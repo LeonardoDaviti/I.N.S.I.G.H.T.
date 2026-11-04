@@ -335,7 +335,7 @@ def _discover_name_address(run: Run):
 def _discover_title_slug(run: Run):
     lines = [(s["key"], a) for s in _discover(run, False) for a in s.get("articles", [])]
     out = {f"{key} {a['url']}" for key, a in lines
-           if a.get("title") and (slug := _slug_text(a["url"])) and a["title"].casefold() == slug.casefold()}
+           if a.get("title") and (slug := _slug_text(a["url"])) and a["title"] == slug}
     return sorted(out), len(lines)
 
 

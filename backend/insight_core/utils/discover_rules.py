@@ -42,8 +42,9 @@ ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voice
 # OWNER_VOICES+ owners each linked by 2+ voices. It found 10 of the lab's 1,313 hosts with 3+ voices
 # (the 6 listed ones, a model hub, two social servers, a contributors' magazine); looser, it took
 # publications by section. An owner is a path segment with pages beneath it, not a number, a date, a
-# language, an id or a file; when one segment holds PREFIX_SHARE+ of the pages (/r/, /profile/, a
-# language), the owner is the next one, down to the third segment (OWNER_DEPTH).
+# language, an id or a file; when one segment holds PREFIX_SHARE+ of the pages (/r/, /profile/), the
+# owner is the next one, past a language too (/ru/companies/<owner>), down to the third segment
+# (OWNER_DEPTH); never past two shared segments (a government site's /government/publications/<doc>).
 OWNERS_MANY, OWNERS_MIN, OWNER_TOP_SHARE, OWNER_VOICES = 50, 15, 0.2, 2
 PREFIX_SHARE = 0.7
 OWNER_DEPTH = 3
@@ -111,6 +112,7 @@ def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]
         if len(set().union(*(v for _, _, v in paths))) < min_voices:
             continue
         prefix: Tuple[str, ...] = ()
+        stepped = False   # one step past a segment most pages share; a language one is skipped (section_of's)
         while len(prefix) < OWNER_DEPTH - 1:
             level = len(prefix)
             first: Counter = Counter()
@@ -122,6 +124,10 @@ def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]
             top, n = first.most_common(1)[0]
             if n < PREFIX_SHARE * sum(urls for _, urls, _ in paths) or NUMBERISH.match(top) or top == "*":
                 break
+            if not LANGUAGE.match(top):
+                if stepped:   # a second shared segment: a site's documents (/government/publications/<doc>), not owners
+                    break
+                stepped = True
             prefix += (top,)
             paths = [p for p in paths if p[0][:len(prefix)] == prefix]
         level = len(prefix)

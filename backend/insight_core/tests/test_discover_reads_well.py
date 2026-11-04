@@ -56,6 +56,11 @@ class PlatformRuleTests(unittest.TestCase):
         links += [("v3", "https://blogs.example/ru/news/1")]
         self.assertEqual(find_platforms(platform_rows(links)), {"blogs.example": ("ru", "companies")})
 
+    def test_two_shared_segments_hold_documents_not_owners(self):
+        links = [(v, f"https://agency.example/government/publications/doc{k}/doc{k}-html") for k in range(20) for v in ("v1", "v2")]
+        links += [("v3", "https://agency.example/government/news/a-release")]
+        self.assertEqual(find_platforms(platform_rows(links)), {})
+
     def test_ids_numbers_and_kinds_of_page_are_no_owners(self):
         links = [(v, f"https://forum.example/posts/{k}a1b2c3d4e5/slug") for k in range(60) for v in ("v1", "v2", "v3")]
         self.assertEqual(find_platforms(platform_rows(links)), {})
