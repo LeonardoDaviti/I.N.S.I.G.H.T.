@@ -33,4 +33,26 @@ describe('PostDetailPage Background', () => {
     expect(document.querySelector('[data-background]')).toBeNull();
     expect(screen.queryByText(/Builds on/)).not.toBeInTheDocument();
   });
+
+  // In News (issue 0083): a post in a News row says which, linking that News.
+  it('names the News row the post is in, linking the News of its scope', async () => {
+    const news = { id: '00000000-0000-4000-8000-0000000000bb', title: 'A model ships', voices: 4, lead_id: '00000000-0000-4000-8000-0000000000bb' };
+    renderPost(baseApi(rssPost({ news: { ...news, scope: 'all' } })));
+    await screen.findByRole('article', { name: 'Post content' });
+    expect(document.querySelector('[data-news]')?.textContent).toBe('In News: A model ships · 4 sources');
+    expect(screen.getByRole('link', { name: 'A model ships' })).toHaveAttribute('href', '/?view=news');
+  });
+
+  it('links a source outside the Main feed to its own News', async () => {
+    const scope = 'source:00000000-0000-4000-8000-0000000000cc';
+    renderPost(baseApi(rssPost({ news: { id: 'n', title: 'A model ships', voices: 2, lead_id: 'n', scope } })));
+    await screen.findByRole('article', { name: 'Post content' });
+    expect(screen.getByRole('link', { name: 'A model ships' })).toHaveAttribute('href', '/read/source/00000000-0000-4000-8000-0000000000cc?view=news');
+  });
+
+  it('says nothing when the post is in no News row', async () => {
+    renderPost(baseApi(rssPost({ news: null })));
+    await screen.findByRole('article', { name: 'Post content' });
+    expect(document.querySelector('[data-news]')).toBeNull();
+  });
 });

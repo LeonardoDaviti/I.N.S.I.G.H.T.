@@ -72,6 +72,8 @@ export interface Post {
   counts?: Counts | null;
   /** A link post's page (issue 0072): its title when known, and the stored post at it. */
   link?: { url: string; title: string | null; post_id: string | null; kind?: 'page' | 'picture' | 'video' } | null;
+  /** Its News row (issue 0083): the row's title and voices, and the scope whose News shows it; null when none. */
+  news?: { id: string; title: string; voices: number; lead_id: string; scope: string } | null;
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
