@@ -37,6 +37,7 @@ import {
 } from '../components/sources/sourceList';
 import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { ConnectionsPanel } from '../components/connections';
+import DataPanel from '../components/data/DataPanel';
 import { EmptyState, ErrorState, LoadingState, Notice } from '../components/states';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { SOURCE_ANATOMY_KEY } from '../lib/ingestionNavigation';
@@ -79,7 +80,7 @@ const SHEET_PUSHED = 'sourceSheetPushed';
 const TRACK_HIGHLIGHT_MS = 1600;
 
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
-const EXTRA_TABS = ['discover', 'connections', 'ingestion'] as const;
+const EXTRA_TABS = ['discover', 'connections', 'ingestion', 'data'] as const;
 type ExtraTab = (typeof EXTRA_TABS)[number];
 const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
 
@@ -98,8 +99,8 @@ export default function SourcesConfig() {
   const view = readSourcesView(searchParams);
   const setView = (next: SourcesView) => setSearchParams(writeSourcesView(searchParams, next), { replace: true });
 
-  // Three tabs: the list, Connections (?tab=connections, spec §10.1) and
-  // Ingestion (?tab=ingestion, reading-finish R3). The legacy Health tab URL
+  // The list, Discover, Connections (?tab=connections, spec §10.1), Ingestion
+  // (?tab=ingestion, reading-finish R3) and Data (?tab=data, the export, issue 0079). The legacy Health tab URL
   // becomes the list view (readSourcesView).
   // `?tab=suggested` (the tab's name until 2026-10-31) is Discover.
   const tabParam = searchParams.get('tab') === 'suggested' ? 'discover' : searchParams.get('tab');
@@ -539,6 +540,7 @@ export default function SourcesConfig() {
           <TabsTrigger value="discover">discover</TabsTrigger>
           <TabsTrigger value="connections">connections</TabsTrigger>
           <TabsTrigger value="ingestion">ingestion</TabsTrigger>
+          <TabsTrigger value="data">data</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="pt-0">
           <div className="pb-24">
@@ -570,6 +572,11 @@ export default function SourcesConfig() {
         <TabsContent value="ingestion" className="pt-2">
           <div className="pb-24">
             <IngestionPanel onOpenSource={openSheet} />
+          </div>
+        </TabsContent>
+        <TabsContent value="data" className="pt-2">
+          <div className="pb-24">
+            <DataPanel />
           </div>
         </TabsContent>
       </Tabs>

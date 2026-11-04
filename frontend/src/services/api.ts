@@ -1148,7 +1148,31 @@ export function createApi() {
     telegramLoginPassword: (password: string) =>
       request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
     telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
+
+    // ---- Data (issue 0079): the export downloads as a link; these read around it ----
+
+    getExportInfo: () => request<ExportInfo>('/api/export'),
+    getExportProgress: (token: string) => request<ExportProgress>(`/api/export/progress/${enc(token)}`),
   };
+}
+
+/** GET /api/export: shown before the click. */
+export interface ExportInfo {
+  database_bytes: number;
+  estimate_bytes: number;
+  estimate_seconds: number;
+  tables: number;
+  login_tables: string[];
+  /** What "Include stored logins" adds, in words. */
+  logins_include: string;
+}
+
+/** GET /api/export/progress/{token}: how far the download started with that token got. */
+export interface ExportProgress {
+  file_name: string;
+  bytes: number;
+  done: boolean;
+  error: string | null;
 }
 
 /** The client's shape, shared by the real client and the test fake (test/fakeApi). */
