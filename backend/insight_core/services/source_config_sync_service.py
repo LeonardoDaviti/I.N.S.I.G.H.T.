@@ -119,26 +119,7 @@ class SourceConfigSyncService:
         """Write every source to sources.json: to a temporary file beside it, then renamed over it,
         so a crash mid-write leaves the old file whole."""
         sources = self.sources_service.get_all_sources()
-
-        platforms: Dict[str, Dict[str, Any]] = {}
-        for source in sources:
-            platform = source["platform"]
-            entry = platforms.setdefault(platform, {"enabled": False, "sources": []})
-            item = {
-                "id": source["handle_or_url"],
-                "state": "enabled" if source["enabled"] else "disabled",
-            }
-            # Written only when off, so the default (true) stays implicit in the file.
-            if source.get("in_main_digest") is False:
-                item["in_main_digest"] = False
-            entry["sources"].append(item)
-            if source["enabled"]:
-                entry["enabled"] = True
-
-        for platform_data in platforms.values():
-            platform_data["sources"].sort(key=lambda item: item["id"])
-
-        document = {**self._default_document(), "platforms": dict(sorted(platforms.items()))}
+        document = self.sources_document(sources)
 
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.config_path.parent,
@@ -160,6 +141,31 @@ class SourceConfigSyncService:
             "path": str(self.config_path),
             "total_sources": len(sources),
         }
+
+    def sources_document(self, sources: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+        """Every source in the shape import_json reads (sources.json; Settings → Data's Export
+        sources, issue 0079)."""
+        if sources is None:
+            sources = self.sources_service.get_all_sources()
+        platforms: Dict[str, Dict[str, Any]] = {}
+        for source in sources:
+            platform = source["platform"]
+            entry = platforms.setdefault(platform, {"enabled": False, "sources": []})
+            item = {
+                "id": source["handle_or_url"],
+                "state": "enabled" if source["enabled"] else "disabled",
+            }
+            # Written only when off, so the default (true) stays implicit in the file.
+            if source.get("in_main_digest") is False:
+                item["in_main_digest"] = False
+            entry["sources"].append(item)
+            if source["enabled"]:
+                entry["enabled"] = True
+
+        for platform_data in platforms.values():
+            platform_data["sources"].sort(key=lambda item: item["id"])
+
+        return {**self._default_document(), "platforms": dict(sorted(platforms.items()))}
 
     def sync_db_to_json(self) -> Dict[str, Any]:
         return self.export_db_to_json()

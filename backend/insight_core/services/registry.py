@@ -33,11 +33,13 @@ class Services:
     stories: Any
     news: Any
     anatomy: Any = None
+    export: Any = None
 
 
 def build_services(db_url: Optional[str] = None) -> Services:
     from insight_core.db.ensure_db import ensure_database
     from insight_core.services.credentials_service import CredentialsService
+    from insight_core.services.export_service import ExportService
     from insight_core.services.folders_service import FoldersService
     from insight_core.services.media_proxy_service import MediaProxyService
     from insight_core.services.operations_service import OperationsService
@@ -82,6 +84,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
         stories=StoriesService(db_url, news=news),
         news=news,
         anatomy=SourceAnatomyService(db_url, operations),
+        export=ExportService(db_url),
     )
 
 
