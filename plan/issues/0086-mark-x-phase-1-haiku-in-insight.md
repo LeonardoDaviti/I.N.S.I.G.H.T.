@@ -113,6 +113,84 @@ Measured 2026-11-04:
 - BGE-M3 takes about 1 GB on the CPU, or 0.8 GB of the 1660 Ti's 6 GB;
 - the worker runs on your device.
 
+### Built (S1, 2026-11-05, branch `markx-s1-storage` from main 58ba6ae)
+Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch copies of `insight_lab` (41,637 posts), never on the lab itself.
+
+**What changed** (the slice's files only):
+- `backend/insight_core/db/migrations/0066_markx_shadow.sql`: the 14 tables above, with their keys, uniques and indexes, and the HNSW index `mx_embeddings_v_hnsw_idx` (`halfvec_cosine_ops`). It creates `mx_*` things only and is idempotent.
+- `backend/insight_core/markx/__init__.py` and `markx/repo.py`: every insert and read the later slices need.
+  - Guides: `put_guide` (loaded again at each start), `guides`.
+  - Tasks: `add_task` (one per kind, guide and input), `task_for`, `lease_tasks` (30-minute leases, by priority then age, `SKIP LOCKED`, expired leases leased again), `release_tasks`, `expire_leases`, `answer_task`, `fail_attempt` (failed at the 3rd), `queue_counts`.
+  - Calls, readings and mentions: `add_call`, `calls`, `valid_call`, `add_reading`, `readings`, `add_mentions`, `mentions`, `posts_naming`.
+  - Embeddings and candidates: `put_embedding`, `embedding`, `embedding_hashes`, `embedding_builds`, `nearest` (through the HNSW index), `add_candidate`, `candidates`.
+  - Runs and stories: `start_run`, `finish_run`, `last_run`, `add_story`, `get_story`, `merge_story`, `set_story_headline`, `set_story_card`.
+  - Memberships and connections: `open_membership`, `close_membership`, `current_members`, `stories_of_post`, `membership_history`, `open_connection`, `close_connection`, `current_connections`. Closing sets `valid_to`; nothing in the module deletes.
+  - News, briefings and labels: `add_news_rows`, `news_rows`, `add_briefing`, `briefings`, `add_label`, `labels`.
+- `backend/insight_core/tests/test_markx_storage.py`: 19 tests.
+
+**How the tables keep the rules** (the build plan's corrections):
+- **No foreign key leaves `mx_*`.** No key goes to `stories` or `story_posts` (corrections 2), and none to `posts` either. A key to `posts` would put Mark X's checks on Mark IX's deletes: a cascade would delete Mark X rows, and a restrict would block Mark IX. Keys inside `mx_*` stay (task → guide, call → task, reading → call, …).
+- **A task is keyed by its content.** It is unique per (`kind`, `guide`, `input_hash`), and a check makes `input_hash` the sha256 of `input` alone. A re-rooted story with the same input is the same task, whatever subject ids come with it (tested).
+- **A guide is never edited.** A check makes `sha256` the body's hash, and a trigger refuses any update to its id, kind, body, hash or schema. `put_guide` refuses the same id with another body.
+- **One current membership per story and post:** a unique index on (`story_id`, `post_id`) where `valid_to` is null. The same applies to connections, per (`a`, `b`, `relation`). A closed row stays, and the slot opens again. A check keeps `valid_to` ≥ `valid_from`.
+- **Every connection names a call or a rule** (a check; 0086 Safety 3).
+- **Set columns are checked:** task status and subject kind, executor, candidate source, membership role, News tag, label kind and split. Task `kind` is not checked, so new kinds (`embed`) need no migration.
+
+**Beyond the table list, and why:**
+- **`mx_embeddings.model_sha256`** (nullable): the embedder build's GGUF sha256. Main's build plan (36eb66d, corrections 6, the owner on 2026-11-05) says every vector records it, so S2 can refuse vectors from another build. S2's file list has no migration, so the column is added here.
+- **`mx_news`** has Mark IX's `news_stories` columns, plus `run_id`, `tag` (NEW, CHANGED, MERGED, SPLIT, SAME: Part E's tags, so S5 needs no migration) and `posts`, the row's `news_posts` rows as JSONB. Its key is (`run_id`, `id`).
+- **`mx_briefings`** is keyed by (`day`, `call_id`), so a new guide's briefing is kept beside the old one.
+
+**Measured** on a scratch copy of `insight_lab` (`insight_lab_check_<pid>_a`; machine load average 10–15):
+- **The migration takes about 0.1–0.56 s of SQL** (3 runs, each in a rolled-back transaction), and 1.5 s for the whole `migrate` run with the container's start.
+- **The empty tables take 376 KB** (385,024 bytes: 14 tables, 32 indexes). The database grows 600 KB.
+- **No existing table changes.** Every table but `mx_*` was compared before and after the migration: rows, an md5 of all their rows, columns, constraints (71), indexes (76), triggers (123) and functions (17). The only change is `schema_migrations`' new row (60 → 61).
+- **With 1,000 fake embeddings** (normalised 1,024-dimension vectors on the newest real posts): `mx_embeddings` takes 5.7 MB, the HNSW index 2.7 MB of it, so about 2.7 KB a post (estimated above: 2.3). `nearest`'s query plan is an index scan on the HNSW index.
+
+**0079's export and restore with the new tables:**
+- `test_export` passes with them, and so does the whole suite.
+- **A real export and restore of the scratch copy:**
+  - The scratch copy held 1,000 fake embeddings, plus a guide, task, call, reading and mention whose text has quotes, commas, a tab, a newline and ünïcode.
+  - Exported with `ExportService`, then restored with `import_export.py` into a new database.
+  - Every table's rows and md5 are equal, `mx_*` and the halfvec values included. Two tables differ, as designed: `credentials` (logins left out) and `system_settings` (`last_export`, written after the export's snapshot).
+  - The HNSW index is rebuilt by the restore, and the restored copy's nearest-neighbour query uses it.
+- **The zip grows 4.36 MB per 1,000 embeddings** (243,593,286 → 247,957,032 bytes; the CSV is 12.8 MB raw, about 12.7 KB of text a vector).
+  - For all 41.6k posts that is about 182 MB, inside corrections 7's estimate of 150–200 MB.
+  - The export took 83–123 s on the loaded machine.
+
+**Tests:** `test_markx_storage` has 19 tests, which pass on a new database migrated from 0001 (run-tests.sh's own `_test` database):
+- the 14 tables;
+- no key out of `mx_*`;
+- the migration run again changes nothing;
+- the HNSW index;
+- the migration only adds;
+- one guide id is one body (and the database refuses an edit or a wrong hash);
+- one task per kind, guide and input hash, by content;
+- leases, answers, retries and failure;
+- releasing and expired leases;
+- calls, readings and mentions;
+- halfvec, `nearest`, and the build;
+- candidates once per source;
+- one current membership per story and post;
+- `valid_to` closing that keeps the row;
+- a post in several stories;
+- connections closed and opened again;
+- stories, runs, News, briefings and labels.
+
+**The whole backend suite: 1,465 tests OK** (run-tests.sh, in the image).
+
+**The real-data check** (`scripts/realdata-check.sh`, on `insight_lab`; the reports are private in `plan/research/lab/checks/` and `plan/research/markx-build/s1/`). It was run three ways, because the branch's base (58ba6ae) is older than 0106, which main and `markx-shadow` now hold:
+1. **Against its own base** (`--base 58ba6ae --head markx-s1-storage`):
+   - every derived thing changed 0, every invariant is the same, and no case changes state;
+   - the verdict reads FAIL only because 0106's two new cases (`discover-one-title-per-page`, `classic-paper-one-page`) fail on both sides: 58ba6ae predates 0106.
+2. **On `markx-shadow`, as it would merge** (S1 merged onto `markx-shadow` 543830d in a trial commit, `--base markx-shadow`): **PASS.** Every derived thing changed 0, every invariant is the same, and no case changes state. Its backend equals main's (36eb66d).
+3. **Literally `--base markx-shadow --head markx-s1-storage`:**
+   - FAIL, with the diff of 0106 undone: the two 0106 cases pass → fail, Classics 230, Discover 740 moved, story membership 32, roundups 16, story origins 3, News 2;
+   - none of it is S1's: run 2 shows the same code with S1 on top changes 0.
+   - Merging S1 needs no rebase: its files are all new.
+
+## Part B: embeddings and candidates (server)
+
 ## Part B: embeddings and candidates (server)
 - **The embedder:**
   - BGE-M3 runs in a new compose service `embedder` (llama.cpp `llama-server --embedding`, the GGUF in a volume), on the CPU or the 1660 Ti, as E8 decides;
