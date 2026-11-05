@@ -132,6 +132,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0118](0118-source-track-record.md) | Source track record (Mark X Stalker): per source and topic, rumors confirmed / wrong / pending, lead time, first or repeat, accurate details; every count opens its cases; recording starts when Stealth's leak rule passes | future |
 | [0119](0119-mark-x-v10.1-entities-and-perspectives.md) | Mark X v10.1 (Stealth in Shadow): A. entity identity, surges per exact version, the entity list, page and review queue (0090 B–C, E, 0115); B. perspectives and the story sheet (0106 v3.2f) with label buttons; new task kinds alias, perspective, sheet | spec |
 | [0120](0120-perspectives-inside-a-story.md) | Perspectives inside a story: what each source adds, and one story sheet (built in 0119 B) | spec |
+| [0121](0121-mark-x-v10.0.3-from-the-v10.0.1-review.md) | Mark X v10.0.3: checks never remove a post that links the story's page, a headline per row, runs in the right order, the reading window at once | spec (v10.0.3) |
 
 ## Analysis archive
 
