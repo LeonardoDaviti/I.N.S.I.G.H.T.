@@ -7,6 +7,7 @@ import AppShell from './components/layout/AppShell';
 import { LoadingState } from './components/states';
 import { ApiProvider } from './services/ApiContext';
 import { sourcesIngestionHref } from './lib/ingestionNavigation';
+import { useMarkxState } from './hooks/useMarkxOn';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
@@ -18,6 +19,8 @@ const SavePage = lazy(() => import('./pages/SavePage'));
 // Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
 const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
+// Mark X Shadow's page (issue 0086 E): its own chunk, so the feed and the post route don't grow for it.
+const MarkXPage = lazy(() => import('./pages/MarkXPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 export function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -32,6 +35,13 @@ function RouteFallback() {
       <LoadingState label="Loading page" rows={4} />
     </div>
   );
+}
+
+/** `/markx` only while Mark X is on (INSIGHT_MARKX): while asking, the page skeleton; off, the feed. */
+function MarkXRoute() {
+  const on = useMarkxState();
+  if (on === undefined) return <RouteFallback />;
+  return on ? <MarkXPage /> : <Navigate to="/" replace />;
 }
 
 /**
@@ -70,7 +80,7 @@ function TrackRedirect() {
  * The app is feed / sources / post. `/tracks/:id` redirects to the reader
  * scoped to the track (Design Studio D5). The retired analysis paths (briefings,
  * stories, inbox, experts, the tracks list; issue 0005) land on the feed, replacing
- * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/design/*` is the Design
+ * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/markx` is Mark X Shadow's page, while it is on (issue 0086 E). `/design/*` is the Design
  * Studio, reached from ⌘K only.
  */
 export function AppRoutes() {
@@ -89,6 +99,7 @@ export function AppRoutes() {
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogPage />} />
       <Route path="/design/*" element={<DesignStudio />} />
+      <Route path="/markx" element={<MarkXRoute />} />
       <Route path="/briefing" element={<Navigate to="/" replace />} />
       <Route path="/briefing/topics" element={<Navigate to="/" replace />} />
       <Route path="/briefing/vertical/*" element={<Navigate to="/" replace />} />

@@ -2,6 +2,7 @@
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
+import type { MarkxNews, MarkxOverview, MarkxPostPanel } from './markx';
 
 export type { Envelope };
 
@@ -1193,6 +1194,12 @@ export function createApi() {
     getMarkxToken: () => request<MarkxTokenView>('/api/markx/token'),
     /** A new worker token, shown once; it replaces the old one. */
     createMarkxToken: () => request<MarkxTokenCreated>('/api/markx/token', { method: 'POST' }),
+    /** Mark X's page (issue 0086 E): {on: true}, or a 404 while INSIGHT_MARKX is off (the menu item's probe). */
+    getMarkxOn: () => request<{ on: boolean }>('/api/markx/on'),
+    getMarkxNews: (all = false) => request<MarkxNews>(`/api/markx/news?all=${all ? 1 : 0}`),
+    getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
+    getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
+    runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 

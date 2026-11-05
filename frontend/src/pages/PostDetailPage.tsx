@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -52,6 +52,10 @@ import type {
   YouTubeWatchProgress,
 } from '../services/api';
 import { proxiedImage } from '../lib/mediaProxy';
+import { useMarkxOn } from '../hooks/useMarkxOn';
+
+// Mark X's folded panel (issue 0086 E): its own chunk, fetched only while Mark X is on.
+const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
 
 /**
  * The post reading view (/posts/:id): one centred column — source and date, the
@@ -789,6 +793,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const queryClient = useQueryClient();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
   const post = detail.post as Post;
+  const markxOn = useMarkxOn();
   const [readerState, setReaderState] = useState<ReaderState | null>(detail.reader_state || null);
   const [youtubeProgress, setYouTubeProgress] = useState<YouTubeWatchProgress | null>(null);
   const [youtubeProgressDraft, setYouTubeProgressDraft] = useState(0);
@@ -1360,6 +1365,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ))}
         </div>
       ) : null}
+
+      {/* ---- Mark X (issue 0086 E): folded, only while Mark X Shadow is on ---- */}
+      {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} /></Suspense> : null}
 
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 
