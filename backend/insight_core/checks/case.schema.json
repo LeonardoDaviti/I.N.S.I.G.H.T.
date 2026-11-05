@@ -38,7 +38,7 @@
     "assertion": {
       "type": "object",
       "required": ["on"],
-      "description": "One surface (checks/surfaces.py), a path into its answer (checks/paths.py) and one test: equals, not_equals, contains, not_contains, starts_with, matches, not_matches, at_least, at_most, is_null, has_post, lacks_post, count {of, equals|at_least|at_most}. stories takes together/apart (+ via), or roundup + of (+ is).",
+      "description": "One surface (checks/surfaces.py), a path into its answer (checks/paths.py) and one test: equals, not_equals, contains, not_contains, starts_with, matches, not_matches, at_least, at_most, rank_at_most (a discover suggestion's place, 1 first), is_null, has_post, lacks_post, count {of, equals|at_least|at_most}. stories takes together/apart (+ via), or roundup + of (+ is).",
       "properties": {
         "on": {"enum": ["post", "row", "feed", "news", "origin", "search", "discover", "classic", "stories"]},
         "post": {"$ref": "#/$defs/ref"},
@@ -64,7 +64,8 @@
         {"on": "news", "post": "https://example.org/a", "path": "story", "has_post": ["https://example.org/b"]},
         {"on": "stories", "together": ["https://example.org/a", {"source": "example_channel", "title": "words"}], "via": "citation"},
         {"on": "search", "query": "words", "order": "best", "limit": 5, "path": "items", "has_post": "https://example.org/a"},
-        {"on": "discover", "key": "example.org", "path": "voices", "at_least": 3}
+        {"on": "discover", "key": "example.org", "path": "voices", "at_least": 3},
+        {"on": "discover", "key": "example.org", "rank_at_most": 60}
       ]
     }
   }

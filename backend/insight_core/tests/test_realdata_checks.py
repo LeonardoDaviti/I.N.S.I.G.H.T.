@@ -51,6 +51,21 @@ class PathsTests(unittest.TestCase):
         self.assertTrue(paths.test("A title", "matches", r"^A \w+$")[0])
         self.assertTrue(paths.test(["x y", "x", "x y z"], "count", {"of": "x y", "equals": 2})[0])
 
+    def test_the_ops_discovers_cases_need(self):
+        """Issue 0109: not_contains on every line, at_most on a count, rank_at_most on a suggestion's place."""
+        urls = ["https://a.test/1?_hsenc=x", "https://a.test/2"]
+        self.assertFalse(paths.test(urls, "not_contains", "_hsenc=")[0])
+        self.assertTrue(paths.test(urls[1:], "not_contains", "_hsenc=")[0])
+        self.assertTrue(paths.test(None, "not_contains", "_hsenc=")[0], "no lines hold none")
+        self.assertTrue(paths.test(5, "at_most", 5)[0])
+        self.assertFalse(paths.test(None, "at_most", 5)[0], "nothing is no number")
+        self.assertTrue(paths.test(12, "rank_at_most", 60)[0])
+        self.assertTrue(paths.test({"key": "a.test", "rank": 12}, "rank_at_most", 60)[0], "a suggestion's own rank")
+        self.assertFalse(paths.test({"key": "a.test", "rank": 61}, "rank_at_most", 60)[0])
+        self.assertFalse(paths.test(None, "rank_at_most", 60)[0], "a suggestion not listed has no rank")
+        self.assertEqual(cases.problems({"id": "c", "kind": "discover", "now": "fail",
+                                         "expect": [{"on": "discover", "key": "a.test", "rank_at_most": 60}]}), [])
+
     def test_a_post_is_held_anywhere_in_the_answer_by_any_of_its_ids(self):
         self.assertTrue(paths.test(self.ANSWER, "has_post", [["p0", "p2"]])[0])
         self.assertTrue(paths.test(self.ANSWER, "has_post", [["p9"]])[0], "a value of a dict")

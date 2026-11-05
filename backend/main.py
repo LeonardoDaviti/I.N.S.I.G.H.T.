@@ -893,7 +893,8 @@ async def get_suggested_sources(offset: int = Query(0, ge=0), limit: int = Query
     article_count, link_count, articles [{url, title, linked_by}], classics, origins, opened, score,
     origin_stories [{url, title, voices, stored}], follow_test? {label: feed | page | headlines |
     blocked, at}}, ranked by the stories started there, classics, opens, sources and recency, the
-    ones that can't be followed last; total, more; archives [{source_id, name, places, origins, since,
+    ones tested followable first, then those that can't be followed as a feed (section: unfollowable),
+    then the untested (issue 0109); total, more; archives [{source_id, name, places, origins, since,
     older, origin_stories}]: followed sources whose own pages started stories they don't hold
     (sections of a site you follow too); unnamed [{place, origins}]; references [{key, voices}]: help
     and docs sites your sources link. Opening the first page tests its suggestions and reads its

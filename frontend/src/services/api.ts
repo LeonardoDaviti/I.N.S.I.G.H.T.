@@ -797,7 +797,7 @@ export interface FoundFeed {
 }
 
 /** Discover's follow test (issue 0080): what following it would give, read once in 30 days. */
-export type FollowLabel = 'feed' | 'page' | 'headlines' | 'blocked';
+export type FollowLabel = 'feed' | 'page' | 'headlines' | 'blocked' | 'other_feed';
 
 /** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
 export interface SuggestedSource {
@@ -813,6 +813,10 @@ export interface SuggestedSource {
   articles: { url: string; title: string | null; linked_by: string[] }[];
   /** Its follow test, on the first page (issue 0080). */
   follow_test?: { label: FollowLabel; at: string };
+  /** One owner's hosts on its domain, the card's first (issue 0109): `deepmind.google`, `blog.deepmind.google`. */
+  places?: string[];
+  /** Set when its follow test says it can't be followed as a feed: listed in a section of its own (issue 0109). */
+  section?: 'unfollowable';
   /** How many of its pages are classics (issue 0051): a suggestion that holds some comes first. */
   classics?: number;
   /** How many of your stories start there (issue 0065): Discover's first reason and its first order. */
@@ -837,11 +841,21 @@ export interface MissingOrigins {
   origin_stories: OriginStory[];
   /** Its archive as stored (issue 0080): running, paused or finished, and how many of these pages it has stored since. */
   archive?: { state: 'running' | 'paused' | 'finished' | null; found: number; pages_fetched?: number };
+  /** Issue 0109: `origins` counts the pages it still lacks; `stored` those it has stored since (their stories join at the next
+   *  story run); `stopped`: its newest post, when its feed stopped; `watches`: the prefix it watches and the sections outside it;
+   *  `archivable`: the missing pages an archive can reach. */
+  stored?: number;
+  stopped?: string;
+  watches?: { prefix: string; not: string[] };
+  archivable?: number;
 }
 export interface SuggestedSourcesResponse {
   success: true;
-  /** One page of them (issue 0080: 30 at a time, the rest behind More). */
+  /** One page of them (issue 0080: 30 at a time, the rest behind More): the tested followable first, then those that
+   *  can't be followed as a feed (`section: 'unfollowable'`), then the untested (issue 0109). */
   suggestions: SuggestedSource[];
+  /** A followed source's other channels (issue 0109): linked by that source, under its name. One folded group, with the first page. */
+  also?: (SuggestedSource & { of: string; source_id: string })[];
   total?: number;
   more?: boolean;
   /** Help and docs sites your sources link: references, never suggestions (issue 0080). */

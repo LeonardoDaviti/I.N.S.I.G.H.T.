@@ -410,27 +410,36 @@ class DiscoverRepository:
         missing these pages: {state: running | paused | finished | None, found: how many of the pages it
         has stored since, pages_fetched: the running or last archive's, when it says}. Running: its newest
         archive job runs or waits out a host's limit; paused: that job paused (its checkpoint kept); finished: the archive's checkpoint
-        is done (settings.archive.checkpoint.completed_at)."""
+        is done (settings.archive.checkpoint.completed_at). Issue 0109: also the pages it stores (stored_urls), its
+        newest post (newest) and the page-watch prefix it watches (prefix), for the row to say what it lacks."""
         ids = sorted(missing)
         cur.execute("""SELECT DISTINCT ON (source_id) source_id::text, status, payload->'paused', payload->'pages_fetched'
                        FROM job_runs WHERE job_type = 'archive_source' AND source_id = ANY(%s::uuid[])
                        ORDER BY source_id, started_at DESC""", (ids,))
         jobs = {sid: (status, paused, pages) for sid, status, paused, pages in cur.fetchall()}
-        cur.execute("SELECT id::text, settings->'archive'->'checkpoint'->>'completed_at' FROM sources WHERE id = ANY(%s::uuid[])",
-                    (ids,))
-        done = {sid for sid, completed in cur.fetchall() if completed}
-        cur.execute("SELECT source_id::text, count(DISTINCT normalized_url) FROM posts p, unnest(%s::uuid[], %s::text[]) AS m(sid, url) "
-                    "WHERE p.source_id = m.sid AND p.normalized_url = m.url GROUP BY 1",
+        cur.execute("SELECT id::text, settings->'archive'->'checkpoint'->>'completed_at', settings->'page_watch'->>'prefix' "
+                    "FROM sources WHERE id = ANY(%s::uuid[])", (ids,))
+        rows = cur.fetchall()
+        done = {sid for sid, completed, _ in rows if completed}
+        prefixes = {sid: prefix for sid, _, prefix in rows if prefix}
+        cur.execute("SELECT DISTINCT source_id::text, normalized_url FROM posts p, unnest(%s::uuid[], %s::text[]) AS m(sid, url) "
+                    "WHERE p.source_id = m.sid AND p.normalized_url = m.url",
                     ([sid for sid in ids for _ in missing[sid]], [url for sid in ids for url in missing[sid]]))
-        found = dict(cur.fetchall())
+        stored: Dict[str, List[str]] = defaultdict(list)
+        for sid, url in cur.fetchall():
+            stored[sid].append(url)
+        cur.execute("SELECT source_id::text, max(COALESCE(published_at, fetched_at)) FROM posts WHERE source_id = ANY(%s::uuid[]) "
+                    "GROUP BY 1", (ids,))
+        newest = dict(cur.fetchall())
         out = {}
         for sid in ids:
             status, paused, pages = jobs.get(sid, (None, None, None))
             # A waiting archive (issue 0107) still runs: it continues by itself.
             state = ("running" if status in ("running", "waiting") else "paused" if paused is True
                      else "finished" if sid in done else None)
-            out[sid] = {"state": state, "found": int(found.get(sid, 0)),
-                        **({"pages_fetched": pages} if isinstance(pages, int) else {})}
+            out[sid] = {"state": state, "found": len(stored[sid]),
+                        **({"pages_fetched": pages} if isinstance(pages, int) else {}),
+                        "stored_urls": sorted(stored[sid]), "newest": newest.get(sid), "prefix": prefixes.get(sid)}
         return out
 
     @staticmethod
@@ -442,10 +451,12 @@ class DiscoverRepository:
 
     @staticmethod
     def read_titles(cur: Cursor, urls: Sequence[str]) -> Dict[str, str]:
-        """The page titles read of these addresses (issue 0106: Classics show them), those that had one."""
-        cur.execute("SELECT t.key, t.value->>'title' FROM system_settings s, jsonb_each(s.value->'titles') t "
-                    "WHERE s.key = %s AND t.key = ANY(%s) AND t.value->>'title' IS NOT NULL", (READS_KEY, list(urls)))
-        return dict(cur.fetchall())
+        """The page titles read of these addresses (issue 0106: Classics show them), those that had one, and not
+        one 2+ pages of its host share (issue 0109 W7: its site's name; page_titles.shared_titles)."""
+        from insight_core.services import page_titles
+        reads = DiscoverRepository.reads(cur).get("titles", {})
+        shared = page_titles.shared_titles(reads)
+        return {url: title for url in urls if (title := page_titles.read(reads, url, shared))}
 
     @staticmethod
     def keep_reads(cur: Cursor, reads: Dict[str, Any]) -> None:
@@ -497,6 +508,18 @@ class DiscoverRepository:
         cur.execute("SELECT source_id, min(COALESCE(published_at, fetched_at)) FROM posts "
                     "WHERE source_id = ANY(%s::uuid[]) GROUP BY 1", (sorted(source_ids),))
         return {str(source_id): first for source_id, first in cur.fetchall() if first}
+
+    @staticmethod
+    def site_hosts(cur: Cursor, sites: Iterable[str]) -> Dict[str, Tuple[int, int]]:
+        """Each site's hosts your sources' kept links point to, and the posts linking it (issue 0109: a domain
+        of many owners, discover_rules.federation): {site: (hosts, posts)}."""
+        sites = sorted(set(sites))
+        if not sites:
+            return {}
+        cur.execute("""SELECT target_site, count(DISTINCT regexp_replace(lower(substring(target_url FROM '://([^/:?#]+)')), '^www[.]', '')),
+                              count(DISTINCT post_id)
+                       FROM post_links WHERE NOT boilerplate AND target_site = ANY(%s) GROUP BY 1""", (sites,))
+        return {site: (int(hosts), int(posts)) for site, hosts, posts in cur.fetchall()}
 
     @staticmethod
     def posts_on(cur: Cursor, hosts: Iterable[str]) -> List[Tuple[str, str]]:

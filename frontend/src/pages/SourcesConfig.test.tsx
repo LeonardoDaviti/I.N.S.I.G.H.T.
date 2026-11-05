@@ -1052,6 +1052,9 @@ describe('SourcesConfig deep links', () => {
         archives: [{
           source_id: 's-openai', name: 'OpenAI News', places: ['openai.com/index'], origins: 37, since: '2026-10-23T17:00:00Z',
           older: 36, origin_stories: [{ url: 'https://openai.com/index/gpt-6-astra', title: null, voices: 9, stored: false }],
+        }, {
+          source_id: 's-cursor', name: 'Tool Blog', places: ['tool.example/blog'], origins: 4, since: '2023-06-11T00:00:00Z',
+          older: 0, origin_stories: [], stopped: '2024-11-11T00:00:00Z', archivable: 0,
         }],
         unnamed: [{ place: 'youtube.com/watch', origins: 9 }],
       }),
@@ -1063,10 +1066,13 @@ describe('SourcesConfig deep links', () => {
 
     const missing = screen.getByRole('region', { name: 'Sources you follow that miss where your stories start' });
     expect(within(missing).getByText('OpenAI News')).toBeInTheDocument();
-    expect(within(missing).getByText(/37 of your stories started at openai.com\/index pages it doesn't hold, 36 from before its first post/)).toBeInTheDocument();
+    expect(within(missing).getByText(/37 pages at openai.com\/index where your stories started aren't in it, 36 from before its first post/)).toBeInTheDocument();
     expect(within(missing).getByRole('link', { name: 'openai.com · index' })).toHaveAttribute('href', 'https://openai.com/index/gpt-6-astra');
     expect(within(missing).getByRole('link', { name: 'Archive…' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=archive&source=s-openai');
     expect(within(missing).queryByRole('button', { name: 'Follow…' })).toBeNull();
+    // Issue 0109: a stopped feed is said, and no archive is offered for it.
+    expect(within(missing).getByText(/Its feed stopped \(Nov 11 ’24\)/)).toBeInTheDocument();
+    expect(within(missing).getAllByRole('link', { name: 'Archive…' })).toHaveLength(1);
     expect(screen.getByText('Stories also start at pages that name no account to follow: youtube.com/watch (9).')).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Follow…' })[0]);
@@ -1083,10 +1089,12 @@ describe('SourcesConfig deep links', () => {
     const firstPage = {
       success: true, total: 3, more: true,
       suggestions: [
-        { ...base, key: 'feeds.example', follow_test: { label: 'feed', at: '2026-11-01T00:00:00Z' } },
-        { ...base, key: 'walled.example', url: 'https://walled.example', follow_test: { label: 'blocked', at: '2026-11-01T00:00:00Z' } },
+        { ...base, key: 'feeds.example', places: ['feeds.example', 'news.feeds.example'], follow_test: { label: 'feed', at: '2026-11-01T00:00:00Z' } },
+        { ...base, key: 'walled.example', url: 'https://walled.example', origins: 7, section: 'unfollowable',
+          follow_test: { label: 'blocked', at: '2026-11-01T00:00:00Z' } },
       ],
       references: [{ key: 'help.tool.example', voices: 7 }],
+      also: [{ ...base, key: 'x.com/labnotes', url: 'https://x.com/labnotes', of: 'Lab Notes', source_id: 's-n' }],
       archives: [{
         source_id: 's-a', name: 'Lab News', places: ['lab.example/index'], origins: 37, since: null, older: 0, origin_stories: [],
         archive: { state: 'running', found: 3 },
@@ -1097,10 +1105,22 @@ describe('SourcesConfig deep links', () => {
       .mockResolvedValueOnce({ success: true, total: 3, more: false, suggestions: [{ ...base, key: 'later.example', url: 'https://later.example' }] });
     setup('/settings/sources?tab=discover', { getSuggestedSources });
     expect(await screen.findByText('Feed found')).toBeInTheDocument();
-    expect(screen.getByText('Blocks readers: listed below the ones you can follow')).toBeInTheDocument();
+    expect(screen.getByText('· also news.feeds.example')).toBeInTheDocument();   // one owner's hosts, one card (issue 0109)
+    // Issue 0109: the ones that can't be followed are a section of their own, below the followable, above the untested.
+    const apart = screen.getByRole('region', { name: "Can't be followed as a feed" });
+    expect(within(apart).getByText('walled.example')).toBeInTheDocument();
+    expect(within(apart).getByText('Blocks readers')).toBeInTheDocument();
+    expect(within(apart).getByText('Started 7 of your stories')).toBeInTheDocument();
+    expect(screen.queryByText(/listed below the ones you can follow/)).toBeNull();
+    // A followed source's other channels: folded, never a suggestion (issue 0109).
+    const channels = screen.getByRole('region', { name: "Your sources' other channels" });
+    expect(within(channels).queryByText('x.com/labnotes')).toBeNull();
+    await userEvent.click(within(channels).getByRole('button', { name: 'Other channels of sources you follow (1)' }));
+    expect(within(channels).getByRole('link', { name: 'x.com/labnotes' })).toHaveAttribute('href', 'https://x.com/labnotes');
+    expect(within(channels).getByText('· also Lab Notes’s')).toBeInTheDocument();
     expect(screen.getByText('References your sources use: help.tool.example (7).')).toBeInTheDocument();
     const missing = screen.getByRole('region', { name: 'Sources you follow that miss where your stories start' });
-    expect(within(missing).getByText('Archive running · 3 of 37 found so far')).toBeInTheDocument();
+    expect(within(missing).getByText('Archive running · 3 found so far, 37 to go')).toBeInTheDocument();
     expect(within(missing).queryByRole('link', { name: 'Archive…' })).toBeNull();
     expect(within(missing).getByRole('link', { name: 'See the archive' })).toBeInTheDocument();
 
@@ -1110,6 +1130,7 @@ describe('SourcesConfig deep links', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'More (1)' }));
     expect(await screen.findByText('later.example')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: "Can't be followed as a feed" })).queryByText('later.example')).toBeNull();
     expect(getSuggestedSources).toHaveBeenLastCalledWith('?offset=2&q=', expect.anything());
     expect(screen.queryByRole('button', { name: /More/ })).toBeNull();
   });

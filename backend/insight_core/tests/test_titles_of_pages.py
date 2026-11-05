@@ -111,7 +111,7 @@ class WorkTests(unittest.TestCase):
         archives = [{"origin_stories": [{"url": "https://b.example/old-1", "title": None},
                                         {"url": "https://x.com/u/status/2111872584338018562", "title": None}]}]
         classics = ["https://c.example/essay", "https://b.example/old-1"]
-        reads = {"follow": {"a.example": {"label": "feed", "at": NOW.isoformat()}},
+        reads = {"follow": {"a.example": {"label": "feed", "at": NOW.isoformat(), "test": discover_reads.FOLLOW_TEST}},
                  "titles": {"https://c.example/essay": {"title": None, "at": (NOW - timedelta(days=31)).isoformat()}}}
         self.assertEqual(discover_reads.work(first, reads, NOW, archives=archives, classics=classics),
                          {"follow": [], "titles": ["https://a.example/1", "https://a.example/2", "https://b.example/old-1",
@@ -144,7 +144,7 @@ class ReadBatchTests(unittest.TestCase):
         first = [{"key": key, "articles": [], "origin_stories": [{"url": origin, "title": None}]}]
         opened = []
 
-        def discover(limit):
+        def discover(limit=None):
             opened.append(limit)
             return {"suggestions": first, "archives": [{"origin_stories": [{"url": old, "title": None}]}]}
 

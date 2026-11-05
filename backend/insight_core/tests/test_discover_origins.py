@@ -233,6 +233,57 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertEqual(row()["archive"]["state"], "finished")
         self.cur.execute("DELETE FROM job_runs WHERE source_id = %s", (feed,))
 
+    def test_an_archive_row_counts_the_pages_it_lacks_and_drops_the_stored(self):
+        """Issue 0109 W8: the row counted stories ("41 it doesn't hold") while its archive had stored 36 of the pages."""
+        m = self.mark
+        site = f"counted-{m}.example"
+        feed = self._source(f"Counted {m}", f"https://{site}/feed.xml")
+        self._post(feed, f"https://{site}/index/recent")
+        voices = self._voices(3)
+        pages = [f"https://{site}/index/older-{n}" for n in range(3)]
+        for page in (*pages, pages[0]):   # two stories start at the first page
+            self._cite(voices, page)
+
+        def row():
+            return next((a for a in self._discover()["archives"] if a["source_id"] == feed), None)
+
+        self.assertEqual((row()["origins"], row()["stored"]), (3, 0), "pages, not stories")
+        self._post(feed, pages[0])   # stored since: the story job hasn't run yet
+        got = row()
+        self.assertEqual((got["origins"], got["stored"]), (2, 1))
+        self.assertNotIn(pages[0], [o["url"] for o in got["origin_stories"]])
+        for page in pages[1:]:
+            self._post(feed, page)
+        self.assertIsNone(row(), "nothing left to miss")
+
+    def test_an_archive_row_says_when_its_feed_stopped(self):
+        m = self.mark
+        site = f"stopped-{m}.example"
+        feed = self._source(f"Stopped {m}", f"https://{site}/atom.xml")
+        self._post(feed, f"https://{site}/blog/last", days=400)
+        voices = self._voices(3)
+        for n in range(2):
+            self._cite(voices, f"https://{site}/blog/new-{n}")
+        [row] = [a for a in self._discover()["archives"] if a["source_id"] == feed]
+        self.assertEqual(row["stopped"], (NOW - timedelta(days=400)).isoformat())
+        self.assertEqual(row["archivable"], 0, "an archive can't reach what the feed never had")
+
+    def test_an_archive_row_says_what_its_source_watches_instead(self):
+        m = self.mark
+        site = f"watched-{m}.example"
+        page = self._source(f"Watched {m}", f"https://{site}/blog")
+        self.cur.execute("""UPDATE sources SET settings = settings || '{"page_watch": {"prefix": "/resources/articles/"}}' WHERE id = %s""",
+                         (page,))
+        self._post(page, f"https://{site}/resources/articles/one")
+        voices = self._voices(3)
+        for n in range(2):
+            self._cite(voices, f"https://{site}/blog/post-{n}")
+        self._cite(voices, f"https://{site}/resources/articles/missed")
+        [row] = [a for a in self._discover()["archives"] if a["source_id"] == page]
+        self.assertEqual(row["watches"], {"prefix": "/resources/articles/", "not": ["/blog"]})
+        self.assertEqual((row["origins"], row["archivable"]), (3, 1), "an archive reaches only what it watches")
+        self.assertNotIn("stopped", row)
+
     def test_tweets_in_any_form_and_reposts_suggest_an_account(self):
         m = self.mark
         author = f"Auth{m}"

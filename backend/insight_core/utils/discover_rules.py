@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
-from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, publication_of, site_of, x_account
+from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, paper_id, publication_of, site_of, x_account
 from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, section_of
 from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS, StoryPost, anchors
@@ -48,7 +48,22 @@ ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voice
 OWNERS_MANY, OWNERS_MIN, OWNER_TOP_SHARE, OWNER_VOICES = 50, 15, 0.2, 2
 PREFIX_SHARE = 0.7
 OWNER_DEPTH = 3
-NOT_OWNER = re.compile(r"^(v?\d[\d.\-_v]*|[a-z]{2}(-[a-z]{2,4})?|\d{4}-\d\d(-\d\d)?.*|[0-9a-f]{8,}|.*\.(html?|php|aspx?|pdf))$", re.I)
+# Issue 0109 W4: a host whose pages mark their owner (/@<owner>/..., /~<owner>/..., /<owner>/posts/...) is a
+# platform of those owners when PLACE_SHARE of its pages are so marked under 2+ owners, however few: a
+# creators' platform (server and lab: 1 host, 3 owners). A section is never marked so.
+OWNER_MARKS = ("@", "~")
+MARKED_OWNERS = ("@",)   # the prefix of such a platform: only a page that marks its owner names one
+OWNER_POSTS = frozenset({"posts", "post", "p"})
+NOT_OWNER = re.compile(r"^(v?\d[\d.\-_v]*|[a-z]{2}|\d{4}-\d\d(-\d\d)?.*|[0-9a-f]{8,}|.*\.(html?|php|aspx?|pdf))$", re.I)
+# Two letters name no owner (a store's /dp/ and /gp/ pages: 283 of the lab's links). A language segment (issue 0109
+# W11: an organisation's handle, ai-sage, was read as one): the whole first path part, a language of ISO 639-1,
+# and a region (ru-RU), a UN area (es-419) or a script (zh-Hant) after it.
+ISO_639_1 = frozenset("""aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de
+dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it
+iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd
+ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su
+sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu""".split())
+SCRIPTS = frozenset({"hans", "hant", "latn", "cyrl", "arab", "deva", "jpan", "kore", "grek", "hebr", "thai"})
 # Path segments of a data platform that name a kind of page, not an owner (hub.example/spaces/...).
 NOT_OWNER_KINDS = frozenset({"spaces", "datasets", "collections", "papers", "models", "docs", "blog", "tags", "tag",
                              "topics", "topic", "search", "settings", "login", "about"}) | NOT_ACCOUNT
@@ -71,8 +86,17 @@ def _id_like(seg: str) -> bool:
                                    and re.search(r"[a-z]", seg, re.I))
 
 
-def owner_segment(seg: str) -> bool:
-    return not NOT_OWNER.match(seg) and not _id_like(seg)
+def language_segment(seg: str) -> bool:
+    """A language tag (ISO_639_1, with a region, a UN area or a script after it): en, ru-RU, es-419, zh-Hant."""
+    primary, _, sub = seg.lower().replace("_", "-").partition("-")
+    return primary in ISO_639_1 and (not sub or (len(sub) == 2 and sub.isalpha()) or (len(sub) == 3 and sub.isdigit())
+                                     or sub in SCRIPTS)
+
+
+def owner_segment(seg: str, *, first: bool = False) -> bool:
+    """A path segment that can name an owner: not a number, a date, an id or a file, and, as the whole first
+    path part (`first`), not a language (issue 0109)."""
+    return not NOT_OWNER.match(seg) and not _id_like(seg) and not (first and language_segment(seg))
 
 
 def is_self_link(url: str, selves: Iterable[str]) -> bool:
@@ -130,10 +154,14 @@ def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]
                 stepped = True
             prefix += (top,)
             paths = [p for p in paths if p[0][:len(prefix)] == prefix]
+        marked = _marked_owners(paths)
+        if marked is not None:
+            out[host] = MARKED_OWNERS
+            continue
         level = len(prefix)
         owners: Dict[str, Tuple[int, Set[str]]] = {}
         for segs, urls, voices in paths:
-            if len(segs) > level + 1 and owner_segment(segs[level]):
+            if len(segs) > level + 1 and owner_segment(segs[level], first=level == 0):
                 n, vs = owners.get(segs[level], (0, set()))
                 owners[segs[level]] = (n + urls, vs | voices)
         if not owners:
@@ -146,16 +174,43 @@ def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]
     return out
 
 
+def _marked_owner(segs: Tuple[str, ...]) -> Optional[str]:
+    """The owner a page marks as its own (/@<owner>, /~<owner>, /<owner>/posts/<x>), else None."""
+    if not segs:
+        return None
+    owner = segs[0].lstrip("".join(OWNER_MARKS))
+    if not owner or owner.startswith("-") or not owner_segment(owner, first=True):
+        return None
+    if segs[0][:1] in OWNER_MARKS or (len(segs) >= 3 and segs[1] in OWNER_POSTS):
+        return owner
+    return None
+
+
+def _marked_owners(paths: List[Tuple[Tuple[str, ...], int, Set[str]]]) -> Optional[Set[str]]:
+    """The owners of a host whose pages mark them (PLACE_SHARE of its pages, 2+ owners), else None."""
+    total = sum(urls for _, urls, _ in paths)
+    owners: Set[str] = set()
+    marked = 0
+    for segs, urls, _ in paths:
+        owner = _marked_owner(segs)
+        if owner:
+            owners.add(owner)
+            marked += urls
+    return owners if total and marked >= PLACE_SHARE * total and len(owners) >= 2 else None
+
+
 def platform_key(url: str, prefix: Tuple[str, ...]) -> Optional[str]:
     """The owner an address on a data platform is under: host/<prefix>/<owner>; None for a page
     outside the prefix or one whose segment there names no owner (a kind of page, a number, an id)."""
     host = publication_of(bare(url).partition("/")[0])
     segs = path_segments(url)
+    if tuple(prefix) == MARKED_OWNERS:   # issue 0109: owners only where a page marks them (/@x, /~x, /x/posts/)
+        return f"{host}/{segs[0]}" if _marked_owner(segs) else None
     level = len(prefix)
     if segs[:level] != prefix or len(segs) <= level:
         return None
     owner = segs[level]
-    if not owner_segment(owner) or owner.lstrip("@~") in NOT_OWNER_KINDS:
+    if not owner_segment(owner, first=level == 0) or owner.lstrip("@~") in NOT_OWNER_KINDS:
         return None
     return "/".join((host, *prefix, owner))
 
@@ -179,17 +234,73 @@ def reference_address(url: str) -> bool:
     return bool(REFERENCE_HOST.match(host)) or any(s in REFERENCE_PATH for s in segs)
 
 
+# Issue 0109 W4, shapes of what isn't a source, each measured on the server's 1,275 suggestions and the lab's
+# 1,082 (their shown pages) before it was adopted (counts in 0109's Built):
+# - an archive: a page holding another full address (/web/<date>/https:/<site>/...), or a file (an image, a
+#   sound, a script): another site's page, or no article (server 3: two web archives, a CDN);
+# - an app's shared pages: an opaque id (a uuid, 16+ hex) right after a share-like segment (/share/<id>,
+#   /c/<id>, /chat/<id>, /notebook/<id>): a conversation, not a publication (server 4: three chat apps and a
+#   notebook app). An id alone is no sign: a newspaper's articles are /content/<uuid>;
+# - documents and data: a first segment (a language aside) that names a kind of record (DOCUMENT_PATH: a
+#   register's /documents/, a court's /docket/, /statistics/, a leaderboard's /sota/): server 11, all right;
+# - a paper: 0106's paper id (addresses.paper_id) or a /paper/ path (a proceedings' /paper/<year>/hash/<hex>).
+_EMBEDDED = re.compile(r"/https?(?::|%3a)(?:/|%2f)", re.I)
+_FILE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp|tiff?|mp4|mp3|m4a|wav|ogg|webm|mov|woff2?|css|js)$", re.I)
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+_HEX = re.compile(r"(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{16,}", re.I)
+SHARE_PATH = frozenset({"share", "s", "c", "chat", "chats", "g", "conversation", "conversations", "notebook",
+                        "app", "apps", "artifact", "artifacts"})
+DOCUMENT_PATH = frozenset({"document", "documents", "docket", "dockets", "record", "records", "statistics",
+                           "sota", "doc", "eli", "advisories", "opinion", "opinions", "legislation", "bill", "bills"})
+PAPER_PATH = frozenset({"paper", "papers"})
+
+
+def _path(url: str) -> str:
+    _, _, rest = bare(url).partition("/")
+    return "/" + re.split(r"[?#]", rest, maxsplit=1)[0]
+
+
+def archive_address(url: str) -> bool:
+    """Another site's page kept here (its full address in the path), or a file, not an article."""
+    path = _path(url)
+    return bool(_EMBEDDED.search(path) or re.search(r"https?%3a%2f%2f", url, re.I) or _FILE.search(path))
+
+
+def app_address(url: str) -> bool:
+    """An app's shared page: an opaque id right after a share-like segment."""
+    segs = [s.lower() for s in _path(url).split("/") if s]
+    return any(a in SHARE_PATH and bool(_UUID.search(b) or _HEX.search(b)) for a, b in zip(segs, segs[1:]))
+
+
+def document_address(url: str) -> bool:
+    """A record, a filing or a data page: its first segment (a language aside) names a kind of record."""
+    segs = [s for s in path_segments(url)[:2] if not LANGUAGE.match(s)][:1]
+    return any(s in DOCUMENT_PATH for s in segs)
+
+
 def paper_address(url: str) -> bool:
-    return any(PAPER_ID.match(s) for s in path_segments(url)[:3])
+    segs = path_segments(url)
+    return (any(PAPER_ID.match(s) for s in segs[:3]) or paper_id(url) is not None
+            or (len(segs) >= 2 and segs[0] in PAPER_PATH))
+
+
+PLACE_TESTS = (("reference", reference_address), ("archive", archive_address), ("app", app_address),
+               ("document", document_address), ("paper", paper_address))
+# What Discover does with each (issue 0109): references and documents are a quiet line of references; an
+# archive, an app's pages and a paper source are no suggestion at all (papers stay in stories and Classics).
+REFERENCE_KINDS = ("reference", "document")
 
 
 def place_kind(key: str, urls: Iterable[str]) -> Optional[str]:
     """What a suggestion is when it is no source: "reference" (its host so named, or PLACE_SHARE of its
-    shown pages reference_address), "paper" (PLACE_SHARE of them hold a paper id), else None."""
+    shown pages reference_address), "archive", "app", "document" or "paper" (PLACE_SHARE of them of that
+    shape, in that order), else None. A platform's owner (a key with a path) is only a reference or a
+    paper source: the other shapes are read of a whole host."""
     urls = list(urls)
     if REFERENCE_HOST.match(key):
         return "reference"
-    for kind, test in (("reference", reference_address), ("paper", paper_address)):
+    tests = PLACE_TESTS if "/" not in key else tuple(t for t in PLACE_TESTS if t[0] in ("reference", "document", "paper"))
+    for kind, test in tests:
         if urls and sum(1 for u in urls if test(u)) >= PLACE_SHARE * len(urls):
             return kind
     return None
@@ -208,6 +319,153 @@ def score(*, origins: int, classics: int, opened: int, voices: int, days: Option
     recency = 0.0 if days is None else 1.0 if days <= RECENT_DAYS else 0.5 if days <= LATELY_DAYS else 0.0
     return (3 * math.log1p(origins) + 2 * math.log1p(classics) + 1.5 * math.log1p(opened)
             + math.log1p(voices) + recency)
+
+
+# ---- a followed source's other channels (issue 0109 W3 A, measured on the server's saved answer) -----
+# A suggestion a followed source itself links, under one of that source's names, is that source's other
+# channel (its X account, a moved blog's old site, a lab's org page): 25 found on the server, 22 right by the
+# review's judgement (2 wrong: a cloud company matched by a word of another source's name, a forge's blog by
+# a third party's feed named after the forge). A name: its account's, its site's word (a writer's own label
+# on a host of many writers), the words of its display name and those words run together; words of NAME_MIN+
+# letters only (an id or a number names no one), none of NOT_NAME. A key holds a name when one of its words (an account's name and its parts, a
+# site's registrable word) is it, starts with it or ends with it. Matching names without the link is Mark X.
+NAME_MIN = 4
+NOT_NAME = NOT_SELF | {"https", "http"}
+_NAME_WORDS = re.compile(r"[^a-z0-9]+")
+_NAME_ADDRESS = re.compile(r"^\s*https?://", re.I)
+
+
+def _site_word(site: str) -> str:
+    return site.split(".", 1)[0]
+
+
+def own_names(name: str, *, account: str = "", publication: str = "",
+              shared_sites: Iterable[str] = frozenset()) -> Set[str]:
+    """A source's names as a key may hold them (above). `account`: its platform account (x.com/<name>);
+    `publication`: a website's host; `shared_sites`: the sites of many writers (SourceFacts.shared_sites)."""
+    names: Set[str] = set()
+    if "/" in account:
+        names.add(account.rsplit("/", 1)[1].lstrip("@~").lower())
+    if publication:
+        site = site_of(publication)
+        names.add(publication.split(".", 1)[0] if site in set(shared_sites) and publication != site else _site_word(site))
+    if name and not _NAME_ADDRESS.match(name):
+        words = [w for w in _NAME_WORDS.split(name.lower()) if w]
+        names.update(words)
+        if len(words) > 1:
+            names.add("".join(w for w in words if w not in NOT_NAME))
+    return {n for n in names if len(n) >= NAME_MIN and n not in NOT_NAME and n.isalpha()}
+
+
+def owner_words(key: str) -> Set[str]:
+    """The words a suggestion's key names its owner by: an account's (or owner's) name and its parts, else
+    the site's registrable word (news.example.com: example)."""
+    host, _, rest = key.partition("/")
+    whole = rest.rsplit("/", 1)[-1].lstrip("@~").lower() if rest else _site_word(site_of(publication_of(host)))
+    return {whole} | {part for part in re.split(r"[-_.]", whole) if part}
+
+
+def same_owner(key: str, names: Iterable[str]) -> bool:
+    """Whether a key holds one of a source's names (own_names): a word of it is the name, starts or ends with it."""
+    names = [n for n in names if n]
+    return any(w == n or w.startswith(n) or w.endswith(n) for w in owner_words(key) for n in names)
+
+
+# ---- one card per owner domain (issue 0109 W5: 23 owners in 54 cards on the server) ------------------------
+# The hosts of one registrable domain (site_of) are one owner's, one card led by its best (the most score),
+# its other hosts listed as its places; outside a domain of many owners: a hosting platform's (site_of
+# already parts those listed as such), one your followed sources publish on at 2+ hosts
+# (SourceFacts.shared_sites), and a federation by the data: FEDERATION_HOSTS+ hosts your sources link, at
+# under FEDERATION_POSTS linking posts a host (measured on the lab's kept links: a blog host 51 hosts at 2.0,
+# a newsletter host 556 at 2.3, three universities 31-47 at 1.6-3.6, the EU's 28 at 2.5, a tumblr-like host
+# 20 at 2.9; one owner's: a search company 49 at 15.5, a software company 27 at 5.2, a phone maker 15 at 16,
+# a portal 13 at 7.3, a browser maker 12 at 5.5). Linking voices shared between hosts were tried and told
+# nothing apart (a blog host 17%, a news site 17%, a lab 0%).
+FEDERATION_HOSTS = 10
+FEDERATION_POSTS = 4.0
+
+
+def federation(*, hosts: int, posts: int) -> bool:
+    """A domain of many owners by its links: FEDERATION_HOSTS+ hosts at under FEDERATION_POSTS posts a host."""
+    return hosts >= FEDERATION_HOSTS and posts < FEDERATION_POSTS * hosts
+
+
+def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional[str]:
+    """The domain a site suggestion's card is one of: its registrable domain, None for a platform's owner (a
+    key with a path) or a host of a domain of many owners."""
+    if "/" in key:
+        return None
+    site = site_of(key)
+    return None if site in set(federations) else site
+
+
+def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] = frozenset()) -> List[Dict]:
+    """The suggestions with one owner domain's hosts as one card (owner_domain): led by the best (score, then
+    voices, then key), `places` its hosts (the lead first, then by score), its voices, articles, classics,
+    stories and opens together, its score at least its lead's (its stories and sources added up)."""
+    federations = set(federations)
+    groups: Dict[str, List[Dict]] = defaultdict(list)
+    out: List[Dict] = []
+    for s in found:
+        domain = owner_domain(s["key"], federations)
+        if domain is None:
+            out.append(dict(s))
+        else:
+            groups[domain].append(dict(s))
+    for members in groups.values():
+        members.sort(key=lambda s: (-s["score"], -s["voices"], s["key"]))
+        lead = members[0]
+        if len(members) == 1:
+            out.append(lead)
+            continue
+        names = list(dict.fromkeys(n for s in members for n in s.get("voice_names", ())))
+        articles: Dict[str, Dict] = {}
+        for s in members:
+            for a in s.get("articles", ()):
+                articles.setdefault(a["url"], a)
+        stories: Dict[str, Dict] = {}
+        for s in members:
+            for o in s.get("origin_stories", ()):
+                stories.setdefault(o["url"], o)
+        card = {**lead, "places": [s["key"] for s in members], "voice_names": names, "voices": len(names),
+                "articles": sorted(articles.values(), key=lambda a: -len(a.get("linked_by", ())))[:20]}
+        for field_ in ("article_count", "link_count", "classics", "origins", "opened"):
+            card[field_] = sum(int(s.get(field_) or 0) for s in members)
+        if stories:
+            card["origin_stories"] = sorted(stories.values(), key=lambda o: -o.get("voices", 0))[:3]
+        days = min((s["days"] for s in members if s.get("days") is not None), default=None)
+        card["score"] = max(lead["score"], round(score(origins=card["origins"], classics=card["classics"], opened=card["opened"],
+                                                       voices=len(names), days=days), 3))
+        out.append(card)
+    return out
+
+
+# The follow test's labels (services/discover_reads.py): what can be followed, and what can't (issue 0080).
+FOLLOWABLE = ("feed", "page")
+UNFOLLOWABLE = ("headlines", "blocked", "other_feed")   # other_feed: a feed, but not of these pages (issue 0109)
+
+
+def _label(s: Mapping) -> Optional[str]:
+    return (s.get("follow_test") or {}).get("label")
+
+
+def section(s: Mapping) -> int:
+    """Where a suggestion is listed (issue 0109): 0 tested followable, 1 tested and can't be followed as a
+    feed (its own section), 2 untested."""
+    label = _label(s)
+    return 0 if label in FOLLOWABLE else 1 if label in UNFOLLOWABLE else 2
+
+
+def order(found: Iterable[Mapping]) -> List[Mapping]:
+    """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
+    untested suggestion): those tested followable first, then the section of those that can't be followed
+    as a feed, then the untested; each by score, ties by key. Each of the section says so
+    (`section: "unfollowable"`)."""
+    out = sorted(found, key=lambda s: (section(s), -s["score"], s["key"]))
+    for s in out:
+        if section(s) == 1:
+            s["section"] = "unfollowable"   # type: ignore[index]
+    return out
 
 # ---- Discover --------------------------------------------------------------------------------
 
@@ -383,7 +641,17 @@ def address_rules() -> str:
     """Which rules wrote a discover_addresses row (issue 0071): what they make of the sample's addresses
     (utils/stamps.py), so a change to discover_address, site_of, account_key or discover_article that
     shows there refills the rows, and a refactor that changes nothing keeps them."""
-    return fingerprint([(url, discover_address(url), discover_article(url)) for url in ADDRESSES])
+    return fingerprint([(url, discover_address(url), discover_article(url)) for url in ADDRESSES] + platform_sample())
+
+
+def platform_sample() -> List[Tuple[str, Tuple[Optional[str], str, bool]]]:
+    """What the rules make of a data platform's addresses (issue 0109: an owner's segment, a language before
+    it), so a change to owner_segment or platform_key refills the rows as a change to discover_address does."""
+    platforms = {"hub.example": (), "forum.example": ("ru", "companies"), "social.example": MARKED_OWNERS}
+    return [(url, discover_address(url, platforms)) for url in (
+        "https://hub.example/ai-sage/a-model", "https://hub.example/en/a-model", "https://hub.example/an-owner/models",
+        "https://forum.example/ru/companies/de/articles/1", "https://hub.example/@someone/posts/1",
+        "https://social.example/@someone/1", "https://social.example/redirect/2/abc")]
 
 
 ADDRESS_RULES = address_rules()
@@ -396,5 +664,5 @@ def address_stamp(platforms: Platforms) -> str:
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
            "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
-           "paper_address", "score", "address_stamp",
+           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
            "Origin", "Origins", "origins", "is_roundup", "address_rules", "ADDRESS_RULES"]

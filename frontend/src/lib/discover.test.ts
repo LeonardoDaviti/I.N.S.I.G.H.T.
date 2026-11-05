@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, missingReason, originReason, untitledLine } from './discover.ts';
+import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, canArchive, missingReason, originReason, rowNotes, untitledLine } from './discover.ts';
 import type { MissingOrigins, SuggestedSource } from '../services/api';
 
 const NOW = new Date('2026-10-31T12:00:00Z');
@@ -25,12 +25,13 @@ test('a section of a site you follow names what you follow and the section', () 
 });
 
 test('a followed source missing its origins says how many are older than its first post', () => {
+  // Issue 0109: pages it lacks, not stories.
   assert.equal(missingReason(MISSING, NOW),
-    "37 of your stories started at openai.com/index pages it doesn't hold, 36 from before its first post (Oct 23)");
+    "37 pages at openai.com/index where your stories started aren't in it, 36 from before its first post (Oct 23)");
   assert.equal(missingReason({ ...MISSING, older: 37 }, NOW),
-    "37 of your stories started at openai.com/index pages it doesn't hold, all from before its first post (Oct 23)");
-  assert.equal(missingReason({ ...MISSING, name: 'Anthropic research', places: ['anthropic.com/research'], origins: 6, older: 0 }, NOW),
-    "6 of your stories started at anthropic.com/research pages it doesn't hold");
+    "37 pages at openai.com/index where your stories started aren't in it, all from before its first post (Oct 23)");
+  assert.equal(missingReason({ ...MISSING, name: 'Anthropic research', places: ['anthropic.com/research'], origins: 1, older: 0 }, NOW),
+    "1 page at anthropic.com/research where your stories started isn't in it");
 });
 
 test('an untitled line names its site and section, a tweet its account, never the address (issue 0080)', () => {
@@ -43,12 +44,24 @@ test('an untitled line names its site and section, a tweet its account, never th
 
 test('a missing row follows its archive (issue 0080)', () => {
   assert.equal(archiveLine(MISSING), null, 'no archive yet');
-  assert.equal(archiveLine({ ...MISSING, archive: { state: 'running', found: 3 } }), 'Archive running · 3 of 37 found so far');
-  assert.equal(archiveLine({ ...MISSING, archive: { state: 'finished', found: 3 } }), "Archive finished · 34 of these pages aren't in its archive");
-  assert.equal(archiveLine({ ...MISSING, archive: { state: 'finished', found: 37 } }), 'Archive finished');
+  // Issue 0109: the row's pages are those still missing; the stored ones have left it.
+  assert.equal(archiveLine({ ...MISSING, stored: 3, archive: { state: 'running', found: 3 } }), 'Archive running · 3 found so far, 37 to go');
+  assert.equal(archiveLine({ ...MISSING, stored: 3, archive: { state: 'finished', found: 3 } }), "Archive finished · 37 of these pages aren't in its archive");
+});
+
+test('a row says what was stored, a stopped feed and a section it does not watch (issue 0109)', () => {
+  assert.deepEqual(rowNotes({ ...MISSING, stored: 36 }, NOW), ['36 now stored; their stories join at the next story run']);
+  assert.deepEqual(rowNotes({ ...MISSING, stopped: '2024-11-11T00:00:00Z', archivable: 0 }, NOW),
+    ["Its feed stopped (Nov 11 ’24): an archive can't reach these pages"]);
+  assert.deepEqual(rowNotes({ ...MISSING, watches: { prefix: '/resources/articles/', not: ['/blog'] }, archivable: 1 }, NOW),
+    ['It watches /resources/articles/, not /blog']);
+  assert.equal(canArchive(MISSING), true);
+  assert.equal(canArchive({ ...MISSING, archivable: 0 }), false);
+  assert.equal(canArchive({ ...MISSING, archive: { state: 'finished', found: 1 } }), false);
 });
 
 test('the follow test labels, and the two that sink', () => {
-  assert.deepEqual(Object.values(FOLLOW_LABELS), ['Feed found', 'Page watching', 'Headlines only', 'Blocks readers']);
-  assert.deepEqual([...UNFOLLOWABLE], ['headlines', 'blocked']);
+  assert.deepEqual(Object.values(FOLLOW_LABELS),
+    ['Feed found', 'Page watching', 'Headlines only', 'Blocks readers', 'A feed, but not of these pages']);
+  assert.deepEqual([...UNFOLLOWABLE], ['headlines', 'blocked', 'other_feed']);
 });
