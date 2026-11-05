@@ -831,7 +831,7 @@ class OperationsService:
             "scheduler": self.get_scheduler_config(),
             "jobs": jobs,
             "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS],
-                              "host_limits": health["host_limits"]},
+                              "host_limits": health.get("host_limits") or []},
             "alerts": alerts,
             "stats": {
                 "recent_failures": len([job for job in jobs if job["status"] == "failed"]),

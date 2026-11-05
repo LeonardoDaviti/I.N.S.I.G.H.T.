@@ -538,6 +538,8 @@ class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result["posts_fetched"], result["posts_inserted"], result["pages_fetched"]), (30, 30, 30),
                          "the counts carry across the waits")
         self.assertEqual(self.waits, [5, 10, 5, 10], "5 min, then doubling while no page comes, then 5 again")
+        self.assertEqual([e["posts_collected"] for e in events if e["stage"] == "page_fetched"][-1], 30,
+                         "a continuation does not count its earlier legs twice")
         stages = [e["stage"] for e in events]
         self.assertEqual(stages.count("planning_complete"), 1)
         self.assertEqual(stages.count("waiting"), 4)

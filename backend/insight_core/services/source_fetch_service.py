@@ -357,6 +357,8 @@ class SourceFetchService:
         total_posts_fetched = int(carried.get("posts_fetched") or 0)
         total_inserted = int(carried.get("posts_inserted") or 0)
         total_updated = int(carried.get("posts_updated") or 0)
+        # A continuation's checkpoint already counts this archive's earlier legs, as does the carry.
+        resume_collected_posts = max(0, resume_collected_posts - total_posts_fetched)
         if not carried:
             await self._emit_progress(progress_callback, {
                 "stage": "planning_complete",
