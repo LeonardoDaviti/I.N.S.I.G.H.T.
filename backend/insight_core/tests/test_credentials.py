@@ -552,6 +552,32 @@ class CredentialsServiceTests(unittest.TestCase):
         self.assertTrue(view["test"]["ok"])
         self.assertNotIn("AUTHORISED-SESSION", json.dumps([result, view, self.service.list()]))
 
+    def test_the_code_can_reach_another_api_process(self):
+        """0112 Decided 11: two API processes. The code and the password land on a service that never sent it."""
+        self._with_api()
+        self.script["code"] = TelegramPasswordNeeded()
+        run(self.service.login_start("+15551234567"))
+        other = self._service()                                  # the second process: nothing in its memory
+        self.assertEqual(self._provider(other.list(), "telegram")["login"], {"stage": "code"})
+        self.assertEqual(run(other.login_code("11111")), {"stage": "password"})
+        self.script["password"] = None
+        self.assertEqual(run(self.service.login_password("right")), {"stage": "done", "account": "@owner"})
+        self.assertIsNone(other.provider("telegram")["login"])
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # never kept in clear, and gone once done
+            cur.execute("SELECT count(*) FROM credentials WHERE provider = 'telegram_sign_in'")
+            self.assertEqual(cur.fetchone()[0], 0)
+
+    def test_a_waiting_sign_in_is_stored_encrypted(self):
+        self._with_api()
+        run(self.service.login_start("+15551234567"))
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT ciphertext FROM credentials WHERE provider = 'telegram_sign_in'")
+            raw = bytes(cur.fetchone()[0])
+        self.assertNotIn(b"hash-1", raw)
+        self.assertNotIn(b"after-send", raw)
+        self.service.login_cancel()
+        self.assertIsNone(self._service()._live_pending())
+
     def test_two_step_verification_asks_for_the_password(self):
         self._with_api()
         self.script["code"] = TelegramPasswordNeeded()

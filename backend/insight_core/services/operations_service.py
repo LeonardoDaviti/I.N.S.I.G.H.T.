@@ -641,6 +641,28 @@ class OperationsService:
     # Tracked work (an archive, a fetch, a comment fetch) goes on when its job_runs row
     # cannot be written: these log the failure and return, instead of raising.
 
+    def start_job_unless_running(self, job_type: str, *, source_id: str, trigger: str = "manual",
+                                 message: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """start_job, unless a job of this type for this source is running: None then. The check and the insert run
+        under one lock on (type, source), so two API processes (0112 Decided 11) can't both start one. A failure to
+        write the row is logged and raised."""
+        key = f"job_runs:{job_type}:{source_id}"
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
+            try:
+                cur.execute("SELECT 1 FROM job_runs WHERE job_type = %s AND source_id = %s AND status = 'running' LIMIT 1",
+                            (job_type, source_id))
+                if cur.fetchone() is not None:
+                    return None
+                try:
+                    return self.start_job(job_type, trigger=trigger, source_id=source_id, message=message,
+                                          payload=payload)
+                except Exception:
+                    self.logger.exception("Could not start a %s job", job_type)
+                    raise
+            finally:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
+
     def try_start_job(self, job_type: str, **kwargs: Any) -> Optional[str]:
         """start_job, or None (logged) when the row cannot be written."""
         try:

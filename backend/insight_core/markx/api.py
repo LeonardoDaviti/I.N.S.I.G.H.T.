@@ -191,7 +191,10 @@ class TokenStore:
 
 token_store = TokenStore()
 
-_contacts: Dict[str, datetime] = {}   # the last request of each worker, since this process started
+# Each worker's last request is kept in mx_workers (0112 Decided 11: with two API processes each saw half of them);
+# this process writes a worker's row at most once every CONTACT_EVERY (its own last write, in _contacts).
+_contacts: Dict[str, datetime] = {}
+CONTACT_EVERY = timedelta(seconds=10)
 
 
 def _worker_auth(authorization: Optional[str] = Header(default=None)) -> None:
@@ -211,7 +214,20 @@ def _name(worker: Any) -> str:
 
 
 def _contact(worker: str) -> None:
-    _contacts[worker] = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if worker in _contacts and now - _contacts[worker] < CONTACT_EVERY:
+        return
+    _contacts[worker] = now
+    with transaction() as cur:
+        cur.execute("INSERT INTO mx_workers (worker, last_contact) VALUES (%s, now()) "
+                    "ON CONFLICT (worker) DO UPDATE SET last_contact = GREATEST(mx_workers.last_contact, EXCLUDED.last_contact)",
+                    (worker,))
+
+
+def contacts(cur) -> Dict[str, datetime]:
+    """Each worker's last request, whichever API process it reached."""
+    cur.execute("SELECT worker, last_contact FROM mx_workers")
+    return dict(cur.fetchall())
 
 
 def _uuid(value: Any) -> Optional[UUID]:
@@ -347,12 +363,13 @@ def status():
         n, ti, to, c = cur.fetchone()
         cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
         leased = {w: (k, until) for w, k, until in cur.fetchall()}
+        seen_at = contacts(cur)
         run = repo.last_run(cur)
         guide_hashes = {gid: g["sha256"] for gid, g in repo.guides(cur).items()}
         job_view = jobs.view(cur)
     workers = []
-    for w in sorted(set(_contacts) | set(leased)):
-        seen = _contacts.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
+    for w in sorted(set(seen_at) | set(leased)):
+        seen = seen_at.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
         workers.append({"worker": w, "last_contact": _iso(seen), "leased": leased.get(w, (0, None))[0]})
     return {"queue": queue, "answers_per_day": days,
             "tokens": {"calls": n, "tokens_in": int(ti), "tokens_out": int(to), "cost_usd": round(float(c), 6)},
@@ -478,7 +495,7 @@ def mx_post(post_id: str):
 @router.get("/overview")
 def mx_overview():
     with transaction() as cur:
-        return {"worker": {**news.worker(cur, dict(_contacts)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
+        return {"worker": {**news.worker(cur, contacts(cur)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}}
 

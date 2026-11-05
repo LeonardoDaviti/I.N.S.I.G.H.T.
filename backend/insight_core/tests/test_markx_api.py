@@ -390,6 +390,16 @@ class Answers(_Api):
         self.assertIsNone(body["last_run"])
         self.assertEqual(set(body["guides"]), set(schemas.guide_ids()))
 
+    def test_a_workers_last_contact_is_seen_by_the_other_api_process(self):
+        """0112 Decided 11: the worker reached one process; the page asks the other, which has nothing in memory."""
+        self.lease(worker="device-7")
+        api._contacts.clear()                                    # the other process
+        status, body = call("GET", "/api/markx/status", token=self.token)
+        seen = {w["worker"]: w["last_contact"] for w in body["workers"]}
+        self.assertIsNotNone(seen.get("device-7"))
+        overview = call("GET", "/api/markx/overview")[1]
+        self.assertIn("device-7", [w["worker"] for w in overview["worker"]["workers"]])
+
 
 class GuidesAndInputs(_Api):
     def test_the_guides_are_loaded_by_sha256_and_never_edited(self):

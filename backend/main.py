@@ -83,9 +83,11 @@ def start_stories() -> None:
     markx_router_module.after_start_stories()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    services()  # build the services at boot, so a bad configuration fails here
+def start_once() -> None:
+    """The start's work when this process is the API's only one (`uvicorn main:app` by hand): the API's jobs a
+    restart ended are closed (issue 0070), then the search refill and the story job run in the background. In the
+    container the API runs as several processes, and the supervisor does this once (scripts/api_supervisor.py,
+    0112 Decided 11): each process doing it would close the other's running jobs and run the story job twice."""
     try:   # the API's jobs a restart ended (issue 0070): no request has started one yet
         closed = services().operations.close_interrupted_jobs("manual")
         if closed:
@@ -94,6 +96,13 @@ async def lifespan(app: FastAPI):
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     threading.Thread(target=start_stories, name="stories", daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    services()  # build the services at boot, so a bad configuration fails here
+    if os.getenv("INSIGHT_API_SUPERVISED") != "1":
+        start_once()
     # Mark X's jobs never run here (0112 Decided 10): insight-ingestion runs them (markx/jobs.py).
     yield
     database.close_all()
@@ -476,8 +485,9 @@ async def _run_archive(
                                      job_id=job_id)
 
 
-# Sources with an archive running in this process. One uvicorn worker runs every background
-# job, so a set is the whole truth; a restart empties it, as it ends the runs it tracked.
+# Sources with an archive running in this process (a restart empties it, as it ends the runs it tracked). With two
+# API processes (0112 Decided 11) it is only this one's: the database's running job is the truth, and a new
+# archive starts only through operations.start_job_unless_running, which checks and inserts under one lock.
 _archiving_sources: set[str] = set()
 
 
@@ -532,15 +542,19 @@ def _accept_archive_run(
         # A new archive replaces the waiting one.
         services().operations.try_finish_job(latest["id"], status="success", message="Replaced by a new archive",
                                              payload={"waiting": False})
-    job_id = services().operations.try_start_job(
-        "archive_source",
-        trigger="manual",
-        source_id=source_id,
-        message="Archive",
-        payload={"resume": resume, "rate_limit": rate_limit_overrides},
-    )
-    if not job_id:
+    try:
+        job_id = services().operations.start_job_unless_running(
+            "archive_source",
+            trigger="manual",
+            source_id=source_id,
+            message="Archive",
+            payload={"resume": resume, "rate_limit": rate_limit_overrides},
+        )
+    except Exception:   # logged by the operations service
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    if not job_id:   # the other API process started one between the check above and here
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     _archiving_sources.add(source_id)
     background_tasks.add_task(
         _run_archive_once, source_id, resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,

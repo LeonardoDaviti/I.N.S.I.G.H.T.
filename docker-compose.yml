@@ -35,6 +35,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-insight}:${DB_PASSWORD:-insight}@postgres:5432/${DB_NAME:-insight}
       API_PORT: 8000
+      # Two API processes (issue 0112 Decided 11): one stuck process can't freeze the reader.
+      API_WORKERS: ${API_WORKERS:-2}
       BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
