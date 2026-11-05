@@ -52,6 +52,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def register_stack_dump() -> Optional[Any]:
+    """SIGUSR1 writes every thread's stack to <logs>/api-stacks.log (issue 0117): the watchdog's door sends it before
+    a restart, so the next hang names its function. faulthandler writes from its C handler, so it works while Python
+    is stuck. The open file is returned (it must stay open)."""
+    import faulthandler
+    import signal as signals
+    try:
+        directory = os.getenv("INSIGHT_LOG_DIR") or "logs"
+        os.makedirs(directory, exist_ok=True)
+        stacks = open(os.path.join(directory, "api-stacks.log"), "a", encoding="utf-8")
+        faulthandler.register(signals.SIGUSR1, file=stacks, all_threads=True, chain=False)
+        return stacks
+    except (OSError, ValueError, AttributeError):   # no such file system or signal: stderr then
+        try:
+            faulthandler.register(signals.SIGUSR1, all_threads=True, chain=False)
+        except (ValueError, AttributeError):
+            pass
+        return None
+
+
+_STACKS_FILE = register_stack_dump()
+
+
 def fill_search_vectors() -> None:
     """The posts stored before search (issue 0040), or indexed by an older rule (issue 0056's
     version names, migration 0042), become searchable as search reads them now, in the background."""
@@ -1368,6 +1391,19 @@ async def health_check():
         logger.warning("Health check: the database did not answer (%s)", type(exc).__name__)
         return JSONResponse(status_code=503, content={"status": "unhealthy", "database": False})
     return {"status": "healthy", "database": True, "timestamp": str(time.time())}
+
+
+@app.post("/api/debug/spin")
+async def debug_spin(seconds: float = Query(default=300, ge=1, le=900)):
+    """Measuring the watchdog (issue 0117) only, behind INSIGHT_DEBUG_SPIN=on (404 otherwise): busy-loops this API
+    process's event loop for `seconds`, so it answers nothing meanwhile (the 5 Nov shape: one thread at 100% CPU)."""
+    if os.getenv("INSIGHT_DEBUG_SPIN", "off").strip().lower() != "on":
+        raise HTTPException(status_code=404, detail="Not Found")
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        pass
+    return {"spun": seconds}
 
 
 @app.get("/api/version")

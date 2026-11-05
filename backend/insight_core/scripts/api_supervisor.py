@@ -10,6 +10,10 @@ must happen once per container start, not once per API process (issue 0112 Decid
 - **The start work, once, in a child process of its own:** the search refill and the start's story job (then Mark
   X's first decision run is asked for), as main.py's lifespan ran them in one process.
 - SIGTERM and SIGINT go to uvicorn; this exits with uvicorn's exit code.
+- **The watchdog's door (issue 0117):** every second it looks for a restart request from the watchdog in
+  insight-ingestion (services/api_watchdog.py). Asked, it saves every API process's thread stacks, stops uvicorn and
+  exits with RESTART_EXIT, so Docker's restart policy starts the container again. Being a process of its own, a hung
+  API process can't block it.
 """
 from __future__ import annotations
 
@@ -30,6 +34,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 logger = logging.getLogger("api_supervisor")
 
 SUPERVISED = "INSIGHT_API_SUPERVISED"
+RESTART_EXIT = 75          # asked to restart by the watchdog (EX_TEMPFAIL): Docker starts the container again
+STOP_GRACE = 15.0          # seconds uvicorn gets to stop before it is killed
 
 
 def close_interrupted_jobs() -> int:
@@ -70,6 +76,7 @@ class Supervisor:
         self.child: Optional[subprocess.Popen] = None
         self.work: Optional[object] = None
         self.stopping = False
+        self.restart_asked = False
 
     @staticmethod
     def _spawn_work():
@@ -88,10 +95,37 @@ class Supervisor:
             logger.exception("Could not start the API's start work")
         return self.child
 
+    def dump_stacks(self, processes: Callable[[], List[int]], kill: Callable[[int, int], None] = os.kill) -> List[int]:
+        """SIGUSR1 to each API process (`docker kill -s USR1 insight-api` reaches this one only): each writes its
+        threads' stacks to api-stacks.log (main.py's faulthandler). Never raises."""
+        sent = []
+        for pid in processes():
+            try:
+                kill(pid, signal.SIGUSR1)
+                sent.append(pid)
+            except OSError:
+                logger.exception("Could not ask API process %s for its stacks", pid)
+        return sent
+
     def forward(self, signum: int, _frame=None) -> None:
         self.stopping = True
         if self.child is not None and self.child.poll() is None:
             self.child.send_signal(signum)
+
+    def stop_for_restart(self, grace: float = STOP_GRACE) -> None:
+        """The watchdog asked: uvicorn stops (killed after `grace` seconds), and this exits with RESTART_EXIT."""
+        self.restart_asked = True
+        child = self.child
+        if child is None or child.poll() is not None:
+            return
+        child.send_signal(signal.SIGTERM)
+
+        def kill_later() -> None:
+            time.sleep(grace)
+            if child.poll() is None:
+                logger.error("uvicorn did not stop in %.0f s: killed", grace)
+                child.kill()
+        threading.Thread(target=kill_later, daemon=True).start()
 
     def wait(self, poll: float = 1.0, on_tick: Optional[Callable[[], None]] = None) -> int:
         """Until uvicorn exits: its exit code. `on_tick` runs every `poll` seconds meanwhile."""
@@ -109,7 +143,7 @@ class Supervisor:
         work = self.work
         if work is not None and getattr(work, "is_alive", lambda: False)():
             work.terminate()   # type: ignore[attr-defined]
-        return code
+        return RESTART_EXIT if self.restart_asked else code
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -122,8 +156,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     supervisor = Supervisor(command)
     signal.signal(signal.SIGTERM, supervisor.forward)
     signal.signal(signal.SIGINT, supervisor.forward)
-    supervisor.start()
-    return supervisor.wait()
+    child = supervisor.start()
+    from insight_core.services.api_watchdog import RestartDoor, api_processes
+    door = RestartDoor(processes=lambda: api_processes(child.pid))
+    signal.signal(signal.SIGUSR1, lambda signum, frame: supervisor.dump_stacks(lambda: api_processes(child.pid)))
+
+    def tick() -> None:
+        if not supervisor.restart_asked and door.honour() is not None:
+            logger.error("Restarting the API container, as the watchdog asked")
+            supervisor.stop_for_restart()
+    return supervisor.wait(on_tick=tick)
 
 
 if __name__ == "__main__":

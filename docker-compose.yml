@@ -62,11 +62,14 @@ services:
     # The frontend starts once this passes (depends_on below), so an update's downtime is the API's
     # start (issue 0069): checked every second from the start, then every 30 s. The start period
     # leaves migrations time; a failure in it doesn't count. start_interval: Engine 25+, Compose 2.20.2+.
+    # It asks /api/version, what the reader needs (issue 0117): on 5 Nov /health answered while every
+    # /api/* request hung. 4 failures in a row (2 minutes) are unhealthy. Docker restarts nothing for
+    # that: insight-ingestion's watchdog does (DEPLOYMENT.md, "When the API stops answering").
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-fsS", "-m", "5", "-o", "/dev/null", "http://localhost:8000/api/version"]
       interval: 30s
-      timeout: 10s
-      retries: 5
+      timeout: 6s
+      retries: 4
       start_period: 120s
       start_interval: 1s
     networks:
@@ -93,6 +96,10 @@ services:
       INSIGHT_INGEST_INTERVAL_HOURS: ${INSIGHT_INGEST_INTERVAL_HOURS:-20}
       INSIGHT_INGEST_TICK_MINUTES: ${INSIGHT_INGEST_TICK_MINUTES:-60}
       INSIGHT_LOG_DIR: /app/logs
+      # The API watchdog (issue 0117): asks the API's /api/version every 30 s; after 2 minutes of no answer it asks
+      # the API container to restart (a file in the shared logs volume; no Docker socket), 3 times an hour at most.
+      INSIGHT_API_WATCHDOG: ${INSIGHT_API_WATCHDOG:-on}
+      INSIGHT_API_WATCHDOG_URL: http://backend:8000/api/version
       # glibc: cap per-thread arenas and keep the trim threshold static, so freed
       # pages actually return to the OS instead of being pinned by fragmentation.
       MALLOC_ARENA_MAX: "2"

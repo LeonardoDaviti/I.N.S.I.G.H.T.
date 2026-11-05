@@ -56,6 +56,12 @@ class Supervisor(unittest.TestCase):
             s.start()
         self.assertEqual(s.wait(poll=0), 0)
 
+    def test_a_sigusr1_reaches_each_api_process(self):
+        sent = []
+        s = S.Supervisor(["uvicorn"], popen=lambda c, env: FakeChild([0]), spawn_work=lambda: None, close_jobs=lambda: 0)
+        self.assertEqual(s.dump_stacks(lambda: [21, 22], kill=lambda pid, sig: sent.append((pid, sig))), [21, 22])
+        self.assertEqual(sent, [(21, signal.SIGUSR1), (22, signal.SIGUSR1)])
+
     def test_the_start_work_is_the_search_refill_and_the_story_job(self):
         ran = []
         with mock.patch.object(main, "fill_search_vectors", lambda: ran.append("search")), \

@@ -15,6 +15,9 @@ Two clocks:
   the same job, in this process (so its pages and the hourly fetches of that host share one
   host limiter). A continuation runs as its own task beside the ticks; one that comes due during a
   tick starts after it, which leaves the hourly fetches the host first.
+- The API watchdog (issue 0117), when INSIGHT_API_WATCHDOG is on (compose sets it): services/api_watchdog.py's
+  Watchdog, in a thread of its own, asks the API every 30 s and asks its container to restart after 2 minutes of
+  no answer, 3 times an hour at most.
 - Mark X's jobs (issue 0112 Decided 10), when INSIGHT_MARKX is on: markx/jobs.py's Runner, in a thread of its own,
   looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process.
 
@@ -245,6 +248,14 @@ async def main() -> None:
         markx_jobs.start()
     except Exception:  # noqa: BLE001 - Mark X never stops ingestion
         logger.exception("Could not start Mark X's jobs")
+
+    # The API watchdog (issue 0117): restarts an API that stopped answering, through its container's door.
+    from insight_core.services import api_watchdog
+    if api_watchdog.enabled():
+        try:
+            api_watchdog.Watchdog(operations_service, url=os.getenv("INSIGHT_API_WATCHDOG_URL") or api_watchdog.URL).start()
+        except Exception:  # noqa: BLE001 - the watchdog never stops ingestion
+            logger.exception("Could not start the API watchdog")
 
     archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
     last_archive_poll = 0.0
