@@ -63,3 +63,12 @@ def normalize(url: str) -> str:
         return normalize_url(url) or url
     except ValueError:
         return url
+
+
+def phrases_function() -> Optional[Callable[[Optional[str]], set]]:
+    """news_rules.phrases(title): where a title says a name, as this version's name rule reads it (issue 0104)."""
+    try:
+        from insight_core.utils.news_rules import phrases
+        return phrases
+    except ImportError:
+        return None
