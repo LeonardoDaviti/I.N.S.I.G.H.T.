@@ -480,6 +480,8 @@ class StoriesService:
             words=row["words"] if kind in LINK_POST_KINDS else None,
             author=row["poster"] if kind == "reddit" else row["author"],
             url=row["url"], links=row["links"],
+            # Where its page moved (issue 0108, metadata.moved_to): one page with the post stored there.
+            moved_to=row.get("moved_to") if row.get("moved_to") != row["url"] else None,
             # The tree's evidence (issue 0064): link words, a page updated since its date, its own site.
             link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
             # On X (issue 0066): a tweet of another account (a repost), the account a reply answers, a quote.

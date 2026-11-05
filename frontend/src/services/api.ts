@@ -603,6 +603,8 @@ export interface SourceHealthRow {
   opened_posts?: number;
   /** When the owner last kept it from Tidy up; the marks hide for 90 days from then. */
   tidy_kept_at?: string | null;
+  /** Its posts now live on another site (issue 0108: their pages redirect there); `followed`: a source of yours is there. */
+  moved_to?: { host: string; followed: boolean } | null;
 }
 
 /** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */
@@ -790,6 +792,8 @@ export interface FoundFeed {
   title: string;
   /** How many of the site's articles your sources linked it holds (issue 0060); only when they linked some. */
   holds?: number;
+  /** The site its posts now live at (issue 0108: its posts' pages redirect there); that site's feed is offered first. */
+  moved_to?: string;
 }
 
 /** Discover's follow test (issue 0080): what following it would give, read once in 30 days. */

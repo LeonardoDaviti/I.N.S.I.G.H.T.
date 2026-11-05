@@ -18,6 +18,7 @@ from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
 from insight_core.utils.titles import title_key
+from insight_core.utils.url_normalization import normalize_url
 
 TELEGRAM_BASE_URL = "https://telegram.local"
 IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
@@ -33,6 +34,38 @@ def meta_content(html: str | None, meta_name: str) -> str:
         if (match.group("name") or "").lower() == meta_name:
             return match.group("content") or ""
     return ""
+
+
+MOVED_TAG_RE = re.compile(r"(?is)<(meta|link)\b([^>]*)>")
+MOVED_ATTR_RE = re.compile(r"""(?s)([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+REFRESH_URL_RE = re.compile(r"""(?is)^\s*\d*(?:\.\d*)?\s*[;,]?\s*url\s*=\s*['"]?([^'"]+)""")
+
+
+def moved_to(page: Optional[str], url: str) -> Optional[str]:
+    """Where a page says it now is (issue 0108), absolute: its meta refresh's address, else its
+    <link rel="canonical"> when that is another address (by normalize_url). None when it names none,
+    names itself, or only a script moves the reader (a `location=` script is never followed)."""
+    refresh = canonical = None
+    for tag, attributes in MOVED_TAG_RE.findall((page or "")[:200_000]):
+        values: Dict[str, str] = {}
+        for name, double, single, bare in MOVED_ATTR_RE.findall(attributes):
+            values.setdefault(name.lower(), double or single or bare)
+        if tag.lower() == "meta" and values.get("http-equiv", "").lower() == "refresh" and refresh is None:
+            found = REFRESH_URL_RE.match(html_lib.unescape(values.get("content", "")))
+            refresh = found.group(1).strip() if found else None
+        elif tag.lower() == "link" and "canonical" in values.get("rel", "").lower().split() and canonical is None:
+            canonical = html_lib.unescape(values.get("href", "")).strip() or None
+    here = normalize_url(url)
+    for candidate in (refresh, canonical):
+        if not candidate:
+            continue
+        try:
+            target = urllib.parse.urldefrag(urllib.parse.urljoin(url, candidate))[0]
+        except ValueError:
+            continue
+        if urllib.parse.urlparse(target).scheme in ("http", "https") and normalize_url(target) not in (None, here):
+            return target
+    return None
 
 
 def parse_datetime_value(value: Optional[str]) -> Optional[datetime]:

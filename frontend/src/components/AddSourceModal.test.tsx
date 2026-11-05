@@ -146,3 +146,15 @@ describe('findings ranked by the articles your sources linked (issue 0060)', () 
     expect(within(dialog()).queryByText(/your sources linked/)).not.toBeInTheDocument();
   });
 });
+
+describe('a feed whose posts moved (issue 0108)', () => {
+  it('offers the moved-to feed first and says where the old feed\'s posts live', async () => {
+    setup({ success: true, status: 'found', homepage: false, linked: 0, start: null, pages: [],
+      feeds: [{ url: 'https://www.blog.example/rss/', title: 'The Blog' },
+        { url: 'https://home.example/feed.xml', title: 'Home', moved_to: 'blog.example' }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'home.example');
+    expect(await within(dialog()).findByRole('radio', { name: /The Blog/ })).toBeChecked();
+    expect(within(dialog()).getByRole('radio', { name: /Home/ })).not.toBeChecked();
+    expect(within(dialog()).getByText('The posts of this feed now live at blog.example')).toBeInTheDocument();
+  });
+});

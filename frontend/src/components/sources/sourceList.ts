@@ -264,6 +264,14 @@ export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_lo
   return row.doctor_looked_at ? 'Broken: no replacement found' : null;
 }
 
+/** Where a source's posts now live (issue 0108): the owner chooses; nothing is switched off. */
+export function movedNote(row: Pick<SourceHealthRow, 'moved_to'>): string | null {
+  const moved = row.moved_to;
+  if (!moved) return null;
+  return moved.followed ? `Its posts now live at ${moved.host}, which you follow too`
+    : `Its posts now live at ${moved.host}: follow that instead?`;
+}
+
 /**
  * Source hygiene's notes (issue 0046), quiet first: "Quiet: last post Mar 4" (or "Quiet: no
  * posts yet"), "Never opened: 214 posts". Empty for a source with neither mark.
@@ -279,6 +287,9 @@ export function tidyNotes(row: Pick<SourceHealthRow, 'quiet' | 'never_opened' | 
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
   if (row.kind === 'saved') return 'pages you save';
+  // A source whose posts moved says so first (issue 0108): it also reads as quiet.
+  const moved = movedNote(row);
+  if (moved) return moved;
   // Never on a broken source (the doctor's note stays), so it may come before the status.
   const [tidy] = tidyNotes(row, now);
   if (tidy) return tidy;
