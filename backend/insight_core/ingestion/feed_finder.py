@@ -18,6 +18,9 @@ One search, cheapest first, stopping at the first stage that finds something:
      links (header and navigation, then footer) are reported instead, unread: the preview
      chooses among them by their articles (issue 0047).
   4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
+The home page's menu link named Blog (or Writing, Posts, Essays) to another domain is a
+candidate after the site's own feeds (issue 0108: a person's site whose blog is elsewhere): its
+feeds follow the site's, or are the finding when the site has none. A platform's takes its rule.
 A feed found whose entries carry no body may be a blog that moved (issue 0108): its first entry's
 page is read, and when it redirects (by HTTP, a meta refresh or a canonical link) to another site,
 the finder runs on that page too. Its feeds come first; the old feed follows, saying where its
@@ -63,6 +66,8 @@ MAX_BLOG_LINKS = 2
 # own menu links, header and navigation before the footer, the shallowest first, at most twelve
 # (a menu may lead with ten sign-up, demo and product pages before its blog).
 MENU_TAGS = ("header", "nav", "footer")
+# A home page's menu link so named, on another domain, is its blog elsewhere (issue 0108): at most two.
+ELSEWHERE_BLOG_TEXTS = frozenset({"blog", "writing", "posts", "essays"})
 MAX_MENU_LINKS = 12
 COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom", "/feed.rss",
                 "/?feed=rss2", "/feeds/posts/default")
@@ -161,9 +166,26 @@ class _Search:
         self.landed = ""
         self.home_pages: Tuple[str, ...] = ()
         self.home_menu: Tuple[str, ...] = ()
+        self.elsewhere: Tuple[str, ...] = ()   # the home page's menu blog links on another domain (0108)
 
     async def run(self, url: str) -> FeedFinding:
-        return await self._past_moved(await self._run(url))
+        finding = await self._run(url)
+        if self.elsewhere and finding.status in ("found", "none"):
+            finding = await self._with_elsewhere(finding)
+        return await self._past_moved(finding)
+
+    async def _with_elsewhere(self, finding: FeedFinding) -> FeedFinding:
+        """The finding with the feeds of the home page's blog on another domain after its own (issue
+        0108): a platform's by its rule, else the feeds its page names, or the page when it is one."""
+        rules = [rule for link in self.elsewhere if (rule := _platform_feed(link))]
+        pages = [link for link in self.elsewhere if not _platform_feed(link)]
+        candidates = list(rules)
+        for got in await asyncio.gather(*(self._get(link, PAGE_BYTES) for link in pages)):
+            if got:
+                candidates += [got[1]] if _feed_title(got[0]) is not None else _feed_links(*got)
+        known = {feed.url for feed in finding.feeds}
+        more = tuple(feed for feed in await self._prove(candidates) if feed.url not in known)
+        return replace(finding, status="found", feeds=finding.feeds + more, pages=(), menu=()) if more else finding
 
     async def _past_moved(self, finding: FeedFinding) -> FeedFinding:
         """The finding, and when the first of its feeds whose entries carry no body has posts on
@@ -183,11 +205,13 @@ class _Search:
         there = _Search(self.http)
         moved = await there._run(target)
         self.requests += there.requests
-        new = [feed for feed in moved.feeds if feed.url not in {f.url for f in finding.feeds}]
-        if not new:
+        if not moved.feeds:
             return finding
+        # Found already (the home page's blog elsewhere, 0108's other way), it moves to the front.
+        first = {feed.url for feed in moved.feeds}
         host = publication_of(host_of(target))
-        feeds = tuple(new) + tuple(replace(feed, moved_to=host) if feed is old else feed for feed in finding.feeds)
+        feeds = tuple(moved.feeds) + tuple(replace(feed, moved_to=host) if feed is old else feed
+                                           for feed in finding.feeds if feed.url not in first)
         logger.info("Feed finder: the posts of %s now live at %s", old.url, host)
         return replace(finding, status="found", feeds=feeds)
 
@@ -207,6 +231,8 @@ class _Search:
             title = _feed_title(body)
             if title is not None:
                 return FeedFinding("feed", (Feed(here, title, *_feed_entries(body, here)),))
+            if not path_segments(here):
+                self.elsewhere = tuple(_elsewhere_blogs(_links(body), here))
             if feeds := await self._prove(_feed_links(body, here)):
                 return FeedFinding("found", feeds)
 
@@ -218,6 +244,8 @@ class _Search:
         # An address that cannot be read (a feed gone) takes its home page's links instead.
         origin = origin_from_source(here, "")
         home = dict(zip(around, pages)).get(f"{origin}/")
+        if home and not self.elsewhere:
+            self.elsewhere = tuple(_elsewhere_blogs(_links(home[0]), home[1]))
         linking = page or home
         if page and home:
             home_links = _links(home[0])
@@ -444,6 +472,16 @@ def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
             if path_segments(url) and not urllib.parse.urlparse(url).query][:MAX_MENU_LINKS]
 
 
+def _elsewhere_blogs(links: "_FeedLinks", page_url: str) -> List[str]:
+    """The page's menu links named a blog (ELSEWHERE_BLOG_TEXTS) on another site, absolute, once
+    each, at most MAX_BLOG_LINKS (issue 0108)."""
+    site = blog_site(host_of(page_url))
+    absolute = (_absolute(page_url, href) for href in links.named)
+    other = (url for url in absolute if url and not same_site(host_of(url), host_of(page_url))
+             and blog_site(host_of(url)) != site)
+    return list(dict.fromkeys(other))[:MAX_BLOG_LINKS]
+
+
 def _absolute(base: str, href: str) -> Optional[str]:
     """href as an absolute http(s) URL without its fragment; None for anything else (a
     malformed one, "http://[x/", too)."""
@@ -479,6 +517,7 @@ class _FeedLinks(HTMLParser):
         self.anchors: List[str] = []
         self.blogs: List[str] = []                   # links to the site's own blog or newsroom
         self.menu: List[Tuple[int, str]] = []        # (0 header or navigation, 1 footer), href
+        self.named: List[str] = []                   # menu links named a blog elsewhere (issue 0108)
         self._regions: List[str] = []                # the open MENU_TAGS
         # [href, text so far, its first piece of text]: a menu item's label comes before its
         # description ("Blog", then "Product updates, insights…").
@@ -495,7 +534,7 @@ class _FeedLinks(HTMLParser):
         elif tag in MENU_TAGS:
             self._regions.append(tag)
         elif tag == "a" and href:
-            self._anchor = [href, "", ""]
+            self._anchor = [href, "", "", "menu" if self._regions else ""]
             if self._regions:
                 self.menu.append((int("footer" in self._regions), href))
 
@@ -508,8 +547,10 @@ class _FeedLinks(HTMLParser):
         if tag in self._regions:
             del self._regions[len(self._regions) - 1 - self._regions[::-1].index(tag):]
         if tag == "a" and self._anchor is not None:
-            href, text, label = self._anchor
+            href, text, label, region = self._anchor
             self._anchor = None
+            if region and " ".join(text.lower().split()) in ELSEWHERE_BLOG_TEXTS:
+                self.named.append(href)
             if _looks_like_feed(href, text) and not _is_comments(href, text):
                 self.anchors.append(href)
             elif ({" ".join(text.lower().split()), " ".join(label.lower().split())} & BLOG_LINK_TEXTS
