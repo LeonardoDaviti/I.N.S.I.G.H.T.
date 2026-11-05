@@ -15,7 +15,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_discover import KEPT_KEY
+from insight_core.db.repo_discover import KEPT_KEY, LIST_KEY
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source
@@ -146,7 +146,8 @@ class DiscoverCleanTests(unittest.TestCase):
         key = f"kept-{self.mark}.example"
         self.assertIn(key, [s["key"] for s in kept["found"]])
         read = StoriesService(db_url()).discover()
-        self.cur.execute("DELETE FROM system_settings WHERE key = %s", (KEPT_KEY,))
+        # Discover's kept list too (issue 0080 cold open), so the open makes it from the counts again
+        self.cur.execute("DELETE FROM system_settings WHERE key = ANY(%s)", ([KEPT_KEY, LIST_KEY],))
         self.conn.commit()
         self.assertEqual(json.dumps(StoriesService(db_url()).discover(), sort_keys=True), json.dumps(read, sort_keys=True),
                          "the kept counts are a fresh count's")
@@ -154,6 +155,7 @@ class DiscoverCleanTests(unittest.TestCase):
             if s["key"] == key:
                 s["link_count"] = 999
         self.cur.execute("UPDATE system_settings SET value = %s WHERE key = %s", (json.dumps(kept), KEPT_KEY))
+        self.cur.execute("DELETE FROM system_settings WHERE key = %s", (LIST_KEY,))
         self.conn.commit()
         self.assertEqual({s["key"]: s for s in StoriesService(db_url()).discover()["suggestions"]}[key]["link_count"], 999)
         self.cur.execute("DELETE FROM sources WHERE id = %s", (voices[2][0],))   # a source removed, with its posts

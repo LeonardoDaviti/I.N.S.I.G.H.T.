@@ -164,6 +164,7 @@ class DiscoverReadsWellTests(unittest.TestCase):
         for author in ("alice", "bob"):
             html = f'submitted by &#32; <a href="https://www.reddit.com/user/{author}"> /u/{author} </a>'
             insert_post(self.cur, reddit, f"https://reddit.com/r/sub/{uuid.uuid4().hex}", html=html, host="reddit.com", links=pages)
+        self._story_run()
         [got] = [s for s in self._discover()["suggestions"] if s["key"] == f"linked-{self.mark}.example"]
         self.assertEqual(got["voices"], 3, "two sites and one subreddit; its authors are voices for the bar only")
         self.assertIn(f"r/sub {self.mark}", got["voice_names"])
@@ -220,6 +221,73 @@ class DiscoverReadsWellTests(unittest.TestCase):
                         {"discover": []})
         self.conn.commit()
         self.assertNotEqual(stamp(), before, "a batch: Discover counts again")
+
+    def test_a_fresh_process_reads_the_kept_list(self):
+        """Issue 0080 cold open: a process's first open made the whole list again, ~16k pages of posts and
+        links (13.6 s on the lab with a cold cache and a busy disk). The list is kept in the database by its
+        inputs and code, so a fresh process reads it; inputs that move or other code make it again."""
+        import json
+        from unittest import mock
+
+        from insight_core.services import stories_service
+
+        for n in range(3):
+            self._post(self._voice(n), self._pages("kept"))
+        made = json.loads(json.dumps(self._discover()))
+        built = []
+
+        class Counting(SourceFacts):
+            def __init__(self, cur):
+                built.append(1)
+                super().__init__(cur)
+
+        with mock.patch.object(stories_service, "SourceFacts", Counting):
+            self.assertEqual(json.loads(json.dumps(StoriesService(db_url()).discover())), made)
+            self.assertEqual(built, [], "a fresh service reads the kept list: no source facts, no posts read")
+            with mock.patch.object(stories_service, "code_stamp", lambda: "other code"):
+                StoriesService(db_url()).discover()
+            self.assertEqual(len(built), 1, "a list kept by other code is made again")
+            self.cur.execute("INSERT INTO discover_hidden (key, reason) VALUES (%s, 'not_interested')",
+                             (f"kept-{self.mark}.example",))
+            self.addCleanup(self._unhide, f"kept-{self.mark}.example")
+            got = self._discover()
+            self.assertEqual(len(built), 2, "inputs that moved: made again")
+            self.assertNotIn(f"kept-{self.mark}.example", [s["key"] for s in got["suggestions"]])
+            StoriesService(db_url()).discover()
+            self.assertEqual(len(built), 2, "and kept again")
+
+    def test_the_story_job_keeps_discovers_list(self):
+        """The job (its own process after a fetch run, and at start) makes and keeps the list for what it
+        changed, so the first open after it reads it."""
+        from unittest import mock
+
+        from insight_core.services import stories_service
+
+        for n in range(3):
+            self._post(self._voice(n), self._pages("job"))
+        self.conn.commit()
+        StoriesService(db_url()).recompute_safely()
+        built = []
+
+        class Counting(SourceFacts):
+            def __init__(self, cur):
+                built.append(1)
+                super().__init__(cur)
+
+        with mock.patch.object(stories_service, "SourceFacts", Counting):
+            got = StoriesService(db_url()).discover()
+        self.assertEqual(built, [], "the first open after the job reads its list")
+        self.assertIn(f"job-{self.mark}.example", [s["key"] for s in got["suggestions"]])
+
+    def _story_run(self):
+        """What a story run does to Discover for posts stored since the last (issue 0080 cold open): the list kept
+        for the old ones is made again. (These tests store posts without running the job.)"""
+        from insight_core.db.repo_discover import LIST_KEY
+        self.cur.execute("DELETE FROM system_settings WHERE key = %s", (LIST_KEY,))
+
+    def _unhide(self, key):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM discover_hidden WHERE key = %s", (key,))
 
     def _restore_stories(self, value):
         from insight_core.db.repo_operations import SystemSettingsRepository
