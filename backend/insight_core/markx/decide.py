@@ -182,7 +182,8 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                in_window: Optional[Callable[[str], bool]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
     2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
-    unrelated replies on a story, which its root's check never reaches); for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
+    unrelated replies on a story, which its root's check never reaches). A check shows the story's reports but the
+    post, or its other members of any role when the post is its only report (0112 bug 2), never an empty story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
     cosine) not asked yet. `kinds`: each post's reading kind. `in_window(a)`: whether a pair's earlier post is in
     the window decided (the prototype's context posts were not)."""
@@ -211,7 +212,9 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                 continue
             if p.words < config.min_words and not roundup:
                 continue                                       # rule A: nothing to judge, keep
-            shown = tuple(q for q in side(key) if q != m.post)[:3]
+            shown = tuple(q for q in side(key) if q != m.post)[:3] or tuple(x.post for x in ms if x.post != m.post)[:3]
+            if not shown:
+                continue                                       # a story's only post: nothing to check it against
             out.append(Question(f"check:{key}:{m.post}", "check", story=key, post=m.post, voices=nv[key], why=m.why,
                                 roundup=roundup, side=shown))
     seen: Set[Any] = set()

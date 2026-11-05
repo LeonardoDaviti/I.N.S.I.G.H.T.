@@ -399,6 +399,35 @@ class GuidesAndInputs(_Api):
         self.assertGreaterEqual(got["tasks"], 1)
         self.assertEqual(got["would_change"], 1)     # the member's question now shows the late post too
 
+    def test_a_one_report_storys_check_shows_its_other_members(self):
+        """0112 bug 2: a member that is its story's only report was checked against an empty story ("Headline: " and
+        no member); it is shown the story's other members (any role) and its card, and a story's only post is never
+        checked."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        origin = self.post(title="Acme ships Widget 4.1", text="The release notes list every change in the new "
+                           "version, from the faster start to the smaller memory footprint and the fixed crash.",
+                           source=self.other, at=t0)
+        member = self.post(title="Widget 4.1 thoughts", text="I tried it for a day on my old laptop and the battery "
+                           "lasted longer than with any build before, though the settings page still confuses me.",
+                           at=t0 + timedelta(hours=1))
+        story = origin
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'share', 'v', NULL), (%s, %s, 'report', 'v', 'citation')", (story, origin, story, member))
+        with self.conn.transaction():
+            got = {p.id: text for p, text in tasks.check_questions(self.cur, days=1)}
+        text = got[member]
+        self.assertTrue(text.startswith("STORY\nHeadline: Acme ships Widget 4.1\nMembers (earliest first):\n"), text)
+        self.assertNotIn("Headline: \n", text)
+
+    def test_the_story_a_check_shows(self):
+        a, b, c = (tasks.Post(id=x, kind="telegram", source=x, source_id=x, at=datetime(2100, 1, 1, n, tzinfo=timezone.utc),
+                              title=x, text="t") for n, x in enumerate("abc"))
+        self.assertEqual([m.id for m in tasks.check_side(b, [a, b, c], {"a", "b"})], ["a"])     # the reports but the post
+        self.assertEqual([m.id for m in tasks.check_side(b, [a, b, c], {"b"})], ["a", "c"])     # its only report: any role
+        self.assertEqual(tasks.check_side(b, [b], {"b"}), [])                                   # alone: nothing to ask
+
     def test_a_member_joined_by_thread_is_checked_unless_switched_off(self):
         """The S5 review's W1: a thread Mark IX hung on a story by its root's citation is checked reply by reply."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)

@@ -424,14 +424,24 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
             continue
         why = {p: reason for p, _, reason in ms}
         reports = {p for p, role, _ in ms if role == "report"}
-        side = [m for m in members if m.id in reports] or members
         for p in members[1:]:
             if p.kind in NOT_VOICE:
                 continue
             roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
                 continue
-            yield p, check_input(p, [m for m in side if m.id != p.id])
+            side = check_side(p, members, reports)
+            if side:
+                yield p, check_input(p, side)
+
+
+def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> List[Post]:
+    """The story a check of `post` shows: its `reports` (post ids) but the post; when the post is the story's only
+    report, its other members of any role (0112 bug 2: Haiku was shown "Headline: " and no member, and answered
+    "different"); [] when it has no other member: a story's only post is never checked."""
+    reports = set(reports)
+    return ([m for m in members if m.id in reports and m.id != post.id]
+            or [m for m in members if m.id != post.id])
 
 
 def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:

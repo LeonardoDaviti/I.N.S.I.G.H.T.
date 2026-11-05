@@ -67,6 +67,17 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
         self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
 
+    def test_a_check_never_shows_an_empty_story(self):
+        """0112 bug 2: the checked post as the story's only report showed Haiku "Headline: (empty)" and no member.
+        Then it shows the story's other members, any role; with none at all, nothing is asked."""
+        self.stories["A"] = [D.Member("a", "share"), D.Member("b", "report", "citation"), D.Member("c", "share", "citation")]
+        qs = {q.tid: q for q in self.plan() if q.story == "A"}
+        self.assertEqual(qs["check:A:b"].side, ("a", "c"))     # b is the only report: the others, any role
+        self.assertEqual(qs["check:A:c"].side, ("b",))         # the reports but the post, as before
+        for q in self.plan():
+            if q.type == "check":
+                self.assertTrue(q.side, q.tid)
+
     def test_a_one_voice_story_is_not_checked(self):
         self.posts["b"] = post("b", "s1", 1)
         self.stories = {"A": story("a", "b")}
