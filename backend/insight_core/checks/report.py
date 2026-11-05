@@ -20,7 +20,8 @@ from insight_core.checks import diff
 
 
 # What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
-MUST_BE_ZERO = {"story.deploy_start", "story.dangling"}
+MUST_BE_ZERO = {"story.deploy_start", "story.dangling",
+                "markx.ix_unchanged", "markx.after_run"}   # 0086 Safety: Mark X never changes Mark IX, nor breaks its own rules
 
 
 def _load(path: str) -> Optional[Any]:

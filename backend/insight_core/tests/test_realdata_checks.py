@@ -317,6 +317,24 @@ class DiffTests(unittest.TestCase):
                 _, problems = report.build(work)
                 self.assertEqual(any("story.deploy_start" in p for p in problems), failed, (base, head))
 
+    def test_mark_x_changing_mark_ix_fails_the_check_even_where_main_cant_measure_it(self):
+        """0086 Safety 1: a version before the decision job says "not measured"; the head's count must be 0."""
+        import json
+        import tempfile
+        from insight_core.checks import report
+
+        def jobs(count):
+            return {"found": [{"name": "markx.ix_unchanged", "area": "mark x", "what": "changed", "count": count, "of": 90,
+                               "examples": ["news_stories: (1, 'a') -> (2, 'b')"] if count > 0 else []}]}
+        with tempfile.TemporaryDirectory() as work:
+            for base, head, failed in ((-1, 0, False), (-1, 1, True), (0, 2, True), (0, 0, False)):
+                for side, count in (("base", base), ("head", head)):
+                    os.makedirs(os.path.join(work, side), exist_ok=True)
+                    with open(os.path.join(work, side, "jobs.json"), "w") as f:
+                        json.dump(jobs(count), f)
+                _, problems = report.build(work)
+                self.assertEqual(any("markx.ix_unchanged" in p for p in problems), failed, (base, head))
+
     def test_the_report_counts_every_thing_and_says_what_wasnt_compared(self):
         before = {"now": "t", "parts": {"posts": {"a": {"title": "x", "text": "y"}}}, "missing": {}}
         after = {"now": "t", "parts": {"posts": {"a": {"title": "x2", "text": "y"}}}, "missing": {"news": "absent"}}

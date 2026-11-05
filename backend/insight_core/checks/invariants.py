@@ -372,6 +372,51 @@ def _discover_untested(run: Run):
     return sorted(out), len(_discover(run, True))
 
 
+# ---- Mark X (issue 0086 Safety): the mx_* tables keep their rules on every copy ------------------------
+# Invariant 1 (Mark IX's tables the same with Mark X on and off) runs the decision job, so it is a job check
+# (job_checks.markx_unchanged). A version before the mx_* tables can't be asked: "not measurable".
+
+def _markx_calls_valid(run: Run):
+    """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse."""
+    from insight_core.markx import validate
+    run.cur.execute("""SELECT c.id::text, t.kind, t.input, c.answer FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+                        WHERE c.valid AND t.kind <> 'embed'""")
+    rows = run.cur.fetchall()
+    return [cid for cid, kind, text, answer in rows if validate.check(kind, answer, text)[1] is not None], len(rows)
+
+
+def _markx_unnamed(run: Run):
+    """A current membership or connection that names neither a rule nor a valid call (memberships: `rule:` reasons)."""
+    run.cur.execute("""SELECT sp.story_id::text || ' ' || sp.post_id::text FROM mx_story_posts sp
+                         LEFT JOIN mx_calls c ON c.id = sp.call_id
+                        WHERE sp.valid_to IS NULL AND sp.reason NOT LIKE 'rule:%' AND NOT COALESCE(c.valid, false)""")
+    out = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("""SELECT x.a::text || ' ' || x.relation || ' ' || x.b::text FROM mx_connections x
+                         LEFT JOIN mx_calls c ON c.id = x.call_id
+                        WHERE x.valid_to IS NULL AND x.rule IS NULL AND NOT COALESCE(c.valid, false)""")
+    out += [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT (SELECT count(*) FROM mx_story_posts WHERE valid_to IS NULL) "
+                    "+ (SELECT count(*) FROM mx_connections WHERE valid_to IS NULL)")
+    return out, run.cur.fetchone()[0]
+
+
+def _markx_task_twice(run: Run):
+    """Two tasks with one (kind, guide, input hash): one question asked twice."""
+    run.cur.execute("""SELECT kind || ' ' || guide || ' ' || input_hash FROM mx_tasks
+                        GROUP BY kind, guide, input_hash HAVING count(*) > 1""")
+    out = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT count(*) FROM mx_tasks")
+    return out, run.cur.fetchone()[0]
+
+
+def _markx_lease_past(run: Run):
+    """A task still leased after its lease ended (by the database's clock: leases are real time)."""
+    run.cur.execute("SELECT id::text FROM mx_tasks WHERE status = 'leased' AND lease_until < now()")
+    out = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT count(*) FROM mx_tasks WHERE status = 'leased'")
+    return out, run.cur.fetchone()[0]
+
+
 @dataclass
 class Invariant:
     name: str
@@ -405,6 +450,10 @@ INVARIANTS: List[Invariant] = [
     Invariant("discover.followed_host", "discover", "a suggestion is a host one of your sources is on", _discover_followed_host),
     Invariant("discover.first_page", "discover", "the first page holds over 30, or one that says no reason", _discover_first_page),
     Invariant("discover.untested", "discover", "a first-page suggestion with no follow test in 30 days", _discover_untested),
+    Invariant("markx.call_invalid", "mark x", "a valid call its guide's schema and checks refuse (0086 Safety 2)", _markx_calls_valid),
+    Invariant("markx.unnamed", "mark x", "a current membership or connection naming no rule nor valid call (Safety 3)", _markx_unnamed),
+    Invariant("markx.task_twice", "mark x", "two tasks of one kind, guide and input hash (Safety 4)", _markx_task_twice),
+    Invariant("markx.lease_past", "mark x", "a task still leased past its lease (Safety 5)", _markx_lease_past),
 ]
 
 
