@@ -209,9 +209,10 @@ class NamedVoicesTests(unittest.TestCase):
                  post("h", "sv", kind="saved", hours=7)]                                # a page you saved: no voice
         named = self._named(posts)
         self.assertEqual([(v["id"], v["name"], v.get("place")) for v in named],
-                         [("r1", "u/alice", "r/sub"), ("r1", "u/bob", "r/sub"), ("s1", "Blog One", None),
-                          ("tg1", "Channel A", None)])
-        self.assertEqual([[s["id"] for s in v["with"]] for v in named], [[], [], ["s2"], ["tg2"]])
+                         [("s1", "Blog One", None), ("tg1", "Channel A", None),
+                          ("r1", "u/alice", "r/sub"), ("r1", "u/bob", "r/sub")],
+                         "followed sources first, then Reddit authors (issue 0103), each by its first post")
+        self.assertEqual([[s["id"] for s in v["with"]] for v in named], [["s2"], ["tg2"], [], []])
         self.assertEqual(len(named), count_voices(posts), "the count is the names")
 
     def test_one_voice_lists_its_sources(self):

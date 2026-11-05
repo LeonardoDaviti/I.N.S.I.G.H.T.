@@ -193,9 +193,11 @@ class NewsService:
             # The lead is the origin (issue 0064): a post its 0050 story's tree starts from.
             origins = [p["id"] for p in posts if p["_origin"]]
             roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead (issue 0083)
-            lead_id = (lead([(p["id"], p["role"]) for p in shown], origins, roundups)
-                       or lead([(p["id"], p["role"]) for p in posts], origins, roundups))
-            first_report = lead([(p["id"], p["role"]) for p in posts], origins, roundups)
+            # Without an origin, the first share of a story's outside origin page leads (issue 0103).
+            sharers = [p["id"] for p in posts if p["_shares_origin"]]
+            lead_id = (lead([(p["id"], p["role"]) for p in shown], origins, roundups, sharers)
+                       or lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers))
+            first_report = lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.

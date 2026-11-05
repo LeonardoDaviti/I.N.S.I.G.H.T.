@@ -70,6 +70,19 @@ class ScoreTests(unittest.TestCase):
                          "a vendor's roundup gives way to the share of the release's page")
         self.assertEqual(lead([("r1", "report"), ("r2", "report")], roundups=["r1", "r2"]), "r1")
 
+    def test_without_an_origin_the_first_share_of_its_page_leads(self):
+        """Issue 0103: no post roots the row (its stories start at an outside page): the first post
+        sharing that page leads, before the first report. An origin still leads; a roundup never does."""
+        posts = [("early", "share"), ("hub", "share"), ("talk", "report"), ("blog", "report")]
+        self.assertEqual(lead(posts, sharers=["hub", "blog"]), "hub", "the release page's share, not the later complaint")
+        self.assertEqual(lead(posts), "talk", "no page shared: the first report, as before")
+        self.assertEqual(lead(posts, origins=["blog"], sharers=["hub"]), "blog", "an origin always leads")
+        self.assertEqual(lead(posts, roundups=["hub"], sharers=["hub", "blog"]), "talk",
+                         "a roundup sharing the page never leads")
+        self.assertEqual(lead([("first", "report"), ("hub", "share"), ("blog", "report")], sharers=["hub", "blog"]),
+                         "first", "a share after the first report doesn't pass over it")
+        self.assertEqual(lead([("hub", "share")], roundups=["hub"], sharers=["hub"]), "hub", "nothing else: as before")
+
 
 # ---- names in titles --------------------------------------------------------------------------
 
@@ -429,6 +442,28 @@ class NewsJobTests(unittest.TestCase):
         self.assertGreater(self.cur.fetchone()[0], 0, "the stories list the digest as a roundup")
         [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == digest]
         self.assertEqual(item["id"], report)
+
+    def test_a_row_without_an_origin_leads_with_the_share_of_its_page_and_names_followed_sources_first(self):
+        """Issue 0103: a row whose story starts at an outside page is led by the first post sharing that
+        page (a Reddit link post), not a later report joined by the name; its names list the followed
+        sources before the Reddit author, the count and the set unchanged."""
+        name = f"Quux{self.mark[:4]} 7"
+        page = f"https://hub-{self.mark}.test/org/quux-{self.mark[:4]}-7"
+        sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
+        a, b = self._source("Alpha"), self._source("Beta")
+        hub = self._post(sub, site="reddit", hours_ago=10, title=f"{name} on the hub",
+                         html=f'submitted by <a href="https://www.reddit.com/user/alice"> /u/alice </a> {self._link(page)}')
+        talk = self._post(a, site="alpha", hours_ago=9, title=f"{name} is out, and nobody covers it well")
+        self._post(b, site="beta", hours_ago=8, title=f"{name} explained", html=self._link(page))
+        self._job()
+        self.cur.execute("SELECT parent_url IS NOT NULL, parent_reason FROM story_posts WHERE post_id = %s", (hub,))
+        self.assertEqual(self.cur.fetchall(), [(True, "citation")], "the Reddit post hangs from the page it shares")
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if name in (i["title"] or "")]
+        self.assertNotEqual(item["id"], talk, "not the first report")
+        self.assertEqual(item["id"], hub, "the share of the page")
+        names = [(s["name"], s.get("place")) for s in item["story"]["sources"]]
+        self.assertEqual(names, [("Alpha", None), ("Beta", None), ("u/alice", "r/sub")])
+        self.assertEqual(item["story"]["voices"], 3)
 
     def test_a_post_page_names_its_news_row(self):
         """Issue 0083: the post page says the News row a post is in, as the Main feed's News shows it,

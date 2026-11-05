@@ -632,14 +632,15 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     source's), kind, voice (StoryPost.voice), text_key, others: [{id, name}] (its other_sources)}; a
     page you saved is none. Each voice is {id, name, place, with}: named by its first post's source,
     a Reddit author as u/<author> with `place` its subreddit, a publication's copies once; `with` the
-    voice's other sources (a copy's, a reposter's), each once."""
+    voice's other sources (a copy's, a reposter's), each once. The voices named by a followed source
+    come first, then those named by a Reddit post (issue 0103), each part by its first post."""
     items = []
     for i, p in enumerate(posts):
         if p["kind"] == "saved":
             continue
         items.append(((i, -1), p["text_key"], p["voice"]))
         items += [((i, j), None, reposter_voice(s["id"])) for j, s in enumerate(p["others"])]
-    out = []
+    followed, reddit = [], []
     for group in voice_groups(items):
         sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else posts[i]["others"][j]
                    for i, j in group]
@@ -648,8 +649,9 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             first.update(name="u/" + posts[i]["voice"].split(":", 1)[1], place=posts[i]["name"])
         seen = {first["id"]}
         first["with"] = [s for s in sources if not (s["id"] in seen or seen.add(s["id"]))]
-        out.append(first)
-    return out
+        # Followed sources are named before Reddit's posters (issue 0103), each part in the order given.
+        (reddit if j < 0 and posts[i]["kind"] == "reddit" else followed).append(first)
+    return followed + reddit
 
 
 def reposter_voice(source_id: str) -> str:

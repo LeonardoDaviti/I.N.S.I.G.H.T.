@@ -317,18 +317,25 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     return sorted(out, key=lambda s: (s.first_at, s.id))
 
 
-def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups: Iterable[str] = ()) -> Optional[str]:
+def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups: Iterable[str] = (),
+         sharers: Iterable[str] = ()) -> Optional[str]:
     """A story's lead, as 0050's: its origin (issue 0064: the first of `origins`, the posts no
-    other post of their 0050 story came from), else its first report, else its first share.
-    Without an origin, a post the stories list as a roundup (`roundups`: 0050's story_mentions,
-    issue 0083) is passed over while a report or share that is none exists. `posts`: (id, role), first
-    posted first."""
-    origins, roundups = set(origins), set(roundups)
+    other post of their 0050 story came from), else its first report or, when one came before it, the
+    first share of a 0050 story's origin page (`sharers`: posts hanging from their story's outside
+    origin by a link to it, issue 0103), else its first share. Measured on the lab: a share after the
+    first report leading too changed 2 more leads of 90, both wrong (a later short post over the first,
+    one on another subject). Without an origin, a post the stories list as a roundup
+    (`roundups`: 0050's story_mentions, issue 0083) is passed over while a report or share that is none
+    exists. `posts`: (id, role), first posted first."""
+    origins, roundups, sharers = set(origins), set(roundups), set(sharers)
     for pid, _ in posts:
         if pid in origins:
             return pid
     if roundups and any(role in ("report", "share") and pid not in roundups for pid, role in posts):
         posts = [(pid, role) for pid, role in posts if pid not in roundups]
+    for pid, role in posts:
+        if role == "report" or (role == "share" and pid in sharers):
+            return pid
     for want in ("report", "share"):
         for pid, role in posts:
             if role == want:
