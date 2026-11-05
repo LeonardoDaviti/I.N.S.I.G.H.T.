@@ -420,10 +420,14 @@ def _markx_lease_past(run: Run):
 def _markx_check_empty_story(run: Run):
     """A check task still to be asked (open or leased) whose input shows its story with no member (0112 bug 2). v10.0's
     answered ones stay as they were (keep everything); no decision reads them again (0112 Decided 6)."""
-    from insight_core.markx import tasks
     run.cur.execute("SELECT id::text, input FROM mx_tasks WHERE kind = 'check' AND status IN ('open', 'leased')")
     rows = run.cur.fetchall()
-    return sorted(tid for tid, text in rows if tasks.shows_empty_story(text)), len(rows)
+    return sorted(tid for tid, text in rows if _shows_empty_story(text)), len(rows)
+
+
+def _shows_empty_story(text: str) -> bool:
+    """markx.tasks.shows_empty_story, here too: the checks package runs on every version's code, and v10.0's has none."""
+    return "\nMembers (earliest first):\n" not in text.split("\n\nPOST\n", 1)[0] + "\n"
 
 
 @dataclass

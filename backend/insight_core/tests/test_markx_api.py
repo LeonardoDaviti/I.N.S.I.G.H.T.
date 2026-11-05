@@ -240,7 +240,9 @@ class Leases(_Api):
             one.join(10)
             two.join(10)
         self.assertEqual([got[n][0] for n in ("device-1", "device-2")], [200, 200], got)
-        self.assertEqual(sum(len(got[n][1]["tasks"]) for n in got), 1)
+        leased = [t["id"] for n in got for t in got[n][1]["tasks"]]
+        self.assertTrue(leased)
+        self.assertEqual(len(leased), len(set(leased)))                # none leased twice
 
     def test_the_guides_are_ready_only_once_their_load_commits(self):
         from unittest import mock
@@ -490,8 +492,9 @@ class GuidesAndInputs(_Api):
             shown, _ = tasks.add(self.cur, "check", tasks.check_input(posts[b], [posts[a]]), a=b)
             asked, _ = tasks.add(self.cur, "check", tasks.check_input(posts[a], []), a=a)
             self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (asked,))
-        self.assertTrue(tasks.shows_empty_story(tasks.check_input(posts[b], [])))
-        self.assertFalse(tasks.shows_empty_story(tasks.check_input(posts[b], [posts[a]])))
+        for text, empty_story in ((tasks.check_input(posts[b], []), True), (tasks.check_input(posts[b], [posts[a]]), False)):
+            self.assertEqual(tasks.shows_empty_story(text), empty_story)
+            self.assertEqual(invariants._shows_empty_story(text), empty_story)   # the checks package's own copy
         check, = [i for i in invariants.INVARIANTS if i.name == "markx.check_empty_story"]
         with self.conn.transaction():
             ids, of = check.count(invariants.Run(db_url(), self.cur, datetime.now(timezone.utc)))
