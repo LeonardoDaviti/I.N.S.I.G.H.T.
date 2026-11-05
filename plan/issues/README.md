@@ -99,7 +99,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
 | [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, pushed (v9.16) |
 | [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | decided: goes to Mark X (burst candidates) |
-| [0086](0086-mark-x-phase-1-haiku-in-insight.md) | Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first; storage, tasks, the worker, decisions, the Mark X page, labels | spec, ready to build ([build plan](../INSIGHT_mark_x_shadow_build_plan.md)) |
+| [0086](0086-mark-x-phase-1-haiku-in-insight.md) | Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first; storage, tasks, the worker, decisions, the Mark X page, labels | built (A–F), pushed: Mark X v10.0 (Shadow) |
 | [0087](0087-gemma-fine-tuned-on-haiku.md) | A local Mark X: Gemma 4 E4B fine-tuned on Haiku's answers | future |
 | [0090](0090-mark-x-entities.md) | Mark X entities: one name per thing, its versions and role, and what connects through it | spec, draft (measured) |
 | [0091](0091-timeline-graph.md) | The timeline graph: events, entities and their connections across time | discussion |
@@ -118,11 +118,11 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | built, merged (v9.17) |
 | [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | built, merged (v9.17) |
 | [0106](0106-v9.17-titles-of-pages-you-dont-follow.md) | v9.17: titles of pages you don't follow (Discover, Classics); a paper is one page | built, merged (v9.17) |
-| [0107](0107-archive-that-waits-out-a-limit.md) | An archive that waits out a host's limit and carries on; each host's budget learned; room left for the hourly fetches | spec (v9.18) |
-| [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | spec (v9.18) |
-| [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | spec (v9.18) |
-| [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, merged (v9.18) |
-| [0111](0111-v9.19-news-from-the-v10-review.md) | v9.19 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v9.19) |
+| [0107](0107-archive-that-waits-out-a-limit.md) | An archive that waits out a host's limit and carries on; each host's budget learned; room left for the hourly fetches | built, pushed (v9.18) |
+| [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | built, pushed (v9.18) |
+| [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | built, pushed (v9.18) |
+| [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, pushed (v9.17 hotfix) |
+| [0111](0111-v10.0.1-news-from-the-v10-review.md) | v10.0.1 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v10.0.1) |
 
 ## Analysis archive
 
