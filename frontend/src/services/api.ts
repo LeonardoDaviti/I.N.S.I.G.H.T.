@@ -1166,6 +1166,18 @@ export interface ExportInfo {
   login_tables: string[];
   /** What "Include stored logins" adds, in words. */
   logins_include: string;
+  /** What the estimate is from (issue 0105): the last whole export, grown with the rows since, else the
+   *  live rows' stored bytes. Optional: an API before 0105 sends neither. */
+  estimate_basis?: 'last_export' | 'live_rows';
+  last_export?: ExportRecord | null;
+}
+
+/** The last whole export, kept for the next estimate (issue 0105). */
+export interface ExportRecord {
+  bytes: number;
+  seconds: number;
+  at: string;
+  logins_included: boolean;
 }
 
 /** GET /api/export/progress/{token}: how far the download started with that token got. */

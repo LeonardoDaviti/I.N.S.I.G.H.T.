@@ -4,9 +4,11 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
+import uuid
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import main
 from insight_core.db import import_export
 from insight_core.services import registry
-from insight_core.services.export_service import ExportService
+from insight_core.services.export_service import LAST_EXPORT_KEY, ExportService, live_bytes
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
 from insight_core.tests._asgi import call
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
@@ -77,12 +79,75 @@ class ExportRoundTripTests(unittest.TestCase):
         with psycopg.connect(self.admin, autocommit=True) as conn:
             conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(self.target_name)))
 
-    def export(self, include_logins: bool) -> Path:
+    def export(self, include_logins: bool, *, keep_last: bool = False) -> Path:
         path = Path(self.tmp.name) / "export.zip"
         with path.open("wb") as handle:
             for piece in ExportService(self.url).stream(include_logins=include_logins):
                 handle.write(piece)
+        if not keep_last:   # the row a whole export keeps for the next estimate (0105) is written after its snapshot
+            self._forget_last_export()
         return path
+
+    def _forget_last_export(self):
+        with psycopg.connect(self.url) as conn:
+            conn.execute("DELETE FROM system_settings WHERE key = %s", (LAST_EXPORT_KEY,))
+
+    def test_the_estimate_counts_live_rows_not_dead_space(self):
+        """Issue 0105: the estimate was the tables' size, dead space included (55% high on the lab)."""
+        self._forget_last_export()
+        service = ExportService(self.url)
+        before = service.info()
+        self.assertEqual((before["estimate_basis"], before["last_export"]), ("live_rows", None))
+        # Dead space and nothing else: a row rewritten many times (no trigger on credentials), ending as it was.
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_table_size('credentials')")
+            disk = cur.fetchone()[0]
+            for _ in range(200):
+                cur.execute("UPDATE credentials SET ciphertext = %s WHERE provider = %s",
+                            (os.urandom(4000), FAKE_PROVIDER))
+                conn.commit()
+            cur.execute("UPDATE credentials SET ciphertext = %s WHERE provider = %s",
+                        (b"\x00not-a-real-secret\xff", FAKE_PROVIDER))
+            conn.commit()
+            cur.execute("SELECT pg_table_size('credentials')")
+            self.assertGreater(cur.fetchone()[0], disk + 100_000, "the rewrites left dead space")
+        self.assertEqual(service.info()["estimate_bytes"], before["estimate_bytes"])
+
+    def test_after_a_whole_export_the_estimate_is_its_real_size(self):
+        """Issue 0105: once an export has run, its real size and time, grown with the live rows since."""
+        self._forget_last_export()
+        self.addCleanup(self._forget_last_export)
+        path = self.export(include_logins=False, keep_last=True)
+        service = ExportService(self.url)
+
+        def estimate_now():
+            with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+                now = live_bytes(cur, import_export.tables_in_load_order(cur))
+                cur.execute("SELECT value FROM system_settings WHERE key = %s", (LAST_EXPORT_KEY,))
+                kept = cur.fetchone()[0]
+            return int(kept["bytes"] * now / kept["stored_bytes"]), kept
+
+        info = service.info()
+        expected, kept = estimate_now()
+        self.assertEqual(info["estimate_basis"], "last_export")
+        self.assertEqual((info["last_export"]["bytes"], kept["bytes"]), (path.stat().st_size, path.stat().st_size))
+        self.assertFalse(info["last_export"]["logins_included"])
+        self.assertIsNotNone(info["last_export"]["at"])
+        self.assertEqual(info["estimate_bytes"], expected)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            source_id = insert_scratch_source(cur)
+            cur.execute("INSERT INTO posts (source_id, url, content) VALUES (%s, %s, %s)",
+                        (source_id, f"https://test.invalid/grown/{source_id}", uuid.uuid4().hex * 30))
+        after = service.info()
+        self.assertGreater(after["estimate_bytes"], info["estimate_bytes"], "grown with the rows")
+        self.assertEqual(after["estimate_bytes"], estimate_now()[0])
+
+    def test_a_stopped_export_keeps_no_size(self):
+        self._forget_last_export()
+        stream = ExportService(self.url).stream(include_logins=False)
+        next(stream)
+        stream.close()
+        self.assertEqual(ExportService(self.url).info()["estimate_basis"], "live_rows")
 
     def restore(self, path: Path, url: str):
         with contextlib.redirect_stdout(io.StringIO()):

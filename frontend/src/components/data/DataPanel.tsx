@@ -1,11 +1,11 @@
 import { useEffect, useId, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
 import type { ExportProgress } from '../../services/api';
 import { apiUrl } from '../../lib/request';
 import { errorMessage } from '../../lib/apiError';
-import { exportPath, formatBytes, formatDuration, newExportToken, restoreCommand } from '../../lib/exportText';
+import { estimateBasis, exportPath, formatBytes, formatDuration, newExportToken, restoreCommand } from '../../lib/exportText';
 import ConfirmDialog from '../ops/ConfirmDialog';
 import { Button } from '../ui';
 import { LoadingState, Notice } from '../states';
@@ -34,6 +34,7 @@ function download(path: string) {
 export default function DataPanel() {
   const api = useApi();
   const loginsId = useId();
+  const queryClient = useQueryClient();
   const info = useQuery({ queryKey: EXPORT_INFO_KEY, queryFn: () => api.getExportInfo() });
   const [includeLogins, setIncludeLogins] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -49,6 +50,8 @@ export default function DataPanel() {
         const state = await api.getExportProgress(token);
         if (stopped) return;
         setProgress(state);
+        // A whole export is the next estimate's basis (issue 0105): read the line again.
+        if (state.done) void queryClient.invalidateQueries({ queryKey: EXPORT_INFO_KEY });
         if (state.done || state.error) return;
       } catch {
         // Not started yet (404) or a blip: ask again.
@@ -57,7 +60,7 @@ export default function DataPanel() {
     };
     let timer = window.setTimeout(poll, POLL_MS);
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [api, token]);
+  }, [api, queryClient, token]);
 
   const start = () => {
     setConfirming(false);
@@ -85,7 +88,7 @@ export default function DataPanel() {
         {info.data ? (
           <p className="text-[0.875rem] text-fg" data-testid="export-estimate">
             The database is {formatBytes(info.data.database_bytes)}. The zip: about {formatBytes(info.data.estimate_bytes)},{' '}
-            {formatDuration(info.data.estimate_seconds)} to write.
+            {formatDuration(info.data.estimate_seconds)} to write{estimateBasis(info.data) ? `, ${estimateBasis(info.data)}` : ''}.
           </p>
         ) : null}
         <div className="flex items-start gap-2.5">

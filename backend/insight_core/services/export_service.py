@@ -30,6 +30,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from psycopg import IsolationLevel, sql
 
 from insight_core.db import database as db
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.import_export import (BOOKKEEPING, CHUNK, FORMAT, FORMAT_VERSION, MIGRATIONS_DIR,
                                            sequences, tables_in_load_order)
 
@@ -38,11 +39,15 @@ logger = logging.getLogger(__name__)
 LOGIN_TABLES = ("credentials",)
 LOGINS_INCLUDE = ("the Substack session cookie and the Telegram API id, hash and sign-in session, "
                   "encrypted: they work after a restore only with this server's secret key")
-# The estimate before the click, from the tables' stored size (heap and TOAST, no indexes).
-# Measured 2026-11-05 on two lab copies (issue 0079's Built section): the zip is 0.44-0.46 of
-# it, written at ~20 MB of it a second.
-SIZE_RATIO = 0.45
-TABLE_BYTES_PER_SECOND = 20e6
+# The estimate before the click (issue 0105), from the live rows: the bytes their values are stored in
+# (pg_column_size, read off each row without opening TOAST), never the tables' size, which counts the dead
+# space a rewrite leaves (the lab's posts: 652 MB on disk, 404 MB in live values). Measured 2026-11-05 on
+# the lab and a restored copy of it (issue 0105's Built section): 499 MB of live values on both, the zip
+# 243 MB (0.487 of it) in 27-34 s (~18 MB of it a second). Once an export has run, the last one's real
+# size and time instead, scaled by how the live rows grew since.
+SIZE_RATIO = 0.49
+STORED_BYTES_PER_SECOND = 18e6
+LAST_EXPORT_KEY = "last_export"   # system_settings: {bytes, seconds, stored_bytes, logins_included, at}
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 KEPT_PROGRESS = 20
 
@@ -117,6 +122,26 @@ def schema_sql(versions: List[str]) -> str:
     return "".join(parts)
 
 
+def live_bytes(cur: Any, tables: List[str]) -> int:
+    """The bytes the live rows' values are stored in, over `tables` (issue 0105): each column's
+    pg_column_size, which reads a TOASTed value's stored size off its pointer without opening it.
+    Dead rows (the space a rewrite left) are not counted. One scan of each table's heap."""
+    if not tables:
+        return 0
+    cur.execute("SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+                "WHERE c.relnamespace = current_schema()::regnamespace AND c.relname = ANY(%s) "
+                "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.relname, a.attnum", (list(tables),))
+    columns: Dict[str, List[str]] = {}
+    for table, column in cur.fetchall():
+        columns.setdefault(table, []).append(column)
+    total = 0
+    for table, names in columns.items():
+        size = sql.SQL(" + ").join(sql.SQL("coalesce(pg_column_size({}), 0)").format(sql.Identifier(n)) for n in names)
+        cur.execute(sql.SQL("SELECT coalesce(sum({}), 0)::bigint FROM {}").format(size, sql.Identifier(table)))
+        total += int(cur.fetchone()[0])
+    return total
+
+
 class ExportService:
     def __init__(self, db_url: str) -> None:
         self.db_url = db_url
@@ -124,21 +149,33 @@ class ExportService:
         self._lock = threading.Lock()
 
     def info(self) -> Dict[str, Any]:
-        """Shown before the click: the database's size, and the zip's estimated size and time."""
+        """Shown before the click: the database's size, and the zip's estimated size and time, with what
+        the estimate is from (`estimate_basis`, issue 0105): `last_export`, the last whole export's real
+        size and time scaled by how the live rows grew since (`last_export`: its bytes, seconds, time and
+        logins), else `live_rows`, the live rows' stored bytes at the ratio measured on the lab."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             tables = tables_in_load_order(cur)
-            cur.execute("SELECT pg_database_size(current_database()), "
-                        "coalesce(sum(pg_table_size(format('%%I', t)::regclass)), 0)::bigint FROM unnest(%s::text[]) t",
-                        (tables,))
-            database_bytes, table_bytes = cur.fetchone()
-        return {
+            cur.execute("SELECT pg_database_size(current_database())")
+            database_bytes = cur.fetchone()[0]
+            stored = live_bytes(cur, tables)
+            kept = SystemSettingsRepository.get(cur, LAST_EXPORT_KEY)
+        last = kept[0] if kept and isinstance(kept[0], dict) else None
+        out: Dict[str, Any] = {
             "database_bytes": int(database_bytes),
-            "estimate_bytes": int(table_bytes * SIZE_RATIO),
-            "estimate_seconds": max(1, round(table_bytes / TABLE_BYTES_PER_SECOND)),
             "tables": len(tables),
             "login_tables": list(LOGIN_TABLES),
             "logins_include": LOGINS_INCLUDE,
+            "last_export": None,
         }
+        if last and last.get("bytes") and last.get("stored_bytes") and last.get("seconds") is not None:
+            grown = stored / last["stored_bytes"]
+            out.update(estimate_basis="last_export", estimate_bytes=int(last["bytes"] * grown),
+                       estimate_seconds=max(1, round(last["seconds"] * grown)),
+                       last_export={k: last.get(k) for k in ("bytes", "seconds", "at", "logins_included")})
+        else:
+            out.update(estimate_basis="live_rows", estimate_bytes=int(stored * SIZE_RATIO),
+                       estimate_seconds=max(1, round(stored / STORED_BYTES_PER_SECOND)))
+        return out
 
     @staticmethod
     def file_name(now: Optional[datetime] = None) -> str:
@@ -164,6 +201,7 @@ class ExportService:
         now = datetime.now(timezone.utc)
         name = name or self.file_name(now)
         state = self._track(token, name)
+        started = time.monotonic()
         sink = _Sink()
         conn = db.session_connection(self.db_url)
         try:
@@ -171,6 +209,7 @@ class ExportService:
             conn.read_only = True
             with conn.cursor() as cur, zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 tables = tables_in_load_order(cur)
+                stored = live_bytes(cur, tables)   # in the snapshot: what the next estimate scales from (0105)
                 cur.execute(f"SELECT version, applied_at FROM {BOOKKEEPING} ORDER BY version")
                 migrations = [{"version": v, "applied_at": at.isoformat()} for v, at in cur.fetchall()]
                 logins = "included (" + LOGINS_INCLUDE + ")" if include_logins else "left out (re-enter them in Sources → Connections)"
@@ -211,6 +250,7 @@ class ExportService:
                 archive.writestr(_entry("manifest.json", now), json.dumps(manifest, indent=2) + "\n")
             yield self._sent(state, sink)
             state["done"] = True
+            self._remember(state["bytes"], time.monotonic() - started, stored, include_logins, now)
         except GeneratorExit:
             state["error"] = "stopped before the end"
             raise
@@ -220,6 +260,17 @@ class ExportService:
             raise
         finally:
             conn.close()
+
+    def _remember(self, size: int, seconds: float, stored: int, include_logins: bool, at: datetime) -> None:
+        """A whole export's real size and time, kept for the next estimate (issue 0105). It never fails
+        the export: the zip is already sent."""
+        try:
+            with db.transaction(self.db_url) as cur:
+                SystemSettingsRepository.upsert(cur, LAST_EXPORT_KEY, {
+                    "bytes": int(size), "seconds": round(seconds, 1), "stored_bytes": int(stored),
+                    "logins_included": include_logins, "at": at.isoformat(timespec="seconds")})
+        except Exception:
+            logger.exception("Export: could not keep its size for the next estimate")
 
     @staticmethod
     def _sent(state: Dict[str, Any], sink: _Sink) -> bytes:
