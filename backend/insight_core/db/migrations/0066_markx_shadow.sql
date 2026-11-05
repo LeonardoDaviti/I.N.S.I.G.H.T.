@@ -124,11 +124,14 @@ CREATE INDEX IF NOT EXISTS mx_mentions_name_key_idx ON mx_mentions (name_key);
 CREATE INDEX IF NOT EXISTS mx_mentions_family_version_idx ON mx_mentions (family, version);
 
 -- A post's vector: text_hash is the hash of the text embedded (markx text v1), so a text change is seen.
+-- model_sha256: the embedder build's file (the GGUF's sha256; build plan corrections 6, the owner on
+-- 2026-11-05): cosines across builds don't compare, so S2 refuses a vector from another build.
 CREATE TABLE IF NOT EXISTS mx_embeddings (
-  post_id   uuid NOT NULL,
-  model     text NOT NULL,
-  text_hash text NOT NULL,
-  v         halfvec(1024) NOT NULL,
+  post_id      uuid NOT NULL,
+  model        text NOT NULL,
+  model_sha256 text,
+  text_hash    text NOT NULL,
+  v            halfvec(1024) NOT NULL,
   PRIMARY KEY (post_id, model)
 );
 CREATE INDEX IF NOT EXISTS mx_embeddings_v_hnsw_idx ON mx_embeddings USING hnsw (v halfvec_cosine_ops);

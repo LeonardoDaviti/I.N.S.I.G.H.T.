@@ -250,14 +250,24 @@ def vector_text(vector: Sequence[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in vector) + "]"
 
 
-def put_embedding(cur: Cursor, *, post_id: Id, model: str, text_hash: str, vector: Sequence[float]) -> bool:
-    """A post's vector under `model`: False when it is already stored for this text (text_hash); a
-    changed text replaces the vector (a derived value, recomputed from the post)."""
-    cur.execute("""INSERT INTO mx_embeddings (post_id, model, text_hash, v) VALUES (%s, %s, %s, %s::halfvec)
-                   ON CONFLICT (post_id, model) DO UPDATE SET text_hash = EXCLUDED.text_hash, v = EXCLUDED.v
-                   WHERE mx_embeddings.text_hash IS DISTINCT FROM EXCLUDED.text_hash""",
-                (post_id, model, text_hash, vector_text(vector)))
+def put_embedding(cur: Cursor, *, post_id: Id, model: str, text_hash: str, vector: Sequence[float],
+                  model_sha256: Optional[str] = None) -> bool:
+    """A post's vector under `model` (from the embedder build `model_sha256`): False when it is already
+    stored for this text and build; a changed text replaces the vector (a derived value, recomputed from
+    the post). Refusing a build other than the stored one is the caller's (`embedding_builds`)."""
+    cur.execute("""INSERT INTO mx_embeddings (post_id, model, model_sha256, text_hash, v) VALUES (%s, %s, %s, %s, %s::halfvec)
+                   ON CONFLICT (post_id, model) DO UPDATE
+                      SET text_hash = EXCLUDED.text_hash, model_sha256 = EXCLUDED.model_sha256, v = EXCLUDED.v
+                   WHERE (mx_embeddings.text_hash, mx_embeddings.model_sha256)
+                         IS DISTINCT FROM (EXCLUDED.text_hash, EXCLUDED.model_sha256)""",
+                (post_id, model, model_sha256, text_hash, vector_text(vector)))
     return cur.rowcount == 1
+
+
+def embedding_builds(cur: Cursor, model: str) -> Dict[Optional[str], int]:
+    """{model_sha256: vectors} stored under `model` (one build per database: build plan corrections 6)."""
+    cur.execute("SELECT model_sha256, count(*) FROM mx_embeddings WHERE model = %s GROUP BY 1", (model,))
+    return dict(cur.fetchall())
 
 
 def embedding_hashes(cur: Cursor, post_ids: Iterable[Id], model: str) -> Dict[UUID, str]:

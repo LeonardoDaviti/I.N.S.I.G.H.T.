@@ -201,6 +201,9 @@ class AnswerTablesTests(_Rollback):
         self.assertFalse(repo.put_embedding(self.cur, post_id=a, model="test-m", text_hash="h1", vector=vec(1.0)))   # same text
         self.assertTrue(repo.put_embedding(self.cur, post_id=a, model="test-m", text_hash="h2", vector=vec(1.0)))    # text changed
         self.assertEqual(repo.embedding_hashes(self.cur, [a, b], "test-m"), {a: "h2", b: "h1"})
+        self.assertTrue(repo.put_embedding(self.cur, post_id=b, model="test-m", text_hash="h1", vector=vec(0.9, 0.1),
+                                           model_sha256="build-1"))   # the build recorded
+        self.assertEqual(repo.embedding_builds(self.cur, "test-m"), {None: 2, "build-1": 1})
         near = repo.nearest(self.cur, vec(1.0, 0.0), model="test-m", limit=3, exclude=[a])
         self.assertEqual([p for p, _ in near if p in (b, c)], [b, c])
         self.assertAlmostEqual(dict(near)[c], 1.0, places=3)
