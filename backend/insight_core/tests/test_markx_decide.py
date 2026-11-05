@@ -209,7 +209,11 @@ class Rules(unittest.TestCase):
                 "A pull request for kernel speedups that benefits other models, so the model family is not its subject.",
                 "Commentary on a leaked draft bill, which is unrelated to the unreleased model in the story.",
                 "A short reaction to the product's comeback, with the store's block not mentioned.",
-                "The post reports a release that is a different model from the story's model."]
+                "The post reports a release that is a different model from the story's model.",
+                # the v10.0.1 review's two (live): "distinct" and "different ... post"
+                "A Rust inference engine for the models: a related but distinct event.",
+                "The Telegram piece is a different commentary post, so this relation applies to the Reddit member only.",
+                "The essay is the same debate as the commentary but a different piece."]
         for reason in said:
             self.assertTrue(D.contradicts(reason), reason)
         fine = ["The post reports the same release, a different angle on the same launch.",
@@ -217,7 +221,9 @@ class Rules(unittest.TestCase):
                 "open-weights status.",
                 "A user's hands-on run of the released model rather than the release itself.",
                 "The same release as the story, with the paper only as background.",
-                "Both stories cover the single release and differ only in headline framing.", "", None]
+                "Both stories cover the single release and differ only in headline framing.",
+                "A one-line reaction to the model, whose subject is its usability, not a distinct release event.",
+                "", None]
         for reason in fine:
             self.assertFalse(D.contradicts(reason), reason)
 

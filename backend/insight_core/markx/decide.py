@@ -451,11 +451,12 @@ def _first_key(posts: Dict[str, Post], ms: Dict[str, Any]):
 
 MAX_ASKS = 3       # a question is asked at most this many times (a first answer, its second, one more on a split)
 
-# The class of reason text that says "not this story", read from v10.0's 1,814 accepted "about" answers (33 match:
-# 1.8%; of the 80 judged, it fires on 3 wrong joins and no right one). Three families, never a name or a site:
-#   1. the reason names another relation for the post: "so it is a different event", "this is closer to a mention",
-#      "a mention rather than a retelling", "the relation should be different", "a mismatch", "a different model
-#      from ..." (but not "a different angle/reading/framing" of the same event);
+# The class of reason text that says "not this story", read from v10.0's 1,814 accepted "about" answers (35 match:
+# 1.9%; of the 80 judged, it fires on 4 wrong joins and no right one). Three families, never a name or a site:
+#   1. the reason names another relation or another thing for the post: "so it is a different event", "this is closer
+#      to a mention", "a mention rather than a retelling", "the relation should be different", "a mismatch", "a
+#      different model from ...", "a different commentary post", "a related but distinct event" (but not "a
+#      different angle/reading/framing" of the same event, nor "not a distinct release event");
 #   2. it says the story's subject is not the post's: "<the story's subject> is not its (main) subject";
 #   3. it says unrelated, absent, no relation, not mentioned ("the family is absent from its text").
 # Not in the class: "rather than the release itself" (a reaction or a hands-on report: still about it), "only as
@@ -468,7 +469,11 @@ _OTHER_RELATION = (r"\b(?:relation|it|this|which)\s+(?:is|should be|falls under|
                    r"|\bmismatch in subject\b"
                    r"|\bis a different (?:event|happening|story|model|release|product|project|company|claim"
                    r"|announcement|report|subject)\b"
-                   r"|\ba different (?:event|happening|model|release|product|project|company|claim) from\b")
+                   r"|\ba different (?:event|happening|model|release|product|project|company|claim) from\b"
+                   # "a different commentary post", "a different piece" (the v10.0.1 review: a pair at 0.95)
+                   r"|(?<!not )\ban? different (?:\w+\s+){0,2}(?:post|piece|article|video|thread|tweet)\b"
+                   # "a related but distinct event", "distinct from"; never "not a distinct release event"
+                   r"|(?<!not )(?<!no )\b(?:related but|but|is|are|as|a|an) distinct\b|(?<!not )\bdistinct from\b")
 _NOT_ITS_SUBJECT = r"\bnot (?:its|the post's) (?:main )?(?:subject|topic)\b"
 _UNRELATED = r"\bunrelated\b|\babsent from\b|\bno relation\b|\bnot related\b|\bnot mentioned\b"
 NOT_THIS_STORY = re.compile("|".join((_OTHER_RELATION, _NOT_ITS_SUBJECT, _UNRELATED)), re.I)
