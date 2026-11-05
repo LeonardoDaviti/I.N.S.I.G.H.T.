@@ -450,9 +450,15 @@ def reasked(cur: Cursor) -> Dict[str, Dict[str, int]]:
     return {"check": {"tasks": len(hashes), "would_change": sum(1 for h in hashes if h not in today)}}
 
 
+def _plan_embeds(cur: Cursor, **kw) -> int:
+    from insight_core.markx import embed   # S2's planner (embed.py imports this module)
+    return embed.plan(cur, **kw)
+
+
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
-            "check": plan_checks}
+            "check": plan_checks,
+            "embed": _plan_embeds}
 
 
 # ---- what a valid answer writes besides its call ----------------------------------------------------

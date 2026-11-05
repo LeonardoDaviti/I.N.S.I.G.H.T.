@@ -57,6 +57,22 @@ POST /api/markx/token   200 {"token": "<new token, shown once>", "set": true, "l
 
 Adding a kind (S2's `embed`): one entry in schemas.KINDS. A route of its own (POST /api/markx/embeddings)
 is one more function on `router` below, or a router of S2's own included the same way; neither edits these.
+
+S2's route (added 2026-11-05; the routes above are unchanged)
+------------------------------------------------------------
+GET /api/markx/work?kinds=embed leases embed tasks as any kind (the server plans 500 more, newest posts first, when
+fewer than `limit` are open); each task's input is the exact text to embed (markx/embed.py), its guide `embed-v1`.
+
+POST /api/markx/embeddings
+    {"worker": "<name>", "model": "bge-m3", "model_sha256": "<the GGUF's sha256, 64 hex>",
+     "vectors": [{"task_id": "<uuid>", "vector": "<base64 of 1,024 little-endian float16, norm 1>", "ms"?: int}]}
+    200 {"stored": int, "invalid": [{"task_id", "error"}], "repeated": int}
+    Each vector is checked (2,048 bytes, finite, norm 1 within 0.01) and stored for its task's post; the task is
+    answered. An invalid one puts its task back to open with its error (failed at the third try). One for a task
+    already answered changes nothing. The candidates of the new vectors are found after the uploads go quiet.
+    400: another model, or not a sha256. 409 {"detail"}: the database holds vectors of another build (one build per
+    database; nothing of the request is stored). An embed task posted to /answers is invalid ("answered at
+    POST /api/markx/embeddings").
 """
 from __future__ import annotations
 
@@ -70,7 +86,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
-from insight_core.markx import repo, schemas, tasks, validate
+from insight_core.markx import candidates, embed, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -304,6 +320,29 @@ def status():
             "last_run": None if run is None else {k: (_iso(v) if isinstance(v, datetime) else str(v) if isinstance(v, UUID) else v)
                                                   for k, v in run.items()},
             "guides": guide_hashes}
+
+
+class Vectors(BaseModel):
+    worker: Any = None
+    model: Any = None
+    model_sha256: Any = None
+    vectors: List[Dict[str, Any]] = []
+
+
+@router.post("/embeddings", dependencies=[Depends(_worker_auth)])
+def post_embeddings(body: Vectors):
+    """S2: an embedder's vectors for embed tasks (markx/embed.py); their candidates follow (markx/candidates.py)."""
+    worker = _name(body.worker)
+    _contact(worker)
+    try:
+        with transaction() as cur:
+            result = embed.store(cur, model=body.model, model_sha256=body.model_sha256, vectors=body.vectors)
+    except embed.BuildMismatch as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    candidates.pending.note(result.pop("posts"))
+    return result
 
 
 # ---- the owner's routes: the worker token ---------------------------------------------------------

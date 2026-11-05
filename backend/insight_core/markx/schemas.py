@@ -116,6 +116,13 @@ BRIEFING_SCHEMA = {
                        "stories": {"type": "array", "minItems": 1, "items": _STR}}}}},
 }
 
+# An embed task's vector, as POST /api/markx/embeddings takes it (markx/embed.py): 1,024 little-endian float16, base64.
+EMBED_SCHEMA = {
+    "type": "object",
+    "required": ["vector"],
+    "properties": {"vector": {"type": "string", "minLength": 2732, "maxLength": 2732}},
+}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "required": ["title_en", "text_en"],
@@ -146,6 +153,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("headline", "headline-v1", "story", HEADLINE_SCHEMA),
     Kind("briefing", "briefing-v1", "day", BRIEFING_SCHEMA),
     Kind("translate", "translate-v1", "post", TRANSLATE_SCHEMA),
+    Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings
 )}
 
 
