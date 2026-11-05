@@ -172,6 +172,7 @@ class Labels(unittest.TestCase):
         self.cur.execute("SELECT input FROM mx_tasks WHERE id = %s", (it.id,))
         self.assertEqual(view["evidence"], self.cur.fetchone()[0])     # the judge's input, as it saw it
         self.assertIsNone(view["verdict"])                             # never before an answer
+        self.assertIsNone(view["pool"])                                # nor the pool, which names the decision
         self.assertNotIn("why", json.dumps(view, default=str))
         got = L.label(self.cur, q, it.id, "different", note="  ")
         self.assertEqual(got["verdict"]["decision"], "taken out")

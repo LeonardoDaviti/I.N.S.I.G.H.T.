@@ -149,7 +149,7 @@ export interface MarkxLabelItem {
   extracted: { name: string; type: string | null; role: string | null; version: string | null; maker: string | null }[] | null;
   day: string | null;
   split: 'dev' | 'test';
-  pool: string;
+  pool: string | null;
   position: number | null;
   label: { answer: MarkxAnswer; note: string | null; split: string; created_at: string } | null;
   /** Null until the item has a label. */

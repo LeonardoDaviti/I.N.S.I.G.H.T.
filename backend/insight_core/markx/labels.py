@@ -386,7 +386,8 @@ def item_view(cur: Any, q: Queue, item_id: str, labeller: str = "owner") -> Opti
     kind, text = row
     got = latest(cur, labeller=labeller, kinds=[f.item_kind]).get((f.item_kind, it.id))
     out = {"id": it.id, "feature": it.feature, "name": f.name, "question": f.question, "answers": list(f.answers),
-           "evidence": text, "day": it.day, "split": got["split"] if got else q.split_of(it), "pool": it.pool,
+           "evidence": text, "day": it.day, "split": got["split"] if got else q.split_of(it),
+           "pool": it.pool if got else None,          # the pool names the decision: shown with the verdict only
            "label": ({k: got[k] for k in ("answer", "note", "split", "created_at")} if got else None),
            "verdict": verdict(it) if got else None, "extracted": None,
            "position": (q.order.index(it.id) + 1) if it.id in q.order else None}
