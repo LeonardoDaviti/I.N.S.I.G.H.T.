@@ -477,12 +477,21 @@ def federation(*, hosts: int, posts: int) -> bool:
     return hosts >= FEDERATION_HOSTS and posts < FEDERATION_POSTS * hosts
 
 
+# A company's directory of many owners' shows, songs, apps or books (podcasts.<company>, apps.<company>) is no
+# place of the company's own (issue 0111): measured on the server's copy, it takes podcasts. and itunes. out of
+# one company's card of 4 hosts, and no host of the other 18 cards; the lab's podcasts. host of the same card.
+CATALOG_LABELS = frozenset({"podcasts", "podcast", "music", "itunes", "apps", "play", "books", "store", "marketplace"})
+
+
 def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional[str]:
     """The domain a site suggestion's card is one of: its registrable domain, None for a platform's owner (a
-    key with a path) or a host of a domain of many owners."""
+    key with a path), a host of a domain of many owners, or a directory of many owners' items (CATALOG_LABELS)."""
     if "/" in key:
         return None
     site = site_of(key)
+    host = key.removeprefix("www.")
+    if host != site and host.split(".", 1)[0] in CATALOG_LABELS:
+        return None
     return None if site in set(federations) else site
 
 
