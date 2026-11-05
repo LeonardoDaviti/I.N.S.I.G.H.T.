@@ -55,3 +55,61 @@ Status: **spec** (2026-11-05, the owner). Not built. After v10.0.1 (0112), which
 ## Not in this issue
 - Moving the job out of the API, and its time limit: that's 0112 decisions 10 and 12, needed first.
 - Deciding over 120 days: a separate setting once this lands, since this is what makes it affordable.
+
+## Built (branch `issue-0112-reask-and-0116` from main 3fde2c6, 2026-11-06)
+Not merged, not pushed, not deployed. Built with [0112](0112-mark-x-v10.0.1-live-fixes.md)'s Decided 8 on the same branch; it leaves 0112's decisions 10–12 (the job out of the API, the time limit, stage logs) to their own branch, and touches none of its files (the Scheduler, `api.py`'s jobs and upload hooks, `main.py`, compose, `checks/`).
+
+**Measured first, on the server's copy** (v10.0's real-Haiku copy, 30 days, 6,606 posts, 275 stories, 2,308 questions): a full run is 2.76 s, and almost none of it is deciding.
+- Reading: the posts' texts 0.47 s, near-copies 0.29 s, each question's task and answer one query at a time 0.45 s, Mark IX's StoryPosts for every News post 0.87 s.
+- The rules (plan, glue, merges, both passes): 0.05 s.
+- On 120 days: 4.33 s (808 stories, 6,213 questions).
+
+So an incremental run re-reads only what changed, and runs the same rules over the same world (`markx/incremental.py`).
+
+**What changed:**
+1. **The dirty set** is every judge task whose (status, valid calls) changed since the last run: one query for all of them (20 ms), then the calls of those tasks only.
+   - An answer, a second ask (0112 Decided 8) or a failure changes that pair, and calls are never changed or deleted. So no writer has to mark anything, and none can forget to.
+   - **Not built as specified:** the `mx_dirty` table. The query is the table: it can't miss an answer, and needs no migration (the other branch may take 0070).
+2. **The closure** is what the dirty answers reach: the Mark X stories holding their posts, now and in the last run (merge groups), those posts' Mark IX stories, and the stories sharing a post with any of them.
+   - It is reported (`counts.run.closure`, and `hub` for over 25% of 40+ stories).
+   - **What is recomputed:** the database reads of the closure's answers; the rules are re-run over every story because they cost 50 ms, and that is what keeps the result a full run's.
+   - **What is written:** only the memberships and connections that changed (`persist`, as before).
+3. **Texts** are re-read only where Mark IX's rows changed: a stamp per table (`posts`, `post_parts`, `post_links`, `sources`: rows, newest xmin, a hash of every row version; 60 ms), then per post only when a table changed. New posts are always read. Readings are stored once and never changed, so only posts with none are read again. Near-copies, the rules' posts and the connect inputs are kept by their posts' row versions.
+4. **News incrementally** (`news.write`): only the rows the changed stories reach are made again, as Mark IX's own incremental News (0072 A).
+   - **The seeds:** the posts of every story whose members or mentions changed, now and before; the posts that came into or left the window; the stories whose start left it.
+   - **The group:** the seeds and every row, story (members and mentions) and surge holding one of them, until nothing joins.
+   - The rest of the last run's rows stay; every row is tagged again against Mark IX.
+   - It is in full when Mark IX's posts, parts, links, sources, surges or roundups changed (a new post can change another post's StoryPost through its links).
+5. **A run is full** without the last run's memo (a start, another process ran last, the last run failed), when the code version, config or a guide changed, nightly (the first run after 04:00 server time, by the runs' own clocks), and with `run(full=True)`.
+   - **The check:** a full run with a memo first reads the same snapshot as an incremental run would, writing nothing, then reads it in full. Any difference in stories and memberships, typed connections or News rows and tags is logged as an incremental-run bug, with the stories' posts (`counts.check`).
+6. **Shown:** `counts.run` (in `/api/markx/status`'s last run): kind, dirty tasks and posts, texts read, Mark IX tables changed, closure, changed stories, seconds. **Not built:** the Worker tab's display (frontend).
+
+**Measured: a replay of the copy's answers, in their order** (`insight_server_1105_mxreal_check_<pid>_{b,d}`).
+- **How:** the 3,446 recorded judge answers were hidden, then shown again 20 at a time in the order they were made: 173 batches.
+  - A task a run asked again got its recorded first answer once more, as its second (504 of them). That exercises joins, pairs and merges. It is a simulated agreement, not a measurement of Haiku.
+  - After each batch: an incremental run, committed; then a full run of the same snapshot, rolled back.
+- **Identical at every step, in both replays:** the full run wrote no membership, connection or News row, and its check found no difference (0 of 173 steps; replay 1 at be9a884, replay 2 at the final code).
+- **Time, replay 2:**
+
+| Measure | Value |
+|---|---|
+| Incremental run | median **0.66 s**, p90 0.74 s, max 1.20 s |
+| Over 1 s | 2 of 173, while the machine was loaded (the full runs at those steps took 3.9 and 5.2 s against a median of 3.4 s) |
+| Full run with its check | median 3.4 s |
+| Dirty tasks a batch | median 22, max 36 |
+
+- **The closure:** median 21 stories, largest 54 of 345 (16%); none over 25%. News was made incrementally at every step; rows were written 102 times.
+- **After real second asks** (0112 Decided 8's copy, 342 stories, 3,000 connect pairs): an incremental run is 0.58 s with nothing new, against 2.7 s for a full one. One upload of 471 answers had a closure of 142 of 341 stories (flagged as a hub) and took 1.03 s.
+
+**Tests** (`test_markx_incremental.py`, 6):
+- every incremental run is a full run's result: a full run of the same snapshot writes nothing and its check finds no difference, after each of 5 answer batches;
+- the dirty set is the tasks answered since, and a quiet run reads no text again;
+- a changed post's text is read again, and News is then made in full;
+- the check finds a memo gone wrong, with its stories' posts;
+- a run is full without the last run's memo, with another rule, and nightly, and the nightly check finds no difference;
+- a failed run leaves no memo.
+
+**Proposed real-data invariant** (`checks/` is the other branch's, so not edited): `markx.incremental_matches_full`, a job check on the head's copy after its deploy runs, in one transaction rolled back.
+- Hide the newest 60 judge calls, run `decide.run(full=True)`, then show them 20 at a time with an incremental run after each, then run `decide.run(full=True)` again.
+- Count that last full run's memberships, connections and News rows written, plus `counts.check.differences`. The bar is 0.
+- Also report the incremental runs' seconds (under 1 s) and their closures.
