@@ -65,7 +65,7 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
 POST /api/markx/decide             one decision run now: {run, ...counts} or {"skipped"} (the hourly and after-upload
-                                   runs are decide.scheduler's)
+                                   runs are jobs.scheduler's)
 
 S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
 --------------------------------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, StrictInt
 
-from insight_core.markx import candidates, decide, embed, labels, news, repo, schemas, tasks, validate
+from insight_core.markx import decide, embed, jobs, labels, news, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -312,7 +312,7 @@ def post_answers(body: Answers):
     with transaction() as cur:
         result = store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
     if result["valid"]:
-        decide.scheduler.note()   # S5: the decisions, once the uploads go quiet
+        jobs.scheduler.note()   # S5: the decisions, once the uploads go quiet
     return result
 
 
@@ -378,9 +378,9 @@ def post_embeddings(body: Vectors):
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    candidates.pending.note(result.pop("posts"))
+    jobs.pending.note(result.pop("posts"))
     if result["stored"]:
-        decide.scheduler.note()   # S5: after the candidates' own debounce
+        jobs.scheduler.note()   # S5: after the candidates' own debounce
     return result
 
 
@@ -404,7 +404,7 @@ def token_generate():
 
 def start_jobs() -> bool:
     """At the API's start (main.py's lifespan): the decision job's hourly clock, only when Mark X is on."""
-    return decide.scheduler.start()
+    return jobs.scheduler.start()
 
 
 MAX_DAYS = 36500
@@ -446,7 +446,7 @@ def mx_set_reading_window(body: WindowIn):
 
 def after_start_stories() -> None:
     """When the start's story job has finished (main.py): Mark X's first decision run, only when Mark X is on."""
-    decide.scheduler.after_stories()
+    jobs.scheduler.after_stories()
 
 
 @router.get("/on")

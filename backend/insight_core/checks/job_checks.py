@@ -112,7 +112,11 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     started = time.monotonic()
     try:
         os.environ["INSIGHT_MARKX"] = "off"
-        off = decide.Scheduler(debounce=None, every=None).run_now()
+        try:   # the scheduler moved to markx/jobs.py (0112 Decided 10); a version before has it in decide.py
+            from insight_core.markx.jobs import Scheduler
+        except ImportError:
+            Scheduler = decide.Scheduler
+        off = Scheduler(debounce=None, every=None).run_now()
         with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
             off_rows = _mx_rows(cur) - mx_before
         os.environ["INSIGHT_MARKX"] = "on"

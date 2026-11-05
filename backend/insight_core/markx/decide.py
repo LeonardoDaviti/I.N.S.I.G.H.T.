@@ -26,7 +26,7 @@ Two layers:
     answers into verdicts; and writes Mark X's stories, memberships and connections (closing what changed, never
     deleting), then Mark X's News (markx/news.py). Each run is one mx_runs row. It writes only mx_* tables.
 
-When it runs (`Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
+When it runs (markx/jobs.py's `Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
 vectors, debounced), and hourly, only when
 INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processes).
 """
@@ -35,7 +35,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import threading
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -937,86 +936,3 @@ def snapshot(url: Optional[str] = None):
         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         yield cur
 
-
-def _transaction():
-    return snapshot()
-
-
-class Scheduler:
-    """After the worker's uploads (`note`, DEBOUNCE seconds after the last) and every EVERY seconds, one run at a
-    time; only when INSIGHT_MARKX is on. Never raises into a request or its thread."""
-    DEBOUNCE = 60.0
-    EVERY = 3600.0
-
-    def __init__(self, transaction: Optional[Callable[[], Any]] = None, debounce: Optional[float] = DEBOUNCE,
-                 every: Optional[float] = EVERY, enabled: Optional[Callable[[], bool]] = None) -> None:
-        self.transaction = transaction
-        self.debounce, self.every = debounce, every
-        self.enabled = enabled
-        self.lock = threading.Lock()
-        self.running = threading.Lock()
-        self.timer: Optional[threading.Timer] = None
-        self.thread: Optional[threading.Thread] = None
-        self.stop = threading.Event()
-        self.last: Optional[Dict[str, Any]] = None
-
-    def on(self) -> bool:
-        if self.enabled is not None:
-            return self.enabled()
-        from insight_core.markx.api import enabled
-        return enabled()
-
-    def note(self) -> None:
-        """An upload arrived: one run DEBOUNCE seconds after the last."""
-        if self.debounce is None or not self.on():
-            return
-        with self.lock:
-            if self.timer is not None:
-                self.timer.cancel()
-            self.timer = threading.Timer(self.debounce, self.run_now)
-            self.timer.daemon = True
-            self.timer.start()
-
-    def start(self) -> bool:
-        """The hourly clock, at the API's start: False (nothing runs) when Mark X is off."""
-        if self.every is None or self.thread is not None or not self.on():
-            return False
-        self.thread = threading.Thread(target=self._hourly, name="markx-decide", daemon=True)
-        self.thread.start()
-        return True
-
-    def after_stories(self) -> Optional[Dict[str, Any]]:
-        """The API's start: its story job has finished, so Mark X decides now over Mark IX's new stories (0112 A),
-        not up to EVERY seconds later; nothing when Mark X is off."""
-        if not self.on():
-            return None
-        return self.run_now(candidates_first=True)
-
-    def _hourly(self) -> None:
-        while not self.stop.wait(self.every):
-            self.run_now(candidates_first=True)
-
-    def run_now(self, candidates_first: bool = False) -> Optional[Dict[str, Any]]:
-        if not self.on():
-            return None
-        with self.lock:
-            self.timer = None
-        if not self.running.acquire(blocking=False):
-            return None
-        try:
-            if candidates_first:   # the posts whose entities arrived since the candidates' last run (S2)
-                from insight_core.markx import candidates
-                candidates.pending.flush()
-            transaction = self.transaction or _transaction
-            with transaction() as cur:
-                self.last = run(cur)
-            log.info("Mark X decisions: %s", {k: v for k, v in self.last.items() if k in ("stories", "changes", "news")})
-            return self.last
-        except Exception:   # never into a request or the timer thread
-            log.exception("Mark X decisions: the run failed")
-            return None
-        finally:
-            self.running.release()
-
-
-scheduler = Scheduler()
