@@ -74,6 +74,12 @@ async def _call(app, method, path, query, body, token):
     return status, (json.loads(data) if data else None)
 
 
+# Three texts of their own, for the check planner's stories: posts of one text are near-copies, never checked (0112).
+OWN = ("Acme released Widget 4.1 today, with 27B parameters and a price of $20 a month for every user who signs up.",
+       "I tried the new version on my old laptop for a day and the battery lasted longer than with any build before.",
+       "The benchmark table puts it ahead on three of the five tests, behind on long documents and on code repair.")
+
+
 def reading(**over):
     r = {"kind": "report", "events": "one", "main": {"headline_en": "Acme released Widget 4.1", "actors": ["Acme"],
          "object": "Widget 4.1", "action": "released"}, "items": [], "mentions": [], "lang": "en"}
@@ -375,9 +381,9 @@ class GuidesAndInputs(_Api):
         """F1's checks read Mark IX's stories (never writing them, never keying by their id); when a story changes
         shape its check's input changes, and `reasked` counts it (build plan, corrections 4)."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
-        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
-        member = self.post(title="Widget 4.1 thoughts", at=t0 + timedelta(hours=1))
-        late = self.post(title="Widget 4.1 benchmarks", source=self.other, at=t0 + timedelta(hours=2))
+        origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
+        member = self.post(title="Widget 4.1 thoughts", text=OWN[1], at=t0 + timedelta(hours=1))
+        late = self.post(title="Widget 4.1 benchmarks", text=OWN[2], source=self.other, at=t0 + timedelta(hours=2))
         story = origin                     # a Mark IX story is keyed by its first post
         self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
         self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
@@ -428,12 +434,48 @@ class GuidesAndInputs(_Api):
         self.assertEqual([m.id for m in tasks.check_side(b, [a, b, c], {"b"})], ["a", "c"])     # its only report: any role
         self.assertEqual(tasks.check_side(b, [b], {"b"}), [])                                   # alone: nothing to ask
 
+    def test_a_near_copy_is_never_a_check_question(self):
+        """0112 bug 3: identical reposts were checked and removed (9 of 44 removals). A member whose folded text is
+        another member's, or whose 5-word shingles overlap one's by 0.6 or more, from any source, is never checked."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        teaser = ("Open meeting on Friday: a project with agents from the first idea to working code, "
+                  "with a live demo and questions at the end, everyone is welcome to join us.")
+        origin = self.post(title="Open meeting on Friday", text=teaser, source=self.other, at=t0)
+        copy = self.post(title="Open meeting on Friday", text="🔥 " + teaser.upper(), at=t0 + timedelta(hours=1))
+        own = self.post(title="My notes from the agents meeting", text="The speaker showed how they split a large task "
+                        "into small steps, and the part about tests before code was the most useful for my team.",
+                        at=t0 + timedelta(hours=2))
+        story = origin
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v', NULL), (%s, %s, 'report', 'v', 'copy'), (%s, %s, 'report', 'v', 'citation')",
+                         (story, origin, story, copy, story, own))
+        with self.conn.transaction():
+            asked = {p.id for p, _ in tasks.check_questions(self.cur, days=1)}
+        self.assertNotIn(copy, asked)
+        self.assertIn(own, asked)
+
+    def test_near_copies(self):
+        def p(pid, text, title="T", source="s"):
+            return tasks.Post(id=pid, kind="telegram", source=source, source_id=source,
+                              at=datetime(2100, 1, 1, tzinfo=timezone.utc), title=title, text=text)
+        base = " ".join(f"w{k}" for k in range(40))
+        edited = " ".join(f"w{k}" for k in range(36)) + " x1 x2 x3 x4"           # 32 shingles shared of 40: 0.8
+        other = " ".join(f"w{k}" for k in range(0, 40, 2)) + " " + " ".join(f"v{k}" for k in range(20))
+        ms = [p("a", base), p("b", "«" + base.upper() + "»!", source="t"), p("c", edited, source="u"), p("d", other)]
+        self.assertTrue(tasks.near_copy(ms[0], ms[1]))                           # the same folded text, another source
+        self.assertTrue(tasks.near_copy(ms[0], ms[2]))                           # shingles at 0.6 or more
+        self.assertFalse(tasks.near_copy(ms[0], ms[3]))
+        self.assertEqual(tasks.near_copies(ms), {"a", "b", "c"})
+        self.assertEqual(tasks.near_copies([ms[0], ms[3]]), set())
+
     def test_a_member_joined_by_thread_is_checked_unless_switched_off(self):
         """The S5 review's W1: a thread Mark IX hung on a story by its root's citation is checked reply by reply."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
-        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
-        root = self.post(title="Benchmarks of many models", at=t0 + timedelta(hours=1))
-        reply = self.post(title="More benchmark numbers", at=t0 + timedelta(hours=2))
+        origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
+        root = self.post(title="Benchmarks of many models", text=OWN[1], at=t0 + timedelta(hours=1))
+        reply = self.post(title="More benchmark numbers", text=OWN[2], at=t0 + timedelta(hours=2))
         story = origin
         self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
         self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))

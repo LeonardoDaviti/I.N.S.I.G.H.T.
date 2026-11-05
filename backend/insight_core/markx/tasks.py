@@ -120,6 +120,42 @@ def words(p: Post) -> int:
     return len((p.title + " " + p.text).split())
 
 
+# A near-copy (0112 bug 3, the prototype's rule: 0106 step 1, persp32.Story): another member's text folded, or a
+# 5-word shingle Jaccard of COPY_JACCARD or more, whatever the source. Never checked, so never removed or demoted.
+COPY_SHINGLE, COPY_JACCARD = 5, 0.6
+
+
+def fold(s: Optional[str]) -> str:
+    """The prototype's fold: lowercase, ё as е, every run of non-word characters one space."""
+    return re.sub(r"[\W_]+", " ", (s or "").lower().replace("ё", "е")).strip()
+
+
+def shingles(p: Post, k: int = COPY_SHINGLE) -> set:
+    w = re.findall(r"\w+", (p.title + " " + p.text).lower())
+    return {tuple(w[i:i + k]) for i in range(max(0, len(w) - k + 1))}
+
+
+def _jaccard(a: set, b: set) -> float:
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+def near_copy(a: Post, b: Post) -> bool:
+    fa = fold(a.title + " " + a.text)
+    return (bool(fa) and fa == fold(b.title + " " + b.text)) or _jaccard(shingles(a), shingles(b)) >= COPY_JACCARD
+
+
+def near_copies(members: Sequence[Post]) -> set:
+    """The ids of the members that are a near-copy of another member."""
+    keys = [(fold(m.title + " " + m.text), shingles(m)) for m in members]
+    out = set()
+    for i, (fi, si) in enumerate(keys):
+        for j in range(i + 1, len(keys)):
+            fj, sj = keys[j]
+            if (fi and fi == fj) or _jaccard(si, sj) >= COPY_JACCARD:
+                out.update((members[i].id, members[j].id))
+    return out
+
+
 def voices(posts: Iterable[Post]) -> int:
     return len({p.source_id for p in posts if p.kind not in NOT_VOICE})
 
@@ -399,7 +435,7 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
                     threads: Optional[bool] = None) -> Iterable[Tuple[Post, str]]:
     """F1's checks over Mark IX's current stories (pipeline.plan), as (post, input), without writing: every member
     of a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
-    roundup, of 20 words or more unless a roundup; with `threads` (default: the decision job's
+    roundup, of 20 words or more unless a roundup, and not a near-copy of another member (0112 bug 3); with `threads` (default: the decision job's
     `Config.check_threads`), a member joined by `thread` too. Stories with a member in the last `days` (None: every
     story). Mark IX is only read."""
     if threads is None:
@@ -424,8 +460,9 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
             continue
         why = {p: reason for p, _, reason in ms}
         reports = {p for p, role, _ in ms if role == "report"}
+        copies = near_copies(members)
         for p in members[1:]:
-            if p.kind in NOT_VOICE:
+            if p.kind in NOT_VOICE or p.id in copies:
                 continue
             roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:

@@ -78,6 +78,13 @@ class Rules(unittest.TestCase):
             if q.type == "check":
                 self.assertTrue(q.side, q.tid)
 
+    def test_a_near_copy_is_never_checked(self):
+        """0112 bug 3: a member that is a near-copy of another member (`copies`, by story) is never a check question,
+        so no check removes or demotes it; it stays a member."""
+        qs = {q.tid for q in D.plan_pass1(self.posts, self.stories, {}, (), (), D.Config(), copies={"A": {"a", "b"}})}
+        self.assertNotIn("check:A:b", qs)
+        self.assertIn("check:A:c", qs)
+
     def test_a_one_voice_story_is_not_checked(self):
         self.posts["b"] = post("b", "s1", 1)
         self.stories = {"A": story("a", "b")}
@@ -232,7 +239,8 @@ class Job(unittest.TestCase):
     def post(self, hours, title, *, platform="telegram"):
         source = insert_scratch_source(self.cur, platform=platform, settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
         pid = str(self.cur.fetchone()[0])
@@ -427,7 +435,8 @@ class Snapshot(unittest.TestCase):
     def post(self, hours, title):
         source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
         pid = str(self.cur.fetchone()[0])
