@@ -638,8 +638,10 @@ class Questions:
         return None
 
 
-def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tuple[Outcome, Dict[str, Any]]:
-    """The two passes over this world: questions, the verdicts found, the decisions."""
+def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
+          answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
+    """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
+    extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
     q = Questions(world, ask, now)
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
     multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= 2}
@@ -663,6 +665,8 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tu
     q2 = plan_pass2(world.posts, p1, centroid_cos, config)
     ans2 = [(x, v) for x in q2 if (v := q.verdict(x, p1)) is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
+    if answered is not None:
+        answered.extend(ans1 + ans2)
     counts = {"questions": dict(Counter(x.type for x in q1 + q2)), "answered": len(ans1) + len(ans2),
               "pass2": len(q2), "changes": dict(Counter(c["change"] for c in out.log))}
     return out, counts

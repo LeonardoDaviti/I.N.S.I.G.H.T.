@@ -88,6 +88,32 @@ export function ixWords(ix: { title: string | null; same_row: boolean } | null |
   return `Mark IX: in “${ix.title ?? 'another row'}”`;
 }
 
+/** The labels' one-tap answers (0086 F), as the buttons say them. */
+export const ANSWER_WORDS: Record<string, string> = {
+  same_event: 'same event',
+  follow_up: 'follow-up',
+  related: 'related',
+  different: 'different',
+  unsure: 'unsure',
+  right: 'right',
+  wrong: 'wrong',
+  wrong_story: 'wrong story',
+  not_about: 'not about this',
+};
+
+/** A share as a whole percent ("86%"), or an en dash when there is none. */
+export function percent(share: number | null | undefined): string {
+  return typeof share === 'number' && Number.isFinite(share) ? `${Math.round(share * 100)}%` : '–';
+}
+
+/** "86% (63–95%)": a precision with its interval. */
+export function withInterval(share: number | null | undefined, lo: number | null | undefined, hi: number | null | undefined): string {
+  if (typeof share !== 'number') return '–';
+  return typeof lo === 'number' && typeof hi === 'number'
+    ? `${percent(share)} (${Math.round(lo * 100)}–${percent(hi)})`
+    : percent(share);
+}
+
 /** USD to two significant places past the cent ("$0.0123", "$1.20"). */
 export function usd(value: number): string {
   if (!Number.isFinite(value)) return '';

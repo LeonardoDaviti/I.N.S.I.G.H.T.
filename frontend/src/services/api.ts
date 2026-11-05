@@ -2,7 +2,10 @@
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
-import type { MarkxNews, MarkxOverview, MarkxPostPanel } from './markx';
+import type {
+  MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
+  MarkxPrecision,
+} from './markx';
 
 export type { Envelope };
 
@@ -1218,6 +1221,17 @@ export function createApi() {
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
     getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
     runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
+    /** Mark X's labels (issue 0086 F): the queue, one item (its verdict only once labelled), an answer, precision. */
+    getMarkxLabels: () => request<MarkxLabelQueue>('/api/markx/labels'),
+    getMarkxLabelItem: (itemId: string) => request<MarkxLabelItem>(`/api/markx/labels/items/${enc(itemId)}`),
+    labelMarkxItem: (item: string, answer: MarkxAnswer, note?: string) =>
+      request<MarkxLabelled>('/api/markx/labels', { method: 'POST', body: { item, answer, note: note ?? null } }),
+    getMarkxPrecision: (labeller = 'owner') =>
+      request<MarkxPrecision>(`/api/markx/labels/precision?labeller=${enc(labeller)}`),
+    /** One tap on a Mark X News member: wrong story, not about this, or ok (taken back). */
+    flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
+      request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
+        { method: 'POST', body: { post, story, answer } }),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 

@@ -1,5 +1,6 @@
 import { Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import MarkXNews from '../components/markx/MarkXNews';
+import MarkXLabels from '../components/markx/MarkXLabels';
 import { MarkXBriefing, MarkXEntities, MarkXWorker } from '../components/markx/MarkXOverview';
 import { useSearchParams } from 'react-router-dom';
 
@@ -9,7 +10,8 @@ type Tab = (typeof TABS)[number];
 /**
  * Mark X Shadow (issue 0086 E), `/markx`, while INSIGHT_MARKX is on: Haiku's stories beside Mark IX's, never read by
  * the reader's feed or News. News (Mark X's News against Mark IX's, only the differences by default), the day's
- * briefing, the main-subject entities, the worker's queue and runs. Labels are part F.
+ * briefing, the main-subject entities, the worker's queue and runs, and the owner's labels with each feature's
+ * precision (part F).
  */
 export default function MarkXPage() {
   const [params, setParams] = useSearchParams();
@@ -28,9 +30,7 @@ export default function MarkXPage() {
           <TabsContent value="briefing"><MarkXBriefing /></TabsContent>
           <TabsContent value="entities"><MarkXEntities /></TabsContent>
           <TabsContent value="worker"><MarkXWorker /></TabsContent>
-          <TabsContent value="labels">
-            <p className="text-[0.875rem] text-fg-2">Your labels come next (0086 part F): every merge and each decision near a bar, one tap each.</p>
-          </TabsContent>
+          <TabsContent value="labels"><MarkXLabels /></TabsContent>
         </Tabs>
       </PageHeader>
     </Page>
