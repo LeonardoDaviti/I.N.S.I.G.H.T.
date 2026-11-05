@@ -25,7 +25,7 @@ from insight_core.utils.tree_rules import PARENT_REASONS
 
 
 def sample_stories():
-    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
+    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
     return group([StoriesService._story_post(row, sources) for row in stamps.posts()])
 
 
@@ -54,6 +54,14 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         stories = {p.id: s for s in sample_stories() for p in s.posts}
         self.assertEqual(stories["t9"].parents["t9"][:3:2], ("t7", "thread"))
         self.assertNotIn("t8", stories, "the tweet in between joins nothing")
+
+    def test_one_owners_channels_are_one_news_voice(self):
+        # Issue 0111: a writer's X account and notes, the notes linking the account, are one owner
+        sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
+        self.assertEqual(sources.owner, {"s-wx": "s-wx", "s-x1": "s-wx"})
+        self.assertEqual(sources.owners, {"source:s-x1": "site:writerx.example", "reddit:writer_x": "site:writerx.example",
+                                          "reddit:sample_channel": "source:s-tg1", "reddit:other_channel": "source:s-tg2",
+                                          "reddit:author_y": "source:s-x2", "reddit:fan_z": "source:s-x3"})
 
     def test_a_papers_abstract_and_pdf_are_one_page(self):
         # Issue 0106: a paper id names one page on its host, whatever its path.
@@ -119,6 +127,9 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         # 0111's: a date as a name
         from insight_core.utils import news_rules
         with mock.patch.object(news_rules, "dated", lambda words: False):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        from insight_core.db import repo_stories
+        with mock.patch.object(repo_stories, "channel_owners", lambda *args: {}):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):

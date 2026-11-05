@@ -258,17 +258,18 @@ def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: 
     roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
     best: Dict[str, str] = {}
     posts = [p for p in posts if p.kind != "saved"]   # a page you saved is no voice (issue 0070)
-    for p in posts:
+    for p in posts:   # each voice as its owner's (issue 0111)
         role = post_roles[p.id]
-        if best.get(p.voice) != "report":
-            best[p.voice] = role
+        if best.get(p.owner_voice) != "report":
+            best[p.owner_voice] = role
     for p in posts:
+        voices = dict(zip(p.other_sources, p.other_voices(by_owner=True)))
         if p.author_source:
-            best[reposter_voice(p.author_source)] = "report"
+            best[voices[p.author_source]] = "report"
         for source_id in p.reposters:
-            best.setdefault(reposter_voice(source_id), "share")
+            best.setdefault(voices[source_id], "share")
     reports = sum(1 for role in best.values() if role == "report")
-    mentions = len({p.voice for p in mentioned_by} - set(best))
+    mentions = len({p.owner_voice for p in mentioned_by} - set(best))
     return reports, len(best) - reports, mentions
 
 
@@ -319,7 +320,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         group = sorted(group, key=lambda p: (times[p.id], not p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
-        voices = count_voices(group)
+        voices = count_voices(group, by_owner=True)   # one owner's channels one voice (issue 0111)
         if voices < NEWS_MIN_VOICES:
             continue
         ids = {p.id for p in group}

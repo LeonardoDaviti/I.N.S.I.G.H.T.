@@ -24,6 +24,7 @@ from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.url_normalization import normalize_url
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
+OWNERS_KEY = "news_owners"   # system_settings: the voices News counts by owner (issue 0111, SourceFacts.owners)
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
 
@@ -60,6 +61,23 @@ class NewsRepository:
         return {str(r[0]): r[1] for r in cur.fetchall()}
 
     # ---- the job: News ----------------------------------------------------------------
+
+    @staticmethod
+    def write_owners(cur: Cursor, owners: Dict[str, str]) -> int:
+        """Keep the owners the job counted News voices by (issue 0111), so reading News names them alike.
+        Returns 1 when they changed."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        if NewsRepository.owners(cur) == owners:
+            return 0
+        SystemSettingsRepository.upsert(cur, OWNERS_KEY, owners)
+        return 1
+
+    @staticmethod
+    def owners(cur: Cursor) -> Dict[str, str]:
+        """The owners the last story run counted News voices by: a voice -> its owner's voice."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        row = SystemSettingsRepository.get(cur, OWNERS_KEY)
+        return dict(row[0] or {}) if row else {}
 
     @staticmethod
     def write_news(cur: Cursor, stories: Sequence[NewsStory], *, since: datetime,

@@ -47,7 +47,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               one_card_per_domain, order, origins, owner_domain, own_names,
                                               place_kind, same_owner, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
-                                            date_alone, grouping, keys, page_key, threads)
+                                            date_alone, grouping, keys, page_key, reposter_voice, threads)
 from insight_core.utils.tree_rules import _PAGE, slug_title
 from insight_core.utils.url_normalization import normalize_url
 
@@ -264,10 +264,13 @@ class StoriesService:
 
     @staticmethod
     def _facts(sources: SourceFacts) -> Dict[str, Any]:
-        """What the rules read of each source, as a fingerprint, and the accounts followed."""
+        """What the rules read of each source, as a fingerprint, and the accounts followed. Its owner when it
+        is one of an owner's channels (issue 0111: News counts its voice so), only then, so no other print moves."""
+        owner = getattr(sources, "owner", {})
         return {"sources": {s: stamps.fingerprint([sources.kind[s], sources.publication(s), sources.own_site(s),
                                                    sources.home_site(s), sources.account.get(s), sources.name.get(s),
-                                                   sources.own_site(s) in sources.shared_sites])
+                                                   sources.own_site(s) in sources.shared_sites,
+                                                   *([owner[s]] if s in owner else [])])
                             for s in sorted(sources.kind)},
                 "accounts": sorted(a for a in sources.of_account)}
 
@@ -474,7 +477,7 @@ class StoriesService:
         read once, when it was saved) and its source's facts, here only (issue 0072)."""
         kind = sources.kind.get(row["source_id"], "site")
         author_source = sources.of_account.get(x_account(row["author"])) if kind == "x" and row["author"] else None
-        return StoryPost(
+        post = StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             # Issue 0076: one post for everyone, the title every page shows (its stored one until parsed).
             t=row["t"], title=row["title"] if row["shown_title"] is None else row["shown_title"], opening=row.get("opening"),
@@ -503,6 +506,12 @@ class StoriesService:
             date_alone=row["precision"] == "date" if row.get("precision") in ("date", "exact") else date_alone(row["t"]),
             undated=row.get("precision") == "none",
         )
+        # Who owns it and who else put it before you (issue 0111): News counts one owner's channels once.
+        post.owner = sources.owner_voice(post.voice)
+        post.other_owners = tuple(sources.owner_voice(reposter_voice(s)) for s in post.other_sources)
+        if not any(post.other_owners):
+            post.other_owners = ()
+        return post
 
     def recompute_safely(self, *, full: bool = False) -> Optional[Dict[str, Any]]:
         """The job, logged and never raising (after a fetch run, at start)."""
@@ -876,7 +885,7 @@ def rules_stamp() -> str:
     job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post).
     Any rule change that changes them (story_rules, tree_rules, news_rules, post_links, how a voice
     is told) changes it; a rename or a move doesn't."""
-    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
+    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
     posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
     found = grouping(posts)
     stories = found.stories

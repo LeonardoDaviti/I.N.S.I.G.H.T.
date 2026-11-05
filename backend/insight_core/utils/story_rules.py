@@ -103,6 +103,10 @@ class StoryPost:
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
     undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
     moved_to: Optional[str] = None         # where its page moved (issue 0108: a redirect stub's target), normalized
+    # Its owner's voice when that is another (issue 0111: a person's blog and video channel are one owner,
+    # SourceFacts.owners), and the same for each of `other_sources`: News counts voices by owner.
+    owner: Optional[str] = None
+    other_owners: Tuple[Optional[str], ...] = ()
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -115,6 +119,17 @@ class StoryPost:
         if self.kind == "reddit" and self.author:
             return "reddit:" + self.author
         return "source:" + self.source_id
+
+    @property
+    def owner_voice(self) -> str:
+        """Its voice as its owner's (issue 0111): News counts one owner's channels once."""
+        return self.owner or self.voice
+
+    def other_voices(self, by_owner: bool = False) -> List[str]:
+        """The voices of its other_sources (reposter_voice), with `by_owner` each as its owner's."""
+        owners = self.other_owners if by_owner else ()
+        return [(owners[k] if k < len(owners) and owners[k] else None) or reposter_voice(s)
+                for k, s in enumerate(self.other_sources)]
 
     @property
     def place(self) -> str:
@@ -672,13 +687,15 @@ def voice_groups(items: Iterable[Tuple[Any, Optional[str], str]]) -> List[List[A
     return list(groups.values())
 
 
-def count_voices(posts: Sequence[StoryPost]) -> int:
+def count_voices(posts: Sequence[StoryPost], *, by_owner: bool = False) -> int:
     """How many voices a story has: posts of one voice, and copies of one text, are one. A source
     that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
-    with its posts in the story, if it has some. A page you saved is no voice (issue 0070)."""
+    with its posts in the story, if it has some. A page you saved is no voice (issue 0070). With
+    `by_owner` (News, issue 0111) one owner's channels are one voice."""
     posts = [p for p in posts if p.kind != "saved"]
-    return len(voice_groups([*((p.id, p.text_key, p.voice) for p in posts),
-                             *((f"{p.id}>{s}", None, reposter_voice(s)) for p in posts for s in p.other_sources)]))
+    return len(voice_groups([*((p.id, p.text_key, p.owner_voice if by_owner else p.voice) for p in posts),
+                             *((f"{p.id}>{s}", None, v) for p in posts
+                               for s, v in zip(p.other_sources, p.other_voices(by_owner)))]))
 
 
 def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -693,12 +710,15 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for i, p in enumerate(posts):
         if p["kind"] == "saved":
             continue
-        items.append(((i, -1), p["text_key"], p["voice"]))
-        items += [((i, j), None, reposter_voice(s["id"])) for j, s in enumerate(p["others"])]
+        items.append(((i, -1), p["text_key"], p.get("owner") or p["voice"]))
+        items += [((i, j), None, s.get("owner") or reposter_voice(s["id"])) for j, s in enumerate(p["others"])]
     followed, reddit = [], []
     for group in voice_groups(items):
-        sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else posts[i]["others"][j]
-                   for i, j in group]
+        sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else
+                   {k: v for k, v in posts[i]["others"][j].items() if k != "owner"} for i, j in group]
+        # One owner's channels are one voice (issue 0111), named by a followed channel before a Reddit post.
+        k = next((k for k, (i, j) in enumerate(group) if not (j < 0 and posts[i]["kind"] == "reddit")), 0)
+        group, sources = [group[k], *group[:k], *group[k + 1:]], [sources[k], *sources[:k], *sources[k + 1:]]
         (i, j), first = group[0], dict(sources[0])
         if j < 0 and posts[i]["voice"].startswith("reddit:"):
             first.update(name="u/" + posts[i]["voice"].split(":", 1)[1], place=posts[i]["name"])

@@ -4,6 +4,7 @@ these rules (`suggestions` is its reference) and services/stories_service.py ran
 """
 from __future__ import annotations
 
+import bisect
 import math
 import re
 from collections import Counter, defaultdict
@@ -369,6 +370,92 @@ def same_owner(key: str, names: Iterable[str]) -> bool:
     """Whether a key holds one of a source's names (own_names): a word of it is the name, starts or ends with it."""
     names = [n for n in names if n]
     return any(w == n or w.startswith(n) or w.endswith(n) for w in owner_words(key) for n in names)
+
+
+# ---- one owner's channels among the followed sources (issue 0111: News counts a voice by owner) ----------
+# 0109's rule between two followed sources: a name of one in the other's own place (its account, or its site's
+# word: a writer's own label on a host of many writers), either way, and a link from one to the other's posts or
+# place; or one place followed twice. A platform's word (github, medium, youtube...) names no owner: a trending
+# feed of a code host is no one's channel. Measured on the server's copy (2026-11-05): 21 of 23 linked pairs right,
+# both wrong ones a code host's trending feed by its platform's word, which this leaves out.
+PLATFORM_WORDS = frozenset(_site_word(site) for site in DISCOVER_PLATFORMS)
+Channel = Tuple[str, str, str, Optional[str], str]   # (source id, kind, name, account, publication)
+
+
+def _place_words(kind: str, account: Optional[str], publication: str, shared_sites: Iterable[str]) -> Set[str]:
+    """The words a followed source's own place names its owner by (owner_words, for a source)."""
+    if kind != "site":
+        whole = account.rsplit("/", 1)[1].lstrip("@~").lower() if account and "/" in account else ""
+    else:
+        site = site_of(publication)
+        whole = publication.split(".", 1)[0] if site in set(shared_sites) and publication != site else _site_word(site)
+    words = {whole} | {part for part in re.split(r"[-_.]", whole) if part}
+    return {w for w in words if w} - PLATFORM_WORDS
+
+
+def owner_pairs(channels: Iterable[Channel], *, shared_sites: Iterable[str] = frozenset(),
+                platforms: Iterable[str] = DISCOVER_PLATFORMS) -> Dict[Tuple[str, str], str]:
+    """The pairs of followed sources that may be one owner: (a, b) with a < b -> "place" (one place followed
+    twice) or "name" (a name of one in the other's place, either way; a link decides). A source at a
+    platform's own host (a code host's trending feed) has no place of its own."""
+    shared, platforms = frozenset(shared_sites), frozenset(platforms)
+    info = {}
+    for source_id, kind, name, account, publication in channels:
+        place = (account or "") if kind != "site" else publication
+        if kind == "site" and publication.removeprefix("www.") in platforms:
+            place = ""
+        named = own_names(name, account="" if kind == "site" else account or "",
+                          publication=publication if kind == "site" else "", shared_sites=shared) - PLATFORM_WORDS
+        info[source_id] = (place, named, _place_words(kind, account, publication, shared) if place else set())
+    out: Dict[Tuple[str, str], str] = {}
+    by_place: Dict[str, List[str]] = defaultdict(list)
+    for source_id, (place, _, _) in info.items():
+        if place:
+            by_place[place].append(source_id)
+    for members in by_place.values():
+        for i, a in enumerate(sorted(members)):
+            for b in sorted(members)[i + 1:]:
+                out[(a, b)] = "place"
+    # A word that is a name, starts with it or ends with it (same_owner), found by the words' sorted order and
+    # their reversed letters' (256 sources: 62k pair tests otherwise).
+    words = sorted((w, i) for i, (place, _, ws) in info.items() if place for w in ws)
+    backwards = sorted((w[::-1], i) for w, i in words)
+
+    def starting(found: List[Tuple[str, str]], prefix: str) -> Iterable[str]:
+        k = bisect.bisect_left(found, (prefix, ""))
+        while k < len(found) and found[k][0].startswith(prefix):
+            yield found[k][1]
+            k += 1
+    for a, (place, named, _) in info.items():
+        if not place:
+            continue
+        for n in named:
+            for b in {*starting(words, n), *starting(backwards, n[::-1])} - {a}:
+                pair = (min(a, b), max(a, b))
+                out.setdefault(pair, "name")
+    return out
+
+
+def channel_owners(channels: Iterable[Channel], pairs: Mapping[Tuple[str, str], str],
+                   linked: Iterable[Tuple[str, str]]) -> Dict[str, str]:
+    """Each followed source of an owner of 2+ channels -> that owner (its first source by id): the pairs of one
+    place, and the named pairs one of which links the other (`linked`: (linking source, linked source))."""
+    linked = set(linked)
+    parent = {source_id: source_id for source_id, *_ in channels}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for (a, b), why in sorted(pairs.items()):
+        if a in parent and b in parent and (why == "place" or (a, b) in linked or (b, a) in linked):
+            ra, rb = find(a), find(b)
+            parent[max(ra, rb)] = min(ra, rb)
+    groups: Dict[str, List[str]] = defaultdict(list)
+    for source_id in parent:
+        groups[find(source_id)].append(source_id)
+    return {source_id: min(members) for members in groups.values() if len(members) > 1 for source_id in members}
 
 
 # ---- one card per owner domain (issue 0109 W5: 23 owners in 54 cards on the server) ------------------------

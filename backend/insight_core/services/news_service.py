@@ -62,6 +62,7 @@ class NewsService:
         since = self.clock() - NEWS_KEEP
         stories_now = self.rows(posts=posts, stories=stories, found=found, since=since)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
+        self.repo.write_owners(cur, getattr(sources, "owners", {}))   # how News named its voices (issue 0111)
         found_classics = self._classics(cur, sources)
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
@@ -116,6 +117,8 @@ class NewsService:
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
         stories_now = news(window, held, found)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
+        # How News named its voices (issue 0111); a source whose owner changed has its posts queued (_facts).
+        self.repo.write_owners(cur, getattr(sources, "owners", {}))
         # A classic no link points to any more (its links read into another address, 0109 B1) goes, as in a full run.
         urls = sorted(set(urls) | set(self.repo.unlinked_classics(cur)))
         urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
@@ -232,6 +235,7 @@ class NewsService:
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
+        owners = self.repo.owners(cur)   # one owner's channels one voice, as the job counted them (issue 0111)
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_story[row["_news"]].append(row)
@@ -255,7 +259,7 @@ class NewsService:
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
-            sources = story_voices([p["_voiced"] for p in covered], followed)
+            sources = story_voices([p["_voiced"] for p in covered], followed, owners)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
             # A lead whose own words are a short reaction reads what it quotes (post_parts.subject, issue 0076).
             item["title"] = head["_subject"] or item["title"]

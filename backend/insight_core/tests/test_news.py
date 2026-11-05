@@ -171,7 +171,51 @@ class NameTests(unittest.TestCase):
         self.assertEqual(surges(self.burst(kind="arxiv"), followed("s1", "s2", "s3")), [])
 
 
+class OwnerTests(unittest.TestCase):
+    """Issue 0111: a followed source's other channels are one owner, by 0109's rule (a name of one in the
+    other's own place, and a link between them), and two sources of one place are one."""
+
+    channels = [("blog", "site", "Jane Doe Blog", None, "janedoe.example"),
+                ("yt", "youtube", "@JaneDoe", "youtube.com/@janedoe", ""),
+                ("x", "x", "jane", "x.com/janedoe_ai", ""),
+                ("other", "site", "Jane Street Notes", None, "janestreet.example"),
+                ("trend", "site", "CodeHub Trending", None, "codehub.example"),
+                ("mine", "site", "writer codehub", None, "writer.codehub.example"),
+                ("dup1", "telegram", "chan", "t.me/somechan", ""), ("dup2", "telegram", "chan", "t.me/somechan", "")]
+
+    def owners(self, linked, platforms=frozenset({"codehub.example"})):
+        from insight_core.utils.discover_rules import channel_owners, owner_pairs
+        pairs = owner_pairs(self.channels, shared_sites=frozenset(), platforms=platforms)
+        return pairs, channel_owners(self.channels, pairs, linked)
+
+    def test_one_owner_by_a_name_and_a_link(self):
+        pairs, owners = self.owners({("blog", "yt"), ("x", "blog"), ("mine", "trend")})
+        self.assertEqual({owners[i] for i in ("blog", "yt", "x")}, {owners["blog"]})
+        self.assertEqual(pairs[("blog", "other")], "name", "'jane' starts janedoe: only a link decides")
+        self.assertNotIn("other", owners, "it links none of them")
+        self.assertNotIn("trend", owners, "a platform's own host is no one's place")
+        self.assertEqual(owners["dup1"], owners["dup2"], "one place followed twice")
+
+    def test_no_link_no_owner(self):
+        _, owners = self.owners(set())
+        self.assertEqual(set(owners), {"dup1", "dup2"})
+
+
 class NewsStoriesTests(unittest.TestCase):
+    def test_one_owners_channels_are_one_voice(self):
+        # Issue 0111: a person's video channel and blog, one News voice; the row of only them is no News
+        page = "https://news.example/2026/10/the-talk"
+        posts = [post("v", "yt", kind="youtube", title="A Talk With Someone", links=[(page, None)]),
+                 post("b", "blog", title="A talk with someone, the transcript", links=[(page, None)])]
+        stories = group(posts)
+        self.assertEqual(len(news(posts, stories, [])), 1, "two sources, two voices, without owners")
+        owned = [post("v", "yt", kind="youtube", title="A Talk With Someone", links=[(page, None)], owner="site:blog.test"),
+                 post("b", "blog", title="A talk with someone, the transcript", links=[(page, None)])]
+        self.assertEqual(news(owned, group(owned), []), [], "one owner is one voice")
+        third = owned + [post("c", "s3", hours=1, title="On the talk", links=[(page, None)])]
+        [row] = news(third, group(third), [])
+        self.assertEqual((row.voices, row.reports + row.shares), (2, 2))
+
     def test_the_lead_comes_from_the_main_story_or_its_own_name(self):
         # Issue 0111: (id, 0050 story, its voices, the joining name)
         row = [("p1", "big", 5, "paper name"), ("t1", "thread", 1, "model x"), ("p2", "big", 5, "model x"),
@@ -508,6 +552,33 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(item["id"], first, "the main story's first report, not the other story's origin")
         [delta] = [i for i in self.news.news_on(self.cur, f"source:{d}")["items"] if i["story"]["id"] == first]
         self.assertEqual(delta["id"], thread, "on its own source's News a source's post still leads")
+
+    def test_one_owners_channels_are_one_news_voice(self):
+        """Issue 0111: a person's blog and video channel (the blog links the channel's videos, the channel's
+        handle holds the blog's name) are one voice in News, named once, the channel with it; a row of only
+        them is no News; a Reddit poster with a followed account's handle is that account."""
+        handle = f"janedoe{''.join(c for c in self.mark if c.isalpha()) or 'x'}"
+        name = f"Zork{self.mark[:4]} 9"
+        blog = self._source("Jane Doe Blog")
+        channel = insert_source(self.cur, "@JaneDoe", platform="youtube", handle=f"https://www.youtube.com/@{handle}",
+                                in_main_digest=True, followed_days=60)
+        video = f"https://www.youtube.com/watch?v={self.mark}vid"
+        talk = self._post(channel, site="youtube", url=video, hours_ago=10, title=f"{name}: a talk")
+        self._post(blog, site="janedoe", hours_ago=9, title=f"{name}: the transcript", html=self._link(video))
+        self._post(blog, site="janedoe", hours_ago=8, title=f"{name}, notes")
+        self._job()
+        self.assertFalse([i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == talk],
+                         "one owner's two channels are no News")
+        gamma = self._source("Gamma")
+        sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
+        self._post(gamma, site="gamma", hours_ago=7, title=f"{name} reviewed")
+        self._post(sub, site="reddit", hours_ago=6, title=f"{name}: I made the talk",
+                   html=f'submitted by <a href="https://www.reddit.com/user/{handle}"> /u/{handle} </a>')
+        self._job()
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == talk]
+        self.assertEqual(item["story"]["voices"], 2)
+        named = [(s["name"], [w["name"] for w in s.get("with", ())]) for s in item["story"]["sources"]]
+        self.assertEqual(named, [("@JaneDoe", ["Jane Doe Blog", "r/sub"]), ("Gamma", [])])
 
     def _urls(self, *ids):
         self.cur.execute("SELECT url FROM posts WHERE id = ANY(%s::uuid[])", (list(ids),))

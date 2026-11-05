@@ -332,6 +332,8 @@ class SearchRepository:
             story["all"].append({**_item(row[:-11]), "role": role, "_quotes": row[21],
                                  "_voiced": voiced(row, voice, content_hash)})
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
+        from insight_core.db.repo_news import NewsRepository as _News
+        owners = _News.owners(cur)   # News counts one owner's channels once (issue 0111)
         for item in items:
             found = stories.get(item["id"])
             item["story"], item["news"] = (found["story"], found["news"]) if found else (None, None)
@@ -340,7 +342,7 @@ class SearchRepository:
             posts = found.pop("all")
             first_report = lead([(p["id"], p["role"]) for p in posts])
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
-            found["story"]["sources"] = story_voices([p["_voiced"] for p in covered], followed)   # as News (0082)
+            found["story"]["sources"] = story_voices([p["_voiced"] for p in covered], followed, owners)   # as News (0082)
             found["story"]["posts"] = NewsRepository.lines(posts, item["id"])
 
     def _classics(self, cur: Cursor, query: SearchQuery, *, now: datetime
