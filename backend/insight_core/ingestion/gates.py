@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import time
 import weakref
 from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
 
+from insight_core.ingestion.host_budgets import HostBudgets
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
 from insight_core.ingestion.kinds.nitter_rss import NITTER_HOSTS
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY
@@ -189,6 +191,7 @@ class FetchGates:
         host_floors: Mapping[str, float] = HOST_FLOORS,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        budgets: Optional[HostBudgets] = None,
     ) -> None:
         self.max_concurrency = max(1, max_concurrency)
         self.ytdlp_concurrency = max(1, ytdlp_concurrency)
@@ -197,12 +200,23 @@ class FetchGates:
         self.ytdlp_spacer = StartSpacer(ytdlp_min_start_interval_s, clock=clock, sleep=sleep)
         self.host_limiter = HostLimiter(host_floors, clock=clock, sleep=sleep)
         self.sleep = sleep   # the wait a limiting host asked for, before the one retry
+        self.clock = clock
+        # Each host's budget, learned from the limits archives meet (issue 0107).
+        self.budgets = budgets if budgets is not None else HostBudgets()
 
     @classmethod
     def from_env(cls) -> "FetchGates":
         # The default executor is min(32, cpu + 4) threads and every kind's I/O runs through
         # asyncio.to_thread, so a global budget far above that only queues invisibly.
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            from insight_core.ingestion.ports import DbHostBudgetStore   # ports imports the DB layer
+
+            budgets = HostBudgets(DbHostBudgetStore(db_url))
+        else:
+            budgets = HostBudgets()
         return cls(
+            budgets=budgets,
             max_concurrency=env_int("INSIGHT_FETCH_MAX_CONCURRENCY", 8, minimum=1),
             # yt-dlp's budget is per IP, not per channel: 2026-07-23 one video spent 7.5 min
             # retrying "Sign in to confirm you're not a bot" with 22 channels in flight.

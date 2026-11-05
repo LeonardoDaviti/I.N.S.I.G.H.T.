@@ -403,6 +403,7 @@ class IngestionRunner:
                     await self.gates.sleep(wait)
                     posts = await fetch_latest()
                 self.gates.host_limiter.succeeded(host)
+                self.gates.budgets.counted(host)   # spends the budget an archive may be measuring (0107)
                 if watching:
                     checks = await self._check_pages(source, kind, full)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,

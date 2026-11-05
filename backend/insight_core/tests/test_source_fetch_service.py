@@ -11,6 +11,7 @@ import psycopg
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
+from insight_core.ingestion.host_budgets import HostBudgets, MemoryHostBudgetStore
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, Inspection, KindUnavailable, PolitenessProfile, start_at
@@ -343,6 +344,7 @@ def _page(n: int) -> ArchivePage:
 
 
 LIMITED = HttpError("HTTP 429 while fetching", status=429, retry_after=4)
+WALL_EPOCH = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)   # the wall clock at SleepClock 0
 
 
 class _ScriptedPagesKind(FakeKind):
@@ -366,9 +368,10 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
 
     def service(self, kind, host_floors=None):
         self.clock = SleepClock()
+        self.wall = lambda: WALL_EPOCH + timedelta(seconds=self.clock.now)
         self.gates = SpyFetchGates(clock=self.clock, sleep=self.clock.sleep, host_floors=host_floors or {})
         service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
-                                     gates=self.gates)
+                                     gates=self.gates, clock=self.wall)
         service.sources_service = self.sources = _PlanSources()
         service.posts_service = _Posts()
         service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=self.sources)
@@ -400,22 +403,186 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(e["message"], e["level"]) for e in events if e["stage"] == "slowed"],
                          [("tg.i-c-a.su: too many requests, slowing to 5 s", "warning")], "a warning, as in a run")
 
-    async def test_failing_twice_pauses_with_the_checkpoint_and_resume_starts_there(self):
+    async def test_failing_twice_waits_with_the_checkpoint_and_resume_starts_there(self):
+        """Issue 0107: the second limit in a row no longer pauses: the archive waits 5 minutes."""
         kind = _ScriptedPagesKind([_page(1), LIMITED], [LIMITED], [_page(2)])
         service = self.service(kind)
-        result = await service.archive_source("s1")
+        events = []
+        result = await service.archive_source("s1", progress_callback=events.append)
         self.assertTrue(result["success"])
-        self.assertTrue(result["paused"])
-        self.assertEqual(result["paused_reason"], "tg.i-c-a.su is limiting us")
-        self.assertEqual(result["message"], "Paused: tg.i-c-a.su is limiting us; resume later")
+        self.assertIsNone(result.get("paused"))
+        self.assertTrue(result["waiting"])
+        self.assertEqual(result["waiting_host"], "tg.i-c-a.su")
+        self.assertEqual(result["waits"], 1)
+        self.assertEqual(datetime.fromisoformat(result["waiting_until"]) - self.wall(), timedelta(minutes=5))
+        self.assertEqual(result["message"], "Waiting for tg.i-c-a.su's limit")
+        self.assertEqual(events[-1]["stage"], "waiting")
         saved = self.sources.saved["checkpoint"]
         self.assertEqual(saved["page"], 1)
-        self.assertNotIn("completed_at", saved, "a paused archive's checkpoint stays resumable")
+        self.assertNotIn("completed_at", saved, "a waiting archive's checkpoint stays resumable")
         self.assertTrue(self.sources.saved["resume_ready"])
+        self.assertEqual(self.sources.saved["waiting"], {"host": "tg.i-c-a.su", "until": result["waiting_until"]})
 
         self.sources.current = self.sources.saved
         await service.archive_source("s1", resume=True)
         self.assertEqual(kind.started_from[-1]["page"], 1)
+        self.assertIsNone(self.sources.saved["waiting"], "a page fetched: no longer waiting")
+
+
+class FakeWindowHost:
+    """A host that allows `allows` requests per `window_s` seconds, then answers 429 until the
+    window ends. A window begins at the first request after the last one ended (a bridge whose
+    upstream sessions refill)."""
+
+    def __init__(self, clock, allows: int, window_s: float):
+        self.clock, self.allows, self.window_s = clock, allows, window_s
+        self.started = None
+        self.used = 0
+        self.log: list[tuple[float, str, bool]] = []    # (when, who, went through)
+
+    def ask(self, who: str = "archive") -> bool:
+        now = self.clock()
+        if self.started is None or now >= self.started + self.window_s:
+            self.started, self.used = now, 0
+        through = self.used < self.allows
+        self.used += through
+        self.log.append((now, who, through))
+        return through
+
+    def refused_after(self, when: float) -> list:
+        return [entry for entry in self.log if entry[0] >= when and not entry[2]]
+
+
+class _WindowedKind(FakeKind):
+    """Pages 1..total, one request each to the fake host; a refused request is HTTP 429."""
+
+    def __init__(self, host: FakeWindowHost, total: int):
+        super().__init__("fake_windowed", inspection=Inspection(total, 1, None))
+        self.host, self.total = host, total
+
+    async def archive_pages(self, source, target, checkpoint, rate):
+        page = int((checkpoint or {}).get("page") or 0)
+        while page < self.total:
+            if not self.host.ask():
+                raise HttpError("HTTP 429 while fetching", status=429)
+            page += 1
+            yield _page(page)
+
+
+class _LiveRun:
+    """The hourly run's fetches of the archive's host: due once at `due_at`; the run asks the
+    host `requests` times while the archive keeps out of the way."""
+
+    def __init__(self, host: FakeWindowHost, due_at: float, requests: int):
+        self.host, self.due_at, self.requests = host, due_at, requests
+        self.state = "not_due"
+        self.asked_by: list[str] = []
+
+    def __call__(self, host_key: str) -> bool:
+        self.asked_by.append(host_key)
+        if self.state == "not_due" and self.host.clock() >= self.due_at:
+            self.state = "due"
+            return True
+        if self.state == "due":                     # the archive yielded: the run fetches now
+            for _ in range(self.requests):
+                self.host.ask("live")
+            self.state = "done"
+        return False
+
+
+class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0107: an archive waits a host's window out, continues by itself, and learns the budget."""
+
+    N, WINDOW_S = 10, 900
+
+    def setUp(self):
+        self.clock = SleepClock()
+        self.wall = lambda: WALL_EPOCH + timedelta(seconds=self.clock.now)
+
+    def service(self, kind, live=None):
+        self.budgets = HostBudgets(MemoryHostBudgetStore(), clock=self.wall)
+        self.gates = SpyFetchGates(clock=self.clock, sleep=self.clock.sleep, budgets=self.budgets)
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
+                                     gates=self.gates, clock=self.wall, live_fetch_due=live)
+        service.sources_service = self.sources = _PlanSources()
+        service.posts_service = _Posts()
+        service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=self.sources)
+        service._save_posts = lambda _sid, posts: SaveBatchResult(inserted_ids=[p["url"] for p in posts])
+        return service
+
+    async def archive_until_done(self, service, events, *, legs=20):
+        """What the scheduler does: continue a waiting archive once its time has come. Each event is
+        stamped with the fake clock (`_t`)."""
+        def record(event):
+            events.append({**event, "_t": self.clock.now})
+
+        result = await service.archive_source("s1", progress_callback=record)
+        self.waits = []
+        while result.get("waiting") and legs:
+            until = datetime.fromisoformat(result["waiting_until"])
+            self.waits.append(round((until - self.wall()).total_seconds() / 60))
+            self.clock.now += (until - self.wall()).total_seconds()
+            result = await service.continue_archive("s1", result, progress_callback=record)
+            legs -= 1
+        return result
+
+    async def test_an_archive_of_3n_pages_finishes_by_itself(self):
+        host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
+        service = self.service(_WindowedKind(host, 3 * self.N))
+        events = []
+        result = await self.archive_until_done(service, events)
+        self.assertNotIn("waiting", result)
+        self.assertIsNone(result.get("paused"))
+        self.assertEqual(events[-1]["message"], "Archive completed with 30 posts")
+        self.assertEqual((result["posts_fetched"], result["posts_inserted"], result["pages_fetched"]), (30, 30, 30),
+                         "the counts carry across the waits")
+        self.assertEqual(self.waits, [5, 10, 5, 10], "5 min, then doubling while no page comes, then 5 again")
+        stages = [e["stage"] for e in events]
+        self.assertEqual(stages.count("planning_complete"), 1)
+        self.assertEqual(stages.count("waiting"), 4)
+        self.assertEqual(stages[-1], "completed")
+
+    async def test_after_two_measured_limits_it_never_gets_a_429_again(self):
+        host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
+        service = self.service(_WindowedKind(host, 6 * self.N))
+        events = []
+        await self.archive_until_done(service, events)
+        learned = [e for e in events if e["stage"] == "learned"]
+        self.assertEqual([e["limits"] for e in learned], [1, 2])
+        second = learned[1]
+        self.assertEqual(second["message"], "tg.i-c-a.su: about 10 requests per 19 min, learned from 2 limits;"
+                                            " pacing to 80%: one page every 140 s")
+        paced_from = second["_t"]
+        self.assertEqual(host.refused_after(paced_from), [], "paced under the limit from then on")
+        self.assertEqual(len([entry for entry in host.log if entry[0] >= paced_from]), 4 * self.N)
+        self.assertEqual(self.budgets.learned("tg.i-c-a.su").requests, self.N)
+
+    async def test_live_fetches_due_meanwhile_go_through(self):
+        host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
+        live = _LiveRun(host, due_at=3900, requests=2)
+        service = self.service(_WindowedKind(host, 4 * self.N), live=live)
+        events = []
+        result = await self.archive_until_done(service, events)
+        self.assertEqual(result["posts_fetched"], 40)
+        self.assertEqual(live.state, "done")
+        # Asked at 4010 s, in the window the archive began at 3140 s and has spent 7 of 10 requests of.
+        self.assertEqual([entry[1:] for entry in host.log if entry[1] == "live"], [("live", True), ("live", True)])
+        self.assertEqual(host.refused_after(3140), [])
+        self.assertEqual([e["message"] for e in events if e["stage"] == "yielding"],
+                         ["Making room for tg.i-c-a.su's live fetches"])
+        self.assertEqual(set(live.asked_by), {"tg.i-c-a.su"})
+
+    async def test_six_waits_with_no_page_gained_pause_it_saying_why(self):
+        host = FakeWindowHost(self.clock, 1, 10 ** 9)     # one request, then never again
+        service = self.service(_WindowedKind(host, 5))
+        events = []
+        result = await self.archive_until_done(service, events)
+        self.assertEqual(self.waits, [5, 10, 20, 40, 60, 60])
+        self.assertTrue(result["paused"])
+        self.assertEqual(result["paused_reason"], "tg.i-c-a.su is still limiting us after 6 waits")
+        self.assertEqual(result["posts_fetched"], 1)
+        self.assertIsNone(self.sources.saved["waiting"])
+        self.assertNotIn("completed_at", self.sources.saved["checkpoint"], "Resume continues from it")
 
 
 class ArchiveKindSessionTests(unittest.IsolatedAsyncioTestCase):

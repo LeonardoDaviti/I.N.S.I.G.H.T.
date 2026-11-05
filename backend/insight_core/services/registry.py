@@ -48,7 +48,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     from insight_core.services.reader_service import ReaderService
     from insight_core.services.saved_service import SavedService
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
-    from insight_core.services.source_fetch_service import SourceFetchService
+    from insight_core.services.source_fetch_service import archive_service
     from insight_core.services.sources_service import SourcesService
     from insight_core.services.stories_service import StoriesService
     from insight_core.services.news_service import NewsService
@@ -57,7 +57,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     from insight_core.services.youtube_service import YouTubeService
 
     db_url = db_url or ensure_database()
-    source_fetch = SourceFetchService(db_url)
+    source_fetch = archive_service(db_url)
     sources = SourcesService(db_url)
     source_config_sync = SourceConfigSyncService(db_url)
     reader = ReaderService(db_url)
