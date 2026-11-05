@@ -27,6 +27,7 @@ post it collected, and that one DELETE can run for minutes.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from contextlib import contextmanager
@@ -36,6 +37,8 @@ import psycopg
 from psycopg_pool import ConnectionPool
 
 from insight_core.utils.env import env_int
+
+logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_SECONDS = 10
 STATEMENT_TIMEOUT_MS = 300_000   # 5 minutes: the cascading delete of a big source
@@ -98,10 +101,21 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[psycopg.Cursor]:
-        """One transaction on a pooled connection: committed if the block ends, rolled back if it raises."""
+        """One transaction on a pooled connection: committed if the block ends, rolled back if it raises. What the
+        block hands `after_commit` runs once the commit is done, and never after a roll back."""
         with self.connection() as conn:
-            with conn.transaction(), conn.cursor() as cur:
-                yield cur
+            setattr(conn, _AFTER_COMMIT, [])
+            try:
+                with conn.transaction(), conn.cursor() as cur:
+                    yield cur
+                hooks = getattr(conn, _AFTER_COMMIT)
+            finally:
+                setattr(conn, _AFTER_COMMIT, None)
+        for hook in hooks:
+            try:
+                hook()
+            except Exception:   # noqa: BLE001 - the transaction is committed; a hook never undoes it
+                logger.exception("database: a hook after a commit failed")
 
     def session_connection(self, *, autocommit: bool = False) -> psycopg.Connection:
         """An unpooled connection the caller closes: for session state (an advisory lock)
@@ -113,6 +127,19 @@ class Database:
             if self._opened:
                 self._pool.close()
                 self._opened = False
+
+
+_AFTER_COMMIT = "_insight_after_commit"
+
+
+def after_commit(conn: Any, hook: Callable[[], Any]) -> bool:
+    """Run `hook` once the transaction `Database.transaction` opened on `conn` commits (never if it rolls back).
+    False when `conn` is in no such transaction (a plain connection): the hook is not kept."""
+    hooks = getattr(conn, _AFTER_COMMIT, None)
+    if hooks is None:
+        return False
+    hooks.append(hook)
+    return True
 
 
 _databases: Dict[str, Database] = {}

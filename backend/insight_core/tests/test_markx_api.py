@@ -210,6 +210,59 @@ class Leases(_Api):
         _, none = self.lease(limit=20, worker="device-2")
         self.assertEqual((none["tasks"], none["guides"]), ([], {}))
 
+    def test_two_first_leases_at_once_on_a_fresh_database_both_succeed(self):
+        """0112 bug 4: the first lease marked the guides loaded before its transaction committed, so a second lease
+        planned tasks naming a guide not committed yet (a foreign-key failure, HTTP 500, worker exit 3)."""
+        import threading
+        import time
+        from unittest import mock
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")       # a fresh database: no guide yet
+        schemas._ready.clear()
+        tasks.PLANNERS = {"read": lambda cur, **kw: tasks.plan_posts(cur, "read", **kw)}
+        self.post(title="Globex raised $300m")
+        counts, first = repo.queue_counts, threading.Event()
+
+        def slow_first(cur):                    # the first lease holds its transaction open after loading the guides
+            if not first.is_set():
+                first.set()
+                time.sleep(1.0)
+            return counts(cur)
+        got = {}
+
+        def lease(name):
+            got[name] = self.lease(worker=name)
+        with mock.patch.object(repo, "queue_counts", slow_first):
+            one = threading.Thread(target=lease, args=("device-1",))
+            one.start()
+            self.assertTrue(first.wait(5))
+            two = threading.Thread(target=lease, args=("device-2",))
+            two.start()
+            one.join(10)
+            two.join(10)
+        self.assertEqual([got[n][0] for n in ("device-1", "device-2")], [200, 200], got)
+        self.assertEqual(sum(len(got[n][1]["tasks"]) for n in got), 1)
+
+    def test_the_guides_are_ready_only_once_their_load_commits(self):
+        from unittest import mock
+        from insight_core.db import database
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        schemas._ready.clear()
+        with mock.patch.object(schemas, "load_guides", side_effect=RuntimeError("the load failed")):
+            with self.assertRaises(RuntimeError):
+                with database.transaction(db_url()) as cur:
+                    schemas.ensure_guides(cur)
+        self.assertEqual(schemas._ready, set())                       # a failed load: not ready, the next one retries
+        with database.transaction(db_url()) as cur:
+            schemas.ensure_guides(cur)
+            self.assertEqual(schemas._ready, set())                   # loaded, not committed yet: not ready
+        self.assertEqual(len(schemas._ready), 1)
+        self.cur.execute("SELECT count(*) FROM mx_guides")
+        self.assertEqual(self.cur.fetchone()[0], len(schemas.guide_ids()))
+        with mock.patch.object(schemas, "load_guides") as load:
+            with database.transaction(db_url()) as cur:
+                schemas.ensure_guides(cur)
+        load.assert_not_called()
+
     def test_a_task_input_is_sent_as_built(self):
         pid = self.post(links=[("https://example.com/a", "Widget notes"), ("https://example.com/b", None)])
         self.task(post=pid)
