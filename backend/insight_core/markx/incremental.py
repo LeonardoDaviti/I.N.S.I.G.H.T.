@@ -53,6 +53,10 @@ class Memo:
     post_stamps: Dict[str, Tuple] = field(default_factory=dict)    # post -> its rows' xmins (post, parts, source, links)
     texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post
     rules: Dict[str, Any] = field(default_factory=dict)            # post -> decide.Post (its words counted once)
+    readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading (never changed once stored)
+    inputs: Dict[Tuple, str] = field(default_factory=dict)         # a render's (kind, (post, stamp)...) -> its input
+    inputs_before: Dict[Tuple, str] = field(default_factory=dict)  # ... the last run's (only what a run uses is kept)
+    surges: Optional[Tuple[Tuple, List[Any]]] = None               # (news_surges' stamp, the surges as news reads them)
     copies: Dict[Tuple, frozenset] = field(default_factory=dict)   # a story's (post, stamp) members -> its near-copies
     tasks: Dict[Tuple[str, str], Tuple[str, str, int]] = field(default_factory=dict)   # (kind, hash) -> (id, status, n)
     keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # task id -> (kind, input hash)
@@ -136,6 +140,7 @@ def refresh(cur: Any, memo: Memo) -> Dict[str, Any]:
     of those that changed (the dirty tasks), and Mark IX's table stamps. Returns the report (dirty tasks, their posts,
     which tables changed); the memo holds this snapshot's tasks and calls after."""
     cold = not memo.tasks
+    memo.inputs_before, memo.inputs = memo.inputs, {}
     cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, COALESCE(c.n, 0), t.a::text, t.b::text
                      FROM mx_tasks t
                      LEFT JOIN (SELECT task_id, count(*) n FROM mx_calls WHERE valid GROUP BY task_id) c ON c.task_id = t.id
@@ -190,6 +195,41 @@ def texts(cur: Any, memo: Memo, ids: Iterable[str]) -> Dict[str, Any]:
             memo.post_stamps.pop(i, None)
     memo.report["texts_read"] = len(stale)
     return {i: memo.texts[i] for i in ids if i in memo.texts}
+
+
+def readings(cur: Any, memo: Memo, ids: Iterable[str]) -> Dict[str, dict]:
+    """The posts' readings: a reading is stored once and never changed (the first stays), so only the posts the memo
+    holds none for are read."""
+    from insight_core.markx import tasks
+    ids = set(ids)
+    missing = sorted(i for i in ids if i not in memo.readings)
+    if missing:
+        memo.readings.update(tasks.readings(cur, missing))
+    return {i: memo.readings[i] for i in ids if i in memo.readings}
+
+
+def rendered(memo: Optional[Memo], kind: str, ids: Sequence[str], render) -> str:
+    """`render()`'s input, kept by the posts' row versions (a render reads only those posts' texts)."""
+    if memo is None:
+        return render()
+    key = (kind, tuple((i, memo.post_stamps.get(i)) for i in ids))
+    if key not in memo.inputs:
+        memo.inputs[key] = memo.inputs_before[key] if key in memo.inputs_before else render()
+    return memo.inputs[key]
+
+
+def surges(cur: Any, memo: Optional[Memo]) -> List[Any]:
+    """Mark IX's stored surges, longest first as News reads them (news_rules.longest), kept while news_surges is as
+    the memo's stamp says."""
+    from insight_core.db.repo_news import NewsRepository
+    from insight_core.utils.news_rules import longest
+    stamp = (memo.stamps or {}).get("news_surges") if memo is not None else None
+    if memo is not None and stamp is not None and memo.surges is not None and memo.surges[0] == stamp:
+        return memo.surges[1]
+    found = sorted(longest(NewsRepository.stored_surges(cur)), key=lambda s: (s.at, s.name))
+    if memo is not None and stamp is not None:
+        memo.surges = (stamp, found)
+    return found
 
 
 def copies(memo: Memo, members: Sequence[Any]) -> frozenset:

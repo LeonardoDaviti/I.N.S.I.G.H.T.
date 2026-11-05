@@ -700,7 +700,8 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     for sid, pid in cur.fetchall():
         ix_mentions[sid].add(pid)
     return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts,
-                 readings=tasks.readings(cur, ids), candidates=window, ix_mentions=dict(ix_mentions), memo=memo)
+                 readings=incremental.readings(cur, memo, ids) if memo is not None else tasks.readings(cur, ids),
+                 candidates=window, ix_mentions=dict(ix_mentions), memo=memo)
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
@@ -984,7 +985,7 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
     the run's cap on new connect tasks (the Ask's: `connect_new`, less what `connect_open` leaves room for) keeps the
     newest; the rest wait for later runs."""
-    from insight_core.markx import tasks
+    from insight_core.markx import incremental, tasks
     rows: List[Dict[str, Any]] = []
 
     def sid(key: str) -> Optional[str]:
@@ -1007,8 +1008,8 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
         pairs.append((x0, y0, cos))
     pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
     for x0, y0, _cos in pairs:
-        text = tasks.connect_input(tasks._earliest([world.text[p] for p in groups[x0]]),
-                                   tasks._earliest([world.text[p] for p in groups[y0]]))
+        text = incremental.rendered(world.memo, "connect", (*groups[x0], "|", *groups[y0]), lambda: tasks.connect_input(
+            tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])))
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0])
         if v is None or v.relation not in CONNECT_RELATIONS:
             continue
@@ -1024,6 +1025,9 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     """Haiku's headline (F4) for every News story, from its first 6 members: asked once, stored when answered."""
     from insight_core.markx import repo, tasks
     changed = 0
+    cur.execute("SELECT id::text, headline, headline_call::text FROM mx_stories WHERE id = ANY(%s::uuid[])",
+                ([ids[k] for k in news_keys],))
+    stored = {sid: {"headline": h, "headline_call": c} for sid, h, c in cur.fetchall()}
     for key in news_keys:
         ps = tasks._earliest([world.text[p] for p in out.about[key] if p in world.text])
         if not ps:
@@ -1031,7 +1035,7 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
         got = ask.answer("headline", tasks.headline_input(ps), a=ps[0].id)
         if got is None:
             continue
-        story = repo.get_story(cur, ids[key])
+        story = stored.get(ids[key])
         text = (got[0].get("headline_en") or "").strip()
         if story and text and (story.get("headline") != text or str(story.get("headline_call") or "") != got[1]):
             repo.set_story_headline(cur, ids[key], headline=text, headline_call=got[1])

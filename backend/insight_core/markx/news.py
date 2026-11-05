@@ -76,15 +76,13 @@ def window_posts(cur: Any, since: datetime) -> Set[str]:
 
 def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
-            first: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+            first: Optional[Dict[str, Any]] = None, memo: Any = None) -> List[Dict[str, Any]]:
     """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
     story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
     rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
     story touching them, and a set closed under rows, stories, mentions and surges. `first` gets each story's
     first_at."""
-    from insight_core.db.repo_news import NewsRepository
     from insight_core.services.news_service import NewsService
-    from insight_core.utils.news_rules import longest
     from insight_core.utils.story_rules import Story, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
@@ -106,7 +104,8 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
         for p in ps:
             if not sid.startswith("one:"):
                 story_of.setdefault(p.id, sid)
-    found = sorted(longest(NewsRepository.stored_surges(cur)), key=lambda s: (s.at, s.name))
+    from insight_core.markx import incremental
+    found = incremental.surges(cur, memo)
     made = NewsService.rows(posts=list(sp.values()), stories=built, found=found, since=since)
     out = []
     for s in made:
@@ -133,13 +132,13 @@ def last_written(cur: Any) -> Optional[str]:
 
 
 def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
-                  last: Dict[str, Any], window: Set[str]) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
+                  last: Dict[str, Any], window: Set[str], memo: Any = None
+                  ) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
     """0116: the last run's rows, with only those its changed stories reach made again (as Mark IX's incremental News,
     0072 A). The seeds: the posts of every story whose members or mentions changed (now and before), the posts that
     came into or left the window, and the stories whose start left it. The group: the seeds with every row, story
     (members and mentions) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
-    from insight_core.db.repo_news import NewsRepository
-    from insight_core.utils.news_rules import longest
+    from insight_core.markx import incremental
     stories = {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}
     seeds: Set[str] = set(window ^ last["window"])
     for sid in set(stories) | set(last["stories"]):
@@ -154,7 +153,7 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
             if v:
                 seeds |= set(v[0]) | set(v[1])
     surges_of: Dict[str, List[Set[str]]] = defaultdict(list)
-    for s in longest(NewsRepository.stored_surges(cur)):
+    for s in incremental.surges(cur, memo):
         for pid in s.posts:
             surges_of[pid].append(set(s.posts))
     rows_of_post: Dict[str, List[int]] = defaultdict(list)
@@ -182,7 +181,7 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
         group |= frontier
     touching = {sid: (sorted(v[0]), set(v[1])) for sid, v in stories.items() if (v[0] | v[1]) & group}
     first = {sid: at for sid, at in last["first"].items() if sid in stories and sid not in touching}
-    made = rows_of(cur, touching, since, only=group, window=window, first=first) if group else []
+    made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo) if group else []
     kept = [r for r in last["rows"] if not any(p["post_id"] in group for p in r["posts"])]
     return sorted(kept + made, key=lambda r: (r["first_at"], str(r["id"]))), group, first
 
@@ -214,10 +213,10 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     first: Dict[str, Any] = {}
     if (memo is not None and memo.news is not None
             and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
-        rows, group, first = _changed_rows(cur, stories, since, memo.news, window)
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)
         how = "incremental"
     else:
-        rows = rows_of(cur, stories, since, window=window, first=first)
+        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo)
     ix_of, ix_rows = _ix_news(cur, since)
     x_of = {p["post_id"]: r["id"] for r in rows for p in r["posts"]}
     for r in rows:
