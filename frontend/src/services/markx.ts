@@ -28,6 +28,8 @@ export interface MarkxLine {
   at: string | null;
   url?: string | null;
   role?: string;
+  /** The surging name Mark IX's News joined it by, when it did. */
+  name?: string | null;
   why: MarkxWhy | null;
   /** What Mark IX did with it: the News row it is in (and whether that is this row's), or null: none. */
   ix: { row: string; title: string | null; same_row: boolean } | null;

@@ -38,7 +38,9 @@ function PostLine({ line, now }: { line: MarkxLine; now: Date }) {
           <span className="text-fg-3"> · {line.source}</span>
         </span>
         <span className="mt-0.5 block text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
-          {whyWords(line.why)}
+          {line.why ? whyWords(line.why) : line.name
+            ? `in no Mark X story: Mark IX's News joins it by the name “${line.name}”`
+            : "in no Mark X story: Mark IX's News joins it"}
           {words ? <span className="text-fg-3"> — {words}</span> : null}
         </span>
         <span className="block text-[0.75rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">{ixWords(line.ix)}</span>
@@ -80,7 +82,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
     <li id={`mx-${row.id}`} className="border-b border-line">
       <details className="group">
         <summary className="flex cursor-pointer list-none gap-3 py-3.5 [&::-webkit-details-marker]:hidden">
-          <span aria-hidden="true" className="mt-0.5 w-3 shrink-0 text-fg-3 group-open:rotate-90">›</span>
+          <span aria-hidden="true" className="inline-block h-5 w-3 shrink-0 self-start text-center leading-5 text-fg-3 group-open:rotate-90">›</span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
               <TagChip tag={row.tag} />
@@ -182,7 +184,7 @@ export default function MarkXNews() {
               <li key={row.id} className="border-b border-line">
                 <details className="group">
                   <summary className="flex cursor-pointer list-none gap-3 py-3 [&::-webkit-details-marker]:hidden">
-                    <span aria-hidden="true" className="w-3 shrink-0 text-fg-3 group-open:rotate-90">›</span>
+                    <span aria-hidden="true" className="inline-block h-5 w-3 shrink-0 self-start text-center leading-5 text-fg-3 group-open:rotate-90">›</span>
                     <span className="min-w-0 text-[0.875rem] leading-5 text-fg [overflow-wrap:anywhere]">
                       {row.title || '(no title)'}
                       <span className="text-fg-3"> · {plural(row.voices ?? 0, 'source')} in Mark IX</span>

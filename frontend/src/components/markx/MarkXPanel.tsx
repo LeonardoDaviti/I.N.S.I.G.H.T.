@@ -21,7 +21,7 @@ export default function MarkXPanel({ postId }: { postId: string }) {
     <details data-markx className="group mt-8 rounded-md border border-line text-[0.8125rem] leading-5"
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}>
       <summary className="flex cursor-pointer list-none items-baseline gap-3 px-4 py-2.5 font-medium text-fg-2 [&::-webkit-details-marker]:hidden">
-        <span aria-hidden="true" className="w-3 text-fg-3 group-open:rotate-90">›</span>
+        <span aria-hidden="true" className="inline-block h-5 w-3 shrink-0 self-start text-center leading-5 text-fg-3 group-open:rotate-90">›</span>
         Mark X
         <span className="font-normal text-fg-3">Haiku’s reading, in shadow</span>
       </summary>

@@ -488,6 +488,7 @@ class World:
     posts: Dict[str, Post]                     # post id -> the rules' Post
     readings: Dict[str, dict]
     candidates: List[Tuple[str, str, Optional[float]]]
+    ix_mentions: Dict[str, Set[str]] = field(default_factory=dict)   # Mark IX story -> the roundups mentioning it
 
     def kinds(self) -> Dict[str, Optional[str]]:
         return {k: r.get("kind") for k, r in self.readings.items()}
@@ -525,8 +526,12 @@ def load(cur: Any, now: datetime, config: Config) -> World:
         ms.sort(key=lambda m: (posts[m.post].at, m.post))
     window = [(a, b, c) for (a, b), c in pairs.items() if a in posts and b in posts and posts[a].at >= since]
     window.sort(key=lambda abc: (abc[2] is None, -(abc[2] or 0.0), abc[0], abc[1]))
+    cur.execute("SELECT story_id::text, post_id::text FROM story_mentions WHERE story_id = ANY(%s::uuid[])", (sorted(stories),))
+    ix_mentions: Dict[str, Set[str]] = defaultdict(set)
+    for sid, pid in cur.fetchall():
+        ix_mentions[sid].add(pid)
     return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts,
-                 readings=tasks.readings(cur, ids), candidates=window)
+                 readings=tasks.readings(cur, ids), candidates=window, ix_mentions=dict(ix_mentions))
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,

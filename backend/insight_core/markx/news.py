@@ -68,25 +68,31 @@ def _story_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Any]:
     return {row["id"]: StoriesService._story_post(row, sources) for row in StoriesRepository.load_posts(cur, sources, parsed)}
 
 
-def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], window: Iterable[str],
-            since: datetime) -> List[Dict[str, Any]]:
-    """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the window's other posts:
-    the rows, each with its posts as news_posts rows and the Mark X story of each."""
+def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime) -> List[Dict[str, Any]]:
+    """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
+    story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
+    rows and the Mark X story of each."""
     from insight_core.db.repo_news import NewsRepository
     from insight_core.services.news_service import NewsService
     from insight_core.utils.news_rules import longest
-    from insight_core.utils.story_rules import Story
-    every = set(window) | {p for ms, _ in stories.values() for p in ms}
+    from insight_core.utils.story_rules import Story, story_times
+    in_story = {p for ms, _ in stories.values() for p in ms}
+    cur.execute("SELECT id::text FROM posts WHERE COALESCE(published_at, fetched_at) >= %s", (since,))
+    every = {r[0] for r in cur.fetchall()} | in_story
     sp = _story_posts(cur, every)
     built = []
     story_of: Dict[str, str] = {}
     for sid, (members, mentions) in sorted(stories.items()):
-        ps = sorted((sp[p] for p in members if p in sp), key=lambda p: (p.t, p.id))
-        if len(ps) < 2:
+        ps = [sp[p] for p in members if p in sp]
+        if not ps or (len(ps) < 2 and not sid.startswith("one:")):
             continue
-        built.append(Story(id=sid, first_at=ps[0].t, posts=ps, voices=0, roles={}, reasons={}, mentions=set(mentions)))
+        times = story_times(ps)
+        ps.sort(key=lambda p: (times[p.id], not p.date_only, p.t, p.id))
+        built.append(Story(id=sid, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
+                           mentions=set(mentions)))
         for p in ps:
-            story_of.setdefault(p.id, sid)
+            if not sid.startswith("one:"):
+                story_of.setdefault(p.id, sid)
     found = sorted(longest(NewsRepository.stored_surges(cur)), key=lambda s: (s.at, s.name))
     made = NewsService.rows(posts=list(sp.values()), stories=built, found=found, since=since)
     out = []
@@ -121,9 +127,15 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     for s in out.stories(world.posts):
         key = s["story"]
         members = [p for p in out.about[key] if p in world.posts]
+        # the roundups that mention it: Mark IX's (story_mentions, link evidence) and Mark X's demotions
         mentions = {p for k, ms in out.mentions.items() if out.final.get(k, k) == key for p in ms}
+        mentions |= {p for k, ms in world.ix_mentions.items() if out.final.get(k, k) == key for p in ms}
         stories[ids[key]] = (members, mentions - set(members))
-    rows = rows_of(cur, stories, [p for p, x in world.posts.items() if x.at >= since], since)
+    for key in sorted(out.ix):   # a Mark IX story of one post Mark X left alone: its roundups still count (no Mark X story)
+        ms = [p for p in out.about.get(key, {}) if p in world.posts]
+        if len(ms) == 1 and world.ix_mentions.get(key):
+            stories[f"one:{key}"] = (ms, set(world.ix_mentions[key]) - set(ms))
+    rows = rows_of(cur, stories, since)
     ix_of, ix_rows = _ix_news(cur, since)
     x_of = {p["post_id"]: r["id"] for r in rows for p in r["posts"]}
     for r in rows:
@@ -276,7 +288,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     for r in shown:
         mine = [p["post_id"] for p in r["posts"]]
         ix_hit = sorted({ix_of[p] for p in mine if p in ix_of})
-        lines = [dict(line(p["post_id"], p.get("story"), set(ix_hit)), role=p["role"]) for p in r["posts"]]
+        lines = [dict(line(p["post_id"], p.get("story"), set(ix_hit)), role=p["role"], name=p.get("name")) for p in r["posts"]]
         removed = []
         for nid in ix_hit:
             for pid in sorted(ix_rows.get(nid, ()), key=lambda q: str((posts.get(q) or {}).get("at") or "")):
@@ -396,7 +408,7 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
                     GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 20""")
     failed = [{"kind": k, "error": e, "tasks": c} for k, e, c in cur.fetchall()]
     cur.execute("""SELECT t.kind, c.error, c.created_at FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
-                    WHERE NOT c.valid ORDER BY c.created_at DESC LIMIT 10""")
+                    WHERE NOT c.valid AND t.status <> 'failed' ORDER BY c.created_at DESC LIMIT 10""")
     invalid = [{"kind": k, "error": e, "at": at} for k, e, at in cur.fetchall()]
     cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
     leased = {w: (k, until) for w, k, until in cur.fetchall()}
