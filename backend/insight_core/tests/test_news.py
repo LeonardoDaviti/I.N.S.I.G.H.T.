@@ -307,6 +307,19 @@ class ClassicRulesTests(unittest.TestCase):
                     "https://example.com/blog/apis-i-like"):
             self.assertFalse(is_reference(url), url)
 
+    def test_licence_and_legal_pages_are_not_classics(self):
+        # Issue 0111: a licence (cited by every model card) and a company's terms are references, by their shape.
+        for url in ("https://commons.example/licenses/by/4.0", "https://foundation.example/licenses/LICENSE-2.0",
+                    "https://hub.example/org/model/blob/main/LICENSE", "https://raw.example/org/repo/main/LICENSE.Open-1.1",
+                    "https://lab.example/legal/consumer-terms", "https://lab.example/legal/privacy", "https://router.example/terms",
+                    "https://maps.example/copyright", "https://lab.example/policies/usage-policies"):
+            self.assertTrue(is_reference(url), url)
+            self.assertEqual(classics([cite("a", 0, url), cite("b", 10, url), cite("a", 300, url)], {}), [], url)
+        for url in ("https://wire.example/legal/litigation/a-company-files-for-bankruptcy-2026-10-13",
+                    "https://glossary.example/terms/e/economiesofscale.asp", "https://blog.example/2026/licensing-models-is-hard",
+                    "https://eu.example/en/policies/contents-code-gpai"):
+            self.assertFalse(is_reference(url), url)
+
     def test_most_voices_first_then_cited_longest(self):
         a, b, c = (f"https://essays.example/essay/number-{n}" for n in range(3))
         found = classics([cite("x", 0, a), cite("y", 10, a), cite("x", 200, a),
