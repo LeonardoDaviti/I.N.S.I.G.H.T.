@@ -221,7 +221,7 @@ function LinkedLine({ linked, busy, onFetch }: { linked: LinkedPagesSummary | nu
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem]" aria-label="Linked pages">
       <span className="tabular-nums text-fg">{said.line}</span>
-      {said.offer === 'fetch' ? (
+      {said.fetch ? (
         <Button variant="secondary" size="sm" onClick={onFetch} disabled={busy} aria-busy={busy}>Fetch them</Button>
       ) : null}
       {said.note ? <span className="text-[0.75rem] text-fg-3">{said.note}</span> : null}

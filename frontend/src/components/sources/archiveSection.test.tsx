@@ -252,12 +252,22 @@ describe('ArchiveSection', () => {
     expect(await screen.findByText('Read linked page 5 of 17')).toBeInTheDocument();
   });
 
-  it('a source whose archive holds them offers the archive first', async () => {
+  it('a source whose archive holds them offers the archive first, and these alone as well', async () => {
     setup({
       getSourceArchive: vi.fn().mockResolvedValue(status()),
       getLinkedPages: vi.fn().mockResolvedValue(linked({ archive_holds: true })),
     });
-    expect(await screen.findByText('Run the archive: it holds them')).toBeInTheDocument();
+    expect(await screen.findByText(/^Run the archive: it holds them\. Or fetch only these/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fetch them' })).toBeInTheDocument();
+  });
+
+  it('pages no reader can read one by one are only counted', async () => {
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status()),
+      getLinkedPages: vi.fn().mockResolvedValue(linked({ readable: false, count: 250 })),
+    });
+    expect(await screen.findByText('Linked by your posts, not stored: 250')).toBeInTheDocument();
+    expect(screen.getByText('Its pages can’t be fetched one by one')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Fetch them' })).not.toBeInTheDocument();
   });
 

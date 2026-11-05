@@ -92,14 +92,20 @@ export function archiveResultLine(result: {
 
 /**
  * Linked, not stored (issue 0084 B) in one line and what to offer: "Linked by your posts, not stored: 17"
- * with Fetch them; the archive first when it pages back and has not run ("Run the archive: it holds
- * them"); only the count when the pages can't be read one by one. Null when there are none.
+ * with Fetch them (`fetch`) when one fetch can read them; the archive first (`archiveFirst`) when it pages
+ * back and has not run ("Run the archive: it holds them"), these alone still offered beside it (fewer
+ * requests than a whole archive); only the count when nothing reads them one by one. Null when none.
  */
 export function describeLinked(linked: Pick<LinkedPagesSummary, 'count' | 'readable' | 'archive_holds' | 'archive_ran'>,
-  estimate: string | null): { line: string; offer: 'fetch' | 'archive' | null; note: string | null } | null {
+  estimate: string | null): { line: string; fetch: boolean; archiveFirst: boolean; note: string } | null {
   if (!linked.count) return null;
   const line = `Linked by your posts, not stored: ${formatCount(linked.count)}`;
-  if (linked.archive_holds && !linked.archive_ran) return { line, offer: 'archive', note: 'Run the archive: it holds them' };
-  if (!linked.readable) return { line, offer: null, note: 'Its pages can’t be fetched one by one' };
-  return { line, offer: 'fetch', note: estimate ? `${estimate}, one page at a time` : 'one page at a time' };
+  const archiveFirst = linked.archive_holds && !linked.archive_ran;
+  const pace = `${estimate ? `${estimate}, ` : ''}one page at a time`;
+  if (archiveFirst) {
+    const note = 'Run the archive: it holds them';
+    return { line, fetch: linked.readable, archiveFirst, note: linked.readable ? `${note}. Or fetch only these: ${pace}` : note };
+  }
+  if (!linked.readable) return { line, fetch: false, archiveFirst, note: 'Its pages can’t be fetched one by one' };
+  return { line, fetch: true, archiveFirst, note: pace };
 }
