@@ -180,6 +180,64 @@ class XRulesTests(unittest.TestCase):
                                                                           minutes=1, reply_to="pankajkumar_dev")]
         self.assertEqual(threads(self_repost), {"r1": "rt"}, "an author reposting its own tweet: its own post")
 
+    # ---- a thread follows the tweet it quotes (issue 0103) ----------------------------------------
+
+    def _two_subjects(self, *, stored=True):
+        """An account's tweet on one subject, then a thread on another, then a reply quoting the first."""
+        first = f"https://x.com/ann/status/{ID}"
+        second = f"https://x.com/ann/status/{ID + 10}"
+        return [tweet("a", "ann", "ann", n=ID),                                            # subject A
+                tweet("b", "ann", "ann", n=ID + 10, minutes=60),                           # subject B
+                tweet("b1", "ann", "ann", n=ID + 11, minutes=61, reply_to="ann", quoted=second,
+                      links=[(second, "b")]),
+                tweet("b2", "ann", "ann", n=ID + 12, minutes=62, reply_to="ann", quoted=second,
+                      links=[(second, "b")]),
+                tweet("a1", "ann", "ann", n=ID + 13, minutes=80, reply_to="ann", quoted=first,
+                      links=[(first, "a" if stored else None)])]
+
+    def test_a_self_reply_hangs_under_the_own_tweet_it_quotes_not_the_one_before_it(self):
+        posts = self._two_subjects()
+        self.assertEqual(threads(posts), {"b1": "b", "b2": "b", "a1": "a"})
+        stories = group(posts)
+        self.assertEqual(sorted(sorted(p.id for p in s.posts) for s in stories), [["a", "a1"], ["b", "b1", "b2"]],
+                         "the two subjects stay apart")
+        [b] = [s for s in stories if s.id == "b"]
+        self.assertEqual(parents(b), {"b": (None, None), "b1": ("b", "thread"), "b2": ("b", "thread")})
+
+    def test_a_self_reply_quoting_an_own_tweet_not_stored_follows_the_timeline(self):
+        posts = self._two_subjects(stored=False)
+        self.assertEqual(threads(posts)["a1"], "b2", "its target isn't stored: the post before it")
+
+    def test_a_self_reply_quoting_its_stored_tweet_from_two_days_ago_continues_no_other_tweet(self):
+        old = f"https://x.com/ann/status/{ID}"
+        posts = [tweet("a", "ann", "ann", n=ID),
+                 tweet("b", "ann", "ann", n=ID + 10, minutes=47 * 60),
+                 tweet("a1", "ann", "ann", n=ID + 11, minutes=48 * 60, reply_to="ann", quoted=old, links=[(old, "a")])]
+        self.assertEqual(threads(posts), {}, "it is about its quoted tweet, past 24 hours: no thread, not the post before")
+        [story] = group(posts)
+        self.assertEqual(sorted(p.id for p in story.posts), ["a", "a1"], "its quote still joins the tweet it quotes")
+
+    def test_a_self_reply_quoting_its_tweet_held_as_another_rows_link_finds_its_own_row(self):
+        first = f"https://x.com/ann/status/{ID}"
+        posts = [tweet("a", "ann", "ann", n=ID),
+                 tweet("b", "ann", "ann", n=ID + 10, minutes=5),
+                 tweet("a1", "ann", "ann", n=ID + 11, minutes=6, reply_to="ann", quoted=first,
+                       links=[(first, "elsewhere")])]   # the address's first row is another source's
+        self.assertEqual(threads(posts), {"a1": "a"})
+
+    def test_a_self_reply_quoting_someone_elses_tweet_follows_the_timeline(self):
+        other = f"https://x.com/bob/status/{ID + 5}"
+        posts = [tweet("a", "ann", "ann", n=ID),
+                 tweet("a1", "ann", "ann", n=ID + 11, minutes=6, reply_to="ann", quoted=other, links=[(other, "x")])]
+        self.assertEqual(threads(posts), {"a1": "a"})
+
+    def test_a_reply_across_a_repost_hangs_under_the_own_tweet_it_quotes(self):
+        first = f"https://x.com/pk/status/{ID}"
+        posts = [tweet("own", "pk", "pk", n=ID),
+                 tweet("rt", "pk", "someone", n=ID - 5, minutes=10, reposted=True),
+                 tweet("r1", "pk", "pk", n=ID + 1, minutes=11, reply_to="pk", quoted=first, links=[(first, "own")])]
+        self.assertEqual(threads(posts), {"r1": "own"}, "its target is known: the repost before it is no matter")
+
 
 @requires_test_db
 class XJobTests(unittest.TestCase):
@@ -317,6 +375,30 @@ class XJobTests(unittest.TestCase):
         self.assertNotIn("<blockquote>", post["content_html"] or "")
         self.assertEqual(post["title"], "Benchmarks")
         self.assertEqual(post["content"], "Benchmarks", "its text without the quoted words: the page reads its title once")
+
+    def test_a_reply_quoting_an_earlier_tweet_of_its_own_joins_that_tweets_story_only(self):
+        # Issue 0103: a reply quoting the account's tweet of an hour ago hangs under it, not under the
+        # account's thread on another subject posted in between.
+        user = f"ann{self.mark}"
+        source = self._x(user)
+
+        def card(n, words):
+            return (f'<p>{words}</p>\n<p><a href="https://nitter.net/{user}/status/{n}?s=20">nitter.net/{user}/status…</a></p>\n'
+                    f'<hr/>\n<blockquote>\n<b>Ann Lee (@{user})</b>\n<p>quoted</p>\n<footer>\n— <cite>'
+                    f'<a href="https://nitter.local/{user}/status/{n}#m">https://nitter.local/{user}/status/{n}#m</a>\n'
+                    f'</footer>\n</blockquote>')
+        first = self._save(source, user, ID, "Another output from Model A.")
+        launch = self._save(source, user, ID + 10, "Model B is now live", minutes=60)
+        out = self._save(source, user, ID + 11, f"R to @{user}: its out", minutes=61, html=card(ID + 10, "its out"))
+        back = self._save(source, user, ID + 12, f"R to @{user}: one more from Model A", minutes=80,
+                          html=card(ID, "one more from Model A"))
+        self._regroup()
+        self.cur.execute("SELECT post_id::text, story_id::text, parent_id::text, parent_reason FROM story_posts "
+                         "WHERE post_id = ANY(%s::uuid[])", ([first, launch, out, back],))
+        rows = {r[0]: r[1:] for r in self.cur.fetchall()}
+        self.assertEqual(rows[back][1:], (first, "thread"))
+        self.assertEqual(rows[out][1:], (launch, "thread"))
+        self.assertNotEqual(rows[first][0], rows[launch][0], "two subjects, two stories")
 
     def test_a_thread_of_only_quotes_of_its_first_tweet_is_no_story(self):
         user = f"ann{self.mark}"

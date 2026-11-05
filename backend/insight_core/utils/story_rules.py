@@ -21,9 +21,10 @@ the reference the real code reproduces. The thresholds are here, in one place.
 - **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
   - `repost`: a repost stored apart from its original (one address, 0049) hangs from it; a repost
     is a share, and never its address's own page;
-  - `thread`: an author's reply to itself hangs from the post right before it in its source's
-    timeline, when that is the author's own (not a repost, not a reply to another account) and
-    within 24 hours. Its posts are one story, whatever the sources: a thread is one item;
+  - `thread`: an author's reply to itself hangs from the stored tweet of its own it quotes (issue
+    0103), else from the post right before it in its source's timeline, when that is the author's own
+    (not a repost, not a reply to another account); within 24 hours. Its posts are one story, whatever
+    the sources: a thread is one item;
   - `quote`: a quoting tweet hangs from the tweet it quotes; a stored one joins its story
     within 72 hours (as a citation), whatever the place.
 """
@@ -37,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import titles
-from insight_core.utils.addresses import bare, host_of, is_tweet, site_of
+from insight_core.utils.addresses import bare, host_of, is_tweet, site_of, tweet_author
 from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
@@ -50,7 +51,7 @@ SAME_TITLE_WITHIN = timedelta(days=7)     # the prototype's, not measured
 SAME_TITLE_MIN_WORDS = 5                  # the prototype's, not measured
 SAME_ADDRESS_WITHIN = SAME_TEXT_WITHIN    # two posts at one address (0064), as a shared text
 LINK_WITHIN = timedelta(hours=72)         # the prototype's, not measured
-THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066); not measured
+THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's own tweet it quotes, else the one before it (0066, 0103); not measured
 # A post with 3+ anchors is a roundup: the prototype's value. Measured, the rule: its first link's
 # join is right 34 of 40 times on the lab (0050); no other count compared.
 ROUNDUP_ANCHORS = 3
@@ -275,19 +276,44 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
     return out
 
 
+def own_quote(post: StoryPost) -> Optional[str]:
+    """The tweet of its own account a tweet quotes, when that tweet is stored (its link resolves to a
+    stored post): what a reply of the author to itself continues (issue 0103)."""
+    if not (post.quoted and post.author and (tweet_author(post.quoted) or "").lower() == post.author.lower()):
+        return None
+    return post.quoted if dict(post.links).get(post.quoted) else None
+
+
 def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
-    """Each reply of an author to itself -> its parent (issue 0066): the post right before it in
-    its source's timeline (reposts included), when that is the author's own tweet within 24 hours.
-    A thread starts at the author's own post, never at a repost of another account."""
+    """Each reply of an author to itself -> its parent (issue 0066), its author's own tweet within 24
+    hours. A thread starts at the author's own post, never at a repost of another account.
+    - A reply that quotes a stored tweet of its own account continues that tweet (issue 0103): its
+      source's row of it, when that is within 24 hours before; else none (its quote still joins the
+      tweet it quotes). The account's previous tweet may be about something else.
+    - Otherwise (its target isn't stored, or it quotes no tweet of its own) the post right before it
+      in its source's timeline (reposts included)."""
     timeline: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in sorted(posts, key=_order):
         if p.kind == "x":
             timeline[p.source_id].append(p)
     out: Dict[str, str] = {}
     for run in timeline.values():
-        for before, p in zip(run, run[1:]):
-            if p.own_tweet and p.reply_to and before.own_tweet and p.t - before.t <= THREAD_WITHIN:
-                out[p.id] = before.id
+        own_row: Dict[str, StoryPost] = {}   # address -> the source's first own row of it
+        for p in run:
+            if p.own_tweet and p.url:
+                own_row.setdefault(p.url, p)
+        for i, p in enumerate(run):
+            if not (p.own_tweet and p.reply_to):
+                continue
+            target = own_quote(p)
+            if target is not None:
+                parent: Optional[StoryPost] = own_row.get(target)
+                if parent is not None and not _order(parent) < _order(p):
+                    parent = None
+            else:
+                parent = run[i - 1] if i and run[i - 1].own_tweet else None
+            if parent is not None and p.t - parent.t <= THREAD_WITHIN:
+                out[p.id] = parent.id
     return out
 
 

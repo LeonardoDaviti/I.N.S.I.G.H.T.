@@ -49,6 +49,12 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual([p.id for p in update.posts[:2]], ["h7", "h1"], "as early as it, first at the tie")
         self.assertEqual(stories["k1"].id, "k2", "the post stored first, not the first posted")
 
+    def test_a_reply_continues_the_own_tweet_it_quotes(self):
+        # Issue 0103: not the account's tweet right before it, which is about something else.
+        stories = {p.id: s for s in sample_stories() for p in s.posts}
+        self.assertEqual(stories["t9"].parents["t9"][:3:2], ("t7", "thread"))
+        self.assertNotIn("t8", stories, "the tweet in between joins nothing")
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")
@@ -78,6 +84,9 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         with mock.patch.object(tree_rules, "origin_title", lambda url, posts: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         with mock.patch.object(story_rules, "SAME_TITLE_MIN_WORDS", 4):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        # 0103's: a reply threaded under the account's previous tweet, not the one it quotes
+        with mock.patch.object(story_rules, "own_quote", lambda post: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):
