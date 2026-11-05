@@ -31,7 +31,8 @@ export interface SourceSettingsResponse extends Envelope {
   source?: SourceWithSettings;
 }
 
-/** GET /api/sources: every source with its settings and post count. */
+/** GET /api/sources: every source with its settings and post count; `settings.archive` without its `history`
+ *  (issue 0105: kept in the database, read by GET /api/archive/{id}/status). */
 export interface SourcesResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
