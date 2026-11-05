@@ -32,7 +32,7 @@ from insight_core.utils.addresses import paper_id
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
 from insight_core.utils.story_rules import page_key, paper_aliases
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
-                                          Surge, lead, longest, name_surges, names, news, phrases)
+                                          Surge, lead, longest, main_story, name_surges, names, news, phrases)
 from insight_core.utils.story_rules import Story, StoryPost
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week, issue 0077)
@@ -243,9 +243,15 @@ class NewsService:
             roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead (issue 0083)
             # Without an origin, the first share of a story's outside origin page leads (issue 0103).
             sharers = [p["id"] for p in posts if p["_shares_origin"]]
-            lead_id = (lead([(p["id"], p["role"]) for p in shown], origins, roundups, sharers)
-                       or lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers))
-            first_report = lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers)
+            # The lead comes from the row's main story, or what its own name joined (issue 0111), in the scope first.
+            may = main_story([(p["id"], p["_story"], p["_story_voices"], p["_name"]) for p in posts])
+            main = posts if may is None else [p for p in posts if p["id"] in may]
+
+            def first(of: Sequence[Dict[str, Any]]) -> Optional[str]:
+                return lead([(p["id"], p["role"]) for p in of], origins, roundups, sharers)
+            in_main = {p["id"] for p in main}
+            lead_id = (first([p for p in shown if p["id"] in in_main]) or first(shown) or first(main) or first(posts))
+            first_report = first(main) or first(posts)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.

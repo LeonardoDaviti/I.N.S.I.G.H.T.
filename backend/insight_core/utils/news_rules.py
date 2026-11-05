@@ -361,4 +361,30 @@ def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups
     return None
 
 
-__all__ = ["names", "surges", "name_surges", "phrases", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead"]
+def main_story(posts: Sequence[Tuple[str, Optional[str], int, Optional[str]]]) -> Optional[Set[str]]:
+    """The posts a row's lead may come from (issue 0111), of `posts` ((id, its 0050 story or None, that
+    story's voices, the surging name that joined it), first posted first): its main story's (the most
+    voices, then the most posts, then the first), and the stories and posts joined to it by the name its
+    posts say most (the first said at a tie). A story joined only by another name (a thread naming the
+    row's model in a comparison) never leads. None: the row holds no 0050 story, every post may lead."""
+    stories: Dict[str, List[Tuple[str, Optional[str]]]] = defaultdict(list)
+    voices: Dict[str, int] = {}
+    for pid, story, n, name in posts:
+        if story:
+            stories[story].append((pid, name))
+            voices[story] = n
+    if not stories:
+        return None
+    order = list(stories)
+    main = min(order, key=lambda s: (-voices[s], -len(stories[s]), order.index(s)))
+    said = [name for _, name in stories[main] if name]
+    if not said:
+        return {pid for pid, _ in stories[main]}
+    counts = {name: said.count(name) for name in said}
+    own = max(said, key=lambda name: (counts[name], -said.index(name)))
+    joined = {s for s, ps in stories.items() if s == main or any(name == own for _, name in ps)}
+    return {pid for pid, story, _, name in posts if (story in joined if story else name == own)}
+
+
+__all__ = ["names", "surges", "name_surges", "phrases", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead",
+           "main_story", "dated"]

@@ -323,7 +323,8 @@ class NewsRepository:
                    np.voice, p.content_hash, pp.subject,
                    EXISTS (SELECT 1 FROM story_mentions m WHERE m.post_id = p.id) AS roundup,
                    sp.parent_url IS NOT NULL AND sp.parent_reason IN ('citation', 'quote')
-                     AND sp.parent_url = (SELECT st.origin_url FROM stories st WHERE st.id = sp.story_id) AS shares_origin
+                     AND sp.parent_url = (SELECT st.origin_url FROM stories st WHERE st.id = sp.story_id) AS shares_origin,
+                   sp.story_id, (SELECT st.voices FROM stories st WHERE st.id = sp.story_id), np.name
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
@@ -340,16 +341,19 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-15])
+            item = _item(row[:-18])
             (sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject,
-             roundup, shares_origin) = row[-15:]
+             roundup, shares_origin, story_id, story_voices_, name) = row[-18:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
                          "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
                          "_voiced": voiced(row, voice, content_hash), "_subject": subject,
                          "_roundup": bool(roundup),   # issue 0083: without an origin, a roundup gives way
-                         "_shares_origin": bool(shares_origin)})   # issue 0103: it links its story's outside origin
+                         "_shares_origin": bool(shares_origin),   # issue 0103: it links its story's outside origin
+                         # issue 0111: its 0050 story, that story's voices and the name that joined it to the row
+                         "_story": str(story_id) if story_id else None, "_story_voices": int(story_voices_ or 0),
+                         "_name": name})
             out.append(item)
         return out
 
