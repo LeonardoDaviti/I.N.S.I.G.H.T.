@@ -57,10 +57,18 @@ class _Rollback(unittest.TestCase):
 
 
 class MigrationTests(_Rollback):
-    def test_the_fourteen_tables_exist(self):
+    def test_the_fourteen_tables_exist_and_0069s_settings(self):
         self.cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace "
                          "AND relkind = 'r' AND relname LIKE 'mx\\_%'")
-        self.assertEqual({r[0] for r in self.cur.fetchall()}, TABLES)
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, TABLES | {"mx_settings"})
+
+    def test_a_setting_is_stored_replaced_and_read(self):
+        key = f"test_{uuid.uuid4().hex}"
+        self.assertEqual(repo.get_setting(self.cur, key, default=30), 30)       # no row: the default
+        repo.set_setting(self.cur, key, 120)
+        self.assertEqual(repo.get_setting(self.cur, key, default=30), 120)
+        repo.set_setting(self.cur, key, None)                                  # null is a value (everything)
+        self.assertIsNone(repo.get_setting(self.cur, key, default=30))
 
     def test_no_mx_table_keys_to_a_mark_ix_table(self):
         """Corrections 2: a Mark IX story's row is deleted and rewritten when it changes shape, so Mark X is keyed
@@ -76,7 +84,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 14)
+        self.assertEqual(self.cur.fetchone()[0], 15)       # 0069 adds mx_settings
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")
@@ -300,6 +308,74 @@ class ValidToTests(_Rollback):
         self.assertEqual([l["id"] for l in repo.labels(self.cur, "join") if l["id"] == label], [label])
         self.savepoint_raises(errors.CheckViolation,
                               "INSERT INTO mx_labels (item_kind, answer) VALUES ('nonsense', 'x')")
+
+
+REOPEN = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0069_markx_v10_0_1.sql"
+BUG1 = "answer.mentions[{}]: name missing"
+
+
+class ReopenTests(_Rollback):
+    """0112 Decided 5 (migration 0069): the read tasks that failed only from bug 1 (read-v2 never names the mention
+    field) are opened again once, with their tries back; their failed answers stay recorded."""
+
+    def failed(self, kind, errors, status="failed", text=None):
+        g = self.guide(f"test-{kind}-v1", kind)
+        tid, _ = self.task(g, text or uuid.uuid4().hex, kind=kind)
+        for e in errors:
+            repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=False, answer={}, error=e)
+        self.cur.execute("UPDATE mx_tasks SET status = %s, attempts = %s, last_error = %s WHERE id = %s",
+                         (status, len(errors), errors[-1] if errors else None, tid))
+        return tid
+
+    def row(self, tid):
+        self.cur.execute("SELECT status, attempts, lease_until, leased_by FROM mx_tasks WHERE id = %s", (tid,))
+        return self.cur.fetchone()
+
+    def calls(self, tid):
+        self.cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s", (tid,))
+        return self.cur.fetchone()[0]
+
+    def test_only_reads_that_failed_from_bug_1_alone_are_reopened(self):
+        bug1 = self.failed("read", [BUG1.format(0), BUG1.format(2), BUG1.format(0)])
+        mixed = self.failed("read", [BUG1.format(0), "answer.kind: not one of report, commentary", BUG1.format(1)])
+        other = self.failed("read", ["answer.main: missing"] * 3)
+        entities = self.failed("entities", [BUG1.format(0)] * 3)
+        waiting = self.failed("read", [BUG1.format(0)], status="open")
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))
+        self.assertEqual(self.row(bug1), ("open", 0, None, None))
+        self.assertEqual(self.calls(bug1), 3)                      # the failed answers stay recorded
+        self.assertEqual(self.row(mixed)[:2], ("failed", 3))
+        self.assertEqual(self.row(other)[:2], ("failed", 3))
+        self.assertEqual(self.row(entities)[:2], ("failed", 3))
+        self.assertEqual(self.row(waiting)[:2], ("open", 1))
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))       # idempotent: nothing more changes
+        self.assertEqual(self.row(bug1), ("open", 0, None, None))
+        self.assertEqual(self.row(mixed)[:2], ("failed", 3))
+
+    def test_a_waiting_check_that_shows_an_empty_story_is_never_asked(self):
+        """0112 C: v10.0 queued checks against an empty story; v10.0.1 never reads their answers, so the waiting ones
+        are closed as failed, with the reason, not asked. An answered one stays as it was."""
+        from insight_core.markx import tasks
+        empty = "STORY\nHeadline: \n\nPOST\nPlatform: telegram | Source: S\nTitle: T\nText: words"
+        shown = ("STORY\nHeadline: H\nMembers (earliest first):\n- [S, telegram] H — t\n\n"
+                 "POST\nPlatform: telegram | Source: S\nTitle: T\nText: words")
+        self.assertTrue(tasks.shows_empty_story(empty))
+        self.assertFalse(tasks.shows_empty_story(shown))
+        g = self.guide("test-check-v1", "check")
+        waiting, _ = self.task(g, empty, kind="check", subject_kind="post_story")
+        leased, _ = self.task(g, empty + " (leased)", kind="check", subject_kind="post_story")
+        self.cur.execute("UPDATE mx_tasks SET status = 'leased', lease_until = now(), leased_by = 'w' WHERE id = %s", (leased,))
+        answered, _ = self.task(g, empty + " (answered)", kind="check", subject_kind="post_story")
+        self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (answered,))
+        fine, _ = self.task(g, shown, kind="check", subject_kind="post_story")
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))
+        for tid in (waiting, leased):
+            self.cur.execute("SELECT status, last_error, lease_until FROM mx_tasks WHERE id = %s", (tid,))
+            status, error, until = self.cur.fetchone()
+            self.assertEqual((status, until), ("failed", None))
+            self.assertIn("empty story", error)
+        self.assertEqual(self.row(answered)[0], "answered")
+        self.assertEqual(self.row(fine)[0], "open")
 
 
 if __name__ == "__main__":

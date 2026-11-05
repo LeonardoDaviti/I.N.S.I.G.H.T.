@@ -244,6 +244,21 @@ class Base(unittest.TestCase):
         return self.events("done")[-1]
 
 
+class TestSystemPrompt(unittest.TestCase):
+    """v10.0.1: the guide's answer schema goes with its body, so the field names are never left to the prose."""
+
+    def test_the_body_then_the_schema_with_its_exact_field_names(self):
+        g = GUIDES["read-v2"]
+        s = W.system_for(g)
+        self.assertTrue(s.startswith(g["body"]))
+        self.assertIn("with exactly these field names:", s)
+        self.assertEqual(json.loads(s.rsplit("\n", 1)[1]), SCHEMA)
+
+    def test_a_guide_without_a_schema_is_its_body(self):
+        self.assertEqual(W.system_for({"body": "B", "schema": None}), "B")
+        self.assertEqual(W.system_for({"body": "B"}), "B")
+
+
 class TestValid(Base):
     def test_every_task_answered_in_batches_of_20_three_at_a_time(self):
         self.stub.add("read", 45)
@@ -254,7 +269,7 @@ class TestValid(Base):
         self.assertEqual(sorted(c["stdin"].count("### ITEM id:") for c in calls), [5, 20, 20])
         for c in calls:
             self.assertEqual(c["argv"], ["-p", "--model", "haiku", "--tools", "", "--system-prompt",
-                                         GUIDES["read-v2"]["body"], "--output-format", "json",
+                                         W.system_for(GUIDES["read-v2"]), "--output-format", "json",
                                          "--no-session-persistence", "--strict-mcp-config"])
             self.assertTrue(c["stdin"].startswith(W.HEAD))
         for w in self.stub.works:
@@ -263,6 +278,24 @@ class TestValid(Base):
             self.assertEqual(w["worker"], "test-device")
         self.assertEqual(self.stub.releases, [])
         self.assertTrue(all(c["valid"] for c in self.stub.calls))
+
+    def test_days_goes_with_every_lease_and_without_it_none(self):
+        """0112 Decided 9: `--days <N|all>` makes the server plan that window first; without it the page's holds."""
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "read", "--days", "120")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(self.stub.works)
+        self.assertTrue(all(w.get("days") == "120" for w in self.stub.works), self.stub.works)
+        self.stub.works.clear()
+        self.stub.add("read", 5)
+        self.assertEqual(self.run_worker("--kinds", "read", "--days", "all").returncode, 0)
+        self.assertTrue(all(w.get("days") == "all" for w in self.stub.works))
+        self.stub.works.clear()
+        self.stub.add("read", 5)
+        self.assertEqual(self.run_worker("--kinds", "read").returncode, 0)
+        self.assertTrue(all("days" not in w for w in self.stub.works))
+        for bad in ("0", "soon", "-3"):
+            self.assertEqual(self.run_worker("--kinds", "read", "--days", bad).returncode, 2, bad)
 
     def test_tokens_and_cost_from_claude_codes_json_logged_and_posted(self):
         self.stub.add("read", 45)
@@ -297,7 +330,7 @@ class TestValid(Base):
             ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
             kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}
             self.assertEqual(len(kinds), 1)
-            self.assertEqual(c["system"], GUIDES[KIND_GUIDE[kinds.pop()]]["body"])
+            self.assertEqual(c["system"], W.system_for(GUIDES[KIND_GUIDE[kinds.pop()]]))
 
     def test_batches_caps_the_leases(self):
         self.stub.add("read", 100)

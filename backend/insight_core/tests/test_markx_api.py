@@ -31,7 +31,8 @@ from insight_core.services import registry
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 
 MX_TABLES = ("mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
-             "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides")
+             "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
+             "mx_settings")
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
@@ -72,6 +73,12 @@ async def _call(app, method, path, query, body, token):
     await app(scope, receive, send)
     data = b"".join(chunks)
     return status, (json.loads(data) if data else None)
+
+
+# Three texts of their own, for the check planner's stories: posts of one text are near-copies, never checked (0112).
+OWN = ("Acme released Widget 4.1 today, with 27B parameters and a price of $20 a month for every user who signs up.",
+       "I tried the new version on my old laptop for a day and the battery lasted longer than with any build before.",
+       "The benchmark table puts it ahead on three of the five tests, behind on long documents and on code repair.")
 
 
 def reading(**over):
@@ -203,6 +210,61 @@ class Leases(_Api):
         self.assertEqual(len(rest["tasks"]), 1)     # the third; the two leased are not leased again
         _, none = self.lease(limit=20, worker="device-2")
         self.assertEqual((none["tasks"], none["guides"]), ([], {}))
+
+    def test_two_first_leases_at_once_on_a_fresh_database_both_succeed(self):
+        """0112 bug 4: the first lease marked the guides loaded before its transaction committed, so a second lease
+        planned tasks naming a guide not committed yet (a foreign-key failure, HTTP 500, worker exit 3)."""
+        import threading
+        import time
+        from unittest import mock
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")       # a fresh database: no guide yet
+        schemas._ready.clear()
+        tasks.PLANNERS = {"read": lambda cur, **kw: tasks.plan_posts(cur, "read", **kw)}
+        self.post(title="Globex raised $300m")
+        counts, first = repo.queue_counts, threading.Event()
+
+        def slow_first(cur):                    # the first lease holds its transaction open after loading the guides
+            if not first.is_set():
+                first.set()
+                time.sleep(1.0)
+            return counts(cur)
+        got = {}
+
+        def lease(name):
+            got[name] = self.lease(worker=name)
+        with mock.patch.object(repo, "queue_counts", slow_first):
+            one = threading.Thread(target=lease, args=("device-1",))
+            one.start()
+            self.assertTrue(first.wait(5))
+            two = threading.Thread(target=lease, args=("device-2",))
+            two.start()
+            one.join(10)
+            two.join(10)
+        self.assertEqual([got[n][0] for n in ("device-1", "device-2")], [200, 200], got)
+        leased = [t["id"] for n in got for t in got[n][1]["tasks"]]
+        self.assertTrue(leased)
+        self.assertEqual(len(leased), len(set(leased)))                # none leased twice
+
+    def test_the_guides_are_ready_only_once_their_load_commits(self):
+        from unittest import mock
+        from insight_core.db import database
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        schemas._ready.clear()
+        with mock.patch.object(schemas, "load_guides", side_effect=RuntimeError("the load failed")):
+            with self.assertRaises(RuntimeError):
+                with database.transaction(db_url()) as cur:
+                    schemas.ensure_guides(cur)
+        self.assertEqual(schemas._ready, set())                       # a failed load: not ready, the next one retries
+        with database.transaction(db_url()) as cur:
+            schemas.ensure_guides(cur)
+            self.assertEqual(schemas._ready, set())                   # loaded, not committed yet: not ready
+        self.assertEqual(len(schemas._ready), 1)
+        self.cur.execute("SELECT count(*) FROM mx_guides")
+        self.assertEqual(self.cur.fetchone()[0], len(schemas.guide_ids()))
+        with mock.patch.object(schemas, "load_guides") as load:
+            with database.transaction(db_url()) as cur:
+                schemas.ensure_guides(cur)
+        load.assert_not_called()
 
     def test_a_task_input_is_sent_as_built(self):
         pid = self.post(links=[("https://example.com/a", "Widget notes"), ("https://example.com/b", None)])
@@ -375,9 +437,9 @@ class GuidesAndInputs(_Api):
         """F1's checks read Mark IX's stories (never writing them, never keying by their id); when a story changes
         shape its check's input changes, and `reasked` counts it (build plan, corrections 4)."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
-        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
-        member = self.post(title="Widget 4.1 thoughts", at=t0 + timedelta(hours=1))
-        late = self.post(title="Widget 4.1 benchmarks", source=self.other, at=t0 + timedelta(hours=2))
+        origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
+        member = self.post(title="Widget 4.1 thoughts", text=OWN[1], at=t0 + timedelta(hours=1))
+        late = self.post(title="Widget 4.1 benchmarks", text=OWN[2], source=self.other, at=t0 + timedelta(hours=2))
         story = origin                     # a Mark IX story is keyed by its first post
         self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
         self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
@@ -399,12 +461,95 @@ class GuidesAndInputs(_Api):
         self.assertGreaterEqual(got["tasks"], 1)
         self.assertEqual(got["would_change"], 1)     # the member's question now shows the late post too
 
+    def test_a_one_report_storys_check_shows_its_other_members(self):
+        """0112 bug 2: a member that is its story's only report was checked against an empty story ("Headline: " and
+        no member); it is shown the story's other members (any role) and its card, and a story's only post is never
+        checked."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        origin = self.post(title="Acme ships Widget 4.1", text="The release notes list every change in the new "
+                           "version, from the faster start to the smaller memory footprint and the fixed crash.",
+                           source=self.other, at=t0)
+        member = self.post(title="Widget 4.1 thoughts", text="I tried it for a day on my old laptop and the battery "
+                           "lasted longer than with any build before, though the settings page still confuses me.",
+                           at=t0 + timedelta(hours=1))
+        story = origin
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'share', 'v', NULL), (%s, %s, 'report', 'v', 'citation')", (story, origin, story, member))
+        with self.conn.transaction():
+            got = {p.id: text for p, text in tasks.check_questions(self.cur, days=1)}
+        text = got[member]
+        self.assertTrue(text.startswith("STORY\nHeadline: Acme ships Widget 4.1\nMembers (earliest first):\n"), text)
+        self.assertNotIn("Headline: \n", text)
+
+    def test_the_real_data_check_counts_a_waiting_check_that_shows_an_empty_story(self):
+        """0112 C: markx.check_empty_story, a check task still to be asked whose input shows a story with no member."""
+        from insight_core.checks import invariants
+        a, b = self.post(title="Acme ships Widget 4.1", text=OWN[0]), self.post(title="Widget 4.1 thoughts", text=OWN[1])
+        posts = tasks.load_posts(self.cur, [a, b])
+        with self.conn.transaction():
+            empty, _ = tasks.add(self.cur, "check", tasks.check_input(posts[b], []), a=b)
+            shown, _ = tasks.add(self.cur, "check", tasks.check_input(posts[b], [posts[a]]), a=b)
+            asked, _ = tasks.add(self.cur, "check", tasks.check_input(posts[a], []), a=a)
+            self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (asked,))
+        for text, empty_story in ((tasks.check_input(posts[b], []), True), (tasks.check_input(posts[b], [posts[a]]), False)):
+            self.assertEqual(tasks.shows_empty_story(text), empty_story)
+            self.assertEqual(invariants._shows_empty_story(text), empty_story)   # the checks package's own copy
+        check, = [i for i in invariants.INVARIANTS if i.name == "markx.check_empty_story"]
+        with self.conn.transaction():
+            ids, of = check.count(invariants.Run(db_url(), self.cur, datetime.now(timezone.utc)))
+        self.assertEqual((ids, of), ([str(empty)], 2))      # waiting: the empty one and the shown one; answered: v10.0's
+
+    def test_the_story_a_check_shows(self):
+        a, b, c = (tasks.Post(id=x, kind="telegram", source=x, source_id=x, at=datetime(2100, 1, 1, n, tzinfo=timezone.utc),
+                              title=x, text="t") for n, x in enumerate("abc"))
+        self.assertEqual([m.id for m in tasks.check_side(b, [a, b, c], {"a", "b"})], ["a"])     # the reports but the post
+        self.assertEqual([m.id for m in tasks.check_side(b, [a, b, c], {"b"})], ["a", "c"])     # its only report: any role
+        self.assertEqual(tasks.check_side(b, [b], {"b"}), [])                                   # alone: nothing to ask
+
+    def test_a_near_copy_is_never_a_check_question(self):
+        """0112 bug 3: identical reposts were checked and removed (9 of 44 removals). A member whose folded text is
+        another member's, or whose 5-word shingles overlap one's by 0.6 or more, from any source, is never checked."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        teaser = ("Open meeting on Friday: a project with agents from the first idea to working code, "
+                  "with a live demo and questions at the end, everyone is welcome to join us.")
+        origin = self.post(title="Open meeting on Friday", text=teaser, source=self.other, at=t0)
+        copy = self.post(title="Open meeting on Friday", text="🔥 " + teaser.upper(), at=t0 + timedelta(hours=1))
+        own = self.post(title="My notes from the agents meeting", text="The speaker showed how they split a large task "
+                        "into small steps, and the part about tests before code was the most useful for my team.",
+                        at=t0 + timedelta(hours=2))
+        story = origin
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v', NULL), (%s, %s, 'report', 'v', 'copy'), (%s, %s, 'report', 'v', 'citation')",
+                         (story, origin, story, copy, story, own))
+        with self.conn.transaction():
+            asked = {p.id for p, _ in tasks.check_questions(self.cur, days=1)}
+        self.assertNotIn(copy, asked)
+        self.assertIn(own, asked)
+
+    def test_near_copies(self):
+        def p(pid, text, title="T", source="s"):
+            return tasks.Post(id=pid, kind="telegram", source=source, source_id=source,
+                              at=datetime(2100, 1, 1, tzinfo=timezone.utc), title=title, text=text)
+        base = " ".join(f"w{k}" for k in range(40))
+        edited = " ".join(f"w{k}" for k in range(36)) + " x1 x2 x3 x4"           # 32 shingles shared of 40: 0.8
+        other = " ".join(f"w{k}" for k in range(0, 40, 2)) + " " + " ".join(f"v{k}" for k in range(20))
+        ms = [p("a", base), p("b", "«" + base.upper() + "»!", source="t"), p("c", edited, source="u"), p("d", other)]
+        self.assertTrue(tasks.near_copy(ms[0], ms[1]))                           # the same folded text, another source
+        self.assertTrue(tasks.near_copy(ms[0], ms[2]))                           # shingles at 0.6 or more
+        self.assertFalse(tasks.near_copy(ms[0], ms[3]))
+        self.assertEqual(tasks.near_copies(ms), {"a", "b", "c"})
+        self.assertEqual(tasks.near_copies([ms[0], ms[3]]), set())
+
     def test_a_member_joined_by_thread_is_checked_unless_switched_off(self):
         """The S5 review's W1: a thread Mark IX hung on a story by its root's citation is checked reply by reply."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
-        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
-        root = self.post(title="Benchmarks of many models", at=t0 + timedelta(hours=1))
-        reply = self.post(title="More benchmark numbers", at=t0 + timedelta(hours=2))
+        origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
+        root = self.post(title="Benchmarks of many models", text=OWN[1], at=t0 + timedelta(hours=1))
+        reply = self.post(title="More benchmark numbers", text=OWN[2], at=t0 + timedelta(hours=2))
         story = origin
         self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
         self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
@@ -428,6 +573,85 @@ class GuidesAndInputs(_Api):
             self.assertEqual(tasks.plan_posts(self.cur, "read", now=now), 0)
         self.cur.execute("SELECT a, priority FROM mx_tasks WHERE kind = 'read' ORDER BY priority")
         self.assertEqual([(str(a), p) for a, p in self.cur.fetchall()], [(fresh, 0), (older, 3)])
+
+
+class ReadingWindow(_Api):
+    """0112 Decided 9: the read, entities and embed planners' window is the owner's (the page's mx_settings row,
+    default 30 days, null for every post), and a lease may carry its own (`days`); the decision window stays 30."""
+    plan = True
+
+    def setUp(self):
+        super().setUp()
+        self.now = datetime.now(timezone.utc)
+        self.fresh = self.post(title="Fresh", at=self.now - timedelta(days=2))
+        self.old = self.post(title="Old", at=self.now - timedelta(days=100))
+        self.ancient = self.post(title="Ancient", at=self.now - timedelta(days=2000))
+
+    def planned(self, kind="read"):
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = %s", (kind,))
+        return {r[0] for r in self.cur.fetchall()} & {self.fresh, self.old, self.ancient}
+
+    def test_the_page_setting_changes_the_next_planner_runs_window(self):
+        self.assertEqual(call("GET", "/api/markx/settings")[1]["reading_window_days"], 30)     # no row: 30
+        with self.conn.transaction():
+            tasks.plan_posts(self.cur, "read")
+        self.assertEqual(self.planned(), {self.fresh})
+        status, body = call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        self.assertEqual((status, body["reading_window_days"]), (200, 120))
+        with self.conn.transaction():
+            tasks.plan_posts(self.cur, "read")
+            tasks.plan_posts(self.cur, "entities")
+        self.assertEqual(self.planned(), {self.fresh, self.old})
+        self.assertEqual(self.planned("entities"), {self.fresh, self.old})
+        self.assertEqual(call("POST", "/api/markx/settings/reading-window", body={"days": None})[1]["reading_window_days"], None)
+        with self.conn.transaction():
+            tasks.PLANNERS["read"](self.cur)
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+        self.assertEqual(call("GET", "/api/markx/overview")[1]["reading_window"]["days"], None)
+
+    def test_the_embed_planner_reads_the_setting(self):
+        with self.conn.transaction():
+            tasks.PLANNERS["embed"](self.cur)
+        self.assertEqual(self.planned("embed"), {self.fresh})
+        call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        with self.conn.transaction():
+            tasks.PLANNERS["embed"](self.cur)
+        self.assertEqual(self.planned("embed"), {self.fresh, self.old})
+
+    def test_a_bad_window_is_refused(self):
+        for bad in (0, -3, "120", 1.5, 100000):
+            self.assertEqual(call("POST", "/api/markx/settings/reading-window", body={"days": bad})[0], 422, bad)
+        self.assertEqual(self.lease(days="soon")[0], 400)
+        self.assertEqual(self.lease(days="0")[0], 400)
+
+    def lease(self, days, kind="read", limit=100):
+        return call("GET", "/api/markx/work", query={"kinds": kind, "limit": limit, "worker": "device-1", "days": days},
+                    token=self.token)
+
+    def test_a_lease_with_days_120_plans_older_posts_first(self):
+        status, body = self.lease("120")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old})
+        leased = {t["input"].split("Title: ")[1].split("\n")[0] for t in body["tasks"]}
+        self.assertTrue({"Fresh", "Old"} <= leased)
+        self.assertNotIn("Ancient", leased)
+        self.assertEqual(call("GET", "/api/markx/settings")[1]["reading_window_days"], 30)   # the page's is unchanged
+
+    def test_a_lease_with_days_all_covers_every_post(self):
+        status, body = self.lease("all")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+
+    def test_neither_touches_the_decision_window(self):
+        from insight_core.markx import decide as D
+        call("POST", "/api/markx/settings/reading-window", body={"days": None})
+        self.lease("all")
+        self.assertEqual(D.Config().days, 30)
+        with self.conn.transaction():
+            world = D.load(self.cur, self.now, D.Config())
+        self.assertEqual(world.since, self.now - timedelta(days=30))
+        import inspect
+        self.assertEqual(inspect.signature(tasks.plan_checks).parameters["days"].default, 30)
 
 
 class EveryKindRoundTrips(_Api):

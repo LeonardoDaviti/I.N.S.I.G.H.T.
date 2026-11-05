@@ -63,8 +63,12 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 <ul className="mt-1 space-y-1.5">
                   {data.stories.map((s) => (
                     <li key={s.id} className="[overflow-wrap:anywhere]">
-                      <span className="text-fg">{s.headline || 'A story of ' + plural(s.posts, 'post')}</span>
-                      <span className="text-fg-3"> · {plural(s.posts, 'post')}</span>
+                      {s.headline ? (
+                        <>
+                          <span className="text-fg">{s.headline}</span>
+                          <span className="text-fg-3"> · {plural(s.posts, 'post')}</span>
+                        </>
+                      ) : <span className="text-fg">A story of {plural(s.posts, 'post')}</span>}
                       <span className="block">{whyWords(s)}{s.words ? <span className="text-fg-3"> — {s.words}</span> : null}</span>
                     </li>
                   ))}

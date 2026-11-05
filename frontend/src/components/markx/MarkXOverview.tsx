@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
@@ -108,6 +108,53 @@ export function MarkXEntities() {
 
 const STATUSES = ['open', 'leased', 'answered', 'failed'] as const;
 
+const WINDOWS: { label: string; days: number | null }[] = [
+  { label: '30 days', days: 30 }, { label: '120 days', days: 120 }, { label: 'everything', days: null },
+];
+
+/** The read, entities and embed planners' window (issue 0112): 30 days, 120, everything, or a number of days. It counts
+ *  from the next planner run, with no restart; `markx-worker cycle --days` reads any other window on its own leases. */
+function ReadingWindow({ days }: { days: number | null }) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const [own, setOwn] = useState('');
+  const save = useMutation({
+    mutationFn: (d: number | null) => api.setMarkxReadingWindow(d),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] }); },
+  });
+  const chosen = save.isPending ? save.variables : days;
+  const custom = chosen !== null && chosen !== undefined && !WINDOWS.some((w) => w.days === chosen);
+  const n = Number(own);
+  const valid = Number.isInteger(n) && n >= 1 && n <= 36500;
+  return (
+    <section aria-label="Reading window">
+      <h2 className={H2}>Reading window</h2>
+      <p className="mt-3 text-[0.8125rem] text-fg-2">
+        The worker reads {chosen === null ? 'every post' : `the last ${plural(chosen ?? 30, 'day')}`}: readings, entities and
+        embeddings. A change counts from the next lease. The decisions keep to the last 30 days.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.8125rem]" role="radiogroup" aria-label="Reading window">
+        {WINDOWS.map((w) => (
+          <label key={w.label} className="flex items-center gap-1.5 text-fg">
+            <input type="radio" name="markx-window" checked={chosen === w.days} disabled={save.isPending}
+                   onChange={() => save.mutate(w.days)} />
+            {w.label}
+          </label>
+        ))}
+        <span className="flex items-center gap-1.5 text-fg">
+          <input type="number" min={1} max={36500} step={1} inputMode="numeric" aria-label="days" value={own}
+                 placeholder={custom ? String(chosen) : 'days'} onChange={(e) => setOwn(e.target.value)}
+                 className="w-20 rounded border border-line bg-transparent px-1.5 py-0.5 tabular-nums" />
+          <Button size="sm" variant="secondary" disabled={!valid || save.isPending} onClick={() => { save.mutate(n); setOwn(''); }}>
+            set
+          </Button>
+        </span>
+        {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
+      </div>
+    </section>
+  );
+}
+
 /** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
 export function MarkXWorker() {
   const api = useApi();
@@ -121,11 +168,12 @@ export function MarkXWorker() {
   });
   return (
     <Loaded>
-      {({ worker }) => {
+      {({ worker, reading_window: readingWindow }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
           <div className="space-y-10">
+            <ReadingWindow days={readingWindow ? readingWindow.days : 30} />
             <section aria-label="Queue">
               <h2 className={H2}>Queue</h2>
               {kinds.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">No task yet.</p> : (

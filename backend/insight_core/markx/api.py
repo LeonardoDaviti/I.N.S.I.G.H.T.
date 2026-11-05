@@ -109,7 +109,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
 from insight_core.markx import candidates, decide, embed, labels, news, repo, schemas, tasks, validate
 
@@ -226,18 +226,27 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 # ---- the worker's routes -------------------------------------------------------------------------
 
 @router.get("/work", dependencies=[Depends(_worker_auth)])
-def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), worker: str = Query(...)):
+def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), worker: str = Query(...),
+         days: Optional[str] = Query(None)):
+    """A lease. With `days` (a number, or "all"; `markx-worker cycle --days`), the read, entities and embed kinds
+    asked are planned for that window first, newest first and PLAN_LIMIT a call, whatever the page's reading window
+    (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
     if not wanted or unknown:
         raise HTTPException(status_code=400, detail=f"unknown kind: {unknown[0] if unknown else '(none)'}")
+    window = _days(days) if days is not None else tasks.SETTING
     _contact(worker)
     with transaction() as cur:
         ensure_guides(cur)
         queue = repo.queue_counts(cur)
         for kind in wanted:
-            if kind in tasks.PLANNERS and queue.get(kind, {}).get("open", 0) < limit:
+            if kind not in tasks.PLANNERS:
+                continue
+            if window is not tasks.SETTING and kind in tasks.WINDOWED:
+                tasks.PLANNERS[kind](cur, days=window)
+            elif queue.get(kind, {}).get("open", 0) < limit:
                 tasks.PLANNERS[kind](cur)
         leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker)
         guides = repo.guides(cur, sorted({t["guide"] for t in leased})) if leased else {}
@@ -398,6 +407,48 @@ def start_jobs() -> bool:
     return decide.scheduler.start()
 
 
+MAX_DAYS = 36500
+
+
+def _days(value: str) -> Optional[int]:
+    """A lease's `days`: "all" (every post) or a whole number of days, 1 to MAX_DAYS."""
+    v = value.strip().lower()
+    if v == "all":
+        return None
+    if v.isdigit() and 1 <= int(v) <= MAX_DAYS:
+        return int(v)
+    raise HTTPException(status_code=400, detail='days: a number of days (1 to 36500) or "all"')
+
+
+class WindowIn(BaseModel):
+    days: Optional[StrictInt] = Field(..., ge=1, le=MAX_DAYS)
+
+
+def _window(cur) -> Dict[str, Any]:
+    return {"reading_window_days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}
+
+
+@router.get("/settings")
+def mx_settings():
+    """The owner's Mark X settings (0112 Decided 9): the reading window of the read, entities and embed planners."""
+    with transaction() as cur:
+        return _window(cur)
+
+
+@router.post("/settings/reading-window")
+def mx_set_reading_window(body: WindowIn):
+    """The reading window from the page: a number of days, or null for every post. It counts from the next planner
+    run (the next lease), with no restart; the decision window stays 30 days."""
+    with transaction() as cur:
+        tasks.set_reading_window(cur, body.days)
+        return _window(cur)
+
+
+def after_start_stories() -> None:
+    """When the start's story job has finished (main.py): Mark X's first decision run, only when Mark X is on."""
+    decide.scheduler.after_stories()
+
+
 @router.get("/on")
 def switched_on():
     return {"on": True}
@@ -422,7 +473,8 @@ def mx_post(post_id: str):
 def mx_overview():
     with transaction() as cur:
         return {"worker": news.worker(cur, dict(_contacts)), "briefing": news.briefings(cur),
-                "entities": news.entities(cur)}
+                "entities": news.entities(cur),
+                "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}}
 
 
 @router.post("/decide")

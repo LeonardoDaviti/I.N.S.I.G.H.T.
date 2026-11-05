@@ -14,7 +14,6 @@ changes. mx_tasks.kind is not checked by the database, so a kind needs no migrat
 """
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -182,16 +181,28 @@ def load_guides(cur) -> Dict[str, str]:
 
 
 _ready: set = set()
-_ready_lock = threading.Lock()
 
 
 def ensure_guides(cur) -> None:
     """The guides loaded once per process and database, before the first task or lease that names one (0086 C:
-    loaded at start, by sha256). The database is told apart by its connection's host, port and name."""
+    loaded at start, by sha256). The database is told apart by its connection's host, port and name.
+
+    It is ready only once the transaction that loaded them commits (0112 bug 4: marked ready before, a second
+    thread's lease planned tasks naming a guide not committed yet, a foreign-key failure). Until then each caller
+    loads them in its own transaction, once per transaction: a concurrent first lease waits on the first one's
+    rows (the database's lock, never a lock of this process held while waiting), then sees them committed; a
+    failed load leaves the database not ready and the next caller loads again. On a plain connection (not
+    `database.transaction`'s, so no commit to wait for) the database never becomes ready: each transaction loads."""
+    from insight_core.db import database
     info = cur.connection.info
     where = (info.host, info.port, info.dbname)
-    with _ready_lock:
-        if where in _ready:
-            return
-        load_guides(cur)
-        _ready.add(where)
+    if where in _ready:
+        return
+    conn = cur.connection
+    cur.execute("SELECT pg_current_xact_id()::text")
+    xact = (where, cur.fetchone()[0])
+    if getattr(conn, "_insight_guides_loaded", None) == xact:
+        return
+    load_guides(cur)
+    conn._insight_guides_loaded = xact
+    database.after_commit(conn, lambda: _ready.add(where))

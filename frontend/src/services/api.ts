@@ -4,7 +4,7 @@ import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 import type {
   MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
-  MarkxPrecision,
+  MarkxPrecision, MarkxSettings,
 } from './markx';
 
 export type { Envelope };
@@ -1221,6 +1221,9 @@ export function createApi() {
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
     getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
     runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
+    /** The reading window from the Worker tab: days, or null for every post; counts from the next planner run. */
+    setMarkxReadingWindow: (days: number | null) =>
+      request<MarkxSettings>('/api/markx/settings/reading-window', { method: 'POST', body: { days } }),
     /** Mark X's labels (issue 0086 F): the queue, one item (its verdict only once labelled), an answer, precision. */
     getMarkxLabels: () => request<MarkxLabelQueue>('/api/markx/labels'),
     getMarkxLabelItem: (itemId: string) => request<MarkxLabelItem>(`/api/markx/labels/items/${enc(itemId)}`),

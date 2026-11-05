@@ -26,7 +26,8 @@ Two layers:
     answers into verdicts; and writes Mark X's stories, memberships and connections (closing what changed, never
     deleting), then Mark X's News (markx/news.py). Each run is one mx_runs row. It writes only mx_* tables.
 
-When it runs (`Scheduler`): after the worker's uploads (answers and vectors, debounced), and hourly, only when
+When it runs (`Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
+vectors, debounced), and hourly, only when
 INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processes).
 """
 from __future__ import annotations
@@ -179,14 +180,18 @@ def ix_members(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]]) -> 
 def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kinds: Dict[str, Optional[str]],
                candidates: Iterable[Tuple[str, str, Optional[float]]],
                story_pairs: Iterable[Tuple[str, str, float]], config: Config = Config(),
-               in_window: Optional[Callable[[str], bool]] = None) -> List[Question]:
+               in_window: Optional[Callable[[str], bool]] = None,
+               copies: Optional[Dict[str, Set[str]]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
     2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
-    unrelated replies on a story, which its root's check never reaches); for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
+    unrelated replies on a story, which its root's check never reaches). A check shows the story's reports but the
+    post, or its other members of any role when the post is its only report (0112 bug 2), never an empty story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
     cosine) not asked yet. `kinds`: each post's reading kind. `in_window(a)`: whether a pair's earlier post is in
-    the window decided (the prototype's context posts were not)."""
+    the window decided (the prototype's context posts were not). `copies`: each story's members that are a near-copy
+    of another of its members (tasks.near_copies), never checked (0112 bug 3)."""
     members = ix_members(posts, stories)
+    copies = copies or {}
     home: Dict[str, List[str]] = {}
     for key, ms in members.items():
         for m in ms:
@@ -204,14 +209,16 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         origin = ms[0].post
         for m in ms:
             p = posts[m.post]
-            if m.post == origin or p.kind in NOT_VOICE:
+            if m.post == origin or p.kind in NOT_VOICE or m.post in copies.get(key, ()):
                 continue
             roundup = kinds.get(m.post) == "roundup"
             if m.why in certain and not roundup:
                 continue
             if p.words < config.min_words and not roundup:
                 continue                                       # rule A: nothing to judge, keep
-            shown = tuple(q for q in side(key) if q != m.post)[:3]
+            shown = tuple(q for q in side(key) if q != m.post)[:3] or tuple(x.post for x in ms if x.post != m.post)[:3]
+            if not shown:
+                continue                                       # a story's only post: nothing to check it against
             out.append(Question(f"check:{key}:{m.post}", "check", story=key, post=m.post, voices=nv[key], why=m.why,
                                 roundup=roundup, side=shown))
     seen: Set[Any] = set()
@@ -515,6 +522,16 @@ class World:
     def events(self) -> Dict[str, Optional[str]]:
         return {k: r.get("events") for k, r in self.readings.items()}
 
+    def copies(self) -> Dict[str, Set[str]]:
+        """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
+        from insight_core.markx import tasks
+        out = {}
+        for key, ms in self.stories.items():
+            found = tasks.near_copies([self.text[m.post] for m in ms if m.post in self.text])
+            if found:
+                out[key] = found
+        return out
+
 
 def load(cur: Any, now: datetime, config: Config) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
@@ -651,7 +668,7 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     story_pairs = [(x, y, c) for (x, y), c in sorted(centroid_cosines(cur, multi, config.story_lo).items())
                    if abs(first[x] - first[y]) <= span]
     q1 = plan_pass1(world.posts, world.stories, world.kinds(), world.candidates, story_pairs, config,
-                    in_window=lambda a: world.posts[a].at >= world.since)
+                    in_window=lambda a: world.posts[a].at >= world.since, copies=world.copies())
     ans1 = [(x, v) for x in q1 if (v := q.verdict(x)) is not None]
     p1 = decide(world.posts, world.stories, ans1, config, world.events())
     groups = {s["story"]: [p for p in s["posts"] if p in world.posts] for s in p1.stories(world.posts)
@@ -967,6 +984,13 @@ class Scheduler:
         self.thread = threading.Thread(target=self._hourly, name="markx-decide", daemon=True)
         self.thread.start()
         return True
+
+    def after_stories(self) -> Optional[Dict[str, Any]]:
+        """The API's start: its story job has finished, so Mark X decides now over Mark IX's new stories (0112 A),
+        not up to EVERY seconds later; nothing when Mark X is off."""
+        if not self.on():
+            return None
+        return self.run_now(candidates_first=True)
 
     def _hourly(self) -> None:
         while not self.stop.wait(self.every):

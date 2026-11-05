@@ -321,7 +321,16 @@ Mark X reads every post beside Mark IX and writes only its own `mx_*` tables (mi
 2. Settings → Sources → Connections → **Mark X worker token**: generate it and copy it once to the device that runs the worker, as `~/.config/insight/markx-token` (mode 600).
 3. The menu shows **mark x** (`/markx`): Mark X News beside Mark IX's, the briefing, entities, the worker's queue and the labels.
 
-**What runs on the server when it's on** (in the API process): the decision job, hourly and 60 s after the worker's last upload (one at a time, one snapshot; about 1.6 s on 49k posts), and the candidate finder, 30 s after the last vectors arrive. Nothing calls a model from the server.
+**What runs on the server when it's on** (in the API process): the decision job, once the start's story job finishes, then hourly and 60 s after the worker's last upload (one at a time, one snapshot; about 1.6 s on 49k posts), and the candidate finder, 30 s after the last vectors arrive. Nothing calls a model from the server.
+
+**Updating to v10.0.1 (issue 0112): update the worker on the device with the server.**
+- The fix for refused readings lives in `scripts/markx-worker`: it sends each guide's answer schema with the guide, so Haiku writes the field names the server checks. A v10.0 worker against a v10.0.1 server keeps failing about 45% of reading items (`answer.mentions[i]: name missing`). Pull the same commit on the device (or copy `scripts/markx-worker`) when you `./update` the server, and restart its loops.
+- Migration 0069 runs at the server's start, once:
+  - it reopens the read tasks that failed only from that error (their failed answers stay recorded); the next worker cycle reads them;
+  - it closes, as failed with the reason, the checks v10.0 queued against an empty story: v10.0.1 never asks them.
+- **The reading window** (issue 0112 Decided 9): `/markx` → Worker → **Reading window**: 30 days (the default, when never set), 120 days, everything, or a number of days. It is how far back the worker reads, finds entities and embeds (embeddings followed every post before; now the window too); a change counts from the next lease, with no restart. Nothing sets it on deploy: set 120 days on the page after the update. The decisions keep to the last 30 days whatever it says. To read another range from the device at any time, whatever the page says: `scripts/markx-worker cycle … --kinds read,entities --days 120` (or `--days all`): each lease then plans that window first, newest first.
+- **Parallel calls:** start the worker at `--parallel 10` at most and raise it in steps while watching it. About 100 `claude -p` calls at once made the device's Tailscale DNS stop resolving, twice (5 Nov), and the calls failed with "Can't reach the API server".
+- The first decision run after the start (once the story job is done) re-decides v10.0's removals: a post removed on an empty-story check, or a near-copy of another member, is a member again; the empty-story check is asked again with the story shown, and a near-copy is never checked. Run the worker's `check` and `merge` kinds again from then on.
 
 **The worker** runs on your device (`scripts/markx-worker`, standard library only):
 ```

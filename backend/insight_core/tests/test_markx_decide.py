@@ -67,6 +67,24 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
         self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
 
+    def test_a_check_never_shows_an_empty_story(self):
+        """0112 bug 2: the checked post as the story's only report showed Haiku "Headline: (empty)" and no member.
+        Then it shows the story's other members, any role; with none at all, nothing is asked."""
+        self.stories["A"] = [D.Member("a", "share"), D.Member("b", "report", "citation"), D.Member("c", "share", "citation")]
+        qs = {q.tid: q for q in self.plan() if q.story == "A"}
+        self.assertEqual(qs["check:A:b"].side, ("a", "c"))     # b is the only report: the others, any role
+        self.assertEqual(qs["check:A:c"].side, ("b",))         # the reports but the post, as before
+        for q in self.plan():
+            if q.type == "check":
+                self.assertTrue(q.side, q.tid)
+
+    def test_a_near_copy_is_never_checked(self):
+        """0112 bug 3: a member that is a near-copy of another member (`copies`, by story) is never a check question,
+        so no check removes or demotes it; it stays a member."""
+        qs = {q.tid for q in D.plan_pass1(self.posts, self.stories, {}, (), (), D.Config(), copies={"A": {"a", "b"}})}
+        self.assertNotIn("check:A:b", qs)
+        self.assertIn("check:A:c", qs)
+
     def test_a_one_voice_story_is_not_checked(self):
         self.posts["b"] = post("b", "s1", 1)
         self.stories = {"A": story("a", "b")}
@@ -221,7 +239,8 @@ class Job(unittest.TestCase):
     def post(self, hours, title, *, platform="telegram"):
         source = insert_scratch_source(self.cur, platform=platform, settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
         pid = str(self.cur.fetchone()[0])
@@ -296,6 +315,46 @@ class Job(unittest.TestCase):
         self.assertEqual(out["news"]["tags"], {"NEW": 1})
         self.assertTrue(out["news"]["written"])
         self.assertFalse(self.go()["news"]["written"])                # the same rows are not written again
+
+    def test_removals_made_under_bugs_2_and_3_are_re_decided_by_the_next_run(self):
+        """0112 Decided 6: v10.0 removed b on a check that showed an empty story (b its story's only report) and d, a
+        copy of a. The next run doesn't trust those answers: b's check is asked again with the story shown, d is never
+        asked; both are members again (a new row, the closed ones kept) and b's new answer decides it."""
+        a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 hands-on"), self.post(2, "Widget 4 price")
+        d = self.post(3, "Acme released Widget 4")
+        self.cur.execute("UPDATE posts SET content = (SELECT content FROM posts WHERE id = %s) WHERE id = %s", (a, d))
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        self.cur.execute("DELETE FROM post_parts WHERE post_id = %s", (d,))
+        PostPartsRepository.write(self.cur, [d])
+        story = self.ix_story(a, b, c, d)
+        self.cur.execute("UPDATE story_posts SET role = 'share' WHERE story_id = %s AND post_id <> %s", (story, b))
+        first = self.go()
+        sid = {s for s, _, _, _ in self.current()}.pop()
+        # v10.0's questions and answers: b against an empty story, d against the story, both "different"
+        text = tasks.load_posts(self.cur, [a, b, c, d])
+        old = {b: tasks.check_input(text[b], []), d: tasks.check_input(text[d], [text[b]])}
+        self.assertIn("Headline: \n", old[b])
+        for pid, question in old.items():
+            tid, new = tasks.add(self.cur, "check", question, a=pid)
+            self.assertTrue(new)
+            call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                                 answer={"id": "x", "relation": "different", "confidence": 90, "reason": "no relation"})
+            repo.answer_task(self.cur, tid)
+            repo.close_membership(self.cur, story_id=sid, post_id=pid, at=self.now)   # v10.0's removal
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, c})
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'check' AND status = 'open'")
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, {b, c})      # d, a copy of a, is never asked
+        again = self.go()
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, c, d})   # not trusted: members again
+        self.assertNotIn("remove", again["changes"])
+        self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE post_id = ANY(%s::uuid[]) AND valid_to IS NOT NULL",
+                         ([b, d],))
+        self.assertEqual(self.cur.fetchone()[0], 2)                        # the closed rows stay
+        self.answer("check", lambda t: {"relation": "same_event" if str(t["a"]) == b else "different", "confidence": 90})
+        third = self.go()
+        self.assertEqual(third["changes"], {"remove": 1})                  # c, asked once, says different
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, d})
+        self.assertEqual(first["tasks_added"].get("check"), 2)
 
     def test_a_short_pair_is_never_asked(self):
         a = self.post(0, "Widget")
@@ -416,7 +475,8 @@ class Snapshot(unittest.TestCase):
     def post(self, hours, title):
         source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
         pid = str(self.cur.fetchone()[0])
@@ -498,6 +558,30 @@ class Switch(unittest.TestCase):
             self.assertTrue(done.wait(2))
             time.sleep(0.3)
         self.assertEqual(ran, ["cur"])
+
+    def test_the_first_run_follows_the_starts_story_job(self):
+        """0112 A: the start's story job ends, then Mark X decides at once (it waited up to an hour for the clock)."""
+        import contextlib
+        ran = []
+
+        @contextlib.contextmanager
+        def transaction():
+            yield "cur"
+        with mock.patch.object(D, "run", lambda cur: ran.append(cur) or {"stories": 0}):
+            D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: False).after_stories()
+            self.assertEqual(ran, [])
+            with mock.patch("insight_core.markx.candidates.pending.flush") as flush:
+                D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: True).after_stories()
+            flush.assert_called_once()
+        self.assertEqual(ran, ["cur"])
+
+    def test_the_api_start_runs_mark_x_after_the_story_job(self):
+        import main
+        order = []
+        with mock.patch.object(main, "in_own_process", lambda job: order.append(job.__name__)), \
+                mock.patch.object(D.scheduler, "after_stories", lambda: order.append("markx")):
+            main.start_stories()
+        self.assertEqual(order, ["recompute_stories", "markx"])
 
     def test_on_a_failed_run_never_raises(self):
         def broken():

@@ -76,6 +76,13 @@ def recompute_stories() -> None:
     services().stories.recompute_safely()
 
 
+def start_stories() -> None:
+    """The start's story job in its own process, then Mark X's first decisions over its stories (issue 0112 A:
+    they waited for the hourly clock); the second is nothing when INSIGHT_MARKX is off."""
+    in_own_process(recompute_stories)
+    markx_router_module.after_start_stories()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
@@ -86,7 +93,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
-    threading.Thread(target=in_own_process, args=(recompute_stories,), name="stories", daemon=True).start()
+    threading.Thread(target=start_stories, name="stories", daemon=True).start()
     markx_router_module.start_jobs()   # Mark X's hourly decisions (issue 0086 E); nothing when INSIGHT_MARKX is off
     yield
     database.close_all()

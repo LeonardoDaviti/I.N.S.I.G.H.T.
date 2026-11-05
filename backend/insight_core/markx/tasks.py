@@ -55,8 +55,24 @@ PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
 NOT_VOICE = {"saved"}
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
-PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only
+PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
+                                           # 0112 Decided 9 the read, entities and embed planners' default only
 PLAN_LIMIT = 500
+READING_WINDOW = "reading_window_days"     # mx_settings: the owner's window for those three (an int, or null: every post)
+SETTING = object()                         # a planner's `days` when the caller names none: the owner's setting
+
+
+def reading_window(cur: Cursor) -> Optional[int]:
+    """The read, entities and embed planners' window in days, as the owner set it on the page (0112 Decided 9): an
+    int, or None for every post; PLAN_DAYS when it was never set. Read on every planner run, so a change counts from
+    the next one (no restart). The decision window (decide.Config.days) and plan_checks stay at PLAN_DAYS."""
+    value = repo.get_setting(cur, READING_WINDOW, default=PLAN_DAYS)
+    return None if value is None else int(value)
+
+
+def set_reading_window(cur: Cursor, days: Optional[int]) -> Optional[int]:
+    repo.set_setting(cur, READING_WINDOW, days)
+    return days
 
 
 # ---- the posts, as Mark X reads them (markx text v1) ----------------------------------------------
@@ -118,6 +134,42 @@ def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[st
 
 def words(p: Post) -> int:
     return len((p.title + " " + p.text).split())
+
+
+# A near-copy (0112 bug 3, the prototype's rule: 0106 step 1, persp32.Story): another member's text folded, or a
+# 5-word shingle Jaccard of COPY_JACCARD or more, whatever the source. Never checked, so never removed or demoted.
+COPY_SHINGLE, COPY_JACCARD = 5, 0.6
+
+
+def fold(s: Optional[str]) -> str:
+    """The prototype's fold: lowercase, ё as е, every run of non-word characters one space."""
+    return re.sub(r"[\W_]+", " ", (s or "").lower().replace("ё", "е")).strip()
+
+
+def shingles(p: Post, k: int = COPY_SHINGLE) -> set:
+    w = re.findall(r"\w+", (p.title + " " + p.text).lower())
+    return {tuple(w[i:i + k]) for i in range(max(0, len(w) - k + 1))}
+
+
+def _jaccard(a: set, b: set) -> float:
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+def near_copy(a: Post, b: Post) -> bool:
+    fa = fold(a.title + " " + a.text)
+    return (bool(fa) and fa == fold(b.title + " " + b.text)) or _jaccard(shingles(a), shingles(b)) >= COPY_JACCARD
+
+
+def near_copies(members: Sequence[Post]) -> set:
+    """The ids of the members that are a near-copy of another member."""
+    keys = [(fold(m.title + " " + m.text), shingles(m)) for m in members]
+    out = set()
+    for i, (fi, si) in enumerate(keys):
+        for j in range(i + 1, len(keys)):
+            fj, sj = keys[j]
+            if (fi and fi == fj) or _jaccard(si, sj) >= COPY_JACCARD:
+                out.update((members[i].id, members[j].id))
+    return out
 
 
 def voices(posts: Iterable[Post]) -> int:
@@ -223,6 +275,12 @@ def check_input(post: Post, members: Sequence[Post]) -> str:
     ms = [m for m in _earliest(members) if m.id != post.id]
     card = {"headline_en": ms[0].title} if ms else {}
     return render_story(card, ms[:STORY_MEMBERS]) + "\n\n" + render_post(post, None)
+
+
+def shows_empty_story(text: str) -> bool:
+    """Whether a check's input shows its story with no member (0112 bug 2; the real-data check's
+    markx.check_empty_story)."""
+    return "\nMembers (earliest first):\n" not in text.split("\n\nPOST\n", 1)[0] + "\n"
 
 
 def join_input(post: Post, reading: Optional[dict], members: Sequence[Post], card: dict) -> str:
@@ -371,16 +429,20 @@ def briefing_task(cur: Cursor, day: date, stories: Sequence[Tuple[str, Sequence[
 
 # ---- planning: what is asked without S2 or S5 ------------------------------------------------------
 
-def plan_posts(cur: Cursor, kind: str, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT,
+def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN_LIMIT,
                now: Optional[datetime] = None) -> int:
-    """`read` or `entities` tasks for the newest posts of the last `days` that have none under the kind's guide,
-    newest first (priority: the post's age in days, so a lease takes today's first): how many were added."""
+    """`read` or `entities` tasks for the newest posts of the last `days` (by default the owner's reading window,
+    `reading_window`; None: every post) that have none under the kind's guide, newest first (priority: the post's
+    age in days, so a lease takes today's first): how many were added."""
     spec = schemas.KINDS[kind]
+    if days is SETTING:
+        days = reading_window(cur)
     cur.execute(
         """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                     - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
              FROM posts p
-            WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s)
+            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                             >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
             ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
             LIMIT %(limit)s""", {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit})
@@ -399,7 +461,7 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
                     threads: Optional[bool] = None) -> Iterable[Tuple[Post, str]]:
     """F1's checks over Mark IX's current stories (pipeline.plan), as (post, input), without writing: every member
     of a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
-    roundup, of 20 words or more unless a roundup; with `threads` (default: the decision job's
+    roundup, of 20 words or more unless a roundup, and not a near-copy of another member (0112 bug 3); with `threads` (default: the decision job's
     `Config.check_threads`), a member joined by `thread` too. Stories with a member in the last `days` (None: every
     story). Mark IX is only read."""
     if threads is None:
@@ -424,14 +486,25 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
             continue
         why = {p: reason for p, _, reason in ms}
         reports = {p for p, role, _ in ms if role == "report"}
-        side = [m for m in members if m.id in reports] or members
+        copies = near_copies(members)
         for p in members[1:]:
-            if p.kind in NOT_VOICE:
+            if p.kind in NOT_VOICE or p.id in copies:
                 continue
             roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
                 continue
-            yield p, check_input(p, [m for m in side if m.id != p.id])
+            side = check_side(p, members, reports)
+            if side:
+                yield p, check_input(p, side)
+
+
+def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> List[Post]:
+    """The story a check of `post` shows: its `reports` (post ids) but the post; when the post is the story's only
+    report, its other members of any role (0112 bug 2: Haiku was shown "Headline: " and no member, and answered
+    "different"); [] when it has no other member: a story's only post is never checked."""
+    reports = set(reports)
+    return ([m for m in members if m.id in reports and m.id != post.id]
+            or [m for m in members if m.id != post.id])
 
 
 def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
@@ -456,10 +529,14 @@ def reasked(cur: Cursor) -> Dict[str, Dict[str, int]]:
 
 
 def _plan_embeds(cur: Cursor, **kw) -> int:
+    """S2's planner, over the owner's reading window unless the caller names `days` (0112 Decided 9)."""
     from insight_core.markx import embed   # S2's planner (embed.py imports this module)
+    if kw.get("days", SETTING) is SETTING:
+        kw["days"] = reading_window(cur)
     return embed.plan(cur, **kw)
 
 
+WINDOWED = ("read", "entities", "embed")   # the planners the reading window (and a lease's `days`) applies to
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
             "check": plan_checks,

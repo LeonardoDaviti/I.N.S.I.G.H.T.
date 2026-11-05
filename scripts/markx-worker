@@ -14,6 +14,8 @@ A cycle
 1. Posts any answers a previous cycle could not deliver (the spool), so an answer is never paid for twice.
 2. Leases up to --parallel batches, each one kind (`GET /work?kinds=<one kind>&limit=<batch>`), kinds in
    --kinds order; a kind is done when the server returns fewer tasks than asked. At most --batches leases.
+   With --days <N|all> each lease carries `days`: the server plans the read, entities and embed tasks of that
+   window first (newest first), whatever the page's reading window; without it, the page's window holds.
 3. Each batch is one call:
        claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
               --no-session-persistence --strict-mcp-config
@@ -68,7 +70,7 @@ The contract (what S3's `markx/api.py` must match; built from 0086 C)
 Every request carries `Authorization: Bearer <token>` (the token file's content, stripped). JSON bodies,
 UTF-8. 401 or 403 means the token is wrong. Paths are under --server (which includes no /api).
 
-GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
+GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>[&days=<N|all>]
     Leases up to n open tasks of those kinds for 30 minutes, by priority then age. The worker always
     sends one kind.
     200 {"lease_until": "<ISO 8601 with offset, e.g. 2026-11-05T12:30:00+00:00>",
@@ -214,8 +216,11 @@ class Server:
         except ValueError:
             raise ServerError(f"{method} {path}: not JSON: {raw[:200]!r}") from None
 
-    def work(self, kind, limit, worker):
-        q = urllib.parse.urlencode({"kinds": kind, "limit": limit, "worker": worker})
+    def work(self, kind, limit, worker, days=None):
+        q = {"kinds": kind, "limit": limit, "worker": worker}
+        if days is not None:
+            q["days"] = days
+        q = urllib.parse.urlencode(q)
         return self._req("GET", f"/api/markx/work?{q}")
 
     def answers(self, payload):
@@ -331,6 +336,24 @@ class Embedder:
 
 
 # ---------------------------------------------------------------------------------------------- claude -p
+
+def days_arg(value):
+    """--days: "all" or a whole number of days, 1 to 36500 (0112 Decided 9)."""
+    v = value.strip().lower()
+    if v == "all" or (v.isdigit() and 1 <= int(v) <= 36500):
+        return v
+    raise argparse.ArgumentTypeError('a number of days (1 to 36500) or "all"')
+
+
+def system_for(guide):
+    """The guide's body, then its answer schema when it has one (v10.0.1): a guide's prose can leave a field's
+    key unnamed (read-v2's mentions never say `name`), and the server refuses an answer without it."""
+    schema = guide.get("schema")
+    if not schema:
+        return guide["body"]
+    return (guide["body"].rstrip() + "\n\nEach answer object (after its \"id\") must match this JSON Schema, with "
+            "exactly these field names:\n" + json.dumps(schema, ensure_ascii=False, separators=(",", ":")))
+
 
 def claude_argv(claude, model, system):
     return [claude, "-p", "--model", model, "--tools", "", "--system-prompt", system,
@@ -635,7 +658,7 @@ class Worker:
         if left < self.a.lease_margin:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
             return None
-        res = call(self.a.claude, self.a.model, batch.guide["body"], prompt_for(tasks),
+        res = call(self.a.claude, self.a.model, system_for(batch.guide), prompt_for(tasks),
                    timeout=self.a.timeout)
         late = datetime.now(timezone.utc) > batch.lease_until
         ok, invalid, missing = [], [], []
@@ -804,7 +827,7 @@ class Worker:
                 list(ex.map(self.second, retry))
 
     def lease(self, kind):
-        w = self.server.work(kind, self.a.batch, self.a.worker) or {}
+        w = self.server.work(kind, self.a.batch, self.a.worker, self.a.days) or {}
         tasks = w.get("tasks") or []
         if not tasks:
             return [], 0
@@ -901,7 +924,11 @@ def main(argv=None):
     c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")
     c.add_argument("--batch", type=int, default=20, help="tasks per call (default 20)")
     c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
-    c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3)")
+    c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3; start at 10 at most and raise "
+                   "it in steps: about 100 at once broke the device's DNS)")
+    c.add_argument("--days", type=days_arg, default=None,
+                   help="read, entities and embed: the server plans this window first (a number of days, or 'all'), "
+                        "whatever the page's reading window (default: the page's)")
     c.add_argument("--model", default="haiku", help="claude --model (default haiku)")
     c.add_argument("--claude", default=os.environ.get("MARKX_CLAUDE", "claude"), help="the claude binary")
     c.add_argument("--timeout", type=float, default=1800, help="seconds per call at most (default 1800)")
