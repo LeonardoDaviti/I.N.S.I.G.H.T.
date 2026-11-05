@@ -24,6 +24,7 @@ from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.url_normalization import normalize_url
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
+OWNERS_KEY = "news_owners"   # system_settings: the voices News counts by owner (issue 0111, SourceFacts.owners)
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
 
@@ -60,6 +61,23 @@ class NewsRepository:
         return {str(r[0]): r[1] for r in cur.fetchall()}
 
     # ---- the job: News ----------------------------------------------------------------
+
+    @staticmethod
+    def write_owners(cur: Cursor, owners: Dict[str, str]) -> int:
+        """Keep the owners the job counted News voices by (issue 0111), so reading News names them alike.
+        Returns 1 when they changed."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        if NewsRepository.owners(cur) == owners:
+            return 0
+        SystemSettingsRepository.upsert(cur, OWNERS_KEY, owners)
+        return 1
+
+    @staticmethod
+    def owners(cur: Cursor) -> Dict[str, str]:
+        """The owners the last story run counted News voices by: a voice -> its owner's voice."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        row = SystemSettingsRepository.get(cur, OWNERS_KEY)
+        return dict(row[0] or {}) if row else {}
 
     @staticmethod
     def write_news(cur: Cursor, stories: Sequence[NewsStory], *, since: datetime,
@@ -323,7 +341,8 @@ class NewsRepository:
                    np.voice, p.content_hash, pp.subject,
                    EXISTS (SELECT 1 FROM story_mentions m WHERE m.post_id = p.id) AS roundup,
                    sp.parent_url IS NOT NULL AND sp.parent_reason IN ('citation', 'quote')
-                     AND sp.parent_url = (SELECT st.origin_url FROM stories st WHERE st.id = sp.story_id) AS shares_origin
+                     AND sp.parent_url = (SELECT st.origin_url FROM stories st WHERE st.id = sp.story_id) AS shares_origin,
+                   sp.story_id, (SELECT st.voices FROM stories st WHERE st.id = sp.story_id), np.name
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
@@ -340,16 +359,19 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-15])
+            item = _item(row[:-18])
             (sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject,
-             roundup, shares_origin) = row[-15:]
+             roundup, shares_origin, story_id, story_voices_, name) = row[-18:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
                          "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
                          "_voiced": voiced(row, voice, content_hash), "_subject": subject,
                          "_roundup": bool(roundup),   # issue 0083: without an origin, a roundup gives way
-                         "_shares_origin": bool(shares_origin)})   # issue 0103: it links its story's outside origin
+                         "_shares_origin": bool(shares_origin),   # issue 0103: it links its story's outside origin
+                         # issue 0111: its 0050 story, that story's voices and the name that joined it to the row
+                         "_story": str(story_id) if story_id else None, "_story_voices": int(story_voices_ or 0),
+                         "_name": name})
             out.append(item)
         return out
 

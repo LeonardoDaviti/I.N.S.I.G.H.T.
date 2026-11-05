@@ -26,7 +26,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.classic_rules import Citation, classics
-from insight_core.utils.news_rules import lead, names, news, phrases, score, surges, tally
+from insight_core.utils.news_rules import lead, main_story, names, news, phrases, score, surges, tally
 from insight_core.utils.post_links import is_reference
 from insight_core.utils.story_rules import StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
@@ -154,11 +154,77 @@ class NameTests(unittest.TestCase):
         self.assertIn("v4.1 flash 1017", found)
         self.assertTrue(all("slug" in ids for ids in found.values()), found)
 
+    def test_a_date_is_no_name(self):
+        # Issue 0111: "<month> <year>" surged and joined a column's dated issue with an unrelated question
+        # (the three date surges on the server's copy, all three of unrelated posts).
+        for title, date in (("Column: Autodoxing (02 Nov 2026)", ("02 nov", "nov 2026", "02 nov 2026", "autodoxing 02 nov")),
+                            ("The best small model at Nov 2026?", ("nov 2026",)), ("Roundup #44: July 2026", ("july 2026",)),
+                            ("Notes from March 20, 2026", ("march 20", "march 20 2026")), ("June 10th update", ("june 10th",)),
+                            ("Итоги: Ноябрь 2026", ("ноябрь 2026",))):
+            self.assertFalse(names(title) & set(date), title)
+        self.assertIn("june model 4", names("June Model 4 is out"), "a month word beside no day or year names it")
+        self.assertIn("q3 2026", names("Q3 2026 results"), "not a month")
+        posts = self.burst("A column (02 Nov 2026)") + [post("q", "s4", hours=6, title="Which model at Nov 2026?")]
+        self.assertEqual(surges(posts, followed("s1", "s2", "s3", "s4")), [])
+
     def test_arxiv_titles_are_left_out(self):
         self.assertEqual(surges(self.burst(kind="arxiv"), followed("s1", "s2", "s3")), [])
 
 
+class OwnerTests(unittest.TestCase):
+    """Issue 0111: a followed source's other channels are one owner, by 0109's rule (a name of one in the
+    other's own place, and a link between them), and two sources of one place are one."""
+
+    channels = [("blog", "site", "Jane Doe Blog", None, "janedoe.example"),
+                ("yt", "youtube", "@JaneDoe", "youtube.com/@janedoe", ""),
+                ("x", "x", "jane", "x.com/janedoe_ai", ""),
+                ("other", "site", "Jane Street Notes", None, "janestreet.example"),
+                ("trend", "site", "CodeHub Trending", None, "codehub.example"),
+                ("mine", "site", "writer codehub", None, "writer.codehub.example"),
+                ("dup1", "telegram", "chan", "t.me/somechan", ""), ("dup2", "telegram", "chan", "t.me/somechan", "")]
+
+    def owners(self, linked, platforms=frozenset({"codehub.example"})):
+        from insight_core.utils.discover_rules import channel_owners, owner_pairs
+        pairs = owner_pairs(self.channels, shared_sites=frozenset(), platforms=platforms)
+        return pairs, channel_owners(self.channels, pairs, linked)
+
+    def test_one_owner_by_a_name_and_a_link(self):
+        pairs, owners = self.owners({("blog", "yt"), ("x", "blog"), ("mine", "trend")})
+        self.assertEqual({owners[i] for i in ("blog", "yt", "x")}, {owners["blog"]})
+        self.assertEqual(pairs[("blog", "other")], "name", "'jane' starts janedoe: only a link decides")
+        self.assertNotIn("other", owners, "it links none of them")
+        self.assertNotIn("trend", owners, "a platform's own host is no one's place")
+        self.assertEqual(owners["dup1"], owners["dup2"], "one place followed twice")
+
+    def test_no_link_no_owner(self):
+        _, owners = self.owners(set())
+        self.assertEqual(set(owners), {"dup1", "dup2"})
+
+
 class NewsStoriesTests(unittest.TestCase):
+    def test_one_owners_channels_are_one_voice(self):
+        # Issue 0111: a person's video channel and blog, one News voice; the row of only them is no News
+        page = "https://news.example/2026/10/the-talk"
+        posts = [post("v", "yt", kind="youtube", title="A Talk With Someone", links=[(page, None)]),
+                 post("b", "blog", title="A talk with someone, the transcript", links=[(page, None)])]
+        stories = group(posts)
+        self.assertEqual(len(news(posts, stories, [])), 1, "two sources, two voices, without owners")
+        owned = [post("v", "yt", kind="youtube", title="A Talk With Someone", links=[(page, None)], owner="site:blog.test"),
+                 post("b", "blog", title="A talk with someone, the transcript", links=[(page, None)])]
+        self.assertEqual(news(owned, group(owned), []), [], "one owner is one voice")
+        third = owned + [post("c", "s3", hours=1, title="On the talk", links=[(page, None)])]
+        [row] = news(third, group(third), [])
+        self.assertEqual((row.voices, row.reports + row.shares), (2, 2))
+
+    def test_the_lead_comes_from_the_main_story_or_its_own_name(self):
+        # Issue 0111: (id, 0050 story, its voices, the joining name)
+        row = [("p1", "big", 5, "paper name"), ("t1", "thread", 1, "model x"), ("p2", "big", 5, "model x"),
+               ("p3", "big", 5, "paper name"), ("l1", None, 0, "paper name"), ("l2", None, 0, "model x"),
+               ("s1", "small", 2, "paper name")]
+        self.assertEqual(main_story(row), {"p1", "p2", "p3", "l1", "s1"})
+        self.assertIsNone(main_story([("l1", None, 0, "a"), ("l2", None, 0, "a")]), "no 0050 story: any post")
+        self.assertEqual(main_story([("a", "s", 2, None), ("b", "t", 2, "n")]), {"a"}, "a tie: the first")
+
     def test_a_name_joins_stories_for_news_only(self):
         page = "https://news.example/2026/10/the-launch"
         posts = [post("a", "s1", title="Steam Frame is here", links=[(page, None)]),
@@ -239,6 +305,19 @@ class ClassicRulesTests(unittest.TestCase):
             self.assertEqual(classics([cite("a", 0, url), cite("b", 10, url), cite("a", 300, url)], {}), [], url)
         for url in ("https://arxiv.org/abs/2001.08361", "https://incompleteideas.net/IncIdeas/BitterLesson.html",
                     "https://example.com/blog/apis-i-like"):
+            self.assertFalse(is_reference(url), url)
+
+    def test_licence_and_legal_pages_are_not_classics(self):
+        # Issue 0111: a licence (cited by every model card) and a company's terms are references, by their shape.
+        for url in ("https://commons.example/licenses/by/4.0", "https://foundation.example/licenses/LICENSE-2.0",
+                    "https://hub.example/org/model/blob/main/LICENSE", "https://raw.example/org/repo/main/LICENSE.Open-1.1",
+                    "https://lab.example/legal/consumer-terms", "https://lab.example/legal/privacy", "https://router.example/terms",
+                    "https://maps.example/copyright", "https://lab.example/policies/usage-policies"):
+            self.assertTrue(is_reference(url), url)
+            self.assertEqual(classics([cite("a", 0, url), cite("b", 10, url), cite("a", 300, url)], {}), [], url)
+        for url in ("https://wire.example/legal/litigation/a-company-files-for-bankruptcy-2026-10-13",
+                    "https://glossary.example/terms/e/economiesofscale.asp", "https://blog.example/2026/licensing-models-is-hard",
+                    "https://eu.example/en/policies/contents-code-gpai"):
             self.assertFalse(is_reference(url), url)
 
     def test_most_voices_first_then_cited_longest(self):
@@ -464,6 +543,59 @@ class NewsJobTests(unittest.TestCase):
         names = [(s["name"], s.get("place")) for s in item["story"]["sources"]]
         self.assertEqual(names, [("Alpha", None), ("Beta", None), ("u/alice", "r/sub")])
         self.assertEqual(item["story"]["voices"], 3)
+
+    def test_a_story_joined_by_another_name_never_leads(self):
+        """Issue 0111: a row's lead comes from its main 0050 story (the most voices), or from a story or
+        post joined to it by that story's own name; a thread joined by a name the main story says in
+        passing never titles the row, even with an origin of its own."""
+        main, side = f"Zork{self.mark[:4]} 9", f"Quux{self.mark[:4]} 7"
+        page = f"https://paper-{self.mark}.test/2026/10/the-paper"
+        a, b, c, d, e = (self._source(n) for n in ("Alpha", "Beta", "Gamma", "Delta", "Epsilon"))
+        first = self._post(a, site="alpha", hours_ago=10, title=f"{main} is out", html=self._link(page))
+        self._post(b, site="beta", hours_ago=9, title=f"{main}, explained", html=self._link(page))
+        self._post(c, site="gamma", hours_ago=8, title=f"{side} reads weights too, like {main}", html=self._link(page))
+        thread = self._post(d, site="delta", hours_ago=7.5, title=f"Our bench: {side} stops within a minute")
+        self._post(e, site="epsilon", hours_ago=7, title=f"{side} on the bench", html=self._link(
+            next(iter(self._urls(thread)))))
+        self._job()
+        self.cur.execute("SELECT parent_reason FROM story_posts WHERE post_id = %s", (thread,))
+        self.assertEqual(self.cur.fetchall(), [(None,)], "the bench thread roots a story of its own")
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == first]
+        self.assertEqual(item["story"]["voices"], 5, "one row, by the names")
+        self.assertEqual(item["id"], first, "the main story's first report, not the other story's origin")
+        [delta] = [i for i in self.news.news_on(self.cur, f"source:{d}")["items"] if i["story"]["id"] == first]
+        self.assertEqual(delta["id"], thread, "on its own source's News a source's post still leads")
+
+    def test_one_owners_channels_are_one_news_voice(self):
+        """Issue 0111: a person's blog and video channel (the blog links the channel's videos, the channel's
+        handle holds the blog's name) are one voice in News, named once, the channel with it; a row of only
+        them is no News; a Reddit poster with a followed account's handle is that account."""
+        handle = f"janedoe{''.join(c for c in self.mark if c.isalpha()) or 'x'}"
+        name = f"Zork{self.mark[:4]} 9"
+        blog = self._source("Jane Doe Blog")
+        channel = insert_source(self.cur, "@JaneDoe", platform="youtube", handle=f"https://www.youtube.com/@{handle}",
+                                in_main_digest=True, followed_days=60)
+        video = f"https://www.youtube.com/watch?v={self.mark}vid"
+        talk = self._post(channel, site="youtube", url=video, hours_ago=10, title=f"{name}: a talk")
+        self._post(blog, site="janedoe", hours_ago=9, title=f"{name}: the transcript", html=self._link(video))
+        self._post(blog, site="janedoe", hours_ago=8, title=f"{name}, notes")
+        self._job()
+        self.assertFalse([i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == talk],
+                         "one owner's two channels are no News")
+        gamma = self._source("Gamma")
+        sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
+        self._post(gamma, site="gamma", hours_ago=7, title=f"{name} reviewed")
+        self._post(sub, site="reddit", hours_ago=6, title=f"{name}: I made the talk",
+                   html=f'submitted by <a href="https://www.reddit.com/user/{handle}"> /u/{handle} </a>')
+        self._job()
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == talk]
+        self.assertEqual(item["story"]["voices"], 2)
+        named = [(s["name"], [w["name"] for w in s.get("with", ())]) for s in item["story"]["sources"]]
+        self.assertEqual(named, [("@JaneDoe", ["Jane Doe Blog", "r/sub"]), ("Gamma", [])])
+
+    def _urls(self, *ids):
+        self.cur.execute("SELECT url FROM posts WHERE id = ANY(%s::uuid[])", (list(ids),))
+        return [r[0] for r in self.cur.fetchall()]
 
     def test_a_post_page_names_its_news_row(self):
         """Issue 0083: the post page says the News row a post is in, as the Main feed's News shows it,

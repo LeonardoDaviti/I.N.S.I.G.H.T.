@@ -18,7 +18,7 @@ from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, p
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
-from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN
+from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
                                             source_site)
 from insight_core.utils.tree_rules import _PAGE
@@ -63,14 +63,77 @@ class SourceFacts:
         rows = cur.fetchall()
         cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         self._read(rows, cur.fetchall())
+        self._own(self._linked(cur))
 
     @classmethod
-    def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]]) -> "SourceFacts":
+    def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]],
+           links: Iterable[Tuple[str, str]] = ()) -> "SourceFacts":
         """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
-        posts)), as read from the database: the rules' stamp reads its sample so (utils/stamps.py)."""
+        posts)), as read from the database, and which source links which (`links`: (linking, linked), as
+        _linked reads them for the pairs that may be one owner): the rules' stamp reads its sample so
+        (utils/stamps.py)."""
         facts = cls.__new__(cls)
         facts._read(list(rows), list(hosts))
+        facts._own(links)
         return facts
+
+    def _channels(self) -> List[Tuple[str, str, str, Optional[str], str]]:
+        """The followed sources that are someone's channel (discover_rules.Channel): not an aggregator,
+        Saved or a subreddit."""
+        return [(i, kind, self.name.get(i, ""), self.account.get(i), self.publication(i))
+                for i, kind in sorted(self.kind.items()) if kind not in (*NOT_PUBLISHERS, "reddit")]
+
+    def _linked(self, cur: Cursor) -> List[Tuple[str, str]]:
+        """(a, b): of the pairs that may be one owner (owner_pairs' named ones), a's posts link b's posts or
+        b's own place (its site's address or its account's), from one read of those sources' links (16k links of
+        52 sources on the server's copy)."""
+        self._pairs = owner_pairs(self._channels(), shared_sites=self.shared_sites)
+        asks = [(a, b) for (x, y), why in self._pairs.items() if why == "name" for a, b in ((x, y), (y, x))]
+        if not asks:
+            return []
+        places = {i: "https://" + (self.publication(i) if kind == "site" else (self.account.get(i) or "")).lower()
+                  for i, kind, *_ in self._channels()}
+        linking = sorted({a for a, _ in asks})
+        cur.execute("SELECT p.source_id::text, pl.target_url FROM posts p JOIN post_links pl ON pl.post_id = p.id "
+                    "AND NOT pl.boilerplate WHERE p.source_id = ANY(%s::uuid[])", (linking,))
+        targets: Dict[str, Set[str]] = defaultdict(set)
+        for source_id, target in cur.fetchall():
+            targets[source_id].add(target)
+        cur.execute("SELECT source_id::text, normalized_url FROM posts WHERE source_id = ANY(%s::uuid[]) "
+                    "AND normalized_url IS NOT NULL", (sorted({b for _, b in asks}),))
+        pages: Dict[str, Set[str]] = defaultdict(set)
+        for source_id, url in cur.fetchall():
+            pages[source_id].add(url)
+
+        def links(a: str, b: str) -> bool:
+            place = places[b]
+            return bool(targets[a] & pages[b]) or any(
+                (low := t.lower()) == place or low.startswith(place + "/") for t in targets[a])
+        return [(a, b) for a, b in asks if links(a, b)]
+
+    def _own(self, linked: Iterable[Tuple[str, str]]) -> None:
+        """Who owns each channel (issue 0111: News counts a voice by owner): `owner` (source -> its owner's first
+        source, for an owner of 2+ channels, discover_rules.channel_owners) and `owners` (a voice, as StoryPost
+        tells it -> its owner's voice, when another): a Reddit poster whose name is a followed account's handle
+        is that account's owner too."""
+        if not hasattr(self, "_pairs"):
+            self._pairs = owner_pairs(self._channels(), shared_sites=self.shared_sites)
+        self.owner = channel_owners(self._channels(), self._pairs, linked)
+
+        def voice(i: str) -> str:
+            return "site:" + self.publication(i) if self.kind.get(i) == "site" else "source:" + i
+        self.owners: Dict[str, str] = {voice(i): voice(o) for i, o in self.owner.items() if voice(i) != voice(o)}
+        for i, kind in sorted(self.kind.items()):
+            account = self.account.get(i) or ""
+            if kind in ("x", "telegram", "youtube") and "/" in account:
+                self.owners.setdefault("reddit:" + account.rsplit("/", 1)[1].lstrip("@").lower(),
+                                       voice(self.owner.get(i, i)))
+
+    def owner_voice(self, voice: str) -> Optional[str]:
+        """A voice's owner's voice, when another (a Reddit poster by its name in any case)."""
+        if voice.startswith("reddit:"):
+            return self.owners.get(voice.lower())
+        return self.owners.get(voice)
 
     def _read(self, rows: List[Tuple[Any, ...]], host_rows: List[Tuple[Any, str, int]]) -> None:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}

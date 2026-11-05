@@ -240,6 +240,27 @@ class IncrementalJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone(), row)
         self.assert_same_as_full()
 
+    def test_a_row_leaves_the_window_whole(self):
+        """Issue 0111: a row is in the window by its first post. When that post leaves, the row leaves as it
+        was, all its posts in it; its second post never comes back leading a row of its own. The incremental
+        job and a full run alike."""
+        name = f"Zork{self.mark[:4]} 9"
+        sources = [self._source(n, followed_days=90) for n in ("A", "B", "C")]
+        first, second, third = (self._post(s, hours_ago=h, title=f"{name} {t}") for s, h, t in
+                                zip(sources, (10, 7, 4), ("is out", "explained", "reviewed")))
+        self._incremental()
+        self.cur.execute("SELECT news_id::text, (SELECT count(*) FROM news_posts o WHERE o.news_id = np.news_id) "
+                         "FROM news_posts np WHERE post_id = %s", (first,))
+        self.assertEqual(self.cur.fetchone(), (first, 3), "one row of the three, by the name")
+        self.now += timedelta(days=30, hours=-8.5)   # the window's edge between the first post and the second
+        self._incremental()
+        self.cur.execute("SELECT post_id::text, news_id::text FROM news_posts WHERE post_id = ANY(%s::uuid[])",
+                         ([first, second, third],))
+        self.assertEqual(dict(self.cur.fetchall()), dict.fromkeys((first, second, third), first), "whole, as it was")
+        self.cur.execute("SELECT count(*) FROM news_stories WHERE id = ANY(%s::uuid[])", ([second, third],))
+        self.assertEqual(self.cur.fetchone()[0], 0, "no row led by its second post")
+        self.assert_same_as_full()
+
     def test_a_story_keeps_its_id_when_an_earlier_post_joins(self):
         page = self._page("stable")
         a = self._post(self._source("A"), hours_ago=2, links=[page], stored_hours_ago=1.5)

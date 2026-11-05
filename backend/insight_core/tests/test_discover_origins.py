@@ -284,6 +284,23 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertEqual((row["origins"], row["archivable"]), (3, 1), "an archive reaches only what it watches")
         self.assertNotIn("stopped", row)
 
+    def test_an_archive_row_names_another_hosts_pages_by_their_host(self):
+        """Issue 0111: a page watch reads its own host's section; a missing page on another host of its site is
+        named by that host, never by its path ("/2026" was another host's), and no archive of it reaches it."""
+        m = self.mark
+        site = f"hosts-{m}.example"
+        page = self._source(f"Hosts {m}", f"https://www.{site}/news")
+        self.cur.execute("""UPDATE sources SET settings = settings || '{"page_watch": {"prefix": "/news/"}}' WHERE id = %s""",
+                         (page,))
+        self._post(page, f"https://www.{site}/news/one")
+        voices = self._voices(3)
+        for url in (f"https://safety.{site}/2026/report-a", f"https://safety.{site}/2026/report-b",
+                    f"https://www.{site}/engineering/post", f"https://www.{site}/news/missed"):
+            self._cite(voices, url)
+        [row] = [a for a in self._discover()["archives"] if a["source_id"] == page]
+        self.assertEqual(row["watches"], {"prefix": "/news/", "not": ["/engineering", f"safety.{site}"]})
+        self.assertEqual((row["origins"], row["archivable"]), (4, 1))
+
     def test_tweets_in_any_form_and_reposts_suggest_an_account(self):
         m = self.mark
         author = f"Auth{m}"
