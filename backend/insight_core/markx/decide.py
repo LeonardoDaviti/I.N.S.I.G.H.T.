@@ -31,6 +31,7 @@ INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processe
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -38,6 +39,8 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from psycopg import errors as psycopg_errors
 
 log = logging.getLogger(__name__)
 
@@ -62,14 +65,18 @@ class Config:
     story_lo: float = 0.70          # story pairs' centroid cosine
     story_days: int = 14            # story pairs' first posts at most this far apart
     connect_lo: float = 0.60        # connect questions: story pairs at this centroid cosine ...
-    connect_days: int = 30          # ... at most this far apart
+    connect_days: int = 30          # ... at most this far apart ...
+    connect_voices: int = 2         # ... both stories of this many voices or more ...
+    connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first ...
+    connect_open: int = 100         # ... and none while this many connect tasks wait (open or leased)
+    check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -174,7 +181,8 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                story_pairs: Iterable[Tuple[str, str, float]], config: Config = Config(),
                in_window: Optional[Callable[[str], bool]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
-    2+ voice story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
+    2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
+    unrelated replies on a story, which its root's check never reaches); for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
     cosine) not asked yet. `kinds`: each post's reading kind. `in_window(a)`: whether a pair's earlier post is in
     the window decided (the prototype's context posts were not)."""
@@ -184,6 +192,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         for m in ms:
             home.setdefault(m.post, []).append(key)
     nv = {key: voices(posts, [m.post for m in ms]) for key, ms in members.items()}
+    certain = CERTAIN - {"thread"} if config.check_threads else CERTAIN
 
     def side(key: str) -> List[str]:
         return [m.post for m in members[key] if m.role == "report"] or [m.post for m in members[key]]
@@ -198,7 +207,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             if m.post == origin or p.kind in NOT_VOICE:
                 continue
             roundup = kinds.get(m.post) == "roundup"
-            if m.why in CERTAIN and not roundup:
+            if m.why in certain and not roundup:
                 continue
             if p.words < config.min_words and not roundup:
                 continue                                       # rule A: nothing to judge, keep
@@ -446,23 +455,33 @@ class Ask:
     """The answers a run reads, and the tasks it adds for the questions not asked yet (content-only inputs: the same
     question is one task whatever ids come with it)."""
 
-    def __init__(self, cur: Any, now: datetime) -> None:
+    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None) -> None:
         self.cur, self.now = cur, now
+        self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
         self.added: Counter = Counter()
+        self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
 
     def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
-        """(the valid answer, its call id), or None: the task is added when it is new (up to CAP a kind a run)."""
+        """(the valid answer, its call id), or None: the task is added when it is new (up to the kind's cap a run:
+        `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
+        seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
+        answered in this snapshot, so the run goes on (`raced` counts them)."""
         from insight_core.markx import repo, schemas, tasks
         spec = schemas.KINDS[kind]
         task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
         if task is None:
-            if self.added[kind] >= CAP:
+            if self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
-            tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+            try:
+                with self.cur.connection.transaction():
+                    tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+            except psycopg_errors.SerializationFailure:
+                self.raced[kind] += 1
+                return None
             self.added[kind] += 1
             return None
         if task["status"] != "answered":
@@ -620,8 +639,10 @@ class Questions:
         return None
 
 
-def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tuple[Outcome, Dict[str, Any]]:
-    """The two passes over this world: questions, the verdicts found, the decisions."""
+def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
+          answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
+    """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
+    extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
     q = Questions(world, ask, now)
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
     multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= 2}
@@ -645,6 +666,8 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tu
     q2 = plan_pass2(world.posts, p1, centroid_cos, config)
     ans2 = [(x, v) for x in q2 if (v := q.verdict(x, p1)) is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
+    if answered is not None:
+        answered.extend(ans1 + ans2)
     counts = {"questions": dict(Counter(x.type for x in q1 + q2)), "answered": len(ans1) + len(ans2),
               "pass2": len(q2), "changes": dict(Counter(c["change"] for c in out.log))}
     return out, counts
@@ -788,7 +811,10 @@ CONNECT_RELATIONS = {"development": "development", "reaction": "reaction", "same
 def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, config: Config,
                 news_keys: Sequence[str]) -> List[Dict[str, Any]]:
     """Typed connections (F6): the merges' developments, the late posts', and the connect questions' between News
-    stories at most `connect_days` apart whose centroids are at `connect_lo` or more and that weren't merged."""
+    stories of `connect_voices`+ voices at most `connect_days` apart whose centroids are at `connect_lo` or more and
+    that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
+    the run's cap on new connect tasks (the Ask's: `connect_new`, less what `connect_open` leaves room for) keeps the
+    newest; the rest wait for later runs."""
     from insight_core.markx import tasks
     rows: List[Dict[str, Any]] = []
 
@@ -801,12 +827,17 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             rows.append(dict(c, a=a, b=b))
     groups = {k: sorted((p for p in out.about[k] if p in world.posts), key=lambda p: _at_key(world.posts, p))
               for k in news_keys}
-    first = {k: world.posts[ps[0]].at for k, ps in groups.items() if ps}
+    groups = {k: ps for k, ps in groups.items() if ps and voices(world.posts, ps) >= config.connect_voices}
+    first = {k: world.posts[ps[0]].at for k, ps in groups.items()}
     span = timedelta(days=config.connect_days)
-    for (x, y), _cos in sorted(centroid_cosines(cur, groups, config.connect_lo).items(), key=lambda kv: (-kv[1], kv[0])):
-        if x not in first or y not in first or abs(first[x] - first[y]) > span or ids.get(x) == ids.get(y):
+    pairs = []
+    for (x, y), cos in centroid_cosines(cur, groups, config.connect_lo).items():
+        if abs(first[x] - first[y]) > span or ids.get(x) == ids.get(y):
             continue
         x0, y0 = sorted([x, y], key=lambda k: (first[k], k))
+        pairs.append((x0, y0, cos))
+    pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
+    for x0, y0, _cos in pairs:
         text = tasks.connect_input(tasks._earliest([world.text[p] for p in groups[x0]]),
                                    tasks._earliest([world.text[p] for p in groups[y0]]))
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0])
@@ -840,8 +871,11 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
 
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) -> Dict[str, Any]:
-    """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only."""
+    """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
+    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot."""
     from insight_core.markx import news as mx_news, repo, schemas
+    cur.execute("SHOW transaction_isolation")
+    isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
     if not cur.fetchone()[0]:
         return {"skipped": "another decision run holds the lock"}
@@ -850,7 +884,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     run_id = repo.start_run(cur, code_version=CODE_VERSION,
                             config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
     world = load(cur, now, config)
-    ask = Ask(cur, now)
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
+    waiting = cur.fetchone()[0]
+    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
     out, counts = think(cur, world, config, ask, now)
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
@@ -860,7 +896,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
-                   "tasks_waiting": dict(ask.waiting), "answers_read": dict(ask.answered),
+                   "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
+                   "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
     return {"run": str(run_id), **counts}
@@ -868,10 +905,24 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
 
 # ---- when it runs -----------------------------------------------------------------------------------
 
-def _transaction():
+@contextlib.contextmanager
+def snapshot(url: Optional[str] = None):
+    """A transaction at REPEATABLE READ for one decision run: its first statement sets the level, so every read of
+    Mark IX's stories, News and posts sees the one snapshot taken at the run's first query, and a story-job commit
+    landing mid-run is never half seen. The run writes only mx_* rows, which only the run (under its advisory lock)
+    updates; the one write another transaction can race is a task insert (the worker's check planner), which `Ask`
+    takes in a savepoint."""
     from insight_core.db import database
-    from insight_core.services.registry import services
-    return database.transaction(services().db_url)
+    if url is None:
+        from insight_core.services.registry import services
+        url = services().db_url
+    with database.transaction(url) as cur:
+        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        yield cur
+
+
+def _transaction():
+    return snapshot()
 
 
 class Scheduler:

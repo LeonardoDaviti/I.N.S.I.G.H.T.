@@ -67,6 +67,19 @@ GET /api/markx/overview            {worker, briefing, entities}: the page's othe
 POST /api/markx/decide             one decision run now: {run, ...counts} or {"skipped"} (the hourly and after-upload
                                    runs are decide.scheduler's)
 
+S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
+--------------------------------------------------------------------------------------------------------------
+GET /api/markx/labels                  the queue (markx/labels.py): {run, cut, total, done, features [{feature, name,
+                                       total, done, population}], next [item ids], answered [item ids], pools}
+GET /api/markx/labels/items/{id}       one item: {id, feature, name, question, answers, evidence (the judge's input),
+                                       extracted (entities), day, split, pool, position, label, verdict}; the verdict
+                                       is null until the item has a label
+POST /api/markx/labels                 {item, answer, note?} -> {label, verdict, next, done, total}; a changed answer is
+                                       a new row
+GET /api/markx/labels/precision?labeller=owner   each feature's precision (dev, test, all, the bar swept on dev)
+POST /api/markx/labels/news            {post, story, answer: wrong_story | not_about | ok, note?}: one tap on a Mark X
+                                       News member, stored as a label
+
 Adding a kind (S2's `embed`): one entry in schemas.KINDS. A route of its own (POST /api/markx/embeddings)
 is one more function on `router` below, or a router of S2's own included the same way; neither edits these.
 
@@ -98,7 +111,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
-from insight_core.markx import candidates, decide, embed, news, repo, schemas, tasks, validate
+from insight_core.markx import candidates, decide, embed, labels, news, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -414,5 +427,71 @@ def mx_overview():
 
 @router.post("/decide")
 def mx_decide():
-    with transaction() as cur:
+    with decide.snapshot(db_url()) as cur:
         return decide.run(cur)
+
+
+# ---- the labels tab (S6, 0086 F) --------------------------------------------------------------------------
+
+class LabelIn(BaseModel):
+    item: str
+    answer: str
+    note: Optional[str] = None
+
+
+class FlagIn(BaseModel):
+    post: str
+    story: str
+    answer: str
+    note: Optional[str] = None
+
+
+@router.get("/labels")
+def mx_labels_queue():
+    with transaction() as cur:
+        return labels.queue_view(cur, labels.queue(cur))
+
+
+@router.get("/labels/precision")
+def mx_labels_precision(labeller: str = Query("owner", min_length=1, max_length=40)):
+    with transaction() as cur:
+        return labels.precision(cur, labels.queue(cur), labeller=labeller)
+
+
+@router.get("/labels/items/{item_id}")
+def mx_labels_item(item_id: str):
+    found = _uuid(item_id)
+    with transaction() as cur:
+        got = labels.item_view(cur, labels.queue(cur), str(found)) if found else None
+    if got is None:
+        raise HTTPException(status_code=404, detail="No such item in the queue")
+    return got
+
+
+@router.post("/labels")
+def mx_labels_answer(body: LabelIn):
+    found = _uuid(body.item)
+    with transaction() as cur:
+        q = labels.queue(cur)
+        if found is None or str(found) not in q.items:
+            raise HTTPException(status_code=404, detail="No such item in the queue")
+        try:
+            out = labels.label(cur, q, str(found), body.answer, note=body.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        view = labels.queue_view(cur, q)
+    return {**out, "next": (view["next"] or [None])[0], "done": view["done"], "total": view["total"]}
+
+
+@router.post("/labels/news")
+def mx_labels_news(body: FlagIn):
+    post, story = _uuid(body.post), _uuid(body.story)
+    if post is None or story is None:
+        raise HTTPException(status_code=404, detail="No such member")
+    with transaction() as cur:
+        try:
+            return labels.flag(cur, post=str(post), story=str(story), answer=body.answer, note=body.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such member")

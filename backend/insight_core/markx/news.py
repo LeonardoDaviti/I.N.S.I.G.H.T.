@@ -113,7 +113,8 @@ def _signature(rows: Iterable[Dict[str, Any]]) -> Set[str]:
 def last_written(cur: Any) -> Optional[str]:
     """The newest run that wrote News rows."""
     cur.execute("""SELECT n.run_id::text FROM mx_news n JOIN mx_runs r ON r.id = n.run_id
-                    GROUP BY n.run_id, r.started_at ORDER BY r.started_at DESC LIMIT 1""")
+                    GROUP BY n.run_id, r.started_at, r.finished_at
+                    ORDER BY r.started_at DESC, r.finished_at DESC NULLS LAST LIMIT 1""")
     row = cur.fetchone()
     return row[0] if row else None
 
@@ -276,6 +277,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     checks = _checks(cur, sorted(left))
     heads = headlines(cur, shown)
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
+    from insight_core.markx import labels
+    flagged = labels.flags(cur, {(p["post_id"], p.get("story")) for r in shown for p in r["posts"] if p.get("story")})
 
     def line(pid: str, story: Optional[str], row_ids: Set[str]) -> Dict[str, Any]:
         p = posts.get(pid) or {"id": pid}
@@ -288,7 +291,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     for r in shown:
         mine = [p["post_id"] for p in r["posts"]]
         ix_hit = sorted({ix_of[p] for p in mine if p in ix_of})
-        lines = [dict(line(p["post_id"], p.get("story"), set(ix_hit)), role=p["role"], name=p.get("name")) for p in r["posts"]]
+        lines = [dict(line(p["post_id"], p.get("story"), set(ix_hit)), role=p["role"], name=p.get("name"),
+                      story=p.get("story"), flag=flagged.get((p["post_id"], p.get("story")))) for p in r["posts"]]
         removed = []
         for nid in ix_hit:
             for pid in sorted(ix_rows.get(nid, ()), key=lambda q: str((posts.get(q) or {}).get("at") or "")):

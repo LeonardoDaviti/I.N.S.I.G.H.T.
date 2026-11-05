@@ -62,6 +62,11 @@ class Rules(unittest.TestCase):
         self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "quote"), D.Member("c", "report", "citation")]
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:c"})   # a quote is not a guess
 
+    def test_a_member_joined_by_thread_is_checked_but_not_in_the_prototypes_config(self):
+        self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "citation"), D.Member("c", "report", "thread")]
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
+        self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
+
     def test_a_one_voice_story_is_not_checked(self):
         self.posts["b"] = post("b", "s1", 1)
         self.stories = {"A": story("a", "b")}
@@ -326,6 +331,48 @@ class Job(unittest.TestCase):
                              WHERE sp.valid_to IS NULL AND NOT (sp.reason LIKE 'rule:%%' OR c.valid)""")
         self.assertEqual(self.cur.fetchone()[0], 0)
 
+    def vector(self, pid, k):
+        v = [0.0] * 1024
+        v[0], v[k] = 1.0, 0.2
+        repo.put_embedding(self.cur, post_id=pid, model=D.MODEL, text_hash="h-" + pid, vector=v, model_sha256="a" * 64)
+
+    def test_connect_questions_are_capped_a_run_newest_pairs_first(self):
+        keys = []
+        for n in range(3):                                   # three 2-voice stories a day apart, all alike
+            a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
+            self.vector(a, 1 + 2 * n)
+            self.vector(b, 2 + 2 * n)
+            keys.append((self.ix_story(a, b), b))
+        out = D.run(self.cur, config=D.Config(connect_new=1), now=self.now)
+        self.assertEqual(out["tasks_added"].get("connect"), 1)
+        self.assertEqual(out["tasks_waiting"].get("connect"), 2)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'connect'")
+        self.assertEqual(self.cur.fetchall(), [(keys[1][0], keys[2][0])])     # the newest pair: stories 1 and 2
+        self.cur.execute("SELECT config->>'connect_new', config->>'connect_voices' FROM mx_runs")
+        self.assertEqual(self.cur.fetchall(), [("1", "2")])                   # the setting is the run's config
+        again = D.run(self.cur, config=D.Config(connect_new=1), now=self.now)
+        self.assertEqual(again["tasks_added"].get("connect"), 1)              # the next run asks the next newest
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect'")
+        self.assertEqual(self.cur.fetchone()[0], 2)
+
+    def test_no_new_connect_question_while_the_backlog_is_full(self):
+        for n in range(3):                                   # three alike 2-voice stories: three pairs
+            a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
+            self.vector(a, 1 + 2 * n)
+            self.vector(b, 2 + 2 * n)
+            self.ix_story(a, b)
+        config = D.Config(connect_new=5, connect_open=2)
+        first = D.run(self.cur, config=config, now=self.now)
+        self.assertEqual((first["tasks_added"].get("connect"), first["tasks_waiting"].get("connect")), (2, 1))
+        self.assertNotIn("connect", D.run(self.cur, config=config, now=self.now)["tasks_added"])   # 2 open: full
+        self.assertEqual(len(repo.lease_tasks(self.cur, kinds=["connect"], limit=10, worker="w")), 2)   # leased still waits
+        self.assertNotIn("connect", D.run(self.cur, config=config, now=self.now)["tasks_added"])
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'connect' LIMIT 1")
+        repo.answer_task(self.cur, self.cur.fetchone()[0])                                   # one answered: room for one
+        self.assertEqual(D.run(self.cur, config=config, now=self.now)["tasks_added"].get("connect"), 1)
+        self.cur.execute("SELECT config->>'connect_open' FROM mx_runs LIMIT 1")
+        self.assertEqual(self.cur.fetchone()[0], "2")
+
     def test_the_lock_skips_a_second_run(self):
         other = psycopg.connect(db_url())
         self.addCleanup(other.close)
@@ -335,6 +382,89 @@ class Job(unittest.TestCase):
                 self.assertIn("skipped", self.go())
             finally:
                 cur.execute("SELECT pg_advisory_unlock(%s)", (D.LOCK_KEY,))
+
+
+@requires_test_db
+class Snapshot(unittest.TestCase):
+    """A run reads one snapshot (REPEATABLE READ): a story-job commit landing mid-run is not seen by that run, and a
+    task the worker's planner commits mid-run is taken, not a failed run. Committed rows, removed after."""
+
+    def setUp(self):
+        self.other = psycopg.connect(db_url(), autocommit=True)
+        self.addCleanup(self.other.close)
+        self.cur = self.other.cursor()
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        self.addCleanup(self.cur.execute, f"TRUNCATE {', '.join(MX_TABLES)}")
+        schemas.load_guides(self.cur)
+        self.now = T + 30 * H
+        self.posts, self.sources = [], []
+        self.addCleanup(self._clean)
+        self.a, self.b, self.c = (self.post(n, f"Acme released Widget {n}") for n in range(3))
+        self.story = self.a
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (self.story, T))
+        self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice, parent_id, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v0', NULL, NULL), (%s, %s, 'report', 'v1', %s, 'citation')",
+                         (self.a, self.story, self.b, self.story, self.a))
+
+    def _clean(self):
+        self.cur.execute("DELETE FROM story_posts WHERE story_id = %s", (self.story,))
+        self.cur.execute("DELETE FROM stories WHERE id = %s", (self.story,))
+        self.cur.execute("DELETE FROM post_parts WHERE post_id = ANY(%s::uuid[])", (self.posts,))
+        self.cur.execute("DELETE FROM posts WHERE id = ANY(%s::uuid[])", (self.posts,))
+        self.cur.execute("DELETE FROM sources WHERE id = ANY(%s::uuid[])", (self.sources,))
+
+    def post(self, hours, title):
+        source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
+        url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
+        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
+                         "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
+        pid = str(self.cur.fetchone()[0])
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        PostPartsRepository.write(self.cur, [pid])
+        self.posts.append(pid)
+        self.sources.append(str(source))
+        return pid
+
+    def run_with(self, transaction, mid_run):
+        """One run whose think() first lets `mid_run` commit on another connection, then counts the story's members
+        on the run's own cursor: what the rest of the run reads."""
+        seen = {}
+        real = D.think
+
+        def think(cur, world, config, ask, now, *rest, **kw):
+            mid_run()
+            cur.execute("SELECT count(*) FROM story_posts WHERE story_id = %s", (self.story,))
+            seen["members"] = cur.fetchone()[0]
+            return real(cur, world, config, ask, now, *rest, **kw)
+        with mock.patch.object(D, "think", think), transaction() as cur:
+            seen["out"] = D.run(cur, now=self.now)
+        return seen
+
+    def add_member(self):
+        self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice, parent_id, parent_reason) "
+                         "VALUES (%s, %s, 'report', 'v2', %s, 'citation') ON CONFLICT DO NOTHING", (self.c, self.story, self.b))
+
+    def test_a_story_change_committed_mid_run_is_not_seen_by_that_run(self):
+        from insight_core.db import database
+        seen = self.run_with(lambda: D.snapshot(db_url()), self.add_member)
+        self.assertEqual(seen["out"]["isolation"], "repeatable read")
+        self.assertEqual(seen["members"], 2)                       # the commit came after the run's snapshot
+        self.cur.execute("DELETE FROM story_posts WHERE post_id = %s", (self.c,))
+        control = self.run_with(lambda: database.transaction(db_url()), self.add_member)
+        self.assertEqual(control["out"]["isolation"], "read committed")
+        self.assertEqual(control["members"], 3)                    # what READ COMMITTED would have mixed in
+
+    def test_a_task_the_planner_commits_mid_run_is_not_a_failed_run(self):
+        def plan():   # the worker's check planner asks the run's own check first, and commits
+            tasks.check_task(self.cur, self.b, [self.a])
+        seen = self.run_with(lambda: D.snapshot(db_url()), plan)
+        self.assertEqual(seen["out"]["tasks_raced"], {"check": 1})
+        self.assertNotIn("check", seen["out"]["tasks_added"])
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'check'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
 
 
 class Switch(unittest.TestCase):

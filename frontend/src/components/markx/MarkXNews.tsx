@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxLeftOut, MarkxLine, MarkxNews as News, MarkxRow, MarkxTag } from '../../services/markx';
-import { Chip, Switch, TextLink } from '../ui';
+import type { MarkxFlag, MarkxLeftOut, MarkxLine, MarkxNews as News, MarkxRow, MarkxTag } from '../../services/markx';
+import { Button, Chip, Switch, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { feedFullTime, postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { newsPart } from '../../lib/news';
-import { ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
+import { errorMessage } from '../../lib/apiError';
+import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
 
@@ -23,6 +24,33 @@ export function TagChip({ tag }: { tag: MarkxTag }) {
 function part(row: MarkxRow, now: Date) {
   const recent = new Date(row.first_at).getTime() >= now.getTime() - 48 * 3600_000;
   return newsPart({ part: recent ? 'recent' : 'earlier', first_at: row.first_at }, now);
+}
+
+/** One tap on a member (0086 F): "wrong story" or "not about this", stored as a label; "undo" stores "ok". */
+function OneTap({ line }: { line: MarkxLine & { story: string } }) {
+  const api = useApi();
+  const [flag, setFlag] = useState<MarkxFlag | null>(line.flag ?? null);
+  const tap = useMutation({
+    mutationFn: (answer: MarkxFlag) => api.flagMarkxMember(line.id, line.story, answer),
+    onSuccess: (got) => setFlag(got.answer === 'ok' ? null : got.answer),
+  });
+  if (flag) {
+    return (
+      <span className="mt-1 flex flex-wrap items-center gap-2 text-[0.75rem] text-fg-2">
+        <span data-flag={flag}>you: {ANSWER_WORDS[flag]}</span>
+        <Button size="sm" variant="ghost" disabled={tap.isPending} onClick={() => tap.mutate('ok')}>undo</Button>
+      </span>
+    );
+  }
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-2" role="group" aria-label="Is this post in the right story?">
+      {(['wrong_story', 'not_about'] as const).map((a) => (
+        <Button key={a} size="sm" variant="ghost" disabled={tap.isPending} onClick={() => tap.mutate(a)}
+          className="text-[0.75rem]">{ANSWER_WORDS[a]}</Button>
+      ))}
+      {tap.isError ? <span role="alert" className="text-[0.75rem] text-fg">{errorMessage(tap.error)}</span> : null}
+    </span>
+  );
 }
 
 function PostLine({ line, now }: { line: MarkxLine; now: Date }) {
@@ -44,6 +72,7 @@ function PostLine({ line, now }: { line: MarkxLine; now: Date }) {
           {words ? <span className="text-fg-3"> — {words}</span> : null}
         </span>
         <span className="block text-[0.75rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">{ixWords(line.ix)}</span>
+        {line.story && line.why ? <OneTap line={{ ...line, story: line.story }} /> : null}
       </span>
     </li>
   );
