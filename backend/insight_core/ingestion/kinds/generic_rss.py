@@ -105,7 +105,8 @@ class GenericRssKind(SingleShotArchive, BaseKind):
     async def _read(self, post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """The post read from its page; None when the page holds nothing longer, or the read went
         wrong in a way no retry mends (the summary is kept). A failed request (an HttpError: an
-        HTTP error, a timeout, a dropped connection) is the post with that try counted."""
+        HTTP error, a timeout, a dropped connection) is the post with that try counted, and so is a
+        page with nothing longer for a post with no body at all (issue 0108)."""
         try:
             article = await full_text.read_article(self.http, post["url"], full_text.body_text(post))
         except HttpError as exc:
@@ -114,7 +115,9 @@ class GenericRssKind(SingleShotArchive, BaseKind):
         except Exception as exc:  # noqa: BLE001 - the summary is kept
             logger.debug("Full-text expansion skipped for %s: %s", post["url"], exc)
             return None
-        return full_text.with_full_text(post, *article) if article is not None else None
+        if article is None:
+            return full_text.with_page_try(post, self.clock(), failed=True) if full_text.empty_read_failed(post) else None
+        return full_text.with_full_text(post, *article)
 
     async def _read_again(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The source's stored teasers whose page read failed, read again (issue 0062): a slice
@@ -147,7 +150,9 @@ class GenericRssKind(SingleShotArchive, BaseKind):
             except Exception as exc:  # noqa: BLE001 - not a failed request: no more tries
                 logger.debug("Full-text read again skipped for %s: %s", stored["url"], exc)
                 article = None
-            counted = full_text.with_page_try(stored, self.clock(), failed=False)
+            # Nothing longer ends it, unless the post has no body at all (issue 0108).
+            counted = full_text.with_page_try(stored, self.clock(),
+                                              failed=article is None and full_text.empty_read_failed(stored))
             read_again[stored["url"]] = full_text.with_full_text(counted, *article) if article else counted
         if read_again:
             logger.info("%s: %s teasers read again, %s in full", source.get("handle_or_url"), len(read_again),

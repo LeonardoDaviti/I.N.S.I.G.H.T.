@@ -18,7 +18,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_posts import FULL_TEXT_FLAG, MOVED_KEY, PostsRepository
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, MOVED_KEY, PAGE_TRIES_KEY, PostsRepository
 from insight_core.ingestion import full_text
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.generic_rss import GenericRssKind
@@ -178,7 +178,7 @@ class OnePageTests(unittest.TestCase):
 
 
 @requires_test_db
-class MovedStoreTests(unittest.TestCase):
+class MovedStoreTests(unittest.IsolatedAsyncioTestCase):
     """The saver: the post keeps its address; its canonical is where it moved, kept on a re-fetch."""
 
     def setUp(self):
@@ -235,6 +235,65 @@ class MovedStoreTests(unittest.TestCase):
             posts = {p.id: p for p in (StoriesService._story_post(row, sources) for row in rows)}
         self.assertEqual(posts[str(post_id)].moved_to, NEW_NORMALIZED)
         self.assertIsNone(posts[str(plain)].moved_to)
+
+    async def test_the_repair_counts_an_empty_read_of_a_post_with_no_body_as_failed(self):
+        from insight_core.scripts.repair_full_text import Repair
+        from insight_core.tests.test_full_text import _StubYouTube
+        from insight_core.ingestion.kinds import KindRegistry
+        post_id = self._upsert({"url": OLD, "content": "", "metadata": {}})
+        http = FakeHttp({OLD: stub(refresh=False, canonical=False)})
+        clock = lambda: NOW  # noqa: E731
+        repair = Repair(self.url, http=http, registry=KindRegistry.default(http, _StubYouTube(), db_url=self.url), clock=clock)
+        summary = await repair.run(source_id=self.source_id)
+        self.assertEqual(summary["nothing_longer"], 1)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT metadata FROM posts WHERE id = %s", (post_id,))
+            metadata = cur.fetchone()[0]
+        self.assertEqual(metadata[PAGE_TRIES_KEY], {"count": 1, "last_at": NOW.isoformat(), "failed": True})
+        self.assertNotIn(FULL_TEXT_CHECKED, metadata, "not checked: the repair reads it again too")
+
+
+NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
+
+
+class EmptyReadOfAPostWithNoBodyTests(unittest.IsolatedAsyncioTestCase):
+    """Decision 2: a page read that yields nothing longer, on a post with no body, is a failed try
+    (0062 reads it again later); a post with a body and a page with nothing longer is unchanged."""
+
+    def _kind(self, http: FakeHttp, due: list | None = None, stored: set | None = None) -> GenericRssKind:
+        return GenericRssKind(http, stored_urls=lambda urls: set(stored or ()) & set(urls),
+                              teasers_due=lambda source_id, **kwargs: list(due or []), clock=lambda: NOW)
+
+    async def test_a_script_only_stub_of_an_empty_entry_counts_a_failed_try(self):
+        http = FakeHttp({OLD_FEED: empty_feed(OLD), OLD: stub(refresh=False, canonical=False)})
+        [post] = await self._kind(http).fetch_latest(_src(), 10)
+        self.assertEqual(post["content"], "")
+        self.assertEqual(post["metadata"][PAGE_TRIES_KEY], {"count": 1, "last_at": NOW.isoformat(), "failed": True})
+
+    async def test_a_post_with_a_body_and_a_short_page_counts_nothing(self):
+        feed = empty_feed(OLD).replace("<summary type=\"html\"><![CDATA[]]>", "<summary type=\"html\"><![CDATA[A summary.]]>")
+        http = FakeHttp({OLD_FEED: feed, OLD: stub(refresh=False, canonical=False)})
+        [post] = await self._kind(http).fetch_latest(_src(), 10)
+        self.assertEqual(post["content"], "A summary.")
+        self.assertNotIn(PAGE_TRIES_KEY, post["metadata"])
+
+    async def test_read_again_an_empty_post_whose_page_is_still_short_stays_failed(self):
+        stored = {"url": OLD, "title": "Post 0", "content": "", "content_html": None, "date": None, "media_urls": [],
+                  "categories": [], "metadata": {PAGE_TRIES_KEY: {"count": 1, "last_at": "2026-11-01T00:00:00+00:00",
+                                                                  "failed": True}}}
+        http = FakeHttp({OLD_FEED: empty_feed(), OLD: stub(refresh=False, canonical=False)})
+        [post] = await self._kind(http, due=[stored], stored={OLD}).fetch_latest(_src(), 10)
+        self.assertEqual(post["metadata"][PAGE_TRIES_KEY], {"count": 2, "last_at": NOW.isoformat(), "failed": True})
+
+    async def test_read_again_an_empty_post_whose_page_now_redirects_is_read(self):
+        stored = {"url": OLD, "title": "Post 0", "content": "", "content_html": None, "date": None, "media_urls": [],
+                  "categories": [], "metadata": {PAGE_TRIES_KEY: {"count": 1, "last_at": "2026-11-01T00:00:00+00:00",
+                                                                  "failed": True}}}
+        http = FakeHttp({OLD_FEED: empty_feed(), OLD: stub(), NEW: blog_post()})
+        [post] = await self._kind(http, due=[stored], stored={OLD}).fetch_latest(_src(), 10)
+        self.assertIn("A paragraph of the essay", post["content"])
+        self.assertEqual(post["metadata"][MOVED_KEY], NEW_NORMALIZED)
+        self.assertEqual(post["metadata"][PAGE_TRIES_KEY]["count"], 2)
 
 
 if __name__ == "__main__":

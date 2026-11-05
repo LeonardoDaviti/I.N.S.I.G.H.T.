@@ -68,6 +68,12 @@ def is_teaser(post: Mapping[str, Any]) -> bool:
     return len(body_text(post)) < SHORT_BODY_CHARS
 
 
+def empty_read_failed(post: Mapping[str, Any]) -> bool:
+    """Whether a page read that found nothing longer is a failed try (issue 0108, decision 2): on a
+    post with no body it is (its page may be read again later, 0062); a post with a body keeps it."""
+    return not body_text(post).strip()
+
+
 def _same_article(current_text: str, page_text: str) -> bool:
     current, page = normalize_text(current_text), normalize_text(page_text)
     if len(current) < SAME_ARTICLE_MIN_CHARS:
