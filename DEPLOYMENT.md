@@ -313,6 +313,29 @@ size of `pg_dump -Fc`, and the restore takes about 41 s, as `pg_restore` does.
 **Explored on its own:** the README in the zip says how (DuckDB, pandas, SQLite, or
 `psql -f schema.sql` into any Postgres with pgvector, then `\copy` each CSV).
 
+## Mark X Shadow (issue 0086): off by default
+Mark X reads every post beside Mark IX and writes only its own `mx_*` tables (migration 0068). Mark IX's feed, stories, News, Classics and Discover don't change because of it. It ships **off**: no Mark X job runs and `/api/markx/*` answers 404.
+
+**Turning it on:**
+1. Add `INSIGHT_MARKX=on` to the server's `.env`, then `./update`.
+2. Settings → Sources → Connections → **Mark X worker token**: generate it and copy it once to the device that runs the worker, as `~/.config/insight/markx-token` (mode 600).
+3. The menu shows **mark x** (`/markx`): Mark X News beside Mark IX's, the briefing, entities, the worker's queue and the labels.
+
+**What runs on the server when it's on** (in the API process): the decision job, hourly and 60 s after the worker's last upload (one at a time, one snapshot; about 1.6 s on 49k posts), and the candidate finder, 30 s after the last vectors arrive. Nothing calls a model from the server.
+
+**The worker** runs on your device (`scripts/markx-worker`, standard library only):
+```
+# embeddings, with a local llama-server running BGE-M3 (llama-server --embedding -m bge-m3-q8_0.gguf --port 8091)
+scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/insight/markx-token \
+    --kinds embed --embedder http://127.0.0.1:8091
+# readings and entities through Claude Code's Haiku (your Claude account)
+scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/insight/markx-token \
+    --kinds read,entities --batch 20 --batches 1 --parallel 3
+```
+Start with `--batches 1`, read what was refused (`markx-worker status`), then the last 30 days. It stops cleanly at a usage limit (exit 4) or a sign-in error (exit 5) and hands its tasks back.
+
+**Turning it off:** `INSIGHT_MARKX=off` (or remove the line) and `./update`. Every Mark X job stops and the page hides; its tables stay as they are (keep everything).
+
 ## Development mode
 
 ```bash

@@ -1,0 +1,963 @@
+#!/usr/bin/env python3
+"""markx-worker: Mark X Shadow's worker, Claude Code mode (issue 0086 part D).
+
+Runs on the owner's device. It leases Mark X tasks from INSIGHT, asks Haiku through Claude Code headless
+(`claude -p`), and posts the answers back. Standard library only; one file.
+
+    markx-worker cycle  --server http://<server>:5173 --token-file ~/.config/insight/markx-token \\
+                        --kinds read,entities --batch 20 --batches 5 --parallel 3
+    markx-worker status --server ... --token-file ...
+    markx-worker release --server ... --token-file ...      (hands back this worker's leases)
+
+A cycle
+-------
+1. Posts any answers a previous cycle could not deliver (the spool), so an answer is never paid for twice.
+2. Leases up to --parallel batches, each one kind (`GET /work?kinds=<one kind>&limit=<batch>`), kinds in
+   --kinds order; a kind is done when the server returns fewer tasks than asked. At most --batches leases.
+3. Each batch is one call:
+       claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
+              --no-session-persistence --strict-mcp-config
+   with the prompt on stdin: an instruction, then each task as "### ITEM id: <task id>\\n<input>". Haiku
+   answers one JSON line per task, `{"id": <task id>, <the guide's answer fields>}` (the prototype's measured
+   form; `{"task_id": .., "answer": {..}}` lines are accepted too).
+4. Each line is checked against the guide's JSON schema (a subset: type, enum, const, required, properties,
+   additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum, pattern, anyOf/oneOf). The
+   valid answers are posted at once.
+5. One retry: the tasks whose line was missing or failed the schema are asked again, in batches of their
+   own (one kind each, at most --batch). After it, valid and still-invalid answers are posted (an invalid
+   one is stored by the server as a call with its error and counts as a try); tasks still without an answer
+   are released at the end of the cycle.
+6. Tokens and cost come from Claude Code's JSON (`usage`: input + cache read + cache creation tokens in,
+   output tokens out; `total_cost_usd`; the model from `modelUsage`). Every call is logged with them; each
+   posted answer carries its share of its batch (an even split; a retried task carries its share of both
+   calls), so the posted totals add up to the spend on answered tasks.
+7. It stops cleanly. On a usage-limit or auth error from Claude Code it starts no new call, lets the calls
+   already running finish (their answers are posted), releases all its leases, logs why and exits 4 (usage)
+   or 5 (auth). A timer reruns it later.
+8. Leases: a call is not started when less than --lease-margin seconds are left on its lease (the tasks
+   go back at the end of the cycle). A running call is not killed when its lease ends (its tokens are
+   spent either way; only --timeout kills it): answers that come back after the lease ended are still
+   posted (they are paid for; the server keeps a second answer as a call and changes nothing) and are
+   never retried.
+9. The server unreachable: leasing stops and it exits 3. Answers whose post fails (after --post-tries
+   tries) are written to the spool and posted first by the next cycle. The leases it could not release
+   expire on the server after 30 minutes.
+
+Exit codes: 0 done (also: nothing to do); 2 bad arguments, token file or `claude` not found, or the
+embedder unreachable; 3 server unreachable or a server error; 4 Claude usage limit; 5 Claude auth error;
+6 the server refused the token (401/403); 7 the server refused the embedder's build or model (409/400).
+
+Embeddings (the `embed` kind, issue 0086 B, the build plan's corrections 6)
+-------------------------------------------------------------------------
+    markx-worker cycle --server ... --token-file ... --kinds embed --embedder http://127.0.0.1:8096 \\
+                       --embedder-gguf ~/Documents/models/markx/bge-m3-q8_0.gguf --batch 100 --batches 50
+An `embed` task is answered by a local llama.cpp server, not by `claude`. Start it as
+    llama-server -m bge-m3-q8_0.gguf --embedding --pooling cls -c 8192 -b 8192 -ub 8192 --port 8096
+Each leased batch is one POST <embedder>/embedding {"content": [inputs]}; each vector is scaled to length 1,
+packed as 1,024 little-endian float16, base64, and posted with the model (`bge-m3`) and the GGUF's sha256:
+    POST /api/markx/embeddings {"worker", "model", "model_sha256", "vectors": [{"task_id", "vector", "ms"}]}
+    200 {"stored": int, "invalid": [{"task_id", "error"}], "repeated": int}; 409: another build is stored.
+The sha256 is the file's (--embedder-gguf, or the model_path the embedder's /props names), hashed once and
+remembered in the state directory by path, size and modification time. No retry round (a vector is the same
+vector twice); a batch the embedder refuses is embedded one text at a time, and a text it still refuses is
+released. The embedder unreachable: exit 2, leases released. A 409 or 400: exit 7, leases released, nothing
+spooled (the same vectors would be refused again).
+
+The contract (what S3's `markx/api.py` must match; built from 0086 C)
+--------------------------------------------------------------------
+Every request carries `Authorization: Bearer <token>` (the token file's content, stripped). JSON bodies,
+UTF-8. 401 or 403 means the token is wrong. Paths are under --server (which includes no /api).
+
+GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
+    Leases up to n open tasks of those kinds for 30 minutes, by priority then age. The worker always
+    sends one kind.
+    200 {"lease_until": "<ISO 8601 with offset, e.g. 2026-11-05T12:30:00+00:00>",
+         "guides": {"<guide id>": {"sha256": "<hex of body>", "body": "<text>", "schema": {..} | null}},
+         "tasks": [{"id": <int or str>, "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
+    Every task's guide is in "guides". No open task: 200 with "tasks": [].
+
+POST /api/markx/answers
+    {"worker": "<name>", "executor": "claude-code", "model": "<model id Claude Code reported>",
+     "answers": [{"task_id": <id as leased>, "answer": {..}, "tokens_in": int, "tokens_out": int,
+                  "ms": int, "cost_usd": float}]}
+    200 {"stored": int, "valid": int, "invalid": [{"task_id": <id>, "error": "<why>"}]}
+    The server checks each answer (0086 C's table) and stores it in mx_calls, valid or not. Valid closes
+    the task; invalid puts it back to open with its error (failed after 3 tries). The worker does not
+    retry the server's invalid ones: the server re-queues them.
+
+POST /api/markx/release
+    {"worker": "<name>", "task_ids": [<id>, ..]}   (task_ids absent: every task this worker holds)
+    200 {"released": int}
+    Leased tasks go back to open; no try is counted.
+
+GET /api/markx/status
+    200 any JSON object (the queue by kind and status, answers per day, tokens, each worker's last
+    contact, the last decision run). The worker prints it.
+
+Where 0086 C is ambiguous (decided here; S3 should confirm or say otherwise)
+--------------------------------------------------------------------------
+- The answer line's shape. 0086 D says `{"task_id", "answer"}`; the prototype measured flat lines,
+  `{"id": .., <answer fields>}`. The worker asks for the measured form and posts `{"task_id", "answer"}`.
+- The id type of a task: int or str both work; it is posted back exactly as leased.
+- `valid` in the answers' response: a count, or a list of ids (both read).
+- `release`'s body: 0086 C names no field. The worker sends `worker` and, for specific tasks, `task_ids`.
+  A server that ignores `task_ids` and releases all of the worker's leases is still correct: the worker
+  only releases specific tasks at the end of a cycle, when nothing else is in flight.
+- An answer to a task whose lease ended (or that another worker now holds): the worker posts it anyway;
+  0086 C's "a second answer is kept as a call and changes nothing" is assumed to cover it, and an answer
+  to an expired but still open task is assumed to be accepted like any other.
+- The schema: 0086 C gives `schema` per guide, no dialect. The worker reads it as JSON Schema and checks
+  the subset above; a missing or null schema checks only that the answer is an object. The server's own
+  checks (spans, versions, figures) stay the server's.
+- Tokens: per answer only, as an even share of its batch; the spend on tasks never answered is in the
+  worker's log, not on the server.
+- `lease_until` without an offset is read as UTC.
+"""
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+
+EXECUTOR = "claude-code"
+# The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
+DEFAULT_KINDS = "read,entities,check,join,pair,merge,connect,card,headline,briefing,translate"
+HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
+        "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
+        "answer fields. No prose, no code fences, nothing else.\n\n")
+
+EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
+EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
+
+USAGE_RE = re.compile(r"usage limit|limit reached|hit your limit|rate.?limit|out of extra usage|credit balance|"
+                      r"quota|limit will reset|resets? at|resets \d", re.I)
+AUTH_RE = re.compile(r"/login|invalid api key|not logged in|authentication|oauth token|unauthori[sz]ed|"
+                     r"token has expired|expired token|invalid x-api-key|\b401\b|\b403\b", re.I)
+
+
+# ---------------------------------------------------------------------------------------------- errors
+
+class ServerUnreachable(Exception):
+    pass
+
+
+class ServerError(Exception):
+    def __init__(self, msg, code=None):
+        super().__init__(msg)
+        self.code = code
+
+
+class ServerAuth(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------------------------- the log
+
+class Log:
+    def __init__(self, path, quiet=False):
+        self.path = Path(path) if path else None
+        self.quiet = quiet
+        self.lock = threading.Lock()
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def __call__(self, event, **rec):
+        rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": event, **rec}
+        with self.lock:
+            if self.path:
+                with self.path.open("a") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if not self.quiet:
+                brief = " ".join(f"{k}={v}" for k, v in rec.items() if k not in ("at", "event") and v is not None)
+                print(f"markx-worker {event} {brief}", file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------------------------------------- the server
+
+class Server:
+    def __init__(self, base, token, timeout=60):
+        self.base = base.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+
+    def _req(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers={
+            "Authorization": f"Bearer {self.token}", "Accept": "application/json",
+            **({"Content-Type": "application/json"} if data is not None else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                raw = r.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise ServerAuth(f"{method} {path}: {e.code}") from None
+            detail = e.read()[:300].decode("utf-8", "replace")
+            raise ServerError(f"{method} {path}: {e.code} {detail}", e.code) from None
+        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as e:
+            raise ServerUnreachable(f"{method} {path}: {getattr(e, 'reason', e)}") from None
+        try:
+            return json.loads(raw.decode() or "null")
+        except ValueError:
+            raise ServerError(f"{method} {path}: not JSON: {raw[:200]!r}") from None
+
+    def work(self, kind, limit, worker):
+        q = urllib.parse.urlencode({"kinds": kind, "limit": limit, "worker": worker})
+        return self._req("GET", f"/api/markx/work?{q}")
+
+    def answers(self, payload):
+        return self._req("POST", "/api/markx/answers", payload)
+
+    def release(self, worker, task_ids=None):
+        body = {"worker": worker}
+        if task_ids is not None:
+            body["task_ids"] = list(task_ids)
+        return self._req("POST", "/api/markx/release", body)
+
+    def status(self):
+        return self._req("GET", "/api/markx/status")
+
+    def embeddings(self, payload):
+        return self._req("POST", "/api/markx/embeddings", payload)
+
+
+# ---------------------------------------------------------------------------------------------- the embedder
+
+class EmbedderDown(Exception):
+    pass
+
+
+class EmbedderError(Exception):
+    pass
+
+
+def file_sha256(path):
+    """The GGUF's sha256, remembered in the state directory by path, size and modification time."""
+    p = Path(path).expanduser().resolve()
+    st = p.stat()
+    memo = state_dir() / "gguf-sha256.json"
+    key = f"{p}|{st.st_size}|{int(st.st_mtime)}"
+    try:
+        known = json.loads(memo.read_text())
+    except (OSError, ValueError):
+        known = {}
+    if key in known:
+        return known[key]
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    known[key] = h.hexdigest()
+    try:
+        memo.parent.mkdir(parents=True, exist_ok=True)
+        memo.write_text(json.dumps(known))
+    except OSError:
+        pass
+    return known[key]
+
+
+def pack(vector):
+    """A vector scaled to length 1, as 1,024 little-endian float16, base64."""
+    norm = sum(x * x for x in vector) ** 0.5
+    if not norm:
+        raise EmbedderError("a zero vector")
+    return base64.b64encode(struct.pack(f"<{len(vector)}e", *[x / norm for x in vector])).decode("ascii")
+
+
+class Embedder:
+    """A local `llama-server --embedding --pooling cls`: POST /embedding {"content": [texts]}."""
+
+    def __init__(self, url, timeout=600):
+        self.url = url.rstrip("/")
+        self.timeout = timeout
+
+    def _req(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.url + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                raw = r.read()
+        except urllib.error.HTTPError as e:
+            raise EmbedderError(f"{path}: {e.code} {e.read()[:300].decode('utf-8', 'replace')}") from None
+        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as e:
+            raise EmbedderDown(f"{self.url}{path}: {getattr(e, 'reason', e)}") from None
+        try:
+            return json.loads(raw.decode() or "null")
+        except ValueError:
+            raise EmbedderError(f"{path}: not JSON") from None
+
+    def model_path(self):
+        props = self._req("GET", "/props") or {}
+        return props.get("model_path")
+
+    def embed(self, texts):
+        """One vector a text, in order (the pooled vector: a list of numbers, or a list holding one)."""
+        res = self._req("POST", "/embedding", {"content": list(texts)})
+        if isinstance(res, dict) and "embedding" in res:
+            res = [res]
+        if not isinstance(res, list) or len(res) != len(texts):
+            got = len(res) if isinstance(res, list) else "no"
+            raise EmbedderError(f"/embedding: {got} vectors for {len(texts)} texts")
+        out = [None] * len(texts)
+        for n, e in enumerate(res):
+            v = e.get("embedding") if isinstance(e, dict) else None
+            if isinstance(v, list) and v and isinstance(v[0], list):
+                if len(v) != 1:
+                    raise EmbedderError("/embedding: a vector a token (start llama-server with --pooling cls)")
+                v = v[0]
+            if not isinstance(v, list) or not v:
+                raise EmbedderError("/embedding: an answer without a vector")
+            k = e.get("index") if isinstance(e.get("index"), int) else n
+            if not 0 <= k < len(out):
+                raise EmbedderError(f"/embedding: index {k} out of range")
+            out[k] = v
+        if any(v is None for v in out):
+            raise EmbedderError("/embedding: a text without a vector")
+        return out
+
+
+# ---------------------------------------------------------------------------------------------- claude -p
+
+def claude_argv(claude, model, system):
+    return [claude, "-p", "--model", model, "--tools", "", "--system-prompt", system,
+            "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"]
+
+
+def classify(text):
+    """'auth', 'usage' or None, for the text of a failed call."""
+    if AUTH_RE.search(text or ""):
+        return "auth"
+    if USAGE_RE.search(text or ""):
+        return "usage"
+    return None
+
+
+def call(claude, model, system, prompt, timeout):
+    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model} or {error, fatal, ms}."""
+    t0 = time.time()
+    try:
+        p = subprocess.run(claude_argv(claude, model, system), input=prompt, capture_output=True, text=True,
+                           timeout=max(1, timeout), cwd=tempfile.gettempdir())
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout", "fatal": None, "ms": int((time.time() - t0) * 1000)}
+    except FileNotFoundError:
+        return {"error": f"claude not found: {claude}", "fatal": "setup", "ms": 0}
+    ms = int((time.time() - t0) * 1000)
+    try:
+        ev = json.loads(p.stdout)
+        r = [x for x in ev if isinstance(x, dict) and x.get("type") == "result"][-1] if isinstance(ev, list) else ev
+        if not isinstance(r, dict):
+            raise ValueError("not an object")
+    except (ValueError, IndexError):
+        out = (p.stdout or "") + "\n" + (p.stderr or "")
+        return {"error": f"unparsable output rc={p.returncode}: {out.strip()[:300]}", "fatal": classify(out), "ms": ms}
+    if r.get("is_error") or r.get("subtype") != "success":
+        msg = f"{r.get('subtype')}: {str(r.get('result'))[:300]}"
+        return {"error": msg, "fatal": classify(str(r.get("result")) + " " + (p.stderr or "")), "ms": ms}
+    u = r.get("usage") or {}
+    mu = r.get("modelUsage") or {}
+    used = max(mu, key=lambda k: (mu[k] or {}).get("outputTokens") or 0) if mu else None
+    return {"text": r.get("result") or "", "ms": ms, "cost": float(r.get("total_cost_usd") or 0),
+            "tin": (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0)
+                   + (u.get("cache_creation_input_tokens") or 0),
+            "tout": u.get("output_tokens") or 0, "model": used}
+
+
+def prompt_for(tasks):
+    return HEAD + "\n\n".join(f"### ITEM id: {t['id']}\n{t['input']}" for t in tasks)
+
+
+def parse_lines(text):
+    """{str(task id): answer} from the model's JSON lines (the prototype's parser)."""
+    out = {}
+    for line in (text or "").replace("```json", "").replace("```", "").split("\n"):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(o, dict):
+            continue
+        key = "id" if "id" in o else "task_id" if "task_id" in o else None
+        if key is None or o[key] in (None, ""):
+            continue
+        ans = {k: v for k, v in o.items() if k not in ("id", "task_id")}
+        if set(ans) == {"answer"} and isinstance(ans["answer"], dict):
+            ans = ans["answer"]
+        out[str(o[key])] = ans
+    return out
+
+
+# ---------------------------------------------------------------------------------------------- the schema
+
+_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None)}
+
+
+def _is(value, t):
+    if t == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if t == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, _TYPES.get(t, object))
+
+
+def schema_error(schema, value, path="answer"):
+    """The first way value breaks schema (a JSON Schema subset), or None."""
+    if schema is None or schema is True:
+        return None
+    if schema is False:
+        return f"{path}: not allowed"
+    if not isinstance(schema, dict):
+        return None
+    t = schema.get("type")
+    if t is not None:
+        ts = t if isinstance(t, list) else [t]
+        if not any(_is(value, x) for x in ts):
+            return f"{path}: not {'/'.join(ts)}"
+    if "const" in schema and value != schema["const"]:
+        return f"{path}: not {schema['const']!r}"
+    if "enum" in schema and value not in schema["enum"]:
+        return f"{path}: {value!r} not in {schema['enum']}"
+    for key in ("anyOf", "oneOf"):
+        if key in schema and all(schema_error(s, value, path) for s in schema[key]):
+            return f"{path}: matches none of {key}"
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            return f"{path}: shorter than {schema['minLength']}"
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            return f"{path}: longer than {schema['maxLength']}"
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            return f"{path}: does not match {schema['pattern']}"
+    if _is(value, "number"):
+        if "minimum" in schema and value < schema["minimum"]:
+            return f"{path}: below {schema['minimum']}"
+        if "maximum" in schema and value > schema["maximum"]:
+            return f"{path}: above {schema['maximum']}"
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            return f"{path}: fewer than {schema['minItems']} items"
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            return f"{path}: more than {schema['maxItems']} items"
+        if isinstance(schema.get("items"), dict):
+            for n, v in enumerate(value):
+                err = schema_error(schema["items"], v, f"{path}[{n}]")
+                if err:
+                    return err
+    if isinstance(value, dict):
+        for k in schema.get("required", []):
+            if k not in value:
+                return f"{path}: {k} missing"
+        props = schema.get("properties") or {}
+        for k, v in value.items():
+            if k in props:
+                err = schema_error(props[k], v, f"{path}.{k}")
+            elif "additionalProperties" in schema:
+                err = schema_error(schema["additionalProperties"], v, f"{path}.{k}")
+            else:
+                err = None
+            if err:
+                return err
+    return None
+
+
+def check_answer(schema, answer):
+    if not isinstance(answer, dict):
+        return "answer: not an object"
+    return schema_error(schema, answer) if schema else None
+
+
+# ---------------------------------------------------------------------------------------------- helpers
+
+def parse_time(v):
+    if isinstance(v, (int, float)):
+        return datetime.fromtimestamp(v, timezone.utc)
+    d = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def shares(total, n):
+    """total split into n integer shares that add up to it."""
+    total = int(total or 0)
+    base, extra = divmod(total, n)
+    return [base + (1 if k < extra else 0) for k in range(n)]
+
+
+def read_token(path):
+    p = Path(path).expanduser()
+    try:
+        token = p.read_text().strip()
+    except OSError as e:
+        raise SystemExit(f"markx-worker: cannot read the token file {p}: {e.strerror}") from None
+    if not token:
+        raise SystemExit(f"markx-worker: the token file {p} is empty")
+    try:
+        if p.stat().st_mode & 0o077:
+            print(f"markx-worker: warning: {p} is readable by others (chmod 600 it)", file=sys.stderr)
+    except OSError:
+        pass
+    return token
+
+
+def state_dir():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return Path(base) / "insight" / "markx-worker"
+
+
+# ---------------------------------------------------------------------------------------------- the cycle
+
+class Batch:
+    def __init__(self, kind, guide_id, guide, tasks, lease_until):
+        self.kind, self.guide_id, self.guide, self.tasks, self.lease_until = kind, guide_id, guide, tasks, lease_until
+
+
+class Worker:
+    def __init__(self, args, server, log):
+        self.a, self.server, self.log = args, server, log
+        self.stop = threading.Event()
+        self.fatal = None            # 'usage', 'auth', 'setup', 'server', 'token'
+        self.fatal_why = None
+        self.held = {}               # str(task id) -> task id as leased, for tasks not yet answered or released
+        self.spent = {}              # str(task id) -> {tokens_in, tokens_out, ms, cost_usd}
+        self.lock = threading.Lock()
+        self.embedder = getattr(args, "embedder_client", None)
+        self.embed_sha = getattr(args, "embedder_sha256", None)
+        self.counts = {"leased": 0, "calls": 0, "posted": 0, "valid": 0, "server_invalid": 0, "released": 0,
+                       "vectors": 0, "embed_ms": 0,
+                       "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
+        self.model_seen = None
+
+    # -- fatal ------------------------------------------------------------------------------------------
+    def set_fatal(self, kind, why):
+        with self.lock:
+            if self.fatal is None:
+                self.fatal, self.fatal_why = kind, why
+        self.stop.set()
+
+    # -- the spool --------------------------------------------------------------------------------------
+    def spool_path(self):
+        return Path(self.a.spool).expanduser()
+
+    def spool(self, payload):
+        p = self.spool_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock, p.open("a") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.log("spooled", answers=len(payload.get("answers") or payload.get("vectors") or []), spool=str(p))
+
+    def flush_spool(self):
+        p = self.spool_path()
+        if not p.exists() or not p.read_text().strip():
+            return
+        lines = [json.loads(x) for x in p.read_text().splitlines() if x.strip()]
+        done = 0
+        try:
+            for payload in lines:
+                if "vectors" in payload:
+                    r = self.server.embeddings(payload)
+                    self.note_vectors(payload, r)
+                else:
+                    r = self.server.answers(payload)
+                    self.note_posted(payload, r)
+                done += 1
+        finally:
+            rest = lines[done:]
+            p.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rest))
+            self.log("spool", posted=done, left=len(rest))
+
+    # -- posting ----------------------------------------------------------------------------------------
+    def note_posted(self, payload, r):
+        r = r or {}
+        valid = r.get("valid")
+        nvalid = len(valid) if isinstance(valid, list) else int(valid or 0)
+        invalid = r.get("invalid") or []
+        with self.lock:
+            self.counts["posted"] += len(payload["answers"])
+            self.counts["valid"] += nvalid
+            self.counts["server_invalid"] += len(invalid)
+        for x in invalid:
+            self.log("server-invalid", task=x.get("task_id"), error=str(x.get("error"))[:300])
+
+    def post(self, answers, model):
+        if not answers:
+            return
+        payload = {"worker": self.a.worker, "executor": EXECUTOR, "model": model or self.a.model,
+                   "answers": answers}
+        for attempt in range(1, self.a.post_tries + 1):
+            try:
+                r = self.server.answers(payload)
+            except ServerAuth as e:
+                self.spool(payload)
+                self.set_fatal("token", str(e))
+                return
+            except (ServerUnreachable, ServerError) as e:
+                self.log("post-failed", attempt=attempt, error=str(e)[:300])
+                if attempt < self.a.post_tries:
+                    time.sleep(self.a.retry_wait * attempt)
+                    continue
+                self.spool(payload)
+                self.set_fatal("server", str(e))
+                return
+            self.note_posted(payload, r)
+            with self.lock:
+                for x in answers:
+                    self.held.pop(str(x["task_id"]), None)
+            return
+
+    def answer_row(self, task, answer):
+        s = self.spent.get(str(task["id"]), {})
+        return {"task_id": task["id"], "answer": answer, "tokens_in": s.get("tokens_in", 0),
+                "tokens_out": s.get("tokens_out", 0), "ms": s.get("ms", 0),
+                "cost_usd": round(s.get("cost_usd", 0.0), 8)}
+
+    # -- one call ---------------------------------------------------------------------------------------
+    def ask(self, batch, tasks, attempt):
+        """Asks one call. Returns (ok [(task, answer)], invalid [(task, answer, error)], missing [task], late,
+        model) or None when no call was made."""
+        if self.stop.is_set():
+            return None
+        left = (batch.lease_until - datetime.now(timezone.utc)).total_seconds()
+        if left < self.a.lease_margin:
+            self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
+            return None
+        res = call(self.a.claude, self.a.model, batch.guide["body"], prompt_for(tasks),
+                   timeout=self.a.timeout)
+        late = datetime.now(timezone.utc) > batch.lease_until
+        ok, invalid, missing = [], [], []
+        if "text" in res:
+            got = parse_lines(res["text"])
+            n = len(tasks)
+            for t, tin, tout, ms in zip(tasks, shares(res["tin"], n), shares(res["tout"], n), shares(res["ms"], n)):
+                with self.lock:
+                    s = self.spent.setdefault(str(t["id"]), {"tokens_in": 0, "tokens_out": 0, "ms": 0, "cost_usd": 0.0})
+                    s["tokens_in"] += tin
+                    s["tokens_out"] += tout
+                    s["ms"] += ms
+                    s["cost_usd"] += res["cost"] / n
+                a = got.get(str(t["id"]))
+                if a is None:
+                    missing.append(t)
+                    continue
+                err = check_answer(batch.guide.get("schema"), a)
+                (invalid.append((t, a, err)) if err else ok.append((t, a)))
+            with self.lock:
+                self.counts["calls"] += 1
+                self.counts["tokens_in"] += res["tin"]
+                self.counts["tokens_out"] += res["tout"]
+                self.counts["cost_usd"] += res["cost"]
+                self.model_seen = res.get("model") or self.model_seen
+        else:
+            missing = list(tasks)
+            with self.lock:
+                self.counts["calls"] += 1
+        self.log("call", kind=batch.kind, guide=batch.guide_id, attempt=attempt, size=len(tasks), ok=len(ok),
+                 invalid=len(invalid), missing=len(missing), ms=res.get("ms"), cost_usd=res.get("cost"),
+                 tokens_in=res.get("tin"), tokens_out=res.get("tout"), model=res.get("model"),
+                 late=late or None, error=res.get("error"),
+                 invalid_errors=[e for _, _, e in invalid][:5] or None)
+        if res.get("fatal"):
+            self.set_fatal(res["fatal"], res["error"])
+        return ok, invalid, missing, late, res.get("model")
+
+    # -- a round ----------------------------------------------------------------------------------------
+    def first(self, batch):
+        r = self.ask(batch, batch.tasks, 1)
+        if r is None:
+            return []
+        ok, invalid, missing, late, model = r
+        rows = [self.answer_row(t, a) for t, a in ok]
+        if late:   # the lease is gone: no retry; the invalid ones are stored with their errors
+            rows += [self.answer_row(t, a) for t, a, _ in invalid]
+            self.post(rows, model)
+            return []
+        self.post(rows, model)
+        return [t for t, _, _ in invalid] + missing
+
+    def second(self, batch):
+        r = self.ask(batch, batch.tasks, 2)
+        if r is None:
+            return
+        ok, invalid, missing, late, model = r
+        self.post([self.answer_row(t, a) for t, a in ok] + [self.answer_row(t, a) for t, a, _ in invalid], model)
+
+    # -- embeddings -------------------------------------------------------------------------------------
+    def note_vectors(self, payload, r):
+        r = r or {}
+        with self.lock:
+            self.counts["posted"] += len(payload["vectors"])
+            self.counts["vectors"] += int(r.get("stored") or 0)
+            self.counts["server_invalid"] += len(r.get("invalid") or [])
+        for x in r.get("invalid") or []:
+            self.log("server-invalid", task=x.get("task_id"), error=str(x.get("error"))[:300])
+
+    def post_vectors(self, rows):
+        if not rows:
+            return
+        payload = {"worker": self.a.worker, "model": self.a.embed_model, "model_sha256": self.embed_sha,
+                   "vectors": rows}
+        for attempt in range(1, self.a.post_tries + 1):
+            try:
+                r = self.server.embeddings(payload)
+            except ServerAuth as e:
+                self.spool(payload)
+                self.set_fatal("token", str(e))
+                return
+            except ServerError as e:
+                if e.code in (400, 409):     # another build or model: the same vectors would be refused again
+                    self.set_fatal("build", str(e))
+                    return
+                err = e
+            except ServerUnreachable as e:
+                err = e
+            else:
+                self.note_vectors(payload, r)
+                with self.lock:
+                    for x in rows:
+                        self.held.pop(str(x["task_id"]), None)
+                return
+            self.log("post-failed", attempt=attempt, error=str(err)[:300])
+            if attempt < self.a.post_tries:
+                time.sleep(self.a.retry_wait * attempt)
+                continue
+            self.spool(payload)
+            self.set_fatal("server", str(err))
+
+    def embed_texts(self, tasks):
+        """[(task, vector or None)]: the batch in one request, else one text at a time."""
+        try:
+            return list(zip(tasks, self.embedder.embed([t["input"] for t in tasks])))
+        except EmbedderError as e:
+            if len(tasks) == 1:
+                self.log("embed-refused", task=tasks[0]["id"], error=str(e)[:300])
+                return [(tasks[0], None)]
+            self.log("embed-batch-refused", size=len(tasks), error=str(e)[:300])
+        out = []
+        for t in tasks:
+            out += self.embed_texts([t])
+        return out
+
+    def embed(self, batch):
+        """One embed batch: the embedder, then the vectors posted (no retry round)."""
+        if self.stop.is_set():
+            return
+        left = (batch.lease_until - datetime.now(timezone.utc)).total_seconds()
+        if left < self.a.lease_margin:
+            self.log("lease-expiring", kind=batch.kind, size=len(batch.tasks), seconds_left=int(left))
+            return
+        t0 = time.time()
+        try:
+            got = self.embed_texts(batch.tasks)
+        except EmbedderDown as e:
+            self.set_fatal("setup", f"the embedder is unreachable: {e}")
+            return
+        ms = int((time.time() - t0) * 1000)
+        done = [(t, v) for t, v in got if v is not None]
+        rows = []
+        for (t, v), share in zip(done, shares(ms, max(1, len(done)))):
+            if len(v) != EMBED_DIMENSIONS:
+                self.set_fatal("setup", f"the embedder gives {len(v)} dimensions, not {EMBED_DIMENSIONS}")
+                return
+            try:
+                rows.append({"task_id": t["id"], "vector": pack(v), "ms": share})
+            except EmbedderError as e:
+                self.log("embed-refused", task=t["id"], error=str(e))
+        with self.lock:
+            self.counts["calls"] += 1
+            self.counts["embed_ms"] += ms
+        self.log("embed", size=len(batch.tasks), vectors=len(rows), ms=ms,
+                 ms_per_post=round(ms / max(1, len(rows)), 1))
+        self.post_vectors(rows)
+
+    def run_round(self, batches):
+        embeds = [b for b in batches if b.kind == EMBED_KIND]
+        batches = [b for b in batches if b.kind != EMBED_KIND]
+        if embeds:
+            with ThreadPoolExecutor(self.a.parallel) as ex:
+                list(ex.map(self.embed, embeds))
+        if not batches or self.stop.is_set():
+            return
+        with ThreadPoolExecutor(self.a.parallel) as ex:
+            again = list(ex.map(self.first, batches))
+        if self.stop.is_set() or self.a.no_retry:
+            return
+        retry = []
+        for b, todo in zip(batches, again):
+            for k in range(0, len(todo), self.a.batch):
+                retry.append(Batch(b.kind, b.guide_id, b.guide, todo[k:k + self.a.batch], b.lease_until))
+        if retry:
+            with ThreadPoolExecutor(self.a.parallel) as ex:
+                list(ex.map(self.second, retry))
+
+    def lease(self, kind):
+        w = self.server.work(kind, self.a.batch, self.a.worker) or {}
+        tasks = w.get("tasks") or []
+        if not tasks:
+            return [], 0
+        until = parse_time(w["lease_until"])
+        guides = w.get("guides") or {}
+        groups = {}
+        for t in tasks:
+            groups.setdefault((t.get("kind") or kind, t["guide"]), []).append(t)
+            with self.lock:
+                self.held[str(t["id"])] = t["id"]
+        self.counts["leased"] += len(tasks)
+        out = []
+        for (k, gid), ts in groups.items():
+            g = guides.get(gid)
+            if not g or not g.get("body"):
+                self.log("guide-missing", kind=k, guide=gid, tasks=len(ts))
+                continue
+            if g.get("sha256") and hashlib.sha256(g["body"].encode()).hexdigest() != g["sha256"]:
+                self.log("guide-sha256-mismatch", kind=k, guide=gid, tasks=len(ts))
+                continue
+            out.append(Batch(k, gid, g, ts, until))
+        self.log("leased", kind=kind, tasks=len(tasks), lease_until=until.isoformat(timespec="seconds"))
+        return out, len(tasks)
+
+    def cycle(self):
+        try:
+            self.flush_spool()
+        except ServerAuth as e:
+            return self.finish("token", str(e))
+        except (ServerUnreachable, ServerError) as e:
+            return self.finish("server", str(e))
+        kinds = [k.strip() for k in self.a.kinds.split(",") if k.strip()]
+        done, leased = set(), 0
+        while leased < self.a.batches and not self.stop.is_set():
+            batches = []
+            while len(batches) < self.a.parallel and leased < self.a.batches:
+                kind = next((k for k in kinds if k not in done), None)
+                if kind is None:
+                    break
+                try:
+                    bs, n = self.lease(kind)
+                except ServerAuth as e:
+                    self.set_fatal("token", str(e))
+                    break
+                except (ServerUnreachable, ServerError) as e:
+                    self.set_fatal("server", str(e))
+                    break
+                except (KeyError, ValueError, TypeError) as e:
+                    self.set_fatal("server", f"bad /work answer: {e!r}")
+                    break
+                if n < self.a.batch:
+                    done.add(kind)
+                if n:
+                    leased += 1
+                    batches += bs
+            if not batches:
+                break
+            self.run_round(batches)
+        return self.finish(self.fatal, self.fatal_why)
+
+    def finish(self, fatal, why):
+        try:
+            if fatal in ("usage", "auth", "setup", "build"):
+                r = self.server.release(self.a.worker)
+                self.counts["released"] += int((r or {}).get("released") or 0)
+                self.held.clear()
+            elif self.held and fatal not in ("server", "token"):
+                r = self.server.release(self.a.worker, list(self.held.values()))
+                self.counts["released"] += int((r or {}).get("released") or len(self.held))
+                self.held.clear()
+        except (ServerUnreachable, ServerError, ServerAuth) as e:
+            self.log("release-failed", error=str(e)[:300], held=len(self.held))
+            fatal, why = fatal or "server", why or str(e)
+        self.counts["cost_usd"] = round(self.counts["cost_usd"], 6)
+        code = {None: EXIT_OK, "usage": EXIT_USAGE, "auth": EXIT_AUTH, "setup": EXIT_SETUP, "build": EXIT_BUILD,
+                "server": EXIT_SERVER, "token": EXIT_TOKEN}[fatal]
+        self.log("done", exit=code, stopped=fatal, why=(why or None) and str(why)[:300], **self.counts)
+        return code
+
+
+# ---------------------------------------------------------------------------------------------- the CLI
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="markx-worker", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--server", required=True, help="INSIGHT's address, e.g. http://<server>:5173")
+    common.add_argument("--token-file", required=True, help="a file holding the bearer token")
+    common.add_argument("--worker", default=socket.gethostname(), help="this worker's name (default: the host)")
+    common.add_argument("--log", default=str(state_dir() / "log.jsonl"), help="JSON-lines log ('' for none)")
+    common.add_argument("--quiet", action="store_true", help="no log lines on stderr")
+    c = sub.add_parser("cycle", parents=[common], help="lease, ask Haiku, post")
+    c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")
+    c.add_argument("--batch", type=int, default=20, help="tasks per call (default 20)")
+    c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
+    c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3)")
+    c.add_argument("--model", default="haiku", help="claude --model (default haiku)")
+    c.add_argument("--claude", default=os.environ.get("MARKX_CLAUDE", "claude"), help="the claude binary")
+    c.add_argument("--timeout", type=float, default=1800, help="seconds per call at most (default 1800)")
+    c.add_argument("--lease-margin", type=float, default=120, help="no call with less lease left (default 120 s)")
+    c.add_argument("--post-tries", type=int, default=3, help="tries per post (default 3)")
+    c.add_argument("--retry-wait", type=float, default=2.0, help="seconds between post tries, times the try")
+    c.add_argument("--no-retry", action="store_true", help="no retry of missing or invalid answers")
+    c.add_argument("--spool", default=str(state_dir() / "spool.jsonl"), help="answers not yet delivered")
+    c.add_argument("--embedder", help="for the embed kind: a local llama-server --embedding's address")
+    c.add_argument("--embedder-gguf", help="the embedder's GGUF, for its sha256 (default: the model_path of its /props)")
+    c.add_argument("--embed-model", default="bge-m3", help="the model id the vectors are stored under (default bge-m3)")
+    sub.add_parser("status", parents=[common], help="print the server's Mark X status")
+    sub.add_parser("release", parents=[common], help="hand back this worker's leased tasks")
+    a = ap.parse_args(argv)
+    if a.cmd == "cycle" and (a.batch < 1 or a.batches < 1 or a.parallel < 1 or a.post_tries < 1):
+        ap.error("--batch, --batches, --parallel and --post-tries must be at least 1")
+
+    try:
+        token = read_token(a.token_file)
+    except SystemExit as e:
+        print(e, file=sys.stderr)
+        return EXIT_SETUP
+    server = Server(a.server, token)
+    log = Log(a.log or None, quiet=a.quiet)
+    try:
+        if a.cmd == "status":
+            print(json.dumps(server.status(), indent=1, ensure_ascii=False))
+            return EXIT_OK
+        if a.cmd == "release":
+            r = server.release(a.worker)
+            log("released", worker=a.worker, released=(r or {}).get("released"))
+            return EXIT_OK
+    except ServerAuth as e:
+        log("stopped", why=f"the server refused the token: {e}")
+        return EXIT_TOKEN
+    except (ServerUnreachable, ServerError) as e:
+        log("stopped", why=str(e)[:300])
+        return EXIT_SERVER
+    if EMBED_KIND in [k.strip() for k in a.kinds.split(",")]:
+        if not a.embedder:
+            log("stopped", why="the embed kind needs --embedder (a local llama-server --embedding)")
+            return EXIT_SETUP
+        a.embedder_client = Embedder(a.embedder)
+        try:
+            gguf = a.embedder_gguf or a.embedder_client.model_path()
+            if not gguf:
+                raise EmbedderError("its /props names no model_path: pass --embedder-gguf")
+            a.embedder_sha256 = file_sha256(gguf)
+        except (EmbedderDown, EmbedderError, OSError) as e:
+            log("stopped", why=f"the embedder's build: {e}")
+            return EXIT_SETUP
+        log("embedder", url=a.embedder, gguf=str(gguf), sha256=a.embedder_sha256)
+    log("start", worker=a.worker, server=a.server, kinds=a.kinds, batch=a.batch, batches=a.batches,
+        parallel=a.parallel, model=a.model)
+    return Worker(a, server, log).cycle()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

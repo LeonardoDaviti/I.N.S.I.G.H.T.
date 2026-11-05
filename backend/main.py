@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     threading.Thread(target=in_own_process, args=(recompute_stories,), name="stories", daemon=True).start()
+    markx_router_module.start_jobs()   # Mark X's hourly decisions (issue 0086 E); nothing when INSIGHT_MARKX is off
     yield
     database.close_all()
 
@@ -1482,3 +1483,9 @@ async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressReq
         completed=request.completed,
     )
     return {"success": True, "progress": progress}
+
+
+# ============= MARK X SHADOW (issue 0086 C: the worker API; INSIGHT_MARKX off answers 404) =============
+from insight_core.markx import api as markx_router_module  # noqa: E402
+from insight_core.markx.api import router as markx_router  # noqa: E402
+app.include_router(markx_router)

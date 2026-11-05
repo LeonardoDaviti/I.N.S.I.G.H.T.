@@ -1,0 +1,603 @@
+"""Tests for scripts/markx-worker (0086 part D) against a stub of 0086 C's API and a fake `claude`.
+
+    python3 -m unittest discover -s scripts/tests -p 'test_markx_worker.py'
+
+Standard library only, no network beyond 127.0.0.1, never the real `claude`: every run passes --claude
+scripts/tests/fake-claude, and PATH starts with a directory whose `claude` is the fake too.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+HERE = Path(__file__).resolve().parent
+WORKER = HERE.parent / "markx-worker"
+FAKE = HERE / "fake-claude"
+TOKEN = "test-token-not-a-secret"
+
+_loader = importlib.machinery.SourceFileLoader("markx_worker", str(WORKER))
+_spec = importlib.util.spec_from_loader("markx_worker", _loader)
+W = importlib.util.module_from_spec(_spec)
+_loader.exec_module(W)
+
+SCHEMA = {"type": "object", "required": ["kind", "headline"], "additionalProperties": False,
+          "properties": {"kind": {"enum": ["news", "other"]}, "headline": {"type": "string", "maxLength": 200}}}
+
+
+def guide(gid, body):
+    return {"sha256": hashlib.sha256(body.encode()).hexdigest(), "body": body, "schema": SCHEMA}
+
+
+GUIDES = {"read-v2": guide("read-v2", "GUIDE read-v2: read the post."),
+          "ent-v3": guide("ent-v3", "GUIDE ent-v3: list the entities.")}
+KIND_GUIDE = {"read": "read-v2", "entities": "ent-v3"}
+
+
+# ---------------------------------------------------------------------------------------------- the stub
+
+class Stub:
+    """0086 C's worker API, in memory: leases, checks, calls, releases."""
+
+    def __init__(self, lease_seconds=1800, token=TOKEN):
+        self.lease_seconds = lease_seconds
+        self.token = token
+        self.tasks = {}             # str(id) -> task
+        self.calls = []             # every stored answer
+        self.posts = []             # every answers payload
+        self.releases = []          # every release body
+        self.works = []             # every /work query
+        self.fail_posts = 0         # answer this many posts with 503 first
+        self.guides = dict(GUIDES)
+        self.lock = threading.Lock()
+        stub = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body):
+                raw = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _auth(self):
+                if self.headers.get("Authorization") != f"Bearer {stub.token}":
+                    self._send(401, {"detail": "bad token"})
+                    return False
+                return True
+
+            def do_GET(self):
+                if not self._auth():
+                    return
+                u = urlparse(self.path)
+                if u.path == "/api/markx/work":
+                    q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                    self._send(200, stub.work(q))
+                elif u.path == "/api/markx/status":
+                    self._send(200, stub.status())
+                else:
+                    self._send(404, {})
+
+            def do_POST(self):
+                if not self._auth():
+                    return
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                if self.path == "/api/markx/answers":
+                    with stub.lock:
+                        if stub.fail_posts > 0:
+                            stub.fail_posts -= 1
+                            return self._send(503, {"detail": "down"})
+                    self._send(200, stub.answers(body))
+                elif self.path == "/api/markx/release":
+                    self._send(200, stub.release(body))
+                else:
+                    self._send(404, {})
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def add(self, kind, n, start=1, ids=None):
+        for k in range(n):
+            tid = ids[k] if ids else start + k
+            self.tasks[str(tid)] = {"id": tid, "kind": kind, "guide": KIND_GUIDE[kind], "priority": 0,
+                                    "input": f"platform: test\ntitle: post {tid}\ntext: something happened",
+                                    "status": "open", "lease_until": None, "leased_by": None, "attempts": 0,
+                                    "last_error": None}
+
+    def _expire(self, now):
+        for t in self.tasks.values():
+            if t["status"] == "leased" and t["lease_until"] < now:
+                t.update(status="open", lease_until=None, leased_by=None)
+
+    def work(self, q):
+        now = datetime.now(timezone.utc)
+        with self.lock:
+            self.works.append(q)
+            self._expire(now)
+            kinds = q["kinds"].split(",")
+            until = now + timedelta(seconds=self.lease_seconds)
+            pick = [t for t in self.tasks.values() if t["status"] == "open" and t["kind"] in kinds]
+            pick = pick[:int(q["limit"])]
+            for t in pick:
+                t.update(status="leased", lease_until=until, leased_by=q["worker"])
+            return {"lease_until": until.isoformat(), "guides": {t["guide"]: self.guides[t["guide"]] for t in pick},
+                    "tasks": [{"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]}
+                              for t in pick]}
+
+    def check(self, answer):
+        err = W.schema_error(SCHEMA, answer) if isinstance(answer, dict) else "not an object"
+        if not err and answer.get("headline") == "SERVER-BAD":
+            err = "headline: a figure that does not occur in the input"
+        return err
+
+    def answers(self, body):
+        with self.lock:
+            self.posts.append(body)
+            invalid, nvalid = [], 0
+            for a in body["answers"]:
+                t = self.tasks[str(a["task_id"])]
+                err = self.check(a["answer"])
+                self.calls.append({**a, "worker": body["worker"], "executor": body["executor"],
+                                   "model": body["model"], "valid": err is None, "error": err})
+                if t["status"] == "answered":
+                    continue                       # a second answer: kept as a call, changes nothing
+                if err is None:
+                    nvalid += 1
+                    t.update(status="answered", lease_until=None, leased_by=None)
+                else:
+                    invalid.append({"task_id": a["task_id"], "error": err})
+                    t["attempts"] += 1
+                    t.update(status="failed" if t["attempts"] >= 3 else "open", lease_until=None,
+                             leased_by=None, last_error=err)
+            return {"stored": len(body["answers"]), "valid": nvalid, "invalid": invalid}
+
+    def release(self, body):
+        with self.lock:
+            self.releases.append(body)
+            ids = set(map(str, body["task_ids"])) if "task_ids" in body else None
+            n = 0
+            for k, t in self.tasks.items():
+                if t["status"] == "leased" and t["leased_by"] == body["worker"] and (ids is None or k in ids):
+                    t.update(status="open", lease_until=None, leased_by=None)
+                    n += 1
+            return {"released": n}
+
+    def status(self):
+        with self.lock:
+            out = {}
+            for t in self.tasks.values():
+                out.setdefault(t["kind"], {}).setdefault(t["status"], 0)
+                out[t["kind"]][t["status"]] += 1
+            return {"queue": out}
+
+    def by_status(self, status):
+        return sorted((t["id"] for t in self.tasks.values() if t["status"] == status), key=str)
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+# ---------------------------------------------------------------------------------------------- the runs
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="markx-worker-test-"))
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "claude").symlink_to(FAKE)     # a bare `claude` is the fake too
+        (self.tmp / "state").mkdir()
+        self.token_file = self.tmp / "token"
+        self.token_file.write_text(TOKEN + "\n")
+        self.token_file.chmod(0o600)
+        self.log = self.tmp / "worker.jsonl"
+        self.spool = self.tmp / "spool.jsonl"
+        self.fake_log = self.tmp / "fake.jsonl"
+        self.stub = Stub()
+        self.addCleanup(self.stub.close)
+
+    def run_worker(self, *extra, plan="valid", server=None, cmd="cycle", timeout=60):
+        env = {**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ.get('PATH', '')}",
+               "FAKE_CLAUDE_PLAN": plan, "FAKE_CLAUDE_STATE": str(self.tmp / "state"),
+               "FAKE_CLAUDE_LOG": str(self.fake_log), "MARKX_CLAUDE": str(FAKE)}
+        argv = [sys.executable, str(WORKER), cmd, "--server", server or self.stub.url,
+                "--token-file", str(self.token_file), "--worker", "test-device", "--log", str(self.log), "--quiet"]
+        if cmd == "cycle":
+            argv += ["--claude", str(FAKE), "--spool", str(self.spool), "--retry-wait", "0"]
+        p = subprocess.run(argv + list(extra), env=env, capture_output=True, text=True, timeout=timeout)
+        return p
+
+    def fake_calls(self):
+        if not self.fake_log.exists():
+            return []
+        return [json.loads(x) for x in self.fake_log.read_text().splitlines()]
+
+    def events(self, name=None):
+        if not self.log.exists():
+            return []
+        ev = [json.loads(x) for x in self.log.read_text().splitlines()]
+        return [e for e in ev if name is None or e["event"] == name]
+
+    def done(self):
+        return self.events("done")[-1]
+
+
+class TestValid(Base):
+    def test_every_task_answered_in_batches_of_20_three_at_a_time(self):
+        self.stub.add("read", 45)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 45)
+        calls = self.fake_calls()
+        self.assertEqual(sorted(c["stdin"].count("### ITEM id:") for c in calls), [5, 20, 20])
+        for c in calls:
+            self.assertEqual(c["argv"], ["-p", "--model", "haiku", "--tools", "", "--system-prompt",
+                                         GUIDES["read-v2"]["body"], "--output-format", "json",
+                                         "--no-session-persistence", "--strict-mcp-config"])
+            self.assertTrue(c["stdin"].startswith(W.HEAD))
+        for w in self.stub.works:
+            self.assertEqual(w["kinds"], "read")
+            self.assertEqual(w["limit"], "20")
+            self.assertEqual(w["worker"], "test-device")
+        self.assertEqual(self.stub.releases, [])
+        self.assertTrue(all(c["valid"] for c in self.stub.calls))
+
+    def test_tokens_and_cost_from_claude_codes_json_logged_and_posted(self):
+        self.stub.add("read", 45)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        # the fake reports, per call: 100 + 2000 + 300 in, 40 per item out, $0.002 per item
+        posted_in = sum(c["tokens_in"] for c in self.stub.calls)
+        posted_out = sum(c["tokens_out"] for c in self.stub.calls)
+        posted_cost = sum(c["cost_usd"] for c in self.stub.calls)
+        self.assertEqual(posted_in, 3 * 2400)
+        self.assertEqual(posted_out, 45 * 40)
+        self.assertAlmostEqual(posted_cost, 45 * 0.002, places=6)
+        for c in self.stub.calls:
+            self.assertEqual(c["executor"], "claude-code")
+            self.assertEqual(c["model"], "claude-haiku-fake")
+            self.assertEqual(c["tokens_out"], 40)
+            self.assertIn("ms", c)
+        logged = self.events("call")
+        self.assertEqual(sum(e["tokens_in"] for e in logged), 3 * 2400)
+        self.assertEqual(sum(e["tokens_out"] for e in logged), 45 * 40)
+        d = self.done()
+        self.assertEqual((d["tokens_in"], d["tokens_out"], d["valid"], d["exit"]), (7200, 1800, 45, 0))
+
+    def test_one_kind_per_batch_in_the_kinds_order(self):
+        self.stub.add("read", 25, start=1)
+        self.stub.add("entities", 25, start=101)
+        p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 50)
+        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "read", "entities", "entities"])
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}
+            self.assertEqual(len(kinds), 1)
+            self.assertEqual(c["system"], GUIDES[KIND_GUIDE[kinds.pop()]]["body"])
+
+    def test_batches_caps_the_leases(self):
+        self.stub.add("read", 100)
+        p = self.run_worker("--kinds", "read", "--batches", "2")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 40)
+        self.assertEqual(len(self.stub.by_status("open")), 60)
+        self.assertEqual(len(self.stub.works), 2)
+
+    def test_string_ids_fenced_and_nested_lines(self):
+        ids = [f"6f1c2b9e-0000-4000-8000-{k:012d}" for k in range(5)]
+        self.stub.add("read", 5, ids=ids)
+        p = self.run_worker("--kinds", "read", plan="fence+nested")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.stub.by_status("answered"), sorted(ids))
+        self.assertEqual({c["answer"]["kind"] for c in self.stub.calls}, {"news"})
+
+    def test_nothing_to_do(self):
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertEqual(self.stub.posts, [])
+
+
+class TestRetry(Base):
+    def test_invalid_then_retried(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="invalid:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.fake_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["stdin"].count("### ITEM id:"), 2)
+        self.assertIn("### ITEM id: 1\n", calls[1]["stdin"])
+        self.assertIn("### ITEM id: 2\n", calls[1]["stdin"])
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        # the first try's invalid lines are not posted (the lease is kept for the retry)
+        self.assertEqual(len(self.stub.calls), 20)
+        self.assertTrue(all(c["valid"] for c in self.stub.calls))
+        # a retried task carries its share of both calls
+        retried = [c for c in self.stub.calls if c["task_id"] in (1, 2)]
+        self.assertEqual({c["tokens_out"] for c in retried}, {80})
+        first = self.events("call")[0]
+        self.assertEqual((first["ok"], first["invalid"], first["missing"]), (18, 2, 0))
+
+    def test_still_invalid_after_the_retry_is_posted_with_its_error(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="invalid:1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 2)            # one retry, not more
+        bad = [c for c in self.stub.calls if not c["valid"]]
+        self.assertEqual([c["task_id"] for c in bad], [1])
+        self.assertEqual(self.stub.tasks["1"]["status"], "open")
+        self.assertEqual(self.stub.tasks["1"]["attempts"], 1)
+        self.assertEqual(len(self.stub.by_status("answered")), 19)
+
+    def test_missing_lines_retried(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="missing:3,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.fake_calls()
+        self.assertEqual([c["stdin"].count("### ITEM id:") for c in calls], [20, 3])
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(self.stub.releases, [])
+
+    def test_missing_after_the_retry_is_released(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="missing:3,missing:1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 19)
+        self.assertEqual(self.stub.by_status("open"), [20])
+        self.assertEqual(self.stub.releases, [{"worker": "test-device", "task_ids": [20]}])
+        self.assertEqual(self.stub.tasks["20"]["attempts"], 0)
+
+    def test_retries_combine_into_batches_of_one_kind(self):
+        self.stub.add("read", 60)
+        p = self.run_worker("--kinds", "read", plan="missing:2,missing:2,missing:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 60)
+        self.assertEqual(sorted(c["stdin"].count("### ITEM id:") for c in self.fake_calls()), [2, 2, 2, 20, 20, 20])
+
+    def test_no_retry_flag(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", "--no-retry", plan="missing:3")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)
+        self.assertEqual(len(self.stub.by_status("open")), 3)
+
+    def test_server_invalid_is_left_to_the_server(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="serverbad:1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)
+        self.assertEqual(self.stub.tasks["1"]["status"], "open")
+        self.assertEqual(self.stub.tasks["1"]["attempts"], 1)
+        ev = self.events("server-invalid")
+        self.assertEqual([e["task"] for e in ev], [1])
+        self.assertEqual(self.done()["server_invalid"], 1)
+
+    def test_a_non_fatal_call_error_releases_and_goes_on(self):
+        self.stub.add("read", 40)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="error,error,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        # batch 1 fails twice (call and retry), batch 2 answers
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(len(self.stub.by_status("open")), 20)
+        self.assertEqual(len(self.stub.releases), 1)
+
+    def test_unparsable_output(self):
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "read", plan="garbage")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("open")), 5)
+        self.assertIn("unparsable", self.events("call")[0]["error"])
+
+
+class TestStops(Base):
+    def test_usage_limit_releases_and_exits_non_zero(self):
+        self.stub.add("read", 60)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="valid,usage")
+        self.assertEqual(p.returncode, 4, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 2)              # no call after the limit
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(self.stub.by_status("leased"), [])
+        self.assertEqual(self.stub.releases[-1], {"worker": "test-device"})
+        self.assertEqual(self.done()["stopped"], "usage")
+        self.assertIn("usage limit", self.done()["why"])
+
+    def test_usage_limit_with_calls_in_flight(self):
+        self.stub.add("read", 60)
+        p = self.run_worker("--kinds", "read", plan="usage,valid,valid")
+        self.assertEqual(p.returncode, 4, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 3)              # the three already started finish
+        self.assertEqual(len(self.stub.by_status("answered")), 40)
+        self.assertEqual(self.stub.by_status("leased"), [])
+        self.assertEqual(len(self.stub.works), 3)                # nothing leased after it
+
+    def test_auth_error(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="auth")
+        self.assertEqual(p.returncode, 5, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)              # no retry
+        self.assertEqual(self.stub.by_status("leased"), [])
+        self.assertEqual(self.stub.releases, [{"worker": "test-device"}])
+
+    def test_auth_error_without_json(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", plan="authraw")
+        self.assertEqual(p.returncode, 5, p.stderr)
+        self.assertEqual(self.stub.by_status("leased"), [])
+
+    def test_claude_not_found(self):
+        self.stub.add("read", 3)
+        p = self.run_worker("--kinds", "read", "--claude", str(self.tmp / "no-such-claude"))
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertEqual(self.stub.by_status("leased"), [])
+
+
+class TestLeases(Base):
+    def test_no_call_on_a_lease_about_to_end(self):
+        self.stub.lease_seconds = 30
+        self.stub.add("read", 10)
+        p = self.run_worker("--kinds", "read", "--lease-margin", "60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertEqual(len(self.events("lease-expiring")), 1)
+        self.assertEqual(len(self.stub.by_status("open")), 10)
+        self.assertEqual(self.stub.posts, [])
+
+    def test_lease_ending_during_the_call(self):
+        self.stub.lease_seconds = 2
+        self.stub.add("read", 10)
+        p = self.run_worker("--kinds", "read", "--lease-margin", "0", plan="sleep:3+missing:2+invalid:1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)              # no retry on a lost lease
+        ev = self.events("call")[0]
+        self.assertTrue(ev["late"])
+        # the paid-for answers are posted: 7 valid, 1 invalid stored with its error
+        self.assertEqual(len(self.stub.calls), 8)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        self.assertEqual(self.stub.tasks["1"]["last_error"] is not None, True)
+
+    def test_call_timeout(self):
+        self.stub.add("read", 4)
+        p = self.run_worker("--kinds", "read", "--timeout", "2", "--no-retry", plan="sleep:10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        ev = self.events("call")[0]
+        self.assertEqual(ev["error"], "timeout")
+        self.assertLess(ev["ms"], 8000)
+        self.assertEqual(self.stub.posts, [])
+        self.assertEqual(len(self.stub.by_status("open")), 4)
+
+    def test_guide_that_does_not_match_its_sha256(self):
+        self.stub.guides["read-v2"] = {**GUIDES["read-v2"], "sha256": "0" * 64}
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertEqual(len(self.events("guide-sha256-mismatch")), 1)
+        self.assertEqual(len(self.stub.by_status("open")), 5)
+
+
+class TestServer(Base):
+    def test_server_unreachable(self):
+        p = self.run_worker("--kinds", "read", server=f"http://127.0.0.1:{free_port()}")
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertIn("/api/markx/work", self.done()["why"])
+
+    def test_post_fails_answers_spooled_then_posted_next_cycle(self):
+        self.stub.add("read", 20)
+        self.stub.fail_posts = 3
+        p = self.run_worker("--kinds", "read", "--post-tries", "3")
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(self.stub.posts, [])
+        spooled = [json.loads(x) for x in self.spool.read_text().splitlines()]
+        self.assertEqual(len(spooled[0]["answers"]), 20)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(len(self.fake_calls()), 1)              # never asked twice
+        self.assertEqual(self.spool.read_text().strip(), "")
+
+    def test_post_retried_once_down(self):
+        self.stub.add("read", 20)
+        self.stub.fail_posts = 1
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(len(self.events("post-failed")), 1)
+
+    def test_spool_with_server_still_down(self):
+        self.spool.write_text(json.dumps({"worker": "w", "executor": "claude-code", "model": "m",
+                                          "answers": [{"task_id": 1, "answer": {}}]}) + "\n")
+        p = self.run_worker("--kinds", "read", server=f"http://127.0.0.1:{free_port()}")
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(len(self.spool.read_text().splitlines()), 1)
+        self.assertEqual(self.fake_calls(), [])
+
+    def test_wrong_token(self):
+        self.stub.token = "another"
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 6, p.stderr)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertNotIn(TOKEN, p.stderr + self.log.read_text())
+
+    def test_token_file_missing_or_empty(self):
+        self.token_file.unlink()
+        self.assertEqual(self.run_worker("--kinds", "read").returncode, 2)
+        self.token_file.write_text("\n")
+        self.assertEqual(self.run_worker("--kinds", "read").returncode, 2)
+
+    def test_status_and_release(self):
+        self.stub.add("read", 5)
+        self.stub.work({"kinds": "read", "limit": "3", "worker": "test-device"})
+        p = self.run_worker(cmd="status")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout), {"queue": {"read": {"leased": 3, "open": 2}}})
+        p = self.run_worker(cmd="release")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.stub.releases, [{"worker": "test-device"}])
+        self.assertEqual(len(self.stub.by_status("open")), 5)
+
+
+class TestParts(unittest.TestCase):
+    def test_parse_lines(self):
+        text = 'prose\n```json\n{"id": 7, "kind": "news"}\n{"task_id": "a", "answer": {"kind": "x"}}\n' \
+               '{"id": 8, "kind": \n{"kind": "no id"}\n[1, 2]\n```'
+        self.assertEqual(W.parse_lines(text), {"7": {"kind": "news"}, "a": {"kind": "x"}})
+
+    def test_schema_subset(self):
+        s = {"type": "object", "required": ["a"], "properties": {
+            "a": {"type": "array", "maxItems": 2, "items": {"type": "integer", "minimum": 0}},
+            "b": {"type": ["string", "null"], "maxLength": 3}, "c": {"anyOf": [{"const": 1}, {"enum": ["x"]}]}}}
+        self.assertIsNone(W.schema_error(s, {"a": [0, 1], "b": None, "c": "x"}))
+        self.assertIn("a missing", W.schema_error(s, {}))
+        self.assertIn("more than 2", W.schema_error(s, {"a": [1, 2, 3]}))
+        self.assertIn("below 0", W.schema_error(s, {"a": [-1]}))
+        self.assertIn("not integer", W.schema_error(s, {"a": [True]}))
+        self.assertIn("longer than 3", W.schema_error(s, {"a": [], "b": "abcd"}))
+        self.assertIn("none of anyOf", W.schema_error(s, {"a": [], "c": 2}))
+        self.assertEqual(W.check_answer(None, ["x"]), "answer: not an object")
+        self.assertIsNone(W.check_answer(None, {"x": 1}))
+
+    def test_shares_add_up(self):
+        self.assertEqual(W.shares(10, 3), [4, 3, 3])
+        self.assertEqual(sum(W.shares(2401, 20)), 2401)
+
+    def test_classify(self):
+        self.assertEqual(W.classify("Claude AI usage limit reached|1762300000"), "usage")
+        self.assertEqual(W.classify("You've hit your limit · resets 3pm"), "usage")
+        self.assertEqual(W.classify("Invalid API key · Please run /login"), "auth")
+        self.assertEqual(W.classify("OAuth token has expired"), "auth")
+        self.assertIsNone(W.classify("API Error: 500 Internal server error"))
+        self.assertIsNone(W.classify("timeout"))
+
+    def test_lease_times(self):
+        self.assertEqual(W.parse_time("2026-11-05T12:00:00Z"), datetime(2026, 11, 5, 12, tzinfo=timezone.utc))
+        self.assertEqual(W.parse_time("2026-11-05T12:00:00"), datetime(2026, 11, 5, 12, tzinfo=timezone.utc))
+
+
+if __name__ == "__main__":
+    unittest.main()

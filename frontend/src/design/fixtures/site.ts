@@ -265,6 +265,9 @@ export function siteRoutes(site: Site): FixtureRoute[] {
       }),
     },
     { path: '/api/credentials', respond: () => site.credentials },
+    // Mark X's worker token (issue 0086 C): INSIGHT_MARKX is off by default, so the route answers 404.
+    { path: '/api/markx/token', respond: () => new Response(JSON.stringify({ detail: 'Not Found' }), { status: 404 }) },
+    { path: '/api/markx/on', respond: () => new Response(JSON.stringify({ detail: 'Not Found' }), { status: 404 }) },
     { path: '/api/operations/overview', respond: () => ({ success: true, jobs: site.jobs, alerts: [], scheduler: site.scheduler }) },
     { path: '/api/operations/scheduler', respond: () => ({ success: true, scheduler: site.scheduler }) },
     { path: '/api/operations/background', respond: () => site.background ?? backgroundWork(new Date()) },

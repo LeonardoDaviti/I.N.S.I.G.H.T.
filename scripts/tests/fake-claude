@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""A fake `claude` for scripts/tests/test_markx_worker.py. It never calls a model.
+
+It checks it was called as markx-worker calls Claude Code headless, reads the prompt from stdin, and answers
+every "### ITEM id: <id>" with one JSON line, printed as Claude Code's `--output-format json` result.
+
+Environment:
+  FAKE_CLAUDE_PLAN   the behaviour of each call, comma-separated, in call order (the last one repeats).
+                     A behaviour is features joined by '+':
+                       valid          answer every item {"id", "kind": "news", "headline": "Item <id>"}
+                       invalid:N      the first N items get an answer the schema refuses (kind "bogus")
+                       missing:N      the last N items get no line
+                       serverbad:N    the first N items get headline "SERVER-BAD" (the stub server refuses it)
+                       fence          wrap the lines in a code fence with a line of prose before
+                       nested         lines as {"task_id": .., "answer": {..}}
+                       sleep:S        sleep S seconds first
+                       usage          the usage-limit result (is_error, exit 1)
+                       auth           the not-logged-in result (is_error, exit 1)
+                       authraw        no JSON: "Invalid API key · Please run /login" on stderr, exit 1
+                       error          a non-fatal API error result (is_error, exit 1)
+                       garbage        output that is not JSON, exit 0
+  FAKE_CLAUDE_STATE  a directory for the call counter (calls run in parallel; the counter is locked)
+  FAKE_CLAUDE_LOG    a JSON-lines file: one record per call {n, argv, system, stdin, plan}
+
+Tokens per call: input 100, cache read 2000, cache creation 300, output 40 per item; cost 0.002 per item.
+"""
+import fcntl
+import json
+import os
+import re
+import sys
+import time
+
+EXPECTED = ["-p", "--model", "haiku", "--tools", "", "--system-prompt", None, "--output-format", "json",
+            "--no-session-persistence", "--strict-mcp-config"]
+
+
+def fail(msg, code=64):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def next_call():
+    state = os.environ.get("FAKE_CLAUDE_STATE")
+    if not state:
+        return 1
+    with open(os.path.join(state, "calls"), "a+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        n = int(f.read().strip() or 0) + 1
+        f.seek(0)
+        f.truncate()
+        f.write(str(n))
+    return n
+
+
+def result(text, n_items, is_error=False):
+    return {"type": "result", "subtype": "success", "is_error": is_error, "duration_ms": 10, "num_turns": 1,
+            "result": text, "session_id": "fake", "total_cost_usd": 0.002 * n_items,
+            "usage": {"input_tokens": 100, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 300,
+                      "output_tokens": 40 * n_items},
+            "modelUsage": {"claude-haiku-fake": {"inputTokens": 100, "outputTokens": 40 * n_items}}}
+
+
+def main():
+    argv = sys.argv[1:]
+    if len(argv) != len(EXPECTED) or any(e is not None and a != e for a, e in zip(argv, EXPECTED)):
+        fail(f"fake-claude: unexpected arguments {argv!r}")
+    system = argv[6]
+    stdin = sys.stdin.read()
+    n = next_call()
+    plans = [p for p in os.environ.get("FAKE_CLAUDE_PLAN", "valid").split(",") if p]
+    plan = plans[min(n, len(plans)) - 1]
+    feats = {}
+    for f in plan.split("+"):
+        k, _, v = f.partition(":")
+        feats[k] = v
+    if os.environ.get("FAKE_CLAUDE_LOG"):
+        with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(json.dumps({"n": n, "argv": argv, "system": system, "stdin": stdin, "plan": plan}) + "\n")
+    if "sleep" in feats:
+        time.sleep(float(feats["sleep"]))
+    ids = re.findall(r"^### ITEM id: (.+)$", stdin, re.M)
+    if "usage" in feats:
+        print(json.dumps(result("Claude AI usage limit reached|1762300000", 0, True)))
+        sys.exit(1)
+    if "auth" in feats:
+        print(json.dumps(result("Not logged in · Please run /login", 0, True)))
+        sys.exit(1)
+    if "authraw" in feats:
+        fail("Invalid API key · Please run /login", 1)
+    if "error" in feats:
+        print(json.dumps(result("API Error: 500 Internal server error", 0, True)))
+        sys.exit(1)
+    if "garbage" in feats:
+        print("this is not json")
+        return
+    bad = int(feats.get("invalid") or 0)
+    sbad = int(feats.get("serverbad") or 0)
+    miss = int(feats.get("missing") or 0)
+    lines = []
+    for k, i in enumerate(ids):
+        if k >= len(ids) - miss:
+            continue
+        ans = {"kind": "bogus" if k < bad else "news", "headline": "SERVER-BAD" if k < sbad else f"Item {i}"}
+        raw_id = int(i) if i.isdigit() else i
+        lines.append(json.dumps({"task_id": raw_id, "answer": ans} if "nested" in feats else {"id": raw_id, **ans}))
+    text = "\n".join(lines)
+    if "fence" in feats:
+        text = "Here are the answers:\n```json\n" + text + "\n```"
+    print(json.dumps(result(text, len(ids))))
+
+
+if __name__ == "__main__":
+    main()

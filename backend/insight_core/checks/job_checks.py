@@ -72,9 +72,84 @@ def incremental_identity(db_url: str, now: datetime, spec: str = IDENTITY) -> Fo
                  examples[:EXAMPLES], round(time.monotonic() - started, 1), note=json.dumps({"by_table": differing, "same": result.get("same")}))
 
 
+def table_checksums(cur: Any) -> Dict[str, tuple]:
+    """{table: (rows, md5 of its rows' md5s)} of every table but Mark X's mx_* (0079's per-table checksum)."""
+    from psycopg import sql
+    cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' "
+                "AND relname NOT LIKE 'mx\\_%' ORDER BY 1")
+    out = {}
+    for (table,) in cur.fetchall():
+        cur.execute(sql.SQL("SELECT count(*), md5(coalesce(string_agg(h, '' ORDER BY h), '')) "
+                            "FROM (SELECT md5(x::text) h FROM {} x) s").format(sql.Identifier(table)))
+        out[table] = tuple(cur.fetchone())
+    return out
+
+
+def _mx_rows(cur: Any) -> int:
+    cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' "
+                "AND relname LIKE 'mx\\_%'")
+    total = 0
+    for (table,) in cur.fetchall():
+        cur.execute(f"SELECT count(*) FROM {table}")
+        total += cur.fetchone()[0]
+    return total
+
+
+def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
+    """0086 Safety 1: Mark IX's tables are the same with Mark X on and off. With Mark X off the scheduler runs nothing
+    (no mx_* row is written); then two decision runs with it on (the second must find the first's work done) leave every
+    table but mx_* row for row as it was. After the runs, the read-only Mark X invariants hold on what they wrote."""
+    import os
+    what = "Mark IX's tables (every table but mx_*) two decision runs with Mark X on change, or a run with it off"
+    try:
+        from insight_core.markx import decide
+    except ImportError:
+        return [Found("markx.ix_unchanged", "mark x", what, -1, 0, note="not measured: this version has no decision job")]
+    from insight_core.checks import invariants
+    with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
+        before, mx_before = table_checksums(cur), _mx_rows(cur)
+    old = os.environ.get("INSIGHT_MARKX")
+    started = time.monotonic()
+    try:
+        os.environ["INSIGHT_MARKX"] = "off"
+        off = decide.Scheduler(debounce=None, every=None).run_now()
+        with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
+            off_rows = _mx_rows(cur) - mx_before
+        os.environ["INSIGHT_MARKX"] = "on"
+        runs = []
+        for _ in range(2):
+            with open_copy(db_url, writable=True) as conn, conn.cursor() as cur, conn.transaction():
+                runs.append(decide.run(cur, now=now))
+    finally:
+        if old is None:
+            os.environ.pop("INSIGHT_MARKX", None)
+        else:
+            os.environ["INSIGHT_MARKX"] = old
+    with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
+        after = table_checksums(cur)
+        run = invariants.Run(db_url, cur, now)
+        mx = [invariants.Found(i.name, i.area, i.what, len(ids), of, run.sample(ids))
+              for i in invariants.INVARIANTS if i.name.startswith("markx.") for ids, of in [i.count(run)]]
+    seconds = round(time.monotonic() - started, 1)
+    changed = sorted(t for t in set(before) | set(after) if before.get(t) != after.get(t))
+    first, second = runs
+    note = {"off": {"ran": off is not None, "mx_rows_written": off_rows},
+            "first_run": {k: first.get(k) for k in ("stories", "posts", "questions", "answered", "changes", "news", "tasks_added")},
+            "second_run": {"memberships": second.get("memberships"), "news_written": (second.get("news") or {}).get("written"),
+                           "tasks_added": second.get("tasks_added")}}
+    out = [Found("markx.ix_unchanged", "mark x", what, len(changed) + (1 if off_rows else 0) + (1 if off is not None else 0),
+                 len(before), [f"{t}: {before.get(t)} -> {after.get(t)}" for t in changed][:EXAMPLES],
+                 seconds, note=json.dumps(note, default=str))]
+    out.append(Found("markx.after_run", "mark x", "the Mark X invariants on what the decision runs wrote (2-5, summed)",
+                     sum(f.count for f in mx), sum(f.of for f in mx), [f"{f.name}: {e}" for f in mx for e in f.examples][:EXAMPLES],
+                     note=json.dumps({f.name: f.count for f in mx})))
+    return out
+
+
 def check(db_url: str, now: datetime, identity: str = IDENTITY) -> List[Found]:
     scratch_only(db_url)
     found = rebuild_twice(db_url, now)
+    found += markx_unchanged(db_url, now)
     found.append(incremental_identity(db_url, now, identity))   # last: it holds posts back and brings them in again
     return found
 

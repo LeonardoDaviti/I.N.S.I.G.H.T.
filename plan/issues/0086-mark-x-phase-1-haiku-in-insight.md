@@ -113,7 +113,84 @@ Measured 2026-11-04:
 - BGE-M3 takes about 1 GB on the CPU, or 0.8 GB of the 1660 Ti's 6 GB;
 - the worker runs on your device.
 
+### Built (S1, 2026-11-05, branch `markx-s1-storage` from main 58ba6ae)
+Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch copies of `insight_lab` (41,637 posts), never on the lab itself.
+
+**What changed** (the slice's files only):
+- `backend/insight_core/db/migrations/0068_markx_shadow.sql`: the 14 tables above, with their keys, uniques and indexes, and the HNSW index `mx_embeddings_v_hnsw_idx` (`halfvec_cosine_ops`). It creates `mx_*` things only and is idempotent.
+- `backend/insight_core/markx/__init__.py` and `markx/repo.py`: every insert and read the later slices need.
+  - Guides: `put_guide` (loaded again at each start), `guides`.
+  - Tasks: `add_task` (one per kind, guide and input), `task_for`, `lease_tasks` (30-minute leases, by priority then age, `SKIP LOCKED`, expired leases leased again), `release_tasks`, `expire_leases`, `answer_task`, `fail_attempt` (failed at the 3rd), `queue_counts`.
+  - Calls, readings and mentions: `add_call`, `calls`, `valid_call`, `add_reading`, `readings`, `add_mentions`, `mentions`, `posts_naming`.
+  - Embeddings and candidates: `put_embedding`, `embedding`, `embedding_hashes`, `embedding_builds`, `nearest` (through the HNSW index), `add_candidate`, `candidates`.
+  - Runs and stories: `start_run`, `finish_run`, `last_run`, `add_story`, `get_story`, `merge_story`, `set_story_headline`, `set_story_card`.
+  - Memberships and connections: `open_membership`, `close_membership`, `current_members`, `stories_of_post`, `membership_history`, `open_connection`, `close_connection`, `current_connections`. Closing sets `valid_to`; nothing in the module deletes.
+  - News, briefings and labels: `add_news_rows`, `news_rows`, `add_briefing`, `briefings`, `add_label`, `labels`.
+- `backend/insight_core/tests/test_markx_storage.py`: 19 tests.
+
+**How the tables keep the rules** (the build plan's corrections):
+- **No foreign key leaves `mx_*`.** No key goes to `stories` or `story_posts` (corrections 2), and none to `posts` either. A key to `posts` would put Mark X's checks on Mark IX's deletes: a cascade would delete Mark X rows, and a restrict would block Mark IX. Keys inside `mx_*` stay (task → guide, call → task, reading → call, …).
+- **A task is keyed by its content.** It is unique per (`kind`, `guide`, `input_hash`), and a check makes `input_hash` the sha256 of `input` alone. A re-rooted story with the same input is the same task, whatever subject ids come with it (tested).
+- **A guide is never edited.** A check makes `sha256` the body's hash, and a trigger refuses any update to its id, kind, body, hash or schema. `put_guide` refuses the same id with another body.
+- **One current membership per story and post:** a unique index on (`story_id`, `post_id`) where `valid_to` is null. The same applies to connections, per (`a`, `b`, `relation`). A closed row stays, and the slot opens again. A check keeps `valid_to` ≥ `valid_from`.
+- **Every connection names a call or a rule** (a check; 0086 Safety 3).
+- **Set columns are checked:** task status and subject kind, executor, candidate source, membership role, News tag, label kind and split. Task `kind` is not checked, so new kinds (`embed`) need no migration.
+
+**Beyond the table list, and why:**
+- **`mx_embeddings.model_sha256`** (nullable): the embedder build's GGUF sha256. Main's build plan (36eb66d, corrections 6, the owner on 2026-11-05) says every vector records it, so S2 can refuse vectors from another build. S2's file list has no migration, so the column is added here.
+- **`mx_news`** has Mark IX's `news_stories` columns, plus `run_id`, `tag` (NEW, CHANGED, MERGED, SPLIT, SAME: Part E's tags, so S5 needs no migration) and `posts`, the row's `news_posts` rows as JSONB. Its key is (`run_id`, `id`).
+- **`mx_briefings`** is keyed by (`day`, `call_id`), so a new guide's briefing is kept beside the old one.
+
+**Measured** on a scratch copy of `insight_lab` (`insight_lab_check_<pid>_a`; machine load average 10–15):
+- **The migration takes about 0.1–0.56 s of SQL** (3 runs, each in a rolled-back transaction), and 1.5 s for the whole `migrate` run with the container's start.
+- **The empty tables take 376 KB** (385,024 bytes: 14 tables, 32 indexes). The database grows 600 KB.
+- **No existing table changes.** Every table but `mx_*` was compared before and after the migration: rows, an md5 of all their rows, columns, constraints (71), indexes (76), triggers (123) and functions (17). The only change is `schema_migrations`' new row (60 → 61).
+- **With 1,000 fake embeddings** (normalised 1,024-dimension vectors on the newest real posts): `mx_embeddings` takes 5.7 MB, the HNSW index 2.7 MB of it, so about 2.7 KB a post (estimated above: 2.3). `nearest`'s query plan is an index scan on the HNSW index.
+
+**0079's export and restore with the new tables:**
+- `test_export` passes with them, and so does the whole suite.
+- **A real export and restore of the scratch copy:**
+  - The scratch copy held 1,000 fake embeddings, plus a guide, task, call, reading and mention whose text has quotes, commas, a tab, a newline and ünïcode.
+  - Exported with `ExportService`, then restored with `import_export.py` into a new database.
+  - Every table's rows and md5 are equal, `mx_*` and the halfvec values included. Two tables differ, as designed: `credentials` (logins left out) and `system_settings` (`last_export`, written after the export's snapshot).
+  - The HNSW index is rebuilt by the restore, and the restored copy's nearest-neighbour query uses it.
+- **The zip grows 4.36 MB per 1,000 embeddings** (243,593,286 → 247,957,032 bytes; the CSV is 12.8 MB raw, about 12.7 KB of text a vector).
+  - For all 41.6k posts that is about 182 MB, inside corrections 7's estimate of 150–200 MB.
+  - The export took 83–123 s on the loaded machine.
+
+**Tests:** `test_markx_storage` has 19 tests, which pass on a new database migrated from 0001 (run-tests.sh's own `_test` database):
+- the 14 tables;
+- no key out of `mx_*`;
+- the migration run again changes nothing;
+- the HNSW index;
+- the migration only adds;
+- one guide id is one body (and the database refuses an edit or a wrong hash);
+- one task per kind, guide and input hash, by content;
+- leases, answers, retries and failure;
+- releasing and expired leases;
+- calls, readings and mentions;
+- halfvec, `nearest`, and the build;
+- candidates once per source;
+- one current membership per story and post;
+- `valid_to` closing that keeps the row;
+- a post in several stories;
+- connections closed and opened again;
+- stories, runs, News, briefings and labels.
+
+**The whole backend suite: 1,465 tests OK** (run-tests.sh, in the image).
+
+**The real-data check** (`scripts/realdata-check.sh`, on `insight_lab`; the reports are private in `plan/research/lab/checks/` and `plan/research/markx-build/s1/`). It was run three ways, because the branch's base (58ba6ae) is older than 0106, which main and `markx-shadow` now hold:
+1. **Against its own base** (`--base 58ba6ae --head markx-s1-storage`):
+   - every derived thing changed 0, every invariant is the same, and no case changes state;
+   - the verdict reads FAIL only because 0106's two new cases (`discover-one-title-per-page`, `classic-paper-one-page`) fail on both sides: 58ba6ae predates 0106.
+2. **On `markx-shadow`, as it would merge** (S1 merged onto `markx-shadow` 543830d in a trial commit, `--base markx-shadow`): **PASS.** Every derived thing changed 0, every invariant is the same, and no case changes state. Its backend equals main's (36eb66d).
+3. **Literally `--base markx-shadow --head markx-s1-storage`:**
+   - FAIL, with the diff of 0106 undone: the two 0106 cases pass → fail, Classics 230, Discover 740 moved, story membership 32, roundups 16, story origins 3, News 2;
+   - none of it is S1's: run 2 shows the same code with S1 on top changes 0.
+   - Merging S1 needs no rebase: its files are all new.
+
 ## Part B: embeddings and candidates (server)
+The embedder and its timing below are superseded by the build plan's corrections 6 (the embedder runs on your device, `embed` is a task kind, no compose service and no runner hook) and by S2's measured E8 (Built, below). The candidates are as written.
 - **The embedder:**
   - BGE-M3 runs in a new compose service `embedder` (llama.cpp `llama-server --embedding`, the GGUF in a volume), on the CPU or the 1660 Ti, as E8 decides;
   - the model file is downloaded once, at deploy, by you;
@@ -129,6 +206,107 @@ Measured 2026-11-04:
   - Proxy on the development machine (2026-11-05): 48 ms a post on 6 CPU threads, 25 ms on a GPU.
   - So a CPU is enough: a day's posts take seconds, and a 13k archive minutes.
 - **Done when** a server copy's last 30 days are embedded and its candidates match the prototype's on the 16 days it ran: the same pairs at the same thresholds, allowing for the embedder build.
+
+### Built (S2, branch `markx-s2-embed` from `markx-shadow` 15b0537, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded, and the real `claude` was never run. Measured on a scratch copy of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a`, migrated to 0066), never on the server copy itself, with the local llama.cpp build and the dev machine's GGUF (mounted, never copied).
+
+**What changed:**
+- `markx/embed.py` (new):
+  - **The text** is markx embed text v1: markx text v1's title and first 1,500 characters (read from post_parts). The title is left out when the text starts with it, web addresses are removed and spaces squashed, as the prototype embedded (it cut at 1,200; 0086 B says 1,500).
+  - **The embed tasks:** the planner takes every post, newest first, 500 a plan (priority = age in days). The task's input is the text, so two posts with one text are one task; the second post gets the first's vector copied at the next plan.
+  - **The vectors' check:** 2,048 bytes of base64, finite, norm 1 within 0.01. A vector is stored as sent (halfvec is float16), with text_hash = the task's input hash and the GGUF's sha256.
+  - **One build per database:** a vector of another build is refused whole (409). No mx_calls row: a vector isn't a model's answer.
+- `markx/candidates.py` (new): the four sources at the thresholds above, keyed by posts (`post_post`: `a` the earlier post; `story_story`: each Mark IX story by its earliest member post, never its id). Found when vectors arrive, 30 s after the last upload, in a transaction of their own; every source is idempotent. The job also takes the posts whose ent-v3 mentions were written since its last run, so S5's hourly job can call `run`. Mark IX's tables are only read: a burst linker Mark IX hasn't parsed is left out rather than parsed.
+  - `embedding`: the prototype's rule, 8 nearest of either post among other sources' posts within 72 h (saved pages left out), at cosine ≥ 0.65, not one Mark IX story. Story centroids (the mean of their members' vectors) at ≥ 0.70, first posts ≤ 14 days apart.
+  - `link`: Mark IX's parent edges.
+  - `entity`: role `subject`, type model, product, software, paper or dataset, the same name key and version, other sources, ≤ 72 h, not one story.
+  - `burst`: experiment W's late bursts, read as the story rules read links, not one story.
+- `markx/api.py`: `POST /api/markx/embeddings` (one route on S3's router, its contract added to the docstring; the frozen part unchanged).
+- `markx/guides/embed-v1.md`: what an embed task asks (no model reads it; its sha256 travels as every guide's).
+- One entry each in S3's files, the way their docstrings say a kind is added: `schemas.KINDS` (`embed`, with `EMBED_SCHEMA`), `validate.CHECKS` (an embed task posted to /answers is invalid), `tasks.PLANNERS` (`embed`). S3's test of the kinds now counts 12.
+- `scripts/markx-worker`: `--kinds embed --embedder <llama-server> [--embedder-gguf <file>]`.
+  - Each leased batch is one `POST /embedding`; the vectors are scaled to 1, packed as float16 and posted.
+  - The sha256 is the GGUF's, hashed once and remembered. Without `--embedder-gguf`, the file is the one the embedder's `/props` names.
+  - A batch the embedder refuses goes one text at a time.
+  - Exits: 2 when the embedder is unreachable or gives other dimensions; 7 on another build (409/400, nothing spooled). Failed posts are spooled like answers.
+- Tests: `test_markx_embed.py` (13), `test_markx_candidates.py` (13), `scripts/tests/test_markx_worker_embed.py` (10, a fake embedder on 127.0.0.1).
+
+**The last 30 days embedded** (the copy's 5,726 posts from 6 Oct to 5 Nov, through the worker and the API in containers of mine, the embedder on this machine's CPU):
+- 5,800 tasks answered, and 316 posts with a duplicate text got a copied vector. That makes 6,116 posts with a vector: the 30 days' 5,726 and 390 older ones the last leases reached.
+- 0 invalid, 0 errors. 50 candidate runs.
+
+**Candidates found on the 30 days:**
+
+| Source | Pairs |
+|---|---|
+| embedding, posts | 2,741 |
+| embedding, stories | 427 |
+| link | 399 (Mark IX's 400 edges between embedded posts) |
+| burst | 24 |
+| entity | 58 (on 1–5 Nov, from the prototype's recorded ent-v3 answers loaded through S3's path: 477 of 479 valid) |
+
+- **Short posts:** 256 of the 2,741 post pairs have a post under 20 words, mostly a media placeholder ("Image", "[Photo]", "Video"). S5's rule A never judges those, so they cost nothing; they are kept as candidates.
+
+**Against the prototype on its 16 days** (18 Oct–3 Nov, `out/cands.jsonl`, pairs at ≥ 0.65 that v9.12 hadn't put in one story):
+- **The overlap:** 882 of the prototype's 981 pairs (90%) are found.
+- **The prototype's 99 that are missing:**
+  - 77: my cosine is under 0.65 because my text is longer (see the texts below);
+  - 19: the pair is not among either post's 8 nearest in my pool, which holds posts the prototype's didn't;
+  - 2: one Mark IX story today;
+  - 1: the build (the same text, cosine 0.6508 against 0.65).
+- **My 515 extra:**
+  - 329: a post not in the prototype's pool (posts it never read: the server's, and back-dated ones);
+  - 155: the prototype's cosine was under 0.65 with its shorter text (and 1 with the same text);
+  - 18: the 8 nearest differ with the pools;
+  - 12: in the 8 nearest when found, outranked by posts embedded later, and kept (keep everything).
+- **The texts:** 1,643 of 3,191 posts have the prototype's exact text. Of the 1,548 that differ:
+  - 1,350 start the same, and mine is longer (1,500 against 1,200 characters);
+  - 52 share their first 200 characters;
+  - 63 start differently (post_parts' title or text, or the address rule);
+  - 83 are copied duplicates.
+- **The build is not a cause:** the same GGUF and llama.cpp binary as the prototype. The same text's vectors agree at cosine ≥ 0.9989 (median 0.99984), CPU against the prototype's GPU. The bench below shows the same spread between configurations.
+- **Entities:** the prototype's rule (o4b, before its exclusions) restricted to specific types gives 66 pairs on 1–5 Nov; S2 finds 58 of them, and the other 8 are one Mark IX story today. S2 has no pair of its own. All types would give 113.
+- **Bursts:** experiment W's script, run unchanged on the copy, finds 63 late-burst pairs over all time. S2's 24 are all among them: 10 touch an embedded post, and 14 are older pairs on pages that new posts link again.
+
+**E8 on this machine** (Ryzen AI Max+ 395; 200 real inputs of 855 characters on average, batches of 100):
+
+| Embedder | ms a post | Memory (peak RSS) |
+|---|---|---|
+| CPU only (`-dev none`), 6 threads, 1 slot | 329 (load 1.8) | 0.88 GB |
+| CPU only, 6 threads, 4 slots | 334 | 0.95 GB |
+| CPU only, 16 threads, 4 slots | 169 | 0.96 GB |
+| `-ngl 0` with the Vulkan device present (the prototype's "CPU") | 43 | 0.25 GB |
+| GPU, all layers (Vulkan) | 26 | 0.27 GB |
+
+- **The 30-day run** was CPU only, 6 threads, at load 10–16 from other agents: 332 ms a post (1,862 s for 5,600). The embedder peaked at 1.17 GB.
+- **0086 B's "48 ms on 6 CPU threads" was not a CPU number.** It was `-ngl 0` with the GPU present, which llama.cpp still uses for the big batches (43 ms here).
+- **On a CPU alone, BGE-M3 takes about 1/3 s a post on 6 threads:**
+  - a day's ~190 posts take about a minute;
+  - the 30 days take 32 minutes;
+  - all 49k posts take about 4.5 hours (2.3 on 16 threads, about 20 minutes on this GPU).
+- Corrections 6 already moved embedding to the device, so a slow CPU only slows the backfill.
+
+**Upload size** (bodies as the worker sends them, 100 vectors a request):
+- **2,811 bytes a post** (base64 is 4/3 of the 2,048 raw bytes): 16.3 MB for the 30 days' 5,800 vectors, and 139 MB for all 49,384 posts (about 130 MB after duplicate texts).
+- As JSON numbers, it would be 13.8 KB a post. The bodies aren't compressed (gzip would save 27%).
+- Corrections 6's 10 MB and 85 MB counted raw bytes.
+- **0079's export** (corrections 7): 12.9 KB of CSV text a vector, about 4.3 KB deflated. That's about 212 MB in the zip for all 49k posts (S1 measured 182 MB for 41.6k with fake vectors).
+
+**Tests:**
+- The whole backend suite (`./run-tests.sh` in the image, at 527893c): **1,567 tests OK**.
+  - A first run had 1 failure, `test_search`'s `test_only_matching_posts_in_the_scope_and_dates_compete`, while the real-data check and the embedding loaded the machine.
+  - That test passes alone (39/39) and in the second full run; it touches no Mark X code.
+- The worker: 36 + 10 OK.
+
+**The real-data check** (`scripts/realdata-check.sh --base markx-shadow --head markx-s2-embed insight_lab`, head 527893c, Mark X off; report `plan/research/lab/checks/markx-s2-embed-2026-11-05.md`): **PASS, 0 change.**
+- Titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover are all unchanged, and so is every invariant.
+- No case changes state against the base.
+- `discover-one-owner-one-card` is marked fail and passes on both sides (not S2's).
+
+**Open:**
+- **A post whose text changes is not embedded again.** `put_embedding` replaces a vector whose text hash differs, but the planner only takes posts with no vector. A text-version bump needs a re-embed pass.
+- **The debounce is in memory.** Posts noted but not yet run are lost on a restart (their neighbours embedded later still find them), and the first run of a process also takes the last day's mentions.
+- **The text cut:** 1,500 characters (0086 B) against the prototype's 1,200 moves pairs across 0.65 both ways: 77 of the prototype's fall under it, and 155 others rise over it. The prototype's recall (88% in the top 10) was measured at 1,200, so E1's labels should re-pick the bar or the cut.
 
 ## Part C: tasks, guides and the worker API (server)
 **Task kinds:** the evidence each sees, and how its answer is checked before it is stored as valid.
@@ -161,6 +339,73 @@ Measured 2026-11-04:
   - `GET /api/markx/status`: the queue by kind and status, answers per day, tokens, the last contact of each worker, the last decision run.
 - **Done when** 200 tasks of every kind round-trip on a copy, with recorded prototype answers as the "model", and the invalid cases come back with their errors.
 
+### Built (S3, branch `markx-s3-api` from `markx-shadow` b897369, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded, and the real `claude` was never run. Measured on a scratch copy of `insight_lab` (`insight_lab_check_<pid>_a`, migrated to 0066), never on the lab itself.
+
+**What changed** (the slice's files):
+- `markx/schemas.py`: the 11 kinds (guide, subject, answer schema in the worker's JSON Schema subset), their sets, and the guides loaded into `mx_guides` by sha256 once per process and database, before the first lease or task (`ensure_guides`).
+- `markx/guides/*.md`: 10 guides copied from the prototype: `read-v2`, `ent-v3`, `judge-raw-v1` and `judge-read-v1` (both `judge.md`), `card-v1`, `judge-story-v1`, `connect-v1`, `headline-v1`, `briefing-v1`, and `translate-v1` (written from F5's measured prompt). Checked against the lab's 380 source names and handles: none occurs, except "Hacker News" in ent-v3's venue examples, a product name kept as the guide was measured.
+- `markx/validate.py`: the checks of the table above, after the schema. Text is compared folded (NFKC, case, dashes, ё).
+- `markx/tasks.py`: `markx text v1` (corrections 3: post_parts' title and first 1,500 characters, the kept links, the quoted tweet), one input builder per kind ported from the prototype's renders, the task builders S2 and S5 call, and two planners: `read`/`entities` for the newest posts of the last 30 days (priority = the post's age in days), and `check` from Mark IX's current stories (`check_questions`, read only). A valid answer writes the post's reading (`mx_readings`) or its entities (`mx_mentions`, with 0090's name key). `reasked` counts the check tasks today's stories would no longer ask (corrections 4).
+- `markx/api.py`: the router, with the contract frozen in its docstring. `INSIGHT_MARKX` off (the default): every path answers 404 and nothing runs.
+- `backend/main.py`: one `include_router` line (and its import).
+- The worker token: `GET`/`POST /api/markx/token` (in `markx/api.py`), stored encrypted in `credentials` (provider `markx`), and one button in Sources → Connections (`MarkXToken.tsx`, hidden while the route answers 404; the token is shown once; the design frames' fixtures answer 404).
+- Tests: `test_markx_validate.py` (35), `test_markx_api.py` (27), `markxToken.test.tsx` (3).
+
+**How the build plan's corrections are kept:**
+- **No Mark IX story id in a task.** Inputs are content only; a check's `b` is null, a story task's `a`/`b` are its earliest member posts (or Mark X stories from S5). The same members in another order are the same task (tested), and a re-rooted story asks nothing new.
+- **Mark X's text is versioned** (`TEXT_VERSION = "markx-text-v1"`); translation reads 2,500 characters, as F5 measured.
+
+**S4's open points, settled** (the worker needs no change): answers posted as `{task_id, answer}` (an answer wrapped in its own name, `{"reading": {..}}`, is unwrapped); ids are uuid strings; `valid` is a count; `release` honours `task_ids`; an answer after its lease, or to a task another worker holds, is taken like any other, and one to an answered or failed task is a call that changes nothing (`repeated`); `schema` is the worker's subset, never null; tokens are per answer; `lease_until` always has its offset.
+
+**Decided here, for the owner to confirm:**
+- `connect` uses F6's guide (`bg_judge_story_dates.md`, story pairs with their members and dates), not `bg_graph.md`: this table's row (story pairs ≤ 30 days, both with dates) and F6's measured "development 13 of 15" are that experiment; `bg_graph` is the across-years post graph (0091).
+- A judge question shows 3 members, as the prototype's renders (and its numbers) did, not "up to 5".
+- Until S2's vectors, headline, connect and briefing inputs show the earliest members; the prototype showed those nearest the story's centroid.
+
+**The round trip** (the prototype's recorded answers as the model, every request through the app; inputs built by `tasks.py` from the copy's posts and the prototype's recorded v9.12 members, corrections 1). Kinds below 200 are bounded by the recorded answers whose posts are in the copy (the lab ends 30 Oct; the prototype read to 5 Nov):
+
+| Kind | Tasks | Valid | Invalid, with their errors |
+|---|---|---|---|
+| read | 200 | 200 | 0 |
+| entities | 200 | 197 | 3: a version the post doesn't state ("6" for a model the posts call by its variant only) — right |
+| translate | 87 | 86 | 1: "2 years" written as "two years" — strict |
+| card | 43 | 43 | 0 |
+| check | 54 | 54 | 0 |
+| join | 111 | 111 | 0 |
+| pair | 200 | 200 | 0 |
+| merge | 43 | 43 | 0 |
+| connect | 143 | 143 | 0 |
+| headline | 138 | 135 | 3: one right (a version no member has), two false ("Q2" from "the second quarter", "November 6" from "11.6") |
+| briefing | 5 | 4 | 1: a figure in a post outside the 4 shown (member choice, above) |
+| **all** | **1,224** | **1,216 (99.3%)** | **8** |
+
+- **The first run had 16 invalid; 9 errors were the checks', fixed as classes and measured again:**
+  - a reading with 7 actors (the prototype's schema capped 6; neither the guide nor this table does);
+  - 6 of 43 cards naming odd members by position (`odd` is kept as given: no decision reads it, and a position's base can't be told);
+  - a headline's "GPT-5.6" from "their 5.6 versions" (a version is now found by its number);
+  - a briefing's year from the day's own line (the same briefing then failed on a later line, above).
+
+  A test then found "02" read against "2"; figures now drop leading zeros.
+- **The invalid cases** (each answered task of every kind answered again wrongly, 5 a kind): a span or a version not in the post, a type or a relation out of its set, 21 entities, a confidence of 150, an odd member that isn't one, a 15-word headline, a figure or version in no member, a key not of the day, 8 lines, numbers dropped, three times the length. **Every one came back with its error**; the one exception was a "numbers dropped" case on a post with no number.
+- **Mark IX's tables** (every non-`mx_*` table's rows and md5, before and after): only `credentials` changed, its new `markx` token row.
+
+**The worker end to end** (`scripts/markx-worker` and `scripts/tests/fake-claude`, both unchanged, against the API in a container of its own on the scratch copy, Mark X on):
+- **valid plan:** 60 tasks leased (planned by the server from the copy's last 30 days), the fake's answers refused by the worker's check of the server's schema, retried once, posted; the server stored 60 invalid calls with their errors and re-opened the tasks;
+- **usage limit:** exit 4, 60 leases released; **auth:** exit 5, released; **missing lines:** retried, then released; **a wrong token:** exit 6.
+- **The valid path, with the recorded answers as the model** (a private replay fake): 107 readings and 34 entity answers valid through both the worker's and the server's checks, stored with their readings and mentions.
+- **For S4 (no change needed):** fake-claude's answers fit the stub's schema, not part C's, and its `FAKE_CLAUDE_STATE`/`_LOG` must be absolute (the worker runs `claude` in the temp directory). Because the server tops up `read` as it drains, `--kinds read,entities` reaches `entities` only when the 30 days are read.
+
+**Tests:**
+- The whole backend suite: 1,540 tests OK (`./run-tests.sh` in the image, at 4a7ba87).
+- After the last change (the check planner's refactor and `reasked`), the Mark X modules again: `test_markx_api` 27 and `test_markx_validate` 35, OK.
+- Frontend: 708 tests pass, and the bundle gate passes (the feed route +0.10%, the post route +0.09%).
+
+**The real-data check** (`scripts/realdata-check.sh --base markx-shadow --head markx-s3-api insight_lab`, head at 4a7ba87; report `plan/research/lab/checks/markx-s3-api-2026-11-05.md`): **PASS**.
+- With `INSIGHT_MARKX` off, Mark IX changes by 0: titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover.
+- Every invariant is the same, and no case changes state (75 pass, 16 fail, 1 error and 17 not checked, on both sides).
+- Corrections 4's count: 0 tasks re-asked, since no Mark X task exists on the lab or its copies (Mark X is off there). `tasks.reasked` is the count S5's invariants can report.
+
 ## Part D: the worker, Claude Code mode (your device)
 `scripts/markx-worker` is one Python file using the standard library only.
 ```
@@ -187,6 +432,58 @@ markx-worker cycle --server http://<server>:5173 --token-file ~/.config/insight/
 
   Each batch is one kind, so its guide is sent once.
 - **Done when** the last 30 days are read and judged through it, and every answer is stored.
+
+### Built (S4, branch `markx-s4-worker`, 2026-11-05)
+The worker, ported from the prototype's `markx_worker.py` (the same `claude -p` call, the same instruction and item blocks, the same JSON-line parser, the same one retry in batches of their own). Not yet run against S3 or the real `claude`: **the owner runs the real-Haiku part** once S3 merges.
+- **Files:**
+  - `scripts/markx-worker`: one executable Python file, standard library only;
+  - `scripts/tests/fake-claude`: a fake binary that checks the exact flags and answers by plan (valid, invalid, missing, usage limit, auth, errors, sleeps);
+  - `scripts/tests/test_markx_worker.py`: a stub of part C's API (`http.server`, in memory: leases, expiry, checks, 3 tries, releases) and 36 tests.
+- **What it does:** `cycle` (also `status` and `release`):
+  - leases one kind per batch, kinds in the order given (default: part D's order);
+  - batches of 20, 3 at a time, at most `--batches` leases a cycle;
+  - checks each line against the guide's JSON schema (a subset), posts the valid ones, and retries what's missing or invalid once;
+  - posts the still-invalid ones after the retry, so the server stores them with their errors;
+  - releases what is still unanswered at the end of the cycle.
+- **Tokens and cost** come from Claude Code's JSON:
+  - in = input + cache read + cache creation;
+  - out = output;
+  - `total_cost_usd`, and the model from `modelUsage`.
+
+  Each call is logged with them. Each answer is posted with its share of its batch (a retried task carries both calls' shares), so the posted totals add up to the spend on answered tasks.
+- **Stops:** exit codes 4 (usage limit) and 5 (auth). On either, it starts no new call, posts what the running calls return, releases all its leases, and exits.
+- **Leases:**
+  - no call starts with under `--lease-margin` (120 s) left on its lease;
+  - a running call isn't killed when its lease ends (its tokens are spent either way): its answers are posted, never retried.
+- **The server unreachable:** exit 3. An answer whose post fails 3 times goes to a local spool, and the next cycle posts the spool first, so nothing is paid for twice. A wrong token exits 6.
+- **The contract** S3 must match is in the worker's docstring: the four endpoints, their bodies and responses, and the bearer token. It lists where part C is ambiguous:
+  - the answer line's shape (flat, as measured, then posted as `{task_id, answer}`);
+  - the id type;
+  - `valid` as a count or a list;
+  - `release`'s body (`worker`, optional `task_ids`);
+  - answers after a lease ended;
+  - the schema dialect;
+  - tokens per answer only;
+  - `lease_until` without an offset.
+- **Tests:** 36 pass (`python3 -m unittest discover -s scripts/tests -p 'test_markx_worker.py'`, about 25 s; run 4 times, no flakes). They cover:
+  - valid: 45 tasks in calls of 20, 20 and 5, with the exact flags; tokens and cost posted and logged;
+  - one kind per batch, in order; the `--batches` cap;
+  - string ids, fenced and nested lines;
+  - invalid then retried; still invalid after the retry; missing lines; missing after the retry (released);
+  - retries combined by kind; the server's invalid answers left to the server; a non-fatal error; unparsable output;
+  - usage limit (alone, and with calls in flight); auth (JSON and plain text); `claude` not found;
+  - leases: about to end, ending during the call, the call's timeout;
+  - a guide whose sha256 doesn't match;
+  - the server unreachable; a post failing, spooled, then posted by the next cycle; a post failing once; the spool with the server still down;
+  - a wrong token; a missing or empty token file; `status` and `release`;
+  - the parser, the schema subset, the shares, the error classes and the lease times.
+
+  The real `claude` was never run.
+- **Real-data check** (`scripts/realdata-check.sh --base 58ba6ae --head markx-s4-worker insight_lab`, report `plan/research/lab/checks/markx-s4-worker-2026-11-05.md`): **0 change**, as expected with no app code touched.
+  - Every derived thing is unchanged (titles, text starts, link titles, roundups, membership, origins, News, Classics, Discover), and so is every invariant. No case changes state.
+  - The verdict says FAIL only for `discover-one-title-per-page` and `classic-paper-one-page`. Those are 0106's cases: marked pass after 0106 merged into main (5c1a375), they fail at the base 58ba6ae as well.
+  - A first run against `main` (by then 543830d) showed 0106's own changes, reversed (Classics 230, Discover 740, membership 32). That run doesn't measure this branch.
+- **Backend suite** (`./run-tests.sh`, unchanged code): 1,446 tests, 1 failure. `test_deploy_finishes`'s held-rows test timed out on a thread while the real-data check ran beside it; that module run alone passes (5/5).
 
 ## Part E: decisions and the Mark X page
 **The decision job** (`markx/decide.py`):
@@ -240,6 +537,42 @@ The rules are the prototype's, none tuned on the server's window:
 - the page reads well in the reader review (phone included);
 - with Mark X on, Mark IX's tables are identical before and after a run (the realdata check's table diff).
 
+### Built (S5, branch `markx-s5-decide` from `markx-shadow` c7311f1, 2026-11-05)
+Not merged, not deployed; merging it is "Mark X v10.0 (Shadow)". Nothing was fetched or downloaded and the real `claude` was never run. Measured on the prototype's recorded files, on scratch copies of `insight_lab` (the real-data check) and of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a`), never on those databases themselves.
+
+**What changed:**
+- `markx/decide.py`:
+  - **The rules**, pure functions ported from the prototype (`pipeline.plan`, `plan2`, `decide`): `plan_pass1` (checks of uncertain and roundup members, candidates as joins, pairs or merges, story pairs), `plan_pass2` (new stories against the others), `decide` (checks, then joins and pairs, pair stories glued, then merges, in the prototype's order). Rule A, rule B, roundups as mentions, joins at 0.6, merges at 0.85 and developments as connections are the prototype's; the two-event guard and the late-post table are `Config` switches (on).
+  - **The job** (`run`): reads Mark IX's stories with a post in the last 30 days (read only), S2's candidates and the readings; asks each question as a task whose input `markx/tasks.py` builds from content (joins and pairs once their posts are read; merges once both stories' cards are answered); turns the valid answers into verdicts; writes Mark X's stories (each matched to the Mark X story holding most of its members), memberships and connections, opening what is new and closing what changed (`valid_to`); asks Haiku's headline for every News story and the connect questions (F6); one `mx_runs` row a run; one run at a time (an advisory lock).
+  - **When:** `Scheduler`: after the worker's uploads (answers or vectors, 60 s after the last) and hourly, in the API process (uploads land there), only while INSIGHT_MARKX is on. One line in `main.py`'s lifespan starts it.
+- `markx/news.py`: Mark X News through Mark IX's own News code (`NewsService.rows`, the part of `refresh` that computes rows, split out; `refresh` calls it, unchanged) over Mark X's stories, the posts of no story, Mark IX's roundup mentions and stored surges; the tags (NEW: no post in a Mark IX row; MERGED; SPLIT; CHANGED; SAME); rows written when they differ from the last run's; the day's briefing after 20:00; the page's reads.
+- `markx/api.py`: `GET /api/markx/on`, `/news`, `/posts/{id}`, `/overview`, `POST /api/markx/decide` (the contract's routes unchanged; 404 when off).
+- Frontend: `/markx` (`pages/MarkXPage.tsx`, `components/markx/*`: news with "only differences" on, briefing, entities, worker, labels to come), a lazy chunk; the post page's folded "Mark X" panel, lazy and loaded when opened; the top bar's `mark x` and a ⌘K entry, only while `/api/markx/on` answers. `pages/shell.md` claims `/markx`.
+- The real-data check: `markx.call_invalid`, `markx.unnamed`, `markx.task_twice`, `markx.lease_past` (read only, every copy), and the job checks `markx.ix_unchanged` (a run with Mark X off writes nothing; two runs with it on leave every non-`mx_*` table's rows and md5 as they were, 0079's per-table checksums) and `markx.after_run` (the four on what the runs wrote). Both job checks fail the merge whenever above 0, even where the base can't measure them.
+- Tests: `test_markx_decide.py` (26), one in `test_realdata_checks.py`, `markx.test.tsx` (5), `lib/markx.test.ts` (2).
+
+**The prototype's decisions reproduced** (its recorded v9.12 stories, `corpus/stories_ix.json`, and recorded answers, `out/cache.sqlite`; corrections 1):
+- **The first pass's questions:** 711 of 711, the same ids (103 checks, 176 joins, 395 pairs, 37 merges) and fields.
+- **The recommended run** (hybrid verdicts, joins at 0.6, both passes; `x_haiku-hybrid_t06`): **exact.** Changes 206 of 206 (5 removals, 1 demotion, 72 joins, 118 new stories, 10 merges), stories 189 of 189, memberships 653 of 653, mentions 1 of 1, News 105 of 105 (35 new). Haiku's 0.7 pass-1 run: 143 of 143 changes, News 104 of 104.
+- **With Shadow's two additions on:** the same. The two-event guard changes nothing (none of the 6 checked posts' readings has several events), nor does the late-post rule (no join is 72 hours past its story's start).
+- **The second pass's questions:** 34 of the recorded 35. The prototype planned them from its Haiku 0.7 first pass, which was re-run after (03:24 against 06:04); the missing one's pair story no longer exists in the re-run. Planned from the recommended run's own first pass, as Shadow does, the second pass asks 42, 19 of them recorded: 23 have no recorded answer.
+
+**On the server's data** (a scratch copy of 2026-11-05, 49,384 posts, Mark IX's stories rebuilt by this branch's deploy start; the prototype's recorded vectors, readings, entities and verdicts loaded through the API's own checks):
+- **With no verdict yet, Mark X News is Mark IX's:** 128 rows of 128, all SAME (and 96 of 96 on the lab in the check).
+- **With the recorded verdicts** (check 90, join 175, pair 351, merge 31, card 47, headline 161 answered; 5 runs to settle, 1.3–1.5 s each): 308 Mark X stories, News 149 rows against Mark IX's 128: 30 NEW, 4 MERGED, 14 CHANGED, 101 SAME, 2 Mark IX rows no longer News. 3 removals, 1 demotion, 68 joins, 105 new stories, 6 merges, 1 late post stored as a connection.
+- **Mark IX's tables:** 31 compared (rows and md5) before the first run and after the last: 0 changed.
+- 75 recorded readings were refused by S3's check (their mentions have the older `headline_en` shape, no `name`), so those posts were never joined or paired; 9 recorded headlines failed the figure check (they were written from other members).
+- **The worker's queue it leaves:** 1,216 connect questions (story pairs ≤ 30 days at centroid ≥ 0.6), more than every other kind together: a cap or a narrower pair rule is the owner's call before the worker runs them.
+
+**The reader review** (the owner's method, desktop 1400 and phone 390, on my own API and web containers over that copy; every non-127.0.0.1 request and `/api/media` failed from the first shot: 300 allowed, 12 blocked, all `/api/media`). Private: `plan/research/markx-build/s5/review-S5-reader.md`.
+- Reads well: the differences first with their counts; one line of why under every post and what Mark IX did with it; the posts left out with Haiku's words; one column on a phone; the folded panel.
+- Fixed from it: the fold arrow swung over the row's text on a phone; a post Mark IX's News joins by a surging name said "not in this Mark X story"; the worker listed a failed task twice; versions shown lowercased.
+- Wrong, for later: a thread Mark IX hung on a story is never checked (F1 asks no `thread` member: 14 posts of a benchmark thread sit in a paper's row); two joins exactly at the 0.6 bar read wrong (E1 re-picks it); the two-event guard misses its own case when the reading says one event.
+
+**Tests:** backend suite 1,619 OK (`./run-tests.sh`, in the image); frontend 234 + 716 OK, the bundle gate passes (feed +0.76%, post +0.49% against v9.15's baseline; the page and the panel are their own chunks).
+
+**The real-data check** (`--base markx-shadow --head markx-s5-decide insight_lab`; report `plan/research/lab/checks/markx-s5-decide-2026-11-05.md`): 0 change in titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover; every invariant the same; the Mark X ones 0 (`markx.ix_unchanged` 0 of 31 tables, `markx.after_run` 0 of 888 rows); no case changes state against the base. The verdict reads FAIL only for three Discover cases (`discover-unfollowable-not-last`, `discover-not-a-publication`, `discover-owner-not-language`) marked pass by 0109 A on main, which `markx-shadow` doesn't have yet: they fail on both sides.
+
 ## Part F: labels in the app (E1), and one tap
 - **The labels page:**
   - **The queue:** the questions whose answer changes a bar: decisions near a bar, and every merge. It also takes a sample of the rest, weighted to the pools, as the prototype's labels were.
@@ -247,6 +580,55 @@ The rules are the prototype's, none tuned on the server's window:
   - **The split:** older days are dev and the newest are test. The bars are re-picked on dev and reported on test, with their confidence intervals.
 - **One tap on Mark X rows:** "wrong story" / "not about this" on any member in the Mark X News. These become labels too: no separate labelling sessions after E1, only a small monthly audit sample.
 - **Done when** E1's set (about 2 hours of your time) is in, and the page shows each feature's precision on your labels with its bar.
+
+### Built (S6, branch `markx-s6-labels` from `markx-shadow` e45cbd8, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded and the real `claude` was never run. Measured on scratch copies of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a` and `_b`: Mark IX's stories rebuilt by the branch's deploy start, then the prototype's recorded vectors, readings, entities and verdicts loaded through the API's own checks, as S5 did), never on that database itself.
+
+**Three S5 follow-ups first, each its own commit:**
+- **The connect questions are capped** (c986206). `Config.connect_new` (100) new connect tasks a decision run, the newest story pairs first (by the later story's first post), only pairs whose stories both have `Config.connect_voices` (2)+ voices. Both are settings in the run's `mx_runs.config`; the cap is the run's `Ask`'s, so the other kinds keep `CAP` (500).
+  - On the server copy, the same five decision rounds: **before** 1,216 connect tasks queued (335, 500, 344, 37 a round), more than every other kind together; **after** 100 a round, 500 after the five rounds. The other kinds are unchanged (check, join, pair, merge, card, headline the same but for the thread checks below).
+  - The per-run cap alone would still queue the whole backlog of about 1,200 pairs in about 12 hourly runs if the worker doesn't answer them, so a backlog cap was added after (owner's choice): no new connect task while `Config.connect_open` (100) wait, open or leased; a run adds at most the room left. (Not re-measured on the server copy; the test covers it.)
+- **Members Mark IX joined by `thread` are checked** (be8d18d), in 2+ voice stories, rule A still applying (`Config.check_threads`, on; off in `Config.prototype()`, so the prototype's reproduction is unchanged). The decision job's planner and the worker's check planner read the one setting.
+  - On the server copy: **6 more check tasks** (179 → 185, in both planners). Of the window's 211 thread members, 203 sit in one-voice stories (not checked: a one-voice story isn't News), 2 are under 20 words, 6 are checked now. Five of the six had recorded verdicts; none changes a decision.
+  - The S5 review's W1 row doesn't occur in this copy's rebuild: the benchmark account's 19 posts (14 joined by thread) sit in their own one-voice thread stories here, so the rule could not be shown on that row.
+- **A decision run reads one snapshot** (b01b36d, asked during S6). `decide.snapshot()` opens the run's transaction at REPEATABLE READ (the scheduler's and `POST /api/markx/decide`); every read of Mark IX's stories, News and posts sees the snapshot of the run's first query.
+  - **Conflicts:** the run writes only `mx_*` rows, and only the run (under its advisory lock) updates them. The one write another transaction can race is a task insert: the worker's check planner committing the same check mid-run makes the run's `INSERT … ON CONFLICT DO NOTHING` a serialization failure at REPEATABLE READ. The run takes it in a savepoint and counts it (`tasks_raced`): the task exists and is unanswered in the run's snapshot, so nothing is lost.
+  - Tests: a story change committed mid-run isn't seen by that run (and is, at READ COMMITTED: the control); a check the planner commits mid-run is counted, and the run commits.
+  - **One run on the server copy** (all recorded answers loaded, 1,259 posts, 308 stories, 892 questions, 652 answered): **1.61 s, peak RSS +24 MB** (116 MB in a process holding only the backend's modules; rolled back).
+
+**What changed (S6):**
+- `markx/labels.py` (new):
+  - **The population:** the questions behind the decisions, as the last run read them: `decide.think` with an `Ask` that only reads (no task added, nothing written), plus the answered connect and entities tasks. Each item is a task, keyed by content, never by a Mark IX story id.
+  - **The queue:** every decision within `Settings.near` (0.05: the judge's confidence comes in fives, so 0.55, 0.60 and 0.65 around the 0.6 bar) of its bar, every merge question, and a stable sample (`Settings.sample`, 6, by a hash of the task) of each other pool (a feature's accepted side and its rejected side), interleaved feature by feature so a short session labels every feature.
+  - **An item** is its task's input, the exact evidence the judge saw. Its verdict (and its pool, which names the decision) is sent only once it has an answer; then the page shows Haiku's relation, p, words, the bar and what Mark X did.
+  - **Answers:** same event, follow-up, related, different, unsure; for entities right, wrong, unsure; plus a note. Stored in `mx_labels` (S1): `a` the task, `b` the post asked about; a changed answer is a new row and the newest counts.
+  - **The split:** an item's day is its newest post's; the newest quarter of the queue's days are test, the rest dev; a label keeps the split it was given.
+  - **Precision per feature** (checks, joins, new stories, merges, connections, entities): the share of its decisions right, post-stratified by pool and split (each label weighs its pool's size over the pool's labels), with a Wilson 95% interval on the Kish effective count; the share right on its rejected side too; the bar swept on dev and test; the re-picked bar (the lowest reaching `Settings.target`, 95%, on 10+ dev labels; for checks, which take out below their bar, the highest), reported on test. A labelled question today's run no longer asks keeps counting in its feature's "earlier" pool.
+  - **One tap on Mark X News members:** "wrong story", "not about this", or "ok" to take it back, as `news_row` labels (`a` the post, `b` its Mark X story); counted by the feature whose membership put the post there.
+- `markx/api.py`: `GET /api/markx/labels`, `GET /api/markx/labels/items/{id}`, `POST /api/markx/labels`, `GET /api/markx/labels/precision?labeller=`, `POST /api/markx/labels/news` (404 when off, like every Mark X path). `markx/news.py`: each member line carries its Mark X story and standing one tap; the newest written run is told apart by its finish time when two runs share a start (one transaction). `markx/decide.py`: `think(answered=)`.
+- Frontend: the labels tab of `/markx` (`components/markx/MarkXLabels.tsx`, in the page's lazy chunk): one item at a time, the question, the evidence, the answers (keys 1–5), a note, then the verdict and "next"; skip; the last answered; the progress per feature; the precision view with a labeller picker. On a phone the answers, the verdict and "next" stay in a bar at the bottom and the evidence scrolls with the page. One tap on each member of an opened Mark X News row.
+
+**Measured on the server copy** (`_b`, the S6 code, after the five decision rounds):
+- **The E1 set:** the queue offers **158 items** of a population of 1,486 questions: checks 15 (of 95), joins 39 (of 175), new stories 67 (of 351), merges 31 (all), entities 6 (of 834). At the prototype's pace (120 items in about 2 hours) that is about 2 h 40 min; the queue's order keeps every feature in its first 120. Near a bar: 8 checks, 27 joins, 55 new stories. Split: 145 dev, 13 test (test from 1 Nov; the recorded answers thin out on the newest days). The defaults first tried (0.10 and 12 a pool) offered 248, about four hours.
+- **The queue builds in 0.45 s** (cached per decision run).
+- **Precision on the prototype's blind Claude labels**, mapped onto the questions by subject as S5 mapped the verdicts (labeller A: 501 labels on the population, 138 of the 158 offered items; B: 212):
+
+| Feature (bar) | Labeller A: Mark X's decisions right | B |
+|---|---|---|
+| F1 checks (0.30): taken out | 2 of 4, 50% (15–85%); kept 90% (82–95%) of 91 | none taken out labelled; kept 86% (70–94%) of 38 |
+| F2 joins (0.6): joined | 91% (81–96%) of 65 | 97% (84–99%) of 33 |
+| F2 new stories (0.6): made a story | 99% (95–100%) of 105; test 91% (62–98%) of 11 | 100% (90–100%) of 36 |
+| Merges (0.85): merged | 5 of 6, 83% (44–97%); not merged right 83% of 17 | 3 of 3 |
+
+  The prototype measured joins and new stories together at 98% on these labellers; here new stories hold that and joins read 91–97%. On A's labels the joins bar re-picked on dev is 0.95, new stories' is 0.3 (dev 100%, test 92% on 12). These are Claude's labels, not the owner's: E1's labels replace them.
+- **Synthetic labels:** the unit tests (the weights back to each pool's size, the interval, the dev and test bars, every feature's rule for "right").
+
+**The reader review** (desktop 1400 and phone 390, on my own containers `markx-s6-api` and `markx-s6-web` over `_b`; every non-127.0.0.1 request and `/api/media` failed from the first shot: 178 requests allowed, 0 blocked, none outside). Private: `plan/research/markx-build/s6/review-S6-reader.md`.
+- Fixed from it: an answered item jumped to the next before its verdict showed (the queue's refetch moved the "next" item); on a phone the verdict and "next" sat under the whole evidence, now in the bottom bar; an unanswered item sent its pool, which names the decision; a re-picked bar could rest on one dev label (now 10+).
+
+**Tests:** `test_markx_labels.py` (11: the pools, the sample and its order, the cut, what is right per feature, Wilson, the weights, the re-picked bar, the queue from a real run read blind, a changed answer a new row, the earlier pool, one tap and "ok", Mark IX's tables and the task count untouched by the queue, the routes and 404 when off); `test_markx_decide.py` +4 (the connect cap, threads in the rules, the snapshot, the planner race); `test_markx_api.py` +1 (threads in the check planner); `labels.test.tsx` (3). Backend suite 1,726 OK (`./run-tests.sh`, in the image); frontend 235 + 723 OK; the bundle gate passes (feed +0.88%, post +0.56% against v9.15's baseline; the tab is in the Mark X page's chunk).
+
+**The real-data check** (`--base markx-shadow --head markx-s6-labels insight_lab`, at eb42f3f; report `plan/research/lab/checks/markx-s6-labels-2026-11-05.md`): **PASS.** 0 change in titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover; every invariant the same; the Mark X ones 0 (`markx.ix_unchanged` 0 of 31 tables, `markx.after_run` 0 of 893 rows); no case changes state. The commits after it change only the labels module's defaults and the page.
 
 ## Part G (later): switching on, one feature at a time
 Order:

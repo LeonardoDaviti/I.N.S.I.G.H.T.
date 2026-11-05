@@ -2,6 +2,10 @@
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
+import type {
+  MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
+  MarkxPrecision,
+} from './markx';
 
 export type { Envelope };
 
@@ -540,6 +544,18 @@ export interface CredentialProviderView {
 
 export interface CredentialsResponse {
   providers: CredentialProviderView[];
+}
+
+/** GET /api/markx/token: the Mark X worker token's state, never the token. */
+export interface MarkxTokenView {
+  set: boolean;
+  last4: string | null;
+  updated_at: string | null;
+}
+
+/** POST /api/markx/token: the new token, the only time it is shown. */
+export interface MarkxTokenCreated extends MarkxTokenView {
+  token: string;
 }
 
 export type TelegramLoginStep = { stage: 'code' } | { stage: 'password' } | { stage: 'done'; account: string };
@@ -1195,6 +1211,27 @@ export function createApi() {
     telegramLoginPassword: (password: string) =>
       request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
     telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
+    /** Mark X's worker token (issue 0086 C): whether one is set. 404 while INSIGHT_MARKX is off. */
+    getMarkxToken: () => request<MarkxTokenView>('/api/markx/token'),
+    /** A new worker token, shown once; it replaces the old one. */
+    createMarkxToken: () => request<MarkxTokenCreated>('/api/markx/token', { method: 'POST' }),
+    /** Mark X's page (issue 0086 E): {on: true}, or a 404 while INSIGHT_MARKX is off (the menu item's probe). */
+    getMarkxOn: () => request<{ on: boolean }>('/api/markx/on'),
+    getMarkxNews: (all = false) => request<MarkxNews>(`/api/markx/news?all=${all ? 1 : 0}`),
+    getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
+    getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
+    runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
+    /** Mark X's labels (issue 0086 F): the queue, one item (its verdict only once labelled), an answer, precision. */
+    getMarkxLabels: () => request<MarkxLabelQueue>('/api/markx/labels'),
+    getMarkxLabelItem: (itemId: string) => request<MarkxLabelItem>(`/api/markx/labels/items/${enc(itemId)}`),
+    labelMarkxItem: (item: string, answer: MarkxAnswer, note?: string) =>
+      request<MarkxLabelled>('/api/markx/labels', { method: 'POST', body: { item, answer, note: note ?? null } }),
+    getMarkxPrecision: (labeller = 'owner') =>
+      request<MarkxPrecision>(`/api/markx/labels/precision?labeller=${enc(labeller)}`),
+    /** One tap on a Mark X News member: wrong story, not about this, or ok (taken back). */
+    flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
+      request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
+        { method: 'POST', body: { post, story, answer } }),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 
