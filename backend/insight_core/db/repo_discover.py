@@ -440,6 +440,13 @@ class DiscoverRepository:
         return (row[0] if row else None) or {}
 
     @staticmethod
+    def read_titles(cur: Cursor, urls: Sequence[str]) -> Dict[str, str]:
+        """The page titles read of these addresses (issue 0106: Classics show them), those that had one."""
+        cur.execute("SELECT t.key, t.value->>'title' FROM system_settings s, jsonb_each(s.value->'titles') t "
+                    "WHERE s.key = %s AND t.key = ANY(%s) AND t.value->>'title' IS NOT NULL", (READS_KEY, list(urls)))
+        return dict(cur.fetchall())
+
+    @staticmethod
     def keep_reads(cur: Cursor, reads: Dict[str, Any]) -> None:
         SystemSettingsRepository.upsert(cur, READS_KEY, reads)
 

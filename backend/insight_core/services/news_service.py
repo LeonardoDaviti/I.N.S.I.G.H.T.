@@ -23,10 +23,14 @@ from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 from insight_core.db import database as db
+from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository, story_voices
 from insight_core.db.repo_stories import SourceFacts
-from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
+from insight_core.services import page_titles
+from insight_core.utils.addresses import paper_id
+from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
+from insight_core.utils.story_rules import page_key, paper_aliases
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
                                           Surge, lead, longest, name_surges, names, news, phrases)
 from insight_core.utils.story_rules import Story, StoryPost
@@ -61,7 +65,7 @@ class NewsService:
         ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
         stories_now = news([p for p in posts if p.id in ids], shown, found)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
-        found_classics = classics(*self._citations(cur, sources))
+        found_classics = self._classics(cur, sources)
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
                 "news_changed": news_changed, "news_removed": news_removed, "classics": len(found_classics),
@@ -105,7 +109,8 @@ class NewsService:
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
         stories_now = news(window, held, found)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
-        found_classics = classics(*self._citations(cur, sources, urls))
+        urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
+        found_classics = self._classics(cur, sources, urls)
         classics_changed = self.repo.write_classics(cur, found_classics, urls)
         return {"surges_changed": surges_changed, "news_posts": len(group), "news_changed": news_changed,
                 "news_removed": news_removed, "classics_changed": classics_changed}
@@ -142,21 +147,48 @@ class NewsService:
                           own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])
                 for row in rows]
 
+    def _classics(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None) -> List[Classic]:
+        """The classics among the kept links (to `targets`, when given), each titled as every page you don't
+        follow is (issue 0106, page_titles.evidence): its stored post's title, else the evidence of every post
+        linking any path of it; else the link words classic_rules reads (none of 182 on the lab needed them)."""
+        citations, stored, aliases = self._cited(cur, sources, targets)
+        found = classics(citations, stored)
+        outside = [c.target for c in found if c.post_id is None]
+        titles = page_titles.evidence(cur, sources, outside, aliases=aliases) if outside else {}
+        for c in found:
+            if c.post_id is None:
+                c.title = titles.get(c.target) or c.title
+        return found
+
     def _citations(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None):
+        """`_cited`'s citations and stored posts."""
+        return self._cited(cur, sources, targets)[:2]
+
+    def _cited(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None):
+        """The kept links as citations, each paper's paths cited as the one address that names it (issue
+        0106: its abstract and its PDF are one classic), the stored posts they are, and those aliases."""
         rows = self.repo.citations(cur, reddit=sources.of_kind("reddit"), saved=sources.of_kind("saved"), targets=targets)
+        papers: Dict[str, Set[str]] = defaultdict(set)
+        at: Dict[str, Optional[str]] = {}
+        for row in rows:
+            at.setdefault(row["target"], row["stored"])
+            if paper_id(row["target"]):
+                papers[page_key(row["target"]) or row["target"]].add(row["target"])
+        aliases = paper_aliases(papers.values(), stored=[t for t, sid in at.items() if sid])
         authors: Dict[str, Optional[str]] = {}
         out = []
         for row in rows:
             if row["post_id"] not in authors:
                 authors[row["post_id"]] = row["author"]
             voice = self._voice(sources, row["source_id"], authors[row["post_id"]])
+            target = aliases.get(row["target"], row["target"])
             out.append(Citation(voice=voice, name=sources.voice_name(voice, row["source_id"]),
-                                source_id=row["source_id"], t=row["t"], target=row["target"], stored=row["stored"],
-                                text=row["text"]))
+                                source_id=row["source_id"], t=row["t"], target=target,
+                                stored=row["stored"] if target == row["target"] else at.get(target), text=row["text"]))
         stored = {}
         for row in self.repo.stored_posts(cur, sorted({c.stored for c in out if c.stored})):
             stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"], row["title"])   # as every place (0072 D1)
-        return out, stored
+        return out, stored, aliases
 
     @staticmethod
     def _voice(sources: SourceFacts, source_id: str, author: Optional[str]) -> str:
@@ -256,9 +288,10 @@ class NewsService:
         now = self.clock()
         rows = self.repo.classics(cur, feed_scope)
         named = self.repo.source_name(cur, feed_scope.id) if feed_scope.kind == "source" else None
+        read = self._read_titles(cur, rows)
         out = []
         for row in sorted(rows, key=lambda r: classic_order(r["last_at"], r["voices"], r["days"], r["url"], now)):
-            title = row["post_title"] if row["post_id"] else row["title"]
+            title = row["post_title"] if row["post_id"] else row["title"] or read.get(row["url"])
             out.append({
                 "url": row["url"], "post_id": row["post_id"], "title": title or None, "voices": row["voices"],
                 "days": row["days"], "first_at": row["first_at"], "last_at": row["last_at"],
@@ -296,10 +329,23 @@ class NewsService:
 
     def background(self, cur: Any, post_id: str) -> List[Dict[str, Any]]:
         """The classics a post links, on the caller's cursor: [{url, post_id, title, voices}]."""
+        rows = self.repo.background(cur, post_id)
+        read = self._read_titles(cur, rows)
         return [{
             "url": row["url"], "post_id": row["post_id"], "voices": row["voices"],
-            "title": (row["post_title"] if row["post_id"] else row["title"]) or None,
-        } for row in self.repo.background(cur, post_id)]
+            "title": (row["post_title"] if row["post_id"] else row["title"] or read.get(row["url"])) or None,
+        } for row in rows]
+
+    @staticmethod
+    def _read_titles(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+        """The page titles read (issue 0106, discover_reads) of the classics the stored data leaves untitled:
+        a read fills one, never over a stored post's title or the evidence's."""
+        untitled = [row["url"] for row in rows if not row["post_id"] and not row["title"]]
+        return DiscoverRepository.read_titles(cur, untitled) if untitled else {}
+
+    def untitled_classics(self, cur: Any) -> List[str]:
+        """The classics whose page's own title Discover's reads read (issue 0106): no stored post, no title."""
+        return self.repo.untitled_classics(cur)
 
     def classic_urls(self, cur: Any) -> List[str]:
         return self.repo.classic_urls(cur)
