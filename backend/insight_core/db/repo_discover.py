@@ -61,6 +61,7 @@ LOCK_KEY = "insight.discover_addresses"
 _SEGMENTS = ("array_remove(string_to_array(lower(regexp_replace(regexp_replace({url}, '^[a-z]+://[^/]*/?', ''), "
              "'[?#].*$', '') COLLATE \"und-x-icu\"), '/'), '')")
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
+LIST_KEY = "discover_list"     # Discover's last list, by what it was made from (system_settings, issue 0080 cold open)
 # When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
 DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read (system_settings, issue 0080)
@@ -389,6 +390,19 @@ class DiscoverRepository:
     @staticmethod
     def keep(cur: Cursor, kept: Dict[str, Any]) -> None:
         SystemSettingsRepository.upsert(cur, KEPT_KEY, kept)
+
+    @staticmethod
+    def kept_list(cur: Cursor, made_from: str) -> Optional[Dict[str, Any]]:
+        """Discover's last list (issue 0080 cold open) when it was made from `made_from` (its inputs and
+        code), else None."""
+        cur.execute("SELECT value->'list' FROM system_settings WHERE key = %s AND value->>'made_from' = %s",
+                    (LIST_KEY, made_from))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def keep_list(cur: Cursor, made_from: str, found: Dict[str, Any]) -> None:
+        SystemSettingsRepository.upsert(cur, LIST_KEY, {"made_from": made_from, "list": found})
 
     @staticmethod
     def archive_states(cur: Cursor, missing: Dict[str, Sequence[str]]) -> Dict[str, Dict[str, Any]]:
