@@ -192,9 +192,38 @@ class Rules(unittest.TestCase):
         self.assertIn("b", out.about["A"])                              # removed by its check, joined again by meaning
         self.assertEqual([x["change"] for x in out.log], ["remove", "join"])
 
+    def test_a_reason_that_says_not_this_story(self):
+        """0112 Decided 8's rule by code: an "about" answer whose own reason says the post is not about the story is
+        never accepted. The class, from v10.0's recorded answers: the reason names another relation for the post
+        (different, a mention, unrelated), says the story's subject is not the post's, or says it is unrelated or
+        absent. A different angle on the same event, a missing detail, or "rather than the release itself" (a
+        reaction) is not that class."""
+        said = ["The post is about a ternary model release, not LFM3; the model family is absent from its text.",
+                "The post is a trending entry for another project, not the launch, so it is a different event.",
+                "The post's main subject is a benchmark of the tool, so this is closer to a mention.",
+                "It uses the review as its opening hook; the main subject is a broader argument, so this is a mention "
+                "rather than a retelling of the review.",
+                "The post reports a cipher result, a different event from the evaluation story, so this is a mismatch.",
+                "Post reports failure modes in a long project; this is a different event, so the relation should be "
+                "different.",
+                "A pull request for kernel speedups that benefits other models, so the model family is not its subject.",
+                "Commentary on a leaked draft bill, which is unrelated to the unreleased model in the story.",
+                "A short reaction to the product's comeback, with the store's block not mentioned.",
+                "The post reports a release that is a different model from the story's model."]
+        for reason in said:
+            self.assertTrue(D.contradicts(reason), reason)
+        fine = ["The post reports the same release, a different angle on the same launch.",
+                "Benchmark results for the model that is the story's subject, though it does not mention the "
+                "open-weights status.",
+                "A user's hands-on run of the released model rather than the release itself.",
+                "The same release as the story, with the paper only as background.",
+                "Both stories cover the single release and differ only in headline framing.", "", None]
+        for reason in fine:
+            self.assertFalse(D.contradicts(reason), reason)
+
     def test_a_story_changing_answer_counts_only_once_asked_again_and_agreeing(self):
         """0112 Decided 8: a join, pair or merge that would change a story is asked a second time; it counts only when
-        the second answer agrees (the same relation, at the bar). (verdict, ask again)."""
+        the second answer agrees (the same relation, at the bar, its reason not against it). (verdict, ask again)."""
         c = D.Config()
         same, same2 = v("same_event", 0.9, call="c1"), v("same_event", 0.8, call="c2")
         self.assertEqual(D.settle("join", [same], c), (None, True))                      # once: not yet
@@ -206,15 +235,19 @@ class Rules(unittest.TestCase):
         self.assertEqual(D.settle("pair", [same, dev], c), (None, True))                 # another relation: a third ask
         self.assertEqual(D.settle("pair", [same, dev, v("development", 0.7, call="c3")], c)[0].relation, "development")
         self.assertEqual(D.settle("pair", [same, dev, same2], c), (None, False))         # three asks at most
-        self.assertEqual(D.settle("join", [same], D.Config(confirm=False)), (same, False))
+        against = v("same_event", 0.9, "unrelated to the story's release", call="c1")
+        self.assertEqual(D.settle("join", [against], c), (None, True))                   # never accepted: asked again
+        self.assertEqual(D.settle("join", [against, same2], c), (None, True))
+        self.assertEqual(D.settle("join", [against, same2, same], c)[0].relation, "same_event")
+        self.assertEqual(D.settle("join", [against, same], D.Config(confirm=False)), (same, False))
         # a merge: "same event" at 0.85 changes stories; a development at the bar is a connection, never asked again
         m = v("same_event", 0.9, call="c1")
         self.assertEqual(D.settle("merge", [m], c), (None, True))
         self.assertEqual(D.settle("merge", [m, v("same_event", 0.86)], c)[0].p, 0.86)
         self.assertEqual(D.settle("merge", [v("development", 0.9)], c), (v("development", 0.9), False))
-        # an answer that changes nothing is final at once; the prototype asked once
+        # an answer that changes nothing is final at once; the prototype asked once and read no reason
         self.assertEqual(D.settle("join", [no], c), (no, False))
-        self.assertEqual(D.settle("join", [same], D.Config.prototype()), (same, False))
+        self.assertEqual(D.settle("join", [against], D.Config.prototype()), (against, False))
 
     def test_a_verdict_reads_the_confidence_as_the_prototype(self):
         self.assertAlmostEqual(D.Verdict.of({"relation": "same_event", "confidence": 70}).p, 0.70)
@@ -415,6 +448,18 @@ class Job(unittest.TestCase):
         self.assertEqual(self.go()["changes"], {"new_pair": 1})        # settled: nothing asked again
         self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'pair' AND status <> 'answered'")
         self.assertEqual(self.cur.fetchone()[0], 0)
+
+    def test_an_answer_whose_reason_says_another_story_never_counts(self):
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
+        repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
+        self.read_all([a, b])
+        self.go()
+        said = {"relation": "same_event", "confidence": 90, "reason": "a ternary model, not Widget; Acme is absent from it"}
+        for _ in range(3):
+            self.answer("pair", lambda t: said)
+            self.assertEqual(self.go()["changes"], {})
+        self.cur.execute("SELECT status FROM mx_tasks WHERE kind = 'pair'")
+        self.assertEqual(self.cur.fetchall(), [("answered",)])        # three asks, then it rests
 
     def test_a_short_pair_is_never_asked(self):
         a = self.post(0, "Widget")

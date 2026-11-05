@@ -19,7 +19,8 @@ Two layers:
          judge's "same event" at the merge bar; a development is a "follows up" connection instead, a reaction
          a "background" one, anything else about it "related"; the story's date never moves.
       8. Asked again (0112 Decided 8, `settle`): a join, pair or merge that would change a story counts only once a
-         second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept.
+         second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept. An "about" answer whose
+         own reason says the post is not about the story (`contradicts`) never counts, and is asked again.
     A question is a `Question` with the prototype's id (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
     `merge2:`); a story is keyed, inside one run only, by its Mark IX story's key or a pair's anchor post. Nothing
     keyed so is stored: the job matches its stories to Mark X's by their member posts.
@@ -37,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import threading
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
@@ -76,11 +78,12 @@ class Config:
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
+    reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -445,9 +448,37 @@ def _first_key(posts: Dict[str, Post], ms: Dict[str, Any]):
 # ---- asked again (0112 Decided 8) ---------------------------------------------------------------------
 # v10.0's accepted joins and pairs were right 62 of 80 (78%) by a blind judge; the same questions asked again at batch
 # 20 kept 53/59 and 50/54 right (90%, 93%). So a join, pair or merge that would change a story counts only when a
-# second answer agrees.
+# second answer agrees; and an "about" answer whose own reason says the post is not about the story never counts.
 
 MAX_ASKS = 3       # a question is asked at most this many times (a first answer, its second, one more on a split)
+
+# The class of reason text that says "not this story", read from v10.0's 1,814 accepted "about" answers (33 match:
+# 1.8%; of the 80 judged, it fires on 3 wrong joins and no right one). Three families, never a name or a site:
+#   1. the reason names another relation for the post: "so it is a different event", "this is closer to a mention",
+#      "a mention rather than a retelling", "the relation should be different", "a mismatch", "a different model
+#      from ..." (but not "a different angle/reading/framing" of the same event);
+#   2. it says the story's subject is not the post's: "<the story's subject> is not its (main) subject";
+#   3. it says unrelated, absent, no relation, not mentioned ("the family is absent from its text").
+# Not in the class: "rather than the release itself" (a reaction or a hands-on report: still about it), "only as
+# background" (as often said of a side subject as of the story), "does not mention <a detail>".
+_OTHER_RELATION = (r"\b(?:relation|it|this|which)\s+(?:is|should be|falls under|reads as|is best read as|is closer to"
+                   r"|is actually)\s+(?:actually\s+|best read as\s+|closer to\s+)?(?:an?\s+)?"
+                   r"(?:different|mention|unrelated|digest item)\b"
+                   r"(?!\s+(?:angle|reading|aspect|take|framing|view|perspective|detail))"
+                   r"|\bfalls under different\b|\bshould be different\b|\ba mention rather than\b|\bis a mismatch\b"
+                   r"|\bmismatch in subject\b"
+                   r"|\bis a different (?:event|happening|story|model|release|product|project|company|claim"
+                   r"|announcement|report|subject)\b"
+                   r"|\ba different (?:event|happening|model|release|product|project|company|claim) from\b")
+_NOT_ITS_SUBJECT = r"\bnot (?:its|the post's) (?:main )?(?:subject|topic)\b"
+_UNRELATED = r"\bunrelated\b|\babsent from\b|\bno relation\b|\bnot related\b|\bnot mentioned\b"
+NOT_THIS_STORY = re.compile("|".join((_OTHER_RELATION, _NOT_ITS_SUBJECT, _UNRELATED)), re.I)
+
+
+def contradicts(reason: Optional[str]) -> bool:
+    """Whether an answer's own reason says the post is not about the story (the class above)."""
+    return bool(reason) and NOT_THIS_STORY.search(reason) is not None
+
 
 def changes_story(kind: str, v: Verdict, config: Config = Config()) -> bool:
     """Whether this answer, if it counted, would change a story: a join or pair "about" at the join bar (a member, or a
@@ -462,19 +493,23 @@ def changes_story(kind: str, v: Verdict, config: Config = Config()) -> bool:
 def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
     """(the verdict that counts, or None for none yet; whether to ask again) from a question's valid answers, oldest
     first. The newest answer decides: one that changes nothing counts as it is; one that would change a story counts
-    only when the answer before it agrees (the same relation, both at the bar), as one verdict at the lower p, named by
-    the earlier call. Until then the question is asked again, MAX_ASKS times at most."""
+    only when the answer before it agrees (the same relation, both at the bar, neither reason against it), as one
+    verdict at the lower p, named by the earlier call; one whose reason is against it never counts. Until then the
+    question is asked again, MAX_ASKS times at most."""
     if not answers:
         return None, False
     last = answers[-1]
     if not changes_story(kind, last, config):
         return last, False
     more = len(answers) < MAX_ASKS
+    if config.reason_rule and contradicts(last.reason):
+        return None, more
     if not config.confirm:
         return last, False
     if len(answers) >= 2:
         prev = answers[-2]
-        if prev.relation == last.relation and changes_story(kind, prev, config):
+        if (prev.relation == last.relation and changes_story(kind, prev, config)
+                and not (config.reason_rule and contradicts(prev.reason))):
             return Verdict(last.relation, min(prev.p, last.p), prev.reason, prev.call), False
     return None, more
 
@@ -702,7 +737,7 @@ class Questions:
             return None
         first = Verdict.of(got[0], got[1])
         c = self.config
-        if not c.confirm or not changes_story(q.type, first, c):
+        if not (c.confirm or c.reason_rule) or not changes_story(q.type, first, c):
             return first
         v, again = settle(q.type, [first] + self.ask.later(got[1]), c)
         if again:
