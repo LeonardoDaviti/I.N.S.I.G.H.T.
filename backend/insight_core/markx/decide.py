@@ -1057,13 +1057,14 @@ def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = Fal
     return world, ask, out, counts
 
 
-def _digest(cur: Any, out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dict[str, Any]],
+def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dict[str, Any]],
             news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """incremental.digest of a reading: a story connection's ends as its member posts (ids differ between readings)."""
     from insight_core.markx import incremental
     members = {sid: tuple(sorted(out.about.get(key, {}))) for key, sid in ids.items()}
     ends = [dict(c, a=c["a"] if c["a_kind"] == "post" else members.get(c["a"], c["a"]),
                  b=c["b"] if c["b_kind"] == "post" else members.get(c["b"], c["b"])) for c in conns]
-    return incremental.digest(wanted(out, world.posts), ends, {}, {}, news_rows)
+    return incremental.digest(wanted(out, world.posts), ends, news_rows)
 
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
@@ -1100,7 +1101,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         p_keys = [s["story"] for s in p_out.stories(p_world.posts) if voices(p_world.posts, s["posts"]) >= 2]
         p_conns = connections(cur, p_out, p_ids, p_world, p_ask, config, p_keys)
         p_news = mx_news.write(cur, None, out=p_out, ids=p_ids, world=p_world, now=now, store=False)["made_rows"]
-        check = _digest(cur, p_out, p_ids, p_world, p_conns, p_news)
+        check = _digest(p_out, p_ids, p_world, p_conns, p_news)
     memo.run_id = None                              # until this run finishes: a failed run leaves no memo
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     world, ask, out, counts = _reading(cur, memo, now, config)
@@ -1110,16 +1111,12 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     conns = connections(cur, out, ids, world, ask, config, news_keys)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
+    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     if check is not None:
-        news_rows: List[Dict[str, Any]] = []
-        counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
-        news_rows = memo.news["rows"] if memo.news else []
-        diff = incremental.differences(check, _digest(cur, out, ids, world, conns, news_rows))
+        diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
-    else:
-        counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),

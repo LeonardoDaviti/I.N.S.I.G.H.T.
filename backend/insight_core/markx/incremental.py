@@ -274,18 +274,14 @@ def closure(memo: Memo, want: Dict[str, Dict[str, Tuple]], ix: Dict[str, Sequenc
 
 # ---- the check: an incremental reading of this snapshot against the full one -------------------------------
 
-def digest(want: Dict[str, Dict[str, Tuple]], connections: Sequence[Dict[str, Any]], final: Dict[str, str],
-           about: Dict[str, Dict[str, Any]], news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def digest(want: Dict[str, Dict[str, Tuple]], connections: Sequence[Dict[str, Any]],
+           news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """A run's results without its keys or ids: each story by its memberships (post, role, reason, p, call); each
-    typed connection by its ends (a post, or a story's member posts); each News row with its posts and tag."""
-    def members(key: str) -> Tuple:
-        return tuple(sorted(about.get(final.get(key, key), {})))
+    typed connection by its ends (a post, or a story's member posts: the caller maps them) and its answer; each News
+    row with its posts and tag."""
     stories = {tuple(sorted((p, *r) for p, r in ms.items())) for ms in want.values()}
-    conns = set()
-    for c in connections:
-        a = c["a"] if c["a_kind"] == "post" else members(c["a"])
-        b = c["b"] if c["b_kind"] == "post" else members(c["b"])
-        conns.add((c["a_kind"], a, c["b_kind"], b, c["relation"], round(float(c["p"]), 4), c.get("call")))
+    conns = {(c["a_kind"], c["a"], c["b_kind"], c["b"], c["relation"], round(float(c["p"]), 4), c.get("call"))
+             for c in connections}
     rows = {json.dumps([str(r["id"]), str(r["first_at"]), r["voices"], r["reports"], r["shares"], r["mentions"],
                         round(float(r["score"]), 2), r.get("tag"), [[p["post_id"], p["role"], p.get("name")]
                                                                       for p in r["posts"]]], default=str)
