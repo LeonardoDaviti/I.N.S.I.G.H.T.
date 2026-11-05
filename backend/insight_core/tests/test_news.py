@@ -607,6 +607,23 @@ class NewsJobTests(unittest.TestCase):
                          [(normalize_url(self.recent), "report"), (normalize_url(self.essay), "report")])
         self.assertNotIn("scope_role", self._mine_classics()[0])
 
+    def test_one_source_is_named_first_among_a_classics_citers(self):
+        """Issue 0105: on one source's page its own voices lead a classic's citers (a Reddit author with its
+        subreddit as `place`); elsewhere the order stays first citation first, with no place."""
+        self._classics()
+        sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
+        self._post(sub, site="reddit", hours_ago=24 * 300,
+                   html=f'submitted by <a href="https://www.reddit.com/user/alice"> /u/alice </a> {self._link(self.essay)}')
+        self._job()
+
+        def citers(scope):
+            essay = next(c for c in self._mine_classics(scope) if c["url"] == normalize_url(self.essay))
+            return [(c["name"], c.get("place")) for c in essay["citers"]]
+
+        self.assertEqual(citers("all"), [("Xeno", None), ("Yolk", None), ("u/alice", None)])
+        self.assertEqual(citers(f"source:{self.y}"), [("Yolk", None), ("Xeno", None), ("u/alice", None)])
+        self.assertEqual(citers(f"source:{sub}"), [("u/alice", "r/sub"), ("Xeno", None), ("Yolk", None)])
+
 
 @requires_test_db
 class DiscoverClassicsTests(unittest.TestCase):

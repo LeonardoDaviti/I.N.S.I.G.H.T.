@@ -158,8 +158,9 @@ export interface Classic {
   first_at: string; last_at: string;
   /** One of your sources cited it in the last 7 days. */
   cited_again: boolean;
-  /** Each voice once, at its first citation, first first. */
-  citers: { name: string; at: string }[];
+  /** Each voice once, at its first citation, first first; on one source's page its own voices first, a Reddit
+   *  author with `place` its subreddit (issue 0105). */
+  citers: { name: string; at: string; place?: string | null }[];
   read_at: string | null; later_at: string | null;
 }
 export interface ClassicsResponse { success: true; classics: Classic[]; }

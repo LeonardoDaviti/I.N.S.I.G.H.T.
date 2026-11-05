@@ -9,7 +9,7 @@ import type { Classic, ClassicsResponse, SearchOrder } from '../../services/api'
 import { UNREAD_COUNTS_KEY } from '../../hooks/useFeed';
 import { errorMessage } from '../../lib/apiError';
 import { postHref } from '../../lib/feedContext';
-import { citedBy, classicTitle, scopeRoleWords, type ScopedClassic } from '../../lib/classics';
+import { citedBy, classicRoleWords, classicTitle, type ScopedClassic } from '../../lib/classics';
 import { sourceLabelList } from '../../lib/sourceLabel';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 
@@ -44,8 +44,8 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
   const title = classicTitle(classic);
   const read = Boolean(classic.read_at);
   const later = Boolean(classic.later_at);
-  // On a source's page (issue 0077): the source's part, when the API sends it.
-  const role = scopeRoleWords(classic);
+  // On a source's page (issue 0077): the source's part, when the API sends it ("Cited it", issue 0105).
+  const role = classicRoleWords(classic);
   const titleClass = `rounded-sm text-left underline-offset-4 hover:underline hover:decoration-fg-3 focus-visible:underline ${FOCUS_RING}`;
   return (
     <li data-classic className="reader-row group flex items-start gap-3 rounded-md border border-line py-2 pl-3 pr-1.5 hover:border-line-strong sm:gap-4 sm:pl-4">
