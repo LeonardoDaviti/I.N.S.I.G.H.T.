@@ -18,11 +18,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
-from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY
+from insight_core.db.repo_posts import FULL_TEXT_FLAG, MOVED_KEY, PAGE_READ_KEY, PAGE_TRIES_KEY
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.utils.addresses import host_of
 from insight_core.utils.content_fingerprints import normalize_text
+from insight_core.utils.url_normalization import normalize_url
 
 # A body shorter than this is probably a teaser. Not measured.
 SHORT_BODY_CHARS = 1400
@@ -30,6 +31,10 @@ SHORT_BODY_CHARS = 1400
 # quarter of the page text. A body under SAME_ARTICLE_MIN_CHARS is not checked. Neither measured.
 OPENING_CHARS = 80
 SAME_ARTICLE_MIN_CHARS = 200
+# A page whose own text is shorter than this and that names another address is a redirect stub
+# (issue 0108: the measured stubs read "Redirecting... Click here if you are not redirected.", 50
+# characters). No article the reader keeps is this short (read_article keeps only 700 and more).
+STUB_PAGE_CHARS = 700
 # Seconds between two article pages of one site.
 PAGE_DELAY_S = 2.0
 # A teaser whose page read failed: read at most MAX_PAGE_TRIES times in all, RETRY_APART apart,
@@ -71,34 +76,49 @@ def _same_article(current_text: str, page_text: str) -> bool:
 
 
 async def read_article(http: KindHttp, url: str, current_text: str
-                       ) -> Optional[Tuple[str, str, Dict[str, Any], Optional[datetime]]]:
-    """(html, text, how well the page was read, the date the page states) of the article at url,
-    or None when the page holds nothing longer, or is not clearly the same article (the feed body
-    is the better version then). A date after now (a clock off) is no date.
+                       ) -> Optional[Tuple[str, str, Dict[str, Any], Optional[datetime], Optional[str]]]:
+    """(html, text, how well the page was read, the date the page states, where the page moved) of
+    the article at url, or None when the page holds nothing longer, or is not clearly the same
+    article (the feed body is the better version then). A date after now (a clock off) is no date.
 
-    Raises what the request raises (ValueError for an HTTP or network error).
+    A page whose own text is under STUB_PAGE_CHARS and that names another address (a meta refresh,
+    else a canonical link: parsing.moved_to) is a redirect stub (issue 0108): the article is read at
+    that address, one hop, and that address is where it moved (else None). A script alone is not
+    followed.
+
+    Raises what the requests raise (ValueError for an HTTP or network error).
     """
     from insight_core.ingestion.kinds.page_watch import page_date   # page_watch imports generic_rss, this module's caller
 
     page, _ = await http.get_text(url)
     html, fidelity = parsing.read_article_page(page, base_url=url)
     text = parsing.strip_html(html)
+    moved = parsing.moved_to(page, url) if len(text) < STUB_PAGE_CHARS else None
+    if moved:
+        page, _ = await http.get_text(moved)
+        html, fidelity = parsing.read_article_page(page, base_url=moved)
+        text = parsing.strip_html(html)
     if len(text) <= max(len(current_text) + 250, 700) or not _same_article(current_text, text):
         return None
     date = page_date(page)
-    return html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None
+    return html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None, moved
 
 
 def with_full_text(post: Dict[str, Any], html: str, text: str,
-                   fidelity: Optional[Dict[str, Any]] = None, date: Optional[datetime] = None) -> Dict[str, Any]:
-    """The post with its page's body, and the page's date when the feed gave it none (issue 0070)."""
+                   fidelity: Optional[Dict[str, Any]] = None, date: Optional[datetime] = None,
+                   moved: Optional[str] = None) -> Dict[str, Any]:
+    """The post with its page's body, and the page's date when the feed gave it none (issue 0070).
+    A page that moved (issue 0108): the post keeps its address; its canonical is where it moved, and
+    metadata.moved_to that address normalized (what the story job makes one page with it)."""
     return {
         **post,
         "content_html": html,
         "content": text,
         "date": post.get("date") or date,
+        **({"canonical_url": moved} if moved else {}),
         "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
-                     **({PAGE_READ_KEY: fidelity} if fidelity else {})},
+                     **({PAGE_READ_KEY: fidelity} if fidelity else {}),
+                     **({MOVED_KEY: normalize_url(moved)} if moved else {})},
     }
 
 

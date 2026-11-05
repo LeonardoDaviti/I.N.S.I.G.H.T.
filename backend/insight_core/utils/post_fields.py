@@ -26,6 +26,9 @@ TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.|\[(?:…|\.\.\.)\])\s*$")
 
 # Nitter's titles say what a tweet is (issue 0066): "RT by @user: …" a repost by user, "R to @user: …"
 # a reply to user. The text after them is the tweet's.
+# metadata key of where a post's page moved (issue 0108): the normalized address its page's
+# redirect stub named, where its article was read. The story job makes the two one page.
+MOVED_KEY = "moved_to"
 REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
@@ -527,7 +530,8 @@ def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
 
     normalized_url = normalize_url(url)
     author = tweet_author(url)
-    canonical_url = canonicalize_url(url)
+    # A page that moved (issue 0108): its canonical is where it moved; the post keeps its address.
+    canonical_url = canonicalize_url(post.get("canonical_url") if isinstance(post, dict) else None) or canonicalize_url(url)
     url_host = extract_url_host(url)
     language_input = "\n".join(
         part

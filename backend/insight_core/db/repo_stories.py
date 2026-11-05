@@ -16,6 +16,7 @@ from psycopg import Cursor
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
 from insight_core.db.repo_post_parts import PostPartsRepository
+from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
@@ -284,7 +285,8 @@ class StoriesRepository:
                    length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
                    pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
-                   CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END
+                   CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END,
+                   p.metadata ->> %(moved)s
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
@@ -292,7 +294,7 @@ class StoriesRepository:
                                                          WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
             """,
             {"html": sources.html_sources(), "ids": None if ids is None else list(ids),
-             "linking": None if linking is None else list(linking)},
+             "linking": None if linking is None else list(linking), "moved": MOVED_KEY},
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
@@ -300,7 +302,7 @@ class StoriesRepository:
              "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {},
              "shown_title": r[12], "reply_to": r[13], "quoted": r[14], "quoted_words": (r[15] or {}) if r[7] else {},
              "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "opening": r[18],
-             "precision": r[19]}
+             "precision": r[19], "moved_to": r[20]}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
