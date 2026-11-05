@@ -395,12 +395,17 @@ def plan_posts(cur: Cursor, kind: str, *, days: int = PLAN_DAYS, limit: int = PL
     return added
 
 
-def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS,
-                    now: Optional[datetime] = None) -> Iterable[Tuple[Post, str]]:
+def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Optional[datetime] = None,
+                    threads: Optional[bool] = None) -> Iterable[Tuple[Post, str]]:
     """F1's checks over Mark IX's current stories (pipeline.plan), as (post, input), without writing: every member
     of a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
-    roundup, of 20 words or more unless a roundup. Stories with a member in the last `days` (None: every story).
-    Mark IX is only read."""
+    roundup, of 20 words or more unless a roundup; with `threads` (default: the decision job's
+    `Config.check_threads`), a member joined by `thread` too. Stories with a member in the last `days` (None: every
+    story). Mark IX is only read."""
+    if threads is None:
+        from insight_core.markx.decide import Config   # one setting for both planners (decide imports this module)
+        threads = Config().check_threads
+    certain = CERTAIN - {"thread"} if threads else CERTAIN
     cur.execute(
         """SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
             WHERE %(days)s::int IS NULL
@@ -424,7 +429,7 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS,
             if p.kind in NOT_VOICE:
                 continue
             roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
-            if (why.get(p.id) in CERTAIN or words(p) < MIN_WORDS) and not roundup:
+            if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
                 continue
             yield p, check_input(p, [m for m in side if m.id != p.id])
 

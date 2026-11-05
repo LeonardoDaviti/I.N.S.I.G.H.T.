@@ -62,6 +62,11 @@ class Rules(unittest.TestCase):
         self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "quote"), D.Member("c", "report", "citation")]
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:c"})   # a quote is not a guess
 
+    def test_a_member_joined_by_thread_is_checked_but_not_in_the_prototypes_config(self):
+        self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "citation"), D.Member("c", "report", "thread")]
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
+        self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
+
     def test_a_one_voice_story_is_not_checked(self):
         self.posts["b"] = post("b", "s1", 1)
         self.stories = {"A": story("a", "b")}

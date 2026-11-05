@@ -399,6 +399,25 @@ class GuidesAndInputs(_Api):
         self.assertGreaterEqual(got["tasks"], 1)
         self.assertEqual(got["would_change"], 1)     # the member's question now shows the late post too
 
+    def test_a_member_joined_by_thread_is_checked_unless_switched_off(self):
+        """The S5 review's W1: a thread Mark IX hung on a story by its root's citation is checked reply by reply."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
+        root = self.post(title="Benchmarks of many models", at=t0 + timedelta(hours=1))
+        reply = self.post(title="More benchmark numbers", at=t0 + timedelta(hours=2))
+        story = origin
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v', NULL), (%s, %s, 'report', 'v', 'citation'), "
+                         "(%s, %s, 'report', 'v', 'thread')", (story, origin, story, root, story, reply))
+        with self.conn.transaction():
+            asked = {p.id for p, _ in tasks.check_questions(self.cur, days=1)}
+            without = {p.id for p, _ in tasks.check_questions(self.cur, days=1, threads=False)}
+        self.assertTrue({root, reply} <= asked)
+        self.assertIn(root, without)
+        self.assertNotIn(reply, without)
+
     def test_plan_posts_takes_the_newest_of_the_last_30_days_once(self):
         now = datetime.now(timezone.utc) + timedelta(days=3650)    # a window no other suite's posts reach
         fresh = self.post(at=now - timedelta(hours=2))

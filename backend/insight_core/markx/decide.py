@@ -65,13 +65,14 @@ class Config:
     connect_days: int = 30          # ... at most this far apart ...
     connect_voices: int = 2         # ... both stories of this many voices or more ...
     connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first
+    check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -176,7 +177,8 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                story_pairs: Iterable[Tuple[str, str, float]], config: Config = Config(),
                in_window: Optional[Callable[[str], bool]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
-    2+ voice story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
+    2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
+    unrelated replies on a story, which its root's check never reaches); for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
     cosine) not asked yet. `kinds`: each post's reading kind. `in_window(a)`: whether a pair's earlier post is in
     the window decided (the prototype's context posts were not)."""
@@ -186,6 +188,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         for m in ms:
             home.setdefault(m.post, []).append(key)
     nv = {key: voices(posts, [m.post for m in ms]) for key, ms in members.items()}
+    certain = CERTAIN - {"thread"} if config.check_threads else CERTAIN
 
     def side(key: str) -> List[str]:
         return [m.post for m in members[key] if m.role == "report"] or [m.post for m in members[key]]
@@ -200,7 +203,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             if m.post == origin or p.kind in NOT_VOICE:
                 continue
             roundup = kinds.get(m.post) == "roundup"
-            if m.why in CERTAIN and not roundup:
+            if m.why in certain and not roundup:
                 continue
             if p.words < config.min_words and not roundup:
                 continue                                       # rule A: nothing to judge, keep
