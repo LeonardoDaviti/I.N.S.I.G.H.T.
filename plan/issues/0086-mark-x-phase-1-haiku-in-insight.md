@@ -190,8 +190,7 @@ Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch
    - Merging S1 needs no rebase: its files are all new.
 
 ## Part B: embeddings and candidates (server)
-
-## Part B: embeddings and candidates (server)
+The embedder and its timing below are superseded by the build plan's corrections 6 (the embedder runs on your device, `embed` is a task kind, no compose service and no runner hook) and by S2's measured E8 (Built, below). The candidates are as written.
 - **The embedder:**
   - BGE-M3 runs in a new compose service `embedder` (llama.cpp `llama-server --embedding`, the GGUF in a volume), on the CPU or the 1660 Ti, as E8 decides;
   - the model file is downloaded once, at deploy, by you;
@@ -207,6 +206,107 @@ Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch
   - Proxy on the development machine (2026-11-05): 48 ms a post on 6 CPU threads, 25 ms on a GPU.
   - So a CPU is enough: a day's posts take seconds, and a 13k archive minutes.
 - **Done when** a server copy's last 30 days are embedded and its candidates match the prototype's on the 16 days it ran: the same pairs at the same thresholds, allowing for the embedder build.
+
+### Built (S2, branch `markx-s2-embed` from `markx-shadow` 15b0537, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded, and the real `claude` was never run. Measured on a scratch copy of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a`, migrated to 0066), never on the server copy itself, with the local llama.cpp build and the dev machine's GGUF (mounted, never copied).
+
+**What changed:**
+- `markx/embed.py` (new):
+  - **The text** is markx embed text v1: markx text v1's title and first 1,500 characters (read from post_parts). The title is left out when the text starts with it, web addresses are removed and spaces squashed, as the prototype embedded (it cut at 1,200; 0086 B says 1,500).
+  - **The embed tasks:** the planner takes every post, newest first, 500 a plan (priority = age in days). The task's input is the text, so two posts with one text are one task; the second post gets the first's vector copied at the next plan.
+  - **The vectors' check:** 2,048 bytes of base64, finite, norm 1 within 0.01. A vector is stored as sent (halfvec is float16), with text_hash = the task's input hash and the GGUF's sha256.
+  - **One build per database:** a vector of another build is refused whole (409). No mx_calls row: a vector isn't a model's answer.
+- `markx/candidates.py` (new): the four sources at the thresholds above, keyed by posts (`post_post`: `a` the earlier post; `story_story`: each Mark IX story by its earliest member post, never its id). Found when vectors arrive, 30 s after the last upload, in a transaction of their own; every source is idempotent. The job also takes the posts whose ent-v3 mentions were written since its last run, so S5's hourly job can call `run`. Mark IX's tables are only read: a burst linker Mark IX hasn't parsed is left out rather than parsed.
+  - `embedding`: the prototype's rule, 8 nearest of either post among other sources' posts within 72 h (saved pages left out), at cosine ≥ 0.65, not one Mark IX story. Story centroids (the mean of their members' vectors) at ≥ 0.70, first posts ≤ 14 days apart.
+  - `link`: Mark IX's parent edges.
+  - `entity`: role `subject`, type model, product, software, paper or dataset, the same name key and version, other sources, ≤ 72 h, not one story.
+  - `burst`: experiment W's late bursts, read as the story rules read links, not one story.
+- `markx/api.py`: `POST /api/markx/embeddings` (one route on S3's router, its contract added to the docstring; the frozen part unchanged).
+- `markx/guides/embed-v1.md`: what an embed task asks (no model reads it; its sha256 travels as every guide's).
+- One entry each in S3's files, the way their docstrings say a kind is added: `schemas.KINDS` (`embed`, with `EMBED_SCHEMA`), `validate.CHECKS` (an embed task posted to /answers is invalid), `tasks.PLANNERS` (`embed`). S3's test of the kinds now counts 12.
+- `scripts/markx-worker`: `--kinds embed --embedder <llama-server> [--embedder-gguf <file>]`.
+  - Each leased batch is one `POST /embedding`; the vectors are scaled to 1, packed as float16 and posted.
+  - The sha256 is the GGUF's, hashed once and remembered. Without `--embedder-gguf`, the file is the one the embedder's `/props` names.
+  - A batch the embedder refuses goes one text at a time.
+  - Exits: 2 when the embedder is unreachable or gives other dimensions; 7 on another build (409/400, nothing spooled). Failed posts are spooled like answers.
+- Tests: `test_markx_embed.py` (13), `test_markx_candidates.py` (13), `scripts/tests/test_markx_worker_embed.py` (10, a fake embedder on 127.0.0.1).
+
+**The last 30 days embedded** (the copy's 5,726 posts from 6 Oct to 5 Nov, through the worker and the API in containers of mine, the embedder on this machine's CPU):
+- 5,800 tasks answered, and 316 posts with a duplicate text got a copied vector. That makes 6,116 posts with a vector: the 30 days' 5,726 and 390 older ones the last leases reached.
+- 0 invalid, 0 errors. 50 candidate runs.
+
+**Candidates found on the 30 days:**
+
+| Source | Pairs |
+|---|---|
+| embedding, posts | 2,741 |
+| embedding, stories | 427 |
+| link | 399 (Mark IX's 400 edges between embedded posts) |
+| burst | 24 |
+| entity | 58 (on 1–5 Nov, from the prototype's recorded ent-v3 answers loaded through S3's path: 477 of 479 valid) |
+
+- **Short posts:** 256 of the 2,741 post pairs have a post under 20 words, mostly a media placeholder ("Image", "[Photo]", "Video"). S5's rule A never judges those, so they cost nothing; they are kept as candidates.
+
+**Against the prototype on its 16 days** (18 Oct–3 Nov, `out/cands.jsonl`, pairs at ≥ 0.65 that v9.12 hadn't put in one story):
+- **The overlap:** 882 of the prototype's 981 pairs (90%) are found.
+- **The prototype's 99 that are missing:**
+  - 77: my cosine is under 0.65 because my text is longer (see the texts below);
+  - 19: the pair is not among either post's 8 nearest in my pool, which holds posts the prototype's didn't;
+  - 2: one Mark IX story today;
+  - 1: the build (the same text, cosine 0.6508 against 0.65).
+- **My 515 extra:**
+  - 329: a post not in the prototype's pool (posts it never read: the server's, and back-dated ones);
+  - 155: the prototype's cosine was under 0.65 with its shorter text (and 1 with the same text);
+  - 18: the 8 nearest differ with the pools;
+  - 12: in the 8 nearest when found, outranked by posts embedded later, and kept (keep everything).
+- **The texts:** 1,643 of 3,191 posts have the prototype's exact text. Of the 1,548 that differ:
+  - 1,350 start the same, and mine is longer (1,500 against 1,200 characters);
+  - 52 share their first 200 characters;
+  - 63 start differently (post_parts' title or text, or the address rule);
+  - 83 are copied duplicates.
+- **The build is not a cause:** the same GGUF and llama.cpp binary as the prototype. The same text's vectors agree at cosine ≥ 0.9989 (median 0.99984), CPU against the prototype's GPU. The bench below shows the same spread between configurations.
+- **Entities:** the prototype's rule (o4b, before its exclusions) restricted to specific types gives 66 pairs on 1–5 Nov; S2 finds 58 of them, and the other 8 are one Mark IX story today. S2 has no pair of its own. All types would give 113.
+- **Bursts:** experiment W's script, run unchanged on the copy, finds 63 late-burst pairs over all time. S2's 24 are all among them: 10 touch an embedded post, and 14 are older pairs on pages that new posts link again.
+
+**E8 on this machine** (Ryzen AI Max+ 395; 200 real inputs of 855 characters on average, batches of 100):
+
+| Embedder | ms a post | Memory (peak RSS) |
+|---|---|---|
+| CPU only (`-dev none`), 6 threads, 1 slot | 329 (load 1.8) | 0.88 GB |
+| CPU only, 6 threads, 4 slots | 334 | 0.95 GB |
+| CPU only, 16 threads, 4 slots | 169 | 0.96 GB |
+| `-ngl 0` with the Vulkan device present (the prototype's "CPU") | 43 | 0.25 GB |
+| GPU, all layers (Vulkan) | 26 | 0.27 GB |
+
+- **The 30-day run** was CPU only, 6 threads, at load 10–16 from other agents: 332 ms a post (1,862 s for 5,600). The embedder peaked at 1.17 GB.
+- **0086 B's "48 ms on 6 CPU threads" was not a CPU number.** It was `-ngl 0` with the GPU present, which llama.cpp still uses for the big batches (43 ms here).
+- **On a CPU alone, BGE-M3 takes about 1/3 s a post on 6 threads:**
+  - a day's ~190 posts take about a minute;
+  - the 30 days take 32 minutes;
+  - all 49k posts take about 4.5 hours (2.3 on 16 threads, about 20 minutes on this GPU).
+- Corrections 6 already moved embedding to the device, so a slow CPU only slows the backfill.
+
+**Upload size** (bodies as the worker sends them, 100 vectors a request):
+- **2,811 bytes a post** (base64 is 4/3 of the 2,048 raw bytes): 16.3 MB for the 30 days' 5,800 vectors, and 139 MB for all 49,384 posts (about 130 MB after duplicate texts).
+- As JSON numbers, it would be 13.8 KB a post. The bodies aren't compressed (gzip would save 27%).
+- Corrections 6's 10 MB and 85 MB counted raw bytes.
+- **0079's export** (corrections 7): 12.9 KB of CSV text a vector, about 4.3 KB deflated. That's about 212 MB in the zip for all 49k posts (S1 measured 182 MB for 41.6k with fake vectors).
+
+**Tests:**
+- The whole backend suite (`./run-tests.sh` in the image, at 527893c): **1,567 tests OK**.
+  - A first run had 1 failure, `test_search`'s `test_only_matching_posts_in_the_scope_and_dates_compete`, while the real-data check and the embedding loaded the machine.
+  - That test passes alone (39/39) and in the second full run; it touches no Mark X code.
+- The worker: 36 + 10 OK.
+
+**The real-data check** (`scripts/realdata-check.sh --base markx-shadow --head markx-s2-embed insight_lab`, head 527893c, Mark X off; report `plan/research/lab/checks/markx-s2-embed-2026-11-05.md`): **PASS, 0 change.**
+- Titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover are all unchanged, and so is every invariant.
+- No case changes state against the base.
+- `discover-one-owner-one-card` is marked fail and passes on both sides (not S2's).
+
+**Open:**
+- **A post whose text changes is not embedded again.** `put_embedding` replaces a vector whose text hash differs, but the planner only takes posts with no vector. A text-version bump needs a re-embed pass.
+- **The debounce is in memory.** Posts noted but not yet run are lost on a restart (their neighbours embedded later still find them), and the first run of a process also takes the last day's mentions.
+- **The text cut:** 1,500 characters (0086 B) against the prototype's 1,200 moves pairs across 0.65 both ways: 77 of the prototype's fall under it, and 155 others rise over it. The prototype's recall (88% in the top 10) was measured at 1,200, so E1's labels should re-pick the bar or the cut.
 
 ## Part C: tasks, guides and the worker API (server)
 **Task kinds:** the evidence each sees, and how its answer is checked before it is stored as valid.

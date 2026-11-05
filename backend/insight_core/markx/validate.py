@@ -273,7 +273,8 @@ def _translate(a: Dict[str, Any], input: str) -> Optional[str]:
 
 
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
-          "translate": _translate}
+          "translate": _translate,
+          "embed": lambda answer, input: "an embed task is answered at POST /api/markx/embeddings, not here"}
 
 
 def unwrap(kind: str, answer: Any) -> Any:

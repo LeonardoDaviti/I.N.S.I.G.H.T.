@@ -264,9 +264,9 @@ class TheHelpers(unittest.TestCase):
 
 
 class TheKindsAndGuides(unittest.TestCase):
-    def test_eleven_kinds_each_with_a_guide_file_and_a_schema(self):
+    def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
-                                              "headline", "briefing", "translate"})
+                                              "headline", "briefing", "translate", "embed"})   # embed: S2
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
