@@ -87,17 +87,17 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built, not deployed |
 | [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft); after the incremental job |
 | [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | built (v9.15), not merged |
-| [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | built, not merged (v9.16) |
-| [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | spec (v9.16) |
+| [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | built, pushed (v9.16) |
+| [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | F + K built, pushed (v9.16) |
 | [0078](0078-channels-one-source-per-voice.md) | Channels: one source for one company, person or blog, made of its channels | on hold (owner) |
-| [0079](0079-export-everything-from-the-web.md) | Export everything from the web: one click for a full database dump (and the sources list) | built, merged (v9.16) |
-| [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | spec, decided (v9.17) |
+| [0079](0079-export-everything-from-the-web.md) | Export everything from the web: one click for a full database dump (and the sources list) | built, pushed (v9.16) |
+| [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | built, pushed (v9.16) |
 | [0081](0081-reading-walled-and-feedless-sites.md) | Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that is all | on hold (owner) |
-| [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, not merged (v9.16) |
-| [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row; a post page says "In News" | 1 merged (v9.16); 2 (a roundup never leads) and 3 (a post page names its News row) built, not merged |
-| [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | spec (v9.16) |
+| [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, pushed (v9.16) |
+| [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row; a post page says "In News" | 1–3 built, pushed (v9.16) |
+| [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | A built, pushed (v9.16); B spec |
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
-| [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, not merged (v9.16) |
+| [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, pushed (v9.16) |
 | [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | measured |
 | [0086](0086-mark-x-phase-1-haiku-in-insight.md) | Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first; storage, tasks, the worker, decisions, the Mark X page, labels | spec, ready to build ([build plan](../INSIGHT_mark_x_shadow_build_plan.md)) |
 | [0087](0087-gemma-fine-tuned-on-haiku.md) | A local Mark X: Gemma 4 E4B fine-tuned on Haiku's answers | future |
@@ -114,6 +114,9 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0100](0100-study-pages.md) | Study pages: one question or topic, everything needed to understand it on one page | future |
 | [0101](0101-discover-with-mark-x.md) | Discover with Mark X: coverage gaps by entity, sources found by attribution, and tracks | future |
 | [0102](0102-archives-for-history.md) | Archives for history: back to a date, and a feed's past through its site | spec, draft (9.x) |
+| [0103](0103-v9.17-threads-and-news-leads.md) | v9.17: a thread follows the tweet it quotes; a News row with no origin leads with the release and names followed sources first | spec (v9.17) |
+| [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | spec (v9.17) |
+| [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | spec (v9.17) |
 
 ## Analysis archive
 
