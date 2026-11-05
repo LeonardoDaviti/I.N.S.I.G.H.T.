@@ -108,4 +108,21 @@ describe('the post page panel', () => {
     expect(screen.getByText('follows up')).toBeInTheDocument();
     expect(getMarkxPost).toHaveBeenCalledWith('p1');
   });
+
+  it('says a story with no headline yet by its count, once', async () => {
+    const panel: MarkxPostPanel = {
+      post_id: 'p1', read: true, reading: null, entities: [], connections: [],
+      stories: [
+        { id: 's1', headline: null, first_at: now, posts: 2, role: 'member', reason: 'rule:citation', p: null, relation: null, words: null },
+        { id: 's2', headline: 'Acme releases Widget 4.1', first_at: now, posts: 3, role: 'member', reason: 'rule:citation', p: null, relation: null, words: null },
+      ],
+    };
+    renderWithProviders(<MarkXPanel postId="p1" />, { api: makeFakeApi({ getMarkxPost: vi.fn().mockResolvedValue(panel) }) });
+    await userEvent.click(screen.getByText('Mark X'));
+    const stories = await screen.findByRole('region', { name: 'Mark X stories' });
+    const [untitled, titled] = within(stories).getAllByRole('listitem');
+    expect(untitled.textContent).toMatch(/^A story of 2 posts(?!.*2 posts)/);
+    expect(untitled.textContent).not.toMatch(/·/);
+    expect(titled.textContent).toMatch(/^Acme releases Widget 4\.1 · 3 posts/);
+  });
 });
