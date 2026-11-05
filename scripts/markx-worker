@@ -16,7 +16,7 @@ A cycle
    --kinds order; a kind is done when the server returns fewer tasks than asked. At most --batches leases.
    With --days <N|all> each lease carries `days`: the server plans the read, entities and embed tasks of that
    window first (newest first), whatever the page's reading window; without it, the page's window holds.
-3. Each batch is one call:
+3. Each batch is one call (a merge: one task a call, --per-call; 0112 Decided 8):
        claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
               --no-session-persistence --strict-mcp-config
    with the prompt on stdin: an instruction, then each task as "### ITEM id: <task id>\\n<input>". Haiku
@@ -138,6 +138,9 @@ from pathlib import Path
 EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
 DEFAULT_KINDS = "read,entities,check,join,pair,merge,connect,card,headline,briefing,translate"
+# Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
+# the lease still takes --batch of them. --per-call overrides it.
+PER_CALL = "merge=1"
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
@@ -343,6 +346,17 @@ def days_arg(value):
     if v == "all" or (v.isdigit() and 1 <= int(v) <= 36500):
         return v
     raise argparse.ArgumentTypeError('a number of days (1 to 36500) or "all"')
+
+
+def per_call_arg(value):
+    """--per-call: "kind=N[,kind=N]", N at least 1: {kind: N}."""
+    out = {}
+    for part in [x.strip() for x in value.split(",") if x.strip()]:
+        kind, eq, n = part.partition("=")
+        if not eq or not kind.strip() or not n.strip().isdigit() or int(n) < 1:
+            raise argparse.ArgumentTypeError('kind=N[,kind=N] with N at least 1, e.g. "merge=1"')
+        out[kind.strip()] = int(n)
+    return out
 
 
 def system_for(guide):
@@ -820,11 +834,16 @@ class Worker:
             return
         retry = []
         for b, todo in zip(batches, again):
-            for k in range(0, len(todo), self.a.batch):
-                retry.append(Batch(b.kind, b.guide_id, b.guide, todo[k:k + self.a.batch], b.lease_until))
+            n = self.per_call(b.kind)
+            for k in range(0, len(todo), n):
+                retry.append(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until))
         if retry:
             with ThreadPoolExecutor(self.a.parallel) as ex:
                 list(ex.map(self.second, retry))
+
+    def per_call(self, kind):
+        """Tasks per call of `kind`: --per-call's, else --batch."""
+        return max(1, min(self.a.batch, (self.a.per_call or {}).get(kind, self.a.batch)))
 
     def lease(self, kind):
         w = self.server.work(kind, self.a.batch, self.a.worker, self.a.days) or {}
@@ -848,7 +867,8 @@ class Worker:
             if g.get("sha256") and hashlib.sha256(g["body"].encode()).hexdigest() != g["sha256"]:
                 self.log("guide-sha256-mismatch", kind=k, guide=gid, tasks=len(ts))
                 continue
-            out.append(Batch(k, gid, g, ts, until))
+            n = self.per_call(k)
+            out += [Batch(k, gid, g, ts[i:i + n], until) for i in range(0, len(ts), n)]
         self.log("leased", kind=kind, tasks=len(tasks), lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
 
@@ -923,6 +943,9 @@ def main(argv=None):
     c = sub.add_parser("cycle", parents=[common], help="lease, ask Haiku, post")
     c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")
     c.add_argument("--batch", type=int, default=20, help="tasks per call (default 20)")
+    c.add_argument("--per-call", type=per_call_arg, default=per_call_arg(PER_CALL),
+                   help="tasks per call for some kinds, at most --batch (default " + PER_CALL + ": a merge is asked alone; "
+                        "the lease still takes --batch)")
     c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
     c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3; start at 10 at most and raise "
                    "it in steps: about 100 at once broke the device's DNS)")
