@@ -128,6 +128,8 @@ PRESS = "https://press.example/2026/03/press-release-on-models"
 TWEET = "https://x.com/writer_x/status/1900000000000000101"
 GUEST = "https://writer-one.github.io/guest-post-on-indexes"
 SAVED = "https://saved.example/essays/on-careful-measurement"
+PAPER = "https://preprints.example/abs/2603.01234"
+PAPER_PDF = "https://preprints.example/pdf/2603.01234v2"
 TOOL_PREVIEW = (f'<p>Worth a look</p><blockquote cite="{L4}"><cite><b>Tool Site</b></cite></br>'
                 '<b>Fast Tokenizer Ships</b></br>Tokenizing is now faster.</blockquote>')
 QUOTE = (f'<p>Great thread</p><blockquote><b>Writer X</b>Thread on evaluation methods<footer> — <cite>'
@@ -307,6 +309,10 @@ def posts() -> List[Dict[str, Any]]:
           html="<p>A new tokenizer release</p>"),
         p("t9", "s-x2", _at(152), "R to @author_y: and the routing numbers hold up", "https://x.com/author_y/status/1900000000000000303",
           links=[(SELF_A, "t7")], author="author_y", html=_self_quote("and the routing numbers hold up", SELF_A)),
+        # A paper's abstract and its PDF are one page (issue 0106): two voices linking either path, one story
+        p("q1", "s-gamma", _at(190), "Notes on a routing preprint", "https://gamma.example/research/routing-preprint",
+          links=[(PAPER, None)]),
+        p("q2", "s-tg1", _at(191), "Препринт", "https://t.me/sample_channel/320", links=[(PAPER_PDF, None)], html="<p>p</p>"),
         p("v1", "s-beta", _at(170), "One address", SAME_PLACE),
         p("v2", "s-hn", _at(170 + 30 * 24), "One address, a month on", SAME_PLACE, html="<p>c</p>"),
         p("v3", "s-red", _at(170 + 60 * 24, 1), "One address, too late", SAME_PLACE, html=_reddit("sample_user")),

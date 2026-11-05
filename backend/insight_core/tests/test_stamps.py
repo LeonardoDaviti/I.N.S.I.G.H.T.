@@ -55,6 +55,11 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual(stories["t9"].parents["t9"][:3:2], ("t7", "thread"))
         self.assertNotIn("t8", stories, "the tweet in between joins nothing")
 
+    def test_a_papers_abstract_and_pdf_are_one_page(self):
+        # Issue 0106: a paper id names one page on its host, whatever its path.
+        [story] = [s for s in sample_stories() if s.origin_url == stamps.PAPER]
+        self.assertEqual({p.id for p in story.posts}, {"q1", "q2"})
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")
@@ -87,6 +92,9 @@ class StampsFollowTheRulesTests(unittest.TestCase):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         # 0103's: a reply threaded under the account's previous tweet, not the one it quotes
         with mock.patch.object(story_rules, "own_quote", lambda post: None):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        # 0106's: a paper's paths as two pages
+        with mock.patch.object(story_rules, "paper_id", lambda url: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):

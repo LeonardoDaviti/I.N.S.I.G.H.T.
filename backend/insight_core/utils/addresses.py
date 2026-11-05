@@ -11,9 +11,10 @@ its publication, whether it is a tweet and whose, the account it is under on a p
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, Tuple
 from urllib.parse import urlparse, urlsplit
 
 from insight_core.utils.url_normalization import TWEET_PATH
@@ -121,10 +122,51 @@ def tweet_author(url: Optional[str]) -> Optional[str]:
     return match.group(1) if match else None
 
 
+# A paper's id in its address (issue 0106; 0080's paper-source shapes): a preprint's yymm.nnnnn, its
+# version and file aside, as the address's last segment; a DOI (10.<registrant>/<suffix>) to the end of
+# the path, a version or a file ending aside.
+_PREPRINT = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$", re.I)
+_DOI_PREFIX = re.compile(r"^10\.\d{4,9}$")
+_DOI_END = re.compile(r"(?:\.full)?(?:\.pdf|\+html)?$", re.I)
+_FILE_SEGMENTS = frozenset({"pdf", "epdf", "pdfdirect", "download"})
+
+
+@lru_cache(maxsize=1 << 15)
+def paper_id(url: Optional[str]) -> Optional[str]:
+    """The paper an address names on its host (issue 0106), whatever the path around it: the abstract,
+    its PDF, its HTML and each version are one page (`arxiv.org/abs/2005.14165`, `/pdf/2005.14165v2`;
+    `/doi/10.1145/123`, `/doi/pdf/10.1145/123`). The id sits in the first three segments; None when the
+    address names none."""
+    _, _, rest = bare(url or "").partition("/")
+    segments = [s for s in re.split(r"[?#]", rest, maxsplit=1)[0].split("/") if s]
+    for i, segment in enumerate(segments[:3]):
+        found = _PREPRINT.match(segment)
+        if found and i == len(segments) - 1:
+            return found.group(1)
+        if _DOI_PREFIX.match(segment) and i < len(segments) - 1:
+            doi = _DOI_END.sub("", "/".join(segments[i:]).lower())
+            return re.sub(r"(?<=\d)v\d+$", "", doi)
+    return None
+
+
+def paper_file(url: str) -> bool:
+    """An address of a paper's file, not its page: a .pdf, or a pdf or download segment before its id."""
+    _, _, rest = bare(url).partition("/")
+    path = re.split(r"[?#]", rest, maxsplit=1)[0].lower()
+    return path.endswith(".pdf") or any(s in _FILE_SEGMENTS for s in path.split("/"))
+
+
+def paper_page_order(url: str) -> Tuple[bool, bool, int, str]:
+    """Which address of one paper names it (issue 0106): its page before its file, then one without a
+    query (a tracking one), then the shortest (no version), then the first in order."""
+    return (paper_file(url), "?" in url, len(url), url)
+
+
 def x_account(user: str) -> str:
     """An X account as the rules key it (account_key's form): x.com/<user>, lower case."""
     return "x.com/" + user.lower()
 
 
 __all__ = ["PLATFORM_SITES", "ACCOUNT_NAMESPACES", "bare", "host_of", "site_of", "same_site", "blog_site",
-           "publication_of", "account_key", "is_tweet", "tweet_author", "x_account"]
+           "publication_of", "account_key", "is_tweet", "tweet_author", "x_account", "paper_id", "paper_file",
+           "paper_page_order"]
