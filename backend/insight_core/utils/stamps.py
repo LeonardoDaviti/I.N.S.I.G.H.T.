@@ -357,6 +357,10 @@ def posts() -> List[Dict[str, Any]]:
           links=[(_stored(TRACKED[0]), None)]),
         p("w2", "s-two", _at(341), "Links for the week", "https://writer-two.github.io/links-for-the-week",
           links=[(_stored(TRACKED[1]), None)]),
+        # A date is no name (issue 0111): a column's two dated issues and a question "at <month> <year>" join nothing
+        p("dt1", "s-gamma", _at(380), "Gamma Column: On Tools (18 Mar 2026)", "https://gamma.example/research/column-on-tools"),
+        p("dt2", "s-one", _at(381), "Which small model is best at Mar 2026?", "https://writer-one.github.io/2026/03/which-model"),
+        p("dt3", "s-gamma", _at(404), "Gamma Column: On Lists (19 Mar 2026)", "https://gamma.example/research/column-on-lists"),
     ]
 
 

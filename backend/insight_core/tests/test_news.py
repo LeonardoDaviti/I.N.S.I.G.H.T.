@@ -154,6 +154,19 @@ class NameTests(unittest.TestCase):
         self.assertIn("v4.1 flash 1017", found)
         self.assertTrue(all("slug" in ids for ids in found.values()), found)
 
+    def test_a_date_is_no_name(self):
+        # Issue 0111: "<month> <year>" surged and joined a column's dated issue with an unrelated question
+        # (the three date surges on the server's copy, all three of unrelated posts).
+        for title, date in (("Column: Autodoxing (02 Nov 2026)", ("02 nov", "nov 2026", "02 nov 2026", "autodoxing 02 nov")),
+                            ("The best small model at Nov 2026?", ("nov 2026",)), ("Roundup #44: July 2026", ("july 2026",)),
+                            ("Notes from March 20, 2026", ("march 20", "march 20 2026")), ("June 10th update", ("june 10th",)),
+                            ("Итоги: Ноябрь 2026", ("ноябрь 2026",))):
+            self.assertFalse(names(title) & set(date), title)
+        self.assertIn("june model 4", names("June Model 4 is out"), "a month word beside no day or year names it")
+        self.assertIn("q3 2026", names("Q3 2026 results"), "not a month")
+        posts = self.burst("A column (02 Nov 2026)") + [post("q", "s4", hours=6, title="Which model at Nov 2026?")]
+        self.assertEqual(surges(posts, followed("s1", "s2", "s3", "s4")), [])
+
     def test_arxiv_titles_are_left_out(self):
         self.assertEqual(surges(self.burst(kind="arxiv"), followed("s1", "s2", "s3")), [])
 

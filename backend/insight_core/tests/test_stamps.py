@@ -116,6 +116,10 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         # 0109's: a mail tracker's query as another page
         with mock.patch.object(url_normalization, "is_tracking_key", lambda key: key.startswith("utm_")):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        # 0111's: a date as a name
+        from insight_core.utils import news_rules
+        with mock.patch.object(news_rules, "dated", lambda words: False):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):
             self.assertNotEqual(posts_service.stored_bodies_stamp.__wrapped__(), bodies)

@@ -93,6 +93,22 @@ def _lower(words: Sequence[str]) -> List[str]:
     return [" ".join(SEPARATOR.sub(" ", w.lower().strip(_TRIM)).split()) for w in words]
 
 
+# A date is no name (issue 0111): a month beside a day or a year ("Nov 2026", "02 Nov", "March 20") names a
+# day, not one event. On the server's copy (2026-11-05) the only three date surges ever ("may 2026", "july 2026",
+# "nov 2026") each joined unrelated posts (a column's dated issues, "the best model at <month>?" questions,
+# monthly roundups). English and Russian months, their short forms; a day 1-31 (its 1st, 2nd...); a year.
+MONTH = re.compile(r"^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?"
+                   r"|nov(ember)?|dec(ember)?|январ[ьяе]|феврал[ьяе]|марта?|апрел[ьяе]|ма[йяе]|июн[ьяе]|июл[ьяе]"
+                   r"|августа?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])$")
+DAY_OR_YEAR = re.compile(r"^(0?[1-9]|[12]\d|3[01])(st|nd|rd|th)?$|^(1\d|2\d)\d\d$")
+
+
+def dated(words: Sequence[str]) -> bool:
+    """Whether a name's words (lowercase) hold a date: a month beside a day or a year."""
+    return any(MONTH.match(w) and any(DAY_OR_YEAR.match(x) for x in words[max(i - 1, 0):i] + words[i + 1:i + 2])
+               for i, w in enumerate(words))
+
+
 def names(title: Optional[str]) -> Set[str]:
     """The names in a title, lowercase, its parts' separators one ("steam frame", "gpt 6", "opus 5.5")."""
     words = _words(title)
@@ -105,6 +121,8 @@ def names(title: Optional[str]) -> Set[str]:
             if not all(x[0].isupper() or any(c.isdigit() for c in x) for x in w):
                 continue
             if all(x.replace(".", "").replace("$", "").isdigit() for x in w):
+                continue
+            if dated([x.lower().strip(_TRIM) for x in w]):
                 continue
             if n == 1:
                 letters = [c for c in w[0] if c.isalpha()]
