@@ -77,8 +77,10 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(lead(posts, sharers=["hub", "blog"]), "hub", "the release page's share, not the later complaint")
         self.assertEqual(lead(posts), "talk", "no page shared: the first report, as before")
         self.assertEqual(lead(posts, origins=["blog"], sharers=["hub"]), "blog", "an origin always leads")
-        self.assertEqual(lead(posts, roundups=["hub"], sharers=["hub", "blog"]), "blog",
+        self.assertEqual(lead(posts, roundups=["hub"], sharers=["hub", "blog"]), "talk",
                          "a roundup sharing the page never leads")
+        self.assertEqual(lead([("first", "report"), ("hub", "share"), ("blog", "report")], sharers=["hub", "blog"]),
+                         "first", "a share after the first report doesn't pass over it")
         self.assertEqual(lead([("hub", "share")], roundups=["hub"], sharers=["hub"]), "hub", "nothing else: as before")
 
 
