@@ -261,6 +261,12 @@ def check_input(post: Post, members: Sequence[Post]) -> str:
     return render_story(card, ms[:STORY_MEMBERS]) + "\n\n" + render_post(post, None)
 
 
+def shows_empty_story(text: str) -> bool:
+    """Whether a check's input shows its story with no member (0112 bug 2; the real-data check's
+    markx.check_empty_story)."""
+    return "\nMembers (earliest first):\n" not in text.split("\n\nPOST\n", 1)[0] + "\n"
+
+
 def join_input(post: Post, reading: Optional[dict], members: Sequence[Post], card: dict) -> str:
     ms = [m for m in _earliest(members) if m.id != post.id]
     return render_story(card, ms[:STORY_MEMBERS]) + "\n\n" + render_post(post, reading)

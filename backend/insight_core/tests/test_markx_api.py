@@ -480,6 +480,23 @@ class GuidesAndInputs(_Api):
         self.assertTrue(text.startswith("STORY\nHeadline: Acme ships Widget 4.1\nMembers (earliest first):\n"), text)
         self.assertNotIn("Headline: \n", text)
 
+    def test_the_real_data_check_counts_a_waiting_check_that_shows_an_empty_story(self):
+        """0112 C: markx.check_empty_story, a check task still to be asked whose input shows a story with no member."""
+        from insight_core.checks import invariants
+        a, b = self.post(title="Acme ships Widget 4.1", text=OWN[0]), self.post(title="Widget 4.1 thoughts", text=OWN[1])
+        posts = tasks.load_posts(self.cur, [a, b])
+        with self.conn.transaction():
+            empty, _ = tasks.add(self.cur, "check", tasks.check_input(posts[b], []), a=b)
+            shown, _ = tasks.add(self.cur, "check", tasks.check_input(posts[b], [posts[a]]), a=b)
+            asked, _ = tasks.add(self.cur, "check", tasks.check_input(posts[a], []), a=a)
+            self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (asked,))
+        self.assertTrue(tasks.shows_empty_story(tasks.check_input(posts[b], [])))
+        self.assertFalse(tasks.shows_empty_story(tasks.check_input(posts[b], [posts[a]])))
+        check, = [i for i in invariants.INVARIANTS if i.name == "markx.check_empty_story"]
+        with self.conn.transaction():
+            ids, of = check.count(invariants.Run(db_url(), self.cur, datetime.now(timezone.utc)))
+        self.assertEqual((ids, of), ([str(empty)], 2))      # waiting: the empty one and the shown one; answered: v10.0's
+
     def test_the_story_a_check_shows(self):
         a, b, c = (tasks.Post(id=x, kind="telegram", source=x, source_id=x, at=datetime(2100, 1, 1, n, tzinfo=timezone.utc),
                               title=x, text="t") for n, x in enumerate("abc"))

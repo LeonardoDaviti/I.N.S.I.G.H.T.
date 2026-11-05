@@ -302,7 +302,7 @@ class ValidToTests(_Rollback):
                               "INSERT INTO mx_labels (item_kind, answer) VALUES ('nonsense', 'x')")
 
 
-REOPEN = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0069_markx_reopen_unnamed_mentions.sql"
+REOPEN = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0069_markx_v10_0_1.sql"
 BUG1 = "answer.mentions[{}]: name missing"
 
 
@@ -343,6 +343,31 @@ class ReopenTests(_Rollback):
         self.cur.execute(REOPEN.read_text(encoding="utf-8"))       # idempotent: nothing more changes
         self.assertEqual(self.row(bug1), ("open", 0, None, None))
         self.assertEqual(self.row(mixed)[:2], ("failed", 3))
+
+    def test_a_waiting_check_that_shows_an_empty_story_is_never_asked(self):
+        """0112 C: v10.0 queued checks against an empty story; v10.0.1 never reads their answers, so the waiting ones
+        are closed as failed, with the reason, not asked. An answered one stays as it was."""
+        from insight_core.markx import tasks
+        empty = "STORY\nHeadline: \n\nPOST\nPlatform: telegram | Source: S\nTitle: T\nText: words"
+        shown = ("STORY\nHeadline: H\nMembers (earliest first):\n- [S, telegram] H — t\n\n"
+                 "POST\nPlatform: telegram | Source: S\nTitle: T\nText: words")
+        self.assertTrue(tasks.shows_empty_story(empty))
+        self.assertFalse(tasks.shows_empty_story(shown))
+        g = self.guide("test-check-v1", "check")
+        waiting, _ = self.task(g, empty, kind="check", subject_kind="post_story")
+        leased, _ = self.task(g, empty + " (leased)", kind="check", subject_kind="post_story")
+        self.cur.execute("UPDATE mx_tasks SET status = 'leased', lease_until = now(), leased_by = 'w' WHERE id = %s", (leased,))
+        answered, _ = self.task(g, empty + " (answered)", kind="check", subject_kind="post_story")
+        self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (answered,))
+        fine, _ = self.task(g, shown, kind="check", subject_kind="post_story")
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))
+        for tid in (waiting, leased):
+            self.cur.execute("SELECT status, last_error, lease_until FROM mx_tasks WHERE id = %s", (tid,))
+            status, error, until = self.cur.fetchone()
+            self.assertEqual((status, until), ("failed", None))
+            self.assertIn("empty story", error)
+        self.assertEqual(self.row(answered)[0], "answered")
+        self.assertEqual(self.row(fine)[0], "open")
 
 
 if __name__ == "__main__":

@@ -417,6 +417,15 @@ def _markx_lease_past(run: Run):
     return out, run.cur.fetchone()[0]
 
 
+def _markx_check_empty_story(run: Run):
+    """A check task still to be asked (open or leased) whose input shows its story with no member (0112 bug 2). v10.0's
+    answered ones stay as they were (keep everything); no decision reads them again (0112 Decided 6)."""
+    from insight_core.markx import tasks
+    run.cur.execute("SELECT id::text, input FROM mx_tasks WHERE kind = 'check' AND status IN ('open', 'leased')")
+    rows = run.cur.fetchall()
+    return sorted(tid for tid, text in rows if tasks.shows_empty_story(text)), len(rows)
+
+
 @dataclass
 class Invariant:
     name: str
@@ -454,6 +463,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("markx.unnamed", "mark x", "a current membership or connection naming no rule nor valid call (Safety 3)", _markx_unnamed),
     Invariant("markx.task_twice", "mark x", "two tasks of one kind, guide and input hash (Safety 4)", _markx_task_twice),
     Invariant("markx.lease_past", "mark x", "a task still leased past its lease (Safety 5)", _markx_lease_past),
+    Invariant("markx.check_empty_story", "mark x", "a check still to be asked that shows its story with no member (0112)",
+              _markx_check_empty_story),
 ]
 
 
