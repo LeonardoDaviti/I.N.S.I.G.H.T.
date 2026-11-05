@@ -192,6 +192,30 @@ class Rules(unittest.TestCase):
         self.assertIn("b", out.about["A"])                              # removed by its check, joined again by meaning
         self.assertEqual([x["change"] for x in out.log], ["remove", "join"])
 
+    def test_a_story_changing_answer_counts_only_once_asked_again_and_agreeing(self):
+        """0112 Decided 8: a join, pair or merge that would change a story is asked a second time; it counts only when
+        the second answer agrees (the same relation, at the bar). (verdict, ask again)."""
+        c = D.Config()
+        same, same2 = v("same_event", 0.9, call="c1"), v("same_event", 0.8, call="c2")
+        self.assertEqual(D.settle("join", [same], c), (None, True))                      # once: not yet
+        got, again = D.settle("join", [same, same2], c)
+        self.assertEqual((got.relation, got.p, got.call, again), ("same_event", 0.8, "c1", False))   # the lower p
+        no = v("different", 0.2, call="c2")
+        self.assertEqual(D.settle("pair", [same, no], c), (no, False))                   # disagrees: the "no" counts
+        dev = v("development", 0.9, call="c2")
+        self.assertEqual(D.settle("pair", [same, dev], c), (None, True))                 # another relation: a third ask
+        self.assertEqual(D.settle("pair", [same, dev, v("development", 0.7, call="c3")], c)[0].relation, "development")
+        self.assertEqual(D.settle("pair", [same, dev, same2], c), (None, False))         # three asks at most
+        self.assertEqual(D.settle("join", [same], D.Config(confirm=False)), (same, False))
+        # a merge: "same event" at 0.85 changes stories; a development at the bar is a connection, never asked again
+        m = v("same_event", 0.9, call="c1")
+        self.assertEqual(D.settle("merge", [m], c), (None, True))
+        self.assertEqual(D.settle("merge", [m, v("same_event", 0.86)], c)[0].p, 0.86)
+        self.assertEqual(D.settle("merge", [v("development", 0.9)], c), (v("development", 0.9), False))
+        # an answer that changes nothing is final at once; the prototype asked once
+        self.assertEqual(D.settle("join", [no], c), (no, False))
+        self.assertEqual(D.settle("join", [same], D.Config.prototype()), (same, False))
+
     def test_a_verdict_reads_the_confidence_as_the_prototype(self):
         self.assertAlmostEqual(D.Verdict.of({"relation": "same_event", "confidence": 70}).p, 0.70)
         self.assertAlmostEqual(D.Verdict.of({"relation": "different", "confidence": 70}).p, 0.30)
@@ -280,6 +304,12 @@ class Job(unittest.TestCase):
     def go(self):
         return D.run(self.cur, now=self.now)
 
+    def twice(self, kind, answer_of):
+        """A story-changing answer counts once asked again (0112 Decided 8): answer, run (the run asks again), answer."""
+        n = self.answer(kind, answer_of)
+        self.go()
+        return n + self.answer(kind, answer_of)
+
     def current(self):
         self.cur.execute("SELECT story_id::text, post_id::text, role, reason FROM mx_story_posts WHERE valid_to IS NULL")
         return self.cur.fetchall()
@@ -307,7 +337,7 @@ class Job(unittest.TestCase):
         repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
         self.read_all([a, b])
         self.go()
-        self.answer("pair", lambda t: {"relation": "same_event", "confidence": 90, "reason": "same release"})
+        self.twice("pair", lambda t: {"relation": "same_event", "confidence": 90, "reason": "same release"})
         out = self.go()
         self.assertEqual(out["changes"], {"new_pair": 1})
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
@@ -356,6 +386,36 @@ class Job(unittest.TestCase):
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, d})
         self.assertEqual(first["tasks_added"].get("check"), 2)
 
+    def test_a_pair_counts_only_once_asked_again(self):
+        """0112 Decided 8: the run asks a story-changing answer again (its task open once more, its first call kept);
+        the next answer that agrees makes the story, one that disagrees doesn't."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
+        c, d = self.post(2, "Beta shipped Gizmo 2"), self.post(3, "Gizmo 2 by Beta is out")
+        repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
+        repo.add_candidate(self.cur, kind="post_post", a=c, b=d, source="embedding", score=0.8)
+        self.read_all([a, b, c, d])
+        self.go()
+        self.answer("pair", lambda t: {"relation": "same_event", "confidence": 90, "reason": "same release"})
+        first = self.go()
+        self.assertEqual(first["changes"], {})                         # once is not enough
+        self.assertEqual(first["tasks_reasked"], {"pair": 2})
+        self.assertEqual(self.current(), [])
+        self.cur.execute("SELECT status, (SELECT count(*) FROM mx_calls c WHERE c.task_id = t.id) FROM mx_tasks t "
+                         "WHERE kind = 'pair'")
+        self.assertEqual(self.cur.fetchall(), [("open", 1), ("open", 1)])
+        self.assertEqual(self.go()["tasks_reasked"], {})               # open: not asked again twice
+        self.answer("pair", lambda t: {"relation": "same_event" if a in str(t["a"]) else "different",
+                                       "confidence": 85, "reason": "same release"})
+        out = self.go()
+        self.assertEqual(out["changes"], {"new_pair": 1})
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
+        self.cur.execute("SELECT sp.p, c.answer->>'confidence' FROM mx_story_posts sp JOIN mx_calls c ON c.id = sp.call_id "
+                         "WHERE sp.valid_to IS NULL AND sp.reason = 'judge:pair'")
+        self.assertEqual(sorted(self.cur.fetchall()), [(0.85, "90"), (0.85, "90")])   # the lower p, the first call
+        self.assertEqual(self.go()["changes"], {"new_pair": 1})        # settled: nothing asked again
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'pair' AND status <> 'answered'")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
     def test_a_short_pair_is_never_asked(self):
         a = self.post(0, "Widget")
         b = self.post(1, "Acme released Widget 4")
@@ -375,7 +435,7 @@ class Job(unittest.TestCase):
         before = checksums(self.cur)
         self.go()
         self.answer("check", lambda t: {"relation": "different", "confidence": 95})
-        self.answer("join", lambda t: {"relation": "same_event", "confidence": 95})
+        self.twice("join", lambda t: {"relation": "same_event", "confidence": 95})
         self.go()
         self.assertEqual(checksums(self.cur), before)
 
@@ -384,8 +444,9 @@ class Job(unittest.TestCase):
         repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
         self.read_all([a, b])
         self.go()
-        self.answer("pair", lambda t: {"relation": "same_event", "confidence": 90})
+        self.twice("pair", lambda t: {"relation": "same_event", "confidence": 90})
         self.go()
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
         self.cur.execute("""SELECT count(*) FROM mx_story_posts sp LEFT JOIN mx_calls c ON c.id = sp.call_id
                              WHERE sp.valid_to IS NULL AND NOT (sp.reason LIKE 'rule:%%' OR c.valid)""")
         self.assertEqual(self.cur.fetchone()[0], 0)

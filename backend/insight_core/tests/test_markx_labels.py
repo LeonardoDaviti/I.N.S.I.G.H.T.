@@ -158,6 +158,9 @@ class Labels(unittest.TestCase):
                                         "confidence": 90 if p == b else 75, "reason": "why " + p[:4]})
         self.answer("pair", lambda p: {"relation": "same_event", "confidence": 65, "reason": "same launch"})
         D.run(self.cur, now=self.now)
+        # a story-changing answer counts once asked again (0112 Decided 8): the run reopened the pair
+        self.answer("pair", lambda p: {"relation": "same_event", "confidence": 65, "reason": "same launch"})
+        D.run(self.cur, now=self.now)
         return a, b, c, d, e
 
     def test_the_queue_offers_the_run_s_decisions_blind_and_keeps_every_answer(self):

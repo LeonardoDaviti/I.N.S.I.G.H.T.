@@ -18,6 +18,8 @@ Two layers:
       7. Late posts (the late-post table): a join of a post more than 72 hours after its story began needs the
          judge's "same event" at the merge bar; a development is a "follows up" connection instead, a reaction
          a "background" one, anything else about it "related"; the story's date never moves.
+      8. Asked again (0112 Decided 8, `settle`): a join, pair or merge that would change a story counts only once a
+         second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept.
     A question is a `Question` with the prototype's id (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
     `merge2:`); a story is keyed, inside one run only, by its Mark IX story's key or a pair's anchor post. Nothing
     keyed so is stored: the job matches its stories to Mark X's by their member posts.
@@ -73,11 +75,12 @@ class Config:
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
+    confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False, check_threads=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -439,6 +442,43 @@ def _first_key(posts: Dict[str, Post], ms: Dict[str, Any]):
     return (0, min(known)) if known else (1,)
 
 
+# ---- asked again (0112 Decided 8) ---------------------------------------------------------------------
+# v10.0's accepted joins and pairs were right 62 of 80 (78%) by a blind judge; the same questions asked again at batch
+# 20 kept 53/59 and 50/54 right (90%, 93%). So a join, pair or merge that would change a story counts only when a
+# second answer agrees.
+
+MAX_ASKS = 3       # a question is asked at most this many times (a first answer, its second, one more on a split)
+
+def changes_story(kind: str, v: Verdict, config: Config = Config()) -> bool:
+    """Whether this answer, if it counted, would change a story: a join or pair "about" at the join bar (a member, or a
+    late post's connection), a merge's "same event" at the merge bar. A merge's development is a typed connection."""
+    if v.p is None:
+        return False
+    if kind == "merge":
+        return v.relation == "same_event" and v.p >= config.tau_merge
+    return kind in ("join", "pair") and v.relation in ABOUT and v.p >= config.tau_join
+
+
+def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
+    """(the verdict that counts, or None for none yet; whether to ask again) from a question's valid answers, oldest
+    first. The newest answer decides: one that changes nothing counts as it is; one that would change a story counts
+    only when the answer before it agrees (the same relation, both at the bar), as one verdict at the lower p, named by
+    the earlier call. Until then the question is asked again, MAX_ASKS times at most."""
+    if not answers:
+        return None, False
+    last = answers[-1]
+    if not changes_story(kind, last, config):
+        return last, False
+    more = len(answers) < MAX_ASKS
+    if not config.confirm:
+        return last, False
+    if len(answers) >= 2:
+        prev = answers[-2]
+        if prev.relation == last.relation and changes_story(kind, prev, config):
+            return Verdict(last.relation, min(prev.p, last.p), prev.reason, prev.call), False
+    return None, more
+
+
 def answered_pairs(questions: Sequence[Question], verdicts: Dict[str, Verdict]) -> List[Tuple[Question, Verdict]]:
     """The questions that have a verdict, with it."""
     return [(q, verdicts[q.tid]) for q in questions if q.tid in verdicts]
@@ -469,6 +509,7 @@ class Ask:
         self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
+        self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind (0112 D8)
 
     def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -502,6 +543,33 @@ class Ask:
     def verdict(self, kind: str, text: str, **kw) -> Optional[Verdict]:
         got = self.answer(kind, text, **kw)
         return None if got is None else Verdict.of(got[0], got[1])
+
+    def later(self, first_call: str) -> List[Verdict]:
+        """The question's valid answers after its first (`first_call`), oldest first. Read only."""
+        self.cur.execute("""SELECT id::text, answer FROM mx_calls
+                             WHERE task_id = (SELECT task_id FROM mx_calls WHERE id = %s) AND valid
+                             ORDER BY created_at, ctid""", (first_call,))
+        return [Verdict.of(ans, cid) for cid, ans in self.cur.fetchall() if cid != first_call]
+
+    def ask_again(self, kind: str, first_call: Optional[str]) -> None:
+        if first_call:
+            self.again[first_call] = kind
+
+    def reopen(self) -> Dict[str, int]:
+        """The questions to ask again: their tasks open once more (their calls stay), {kind: how many}. An answered
+        task only; one another transaction changed since the run's snapshot is left for the next run."""
+        out: Counter = Counter()
+        for call, kind in sorted(self.again.items()):
+            try:
+                with self.cur.connection.transaction():
+                    self.cur.execute("""UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL
+                                         WHERE status = 'answered'
+                                           AND id = (SELECT task_id FROM mx_calls WHERE id = %s)""", (call,))
+                    if self.cur.rowcount:
+                        out[kind] += 1
+            except psycopg_errors.SerializationFailure:
+                self.raced[kind] += 1
+        return dict(out)
 
 
 @dataclass
@@ -593,8 +661,8 @@ def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
 class Questions:
     """Each question's input, built from content (markx/tasks.py's renders), and its verdict when answered."""
 
-    def __init__(self, world: World, ask: Ask, now: datetime) -> None:
-        self.w, self.ask, self.now = world, ask, now
+    def __init__(self, world: World, ask: Ask, now: datetime, config: Config = Config()) -> None:
+        self.w, self.ask, self.now, self.config = world, ask, now, config
         self.members = ix_members(world.posts, world.stories)
         self.cards: Dict[str, Optional[dict]] = {}
 
@@ -626,6 +694,21 @@ class Questions:
             return [m.post for m in self.members[key]]
         return sorted((outcome.about.get(key, {}) if outcome else {}), key=lambda p: _at_key(self.w.posts, p))
 
+    def settled(self, q: Question, text: str, **kw) -> Optional[Verdict]:
+        """A join's, pair's or merge's verdict as it counts (`settle`): asked again when it would change a story and
+        no second answer agrees yet (the run reopens it: `Ask.reopen`)."""
+        got = self.ask.answer(q.type, text, **kw)
+        if got is None:
+            return None
+        first = Verdict.of(got[0], got[1])
+        c = self.config
+        if not c.confirm or not changes_story(q.type, first, c):
+            return first
+        v, again = settle(q.type, [first] + self.ask.later(got[1]), c)
+        if again:
+            self.ask.ask_again(q.type, got[1])
+        return v
+
     def verdict(self, q: Question, outcome: Optional[Outcome] = None) -> Optional[Verdict]:
         from insight_core.markx import tasks
         rd, t = self.w.readings, self.w.text
@@ -639,20 +722,20 @@ class Questions:
             if q.post not in t or not self._read([q.post]):
                 return None
             card = tasks.rule_card(tasks._earliest(self._p(ms)), rd)
-            return self.ask.verdict("join", tasks.join_input(t[q.post], rd.get(q.post), self._p(q.side), card),
-                                    a=q.post, priority=self._priority(q.post))
+            return self.settled(q, tasks.join_input(t[q.post], rd.get(q.post), self._p(q.side), card),
+                                a=q.post, priority=self._priority(q.post))
         if q.type == "pair":
             if q.post not in t or q.anchor not in t or not self._read([q.post, q.anchor]):
                 return None
-            return self.ask.verdict("pair", tasks.pair_input(t[q.anchor], t[q.post], rd), a=q.anchor, b=q.post,
-                                    priority=self._priority(q.post))
+            return self.settled(q, tasks.pair_input(t[q.anchor], t[q.post], rd), a=q.anchor, b=q.post,
+                                priority=self._priority(q.post))
         if q.type == "merge":
             pa, pb = self.story_posts(q.story, outcome), self.story_posts(q.other, outcome)
             ca, cb = self.card(q.story, pa), self.card(q.other, pb)
             if ca is None or cb is None or not pa or not pb:
                 return None
-            return self.ask.verdict("merge", tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
-                                    a=pa[0], b=pb[0], priority=self._priority(pb[0]))
+            return self.settled(q, tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
+                                a=pa[0], b=pb[0], priority=self._priority(pb[0]))
         return None
 
 
@@ -660,7 +743,7 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
           answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
     extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
-    q = Questions(world, ask, now)
+    q = Questions(world, ask, now, config)
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
     multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= 2}
     first = {k: world.posts[ps[0]].at for k, ps in multi.items()}
@@ -905,6 +988,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     waiting = cur.fetchone()[0]
     ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
     out, counts = think(cur, world, config, ask, now)
+    counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
     conns = connections(cur, out, ids, world, ask, config, news_keys)
