@@ -144,6 +144,21 @@ class FetchStateRepository:
         )
         return {row.source_id: row for row in (_row(r) for r in cur.fetchall())}
 
+    def pending_fetch_sources(self, cur: Cursor, since: datetime) -> List[Dict[str, Any]]:
+        """The enabled sources a run decided (after `since`) to fetch and has not tried yet: the
+        live fetches due now (issue 0107: an archive of the same host keeps out of their way).
+        {id, platform, handle_or_url, settings}."""
+        cur.execute(
+            """
+            SELECT s.id::text, s.platform, s.handle_or_url, s.settings
+            FROM source_fetch_state st JOIN sources s ON s.id = st.source_id
+            WHERE s.enabled AND st.last_decision_kind LIKE 'fetch\\_%%' AND st.last_decision_at > %s
+              AND (st.last_attempt_at IS NULL OR st.last_attempt_at < st.last_decision_at)
+            """,
+            (since,),
+        )
+        return [{"id": r[0], "platform": r[1], "handle_or_url": r[2], "settings": r[3] or {}} for r in cur.fetchall()]
+
     def record_decisions(
         self, cur: Cursor, decisions: Sequence[tuple[str, "FetchDecision"]], now: datetime
     ) -> None:

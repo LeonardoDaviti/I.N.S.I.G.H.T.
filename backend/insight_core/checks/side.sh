@@ -2,7 +2,7 @@
 # One version's checks over its own scratch copy (issue 0075; called by scripts/realdata-check.sh inside a
 # container: the version's code at /app, its outputs in the current directory).
 #   side.sh <scratch dsn> <name> [now]     env: IDENTITY, CASES, NO_JOB, PARTS, PARTS_ONLY
-# Writes job.json, snapshot.json, invariants.json, jobs.json, cases.json and their logs; never prints a DSN.
+# Writes job.json, deploy.json, snapshot.json, invariants.json, jobs.json, cases.json and their logs; never prints a DSN.
 set -u
 DSN="$1"; NAME="$2"; NOW="${3:-}"
 NOWARG=""; [ -n "$NOW" ] && NOWARG="--now $NOW"
@@ -11,8 +11,10 @@ step() { echo "[$NAME] $(date +%H:%M:%S) $*"; }
 if [ "${NO_JOB:-0}" != "1" ]; then
   step "migrate"
   DATABASE_URL="$DSN" python -m insight_core.db.migrate > migrate.log 2>&1 || { step "migrate FAILED (migrate.log)"; exit 2; }
-  step "story job (full)"
-  python -m insight_core.checks.job --db "$DSN" $NOWARG > job.json 2> job.log || { step "job FAILED (job.log)"; exit 2; }
+  # First what a deploy's first start runs (issue 0110): the incremental job over the copy as stored (a rule
+  # change's rebuild when its rows are of other rules), then the full job, and the rows they differ by.
+  step "deploy start (incremental, to the end), then story job (full)"
+  python -m insight_core.checks.job --db "$DSN" $NOWARG --deploy-json deploy.json > job.json 2> job.log || { step "job FAILED (job.log)"; exit 2; }
 fi
 step "snapshot"
 python -m insight_core.checks.snapshot --db "$DSN" --out snapshot.json --parts "${PARTS:-posts,links,stories,news,classics,discover}" $NOWARG > snapshot.log 2>&1 \

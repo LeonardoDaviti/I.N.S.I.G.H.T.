@@ -432,6 +432,16 @@ class IngestionRunnerPaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.status, "success")
         self.assertEqual(self.clock.sleeps, [60], "no Retry-After: a minute")
 
+    async def test_a_live_fetch_spends_the_budget_an_archive_is_measuring(self):
+        """Issue 0107: the hourly fetch of an archive's host counts against the stretch being measured."""
+        source = _source("https://a.test/rss")
+        h = self._harness([source], _posts_for(2))
+        budgets = h.gates.budgets
+        await budgets.archive_started("a.test")
+        await h.run(force=True)
+        await budgets.limited("a.test")
+        self.assertEqual(budgets.store.load("a.test")["budget"], 1)
+
     async def test_two_429s_fail_the_source(self):
         source = _source("https://a.test/rss")
 

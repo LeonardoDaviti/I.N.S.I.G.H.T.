@@ -6,8 +6,12 @@ fetch goes through the ingestion runner (insight_core/ingestion). This service k
 - plan_archive / archive_source: one loop over kind.archive_pages, paced by
   kind.profile.rate_limit(persisted settings, request overrides) and by the same
   FetchGates.slot per page a fetch takes; every page is one save batch. A host that limits
-  us (429) or times out is waited out and the page retried once from the last checkpoint;
-  twice in a row pauses the archive with its checkpoint kept (issue 0016). An unavailable
+  us (429) or times out is waited out and the page retried once from the last checkpoint
+  (issue 0016); twice in a row, the archive waits for the host's window and the scheduler
+  continues it (continue_archive), pausing only after MAX_WAITS waits with no page gained.
+  Each host's budget is learned from those limits (ingestion/host_budgets.py), and once
+  known an archive paces under it and keeps out of the way of the host's live fetches
+  (issue 0107). An unavailable
   kind (yt-dlp off, no Telegram session) raises KindUnavailable before any planning (the API answers 409). Both run inside the
   kind's session (B8: telegram_mtproto connects and checks authorisation; every other kind
   has a no-op session), so a session that cannot open is the same 409.
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from insight_core.db import database as db
@@ -52,6 +57,23 @@ ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
 # The target of an archive whose source reports no size: it runs until the source ends.
 UNBOUNDED_ARCHIVE = 1_000_000_000
 
+# Issue 0107. A host that refused twice in a row is waited out: FIRST_WAIT_S, doubling up to
+# LAST_WAIT_S while no page comes; after MAX_WAITS such waits the archive pauses.
+FIRST_WAIT_S = 5 * 60
+LAST_WAIT_S = 60 * 60
+MAX_WAITS = 6
+# An archive looks for due live fetches of its host at most every LIVE_CHECK_S, and keeps out of
+# their way in LIVE_YIELD_STEP_S steps, at most LIVE_YIELD_MAX_S (a run that never comes).
+LIVE_CHECK_S = 60
+LIVE_YIELD_STEP_S = 30
+LIVE_YIELD_MAX_S = 15 * 60
+# A leg's own result keys: what is left of a waiting leg's result is the plan the next leg reuses.
+_LEG_KEYS = frozenset({
+    "success", "posts_fetched", "pages_fetched", "posts_inserted", "posts_updated", "stored_posts",
+    "archive_status", "message", "paused", "paused_reason", "waiting", "waiting_until", "waiting_host",
+    "waiting_reason", "waits", "events", "progress",
+})
+
 
 class SourceFetchService:
     """Archive service for DB-backed sources; fetches go through the source kinds."""
@@ -64,6 +86,8 @@ class SourceFetchService:
         kinds: Optional[KindRegistry] = None,
         availability: Callable[[], Availability] = availability_from_env,
         gates: Optional[FetchGates] = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        live_fetch_due: Optional[Callable[[str], bool]] = None,
     ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
@@ -77,6 +101,9 @@ class SourceFetchService:
         self.availability = availability
         # None: the process's FetchGates.shared(), the runner's own (taken inside the loop).
         self.gates = gates
+        self.clock = clock
+        # Is a live fetch of this host due now (ports.DbLiveFetchDue)? None: never yield.
+        self.live_fetch_due = live_fetch_due
 
     # ------------------------------------------------------------------ kinds
 
@@ -126,6 +153,8 @@ class SourceFetchService:
                     "last_live_fetch_at": archive.get("last_live_fetch_at"),
                     "checkpoint": archive.get("checkpoint"),
                     "rate_limit": archive.get("rate_limit") or {},
+                    # {host, until} while it waits out a host's limit (issue 0107), else None.
+                    "waiting": archive.get("waiting"),
                 }
             )
         catalog.sort(key=lambda item: (item["archive_status"] != "partial",
@@ -277,6 +306,32 @@ class SourceFetchService:
                                     rate_limit_overrides=rate_limit_overrides)
             return await self._archive(source_id, source, kind, plan, progress_callback)
 
+    async def continue_archive(
+        self,
+        source_id: str,
+        previous: Dict[str, Any],
+        progress_callback: ProgressCallback = None,
+    ) -> Dict[str, Any]:
+        """Continue an archive that waited out a host's limit (issue 0107), from where its last
+        leg stopped: `previous` is that leg's result (the waiting job's payload). The plan it
+        carries is reused: no new measurement, which would be one more request to a host that
+        was limiting us. The counts and the waits carry on."""
+        source = self.sources_service.get_source_by_id(source_id)
+        if not source:
+            raise LookupError(f"Source {source_id} not found")
+        kind = self.kinds.resolve(source)
+        self._check_available(kind)
+        plan = {key: value for key, value in previous.items() if key not in _LEG_KEYS}
+        carried = {key: previous.get(key) for key in ("posts_fetched", "posts_inserted", "posts_updated", "waits")}
+        await self._emit_progress(progress_callback, {
+            "stage": "continuing",
+            "source_type": kind.name,
+            "host": previous.get("waiting_host"),
+            "message": f"Continuing after {previous.get('waiting_host') or 'the host'}'s limit",
+        })
+        async with self._kind_session(kind):
+            return await self._archive(source_id, source, kind, plan, progress_callback, carried=carried)
+
     async def _archive(
         self,
         source_id: str,
@@ -284,8 +339,12 @@ class SourceFetchService:
         kind: SourceKind,
         plan: Dict[str, Any],
         progress_callback: ProgressCallback,
+        *,
+        carried: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """One loop over kind.archive_pages from the plan's checkpoint (its measurement reused)."""
+        """One leg of the archive: a loop over kind.archive_pages from the plan's checkpoint (its
+        measurement reused). It ends completed, paused, or waiting for a host's limit (issue
+        0107: the scheduler continues it, carrying the counts)."""
         rate = kind.profile.rate_limit(plan.get("rate_limit"))
         # An archive has no limit: a kind stops where the source ends. The target only caps
         # the count, at the source's size when it reports one.
@@ -294,19 +353,25 @@ class SourceFetchService:
         older_posts = plan.get("older_posts")
         start_checkpoint = plan.get("checkpoint")
         resume_collected_posts, total_pages_fetched = resume_counts(start_checkpoint)
-        total_posts_fetched = total_inserted = total_updated = 0
-        await self._emit_progress(progress_callback, {
-            "stage": "planning_complete",
-            "source_type": kind.name,
-            "older_posts": older_posts,
-            "estimated_pages": plan.get("estimated_pages"),
-            "estimated_seconds": plan.get("estimated_seconds"),
-            "message": "Planning complete: " + (
-                "size unknown" if older_posts is None else f"about {older_posts} older posts"),
-            "progress": 0.0,
-        })
+        carried = carried or {}
+        total_posts_fetched = int(carried.get("posts_fetched") or 0)
+        total_inserted = int(carried.get("posts_inserted") or 0)
+        total_updated = int(carried.get("posts_updated") or 0)
+        # A continuation's checkpoint already counts this archive's earlier legs, as does the carry.
+        resume_collected_posts = max(0, resume_collected_posts - total_posts_fetched)
+        if not carried:
+            await self._emit_progress(progress_callback, {
+                "stage": "planning_complete",
+                "source_type": kind.name,
+                "older_posts": older_posts,
+                "estimated_pages": plan.get("estimated_pages"),
+                "estimated_seconds": plan.get("estimated_seconds"),
+                "message": "Planning complete: " + (
+                    "size unknown" if older_posts is None else f"about {older_posts} older posts"),
+                "progress": 0.0,
+            })
 
-        if older_posts == 0:
+        if older_posts == 0 and not carried:
             post_stats = self.posts_service.get_source_post_stats(source_id)
             result = {
                 **plan,
@@ -327,61 +392,70 @@ class SourceFetchService:
         delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
         checkpoint = start_checkpoint
         retried = False
-        paused_reason: Optional[str] = None
-        while True:
-            pages = kind.archive_pages(source, target_posts, checkpoint, rate)
-            try:
-                async for page in self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched):
-                    retried = False
-                    if page.posts:
-                        saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
-                        total_posts_fetched += len(page.posts)
-                        total_inserted += saved.inserted
-                        total_updated += saved.updated
-                    collected = resume_collected_posts + total_posts_fetched
-                    if page.checkpoint is not None:
-                        checkpoint = page.checkpoint
-                        total_pages_fetched = int(page.checkpoint.get("pages_fetched") or total_pages_fetched + 1)
-                    else:
-                        # Single-shot kinds finish in one page; keep a checkpoint for the history.
-                        total_pages_fetched += 1
-                        checkpoint = {"mode": kind.name, "pages_fetched": total_pages_fetched,
-                                      "collected_posts": collected}
+        pages_this_leg = 0
+        stopped: Optional[HttpError] = None
+        pace = _Pace(self, gates, host, progress_callback)
+        await gates.budgets.archive_started(host)
+        try:
+            while True:
+                pages = kind.archive_pages(source, target_posts, checkpoint, rate)
+                try:
+                    async for page in self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched, pace):
+                        retried = False
+                        pages_this_leg += 1
+                        if page.posts:
+                            saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
+                            total_posts_fetched += len(page.posts)
+                            total_inserted += saved.inserted
+                            total_updated += saved.updated
+                        collected = resume_collected_posts + total_posts_fetched
+                        if page.checkpoint is not None:
+                            checkpoint = page.checkpoint
+                            total_pages_fetched = int(page.checkpoint.get("pages_fetched") or total_pages_fetched + 1)
+                        else:
+                            # Single-shot kinds finish in one page; keep a checkpoint for the history.
+                            total_pages_fetched += 1
+                            checkpoint = {"mode": kind.name, "pages_fetched": total_pages_fetched,
+                                          "collected_posts": collected}
 
-                    await self._record_archive_metadata(source_id, {
-                        **plan,
-                        "pages_fetched": total_pages_fetched,
-                        "posts_fetched": total_posts_fetched,
-                        "posts_inserted": total_inserted,
-                        "posts_updated": total_updated,
-                        "checkpoint": checkpoint,
-                    }, mode="archive_progress", kind=kind)
-                    await self._emit_progress(progress_callback, {
-                        "stage": "page_fetched",
-                        "source_type": kind.name,
-                        "pages_fetched": total_pages_fetched,
-                        "posts_collected": collected,
-                        "progress": (min(100.0, total_posts_fetched / older_posts * 100.0)
-                                     if older_posts else None),
-                        "message": f"Fetched {kind.name} page {total_pages_fetched}",
-                    })
-                break
-            except HttpError as exc:
-                if not exc.limiting:
-                    raise
-                if retried:
-                    # Twice in a row: pause. The last page's checkpoint is saved (no
-                    # completed_at), so Resume continues from it.
-                    paused_reason = f"{host} {'is not answering' if exc.timed_out else 'is limiting us'}"
+                        await self._record_archive_metadata(source_id, {
+                            **plan,
+                            "pages_fetched": total_pages_fetched,
+                            "posts_fetched": total_posts_fetched,
+                            "posts_inserted": total_inserted,
+                            "posts_updated": total_updated,
+                            "checkpoint": checkpoint,
+                        }, mode="archive_progress", kind=kind)
+                        await self._emit_progress(progress_callback, {
+                            "stage": "page_fetched",
+                            "source_type": kind.name,
+                            "pages_fetched": total_pages_fetched,
+                            "posts_collected": collected,
+                            "progress": (min(100.0, total_posts_fetched / older_posts * 100.0)
+                                         if older_posts else None),
+                            "message": f"Fetched {kind.name} page {total_pages_fetched}",
+                        })
                     break
-                retried = True
-                wait = gates.host_limiter.limited(host, exc.retry_after)
-                slowed = {"host": host, "timed_out": exc.timed_out, "gap_s": gates.host_limiter.gap(host)}
-                await self._emit_progress(progress_callback,
-                                          {"stage": "slowed", "level": "warning", **slowed,
-                                           "message": slowed_line(slowed)})
-                await gates.sleep(wait)
-                # The page is asked again from the last recorded checkpoint.
+                except HttpError as exc:
+                    if not exc.limiting:
+                        raise
+                    if exc.status == 429:
+                        await gates.budgets.limited(host)
+                    if retried:
+                        # Twice in a row: the window has not refilled. The last page's checkpoint
+                        # is saved (no completed_at): the archive waits, or pauses.
+                        stopped = exc
+                        break
+                    retried = True
+                    wait = gates.host_limiter.limited(host, exc.retry_after)
+                    slowed = {"host": host, "timed_out": exc.timed_out, "gap_s": gates.host_limiter.gap(host)}
+                    await self._emit_progress(progress_callback,
+                                              {"stage": "slowed", "level": "warning", **slowed,
+                                               "message": slowed_line(slowed)})
+                    await gates.sleep(wait)
+                    # The page is asked again from the last recorded checkpoint.
+        finally:
+            gates.budgets.archive_stopped(host)
 
         post_stats = self.posts_service.get_source_post_stats(source_id)
         result = {
@@ -394,18 +468,10 @@ class SourceFetchService:
             "stored_posts": post_stats["post_count"],
             "checkpoint": checkpoint,
         }
-        if paused_reason is not None:
-            # Not recorded as a finished archive: the checkpoint gets no completed_at.
-            result.update(paused=True, paused_reason=paused_reason, message=f"Paused: {paused_reason}; resume later")
-            await self._emit_progress(progress_callback, {
-                "stage": "paused",
-                "level": "warning",
-                "source_type": kind.name,
-                "pages_fetched": total_pages_fetched,
-                "posts_fetched": total_posts_fetched,
-                "message": result["message"],
-            })
-            return result
+        if stopped is not None:
+            return await self._stopped(source_id, kind, plan, result, host, stopped,
+                                       waits=0 if pages_this_leg else int(carried.get("waits") or 0),
+                                       progress_callback=progress_callback)
         result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
 
         await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
@@ -422,23 +488,54 @@ class SourceFetchService:
         })
         return result
 
-    @staticmethod
-    async def _gated(pages: AsyncIterator[ArchivePage], gates: FetchGates, kind: SourceKind, host: str,
-                     delay: float, rate: RateLimit, pages_fetched: int) -> AsyncIterator[ArchivePage]:
+    async def _stopped(self, source_id: str, kind: SourceKind, plan: Dict[str, Any], result: Dict[str, Any],
+                       host: str, exc: HttpError, *, waits: int, progress_callback: ProgressCallback) -> Dict[str, Any]:
+        """A host refused twice in a row. The archive waits for its window (first 5 min, then
+        doubling up to 60 min while no page comes) and the scheduler continues it; after
+        MAX_WAITS waits with no page gained it pauses, saying why. Its checkpoint is kept either
+        way (no completed_at), so Resume continues from it."""
+        progress = {"source_type": kind.name, "pages_fetched": result["pages_fetched"],
+                    "posts_fetched": result["posts_fetched"], "level": "warning"}
+        if waits >= MAX_WAITS:
+            reason = f"{host} {'is still not answering' if exc.timed_out else 'is still limiting us'} after {MAX_WAITS} waits"
+            result.update(paused=True, paused_reason=reason, message=f"Paused: {reason}; resume later")
+            await self._record_archive_metadata(source_id, {**result, "waiting": None}, mode="archive_progress", kind=kind)
+            await self._emit_progress(progress_callback, {"stage": "paused", **progress, "message": result["message"]})
+            return result
+        wait_s = min(LAST_WAIT_S, FIRST_WAIT_S * 2 ** waits)
+        until = self.clock() + timedelta(seconds=wait_s)
+        what = f"{host} to answer" if exc.timed_out else f"{host}'s limit"
+        result.update(waiting=True, waiting_until=until.isoformat(), waiting_host=host,
+                      waiting_reason="timeout" if exc.timed_out else "limit", waits=waits + 1,
+                      message=f"Waiting for {what}")
+        await self._record_archive_metadata(source_id, {**result, "waiting": {"host": host, "until": until.isoformat(),
+                                                                  "reason": result["waiting_reason"]}},
+                                            mode="archive_progress", kind=kind)
+        await self._emit_progress(progress_callback, {
+            "stage": "waiting", **progress, "host": host, "waiting_until": until.isoformat(), "wait_s": wait_s,
+            "timed_out": exc.timed_out, "message": f"Waiting for {what}: continues at {until:%H:%M} UTC"})
+        return result
+
+    async def _gated(self, pages: AsyncIterator[ArchivePage], gates: FetchGates, kind: SourceKind, host: str,
+                     delay: float, rate: RateLimit, pages_fetched: int, pace: "_Pace") -> AsyncIterator[ArchivePage]:
         """The kind's pages, each asked for under the same gate slot a fetch takes, so a run and
         an archive on one host are spaced together.
 
         The kind's pause after the last page (its page delay, or a batch cooldown) is the slot's
-        minimum interval, so the wait between two pages is max(host gap, pause), never the sum.
+        minimum interval, so the wait between two pages is max(host gap, pause, the learned
+        budget's pace), never the sum. Before each page the archive keeps out of the way of a
+        live fetch of the host that is due (issue 0107).
         """
         while True:
+            await pace.yield_to_live()
             pause = rate.delay_after(pages_fetched) if pages_fetched else 0.0
-            async with gates.slot(kind.profile, host, per_source_delay_s=max(delay, pause)):
+            async with gates.slot(kind.profile, host, per_source_delay_s=max(delay, pause, await pace.gap())):
                 try:
                     page = await pages.__anext__()
                 except StopAsyncIteration:
                     return
             gates.host_limiter.succeeded(host)
+            await pace.succeeded()
             pages_fetched += 1
             yield page
 
@@ -464,3 +561,72 @@ class SourceFetchService:
         result = progress_callback(payload)
         if asyncio.iscoroutine(result):
             await result
+
+
+def archive_service(db_url: str) -> SourceFetchService:
+    """The archive service with its real ports: an archive keeps out of the way of its host's due
+    live fetches (issue 0107). The API's registry and the scheduler each build one."""
+    from insight_core.ingestion.ports import DbLiveFetchDue
+
+    service = SourceFetchService(db_url)
+    service.live_fetch_due = DbLiveFetchDue(db_url, service.kinds)
+    return service
+
+
+class _Pace:
+    """One archive leg's pace against its host (issue 0107): the learned budget's gap between
+    pages, the events that say so, and keeping out of the way of a due live fetch."""
+
+    def __init__(self, service: SourceFetchService, gates: FetchGates, host: str, progress: ProgressCallback) -> None:
+        self.service, self.gates, self.host, self.progress = service, gates, host, progress
+        self.announced: Optional[int] = None    # the learned gap last said in an event
+        self.last_live_check: Optional[float] = None
+
+    async def gap(self) -> float:
+        learned = self.gates.budgets.learned(self.host)
+        if learned is None:
+            return 0.0
+        gap = learned.archive_gap_s()
+        if round(gap) != self.announced:
+            self.announced = round(gap)
+            await self.service._emit_progress(self.progress, {
+                "stage": "pacing", "host": self.host, "archive_gap_s": round(gap, 1), **_budget_fields(learned),
+                "message": f"Pacing to 80% of {learned.line()}: one page every {round(gap)} s"})
+        return gap
+
+    async def succeeded(self) -> None:
+        measured = await self.gates.budgets.succeeded(self.host)
+        if measured is None:
+            return
+        learned = self.gates.budgets.learned(self.host)
+        message = measured.line()
+        if learned is not None:
+            self.announced = round(learned.archive_gap_s())
+            message += f"; pacing to 80%: one page every {self.announced} s"
+        await self.service._emit_progress(self.progress, {
+            "stage": "learned", "host": self.host, **_budget_fields(measured),
+            "archive_gap_s": round(learned.archive_gap_s(), 1) if learned else None, "message": message})
+
+    async def yield_to_live(self) -> None:
+        due_now = self.service.live_fetch_due
+        if due_now is None:
+            return
+        now = self.gates.clock()
+        if self.last_live_check is not None and now - self.last_live_check < LIVE_CHECK_S:
+            return
+        self.last_live_check = now
+        if not await asyncio.to_thread(due_now, self.host):
+            return
+        await self.service._emit_progress(self.progress, {
+            "stage": "yielding", "host": self.host, "message": f"Making room for {self.host}'s live fetches"})
+        waited = 0
+        while waited < LIVE_YIELD_MAX_S:
+            await self.gates.sleep(LIVE_YIELD_STEP_S)
+            waited += LIVE_YIELD_STEP_S
+            if not await asyncio.to_thread(due_now, self.host):
+                break
+        self.last_live_check = self.gates.clock()
+
+
+def _budget_fields(budget: Any) -> Dict[str, Any]:
+    return {"requests": budget.requests, "window_s": budget.window_s, "limits": budget.limits}

@@ -315,6 +315,10 @@ export interface ArchiveJobSummary {
     /** Issue 0016: the archive paused (a site limiting us); Resume continues from its checkpoint. */
     paused?: boolean;
     paused_reason?: string;
+    /** Issue 0107: while the job waits out a host's limit, when it continues and which host. */
+    waiting_until?: string;
+    waiting_host?: string;
+    waiting_reason?: string;
   };
 }
 
@@ -386,6 +390,27 @@ export interface ArchiveCatalogEntry {
   last_live_fetch_at?: string | null;
   checkpoint?: Record<string, unknown> | null;
   rate_limit?: Record<string, unknown>;
+  /** Issue 0107: the archive waits out this host's limit and continues by itself at `until`. */
+  waiting?: ArchiveWaiting | null;
+}
+
+export interface ArchiveWaiting {
+  host: string;
+  until: string;
+  /** "limit" (HTTP 429) or "timeout" (no answer in time). */
+  reason?: string | null;
+}
+
+/** Issue 0107: a host's budget, learned from the limits archives met. */
+export interface HostLimit {
+  host: string;
+  requests: number;
+  window_s: number;
+  /** How many limits it was learned from; an archive paces to it from 2. */
+  limits: number;
+  archive_gap_s: number;
+  /** "<host>: about 40 requests per 16 min, learned from 2 limits". */
+  line: string;
 }
 
 export interface ArchiveCatalogResponse extends Envelope {
@@ -618,6 +643,8 @@ export interface SourcesHealthResponse {
   generated_at: string;
   rows: SourceHealthRow[];
   summary: SourceHealthSummary;
+  /** Issue 0107: each host's learned budget. */
+  host_limits?: HostLimit[];
 }
 
 export interface JobAccepted {
@@ -670,7 +697,7 @@ export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
   /** Summary plus the 8 worst rows. */
-  source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[] };
+  source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[]; host_limits?: HostLimit[] };
   alerts?: Array<{
     id: string;
     severity: string;

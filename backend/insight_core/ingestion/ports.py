@@ -271,6 +271,60 @@ class DbFetchStateStore:
 # --------------------------------------------------------------------------- saver
 
 
+class DbHostBudgetStore:
+    """HostBudgetStore (ingestion/host_budgets.py) over system_settings, one key per host
+    (`host_budget:<host>`), so two processes learning two hosts never overwrite each other."""
+
+    PREFIX = "host_budget:"
+
+    def __init__(self, db_url: str) -> None:
+        self.db_url = db_url
+
+    def load(self, host: str) -> Optional[Dict[str, Any]]:
+        from insight_core.db.repo_operations import SystemSettingsRepository
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            row = SystemSettingsRepository.get(cur, self.PREFIX + host)
+        return dict(row[0]) if row and isinstance(row[0], dict) else None
+
+    def save(self, host: str, record: Dict[str, Any]) -> None:
+        from insight_core.db.repo_operations import SystemSettingsRepository
+
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                SystemSettingsRepository.upsert(cur, self.PREFIX + host, record)
+            conn.commit()
+
+    def load_all(self) -> Dict[str, Dict[str, Any]]:
+        from insight_core.db.repo_operations import SystemSettingsRepository
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            rows = SystemSettingsRepository.with_prefix(cur, self.PREFIX)
+        return {key[len(self.PREFIX):]: value for key, value in rows.items() if isinstance(value, dict)}
+
+
+class DbLiveFetchDue:
+    """Is a live fetch of this host due now? (issue 0107) A run has decided to fetch a source of
+    the host in the last PENDING_WINDOW and not tried it yet. The host is the kind's host key, as
+    the gates key it. Never raises: an archive does not stop for a failed look."""
+
+    PENDING_WINDOW = timedelta(hours=2)   # a run that died leaves decisions nobody will try
+
+    def __init__(self, db_url: str, registry: Any, *, clock: Clock = utc_now) -> None:
+        self.db_url = db_url
+        self.registry = registry
+        self.clock = clock
+
+    def __call__(self, host: str) -> bool:
+        try:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                pending = FetchStateRepository().pending_fetch_sources(cur, self.clock() - self.PENDING_WINDOW)
+            return any(self.registry.resolve(source).host_key(source) == host for source in pending)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read the live fetches due for %s: %s", host, exc)
+            return False
+
+
 class DbPostSaver:
     """PostsRepository.save_batch on a fresh connection (save_batch owns the transaction)."""
 

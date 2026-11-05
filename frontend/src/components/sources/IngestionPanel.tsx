@@ -44,6 +44,8 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
 
   const overview = useOperationsOverview();
   const jobs = overview.data?.jobs ?? [];
+  // Each host's budget, learned from the limits archives met (issue 0107).
+  const hostLimits = overview.data?.source_health?.host_limits ?? [];
   const scheduler = useSchedulerConfig();
   // Every 30 seconds: enough for a minute countdown.
   const nowMs = useNow(30_000).getTime();
@@ -132,6 +134,23 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
             )}
           </section>
           <BackgroundWork titleClass={sectionTitle} />
+          {hostLimits.length ? (
+            <section aria-labelledby="ingestion-site-limits" className="space-y-3">
+              <h2 id="ingestion-site-limits" className={sectionTitle}>Site limits</h2>
+              <ul className="space-y-1.5 text-[0.875rem] tabular-nums">
+                {hostLimits.map((limit) => (
+                  <li key={limit.host} className="[overflow-wrap:anywhere]">
+                    <span className="text-fg">{limit.line}</span>
+                    <span className="text-fg-3">
+                      {limit.limits >= 2
+                        ? ` · archives page every ${Math.round(limit.archive_gap_s)} s, 80% of it`
+                        : ' · archives pace to it once 2 limits are measured'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
       )}
       <p className="text-[0.75rem] tabular-nums text-fg-3">{versionLine(WEB_BUILD, apiVersion.data)}</p>

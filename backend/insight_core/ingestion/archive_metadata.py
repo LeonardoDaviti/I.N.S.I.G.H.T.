@@ -101,6 +101,10 @@ class ArchiveMetadataWriter:
             "rate_limit": data.get("rate_limit", current.get("rate_limit")),
             "checkpoint": checkpoint,
             "resume_ready": resumable(kind, checkpoint) is not None,
+            # {host, until} while the archive waits out a host's limit (issue 0107); a page
+            # fetched, a pause or the archive's end clears it.
+            "waiting": (data.get("waiting") if mode in {"archive", "archive_progress"}
+                        else current.get("waiting")),
             "history": history[-HISTORY_LIMIT:],
         }
         self.sources.merge_source_settings(source_id, {"archive": archive})

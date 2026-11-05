@@ -516,6 +516,76 @@ class OperationsService:
             conn.commit()
         return closed
 
+    # A job that waits (issue 0107: an archive waiting out a host's limit) is not finished: its
+    # status is `waiting`, `waiting_until` in its payload says when it continues, and the process
+    # that continues it claims it first.
+
+    def wait_job(self, job_id: str, *, message: str, payload: Dict[str, Any]) -> None:
+        """Mark a running job waiting, its payload merged with the leg's result (finished_at stays empty)."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
+                row = cur.fetchone()
+                if not row:
+                    return
+                next_payload = {**(row[0] or {}), **self._prepare_payload(payload, compact=False)}
+                next_payload["events"] = (row[0] or {}).get("events") or []
+                cur.execute(
+                    "UPDATE job_runs SET status = 'waiting', message = %s, payload = %s::jsonb, finished_at = NULL "
+                    "WHERE id = %s",
+                    (message, json.dumps(next_payload), job_id),
+                )
+            conn.commit()
+
+    def due_waiting_jobs(self, job_type: str, now: datetime) -> List[Dict[str, Any]]:
+        """The waiting jobs of this type whose waiting_until has come, soonest first: [{id, source_id}]."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, source_id::text FROM job_runs
+                WHERE job_type = %s AND status = 'waiting' AND (payload->>'waiting_until')::timestamptz <= %s
+                ORDER BY (payload->>'waiting_until')::timestamptz
+                """,
+                (job_type, now),
+            )
+            return [{"id": row[0], "source_id": row[1]} for row in cur.fetchall()]
+
+    def claim_waiting_job(self, job_id: str, *, trigger: str) -> Optional[Dict[str, Any]]:
+        """waiting -> running, as this process's job (`trigger`); {id, source_id, payload}, or None
+        when the job is not waiting (another process claimed it first)."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE job_runs SET status = 'running', trigger = %s WHERE id = %s AND status = 'waiting' "
+                    "RETURNING id::text, source_id::text, payload",
+                    (trigger, job_id),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return {"id": row[0], "source_id": row[1], "payload": row[2] or {}} if row else None
+
+    def requeue_interrupted_archives(self, trigger: str, now: datetime) -> int:
+        """At the scheduler's start: the archives it was continuing when it stopped wait again, due
+        now, so they carry on by themselves (a deploy must not need a Resume). Returns how many."""
+        event = {"level": "warning", "message": "Interrupted by a restart; continues shortly", "status": "waiting"}
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE job_runs
+                    SET status = 'waiting',
+                        payload = jsonb_set(payload || jsonb_build_object('waiting_until', %s::text), '{events}',
+                                            COALESCE(payload->'events', '[]'::jsonb)
+                                            || jsonb_build_array(%s::jsonb || jsonb_build_object('at', now())))
+                    WHERE status = 'running' AND trigger = %s AND job_type = 'archive_source'
+                      AND payload ? 'waits'
+                    """,
+                    (now.isoformat(), json.dumps(event), trigger),
+                )
+                requeued = cur.rowcount or 0
+            conn.commit()
+        return requeued
+
     def discard_job(self, job_id: str) -> None:
         """Delete a job that turned out not worth listing (a scheduler tick with nothing due)."""
         with db.connection(self.db_url) as conn:
@@ -760,7 +830,8 @@ class OperationsService:
             "success": True,
             "scheduler": self.get_scheduler_config(),
             "jobs": jobs,
-            "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS]},
+            "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS],
+                              "host_limits": health.get("host_limits") or []},
             "alerts": alerts,
             "stats": {
                 "recent_failures": len([job for job in jobs if job["status"] == "failed"]),
@@ -826,7 +897,21 @@ class OperationsService:
             "generated_at": now.isoformat(),
             "rows": rows,
             "summary": summarize_health(rows),
+            "host_limits": self.host_limits(),
         }
+
+    def host_limits(self) -> List[Dict[str, Any]]:
+        """Each host's budget as learned from the limits archives met (issue 0107), by host:
+        [{host, requests, window_s, limits, archive_gap_s, line}]. An archive paces to it once
+        learned from LEARN_AFTER limits. Never raises: health does not fail for it."""
+        from insight_core.ingestion.host_budgets import HostBudgets
+        from insight_core.ingestion.ports import DbHostBudgetStore
+
+        try:
+            return [budget.as_dict() for budget in HostBudgets(DbHostBudgetStore(self.db_url), clock=self.clock).learned_all()]
+        except Exception:  # noqa: BLE001
+            self.logger.exception("Could not read the learned host budgets")
+            return []
 
     def get_source_health_row(self, source_id: str) -> Optional[Dict[str, Any]]:
         rows = self._health_rows(self._load_schedule_view([source_id]), self.clock())

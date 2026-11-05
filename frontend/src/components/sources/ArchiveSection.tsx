@@ -1,12 +1,14 @@
 import { useEffect, useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, JobRun } from '../../services/api';
+import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, ArchiveWaiting, JobRun } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
 import { useOperationJob } from '../../hooks/useOperations';
 import { SOURCES_HEALTH_KEY } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
 import { archiveResultLine, describeAvailable, describePlan, describeRate } from '../../lib/archive';
+import { waitingLine } from '../../lib/archiveWaiting';
+import { jobWaiting } from '../../lib/jobRuns';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatEstimate } from '../../lib/duration';
 import { formatCount, plural } from '../../lib/format';
@@ -70,6 +72,8 @@ interface RunView {
   pages?: number;
   /** Why the archive paused (a site limiting us); it resumes from its checkpoint. */
   pausedReason?: string;
+  /** What it waits for (issue 0107: a host's limit); the scheduler continues it. */
+  waiting?: ArchiveWaiting | null;
 }
 
 const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
@@ -90,6 +94,7 @@ function fromJob(job: JobRun): RunView {
     inserted: count(payload.posts_inserted),
     pages: count(payload.pages_fetched),
     pausedReason: pausedReason(payload),
+    waiting: jobWaiting(job),
   };
 }
 
@@ -105,6 +110,7 @@ function fromSummary(job: ArchiveJobSummary): RunView {
     inserted: job.result?.posts_inserted,
     pages: job.result?.pages_fetched,
     pausedReason: pausedReason(job.result),
+    waiting: jobWaiting({ status: job.status, payload: job.result }),
   };
 }
 
@@ -213,7 +219,8 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
   const [error, setError] = useState<string | null>(null);
 
   const latest = status.latest_job ?? null;
-  const [jobId, setJobId] = useState<string | null>(latest?.status === 'running' ? latest.id : null);
+  // A waiting archive is followed too: the scheduler continues it on the same job (issue 0107).
+  const [jobId, setJobId] = useState<string | null>(latest?.status === 'running' || latest?.status === 'waiting' ? latest.id : null);
   const job = useOperationJob(jobId);
   const run: RunView | null = job.data ? fromJob(job.data) : latest ? fromSummary(latest) : null;
   const running = run?.status === 'running';
@@ -351,6 +358,13 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
       {run && !running ? (
         run.status === 'failed' ? (
           <Notice tone="error" title="The last archive failed" message={run.message || 'No reason was recorded.'} />
+        ) : run.waiting ? (
+          <Notice
+            tone="warning"
+            title={waitingLine(run.waiting, now)}
+            message={resultLine(run)}
+            action={starting ? undefined : { label: 'Continue now', onClick: () => void start(true) }}
+          />
         ) : run.pausedReason ? (
           <Notice
             tone="warning"

@@ -37,6 +37,13 @@ class SystemSettingsRepository:
         return cur.fetchone()[0]
 
 
+    @staticmethod
+    def with_prefix(cur: Cursor, prefix: str) -> dict:
+        """{key: value} for every key starting with the prefix."""
+        cur.execute("SELECT key, value FROM system_settings WHERE starts_with(key, %s)", (prefix,))
+        return {key: value for key, value in cur.fetchall()}
+
+
 class JobRunsRepository:
     """Read-side lookups over job_runs."""
 
@@ -72,7 +79,10 @@ class JobRunsRepository:
                      'stored_posts',   payload->'stored_posts',
                      'error',          payload->'error',
                      'paused',         payload->'paused',
-                     'paused_reason',  payload->'paused_reason'
+                     'paused_reason',  payload->'paused_reason',
+                     'waiting_until',  CASE WHEN status = 'waiting' THEN payload->'waiting_until' END,
+                     'waiting_host',   CASE WHEN status = 'waiting' THEN payload->'waiting_host' END,
+                     'waiting_reason', CASE WHEN status = 'waiting' THEN payload->'waiting_reason' END
                    ))
             FROM job_runs
             WHERE job_type = %s AND source_id = %s

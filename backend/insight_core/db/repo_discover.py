@@ -409,7 +409,7 @@ class DiscoverRepository:
         """Each source's archive as it is stored (issue 0080: an archive row follows it), for the sources
         missing these pages: {state: running | paused | finished | None, found: how many of the pages it
         has stored since, pages_fetched: the running or last archive's, when it says}. Running: its newest
-        archive job runs; paused: that job paused (its checkpoint kept); finished: the archive's checkpoint
+        archive job runs or waits out a host's limit; paused: that job paused (its checkpoint kept); finished: the archive's checkpoint
         is done (settings.archive.checkpoint.completed_at)."""
         ids = sorted(missing)
         cur.execute("""SELECT DISTINCT ON (source_id) source_id::text, status, payload->'paused', payload->'pages_fetched'
@@ -426,7 +426,8 @@ class DiscoverRepository:
         out = {}
         for sid in ids:
             status, paused, pages = jobs.get(sid, (None, None, None))
-            state = ("running" if status == "running" else "paused" if paused is True
+            # A waiting archive (issue 0107) still runs: it continues by itself.
+            state = ("running" if status in ("running", "waiting") else "paused" if paused is True
                      else "finished" if sid in done else None)
             out[sid] = {"state": state, "found": int(found.get(sid, 0)),
                         **({"pages_fetched": pages} if isinstance(pages, int) else {})}

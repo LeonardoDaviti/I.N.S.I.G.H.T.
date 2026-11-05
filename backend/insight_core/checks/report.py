@@ -19,6 +19,10 @@ from typing import Any, Dict, List, Optional
 from insight_core.checks import diff
 
 
+# What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
+MUST_BE_ZERO = {"story.deploy_start", "story.dangling"}
+
+
 def _load(path: str) -> Optional[Any]:
     if not os.path.exists(path):
         return None
@@ -28,7 +32,7 @@ def _load(path: str) -> Optional[Any]:
 
 def _found(side: str) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
-    for name in ("invariants.json", "jobs.json"):
+    for name in ("deploy.json", "invariants.json", "jobs.json"):
         data = _load(os.path.join(side, name)) or {"found": []}
         out.update({f["name"]: f for f in data["found"]})
     return out
@@ -89,6 +93,9 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
                 problems.append(f"invariant {name} rose {bc} -> {hc}")
         elif bc is not None and bc >= 0 and hc < bc:
             verdict = "fell"
+        if name in MUST_BE_ZERO and hc and hc > 0 and verdict == "ok":   # broken on main too: still no merge
+            verdict = "**FAILS**"
+            problems.append(f"{name}: {hc} ({labels[1]})")
         shown = lambda c: "-" if c is None else "n/a" if c < 0 else c   # noqa: E731
         lines.append(f"| `{name}` {h.get('what') or b.get('what', '')} | {shown(bc)} | {shown(hc)} | {h.get('of') or ''} | {verdict} |")
     lines += ["", f"Examples ({labels[1]}, up to 5 each):"]
