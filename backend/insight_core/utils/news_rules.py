@@ -44,6 +44,10 @@ NEWS_RECENT = timedelta(hours=48)   # ... the API's part "recent" the last 48 ho
                                     # week); neither measured
 NEWS_KEEP = timedelta(days=30)      # the story job writes News for the stories begun in the last 30 days (search's
                                     # "News, last 30 days"); the rows before stay (issue 0077); not measured
+# A row is in the window by its first post (issue 0111): the job reads the posts of NEWS_EDGE before the window too,
+# so a row whose first post just left it is found whole, and left as it was, never re-led by its second post. A
+# name joins posts within NAME_WINDOW, so a post joined to one in the window is at most that much older.
+NEWS_EDGE = timedelta(hours=48)
 SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first (0077)
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured

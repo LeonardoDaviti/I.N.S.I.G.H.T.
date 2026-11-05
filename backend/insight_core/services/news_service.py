@@ -31,7 +31,7 @@ from insight_core.services import page_titles
 from insight_core.utils.addresses import paper_id
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
 from insight_core.utils.story_rules import page_key, paper_aliases
-from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
+from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_EDGE, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
                                           Surge, lead, longest, main_story, name_surges, names, news, phrases)
 from insight_core.utils.story_rules import Story, StoryPost
 
@@ -73,11 +73,14 @@ class NewsService:
     def rows(*, posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
              since: datetime) -> List[Any]:
         """A full run's News rows, written by no one here (`refresh` writes them; Mark X writes its own, issue 0086
-        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names."""
-        shown = [s for s in stories if s.first_at >= since]
+        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names. A
+        row is in the window by its first post (issue 0111): those of NEWS_EDGE before are read too, and a row they
+        begin is no row of the window (the one stored stays as it was)."""
+        edge = since - NEWS_EDGE
+        shown = [s for s in stories if s.first_at >= edge]
         in_story = {p.id for s in stories for p in s.posts}
-        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
-        return news([p for p in posts if p.id in ids], shown, found)
+        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= edge}
+        return [s for s in news([p for p in posts if p.id in ids], shown, found) if s.first_at >= since]
 
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
@@ -92,8 +95,9 @@ class NewsService:
         raw = self.repo.stored_surges(cur)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
         seeds = set(touched) | {p for name, at, ps in old ^ {(s.name, s.at, tuple(s.posts)) for s in found} for p in ps}
+        edge = since - NEWS_EDGE   # a row is in the window by its first post (issue 0111): read from the edge before it
         if before is not None and before != since:
-            lo, hi = min(before, since), max(before, since)
+            lo, hi = min(before, since) - NEWS_EDGE, max(before, since)
             seeds |= set(self.repo.window_posts(cur, lo, hi))
         surges_of: Dict[str, List[Surge]] = defaultdict(list)
         for s in found:
@@ -103,19 +107,19 @@ class NewsService:
         # the surges they are in, until nothing more joins (news_rules.news).
         group, frontier, stories = set(seeds), set(seeds), {}
         while frontier:
-            held = self.repo.stories_of(cur, sorted(frontier), since)
+            held = self.repo.stories_of(cur, sorted(frontier), edge)
             stories.update(held)
             more = self.repo.news_mates(cur, sorted(frontier))
             more |= {pid for story in held.values() for pid in (*story["posts"], *story["mentions"])}
             more |= {pid for f in frontier for s in surges_of.get(f, ()) for pid in s.posts}
             frontier = more - group
             group |= frontier
-        shown = set(self.repo.window_posts(cur, since, ids=sorted(group)))
+        shown = set(self.repo.window_posts(cur, edge, ids=sorted(group)))
         load(shown)
         window = [posts[pid] for pid in sorted(shown) if pid in posts]
-        held = [Story(id=sid, first_at=since, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
+        held = [Story(id=sid, first_at=edge, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
-        stories_now = news(window, held, found)
+        stories_now = [s for s in news(window, held, found) if s.first_at >= since]   # a row begun before is left whole
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
         # How News named its voices (issue 0111); a source whose owner changed has its posts queued (_facts).
         self.repo.write_owners(cur, getattr(sources, "owners", {}))
