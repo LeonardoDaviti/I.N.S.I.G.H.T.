@@ -117,7 +117,7 @@ Measured 2026-11-04:
 Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch copies of `insight_lab` (41,637 posts), never on the lab itself.
 
 **What changed** (the slice's files only):
-- `backend/insight_core/db/migrations/0066_markx_shadow.sql`: the 14 tables above, with their keys, uniques and indexes, and the HNSW index `mx_embeddings_v_hnsw_idx` (`halfvec_cosine_ops`). It creates `mx_*` things only and is idempotent.
+- `backend/insight_core/db/migrations/0068_markx_shadow.sql`: the 14 tables above, with their keys, uniques and indexes, and the HNSW index `mx_embeddings_v_hnsw_idx` (`halfvec_cosine_ops`). It creates `mx_*` things only and is idempotent.
 - `backend/insight_core/markx/__init__.py` and `markx/repo.py`: every insert and read the later slices need.
   - Guides: `put_guide` (loaded again at each start), `guides`.
   - Tasks: `add_task` (one per kind, guide and input), `task_for`, `lease_tasks` (30-minute leases, by priority then age, `SKIP LOCKED`, expired leases leased again), `release_tasks`, `expire_leases`, `answer_task`, `fail_attempt` (failed at the 3rd), `queue_counts`.

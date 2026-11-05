@@ -1,4 +1,4 @@
-"""Mark X Shadow's storage (issue 0086 A, migration 0066): the 14 mx_* tables, their keys and uniques,
+"""Mark X Shadow's storage (issue 0086 A, migration 0068): the 14 mx_* tables, their keys and uniques,
 closing with valid_to (keep everything), and the migration itself (additive, idempotent, no key to
 Mark IX's stories). Every test runs in one transaction rolled back at its end, so it is safe on any
 database and leaves nothing behind."""
@@ -19,7 +19,7 @@ from psycopg import errors
 from insight_core.markx import repo
 from insight_core.tests._db import db_url, requires_db
 
-MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0066_markx_shadow.sql"
+MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0068_markx_shadow.sql"
 TABLES = {"mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
           "mx_runs", "mx_stories", "mx_story_posts", "mx_connections", "mx_news", "mx_briefings", "mx_labels"}
 

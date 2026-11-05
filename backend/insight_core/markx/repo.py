@@ -1,4 +1,4 @@
-"""Mark X Shadow's storage (issue 0086 A, migration 0066): every insert and read of the mx_* tables.
+"""Mark X Shadow's storage (issue 0086 A, migration 0068): every insert and read of the mx_* tables.
 
 Each function takes an open cursor and leaves the transaction to its caller (one batch, one
 transaction). Ids are uuids; rows come back as dicts.

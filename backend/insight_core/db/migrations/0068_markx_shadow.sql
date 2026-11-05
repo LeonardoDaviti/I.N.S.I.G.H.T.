@@ -1,4 +1,4 @@
--- 0066_markx_shadow.sql (issue 0086 A: Mark X Shadow's storage)
+-- 0068_markx_shadow.sql (issue 0086 A: Mark X Shadow's storage)
 --
 -- Fourteen new tables, mx_*, and nothing else: no existing table, column, index or trigger changes.
 -- Mark X writes only these; markx/repo.py holds their inserts and reads.
