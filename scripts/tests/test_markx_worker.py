@@ -244,6 +244,21 @@ class Base(unittest.TestCase):
         return self.events("done")[-1]
 
 
+class TestSystemPrompt(unittest.TestCase):
+    """v10.0.1: the guide's answer schema goes with its body, so the field names are never left to the prose."""
+
+    def test_the_body_then_the_schema_with_its_exact_field_names(self):
+        g = GUIDES["read-v2"]
+        s = W.system_for(g)
+        self.assertTrue(s.startswith(g["body"]))
+        self.assertIn("with exactly these field names:", s)
+        self.assertEqual(json.loads(s.rsplit("\n", 1)[1]), SCHEMA)
+
+    def test_a_guide_without_a_schema_is_its_body(self):
+        self.assertEqual(W.system_for({"body": "B", "schema": None}), "B")
+        self.assertEqual(W.system_for({"body": "B"}), "B")
+
+
 class TestValid(Base):
     def test_every_task_answered_in_batches_of_20_three_at_a_time(self):
         self.stub.add("read", 45)
@@ -254,7 +269,7 @@ class TestValid(Base):
         self.assertEqual(sorted(c["stdin"].count("### ITEM id:") for c in calls), [5, 20, 20])
         for c in calls:
             self.assertEqual(c["argv"], ["-p", "--model", "haiku", "--tools", "", "--system-prompt",
-                                         GUIDES["read-v2"]["body"], "--output-format", "json",
+                                         W.system_for(GUIDES["read-v2"]), "--output-format", "json",
                                          "--no-session-persistence", "--strict-mcp-config"])
             self.assertTrue(c["stdin"].startswith(W.HEAD))
         for w in self.stub.works:
@@ -297,7 +312,7 @@ class TestValid(Base):
             ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
             kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}
             self.assertEqual(len(kinds), 1)
-            self.assertEqual(c["system"], GUIDES[KIND_GUIDE[kinds.pop()]]["body"])
+            self.assertEqual(c["system"], W.system_for(GUIDES[KIND_GUIDE[kinds.pop()]]))
 
     def test_batches_caps_the_leases(self):
         self.stub.add("read", 100)

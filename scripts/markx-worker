@@ -332,6 +332,16 @@ class Embedder:
 
 # ---------------------------------------------------------------------------------------------- claude -p
 
+def system_for(guide):
+    """The guide's body, then its answer schema when it has one (v10.0.1): a guide's prose can leave a field's
+    key unnamed (read-v2's mentions never say `name`), and the server refuses an answer without it."""
+    schema = guide.get("schema")
+    if not schema:
+        return guide["body"]
+    return (guide["body"].rstrip() + "\n\nEach answer object (after its \"id\") must match this JSON Schema, with "
+            "exactly these field names:\n" + json.dumps(schema, ensure_ascii=False, separators=(",", ":")))
+
+
 def claude_argv(claude, model, system):
     return [claude, "-p", "--model", model, "--tools", "", "--system-prompt", system,
             "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"]
@@ -635,7 +645,7 @@ class Worker:
         if left < self.a.lease_margin:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
             return None
-        res = call(self.a.claude, self.a.model, batch.guide["body"], prompt_for(tasks),
+        res = call(self.a.claude, self.a.model, system_for(batch.guide), prompt_for(tasks),
                    timeout=self.a.timeout)
         late = datetime.now(timezone.utc) > batch.lease_until
         ok, invalid, missing = [], [], []
