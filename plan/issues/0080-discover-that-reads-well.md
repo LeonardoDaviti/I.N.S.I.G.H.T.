@@ -255,6 +255,49 @@ During a whole rebuild run in its own process, the branch opened Discover 48 tim
 - `./run-tests.sh` (rebased on main 4bf7a2a): 1,419 OK, including a test that a step with nothing to count keeps the stamp, the inputs and the list, and that a batch moves them.
 - `scripts/realdata-check.sh insight_lab` (scratch `insight_lab_8001a/b`): **PASS**, with no case and no invariant changed.
 
+### Cold open (2026-11-05, branch `issue-0080-cold-open`)
+
+**The case:** the lab's API had been up 7 h with no request but its health checks. Its first Discover open took 14.07 s, the next ones 0.01 s. The counts were not counted again.
+
+**Cause:**
+- A process's first open makes the whole list from the kept counts: the in-process list starts empty.
+- Making it reads about 16-18k pages:
+  - the source facts scan the whole posts table (`GROUP BY source_id, url_host`; the lab's posts table is 18k pages, 2.5 times its live rows);
+  - the activity query looks up 35k posts and scans the kept links.
+- Warm, that is 0.38 s. When those pages have left the cache and the disk is busy with other writes, every read waits 4-8 ms.
+- Measured on the lab, read only, its cache dropped:
+  - 5.7 s while other work wrote 2.7 GB;
+  - 13.6 s with an 8 GB write beside it (the source facts 9.3 s, the activity 4.0 s).
+- Ruled out by measurement:
+  - imports;
+  - the pooled connection (an API idle an hour opened in 0.34 s);
+  - DNS;
+  - locks (the cluster wrote nothing from 23:24 to 06:38);
+  - the page-title and follow-test reads (off on the lab).
+
+**Fix:**
+- Discover's list is kept in the database (`discover_list`), by what it was made from: its inputs (`discover_inputs`) and the code (`code_stamp`, a hash of `insight_core`).
+- An open reads it when nothing moved. Otherwise it makes the list and keeps it.
+- The story job keeps it after each run, in its own process. So the first open after a run, a start or a deploy reads one row.
+- It changes exactly when the in-process list did: a story run, a source, a hidden suggestion, or Discover's reads.
+- A restart no longer makes it again. The posts you opened since the last run, and the days since a link, count from the last run, as they already did within one process.
+
+**Measured** (an API container on a fresh copy of the lab, its start job done, the copy's cache dropped):
+
+| | main | this branch |
+|---|---|---|
+| first open, the disk busy with others' work | 1.25 / 1.59 s | 0.17 / 0.46 s |
+| first open, plus an 8 GB write | 41.6 / 41.8 s | 1.42 / 0.77 s |
+| the next open | 0.011 s | 0.011 s |
+
+- Both answer the same, with a total of 1,082.
+- What is left on a cold open is about 200 reads: the inputs, the kept row, and each archive row's state. The archive state is read on every open by design.
+
+**Checks:**
+- `./run-tests.sh`: 1,421 OK, with the two new tests red first.
+- Two tests stored posts without a story run and expected a fresh process to see them. They now drop the kept list where a run would make it again.
+- `scripts/realdata-check.sh --base main --head issue-0080-cold-open insight_lab` (scratch `insight_lab_check_1923473_a/b`): **PASS**. No case changed state, every invariant held, and no derived thing changed (Discover: 0).
+
 ## Not in this issue
 - Reading walled or JavaScript-only sites (0081).
 - Mark X's "same voice" (0078 channels).
