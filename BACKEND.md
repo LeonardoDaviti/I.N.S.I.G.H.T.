@@ -359,8 +359,33 @@ share one (accepted; nothing is stored).
   cooldown on a batch boundary) is the slot's minimum interval, so two pages are
   max(host gap, pause) apart, never the sum; kinds do not sleep between archive pages. The
   plan's time estimate uses the same rule with the host's floor. On a 429 or a timeout it waits, then asks again from the last
-  recorded checkpoint; twice in a row it pauses: the job succeeds with `paused: true` and
-  `paused_reason` ("reddit.com is limiting us"), and the checkpoint stays resumable.
+  recorded checkpoint.
+- **Twice in a row, the archive waits for the host's window** (issue 0107; `_stopped` in
+  `services/source_fetch_service.py`): its job's status becomes `waiting`, with `waiting_until`,
+  `waiting_host` and `waits` in the payload and `settings.archive.waiting` {host, until, reason}.
+  The waits are 5 min, then doubling up to 60 min while no page comes; after 6 waits with no page
+  gained the job ends paused (`paused_reason` "<host> is still limiting us after 6 waits"), the
+  checkpoint resumable. The scheduler (`run_scheduler.py`, every 30 s) continues each waiting job
+  whose time has come, on the same job row, from its checkpoint, reusing its plan (no new
+  measurement): `services/archive_jobs.py` claims it atomically (waiting -> running, trigger
+  `scheduler`), so only one process continues it. Resume by hand on a waiting archive continues
+  it at once. A restart of the scheduler sets the archives it was continuing waiting again, due
+  at once.
+- **Each host's budget is learned from those limits** (`ingestion/host_budgets.py`, kept in
+  `system_settings` as `host_budget:<host>`): the requests that went through from a recovery (an
+  archive's start, or the first success after a limit) to the next 429, over the time from that
+  recovery to the next one (not from the 429 to the first success: that is the window minus the
+  time spent, and pacing to it would hit the limit again). Only archives take measures; a live
+  fetch in the same process counts against the stretch being measured. After 2 measured limits an
+  archive paces to 80% of the slowest measure (gap = window / (0.8 x requests)); measures older
+  than 7 days are forgotten. Events: `learned` ("<host>: about 40 requests per 16 min, learned
+  from 2 limits; pacing to 80%: one page every 30 s") and `pacing`.
+- **An archive keeps out of the way of its host's live fetches**: at most once a minute it asks
+  whether a run has decided to fetch a source of that host and not tried it yet
+  (`ports.DbLiveFetchDue`); if so it waits in 30 s steps, at most 15 min (`yielding` event,
+  "Making room for <host>'s live fetches"). The remaining 20% of the budget is theirs.
+- Health: `GET /api/sources/health` and the overview's `source_health` carry `host_limits`
+  [{host, requests, window_s, limits, archive_gap_s, line}].
 
 ### Reading an article page
 

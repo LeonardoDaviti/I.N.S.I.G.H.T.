@@ -35,6 +35,7 @@ from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.kinds.parsing import web_address
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
+from insight_core.services.archive_jobs import ArchiveJobs
 from insight_core.services.credentials_service import LoginFailed
 from insight_core.services.media_proxy_service import MediaFetchFailed, MediaNotAllowed
 from insight_core.services.operations_service import (
@@ -444,6 +445,11 @@ def _accept_ingestion_run(
     )
 
 
+def _archive_jobs() -> ArchiveJobs:
+    """The API's archive jobs (trigger "manual"); the scheduler continues the waiting ones (0107)."""
+    return ArchiveJobs(services().operations, services().source_fetch, trigger="manual")
+
+
 async def _run_archive(
     source_id: str,
     *,
@@ -451,56 +457,15 @@ async def _run_archive(
     rate_limit_overrides: Dict[str, Any] | None = None,
     job_id: str | None = None,
 ) -> Dict[str, Any]:
-    """Archive posts for a single source into the shared posts table.
+    """Archive posts for a single source into the shared posts table (services/archive_jobs.py).
 
     With job_id (the route already started the job) progress lands on that job; otherwise
     the run starts its own archive_source job. An unavailable kind answers
-    {success: false, unavailable: true}; any other failure fails the job and raises.
+    {success: false, unavailable: true}; any other failure fails the job and raises. A host that
+    limits it leaves the job waiting, and the scheduler continues it (issue 0107).
     """
-    ops = services().operations
-    job_id = job_id or ops.try_start_job(
-        "archive_source",
-        trigger="manual",
-        source_id=source_id,
-        payload={"resume": resume, "rate_limit": rate_limit_overrides or {}},
-    )
-    try:
-        ops.try_append_job_event(
-            job_id,
-            message="Archive job started",
-            level="info",
-            payload={"resume": resume, "rate_limit": rate_limit_overrides or {}},
-        )
-        result = await services().source_fetch.archive_source(
-            source_id,
-            progress_callback=lambda event: ops.try_append_job_event(
-                job_id,
-                message=str(event.get("message") or event.get("stage") or "Archive progress"),
-                level=event.get("level") or "info",
-                progress=event.get("progress"),
-                payload=event,
-            ),
-            resume=resume,
-            rate_limit_overrides=rate_limit_overrides,
-        )
-    except KindUnavailable as e:
-        ops.try_finish_job(job_id, status="failed", message=f"Unavailable: {e.reason}",
-                           payload={"source_id": source_id, "unavailable": True})
-        return {"success": False, "error": e.reason, "unavailable": True, "source_id": source_id}
-    except Exception as e:
-        ops.try_finish_job(job_id, status="failed", message=str(e), payload={"source_id": source_id})
-        raise
-    # An archive run is not a live fetch: it does not touch source_fetch_state, so paging old
-    # posts can neither delay the next live fetch nor reset its backoff. Its own status lives
-    # in settings.archive.
-    ops.try_finish_job(
-        job_id,
-        status="success" if result.get("success") else "failed",
-        # A paused archive (issue 0016) is a success whose message says why it paused.
-        message=result.get("error") or result.get("message") or f"Archived {result.get('posts_fetched', 0)} posts",
-        payload=result,
-    )
-    return result
+    return await _archive_jobs().run(source_id, resume=resume, rate_limit_overrides=rate_limit_overrides,
+                                     job_id=job_id)
 
 
 # Sources with an archive running in this process. One uvicorn worker runs every background
@@ -511,6 +476,14 @@ _archiving_sources: set[str] = set()
 async def _run_archive_once(source_id: str, *args, **kwargs):
     try:
         await _run_async_job_background("archive_source", _run_archive, source_id, *args, **kwargs)
+    finally:
+        _archiving_sources.discard(source_id)
+
+
+async def _continue_archive_once(source_id: str, job_id: str):
+    """Continue a waiting archive now (a Resume by hand while it waits out a host's limit, 0107)."""
+    try:
+        await _run_async_job_background("archive_source", _archive_jobs().continue_job, job_id)
     finally:
         _archiving_sources.discard(source_id)
 
@@ -535,10 +508,22 @@ def _accept_archive_run(
         reason = support.get("reason") or "This source cannot archive"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason,
                                                       "unavailable": bool(support.get("unavailable"))})
-    if source_id in _archiving_sources:
+    latest = services().operations.latest_job_for_source("archive_source", source_id)
+    # The scheduler may be the one running it (it continues waiting archives, issue 0107).
+    if source_id in _archiving_sources or (latest or {}).get("status") == "running":
         reason = "An archive of this source is already running"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     resume = bool(request.resume)
+    if resume and (latest or {}).get("status") == "waiting":
+        # Resume by hand while it waits out a host's limit: the same job continues now.
+        _archiving_sources.add(source_id)
+        background_tasks.add_task(_continue_archive_once, source_id, latest["id"])
+        return JSONResponse(status_code=202, content=_accepted_job_response(latest["id"], "archive_source",
+                                                                            message="Archive continues"))
+    if (latest or {}).get("status") == "waiting":
+        # A new archive replaces the waiting one.
+        services().operations.try_finish_job(latest["id"], status="success", message="Replaced by a new archive",
+                                             payload={"waiting": False})
     job_id = services().operations.try_start_job(
         "archive_source",
         trigger="manual",

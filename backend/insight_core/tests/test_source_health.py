@@ -280,7 +280,7 @@ class SourceHealthTests(unittest.TestCase):
         service.get_database_counts = lambda: {"total_posts": 1}  # type: ignore[method-assign]
         overview = service.get_operations_overview()
         health = overview["source_health"]
-        self.assertEqual(set(health), {"summary", "rows"})
+        self.assertEqual(set(health), {"summary", "rows", "host_limits"}, "host_limits: issue 0107")
         self.assertEqual(len(health["rows"]), 8)
         self.assertEqual(health["rows"][0]["source_id"], "erroring")
         self.assertEqual(health["summary"]["deferred"], 6)

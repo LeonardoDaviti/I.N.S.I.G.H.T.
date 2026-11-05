@@ -10,6 +10,11 @@ Two clocks:
   .last_daily_work_at: prune job_runs and refresh source cadence. On
   the first tick after deploy last_daily_work_at is seeded from the newest successful
   scheduler_cycle job, so a deploy does not run the daily work twice.
+- waiting archives, every ARCHIVE_POLL_SECONDS: an archive a host's limit stopped waits for the
+  window (issue 0107); once its time has come the scheduler continues it from its checkpoint, on
+  the same job, in this process (so its pages and the hourly fetches of that host share one
+  host limiter). A continuation runs as its own task beside the ticks; one that comes due during a
+  tick starts after it, which leaves the hourly fetches the host first.
 
 tick() is the testable unit: it takes its collaborators as arguments.
 """
@@ -36,6 +41,7 @@ logger = get_component_logger("run_scheduler")
 
 RUNNING = True
 TICK_MINUTES_FLOOR = 15
+ARCHIVE_POLL_SECONDS = 30
 
 
 def _handle_stop(signum, frame):
@@ -199,7 +205,9 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
 async def main() -> None:
     from insight_core.db.ensure_db import ensure_database
     from insight_core.ingestion import run_ingestion
+    from insight_core.services.archive_jobs import ArchiveJobs
     from insight_core.services.operations_service import OperationsService
+    from insight_core.services.source_fetch_service import archive_service
 
     setup_logging(debug_mode=False)
     db_url = ensure_database()
@@ -209,6 +217,12 @@ async def main() -> None:
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     logger.info("Starting scheduler")
+    try:   # the archives it was continuing carry on by themselves (issue 0107)
+        requeued = operations_service.requeue_interrupted_archives("scheduler", datetime.now(timezone.utc))
+        if requeued:
+            logger.info("%s archives a restart stopped continue shortly", requeued)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not requeue the archives a restart stopped")
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:
@@ -221,8 +235,19 @@ async def main() -> None:
         logger.exception("Could not read the scheduler state; starting fresh")
         state = SchedulerState()
 
+    archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
+    last_archive_poll = 0.0
+    loop = asyncio.get_running_loop()
+
     while RUNNING:
         now = datetime.now(timezone.utc)
+        if loop.time() - last_archive_poll >= ARCHIVE_POLL_SECONDS:
+            last_archive_poll = loop.time()
+            try:
+                for job_id in await archives.continue_due():
+                    logger.info("Continuing archive job %s after its wait", job_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not continue the waiting archives")
         if state.next_tick_at is None or now >= state.next_tick_at:
             config = operations_service.get_scheduler_config()
 
