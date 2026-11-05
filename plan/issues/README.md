@@ -99,6 +99,21 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
 | [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, not merged (v9.16) |
 | [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | measured |
+| [0086](0086-mark-x-phase-1-haiku-in-insight.md) | Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first; storage, tasks, the worker, decisions, the Mark X page, labels | spec, ready to build ([build plan](../INSIGHT_mark_x_shadow_build_plan.md)) |
+| [0087](0087-gemma-fine-tuned-on-haiku.md) | A local Mark X: Gemma 4 E4B fine-tuned on Haiku's answers | future |
+| [0090](0090-mark-x-entities.md) | Mark X entities: one name per thing, its versions and role, and what connects through it | spec, draft (measured) |
+| [0091](0091-timeline-graph.md) | The timeline graph: events, entities and their connections across time | discussion |
+| [0092](0092-back-in-the-news.md) | Back in the news: an old story that gets a fresh burst reappears in News | future |
+| [0093](0093-noise-per-source.md) | Noise per source: what each source adds, and what it only repeats | future |
+| [0094](0094-since-you-last-looked.md) | Since you last looked: what's new on a story, entity or track since you opened it | future |
+| [0095](0095-numbers-over-time.md) | Numbers over time: prices, scores and money, per entity, with their sources | future |
+| [0096](0096-weekly-what-changed.md) | Weekly "what changed": a digest for learning, not a feed | future |
+| [0097](0097-where-sources-disagree.md) | Where sources disagree: who supports, disputes or adds what, on one story | future |
+| [0098](0098-questions-with-citations.md) | Questions with citations: answers drawn only from what you've received | future |
+| [0099](0099-predictions-checked-later.md) | Predictions checked later: what sources said would happen, checked when the date comes | future |
+| [0100](0100-study-pages.md) | Study pages: one question or topic, everything needed to understand it on one page | future |
+| [0101](0101-discover-with-mark-x.md) | Discover with Mark X: coverage gaps by entity, sources found by attribution, and tracks | future |
+| [0102](0102-archives-for-history.md) | Archives for history: back to a date, and a feed's past through its site | spec, draft (9.x) |
 
 ## Analysis archive
 
