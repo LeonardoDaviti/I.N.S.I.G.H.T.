@@ -414,5 +414,5 @@ def mx_overview():
 
 @router.post("/decide")
 def mx_decide():
-    with transaction() as cur:
+    with decide.snapshot(db_url()) as cur:
         return decide.run(cur)

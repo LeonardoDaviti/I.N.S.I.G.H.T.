@@ -31,6 +31,7 @@ INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processe
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -38,6 +39,8 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from psycopg import errors as psycopg_errors
 
 log = logging.getLogger(__name__)
 
@@ -455,13 +458,16 @@ class Ask:
         self.cur, self.now = cur, now
         self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
         self.added: Counter = Counter()
+        self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
 
     def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
         """(the valid answer, its call id), or None: the task is added when it is new (up to the kind's cap a run:
-        `caps`, else CAP)."""
+        `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
+        seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
+        answered in this snapshot, so the run goes on (`raced` counts them)."""
         from insight_core.markx import repo, schemas, tasks
         spec = schemas.KINDS[kind]
         task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
@@ -469,7 +475,12 @@ class Ask:
             if self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
-            tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+            try:
+                with self.cur.connection.transaction():
+                    tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+            except psycopg_errors.SerializationFailure:
+                self.raced[kind] += 1
+                return None
             self.added[kind] += 1
             return None
         if task["status"] != "answered":
@@ -854,8 +865,11 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
 
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) -> Dict[str, Any]:
-    """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only."""
+    """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
+    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot."""
     from insight_core.markx import news as mx_news, repo, schemas
+    cur.execute("SHOW transaction_isolation")
+    isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
     if not cur.fetchone()[0]:
         return {"skipped": "another decision run holds the lock"}
@@ -874,7 +888,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
-                   "tasks_waiting": dict(ask.waiting), "answers_read": dict(ask.answered),
+                   "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
+                   "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
     return {"run": str(run_id), **counts}
@@ -882,10 +897,24 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
 
 # ---- when it runs -----------------------------------------------------------------------------------
 
-def _transaction():
+@contextlib.contextmanager
+def snapshot(url: Optional[str] = None):
+    """A transaction at REPEATABLE READ for one decision run: its first statement sets the level, so every read of
+    Mark IX's stories, News and posts sees the one snapshot taken at the run's first query, and a story-job commit
+    landing mid-run is never half seen. The run writes only mx_* rows, which only the run (under its advisory lock)
+    updates; the one write another transaction can race is a task insert (the worker's check planner), which `Ask`
+    takes in a savepoint."""
     from insight_core.db import database
-    from insight_core.services.registry import services
-    return database.transaction(services().db_url)
+    if url is None:
+        from insight_core.services.registry import services
+        url = services().db_url
+    with database.transaction(url) as cur:
+        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        yield cur
+
+
+def _transaction():
+    return snapshot()
 
 
 class Scheduler:

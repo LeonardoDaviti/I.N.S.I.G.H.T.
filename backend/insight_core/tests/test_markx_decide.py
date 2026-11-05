@@ -366,6 +366,89 @@ class Job(unittest.TestCase):
                 cur.execute("SELECT pg_advisory_unlock(%s)", (D.LOCK_KEY,))
 
 
+@requires_test_db
+class Snapshot(unittest.TestCase):
+    """A run reads one snapshot (REPEATABLE READ): a story-job commit landing mid-run is not seen by that run, and a
+    task the worker's planner commits mid-run is taken, not a failed run. Committed rows, removed after."""
+
+    def setUp(self):
+        self.other = psycopg.connect(db_url(), autocommit=True)
+        self.addCleanup(self.other.close)
+        self.cur = self.other.cursor()
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        self.addCleanup(self.cur.execute, f"TRUNCATE {', '.join(MX_TABLES)}")
+        schemas.load_guides(self.cur)
+        self.now = T + 30 * H
+        self.posts, self.sources = [], []
+        self.addCleanup(self._clean)
+        self.a, self.b, self.c = (self.post(n, f"Acme released Widget {n}") for n in range(3))
+        self.story = self.a
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (self.story, T))
+        self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice, parent_id, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v0', NULL, NULL), (%s, %s, 'report', 'v1', %s, 'citation')",
+                         (self.a, self.story, self.b, self.story, self.a))
+
+    def _clean(self):
+        self.cur.execute("DELETE FROM story_posts WHERE story_id = %s", (self.story,))
+        self.cur.execute("DELETE FROM stories WHERE id = %s", (self.story,))
+        self.cur.execute("DELETE FROM post_parts WHERE post_id = ANY(%s::uuid[])", (self.posts,))
+        self.cur.execute("DELETE FROM posts WHERE id = ANY(%s::uuid[])", (self.posts,))
+        self.cur.execute("DELETE FROM sources WHERE id = ANY(%s::uuid[])", (self.sources,))
+
+    def post(self, hours, title):
+        source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
+        url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
+        body = title + ". " + " ".join(f"word{k}" for k in range(LONG))
+        self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
+                         "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
+        pid = str(self.cur.fetchone()[0])
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        PostPartsRepository.write(self.cur, [pid])
+        self.posts.append(pid)
+        self.sources.append(str(source))
+        return pid
+
+    def run_with(self, transaction, mid_run):
+        """One run whose think() first lets `mid_run` commit on another connection, then counts the story's members
+        on the run's own cursor: what the rest of the run reads."""
+        seen = {}
+        real = D.think
+
+        def think(cur, world, config, ask, now, *rest, **kw):
+            mid_run()
+            cur.execute("SELECT count(*) FROM story_posts WHERE story_id = %s", (self.story,))
+            seen["members"] = cur.fetchone()[0]
+            return real(cur, world, config, ask, now, *rest, **kw)
+        with mock.patch.object(D, "think", think), transaction() as cur:
+            seen["out"] = D.run(cur, now=self.now)
+        return seen
+
+    def add_member(self):
+        self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice, parent_id, parent_reason) "
+                         "VALUES (%s, %s, 'report', 'v2', %s, 'citation') ON CONFLICT DO NOTHING", (self.c, self.story, self.b))
+
+    def test_a_story_change_committed_mid_run_is_not_seen_by_that_run(self):
+        from insight_core.db import database
+        seen = self.run_with(lambda: D.snapshot(db_url()), self.add_member)
+        self.assertEqual(seen["out"]["isolation"], "repeatable read")
+        self.assertEqual(seen["members"], 2)                       # the commit came after the run's snapshot
+        self.cur.execute("DELETE FROM story_posts WHERE post_id = %s", (self.c,))
+        control = self.run_with(lambda: database.transaction(db_url()), self.add_member)
+        self.assertEqual(control["out"]["isolation"], "read committed")
+        self.assertEqual(control["members"], 3)                    # what READ COMMITTED would have mixed in
+
+    def test_a_task_the_planner_commits_mid_run_is_not_a_failed_run(self):
+        def plan():   # the worker's check planner asks the run's own check first, and commits
+            tasks.check_task(self.cur, self.b, [self.a])
+        seen = self.run_with(lambda: D.snapshot(db_url()), plan)
+        self.assertEqual(seen["out"]["tasks_raced"], {"check": 1})
+        self.assertNotIn("check", seen["out"]["tasks_added"])
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'check'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
+
+
 class Switch(unittest.TestCase):
     def test_off_nothing_runs(self):
         ran = []
