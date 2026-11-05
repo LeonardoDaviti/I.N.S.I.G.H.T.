@@ -1192,10 +1192,14 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
     if (latest or {}).get("status") == "waiting":
         reason = "This source's archive is waiting for its host; it continues by itself"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
-    job_id = services().operations.try_start_job("archive_source", trigger="manual", source_id=source_id,
-                                                  message="Fetch linked pages", payload={"linked": True})
-    if not job_id:
+    try:   # under the start lock, as an archive (0112 Decided 11: two API processes)
+        job_id = services().operations.start_job_unless_running("archive_source", trigger="manual", source_id=source_id,
+                                                                message="Fetch linked pages", payload={"linked": True})
+    except Exception:   # logged by the operations service
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    if not job_id:   # the other API process started one between the check above and here
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     _archiving_sources.add(source_id)
     background_tasks.add_task(_run_archive_once, source_id, job_id=job_id, linked=True)
     return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source",
