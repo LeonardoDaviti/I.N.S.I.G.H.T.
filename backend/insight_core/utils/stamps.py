@@ -134,6 +134,17 @@ QUOTE = (f'<p>Great thread</p><blockquote><b>Writer X</b>Thread on evaluation me
          f'<a href="{TWEET}">x.com/writer_x</a></cite></footer></blockquote>')
 
 
+SELF_A = "https://x.com/author_y/status/1900000000000000301"
+SELF_B = "https://x.com/author_y/status/1900000000000000302"
+
+
+def _self_quote(words: str, tweet: str) -> str:
+    """A reply's HTML as Nitter writes it, quoting one of its account's tweets."""
+    nitter = tweet.replace("https://x.com/", "https://nitter.local/") + "#m"
+    return (f'<p>{words}</p><blockquote><b>Author Y (@author_y)</b><p>quoted</p><footer> — <cite>'
+            f'<a href="{nitter}">{nitter}</a></cite></footer></blockquote>')
+
+
 def _reddit(user: str) -> str:
     return f'<p>submitted by <a href="https://www.reddit.com/user/{user}"> /u/{user} </a></p>'
 
@@ -288,6 +299,14 @@ def posts() -> List[Dict[str, Any]]:
           author="writer_x", html="<p>part three</p>"),
         p("t6", "s-x1", _at(138, 3), "R to @writer_x: part four, a day and a minute later",
           "https://x.com/writer_x/status/1900000000000000104", author="writer_x", html="<p>part four</p>"),
+        # A reply quoting its own account's stored tweet continues it, not the tweet right before it
+        # (issue 0103): two subjects, two stories
+        p("t7", "s-x2", _at(150), "Sparse routing results are in, a short summary", SELF_A, author="author_y",
+          html="<p>Sparse routing results are in</p>"),
+        p("t8", "s-x2", _at(151), "A new tokenizer release from the tool team", SELF_B, author="author_y",
+          html="<p>A new tokenizer release</p>"),
+        p("t9", "s-x2", _at(152), "R to @author_y: and the routing numbers hold up", "https://x.com/author_y/status/1900000000000000303",
+          links=[(SELF_A, "t7")], author="author_y", html=_self_quote("and the routing numbers hold up", SELF_A)),
         p("v1", "s-beta", _at(170), "One address", SAME_PLACE),
         p("v2", "s-hn", _at(170 + 30 * 24), "One address, a month on", SAME_PLACE, html="<p>c</p>"),
         p("v3", "s-red", _at(170 + 60 * 24, 1), "One address, too late", SAME_PLACE, html=_reddit("sample_user")),
