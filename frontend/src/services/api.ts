@@ -319,6 +319,8 @@ export interface ArchiveJobSummary {
     /** Issue 0016: the archive paused (a site limiting us); Resume continues from its checkpoint. */
     paused?: boolean;
     paused_reason?: string;
+    /** Issue 0084 B: the job read the source's linked, not stored pages (not its archive). */
+    linked?: boolean;
     /** Issue 0107: while the job waits out a host's limit, when it continues and which host. */
     waiting_until?: string;
     waiting_host?: string;
@@ -350,6 +352,18 @@ export interface ArchiveStatusResponse extends Envelope {
   /** Missing from a backend older than the source sheet's archive section. */
   support?: ArchiveSupport | null;
   latest_job?: ArchiveJobSummary | null;
+}
+
+/** GET /api/archive/{id}/linked `linked` (issue 0084 B): the source's own pages that your stored posts
+ *  link and no stored post is. `readable`: one fetch can read them one page at a time; `archive_holds`:
+ *  the source's archive pages back, so it would hold them (offered first until `archive_ran`). */
+export interface LinkedPagesSummary {
+  count: number;
+  readable: boolean;
+  estimated_seconds: number | null;
+  archive_holds: boolean;
+  archive_ran: boolean;
+  pages: Array<{ url: string; posts: number; first_linked_at: string | null }>;
 }
 
 /** POST /api/archive/{id}/plan `archive`: one measurement of the source, where the archive starts, and the estimate. */
@@ -1192,6 +1206,19 @@ export function createApi() {
         `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { resume, background: true, ...pacing } },
       );
       if (!response.job_id) throw new Error('Could not start the archive');
+      return { job_id: response.job_id };
+    },
+
+    /** Linked, not stored (issue 0084 B): how many of the source's own pages your posts link. */
+    getLinkedPages: async (sourceId: string): Promise<LinkedPagesSummary> => {
+      const response = await request<{ linked?: LinkedPagesSummary }>(`/api/archive/${enc(sourceId)}/linked`);
+      if (!response.linked) throw new Error('Could not count the linked pages');
+      return response.linked;
+    },
+    /** Fetch them: an archive_source job reading each linked, not stored page once (202); poll it with getOperationJob. */
+    fetchLinkedPages: async (sourceId: string): Promise<{ job_id: string }> => {
+      const response = await request<{ job_id?: string }>(`/api/archive/${enc(sourceId)}/linked`, { method: 'POST' });
+      if (!response.job_id) throw new Error('Could not fetch the linked pages');
       return { job_id: response.job_id };
     },
 
