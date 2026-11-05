@@ -10,7 +10,8 @@ import { useOperationsOverview } from '../../hooks/useOperations';
 import { useNow } from '../../hooks/useNow';
 import { fetchingLabel, recentFailedRun, runningFetchJob } from '../../lib/jobRuns';
 import { sourcesIngestionHref } from '../../lib/ingestionNavigation';
-import { activeNavKey, NAV_ITEMS } from './navigation';
+import { activeNavKey, navItems } from './navigation';
+import { useMarkxOn } from '../../hooks/useMarkxOn';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -47,6 +48,7 @@ function FetchActivity() {
 export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void }) {
   const { pathname } = useLocation();
   const current = activeNavKey(pathname);
+  const items = navItems(useMarkxOn());
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -86,7 +88,7 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
 
         <nav aria-label="Primary" className="ml-auto hidden min-w-0 sm:block">
           <ul className="flex items-center gap-1.5 text-[0.875rem]">
-            {NAV_ITEMS.map((item, index) => {
+            {items.map((item, index) => {
               const isCurrent = item.key === current;
               return (
                 <Fragment key={item.key}>

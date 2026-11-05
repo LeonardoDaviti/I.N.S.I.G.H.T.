@@ -55,6 +55,18 @@ GET /api/markx/token    200 {"set": bool, "last4": str | null, "updated_at": ISO
 POST /api/markx/token   200 {"token": "<new token, shown once>", "set": true, "last4", "updated_at"}
                         A new token replaces the old one (a worker holding the old one gets 401).
 
+S5's routes, the Mark X page's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
+--------------------------------------------------------------------------------------------------------
+GET /api/markx/on                  200 {"on": true} (404 when off, as every path here: the menu item's probe)
+GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `page`): the newest written run's rows,
+                                   only the differences unless all=1, each {id, tag, headline {text, from}, first_at,
+                                   voices, score, posts [{id, title, source, kind, at, role, why, ix}], removed, ix};
+                                   and `gone`: the Mark IX rows no Mark X row holds.
+GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}
+GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
+POST /api/markx/decide             one decision run now: {run, ...counts} or {"skipped"} (the hourly and after-upload
+                                   runs are decide.scheduler's)
+
 Adding a kind (S2's `embed`): one entry in schemas.KINDS. A route of its own (POST /api/markx/embeddings)
 is one more function on `router` below, or a router of S2's own included the same way; neither edits these.
 
@@ -86,7 +98,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
-from insight_core.markx import candidates, embed, repo, schemas, tasks, validate
+from insight_core.markx import candidates, decide, embed, news, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -276,7 +288,10 @@ def post_answers(body: Answers):
         raise HTTPException(status_code=400, detail="model: the model id that answered")
     _contact(worker)
     with transaction() as cur:
-        return store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
+        result = store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
+    if result["valid"]:
+        decide.scheduler.note()   # S5: the decisions, once the uploads go quiet
+    return result
 
 
 class Release(BaseModel):
@@ -342,6 +357,8 @@ def post_embeddings(body: Vectors):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     candidates.pending.note(result.pop("posts"))
+    if result["stored"]:
+        decide.scheduler.note()   # S5: after the candidates' own debounce
     return result
 
 
@@ -359,3 +376,43 @@ def token_generate():
         token = token_store.generate(cur)
         view = token_store.view(cur)
     return {"token": token, **view}
+
+
+# ---- the Mark X page's routes (S5, 0086 E) -------------------------------------------------------------
+
+def start_jobs() -> bool:
+    """At the API's start (main.py's lifespan): the decision job's hourly clock, only when Mark X is on."""
+    return decide.scheduler.start()
+
+
+@router.get("/on")
+def switched_on():
+    return {"on": True}
+
+
+@router.get("/news")
+def mx_news_page(all: int = Query(0, ge=0, le=1)):
+    with transaction() as cur:
+        return news.page(cur, only_differences=not all)
+
+
+@router.get("/posts/{post_id}")
+def mx_post(post_id: str):
+    found = _uuid(post_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such post")
+    with transaction() as cur:
+        return news.post_panel(cur, str(found))
+
+
+@router.get("/overview")
+def mx_overview():
+    with transaction() as cur:
+        return {"worker": news.worker(cur, dict(_contacts)), "briefing": news.briefings(cur),
+                "entities": news.entities(cur)}
+
+
+@router.post("/decide")
+def mx_decide():
+    with transaction() as cur:
+        return decide.run(cur)

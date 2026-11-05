@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils';
 import { destinations, filterDestinations, insideDesignFrame, type Destination } from './navigation';
 import { searchHref } from '../../lib/search';
 import { useFolders } from '../../hooks/useReaderDirectory';
+import { useMarkxOn } from '../../hooks/useMarkxOn';
 
 type Option = Destination | { id: 'toggle-theme' | 'reading-settings'; label: string; group: string; to?: undefined };
 
@@ -30,7 +31,8 @@ export default function QuickSwitcher({ open, onOpenChange, onOpenReadingSetting
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
   const folders = useFolders();
-  const items = useMemo(() => destinations(folders.data ?? [], { studio: !insideDesignFrame() }), [folders.data]);
+  const markx = useMarkxOn();
+  const items = useMemo(() => destinations(folders.data ?? [], { studio: !insideDesignFrame(), markx }), [folders.data, markx]);
 
   const options: Option[] = useMemo(() => {
     const themeOption: Option = {

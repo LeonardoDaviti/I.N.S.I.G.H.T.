@@ -60,16 +60,23 @@ class NewsService:
         surges_changed = self.repo.write_surges(cur, raw)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
         since = self.clock() - NEWS_KEEP
-        shown = [s for s in stories if s.first_at >= since]
-        in_story = {p.id for s in stories for p in s.posts}
-        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
-        stories_now = news([p for p in posts if p.id in ids], shown, found)
+        stories_now = self.rows(posts=posts, stories=stories, found=found, since=since)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
         found_classics = self._classics(cur, sources)
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
                 "news_changed": news_changed, "news_removed": news_removed, "classics": len(found_classics),
                 "classics_changed": classics_changed}
+
+    @staticmethod
+    def rows(*, posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
+             since: datetime) -> List[Any]:
+        """A full run's News rows, written by no one here (`refresh` writes them; Mark X writes its own, issue 0086
+        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names."""
+        shown = [s for s in stories if s.first_at >= since]
+        in_story = {p.id for s in stories for p in s.posts}
+        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
+        return news([p for p in posts if p.id in ids], shown, found)
 
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],

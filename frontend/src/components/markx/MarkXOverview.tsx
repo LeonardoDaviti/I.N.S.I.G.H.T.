@@ -1,0 +1,218 @@
+import type { ReactElement } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { useApi } from '../../services/ApiContext';
+import type { MarkxOverview } from '../../services/markx';
+import { Button, TextLink } from '../ui';
+import { EmptyState, ErrorState, LoadingState } from '../states';
+import { feedFullTime, postBylineTime } from '../../lib/dates';
+import { formatCount, plural } from '../../lib/format';
+import { errorMessage } from '../../lib/apiError';
+import { usd } from '../../lib/markx';
+
+const OVERVIEW_KEY = ['markx-overview'] as const;
+
+function useOverview() {
+  const api = useApi();
+  return useQuery({ queryKey: [...OVERVIEW_KEY], queryFn: () => api.getMarkxOverview(), staleTime: 30_000 });
+}
+
+function Loaded({ children }: { children: (data: MarkxOverview) => ReactElement }) {
+  const query = useOverview();
+  if (query.isPending) return <LoadingState label="Loading" rows={4} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
+  return children(query.data);
+}
+
+const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
+
+/** Today's briefing (F12), each line with the Mark X stories it cites. */
+export function MarkXBriefing() {
+  return (
+    <Loaded>
+      {({ briefing }) => {
+        const latest = briefing.briefings[0];
+        if (!latest) {
+          return <EmptyState title="No briefing yet"
+            description="Haiku writes one each day after 20:00, from the day's top Mark X News rows, once the worker answers it." />;
+        }
+        return (
+          <section aria-label="Briefing">
+            <p className="text-[0.8125rem] text-fg-2">
+              {briefing.day} · {latest.guide ?? 'briefing'} · written {postBylineTime(latest.created_at)}
+            </p>
+            <ol className="mt-4 space-y-3">
+              {latest.lines.map((line, n) => (
+                <li key={n} className="text-[0.9375rem] leading-[1.55] text-fg [overflow-wrap:anywhere]">
+                  {line.text}
+                  {line.rows?.length ? (
+                    <span className="ml-1 text-[0.75rem] text-fg-3">
+                      {line.rows.map((row, k) => (
+                        <a key={row} href={`#mx-${row}`} className="ml-1 underline decoration-fg-3/60 underline-offset-2 hover:text-fg">
+                          {line.keys[k] ?? `s${k + 1}`}
+                        </a>
+                      ))}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+        );
+      }}
+    </Loaded>
+  );
+}
+
+/** The main-subject entities (F7, a first look; pages and timelines are 0090). */
+export function MarkXEntities() {
+  return (
+    <Loaded>
+      {({ entities }) => (
+        <div className="grid gap-8 lg:grid-cols-2">
+          {(['today', 'week'] as const).map((when) => (
+            <section key={when} aria-label={when === 'today' ? 'Today' : 'This week'}>
+              <h2 className={H2}>{when === 'today' ? 'Today' : 'This week'}</h2>
+              {entities[when].length === 0 ? (
+                <p className="mt-3 text-[0.8125rem] text-fg-3">No main subject read {when === 'today' ? 'today' : 'this week'}.</p>
+              ) : (
+                <ul>
+                  {entities[when].map((e) => (
+                    <li key={`${e.key}|${e.version ?? ''}`} className="border-b border-line py-2.5">
+                      <span className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-[0.9375rem] font-semibold text-fg [overflow-wrap:anywhere]">{e.name}</span>
+                        <span className="text-[0.75rem] text-fg-3">{e.type}{e.version ? ` · ${e.version}` : ''}</span>
+                        <span className="ml-auto text-[0.8125rem] tabular-nums text-fg-2">
+                          {plural(e.voices, 'source')} · {plural(e.posts, 'post')}
+                        </span>
+                      </span>
+                      <ul className="mt-1 space-y-0.5">
+                        {e.examples.slice(0, 3).map((p) => (p.id ? (
+                          <li key={p.id} className="min-w-0 truncate text-[0.8125rem] text-fg-2">
+                            <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
+                            <span className="text-fg-3"> · {p.source}</span>
+                          </li>
+                        ) : null))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+    </Loaded>
+  );
+}
+
+const STATUSES = ['open', 'leased', 'answered', 'failed'] as const;
+
+/** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
+export function MarkXWorker() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const run = useMutation({
+    mutationFn: () => api.runMarkxDecisions(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] });
+      void queryClient.invalidateQueries({ queryKey: ['markx-news'] });
+    },
+  });
+  return (
+    <Loaded>
+      {({ worker }) => {
+        const kinds = Object.keys(worker.queue).sort();
+        const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
+        return (
+          <div className="space-y-10">
+            <section aria-label="Queue">
+              <h2 className={H2}>Queue</h2>
+              {kinds.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">No task yet.</p> : (
+                <div className="overflow-x-auto">
+                  <table className="mt-2 w-full min-w-[26rem] text-left text-[0.8125rem] tabular-nums">
+                    <thead className="text-fg-3">
+                      <tr><th className="py-1.5 font-medium">kind</th>{STATUSES.map((s) => <th key={s} className="py-1.5 text-right font-medium">{s}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {kinds.map((kind) => (
+                        <tr key={kind} className="border-t border-line">
+                          <td className="py-1.5 text-fg">{kind}</td>
+                          {STATUSES.map((s) => <td key={s} className="py-1.5 text-right text-fg-2">{formatCount(worker.queue[kind][s] ?? 0)}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+            <section aria-label="Answers">
+              <h2 className={H2}>Answers and tokens</h2>
+              <p className="mt-3 text-[0.8125rem] tabular-nums text-fg-2">
+                {plural(worker.tokens.calls, 'answer')} · {formatCount(worker.tokens.tokens_in)} tokens in, {formatCount(worker.tokens.tokens_out)} out ·
+                {' '}{usd(worker.tokens.api_usd)} on the API (Haiku 5.5){worker.tokens.paid_usd ? ` · ${usd(worker.tokens.paid_usd)} reported` : ''}
+              </p>
+              {worker.days.length ? (
+                <ul className="mt-2 text-[0.8125rem] tabular-nums text-fg-2">
+                  {worker.days.map((d) => (
+                    <li key={d.day} className="flex gap-3 border-t border-line py-1.5">
+                      <span className="w-24 shrink-0 text-fg">{d.day}</span>
+                      <span>{d.valid} valid of {d.calls}</span>
+                      <span className="ml-auto">{usd(d.api_usd)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+            <section aria-label="Failures">
+              <h2 className={H2}>Failures</h2>
+              {worker.failed.length === 0 && worker.invalid.length === 0 ? (
+                <p className="mt-3 text-[0.8125rem] text-fg-3">None.</p>
+              ) : (
+                <ul className="mt-2 text-[0.8125rem] text-fg-2">
+                  {worker.failed.map((f, n) => (
+                    <li key={`f${n}`} className="border-t border-line py-1.5 [overflow-wrap:anywhere]">
+                      <span className="text-fg">{f.kind}</span> · {plural(f.tasks, 'task')} failed · {f.error}
+                    </li>
+                  ))}
+                  {worker.invalid.map((f, n) => (
+                    <li key={`i${n}`} className="border-t border-line py-1.5 [overflow-wrap:anywhere]">
+                      <span className="text-fg">{f.kind}</span> · invalid {postBylineTime(f.at)} · {f.error}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section aria-label="Workers and runs">
+              <h2 className={H2}>Workers and the last decision run</h2>
+              <ul className="mt-2 text-[0.8125rem] text-fg-2">
+                {worker.workers.length === 0 ? <li className="py-1.5 text-fg-3">No worker has called since the API started.</li> : null}
+                {worker.workers.map((w) => (
+                  <li key={w.worker} className="border-t border-line py-1.5">
+                    <span className="text-fg">{w.worker}</span> · last contact {w.last_contact ? postBylineTime(w.last_contact) : 'not since the start'}
+                    {w.leased ? ` · ${plural(w.leased, 'task')} leased` : ''}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[0.8125rem] tabular-nums text-fg-2" title={worker.last_run ? feedFullTime(worker.last_run.started_at) : undefined}>
+                {worker.last_run ? (
+                  <>
+                    Last run {postBylineTime(worker.last_run.started_at)} ({worker.last_run.code_version})
+                    {counts ? ` · ${String(counts.stories ?? 0)} stories · ${String(counts.answered ?? 0)} answers read` : ''}
+                  </>
+                ) : 'No decision run yet.'}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button size="sm" variant="secondary" onClick={() => run.mutate()} disabled={run.isPending} aria-busy={run.isPending || undefined}>
+                  {run.isPending ? 'deciding…' : 'run the decisions now'}
+                </Button>
+                {run.isError ? <span className="text-[0.8125rem] text-fg">× {errorMessage(run.error)}</span> : null}
+                {run.isSuccess ? <span className="text-[0.8125rem] text-fg-2">done</span> : null}
+              </div>
+            </section>
+          </div>
+        );
+      }}
+    </Loaded>
+  );
+}

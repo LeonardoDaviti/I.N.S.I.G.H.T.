@@ -9,7 +9,7 @@ import { folderReadPath } from '../../lib/feedContext';
  * Decision 2). The top bar is `feed / sources / blog`; tracks are read from the
  * reader rail and reached in ⌘K one entry per track.
  */
-export type NavKey = 'feed' | 'sources' | 'blog';
+export type NavKey = 'feed' | 'sources' | 'blog' | 'markx';
 
 export interface NavItem {
   key: NavKey;
@@ -24,6 +24,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'blog', label: 'blog', to: '/blog' },
 ];
 
+/** Mark X's page (issue 0086 E): one more word, only while INSIGHT_MARKX is on. */
+export const MARKX_NAV: NavItem = { key: 'markx', label: 'mark x', to: '/markx' };
+
+/** The top bar's words, with Mark X's when it is on. */
+export function navItems(markx: boolean): readonly NavItem[] {
+  return markx ? [...NAV_ITEMS, MARKX_NAV] : NAV_ITEMS;
+}
+
 /** Which nav word is current for a pathname; null when none is (an unknown route).
  *  A track page and search belong to the feed: tracks live in the reader rail. */
 export function activeNavKey(pathname: string): NavKey | null {
@@ -32,6 +40,7 @@ export function activeNavKey(pathname: string): NavKey | null {
   if (path === '/' || under('/read') || under('/posts') || under('/tracks') || under('/search')) return 'feed';
   if (under('/settings')) return 'sources';
   if (under('/blog')) return 'blog';
+  if (under('/markx')) return 'markx';
   return null;
 }
 
@@ -86,11 +95,16 @@ export interface TrackRef {
  * The design studio comes last, unless `studio` is false (⌘K inside one of the
  * studio's own frames).
  */
+/** Mark X's page in ⌘K (issue 0086 E), only while it is on. */
+export const MARKX_DESTINATION: Destination = {
+  id: 'markx', label: 'Mark X', group: 'mark x', to: '/markx', keywords: 'shadow haiku stories news judge worker briefing entities',
+};
+
 export function destinations(
   tracks: readonly TrackRef[] = [],
-  { studio = true }: { studio?: boolean } = {},
+  { studio = true, markx = false }: { studio?: boolean; markx?: boolean } = {},
 ): Destination[] {
-  const last = studio ? [DESIGN_STUDIO] : [];
+  const last = [...(markx ? [MARKX_DESTINATION] : []), ...(studio ? [DESIGN_STUDIO] : [])];
   const trackItems = tracks.map((track): Destination => ({
     id: `track-${track.id}`,
     label: track.name,
