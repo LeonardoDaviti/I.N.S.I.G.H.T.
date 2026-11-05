@@ -546,7 +546,9 @@ class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["message"], "Archive completed with 30 posts")
         self.assertEqual((result["posts_fetched"], result["posts_inserted"], result["pages_fetched"]), (30, 30, 30),
                          "the counts carry across the waits")
-        self.assertEqual(self.waits, [5, 10, 5, 10], "5 min, then doubling while no page comes, then 5 again")
+        # 5 min, then doubling while no page comes; once a window is measured (0107's follow-up), the refill of
+        # the window the next limit hit: 5 min past the latest refusal measured, then 5 more.
+        self.assertEqual(self.waits, [5, 10, 9, 4])
         self.assertEqual([e["posts_collected"] for e in events if e["stage"] == "page_fetched"][-1], 30,
                          "a continuation does not count its earlier legs twice")
         stages = [e["stage"] for e in events]
@@ -562,12 +564,33 @@ class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
         learned = [e for e in events if e["stage"] == "learned"]
         self.assertEqual([e["limits"] for e in learned], [1, 2])
         second = learned[1]
-        self.assertEqual(second["message"], "tg.i-c-a.su: about 10 requests per 19 min, learned from 2 limits;"
-                                            " pacing to 80%: one page every 140 s")
+        self.assertEqual(second["message"], "tg.i-c-a.su: about 10 requests per 17 min, learned from 2 limits;"
+                                            " pacing to 80%: one page every 128 s")
         paced_from = second["_t"]
         self.assertEqual(host.refused_after(paced_from), [], "paced under the limit from then on")
         self.assertEqual(len([entry for entry in host.log if entry[0] >= paced_from]), 4 * self.N)
         self.assertEqual(self.budgets.learned("tg.i-c-a.su").requests, self.N)
+
+    async def test_once_a_window_is_measured_the_wait_aims_at_its_refill(self):
+        # Issue 0107's follow-up: the ladder only until one window is measured; then the wait aims at the
+        # refill of the window the limit hit, so the second measure is within 5 min of the host's 15 min,
+        # not the ladder's overshoot.
+        host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
+        service = self.service(_WindowedKind(host, 6 * self.N))
+        events = []
+        await self.archive_until_done(service, events)
+        learned = [e for e in events if e["stage"] == "learned"]
+        self.assertEqual([e["limits"] for e in learned], [1, 2])
+        first_measured = learned[0]["_t"]
+        waiting = [e for e in events if e["stage"] == "waiting"]
+        self.assertEqual([e["refill"] for e in waiting], [e["_t"] > first_measured for e in waiting],
+                         "the ladder before the first measure, the refill after it")
+        self.assertTrue(waiting[-1]["message"].endswith("UTC, when its window refills"))
+        budget = self.budgets.learned("tg.i-c-a.su")
+        self.assertEqual(budget.requests, self.N)
+        self.assertGreaterEqual(budget.window_s, self.WINDOW_S)
+        self.assertLessEqual(budget.window_s, self.WINDOW_S + 5 * 60)
+        self.assertEqual(host.refused_after(learned[1]["_t"]), [], "paced under the limit from then on")
 
     async def test_live_fetches_due_meanwhile_go_through(self):
         host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
