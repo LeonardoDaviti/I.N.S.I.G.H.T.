@@ -348,6 +348,21 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime])
     return article_post(page, source_url, url, date or lastmod, adapter=PageWatchKind.adapter_type)
 
 
+async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: str) -> Optional[Dict[str, Any]]:
+    """One page of a website source read as its post (issue 0084 B: a page its posts link that no post
+    is): the article, its title and the date the page states (0070), marked backlog (an older page,
+    never new to you). None when the page has no article or no date of its own: stored at the time it
+    was read, an old page would sort as new. Raises what the request raises."""
+    page, _ = await http.get_text(url)
+    date = page_date(page)
+    if date is None or date > datetime.now(timezone.utc):
+        return None
+    post = article_post(page, str(source["handle_or_url"]), url, date, adapter=adapter)
+    if post is not None:
+        post[BACKLOG_KEY] = True
+    return post
+
+
 def article_post(page: str, source_url: str, url: str, date: Optional[datetime], *,
                  adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
     """The post any article page is: its body (the full-text reader), title, date (else now) and
@@ -553,4 +568,4 @@ class PageWatchKind(BaseSourceAdapter):
 
 
 __all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "discover_changed", "infer_prefix", "is_home",
-           "normalise_prefix", "offers", "page_date", "page_title", "preview", "sitemap_entries"]
+           "normalise_prefix", "offers", "page_date", "page_title", "preview", "read_page_post", "sitemap_entries"]

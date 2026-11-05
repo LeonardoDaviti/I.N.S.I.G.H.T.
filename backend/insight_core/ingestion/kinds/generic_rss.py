@@ -48,6 +48,7 @@ class GenericRssKind(BaseKind):
     name = "generic_rss"
     available_basis = "feed_window"
     conditional = True
+    reads_posts = True   # read_post: one page of its site, as the site reader reads it (issue 0084 B)
     profile = GENERIC_RSS_PROFILE
 
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None,
@@ -91,6 +92,11 @@ class GenericRssKind(BaseKind):
             first_post_date=iso(oldest),
             raw={"sitemap_posts": len(older), "sitemap_prefix": prefix} if older else {},
         )
+
+    async def read_post(self, source: Source, url: str) -> Optional[Dict[str, Any]]:
+        from insight_core.ingestion.kinds.page_watch import read_page_post   # page_watch imports this module
+
+        return await read_page_post(self.http, source, url, adapter=self.name)
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         """An archive stopped in the sitemap's posts (issue 0108) continues there."""

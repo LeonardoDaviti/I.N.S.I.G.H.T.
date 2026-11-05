@@ -44,23 +44,32 @@ class ArchiveJobs:
         return record
 
     async def run(self, source_id: str, *, resume: bool = True,
-                  rate_limit_overrides: Optional[Dict[str, Any]] = None, job_id: Optional[str] = None) -> Dict[str, Any]:
+                  rate_limit_overrides: Optional[Dict[str, Any]] = None, job_id: Optional[str] = None,
+                  linked: bool = False) -> Dict[str, Any]:
         """One archive from its plan. With job_id (the route already started the job) progress lands
         on that job; otherwise the run starts its own. An unavailable kind answers
-        {success: false, unavailable: true}; any other failure fails the job and raises."""
+        {success: false, unavailable: true}; any other failure fails the job and raises.
+
+        `linked` (issue 0084 B): instead of the archive, read the source's own pages its stored posts
+        link and no post is (SourceFetchService.fetch_linked). It is an archive job of the source, so
+        one runs at a time, and a host's limit waits and is continued as any archive's."""
         from insight_core.ingestion.kinds.base import KindUnavailable
 
         job_id = job_id or self.ops.try_start_job(
             JOB_TYPE, trigger=self.trigger, source_id=source_id,
-            payload={"resume": resume, "rate_limit": rate_limit_overrides or {}},
+            payload={"resume": resume, "rate_limit": rate_limit_overrides or {}, **({"linked": True} if linked else {})},
         )
-        self.ops.try_append_job_event(job_id, message="Archive job started", level="info",
-                                      payload={"resume": resume, "rate_limit": rate_limit_overrides or {}})
+        self.ops.try_append_job_event(job_id, message="Fetching linked pages" if linked else "Archive job started",
+                                      level="info", payload={"resume": resume, "rate_limit": rate_limit_overrides or {},
+                                                             **({"linked": True} if linked else {})})
         try:
-            result = await self.archives.archive_source(
-                source_id, progress_callback=self._progress(job_id), resume=resume,
-                rate_limit_overrides=rate_limit_overrides,
-            )
+            if linked:
+                result = await self.archives.fetch_linked(source_id, progress_callback=self._progress(job_id))
+            else:
+                result = await self.archives.archive_source(
+                    source_id, progress_callback=self._progress(job_id), resume=resume,
+                    rate_limit_overrides=rate_limit_overrides,
+                )
         except KindUnavailable as e:
             self.ops.try_finish_job(job_id, status="failed", message=f"Unavailable: {e.reason}",
                                     payload={"source_id": source_id, "unavailable": True})

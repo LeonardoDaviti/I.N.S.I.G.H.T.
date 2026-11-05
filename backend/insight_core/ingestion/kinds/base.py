@@ -238,6 +238,8 @@ class BaseKind:
     page_based: bool = False
     # Its stored pages can be re-read for changes (page_post), when the owner switches it on.
     watches: bool = False
+    # read_post reads one of its pages as a post (issue 0084 B: a page its posts link, not stored).
+    reads_posts: bool = False
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError
@@ -249,6 +251,11 @@ class BaseKind:
 
     def host_key(self, source: Source) -> str:
         return source_host_key(source)
+
+    async def read_post(self, source: Source, url: str) -> Optional[dict]:
+        """One page of this source read as its post, with the page's own date; None when it is no
+        post. Kinds that set reads_posts implement it (issue 0084 B). Raises what the request raises."""
+        return None
 
     async def fetch_latest(self, source: Source, limit: int) -> list[dict]:  # pragma: no cover
         raise NotImplementedError

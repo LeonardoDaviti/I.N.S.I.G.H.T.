@@ -80,6 +80,7 @@ class JobRunsRepository:
                      'error',          payload->'error',
                      'paused',         payload->'paused',
                      'paused_reason',  payload->'paused_reason',
+                     'linked',         payload->'linked',
                      'waiting_until',  CASE WHEN status = 'waiting' THEN payload->'waiting_until' END,
                      'waiting_host',   CASE WHEN status = 'waiting' THEN payload->'waiting_host' END,
                      'waiting_reason', CASE WHEN status = 'waiting' THEN payload->'waiting_reason' END
