@@ -537,9 +537,12 @@ class Ask:
     """The answers a run reads, and the tasks it adds for the questions not asked yet (content-only inputs: the same
     question is one task whatever ids come with it)."""
 
-    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None) -> None:
+    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None, memo: Any = None,
+                 dry: bool = False) -> None:
         self.cur, self.now = cur, now
         self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
+        self.memo = memo                      # 0116: the tasks and calls of this snapshot, read once (incremental.refresh)
+        self.dry = dry                        # nothing added, nothing reopened (the check's incremental reading)
         self.added: Counter = Counter()
         self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
@@ -552,24 +555,37 @@ class Ask:
         `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
         seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
         answered in this snapshot, so the run goes on (`raced` counts them)."""
-        from insight_core.markx import repo, schemas, tasks
+        from insight_core.markx import incremental, repo, schemas, tasks
         spec = schemas.KINDS[kind]
-        task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
+        memo = self.memo if kind in incremental.KINDS else None
+        if memo is not None:
+            h = repo.sha256_hex(text)
+            got = memo.tasks.get((kind, h))
+            task = None if got is None else {"id": got[0], "status": got[1]}
+        else:
+            task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
         if task is None:
-            if self.added[kind] >= self.caps.get(kind, CAP):
+            if self.dry or self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
             try:
                 with self.cur.connection.transaction():
-                    tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+                    tid, _new = tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
                 return None
             self.added[kind] += 1
+            if memo is not None:
+                memo.tasks[(kind, h)] = (str(tid), "open", 0)
+                memo.keys[str(tid)] = (kind, h)
             return None
         if task["status"] != "answered":
             return None
-        call = repo.valid_call(self.cur, task["id"])
+        if memo is not None:
+            calls = memo.calls.get(task["id"]) or []
+            call = {"id": calls[0][1], "answer": calls[0][0]} if calls else None
+        else:
+            call = repo.valid_call(self.cur, task["id"])
         if call is None:
             return None
         self.answered[kind] += 1
@@ -581,13 +597,15 @@ class Ask:
 
     def later(self, first_call: str) -> List[Verdict]:
         """The question's valid answers after its first (`first_call`), oldest first. Read only."""
+        if self.memo is not None and first_call in self.memo.call_task:
+            return [Verdict.of(ans, cid) for ans, cid in self.memo.calls[self.memo.call_task[first_call]][1:]]
         self.cur.execute("""SELECT id::text, answer FROM mx_calls
                              WHERE task_id = (SELECT task_id FROM mx_calls WHERE id = %s) AND valid
                              ORDER BY created_at, ctid""", (first_call,))
         return [Verdict.of(ans, cid) for cid, ans in self.cur.fetchall() if cid != first_call]
 
     def ask_again(self, kind: str, first_call: Optional[str]) -> None:
-        if first_call:
+        if first_call and not self.dry:
             self.again[first_call] = kind
 
     def reopen(self) -> Dict[str, int]:
@@ -602,6 +620,10 @@ class Ask:
                                            AND id = (SELECT task_id FROM mx_calls WHERE id = %s)""", (call,))
                     if self.cur.rowcount:
                         out[kind] += 1
+                        tid = self.memo.call_task.get(call) if self.memo is not None else None
+                        if tid and tid in self.memo.keys:
+                            key = self.memo.keys[tid]
+                            self.memo.tasks[key] = (tid, "open", self.memo.tasks[key][2])
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
         return dict(out)
@@ -618,6 +640,7 @@ class World:
     readings: Dict[str, dict]
     candidates: List[Tuple[str, str, Optional[float]]]
     ix_mentions: Dict[str, Set[str]] = field(default_factory=dict)   # Mark IX story -> the roundups mentioning it
+    memo: Any = None                           # 0116: what the last run read (incremental.Memo), when kept
 
     def kinds(self) -> Dict[str, Optional[str]]:
         return {k: r.get("kind") for k, r in self.readings.items()}
@@ -628,18 +651,20 @@ class World:
     def copies(self) -> Dict[str, Set[str]]:
         """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
         from insight_core.markx import tasks
+        from insight_core.markx import incremental
         out = {}
         for key, ms in self.stories.items():
-            found = tasks.near_copies([self.text[m.post] for m in ms if m.post in self.text])
+            members = [self.text[m.post] for m in ms if m.post in self.text]
+            found = incremental.copies(self.memo, members) if self.memo is not None else tasks.near_copies(members)
             if found:
                 out[key] = found
         return out
 
 
-def load(cur: Any, now: datetime, config: Config) -> World:
+def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
-    candidate pairs, and their readings."""
-    from insight_core.markx import tasks
+    candidate pairs, and their readings. With `memo` (0116), the texts are read again only where a row changed."""
+    from insight_core.markx import incremental, tasks
     since = now - timedelta(days=config.days)
     cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
@@ -655,8 +680,13 @@ def load(cur: Any, now: datetime, config: Config) -> World:
         elif cos is not None and (pairs[(a, b)] is None or cos > pairs[(a, b)]):
             pairs[(a, b)] = cos
     ids = {r[1] for r in rows} | {p for ab in pairs for p in ab}
-    text = tasks.load_posts(cur, ids)
-    posts = {pid: Post(pid, p.source_id, p.kind, p.at, tasks.words(p)) for pid, p in text.items()}
+    text = incremental.texts(cur, memo, ids) if memo is not None else tasks.load_posts(cur, ids)
+    rules = memo.rules if memo is not None else {}
+    posts = {}
+    for pid, p in text.items():
+        if pid not in rules:
+            rules[pid] = Post(pid, p.source_id, p.kind, p.at, tasks.words(p))
+        posts[pid] = rules[pid]
     stories: Dict[str, List[Member]] = defaultdict(list)
     for sid, pid, role, why in rows:
         if pid in posts:
@@ -670,7 +700,7 @@ def load(cur: Any, now: datetime, config: Config) -> World:
     for sid, pid in cur.fetchall():
         ix_mentions[sid].add(pid)
     return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts,
-                 readings=tasks.readings(cur, ids), candidates=window, ix_mentions=dict(ix_mentions))
+                 readings=tasks.readings(cur, ids), candidates=window, ix_mentions=dict(ix_mentions), memo=memo)
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
@@ -850,9 +880,11 @@ def _same(a: Row, b: Row) -> bool:
     return a[0] == b[0] and a[1] == b[1] and _p(a[2]) == _p(b[2]) and (a[3] or None) == (b[3] or None)
 
 
-def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime) -> Tuple[Dict[str, str], Counter]:
+def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
+            write: bool = True) -> Tuple[Dict[str, str], Counter]:
     """Match each final story to the Mark X story holding most of its members (one each), open what is new and
-    close what changed (valid_to; nothing is deleted). Returns {final key: Mark X story id} and the counts."""
+    close what changed (valid_to; nothing is deleted). Returns {final key: Mark X story id} and the counts. With
+    `write` False (0116's check), only the match: a new story is "new:<key>", nothing is written."""
     from insight_core.markx import repo
     want = wanted(out, world.posts)
     counts: Counter = Counter()
@@ -884,8 +916,10 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime) ->
             claimed.add(best)
         else:
             first = min((world.posts[p].at for p in want[key] if p in world.posts), default=None)
-            ids[key] = str(repo.add_story(cur, first_at=first, run_id=run_id))
+            ids[key] = str(repo.add_story(cur, first_at=first, run_id=run_id)) if write else f"new:{key}"
             counts["stories_new"] += 1
+    if not write:
+        return ids, counts
     for key, sid in ids.items():
         old = have.get(sid, {})
         for pid, row in old.items():
@@ -1005,37 +1039,99 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     return changed
 
 
-def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) -> Dict[str, Any]:
+def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = False):
+    """A run's reading of its snapshot through `memo` (0116: incremental.refresh, then load and think): (world, ask,
+    outcome, counts). `dry`: nothing is added or asked again (the check's incremental reading)."""
+    from insight_core.markx import incremental
+    incremental.refresh(cur, memo)
+    world = load(cur, now, config, memo=memo)
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
+    waiting = cur.fetchone()[0]
+    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))}, memo=memo,
+              dry=dry)
+    out, counts = think(cur, world, config, ask, now)
+    return world, ask, out, counts
+
+
+def _digest(cur: Any, out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dict[str, Any]],
+            news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    from insight_core.markx import incremental
+    members = {sid: tuple(sorted(out.about.get(key, {}))) for key, sid in ids.items()}
+    ends = [dict(c, a=c["a"] if c["a_kind"] == "post" else members.get(c["a"], c["a"]),
+                 b=c["b"] if c["b_kind"] == "post" else members.get(c["b"], c["b"])) for c in conns]
+    return incremental.digest(wanted(out, world.posts), ends, {}, {}, news_rows)
+
+
+def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
+        full: Optional[bool] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
-    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot."""
-    from insight_core.markx import news as mx_news, repo, schemas
+    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot.
+
+    0116: a run is incremental (it reads again only what changed since the last run: markx/incremental.py) unless
+    `full`, or there is no memo of the last run in this process, the code, config or a guide changed, or no full run
+    started since the night's NIGHTLY_HOUR. A nightly full run with a memo first reads the snapshot as an incremental
+    run would, writing nothing, and logs any difference from the full reading (`counts.check`)."""
+    import json as _json
+    import time as _time
+    from insight_core.markx import incremental, news as mx_news, repo, schemas
     cur.execute("SHOW transaction_isolation")
     isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
     if not cur.fetchone()[0]:
         return {"skipped": "another decision run holds the lock"}
+    started = _time.monotonic()
     now = now or _now()
     schemas.ensure_guides(cur)
-    run_id = repo.start_run(cur, code_version=CODE_VERSION,
-                            config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
-    world = load(cur, now, config)
-    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
-    waiting = cur.fetchone()[0]
-    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
-    out, counts = think(cur, world, config, ask, now)
+    guides = {k.name: k.guide for k in schemas.KINDS.values()}
+    key = _json.dumps([CODE_VERSION, config.as_dict(), guides], sort_keys=True, default=str)
+    memo, warm = incremental.memo_for(cur, key)
+    nightly = warm and full is None and incremental.nightly_due(cur, now)
+    kind = "full" if (full or not warm or nightly) else "incremental"
+    check = None
+    if kind == "full" and warm:
+        prev = memo
+        memo = incremental.fresh(prev.db, key)
+        p_world, p_ask, p_out, _ = _reading(cur, prev, now, config, dry=True)
+        p_ids, _ = persist(cur, None, p_out, p_world, now, write=False)
+        p_keys = [s["story"] for s in p_out.stories(p_world.posts) if voices(p_world.posts, s["posts"]) >= 2]
+        p_conns = connections(cur, p_out, p_ids, p_world, p_ask, config, p_keys)
+        p_news = mx_news.write(cur, None, out=p_out, ids=p_ids, world=p_world, now=now, store=False)["made_rows"]
+        check = _digest(cur, p_out, p_ids, p_world, p_conns, p_news)
+    memo.run_id = None                              # until this run finishes: a failed run leaves no memo
+    run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
+    world, ask, out, counts = _reading(cur, memo, now, config)
     counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
     conns = connections(cur, out, ids, world, ask, config, news_keys)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
-    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
+    if check is not None:
+        news_rows: List[Dict[str, Any]] = []
+        counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
+        news_rows = memo.news["rows"] if memo.news else []
+        diff = incremental.differences(check, _digest(cur, out, ids, world, conns, news_rows))
+        counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
+        if diff:
+            log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
+    else:
+        counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
+    want = wanted(out, world.posts)
+    counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
+                     "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
+                     "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
+                     "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),
+                     **(incremental.closure(memo, want, world.stories) if kind == "incremental" else
+                        {"closure": len(want), "stories": len(want)}),
+                     "seconds": round(_time.monotonic() - started, 3)}
+    memo.want = want
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
+    memo.run_id = str(run_id)
     return {"run": str(run_id), **counts}
 
 
