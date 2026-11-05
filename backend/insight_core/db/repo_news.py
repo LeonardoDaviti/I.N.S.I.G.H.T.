@@ -14,6 +14,9 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from psycopg import Cursor
 
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item, voiced
+from insight_core.db.repo_stories import KEY_CHARS
+from insight_core.utils.addresses import paper_id
+from insight_core.utils.story_rules import page_key
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory, Surge
 from insight_core.db.repo_post_parts import shown_title
@@ -428,6 +431,27 @@ class NewsRepository:
         )
         return [{"url": r[0], "voices": int(r[1]), "title": r[2], "post_id": str(r[3]) if r[3] else None,
                  "post_title": r[4]} for r in cur.fetchall()]
+
+    @staticmethod
+    def untitled_classics(cur: Cursor) -> List[str]:
+        """The classics you did not hide that no stored post is at and the stored data leaves untitled (issue
+        0106: their page's own title is read once)."""
+        cur.execute("SELECT c.target_url FROM classics c WHERE c.title IS NULL "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = c.target_url) "
+                    "AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url) ORDER BY 1")
+        return [r[0] for r in cur.fetchall()]
+
+    @staticmethod
+    def paper_paths(cur: Cursor, urls: Sequence[str]) -> List[str]:
+        """`urls` and every other kept link target of the papers among them (issue 0106: a paper's paths
+        are one classic), found by the page key every post linking one of its paths holds (story_keys)."""
+        wanted = {page_key(url) for url in urls if paper_id(url)}
+        if not wanted:
+            return list(urls)
+        cur.execute("SELECT DISTINCT pl.target_url FROM story_keys k JOIN post_links pl ON pl.post_id = k.post_id "
+                    "WHERE k.key = ANY(%s) AND NOT pl.boilerplate", (sorted(key[:KEY_CHARS] for key in wanted),))
+        found = {url for (url,) in cur.fetchall() if paper_id(url) and page_key(url) in wanted}
+        return sorted(set(urls) | found)
 
     @staticmethod
     def classic_urls(cur: Cursor) -> List[str]:

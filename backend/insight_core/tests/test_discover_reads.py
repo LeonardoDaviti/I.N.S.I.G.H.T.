@@ -105,7 +105,7 @@ class ReadFirstPageTests(unittest.TestCase):
         key, article = f"site-{m}.example", f"https://site-{m}.example/2026/10/a"
         first = [{"key": key, "articles": [{"url": article, "title": None}]}]
         stories = SimpleNamespace(db_url=db_url(), discover=lambda limit: {"suggestions": first},
-                                  linked_articles=lambda address: [])
+                                  linked_articles=lambda address: [], untitled_classics=lambda: [])
         responses = {f"https://{key}/": page('<link rel="alternate" type="application/rss+xml" href="/feed.xml">'),
                      f"https://{key}/feed.xml": rss("Site"),
                      article: '<html><head><title>The article</title></head></html>'}

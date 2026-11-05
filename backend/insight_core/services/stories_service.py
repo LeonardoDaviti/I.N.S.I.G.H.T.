@@ -36,16 +36,17 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import catch_up_safely
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
+from insight_core.services import page_titles
 from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
-from insight_core.utils.addresses import host_of, is_tweet, site_of, x_account
+from insight_core.utils.addresses import host_of, site_of, x_account
 from insight_core.utils.post_links import PLATFORM_KINDS
 from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, Origin,
                                               discover_address, discover_open, discover_place, origins, place_kind, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
-from insight_core.utils.tree_rules import _PAGE, origin_title, slug_title
+from insight_core.utils.tree_rules import _PAGE, slug_title
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -604,22 +605,9 @@ class StoriesService:
         `titled`: the titles kept, which hold (an incremental run's addresses aside)."""
         titled = titled or {}
         urls = sorted({url for s in found for url, _ in s["articles"] if url not in titled})
-        linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
-        rows = StoriesRepository.load_posts(cur, sources, linking=urls) if urls else []
-        for row in sorted(rows, key=lambda row: (row["t"], row["id"])):
-            post = StoriesService._story_post(row, sources)
-            for target, _ in post.links:
-                linking[target][post.id] = post
-        stored = DiscoverRepository.stored_titles(cur, urls)
-
-        def title(url: str) -> Optional[str]:
-            posts = list(linking[url].values())
-            if is_tweet(url):
-                posts = [p for p in posts if p.quoted_words.get(url)]
-            return stored.get(url) or origin_title(url, posts, slug=False)
-
+        titles = page_titles.evidence(cur, sources, urls)   # one title for a page you don't follow (issue 0106)
         for s in found:
-            s["articles"] = [(url, voices, titled[url] if url in titled else title(url)) for url, voices in s["articles"]]
+            s["articles"] = [(url, voices, titled[url] if url in titled else titles[url]) for url, voices in s["articles"]]
 
     def discover(self, *, offset: int = 0, limit: Optional[int] = None, q: Optional[str] = None) -> Dict[str, Any]:
         """Sites and accounts your sources keep linking that you don't follow, each with why, ranked
@@ -664,6 +652,7 @@ class StoriesService:
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
             activity = DiscoverRepository.activity(cur, [s["key"] for s in counted["found"]], platforms)
             reads = DiscoverRepository.reads(cur)
+            title_of = self._title_map(cur, sources, counted, started, reads.get("titles", {}))
         now = self.clock()
         saved = set(sources.of_kind("saved"))
         out, references, last, weight = [], {}, {}, {}
@@ -714,16 +703,16 @@ class StoriesService:
                 suggestion = by_key[key] = {
                     "key": key, "url": "https://" + key, "voices": len(linking), "voice_names": [n for _, n in linking],
                     "article_count": len(pages), "link_count": len(pages), "classics": 0, "opened": 0,
-                    "articles": [{"url": root.url, "title": _shown(root),
+                    "articles": [{"url": root.url, "title": None,
                                   "linked_by": sorted(names[v] for v in root.voices)}
                                  for root in _first(stories, pages=True)[:DISCOVER_ARTICLES_SHOWN]],
                 }
                 out.append(suggestion)
             suggestion["origins"] = len(stories)
-            suggestion["origin_stories"] = [_story(root) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]]
+            suggestion["origin_stories"] = [_story(root, title_of) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]]
             newest = max(root.first_at for root in stories)
             last[key] = max(filter(None, (last.get(key), newest)))
-        follow, titles = reads.get("follow", {}), reads.get("titles", {})
+        follow = reads.get("follow", {})
         for s in out:
             days = (now - last[s["key"]]).total_seconds() / 86400 if last.get(s["key"]) else None
             s["score"] = round(score(origins=s["origins"], classics=s["classics"], opened=s["opened"],
@@ -731,9 +720,8 @@ class StoriesService:
             test = follow.get(s["key"])
             if test:
                 s["follow_test"] = {"label": test["label"], "at": test["at"]}
-            for a in s["articles"]:
-                if not a["title"] and (titles.get(a["url"]) or {}).get("title"):
-                    a["title"] = titles[a["url"]]["title"]
+            for a in s["articles"]:   # one title per page in the answer (issue 0106)
+                a["title"] = title_of(a["url"])
         # The most stories started there, classics, posts you opened, sources and the newest links first
         # (discover_rules.score); a suggestion its follow test can't follow (headlines only, blocks
         # readers) below every other (issue 0080).
@@ -744,7 +732,7 @@ class StoriesService:
             "origins": len(stories),
             "since": first_posts[source_id].isoformat() if source_id in first_posts else None,
             "older": sum(1 for root in stories if first_posts.get(source_id) and root.first_at < first_posts[source_id]),
-            "origin_stories": [_story(root) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]],
+            "origin_stories": [_story(root, title_of) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]],
             "pages": sorted({root.url for root in stories}),
         } for source_id, stories in started.missing.items() if len(stories) >= DISCOVER_MIN_ARTICLES]
         archives.sort(key=lambda a: (-a["origins"], a["name"].lower()))
@@ -760,6 +748,28 @@ class StoriesService:
             logger.exception("Discover: the list was not kept")
         self._discovered = (inputs, result)
         return result
+
+    @staticmethod
+    def _title_map(cur: Any, sources: SourceFacts, counted: Dict[str, Any], started: Any,
+                   read: Dict[str, Any]) -> Callable[[str], Optional[str]]:
+        """One url -> title map for the whole answer (issue 0106): articles, the stories a suggestion started
+        and the archive rows' lines title one page alike. A page that starts a story has the title its story
+        page shows (its stored post's, or its origin's by the story's evidence, never its slug); else, as
+        every page you don't follow (page_titles), the evidence of every post linking it (the articles' as
+        counted; worked out here for the lines shown that no article titles); else the page's own title
+        read once."""
+        titles: Dict[str, Optional[str]] = {url: title for s in counted["found"] for url, _, title in s["articles"] if title}
+        roots: Dict[str, Origin] = {}
+        for stories in (*started.suggest.values(), *started.missing.values()):
+            for root in _first(stories)[:ORIGIN_STORIES_SHOWN] + _first(stories, pages=True)[:DISCOVER_ARTICLES_SHOWN]:
+                roots.setdefault(root.url, root)
+        titles.update({url: _shown(root) for url, root in roots.items() if _shown(root)})
+        found = page_titles.evidence(cur, sources, sorted(url for url in roots if not titles.get(url)))
+        titles.update({url: title for url, title in found.items() if title})
+
+        def title_of(url: str) -> Optional[str]:
+            return titles.get(url) or page_titles.read(read, url)
+        return title_of
 
     @staticmethod
     def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str],
@@ -782,6 +792,11 @@ class StoriesService:
         for (place, source_id), _ in sorted(posts.items(), key=lambda item: (item[1], item[0][1])):
             held[place] = source_id   # the most posts last, so it stays
         return held
+
+    def untitled_classics(self) -> List[str]:
+        """The classics the stored data leaves untitled (issue 0106): Discover's reads read their page's title."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self.news.untitled_classics(cur)
 
     def linked_articles(self, address: str) -> List[str]:
         """The articles on an address's host your sources linked (issue 0060): Follow ranks the
@@ -889,8 +904,9 @@ def _shown(root: Origin) -> Optional[str]:
     return root.title if root.stored or root.title != slug_title(root.url) else None
 
 
-def _story(root: Origin) -> Dict[str, Any]:
-    return {"url": root.url, "title": _shown(root), "voices": len(root.voices), "stored": root.stored}
+def _story(root: Origin, title_of: Callable[[str], Optional[str]]) -> Dict[str, Any]:
+    """A story a place started, as Discover lists it, titled by the answer's one map (issue 0106)."""
+    return {"url": root.url, "title": title_of(root.url), "voices": len(root.voices), "stored": root.stored}
 
 
 def _platforms(kept: Optional[Dict[str, Any]]) -> Dict[str, Tuple[str, ...]]:

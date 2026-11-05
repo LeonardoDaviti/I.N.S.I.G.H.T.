@@ -94,8 +94,10 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         with mock.patch.object(story_rules, "own_quote", lambda post: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         # 0106's: a paper's paths as two pages
+        story_rules._page_key.cache_clear()
         with mock.patch.object(story_rules, "paper_id", lambda url: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        story_rules._page_key.cache_clear()
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):
             self.assertNotEqual(posts_service.stored_bodies_stamp.__wrapped__(), bodies)

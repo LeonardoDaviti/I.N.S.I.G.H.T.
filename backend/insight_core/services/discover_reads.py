@@ -6,9 +6,10 @@ For each suggestion on the first page (StoriesService.discover, FIRST_PAGE), at 
   watching), labelled "feed" (Feed found), "page" (Page watching: a page whose articles it reads),
   "blocked" (Blocks readers: every request it made was refused with 401 or 403) or "headlines"
   (Headlines only: anything else, a paywall or no feed and a page it can't read);
-- **the titles** of its articles that have none (no stored post, no link words that read as a title):
-  the page's own title, as page watching reads one (page_watch.page_title), from the start of the page.
-  Tweets are never read: their line names the account.
+- **the titles** of the pages it lists that have none (no stored post, no evidence: services/page_titles.py),
+  its articles' and the stories they started, and the archive rows' lines (issue 0106); and Classics'
+  untitled pages: the page's own title, as page watching reads one (page_watch.page_title), from the
+  start of the page. Tweets are never read: their line names the account.
 Each answer is stored with its date (system_settings `discover_reads`, DiscoverRepository.reads), a failure
 too, so nothing is asked again within CHECK_DAYS. Requests go one at a time per host, spaced by the
 ingestion's per-host limiter (gates.HostLimiter), FAN_OUT hosts at once, with the Add source dialog's client.
@@ -22,7 +23,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
@@ -138,21 +139,29 @@ def due(read: Optional[Dict[str, Any]], now: datetime) -> bool:
         return True
 
 
-def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime) -> Dict[str, List[str]]:
-    """What the first page asks to read: the suggestions whose follow test is due, the untitled articles
-    (not tweets) whose title is."""
+def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
+         archives: Sequence[Dict[str, Any]] = (), classics: Sequence[str] = ()) -> Dict[str, List[str]]:
+    """What the first page asks to read: the suggestions whose follow test is due; the pages whose title is
+    due and that have none (not tweets): its suggestions' articles and the stories they started, the archive
+    rows' lines (issue 0106: one title per page, whichever line shows it) and the untitled `classics`."""
     follow, titles = reads.get("follow", {}), reads.get("titles", {})
+    lines = [line for s in page for line in (*s.get("articles", ()), *s.get("origin_stories", ()))]
+    lines += [line for a in archives for line in a.get("origin_stories", ())]
+    untitled = {line["url"] for line in lines if not line["title"]} | set(classics)
     return {"follow": [s["key"] for s in page if due(follow.get(s["key"]), now)],
-            "titles": sorted({a["url"] for s in page for a in s["articles"]
-                              if not a["title"] and not is_tweet(a["url"]) and due(titles.get(a["url"]), now)})}
+            "titles": sorted(url for url in untitled if not is_tweet(url) and due(titles.get(url), now))}
 
 
 async def read_first_page(stories: Any, http: Any, registry: Any, *,
                           clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, int]:
-    """Read what the first page lacks (`work`), and store each answer with its date. Returns how many."""
-    page = (await asyncio.to_thread(stories.discover, limit=FIRST_PAGE))["suggestions"]
+    """Read what the first page lacks (`work`), and Classics' untitled pages (issue 0106), and store each
+    answer with its date; then make and keep Discover's list once (issue 0080 cold open: the answers change
+    its inputs, so the next open, in any process, reads it instead of making it). Returns how many."""
+    answer = await asyncio.to_thread(stories.discover, limit=FIRST_PAGE)
+    classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
-        todo = work(page, DiscoverRepository.reads(cur), clock())
+        todo = work(answer["suggestions"], DiscoverRepository.reads(cur), clock(),
+                    archives=answer.get("archives", ()), classics=classics)
     if not todo["follow"] and not todo["titles"]:
         return {"follow": 0, "titles": 0}
     gate = asyncio.Semaphore(FAN_OUT)
@@ -177,6 +186,7 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
         reads["titles"] = {**reads.get("titles", {}), **titled}
         DiscoverRepository.keep_reads(cur, reads)
     logger.info("Discover: %d follow tests, %d page titles read", len(tested), len(titled))
+    await asyncio.to_thread(stories.discover, limit=FIRST_PAGE)   # made with the answers, and kept
     return {"follow": len(tested), "titles": len(titled)}
 
 
