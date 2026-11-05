@@ -363,7 +363,7 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
     for name, days in (("today", 1), ("week", 7)):
         cur.execute("""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
                               (array_agg(m.type))[1], count(DISTINCT m.post_id), count(DISTINCT p.source_id),
-                              (array_agg(DISTINCT m.post_id::text))[1:5]
+                              (array_agg(DISTINCT m.post_id::text))[1:5], (array_agg(m.version ORDER BY m.version))[1]
                          FROM mx_mentions m JOIN posts p ON p.id = m.post_id
                         WHERE m.guide = 'ent-v3' AND m.role = 'subject'
                           AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
@@ -371,9 +371,9 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
                     (now - timedelta(days=days), limit))
         rows = cur.fetchall()
         posts = _posts(cur, {p for r in rows for p in (r[6] or [])})
-        out[name] = [{"key": k, "version": v or None, "name": n, "type": t, "posts": np_, "voices": nv,
+        out[name] = [{"key": k, "version": shown or v or None, "name": n, "type": t, "posts": np_, "voices": nv,
                       "examples": [{k2: (posts.get(p) or {}).get(k2) for k2 in ("id", "title", "source")} for p in (ps or [])]}
-                     for k, v, n, t, np_, nv, ps in rows]
+                     for k, v, n, t, np_, nv, ps, shown in rows]
     return out
 
 
