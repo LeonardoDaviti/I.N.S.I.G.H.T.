@@ -32,13 +32,13 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import titles
-from insight_core.utils.addresses import bare, host_of, is_tweet, site_of, tweet_author
+from insight_core.utils.addresses import bare, host_of, is_tweet, paper_id, paper_page_order, site_of, tweet_author
 from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
@@ -248,7 +248,12 @@ def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
 def _page_key(url: str) -> Optional[Tuple[str, str, Tuple[str, ...]]]:
     """What names a page on its host whatever its section (issue 0070): (host, its last segment, its
     path's numbers and dates), when the last segment is a slug of SLUG_MIN_WORDS+ words of letters
-    (not an id), and the page is no reference page (a /docs/ or /collections/ page is another one)."""
+    (not an id), and the page is no reference page (a /docs/ or /collections/ page is another one).
+    A paper is named by its id on its host, whatever the path around it (issue 0106, addresses.paper_id):
+    (host, "paper " + its id, ())."""
+    paper = paper_id(url)
+    if paper:
+        return host_of(url), "paper " + paper, ()
     words = _slug_words(url)
     if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) < SLUG_MIN_WORDS or is_reference(url):
         return None
@@ -263,17 +268,59 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
     anthropic.com/engineering/redesigning-source-control is anthropic.com/research/redesigning-source-control,
     darioamodei.com/machines-of-loving-grace is darioamodei.com/essay/machines-of-loving-grace, and a
     language before it (openai.com/ru-RU/index/...) is skipped with the section. A slug two stored
-    pages share (a weekly series' "this-week-in-..." under its dates) names neither."""
+    pages share (a weekly series' "this-week-in-..." under its dates) names neither.
+    A paper (issue 0106) is one page on its host across its paths, its abstract, PDF, HTML and versions:
+    its stored page when there is one, else the address that names it among those seen (its page before
+    its file, then without a query, then the shortest: addresses.paper_page_order)."""
     own: Dict[Tuple[str, str, Tuple[str, ...]], Set[str]] = defaultdict(set)
     for p in posts:
         if p.kind == "site" and p.on_own_site and _page_key(p.url):
             own[_page_key(p.url)].add(p.url)
     out: Dict[str, str] = {}
+    papers: Dict[Tuple[str, str, Tuple[str, ...]], Set[str]] = defaultdict(set)
     for url in {u for p in posts for u in ((p.url,) if p.url else ()) + tuple(t for t, _ in p.links)}:
         pages = own.get(_page_key(url)) or set()
         if len(pages) == 1 and url not in pages:
             out[url] = next(iter(pages))
+        elif not pages and paper_id(url):
+            papers[_page_key(url)].add(url)
+    out.update(paper_aliases(papers.values()))
     return out
+
+
+def paper_aliases(papers: Iterable[Iterable[str]], stored: Iterable[str] = ()) -> Dict[str, str]:
+    """Each address of a paper -> the one that names it (issue 0106), for `papers`, each one paper's
+    addresses on its host: a `stored` one (a post is at it), else by addresses.paper_page_order."""
+    out: Dict[str, str] = {}
+    stored = set(stored)
+    for addresses in papers:
+        addresses = set(addresses)
+        named = min(addresses & stored or addresses, key=paper_page_order)
+        out.update({url: named for url in addresses if url != named})
+    return out
+
+
+def link_via(target: str) -> str:
+    """The key a link join to an outside page holds (Edge.via): its address ("u:"), and for a paper the
+    key every path of it shares ("g:", issue 0106), so the incremental job compares it from any of them."""
+    return (page_key(target) or "u:" + target) if paper_id(target) else "u:" + target
+
+
+def one_page(post: StoryPost, aliases: Mapping[str, str]) -> StoryPost:
+    """A post whose links to another path of a paper are links to its one page (issue 0106): the page,
+    its words and the words it quotes, as origin_title reads them."""
+    if not any(target in aliases for target, _ in post.links):
+        return post
+    links: Dict[str, Optional[str]] = {}
+    for target, stored in post.links:
+        named = aliases.get(target, target)
+        if links.get(named) is None:
+            links[named] = stored
+    texts: Dict[str, str] = {}
+    for target, text in post.link_texts.items():
+        texts.setdefault(aliases.get(target, target), text)
+    quoted = {aliases.get(target, target): words for target, words in post.quoted_words.items()}
+    return replace(post, links=list(links.items()), link_texts=texts, quoted_words=quoted)
 
 
 def own_quote(post: StoryPost) -> Optional[str]:
@@ -345,12 +392,14 @@ def group(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = Non
 def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> Grouping:
     """`group`, with what it found on the way. `replies`: each thread reply -> the post it continues,
     when known (the stored thread edges; `threads(posts)` when None)."""
-    posts = sorted(posts, key=_order)
-    by_id = {p.id: p for p in posts}
     # A link to an address is a link to its own page when one is stored: the row a link resolves
     # to (the first seen at the address) may be another source's post of that page (HN's). Another
-    # path of a website's page is that page too (issue 0070, page_aliases).
+    # path of a website's page is that page too (issue 0070, page_aliases); a link to any path of a
+    # paper no post is stored at is a link to the address that names it (issue 0106).
     aliases = page_aliases(posts)
+    papers = {url: named for url, named in aliases.items() if paper_id(url)}
+    posts = sorted((one_page(p, papers) for p in posts) if papers else posts, key=_order)
+    by_id = {p.id: p for p in posts}
     origin_of = address_origins(posts)
     origin_of.update({alias: origin_of[url] for alias, url in aliases.items() if url in origin_of})
 
@@ -443,7 +492,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
             if len({p.place for p in near}) >= 2:
                 for p in near:
-                    join(p.id, _PAGE + target, "link", "u:" + target)
+                    join(p.id, _PAGE + target, "link", link_via(target))
                     why[p.id].add("link")
     # On X (issue 0066): a thread is one story, and a quote joins the stored tweet it quotes.
     replies = threads(posts) if replies is None else {c: p for c, p in replies.items() if c in by_id and p in by_id}
@@ -667,5 +716,5 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
 
 
 __all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
-           "address_origins", "page_aliases", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "source_site", "title_key",
+           "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "source_site", "title_key",
            "anchors"]
