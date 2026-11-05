@@ -9,7 +9,8 @@ import MarkXPage from '../../pages/MarkXPage';
 import MarkXPanel from './MarkXPanel';
 import { ApiError } from '../../lib/apiError';
 import type { Api } from '../../services/api';
-import type { MarkxNews, MarkxPostPanel } from '../../services/markx';
+import type { MarkxNews, MarkxOverview, MarkxPostPanel } from '../../services/markx';
+import { MarkXWorker } from './MarkXOverview';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
@@ -86,6 +87,35 @@ describe('the menu item', () => {
     shell(false);
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     await waitFor(() => expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['feed', 'sources', 'blog']));
+  });
+});
+
+describe('the reading window', () => {
+  const overview = (days: number | null): MarkxOverview => ({
+    worker: { queue: {}, days: [], tokens: { calls: 0, tokens_in: 0, tokens_out: 0, paid_usd: 0, api_usd: 0 }, failed: [],
+      invalid: [], workers: [], last_run: null },
+    briefing: { day: null, briefings: [] }, entities: { today: [], week: [] },
+    reading_window: { days, default: 30 },
+  });
+
+  it('shows the window and sets 120 days, everything, or a number of days', async () => {
+    let days: number | null = 30;
+    const getMarkxOverview = vi.fn(async () => overview(days));
+    const setMarkxReadingWindow = vi.fn(async (d: number | null) => { days = d; return { reading_window_days: d, default: 30 }; });
+    renderWithProviders(<MarkXWorker />, { api: makeFakeApi({ getMarkxOverview, setMarkxReadingWindow, runMarkxDecisions: vi.fn() }) });
+    const section = await screen.findByRole('region', { name: 'Reading window' });
+    expect(within(section).getByRole('radio', { name: '30 days' })).toBeChecked();
+    await userEvent.click(within(section).getByRole('radio', { name: '120 days' }));
+    expect(setMarkxReadingWindow).toHaveBeenLastCalledWith(120);
+    await waitFor(() => expect(within(section).getByRole('radio', { name: '120 days' })).toBeChecked());
+    await userEvent.click(within(section).getByRole('radio', { name: 'everything' }));
+    expect(setMarkxReadingWindow).toHaveBeenLastCalledWith(null);
+    const input = within(section).getByRole('spinbutton', { name: 'days' });
+    await userEvent.clear(input);
+    await userEvent.type(input, '45');
+    await userEvent.click(within(section).getByRole('button', { name: 'set' }));
+    expect(setMarkxReadingWindow).toHaveBeenLastCalledWith(45);
+    await waitFor(() => expect(within(section).getByText(/the last 45 days/)).toBeInTheDocument());
   });
 });
 

@@ -31,7 +31,8 @@ from insight_core.services import registry
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 
 MX_TABLES = ("mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
-             "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides")
+             "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
+             "mx_settings")
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
@@ -572,6 +573,85 @@ class GuidesAndInputs(_Api):
             self.assertEqual(tasks.plan_posts(self.cur, "read", now=now), 0)
         self.cur.execute("SELECT a, priority FROM mx_tasks WHERE kind = 'read' ORDER BY priority")
         self.assertEqual([(str(a), p) for a, p in self.cur.fetchall()], [(fresh, 0), (older, 3)])
+
+
+class ReadingWindow(_Api):
+    """0112 Decided 9: the read, entities and embed planners' window is the owner's (the page's mx_settings row,
+    default 30 days, null for every post), and a lease may carry its own (`days`); the decision window stays 30."""
+    plan = True
+
+    def setUp(self):
+        super().setUp()
+        self.now = datetime.now(timezone.utc)
+        self.fresh = self.post(title="Fresh", at=self.now - timedelta(days=2))
+        self.old = self.post(title="Old", at=self.now - timedelta(days=100))
+        self.ancient = self.post(title="Ancient", at=self.now - timedelta(days=2000))
+
+    def planned(self, kind="read"):
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = %s", (kind,))
+        return {r[0] for r in self.cur.fetchall()} & {self.fresh, self.old, self.ancient}
+
+    def test_the_page_setting_changes_the_next_planner_runs_window(self):
+        self.assertEqual(call("GET", "/api/markx/settings")[1]["reading_window_days"], 30)     # no row: 30
+        with self.conn.transaction():
+            tasks.plan_posts(self.cur, "read")
+        self.assertEqual(self.planned(), {self.fresh})
+        status, body = call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        self.assertEqual((status, body["reading_window_days"]), (200, 120))
+        with self.conn.transaction():
+            tasks.plan_posts(self.cur, "read")
+            tasks.plan_posts(self.cur, "entities")
+        self.assertEqual(self.planned(), {self.fresh, self.old})
+        self.assertEqual(self.planned("entities"), {self.fresh, self.old})
+        self.assertEqual(call("POST", "/api/markx/settings/reading-window", body={"days": None})[1]["reading_window_days"], None)
+        with self.conn.transaction():
+            tasks.PLANNERS["read"](self.cur)
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+        self.assertEqual(call("GET", "/api/markx/overview")[1]["reading_window"]["days"], None)
+
+    def test_the_embed_planner_reads_the_setting(self):
+        with self.conn.transaction():
+            tasks.PLANNERS["embed"](self.cur)
+        self.assertEqual(self.planned("embed"), {self.fresh})
+        call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        with self.conn.transaction():
+            tasks.PLANNERS["embed"](self.cur)
+        self.assertEqual(self.planned("embed"), {self.fresh, self.old})
+
+    def test_a_bad_window_is_refused(self):
+        for bad in (0, -3, "120", 1.5, 100000):
+            self.assertEqual(call("POST", "/api/markx/settings/reading-window", body={"days": bad})[0], 422, bad)
+        self.assertEqual(self.lease(days="soon")[0], 400)
+        self.assertEqual(self.lease(days="0")[0], 400)
+
+    def lease(self, days, kind="read", limit=100):
+        return call("GET", "/api/markx/work", query={"kinds": kind, "limit": limit, "worker": "device-1", "days": days},
+                    token=self.token)
+
+    def test_a_lease_with_days_120_plans_older_posts_first(self):
+        status, body = self.lease("120")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old})
+        leased = {t["input"].split("Title: ")[1].split("\n")[0] for t in body["tasks"]}
+        self.assertTrue({"Fresh", "Old"} <= leased)
+        self.assertNotIn("Ancient", leased)
+        self.assertEqual(call("GET", "/api/markx/settings")[1]["reading_window_days"], 30)   # the page's is unchanged
+
+    def test_a_lease_with_days_all_covers_every_post(self):
+        status, body = self.lease("all")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+
+    def test_neither_touches_the_decision_window(self):
+        from insight_core.markx import decide as D
+        call("POST", "/api/markx/settings/reading-window", body={"days": None})
+        self.lease("all")
+        self.assertEqual(D.Config().days, 30)
+        with self.conn.transaction():
+            world = D.load(self.cur, self.now, D.Config())
+        self.assertEqual(world.since, self.now - timedelta(days=30))
+        import inspect
+        self.assertEqual(inspect.signature(tasks.plan_checks).parameters["days"].default, 30)
 
 
 class EveryKindRoundTrips(_Api):

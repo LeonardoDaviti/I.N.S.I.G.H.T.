@@ -48,6 +48,21 @@ def _one(cur: Cursor) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+# ---- settings (0069: the owner's, from the page) ----------------------------------------------------
+
+def get_setting(cur: Cursor, key: str, default: Any = None) -> Any:
+    """A setting's value (JSON; null is a value), or `default` when it has no row."""
+    cur.execute("SELECT value FROM mx_settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    return default if row is None else row[0]
+
+
+def set_setting(cur: Cursor, key: str, value: Any) -> None:
+    cur.execute("INSERT INTO mx_settings (key, value, updated_at) VALUES (%s, %s::jsonb, now()) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                (key, json.dumps(value)))
+
+
 # ---- guides ---------------------------------------------------------------------------------------
 
 def put_guide(cur: Cursor, guide_id: str, kind: str, body: str, schema: Optional[dict] = None) -> str:

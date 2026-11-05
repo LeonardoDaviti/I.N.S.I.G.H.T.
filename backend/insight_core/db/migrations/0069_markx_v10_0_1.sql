@@ -13,6 +13,10 @@
 --    The same test as tasks.shows_empty_story and the real-data check's markx.check_empty_story. On the lab
 --    (2026-11-05): 10 of its 125 waiting checks. Answered ones stay as they are (Decided 6: not read again).
 --
+-- 3. (Decided 9) mx_settings: the owner's Mark X settings, set from the /markx page (Mark X writes only mx_*
+--    tables, so not system_settings). Key `reading_window_days`: the read, entities and embed planners' window,
+--    an int or null for every post; no row means 30 days. Nothing is seeded: the owner sets it on the page.
+--
 -- Mark X tables only; nothing is deleted. Idempotent: a reopened read is open and a closed check failed, so a
 -- second run changes nothing.
 
@@ -32,3 +36,9 @@ UPDATE mx_tasks
  WHERE kind = 'check'
    AND status IN ('open', 'leased')
    AND strpos(split_part(input, E'\n\nPOST\n', 1) || E'\n', E'\nMembers (earliest first):\n') = 0;
+
+CREATE TABLE IF NOT EXISTS mx_settings (
+  key        text PRIMARY KEY,
+  value      jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

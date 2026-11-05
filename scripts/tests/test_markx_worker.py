@@ -279,6 +279,24 @@ class TestValid(Base):
         self.assertEqual(self.stub.releases, [])
         self.assertTrue(all(c["valid"] for c in self.stub.calls))
 
+    def test_days_goes_with_every_lease_and_without_it_none(self):
+        """0112 Decided 9: `--days <N|all>` makes the server plan that window first; without it the page's holds."""
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "read", "--days", "120")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(self.stub.works)
+        self.assertTrue(all(w.get("days") == "120" for w in self.stub.works), self.stub.works)
+        self.stub.works.clear()
+        self.stub.add("read", 5)
+        self.assertEqual(self.run_worker("--kinds", "read", "--days", "all").returncode, 0)
+        self.assertTrue(all(w.get("days") == "all" for w in self.stub.works))
+        self.stub.works.clear()
+        self.stub.add("read", 5)
+        self.assertEqual(self.run_worker("--kinds", "read").returncode, 0)
+        self.assertTrue(all("days" not in w for w in self.stub.works))
+        for bad in ("0", "soon", "-3"):
+            self.assertEqual(self.run_worker("--kinds", "read", "--days", bad).returncode, 2, bad)
+
     def test_tokens_and_cost_from_claude_codes_json_logged_and_posted(self):
         self.stub.add("read", 45)
         p = self.run_worker("--kinds", "read")

@@ -55,8 +55,24 @@ PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
 NOT_VOICE = {"saved"}
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
-PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only
+PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
+                                           # 0112 Decided 9 the read, entities and embed planners' default only
 PLAN_LIMIT = 500
+READING_WINDOW = "reading_window_days"     # mx_settings: the owner's window for those three (an int, or null: every post)
+SETTING = object()                         # a planner's `days` when the caller names none: the owner's setting
+
+
+def reading_window(cur: Cursor) -> Optional[int]:
+    """The read, entities and embed planners' window in days, as the owner set it on the page (0112 Decided 9): an
+    int, or None for every post; PLAN_DAYS when it was never set. Read on every planner run, so a change counts from
+    the next one (no restart). The decision window (decide.Config.days) and plan_checks stay at PLAN_DAYS."""
+    value = repo.get_setting(cur, READING_WINDOW, default=PLAN_DAYS)
+    return None if value is None else int(value)
+
+
+def set_reading_window(cur: Cursor, days: Optional[int]) -> Optional[int]:
+    repo.set_setting(cur, READING_WINDOW, days)
+    return days
 
 
 # ---- the posts, as Mark X reads them (markx text v1) ----------------------------------------------
@@ -413,16 +429,20 @@ def briefing_task(cur: Cursor, day: date, stories: Sequence[Tuple[str, Sequence[
 
 # ---- planning: what is asked without S2 or S5 ------------------------------------------------------
 
-def plan_posts(cur: Cursor, kind: str, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT,
+def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN_LIMIT,
                now: Optional[datetime] = None) -> int:
-    """`read` or `entities` tasks for the newest posts of the last `days` that have none under the kind's guide,
-    newest first (priority: the post's age in days, so a lease takes today's first): how many were added."""
+    """`read` or `entities` tasks for the newest posts of the last `days` (by default the owner's reading window,
+    `reading_window`; None: every post) that have none under the kind's guide, newest first (priority: the post's
+    age in days, so a lease takes today's first): how many were added."""
     spec = schemas.KINDS[kind]
+    if days is SETTING:
+        days = reading_window(cur)
     cur.execute(
         """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                     - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
              FROM posts p
-            WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s)
+            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                             >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
             ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
             LIMIT %(limit)s""", {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit})
@@ -509,10 +529,14 @@ def reasked(cur: Cursor) -> Dict[str, Dict[str, int]]:
 
 
 def _plan_embeds(cur: Cursor, **kw) -> int:
+    """S2's planner, over the owner's reading window unless the caller names `days` (0112 Decided 9)."""
     from insight_core.markx import embed   # S2's planner (embed.py imports this module)
+    if kw.get("days", SETTING) is SETTING:
+        kw["days"] = reading_window(cur)
     return embed.plan(cur, **kw)
 
 
+WINDOWED = ("read", "entities", "embed")   # the planners the reading window (and a lease's `days`) applies to
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
             "check": plan_checks,

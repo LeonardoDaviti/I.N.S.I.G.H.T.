@@ -109,6 +109,14 @@ export interface MarkxOverview {
     lines: { text: string; keys: string[]; stories: string[]; rows?: string[] }[] }[] };
   entities: Record<'today' | 'week', { key: string; version: string | null; name: string; type: string | null; posts: number;
     voices: number; examples: { id: string | null; title: string | null; source: string | null }[] }[]>;
+  /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
+  reading_window: { days: number | null; default: number };
+}
+
+/** POST /api/markx/settings/reading-window's answer. */
+export interface MarkxSettings {
+  reading_window_days: number | null;
+  default: number;
 }
 
 // ---- Labels (issue 0086 F): /api/markx/labels ----
