@@ -581,6 +581,55 @@ Not merged, not deployed; merging it is "Mark X v10.0 (Shadow)". Nothing was fet
 - **One tap on Mark X rows:** "wrong story" / "not about this" on any member in the Mark X News. These become labels too: no separate labelling sessions after E1, only a small monthly audit sample.
 - **Done when** E1's set (about 2 hours of your time) is in, and the page shows each feature's precision on your labels with its bar.
 
+### Built (S6, branch `markx-s6-labels` from `markx-shadow` e45cbd8, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded and the real `claude` was never run. Measured on scratch copies of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a` and `_b`: Mark IX's stories rebuilt by the branch's deploy start, then the prototype's recorded vectors, readings, entities and verdicts loaded through the API's own checks, as S5 did), never on that database itself.
+
+**Three S5 follow-ups first, each its own commit:**
+- **The connect questions are capped** (c986206). `Config.connect_new` (100) new connect tasks a decision run, the newest story pairs first (by the later story's first post), only pairs whose stories both have `Config.connect_voices` (2)+ voices. Both are settings in the run's `mx_runs.config`; the cap is the run's `Ask`'s, so the other kinds keep `CAP` (500).
+  - On the server copy, the same five decision rounds: **before** 1,216 connect tasks queued (335, 500, 344, 37 a round), more than every other kind together; **after** 100 a round, 500 after the five rounds. The other kinds are unchanged (check, join, pair, merge, card, headline the same but for the thread checks below).
+  - The cap is per run, as asked: the hourly job would still queue the whole backlog of about 1,200 pairs in about 12 hours if the worker doesn't answer them. Capping the open connect tasks instead (no new one while 100 wait) is the owner's call.
+- **Members Mark IX joined by `thread` are checked** (be8d18d), in 2+ voice stories, rule A still applying (`Config.check_threads`, on; off in `Config.prototype()`, so the prototype's reproduction is unchanged). The decision job's planner and the worker's check planner read the one setting.
+  - On the server copy: **6 more check tasks** (179 → 185, in both planners). Of the window's 211 thread members, 203 sit in one-voice stories (not checked: a one-voice story isn't News), 2 are under 20 words, 6 are checked now. Five of the six had recorded verdicts; none changes a decision.
+  - The S5 review's W1 row doesn't occur in this copy's rebuild: the benchmark account's 19 posts (14 joined by thread) sit in their own one-voice thread stories here, so the rule could not be shown on that row.
+- **A decision run reads one snapshot** (b01b36d, asked during S6). `decide.snapshot()` opens the run's transaction at REPEATABLE READ (the scheduler's and `POST /api/markx/decide`); every read of Mark IX's stories, News and posts sees the snapshot of the run's first query.
+  - **Conflicts:** the run writes only `mx_*` rows, and only the run (under its advisory lock) updates them. The one write another transaction can race is a task insert: the worker's check planner committing the same check mid-run makes the run's `INSERT … ON CONFLICT DO NOTHING` a serialization failure at REPEATABLE READ. The run takes it in a savepoint and counts it (`tasks_raced`): the task exists and is unanswered in the run's snapshot, so nothing is lost.
+  - Tests: a story change committed mid-run isn't seen by that run (and is, at READ COMMITTED: the control); a check the planner commits mid-run is counted, and the run commits.
+  - **One run on the server copy** (all recorded answers loaded, 1,259 posts, 308 stories, 892 questions, 652 answered): **1.61 s, peak RSS +24 MB** (116 MB in a process holding only the backend's modules; rolled back).
+
+**What changed (S6):**
+- `markx/labels.py` (new):
+  - **The population:** the questions behind the decisions, as the last run read them: `decide.think` with an `Ask` that only reads (no task added, nothing written), plus the answered connect and entities tasks. Each item is a task, keyed by content, never by a Mark IX story id.
+  - **The queue:** every decision within `Settings.near` (0.05: the judge's confidence comes in fives, so 0.55, 0.60 and 0.65 around the 0.6 bar) of its bar, every merge question, and a stable sample (`Settings.sample`, 6, by a hash of the task) of each other pool (a feature's accepted side and its rejected side), interleaved feature by feature so a short session labels every feature.
+  - **An item** is its task's input, the exact evidence the judge saw. Its verdict (and its pool, which names the decision) is sent only once it has an answer; then the page shows Haiku's relation, p, words, the bar and what Mark X did.
+  - **Answers:** same event, follow-up, related, different, unsure; for entities right, wrong, unsure; plus a note. Stored in `mx_labels` (S1): `a` the task, `b` the post asked about; a changed answer is a new row and the newest counts.
+  - **The split:** an item's day is its newest post's; the newest quarter of the queue's days are test, the rest dev; a label keeps the split it was given.
+  - **Precision per feature** (checks, joins, new stories, merges, connections, entities): the share of its decisions right, post-stratified by pool and split (each label weighs its pool's size over the pool's labels), with a Wilson 95% interval on the Kish effective count; the share right on its rejected side too; the bar swept on dev and test; the re-picked bar (the lowest reaching `Settings.target`, 95%, on 10+ dev labels; for checks, which take out below their bar, the highest), reported on test. A labelled question today's run no longer asks keeps counting in its feature's "earlier" pool.
+  - **One tap on Mark X News members:** "wrong story", "not about this", or "ok" to take it back, as `news_row` labels (`a` the post, `b` its Mark X story); counted by the feature whose membership put the post there.
+- `markx/api.py`: `GET /api/markx/labels`, `GET /api/markx/labels/items/{id}`, `POST /api/markx/labels`, `GET /api/markx/labels/precision?labeller=`, `POST /api/markx/labels/news` (404 when off, like every Mark X path). `markx/news.py`: each member line carries its Mark X story and standing one tap; the newest written run is told apart by its finish time when two runs share a start (one transaction). `markx/decide.py`: `think(answered=)`.
+- Frontend: the labels tab of `/markx` (`components/markx/MarkXLabels.tsx`, in the page's lazy chunk): one item at a time, the question, the evidence, the answers (keys 1–5), a note, then the verdict and "next"; skip; the last answered; the progress per feature; the precision view with a labeller picker. On a phone the answers, the verdict and "next" stay in a bar at the bottom and the evidence scrolls with the page. One tap on each member of an opened Mark X News row.
+
+**Measured on the server copy** (`_b`, the S6 code, after the five decision rounds):
+- **The E1 set:** the queue offers **158 items** of a population of 1,486 questions: checks 15 (of 95), joins 39 (of 175), new stories 67 (of 351), merges 31 (all), entities 6 (of 834). At the prototype's pace (120 items in about 2 hours) that is about 2 h 40 min; the queue's order keeps every feature in its first 120. Near a bar: 8 checks, 27 joins, 55 new stories. Split: 145 dev, 13 test (test from 1 Nov; the recorded answers thin out on the newest days). The defaults first tried (0.10 and 12 a pool) offered 248, about four hours.
+- **The queue builds in 0.45 s** (cached per decision run).
+- **Precision on the prototype's blind Claude labels**, mapped onto the questions by subject as S5 mapped the verdicts (labeller A: 501 labels on the population, 138 of the 158 offered items; B: 212):
+
+| Feature (bar) | Labeller A: Mark X's decisions right | B |
+|---|---|---|
+| F1 checks (0.30): taken out | 2 of 4, 50% (15–85%); kept 90% (82–95%) of 91 | none taken out labelled; kept 86% (70–94%) of 38 |
+| F2 joins (0.6): joined | 91% (81–96%) of 65 | 97% (84–99%) of 33 |
+| F2 new stories (0.6): made a story | 99% (95–100%) of 105; test 91% (62–98%) of 11 | 100% (90–100%) of 36 |
+| Merges (0.85): merged | 5 of 6, 83% (44–97%); not merged right 83% of 17 | 3 of 3 |
+
+  The prototype measured joins and new stories together at 98% on these labellers; here new stories hold that and joins read 91–97%. On A's labels the joins bar re-picked on dev is 0.95, new stories' is 0.3 (dev 100%, test 92% on 12). These are Claude's labels, not the owner's: E1's labels replace them.
+- **Synthetic labels:** the unit tests (the weights back to each pool's size, the interval, the dev and test bars, every feature's rule for "right").
+
+**The reader review** (desktop 1400 and phone 390, on my own containers `markx-s6-api` and `markx-s6-web` over `_b`; every non-127.0.0.1 request and `/api/media` failed from the first shot: 178 requests allowed, 0 blocked, none outside). Private: `plan/research/markx-build/s6/review-S6-reader.md`.
+- Fixed from it: an answered item jumped to the next before its verdict showed (the queue's refetch moved the "next" item); on a phone the verdict and "next" sat under the whole evidence, now in the bottom bar; an unanswered item sent its pool, which names the decision; a re-picked bar could rest on one dev label (now 10+).
+
+**Tests:** `test_markx_labels.py` (11: the pools, the sample and its order, the cut, what is right per feature, Wilson, the weights, the re-picked bar, the queue from a real run read blind, a changed answer a new row, the earlier pool, one tap and "ok", Mark IX's tables and the task count untouched by the queue, the routes and 404 when off); `test_markx_decide.py` +4 (the connect cap, threads in the rules, the snapshot, the planner race); `test_markx_api.py` +1 (threads in the check planner); `labels.test.tsx` (3). Backend suite 1,726 OK (`./run-tests.sh`, in the image); frontend 235 + 723 OK; the bundle gate passes (feed +0.88%, post +0.56% against v9.15's baseline; the tab is in the Mark X page's chunk).
+
+**The real-data check** (`--base markx-shadow --head markx-s6-labels insight_lab`, at eb42f3f; report `plan/research/lab/checks/markx-s6-labels-2026-11-05.md`): **PASS.** 0 change in titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover; every invariant the same; the Mark X ones 0 (`markx.ix_unchanged` 0 of 31 tables, `markx.after_run` 0 of 893 rows); no case changes state. The commits after it change only the labels module's defaults and the page.
+
 ## Part G (later): switching on, one feature at a time
 Order:
 1. F1 checks;
