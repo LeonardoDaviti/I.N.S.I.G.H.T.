@@ -113,3 +113,5 @@ So an incremental run re-reads only what changed, and runs the same rules over t
 - Hide the newest 60 judge calls, run `decide.run(full=True)`, then show them 20 at a time with an incremental run after each, then run `decide.run(full=True)` again.
 - Count that last full run's memberships, connections and News rows written, plus `counts.check.differences`. The bar is 0.
 - Also report the incremental runs' seconds (under 1 s) and their closures.
+
+**The suite and the real-data check:** as in [0112's Built: Decided 8](0112-mark-x-v10.0.1-live-fixes.md): backend 1,859 after merging main (1 unrelated flaky search test, which passes alone), worker 51 OK. `realdata-check --base main --head issue-0112-reask-and-0116 insight_lab`: **PASS**, 0 change in every derived thing, every invariant equal, Mark IX unchanged.
