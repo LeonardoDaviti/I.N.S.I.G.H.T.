@@ -20,6 +20,7 @@ idempotent. One job at a time (an advisory lock); a job that finds one running s
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import multiprocessing
 import sys
@@ -27,6 +28,7 @@ import time
 from collections import Counter, defaultdict
 from functools import lru_cache
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from insight_core.db import database as db
@@ -69,8 +71,10 @@ class StoriesService:
         # News and Classics (issue 0051) are refreshed by this job, on its transaction.
         self.news = news or NewsService(db_url, clock=self.clock)
         # Discover counts every kept link in the database (138k on the server's data), and its inputs change only
-        # with a story run, a source or a hidden suggestion: the last list is kept until they do.
+        # with a story run, a source or a hidden suggestion: the last list is kept until they do, here and in the
+        # database (issue 0080 cold open: a fresh process reads it, the story job makes it).
         self._discovered: tuple = ("", None)
+        code_stamp()   # read at start, not on an open
 
     # ---- the job ------------------------------------------------------------------------
 
@@ -499,10 +503,21 @@ class StoriesService:
         try:
             summary = self.recompute(full=full)
             logger.info("Stories: %s", summary)
-            return summary
         except Exception:  # noqa: BLE001 - stories are derived; the next run recomputes them
             logger.exception("Stories: the story job failed")
             return None
+        if not summary.get("skipped"):
+            self.keep_discover()
+        return summary
+
+    def keep_discover(self) -> None:
+        """After a story run, in its process: Discover's list made for what the run changed and kept, so the
+        first open after it reads one row (issue 0080 cold open: making it reads ~16k pages of posts and links,
+        13.6 s on the lab when they had left the cache and the disk was busy). Never raises."""
+        try:
+            self._discover_all()
+        except Exception:  # noqa: BLE001 - derived; Discover makes it on its next open
+            logger.exception("Stories: Discover's list was not kept")
 
     # ---- Discover -----------------------------------------------------------------------
 
@@ -627,10 +642,16 @@ class StoriesService:
                 "more": end < len(ranked)}
 
     def _discover_all(self) -> Dict[str, Any]:
+        """The whole list: this process's last when its inputs and code are unchanged, else the one the
+        database keeps for them (a story run's, another process's), else made now and kept."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            inputs = self.repo.discover_inputs(cur)
+            inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
             if self._discovered[0] == inputs and self._discovered[1] is not None:
                 return self._discovered[1]
+            kept = DiscoverRepository.kept_list(cur, inputs)
+            if kept is not None:
+                self._discovered = (inputs, kept)
+                return kept
             # Grouped and counted in the database (issue 0062): the kept links never come to Python.
             sources = SourceFacts(cur)
             counted = self._counted(cur, sources)
@@ -732,6 +753,11 @@ class StoriesService:
         result = {"success": True, "suggestions": out, "archives": archives, "unnamed": unnamed,
                   "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],
                   "first_page": FIRST_PAGE}
+        try:
+            with db.transaction(self.db_url) as cur:
+                DiscoverRepository.keep_list(cur, inputs, result)
+        except Exception:  # noqa: BLE001 - derived; the next open makes it again
+            logger.exception("Discover: the list was not kept")
         self._discovered = (inputs, result)
         return result
 
@@ -787,6 +813,19 @@ def rules_stamp() -> str:
     names = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
     return stamps.fingerprint([stories, found.edges, {p.id: sorted(keys(p)) for p in posts}, names,
                                news(posts, stories, names)])
+
+
+@lru_cache(maxsize=1)
+def code_stamp() -> str:
+    """The code Discover's kept list was made by (issue 0080 cold open): every module of insight_core, its
+    tests aside. A list kept by other code (a deploy, a branch on a copy) is made again."""
+    root = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha1()
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if relative.parts[0] != "tests":
+            digest.update(str(relative).encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def in_own_process(job: Callable[..., Any], *args: Any) -> None:
