@@ -244,16 +244,31 @@ def api_during_run(db_url: str, now: datetime) -> Found:
             status = getattr(exc, "code", -1) or -1
         return {"path": path.split("?")[0], "ms": round((time.monotonic() - t) * 1000), "status": status}
 
+    asked: Dict[str, int] = {}   # requests asked per window, answered or not: a window is judged once all are in
+    count_lock = threading.Lock()
+
+    def ask(path: str, window: str) -> None:
+        rows.append({**get(path), "phase": window})
+
     def probe() -> None:
         pending: List[threading.Thread] = []
         while not stop.is_set():
             for path in PROBES:
-                th = threading.Thread(target=lambda p=path, w=phase[0]: rows.append({**get(p), "phase": w}), daemon=True)
+                with count_lock:
+                    asked[phase[0]] = asked.get(phase[0], 0) + 1
+                th = threading.Thread(target=ask, args=(path, phase[0]), daemon=True)
                 th.start()
                 pending.append(th)
             stop.wait(0.5)
         for th in pending:
             th.join(12)
+
+    def answered(window: str) -> List[Dict[str, Any]]:
+        """The window's requests, once every one asked in it is answered or timed out (at most the 10 s timeout)."""
+        end = time.monotonic() + 12
+        while time.monotonic() < end and sum(1 for r in rows if r["phase"] == window) < asked.get(window, 0):
+            time.sleep(0.2)
+        return [r for r in rows if r["phase"] == window]
 
     started = time.monotonic()
     run_seconds, where, note_extra = None, "insight-ingestion (a process of its own)" if out_of_api else "inside the API", {}
@@ -268,16 +283,19 @@ def api_during_run(db_url: str, now: datetime) -> Found:
         waited, loaded = time.monotonic() + QUIET_WAIT_S, []
         while True:   # the run starts after a quiet 10 s window; the loaded ones before it are set aside
             stop.wait(BASELINE_S)
-            window = [r for r in rows if r["phase"] == "before"]
+            phase[0] = "aside"          # asked while the window is judged: no window's
+            window = answered("before")
             if quiet(window):
                 break
             loaded.append(f"{sum(map(_slow, window))} of {len(window)}")
             for r in window:
                 r["phase"] = "loaded"
+            asked.pop("before", None)
             if time.monotonic() > waited:
                 return Found("markx.api_during_run", "mark x", what, -1, 0, round(time.monotonic() - started, 1),
                              note=f"{LOADED_NOTE} (slow in each 10 s window over {QUIET_WAIT_S} s: {', '.join(loaded)})")
             stop.wait(20)
+            phase[0] = "before"
         note_extra["loaded_windows_before"] = loaded
         phase[0] = "during"
         t0 = time.monotonic()
