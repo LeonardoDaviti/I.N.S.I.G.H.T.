@@ -14,6 +14,7 @@ changes. mx_tasks.kind is not checked by the database, so a kind needs no migrat
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -45,7 +46,6 @@ TRANSLATE_LENGTH = (0.5, 2.0)
 
 _STR = {"type": "string"}
 _STR_OR_NULL = {"type": ["string", "null"]}
-_STRS = {"type": "array", "items": _STR}
 
 # ---- the answer schemas ----------------------------------------------------------------------------
 
@@ -57,13 +57,13 @@ READ_SCHEMA = {
         "events": {"enum": EVENTS},
         "main": {"anyOf": [{"type": "null"}, {
             "type": "object", "required": ["headline_en", "actors", "object", "action"],
-            "properties": {"headline_en": _STR, "actors": {"type": "array", "items": _STR, "maxItems": 6},
+            "properties": {"headline_en": _STR, "actors": {"type": "array", "items": _STR},
                            "object": _STR, "action": _STR, "date": _STR_OR_NULL,
-                           "numbers": {"type": "array", "items": {"type": ["string", "number"]}, "maxItems": 6}}}]},
+                           "numbers": {"type": "array", "items": {"type": ["string", "number"]}}}}]},
         "items": {"type": "array", "maxItems": 12, "items": {
             "type": "object", "required": ["headline_en", "link"],
             "properties": {"headline_en": _STR, "link": _STR_OR_NULL}}},
-        "mentions": {"type": "array", "maxItems": 10, "items": {
+        "mentions": {"type": "array", "items": {
             "type": "object", "required": ["name", "role"],
             "properties": {"name": _STR, "role": {"enum": MENTION_ROLES}}}},
         "lang": {"type": "string", "pattern": r"^[a-z]{2,3}([-_][A-Za-z]{2,4})?$"},
@@ -98,7 +98,7 @@ CARD_SCHEMA = {
     "required": ["headline_en", "actors", "object", "action"],
     "properties": {"headline_en": {"type": "string", "minLength": 1},
                    "actors": {"type": ["array", "string"]}, "object": _STR, "action": _STR, "date": _STR_OR_NULL,
-                   "summary_en": _STR, "odd": _STRS},
+                   "summary_en": _STR, "odd": {"type": "array", "items": {"type": ["string", "integer"]}}},
 }
 
 HEADLINE_SCHEMA = {
@@ -171,3 +171,19 @@ def load_guides(cur) -> Dict[str, str]:
         schema = next(k.schema for k in KINDS.values() if k.guide == guide_id)
         out[guide_id] = repo.put_guide(cur, guide_id, kind, guide_body(guide_id), schema)
     return out
+
+
+_ready: set = set()
+_ready_lock = threading.Lock()
+
+
+def ensure_guides(cur) -> None:
+    """The guides loaded once per process and database, before the first task or lease that names one (0086 C:
+    loaded at start, by sha256). The database is told apart by its connection's host, port and name."""
+    info = cur.connection.info
+    where = (info.host, info.port, info.dbname)
+    with _ready_lock:
+        if where in _ready:
+            return
+        load_guides(cur)
+        _ready.add(where)

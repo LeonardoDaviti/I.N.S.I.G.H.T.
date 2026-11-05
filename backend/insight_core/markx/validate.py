@@ -60,10 +60,10 @@ _VERSION = re.compile(r"\b[A-Za-z]+[-_‐‑]?\d+(?:\.\d+)+[A-Za-z]?\b|\b[A-Z][\
 
 
 def figures(text: Optional[str]) -> List[str]:
-    """Each figure as its bare digits ('1 000' -> '1000', '2,5' -> '25', '$500bn' -> '500')."""
+    """Each figure as its bare digits, no leading zero ("1 000" -> "1000", "2,5" -> "25", "$500bn" -> "500", "02" -> "2")."""
     out = []
     for m in _FIGURE.finditer(text or ""):
-        d = re.sub(r"\D", "", m.group(0))
+        d = re.sub(r"\D", "", m.group(0)).lstrip("0") or "0"   # "02" is 2
         if d:
             out.append(d)
     return out
@@ -118,8 +118,11 @@ def schema_error(schema: Any, value: Any, path: str = "answer") -> Optional[str]
         return f"{path}: {value!r} is not one of {', '.join(map(str, schema['enum']))}"
     for key in ("anyOf", "oneOf"):
         if key in schema and all(schema_error(s, value, path) for s in schema[key]):
+            # say what is wrong inside the branch of the value's own type ("main.actors: ..."), not "main: not null"
             errors = [schema_error(s, value, path) for s in schema[key]]
-            return min(errors, key=len)
+            typed = [e for s, e in zip(schema[key], errors)
+                     if not (isinstance(s, dict) and "type" in s and schema_error({"type": s["type"]}, value, path))]
+            return (typed or errors)[0]
     if isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
             return f"{path}: empty" if schema.get("minLength") == 1 else f"{path}: shorter than {schema['minLength']}"
@@ -180,11 +183,23 @@ def _entities(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_VERSION_NUMBER = re.compile(r"\d+(?:\.\d+)+")
+
+
+def version_number_occurs(version: str, text: str) -> bool:
+    """A headline's version is found when its number occurs in the text as a number ("GPT-5.6" in "their 5.6
+    versions"): the name around it may be the story's family, said once (measured on the recorded headlines)."""
+    m = _VERSION_NUMBER.search(version)
+    if not m:
+        return version_occurs(version, text)
+    return re.search(r"(?<![\d.])" + re.escape(m.group(0)) + r"(?!\d|\.\d)", text) is not None
+
+
 def _story_headline(text: str, input: str, field: str) -> Optional[str]:
     if words(text) > schemas.STORY_HEADLINE_WORDS:
         return f"{field} has {words(text)} words, more than {schemas.STORY_HEADLINE_WORDS}"
     for v in versions(text):
-        if not version_occurs(v, input):
+        if not version_number_occurs(v, input):
             return f"{field}: the version {v!r} occurs in no member"
     miss = missing_figures(text, input)
     if miss:
@@ -198,9 +213,12 @@ _CARD_ID = re.compile(r"^- id (\S+) \[", re.M)
 def _card(a: Dict[str, Any], input: str) -> Optional[str]:
     if words(a["headline_en"]) > schemas.STORY_HEADLINE_WORDS:
         return f"headline_en has {words(a['headline_en'])} words, more than {schemas.STORY_HEADLINE_WORDS}"
+    # `odd` names members by the 8-character id the input shows. An answer that numbers them instead (6 of the 43
+    # recorded cards) is kept as given: no decision reads `odd` (the prototype's never did), and a number's base
+    # (first member 0 or 1) can't be told, so it is not turned into an id.
     ids = set(_CARD_ID.findall(input))
     for odd in a.get("odd") or []:
-        if str(odd).strip() not in ids and not any(i.startswith(str(odd).strip()) or str(odd).startswith(i) for i in ids):
+        if isinstance(odd, str) and odd.strip() not in ids and not any(i.startswith(odd.strip()) for i in ids):
             return f"odd names {odd!r}, not a member"
     return None
 
@@ -230,7 +248,8 @@ def _briefing(a: Dict[str, Any], input: str) -> Optional[str]:
         unknown = [k for k in cited if k not in blocks]
         if unknown:
             return f"lines[{i}] cites {unknown[0]!r}, not a story of the day"
-        evidence = "\n".join(blocks[k] for k in cited)
+        # the day's own line ("DAY 2026-10-23: ...") is every story's: its year and date may be cited
+        evidence = "\n".join([input.split("\n", 1)[0]] + [blocks[k] for k in cited])
         miss = missing_figures(line["text"], evidence)
         if miss:
             return f"lines[{i}]: the figure {miss[0]} occurs in none of its stories ({', '.join(cited)})"

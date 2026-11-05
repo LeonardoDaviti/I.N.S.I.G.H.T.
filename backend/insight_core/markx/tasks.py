@@ -291,6 +291,7 @@ def add(cur: Cursor, kind: str, input: str, *, a: Any = None, b: Any = None, day
         priority: int = 0) -> Tuple[UUID, bool]:
     """The task asking `input` under `kind`'s guide: (its id, whether it is new)."""
     spec = schemas.KINDS[kind]
+    schemas.ensure_guides(cur)
     return repo.add_task(cur, kind=kind, guide=spec.guide, subject_kind=spec.subject, input=input, a=a, b=b, day=day,
                          priority=priority)
 

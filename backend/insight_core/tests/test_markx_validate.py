@@ -186,6 +186,28 @@ class StoryAnswers(unittest.TestCase):
                          "headline_en: the version 'Widget 4.2' occurs in no member")
         self.assertIn("15 words", check("headline", {"headline_en": " ".join(["w"] * 15)}, MEMBERS)[1])
 
+    def test_a_card_that_numbers_its_odd_members_is_kept_as_given(self):
+        """6 of the 43 recorded cards named odd members by position; nothing reads `odd`, so it is not refused."""
+        self.assertIsNone(check("card", self.card(odd=[2]), MEMBERS)[1])
+
+    def test_a_headline_version_is_found_by_its_number(self):
+        """A recorded headline wrote "GPT-5.6" where its members said "their 5.6 versions": right, not invented."""
+        members = MEMBERS + "\n- id 11111111 [Example Blog, site, 2026-11-02T13:00] Cheaper than their 5.6 versions | x"
+        self.assertIsNone(check("headline", {"headline_en": "Acme prices Widget 4.1 Pro below Widget 5.6"}, members)[1])
+        self.assertIn("'Widget 5.7'", check("headline", {"headline_en": "Acme prices it below Widget 5.7"}, members)[1])
+
+    def test_a_reading_names_any_number_of_actors_and_says_what_is_wrong_inside_main(self):
+        r = reading()
+        r["main"] = dict(r["main"], actors=[f"Org {n}" for n in range(9)])
+        self.assertIsNone(check("read", r, POST)[1])
+        r["main"] = dict(r["main"], actors="Acme")
+        self.assertEqual(check("read", r, POST)[1], "answer.main.actors: not array")
+
+    def test_a_briefing_line_may_cite_the_days_own_date(self):
+        ok = briefing(("Acme released Widget 4.1 Pro on 2 November 2026.", ["s1"]),
+                      ("Globex raised $300m.", ["s2"]), ("Initech opened a lab.", ["s3"]))
+        self.assertIsNone(check("briefing", ok, DAY)[1])
+
     def test_a_briefing_of_five_to_seven_lines_citing_the_days_stories(self):
         ok = briefing(("Acme released Widget 4.1 Pro, with 27B parameters.", ["s1"]),
                       ("Globex raised $300m.", ["s2"]), ("Initech opened a lab of 40 researchers.", ["s3"]))

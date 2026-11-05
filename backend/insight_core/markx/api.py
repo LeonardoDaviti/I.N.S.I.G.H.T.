@@ -63,7 +63,6 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -103,18 +102,7 @@ def transaction():
     return database.transaction(db_url())
 
 
-_loaded: set = set()
-_loaded_lock = threading.Lock()
-
-
-def ensure_guides(cur) -> None:
-    """The guides into mx_guides once per process and database (0086 C: loaded at start, by sha256)."""
-    url = db_url()
-    with _loaded_lock:
-        if url in _loaded:
-            return
-        schemas.load_guides(cur)
-        _loaded.add(url)
+ensure_guides = schemas.ensure_guides
 
 
 class TokenStore:

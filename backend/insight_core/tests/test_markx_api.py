@@ -92,7 +92,7 @@ class _Api(unittest.TestCase):
         self.addCleanup(registry.use, registry.use(SimpleNamespace(db_url=db_url())))
         self.addCleanup(setattr, api, "token_store", api.token_store)
         api.token_store = api.TokenStore(box=SecretBox(SecretBox.generate_key()))
-        api._loaded.clear()
+        schemas._ready.clear()
         api._contacts.clear()
         if not self.plan:
             self.addCleanup(setattr, tasks, "PLANNERS", tasks.PLANNERS)
@@ -341,6 +341,14 @@ class GuidesAndInputs(_Api):
         with self.assertRaises(ValueError):
             with self.conn.transaction():
                 repo.put_guide(self.cur, "read-v2", "read", "another body")
+
+    def test_a_builder_called_before_any_request_loads_the_guides_itself(self):
+        """S2's and S5's jobs build tasks without the API having run: the first task loads the guides."""
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        schemas._ready.clear()
+        task_id = self.task()
+        self.assertEqual(self.row(task_id)["guide"], "read-v2")
+        self.assertEqual(set(repo.guides(self.cur)), set(schemas.guide_ids()))
 
     def test_the_text_is_markx_text_v1_the_first_1500_characters(self):
         long = "word " * 400
