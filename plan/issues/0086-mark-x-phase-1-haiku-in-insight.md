@@ -537,6 +537,42 @@ The rules are the prototype's, none tuned on the server's window:
 - the page reads well in the reader review (phone included);
 - with Mark X on, Mark IX's tables are identical before and after a run (the realdata check's table diff).
 
+### Built (S5, branch `markx-s5-decide` from `markx-shadow` c7311f1, 2026-11-05)
+Not merged, not deployed; merging it is "Mark X v10.0 (Shadow)". Nothing was fetched or downloaded and the real `claude` was never run. Measured on the prototype's recorded files, on scratch copies of `insight_lab` (the real-data check) and of the server's data of 2026-11-05 (`insight_server_1105_check_<pid>_a`), never on those databases themselves.
+
+**What changed:**
+- `markx/decide.py`:
+  - **The rules**, pure functions ported from the prototype (`pipeline.plan`, `plan2`, `decide`): `plan_pass1` (checks of uncertain and roundup members, candidates as joins, pairs or merges, story pairs), `plan_pass2` (new stories against the others), `decide` (checks, then joins and pairs, pair stories glued, then merges, in the prototype's order). Rule A, rule B, roundups as mentions, joins at 0.6, merges at 0.85 and developments as connections are the prototype's; the two-event guard and the late-post table are `Config` switches (on).
+  - **The job** (`run`): reads Mark IX's stories with a post in the last 30 days (read only), S2's candidates and the readings; asks each question as a task whose input `markx/tasks.py` builds from content (joins and pairs once their posts are read; merges once both stories' cards are answered); turns the valid answers into verdicts; writes Mark X's stories (each matched to the Mark X story holding most of its members), memberships and connections, opening what is new and closing what changed (`valid_to`); asks Haiku's headline for every News story and the connect questions (F6); one `mx_runs` row a run; one run at a time (an advisory lock).
+  - **When:** `Scheduler`: after the worker's uploads (answers or vectors, 60 s after the last) and hourly, in the API process (uploads land there), only while INSIGHT_MARKX is on. One line in `main.py`'s lifespan starts it.
+- `markx/news.py`: Mark X News through Mark IX's own News code (`NewsService.rows`, the part of `refresh` that computes rows, split out; `refresh` calls it, unchanged) over Mark X's stories, the posts of no story, Mark IX's roundup mentions and stored surges; the tags (NEW: no post in a Mark IX row; MERGED; SPLIT; CHANGED; SAME); rows written when they differ from the last run's; the day's briefing after 20:00; the page's reads.
+- `markx/api.py`: `GET /api/markx/on`, `/news`, `/posts/{id}`, `/overview`, `POST /api/markx/decide` (the contract's routes unchanged; 404 when off).
+- Frontend: `/markx` (`pages/MarkXPage.tsx`, `components/markx/*`: news with "only differences" on, briefing, entities, worker, labels to come), a lazy chunk; the post page's folded "Mark X" panel, lazy and loaded when opened; the top bar's `mark x` and a ⌘K entry, only while `/api/markx/on` answers. `pages/shell.md` claims `/markx`.
+- The real-data check: `markx.call_invalid`, `markx.unnamed`, `markx.task_twice`, `markx.lease_past` (read only, every copy), and the job checks `markx.ix_unchanged` (a run with Mark X off writes nothing; two runs with it on leave every non-`mx_*` table's rows and md5 as they were, 0079's per-table checksums) and `markx.after_run` (the four on what the runs wrote). Both job checks fail the merge whenever above 0, even where the base can't measure them.
+- Tests: `test_markx_decide.py` (26), one in `test_realdata_checks.py`, `markx.test.tsx` (5), `lib/markx.test.ts` (2).
+
+**The prototype's decisions reproduced** (its recorded v9.12 stories, `corpus/stories_ix.json`, and recorded answers, `out/cache.sqlite`; corrections 1):
+- **The first pass's questions:** 711 of 711, the same ids (103 checks, 176 joins, 395 pairs, 37 merges) and fields.
+- **The recommended run** (hybrid verdicts, joins at 0.6, both passes; `x_haiku-hybrid_t06`): **exact.** Changes 206 of 206 (5 removals, 1 demotion, 72 joins, 118 new stories, 10 merges), stories 189 of 189, memberships 653 of 653, mentions 1 of 1, News 105 of 105 (35 new). Haiku's 0.7 pass-1 run: 143 of 143 changes, News 104 of 104.
+- **With Shadow's two additions on:** the same. The two-event guard changes nothing (none of the 6 checked posts' readings has several events), nor does the late-post rule (no join is 72 hours past its story's start).
+- **The second pass's questions:** 34 of the recorded 35. The prototype planned them from its Haiku 0.7 first pass, which was re-run after (03:24 against 06:04); the missing one's pair story no longer exists in the re-run. Planned from the recommended run's own first pass, as Shadow does, the second pass asks 42, 19 of them recorded: 23 have no recorded answer.
+
+**On the server's data** (a scratch copy of 2026-11-05, 49,384 posts, Mark IX's stories rebuilt by this branch's deploy start; the prototype's recorded vectors, readings, entities and verdicts loaded through the API's own checks):
+- **With no verdict yet, Mark X News is Mark IX's:** 128 rows of 128, all SAME (and 96 of 96 on the lab in the check).
+- **With the recorded verdicts** (check 90, join 175, pair 351, merge 31, card 47, headline 161 answered; 5 runs to settle, 1.3–1.5 s each): 308 Mark X stories, News 149 rows against Mark IX's 128: 30 NEW, 4 MERGED, 14 CHANGED, 101 SAME, 2 Mark IX rows no longer News. 3 removals, 1 demotion, 68 joins, 105 new stories, 6 merges, 1 late post stored as a connection.
+- **Mark IX's tables:** 31 compared (rows and md5) before the first run and after the last: 0 changed.
+- 75 recorded readings were refused by S3's check (their mentions have the older `headline_en` shape, no `name`), so those posts were never joined or paired; 9 recorded headlines failed the figure check (they were written from other members).
+- **The worker's queue it leaves:** 1,216 connect questions (story pairs ≤ 30 days at centroid ≥ 0.6), more than every other kind together: a cap or a narrower pair rule is the owner's call before the worker runs them.
+
+**The reader review** (the owner's method, desktop 1400 and phone 390, on my own API and web containers over that copy; every non-127.0.0.1 request and `/api/media` failed from the first shot: 300 allowed, 12 blocked, all `/api/media`). Private: `plan/research/markx-build/s5/review-S5-reader.md`.
+- Reads well: the differences first with their counts; one line of why under every post and what Mark IX did with it; the posts left out with Haiku's words; one column on a phone; the folded panel.
+- Fixed from it: the fold arrow swung over the row's text on a phone; a post Mark IX's News joins by a surging name said "not in this Mark X story"; the worker listed a failed task twice; versions shown lowercased.
+- Wrong, for later: a thread Mark IX hung on a story is never checked (F1 asks no `thread` member: 14 posts of a benchmark thread sit in a paper's row); two joins exactly at the 0.6 bar read wrong (E1 re-picks it); the two-event guard misses its own case when the reading says one event.
+
+**Tests:** backend suite 1,619 OK (`./run-tests.sh`, in the image); frontend 234 + 716 OK, the bundle gate passes (feed +0.76%, post +0.49% against v9.15's baseline; the page and the panel are their own chunks).
+
+**The real-data check** (`--base markx-shadow --head markx-s5-decide insight_lab`; report `plan/research/lab/checks/markx-s5-decide-2026-11-05.md`): 0 change in titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover; every invariant the same; the Mark X ones 0 (`markx.ix_unchanged` 0 of 31 tables, `markx.after_run` 0 of 888 rows); no case changes state against the base. The verdict reads FAIL only for three Discover cases (`discover-unfollowable-not-last`, `discover-not-a-publication`, `discover-owner-not-language`) marked pass by 0109 A on main, which `markx-shadow` doesn't have yet: they fail on both sides.
+
 ## Part F: labels in the app (E1), and one tap
 - **The labels page:**
   - **The queue:** the questions whose answer changes a bar: decisions near a bar, and every merge. It also takes a sample of the rest, weighted to the pools, as the prototype's labels were.
