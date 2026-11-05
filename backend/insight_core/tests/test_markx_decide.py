@@ -326,6 +326,30 @@ class Job(unittest.TestCase):
                              WHERE sp.valid_to IS NULL AND NOT (sp.reason LIKE 'rule:%%' OR c.valid)""")
         self.assertEqual(self.cur.fetchone()[0], 0)
 
+    def vector(self, pid, k):
+        v = [0.0] * 1024
+        v[0], v[k] = 1.0, 0.2
+        repo.put_embedding(self.cur, post_id=pid, model=D.MODEL, text_hash="h-" + pid, vector=v, model_sha256="a" * 64)
+
+    def test_connect_questions_are_capped_a_run_newest_pairs_first(self):
+        keys = []
+        for n in range(3):                                   # three 2-voice stories a day apart, all alike
+            a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
+            self.vector(a, 1 + 2 * n)
+            self.vector(b, 2 + 2 * n)
+            keys.append((self.ix_story(a, b), b))
+        out = D.run(self.cur, config=D.Config(connect_new=1), now=self.now)
+        self.assertEqual(out["tasks_added"].get("connect"), 1)
+        self.assertEqual(out["tasks_waiting"].get("connect"), 2)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'connect'")
+        self.assertEqual(self.cur.fetchall(), [(keys[1][0], keys[2][0])])     # the newest pair: stories 1 and 2
+        self.cur.execute("SELECT config->>'connect_new', config->>'connect_voices' FROM mx_runs")
+        self.assertEqual(self.cur.fetchall(), [("1", "2")])                   # the setting is the run's config
+        again = D.run(self.cur, config=D.Config(connect_new=1), now=self.now)
+        self.assertEqual(again["tasks_added"].get("connect"), 1)              # the next run asks the next newest
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect'")
+        self.assertEqual(self.cur.fetchone()[0], 2)
+
     def test_the_lock_skips_a_second_run(self):
         other = psycopg.connect(db_url())
         self.addCleanup(other.close)

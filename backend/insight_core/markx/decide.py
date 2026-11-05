@@ -62,7 +62,9 @@ class Config:
     story_lo: float = 0.70          # story pairs' centroid cosine
     story_days: int = 14            # story pairs' first posts at most this far apart
     connect_lo: float = 0.60        # connect questions: story pairs at this centroid cosine ...
-    connect_days: int = 30          # ... at most this far apart
+    connect_days: int = 30          # ... at most this far apart ...
+    connect_voices: int = 2         # ... both stories of this many voices or more ...
+    connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     days: int = 30                  # the window a run decides (corrections 8)
@@ -446,20 +448,22 @@ class Ask:
     """The answers a run reads, and the tasks it adds for the questions not asked yet (content-only inputs: the same
     question is one task whatever ids come with it)."""
 
-    def __init__(self, cur: Any, now: datetime) -> None:
+    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None) -> None:
         self.cur, self.now = cur, now
+        self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
         self.added: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
 
     def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
-        """(the valid answer, its call id), or None: the task is added when it is new (up to CAP a kind a run)."""
+        """(the valid answer, its call id), or None: the task is added when it is new (up to the kind's cap a run:
+        `caps`, else CAP)."""
         from insight_core.markx import repo, schemas, tasks
         spec = schemas.KINDS[kind]
         task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
         if task is None:
-            if self.added[kind] >= CAP:
+            if self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
             tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
@@ -788,7 +792,9 @@ CONNECT_RELATIONS = {"development": "development", "reaction": "reaction", "same
 def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, config: Config,
                 news_keys: Sequence[str]) -> List[Dict[str, Any]]:
     """Typed connections (F6): the merges' developments, the late posts', and the connect questions' between News
-    stories at most `connect_days` apart whose centroids are at `connect_lo` or more and that weren't merged."""
+    stories of `connect_voices`+ voices at most `connect_days` apart whose centroids are at `connect_lo` or more and
+    that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
+    the run's cap on new connect tasks (`connect_new`, the Ask's) keeps the newest; the rest wait for later runs."""
     from insight_core.markx import tasks
     rows: List[Dict[str, Any]] = []
 
@@ -801,12 +807,17 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             rows.append(dict(c, a=a, b=b))
     groups = {k: sorted((p for p in out.about[k] if p in world.posts), key=lambda p: _at_key(world.posts, p))
               for k in news_keys}
-    first = {k: world.posts[ps[0]].at for k, ps in groups.items() if ps}
+    groups = {k: ps for k, ps in groups.items() if ps and voices(world.posts, ps) >= config.connect_voices}
+    first = {k: world.posts[ps[0]].at for k, ps in groups.items()}
     span = timedelta(days=config.connect_days)
-    for (x, y), _cos in sorted(centroid_cosines(cur, groups, config.connect_lo).items(), key=lambda kv: (-kv[1], kv[0])):
-        if x not in first or y not in first or abs(first[x] - first[y]) > span or ids.get(x) == ids.get(y):
+    pairs = []
+    for (x, y), cos in centroid_cosines(cur, groups, config.connect_lo).items():
+        if abs(first[x] - first[y]) > span or ids.get(x) == ids.get(y):
             continue
         x0, y0 = sorted([x, y], key=lambda k: (first[k], k))
+        pairs.append((x0, y0, cos))
+    pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
+    for x0, y0, _cos in pairs:
         text = tasks.connect_input(tasks._earliest([world.text[p] for p in groups[x0]]),
                                    tasks._earliest([world.text[p] for p in groups[y0]]))
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0])
@@ -850,7 +861,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     run_id = repo.start_run(cur, code_version=CODE_VERSION,
                             config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
     world = load(cur, now, config)
-    ask = Ask(cur, now)
+    ask = Ask(cur, now, caps={"connect": config.connect_new})
     out, counts = think(cur, world, config, ask, now)
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
