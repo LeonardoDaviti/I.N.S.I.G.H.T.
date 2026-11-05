@@ -14,33 +14,51 @@ export function originReason(s: SuggestedSource): string {
   return `You follow ${s.follows.join(', ')}; ${place} started ${started}`;
 }
 
-/** "37 of your stories started at openai.com/index pages it doesn't hold, 36 from before its first post (Oct 23)". */
+/** "37 pages at openai.com/index where your stories started aren't in it, 36 from before its first post (Oct 23)": the pages
+ *  it still lacks (issue 0109: pages, not stories; a page it has stored since has left the row). */
 export function missingReason(a: MissingOrigins, now: Date = new Date()): string {
   const older = a.older && a.since
     ? `, ${a.older === a.origins ? 'all' : formatCount(a.older)} from before its first post (${feedDateLabel(a.since, now)})`
     : '';
-  return `${formatCount(a.origins)} of your stories started at ${a.places.join(', ')} pages it doesn't hold${older}`;
+  const pages = a.origins === 1 ? 'page' : 'pages';
+  return `${formatCount(a.origins)} ${pages} at ${a.places.join(', ')} where your stories started ${a.origins === 1 ? "isn't" : "aren't"} in it${older}`;
 }
 
-/** A missing row's archive, as stored (issue 0080): "Archive running · 3 of 37 found so far"; finished,
- *  "Archive finished · 34 of these pages aren't in its archive"; null before any archive. */
+/** A missing row's archive, as stored (issue 0080): "Archive running · 3 found so far, 37 to go"; finished,
+ *  "Archive finished · 37 of these pages aren't in its archive"; null before any archive. */
 export function archiveLine(a: MissingOrigins): string | null {
   const { state, found = 0 } = a.archive ?? {};
   if (state === 'running' || state === 'paused') {
-    return `Archive ${state} · ${formatCount(found)} of ${formatCount(a.origins)} found so far`;
+    return `Archive ${state} · ${formatCount(a.stored ?? found)} found so far, ${formatCount(a.origins)} to go`;
   }
   if (state === 'finished') {
-    const left = Math.max(0, a.origins - found);
-    return left ? `Archive finished · ${formatCount(left)} of these pages aren't in its archive` : 'Archive finished';
+    return `Archive finished · ${formatCount(a.origins)} of these pages aren't in its archive`;
   }
   return null;
 }
 
-/** The follow test's labels (issue 0080), and those that can't be followed: they sit below the rest. */
+/** What else a row says (issue 0109): the pages stored since, a feed that stopped, a section its source doesn't watch. */
+export function rowNotes(a: MissingOrigins, now: Date = new Date()): string[] {
+  const notes: string[] = [];
+  const running = a.archive?.state === 'running' || a.archive?.state === 'paused';
+  if (a.stored && !running) notes.push(`${formatCount(a.stored)} now stored; their stories join at the next story run`);
+  if (a.stopped) notes.push(`Its feed stopped (${feedDateLabel(a.stopped, now)}): an archive can't reach these pages`);
+  if (a.watches) notes.push(`It watches ${a.watches.prefix}, not ${a.watches.not.join(', ')}`);
+  return notes;
+}
+
+/** Whether Archive… is offered: an archive can reach some of the pages, and none ran or runs. */
+export function canArchive(a: MissingOrigins): boolean {
+  const state = a.archive?.state;
+  return (a.archivable ?? a.origins) > 0 && state !== 'running' && state !== 'finished';
+}
+
+/** The follow test's labels (issue 0080), and those that can't be followed: a section of their own (issue 0109). */
 export const FOLLOW_LABELS: Record<FollowLabel, string> = {
   feed: 'Feed found', page: 'Page watching', headlines: 'Headlines only', blocked: 'Blocks readers',
+  other_feed: 'A feed, but not of these pages',
 };
-export const UNFOLLOWABLE: ReadonlySet<FollowLabel> = new Set<FollowLabel>(['headlines', 'blocked']);
+export const UNFOLLOWABLE: ReadonlySet<FollowLabel> = new Set<FollowLabel>(['headlines', 'blocked', 'other_feed']);
 
 const NUMBERISH = /^\d[\d_.-]*$/;
 const LANGUAGE = /^[a-z]{2}(?:[-_](?:[a-z]{2}|[a-z]{4}|\d{3}))?$/i;

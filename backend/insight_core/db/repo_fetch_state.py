@@ -10,16 +10,19 @@ transaction. Spec: plan/INSIGHT_mark_ix_plan.md §C.3.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from psycopg import Cursor
 
-from insight_core.db.repo_posts import PAGE_READ_KEY
+from insight_core.db.repo_posts import MOVED_KEY, PAGE_READ_KEY
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.ingestion.http import Validators
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus, Trigger
+from insight_core.utils.addresses import host_of, publication_of, same_site
+from insight_core.utils.url_normalization import normalize_url
 
 if TYPE_CHECKING:
     from insight_core.ingestion.schedule import FetchDecision
@@ -32,6 +35,7 @@ MEDIUM_UP_TO_SECONDS = 7 * 24 * 3600
 
 MAX_ERROR_LENGTH = 2000
 PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
+MOVED_NEWEST = 10           # the newest posts whose pages' moves say a source moved (issue 0108)
 
 # A post the owner opened (issue 0046): its page was opened or read for a while, or it was
 # put in Later, kept (starred) or left part-read. read_at alone is not an open: "mark read
@@ -68,6 +72,25 @@ class FetchStateRow:
 
 _COLUMNS = [f.name for f in fields(FetchStateRow)]
 _SELECT_COLUMNS = ", ".join(_COLUMNS)
+
+
+def moved_to(handle: Optional[str], moved: Sequence[Optional[str]], followed: set) -> Optional[Dict[str, Any]]:
+    """Where a source's posts now live (issue 0108): the site the pages of half or more of its MOVED_NEWEST
+    newest posts moved to (metadata.moved_to), when it is another site than the source's own; `followed`
+    when a source of yours is at it. None otherwise."""
+    hosts = Counter(publication_of(host_of(address)) for address in moved if address)
+    if not hosts:
+        return None
+    host, count = hosts.most_common(1)[0]
+    if count * 2 < len(moved) or same_site(host, host_of(normalize_url(handle) or "")):
+        return None
+    return {"host": host, "followed": host in followed}
+
+
+def _followed_sites(cur: Cursor) -> set:
+    """The publications your sources are at (by their addresses)."""
+    cur.execute("SELECT handle_or_url FROM sources")
+    return {publication_of(host_of(normalize_url(handle) or "")) for (handle,) in cur.fetchall()} - {""}
 
 
 def _row(values: Sequence[Any]) -> FetchStateRow:
@@ -441,6 +464,9 @@ class FetchStateRepository:
                    (SELECT (p.metadata ->> 'paywalled')::boolean FROM posts p
                      WHERE p.source_id = s.id AND p.metadata ->> 'audience' = 'only_paid'
                      ORDER BY p.fetched_at DESC LIMIT 1) AS paid_preview,
+                   (SELECT array_agg(r.moved) FROM (SELECT p.metadata ->> '{MOVED_KEY}' AS moved FROM posts p
+                     WHERE p.source_id = s.id ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                     LIMIT {MOVED_NEWEST}) r) AS moved,
                    {state_columns}
             FROM sources s
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
@@ -451,8 +477,10 @@ class FetchStateRepository:
         )
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
-        for r in cur.fetchall():
-            state_values = r[19:]
+        fetched = cur.fetchall()
+        followed = _followed_sites(cur) if any(r[19] and any(r[19]) for r in fetched) else set()
+        for r in fetched:
+            state_values = r[20:]
             rows.append(
                 {
                     "id": str(r[0]),
@@ -477,6 +505,8 @@ class FetchStateRepository:
                     "tidy_kept_at": r[17],
                     # Its newest only_paid post came as a teaser (issue 0084): True, False or None.
                     "paid_preview": r[18],
+                    # Where its posts moved (issue 0108): {host, followed}, or None.
+                    "moved_to": moved_to(r[2], r[19] or [], followed),
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
             )

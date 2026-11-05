@@ -13,7 +13,7 @@ import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperation
 import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
-import { STATUS_GLYPH, kindLabel } from './sources/sourceList';
+import { STATUS_GLYPH, kindLabel, movedNote } from './sources/sourceList';
 import { Button, FilterChip, Input, Sheet, SheetContent, StatusGlyph, Switch, TextLink } from './ui';
 import { Notice } from './states';
 import { getPlatformLabel, sourceLabel } from '../lib/sourceLabel';
@@ -261,6 +261,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             {/* A quiet note, after the replacement (an action): the reader keeps less of this
                 source's pages than they show (issue 0032). */}
             {healthRow?.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{healthRow.reading_notice}</p> : null}
+            {healthRow && movedNote(healthRow) ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{movedNote(healthRow)}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               {saved ? (
                 <p className="text-[0.8125rem] text-fg-2">The pages you save from any site. Never fetched by itself.</p>

@@ -15,7 +15,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
-from insight_core.utils.post_fields import build_post_fields
+from insight_core.utils.post_fields import MOVED_KEY, build_post_fields
 from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
@@ -614,7 +614,11 @@ class PostsRepository:
                 f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{FULL_TEXT_FLAG}')")
         # The last meaningful change (issue 0039) is the saver's, not the kind's: a re-fetch keeps it.
         # A teaser's page tries (issue 0062) are kept too, unless the kind brings newer ones.
-        metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}'))"
+        # Where its page moved (issue 0108) too, and its canonical with it, unless the kind brings it again.
+        moved = (f"({row}metadata ? '{MOVED_KEY}' AND NOT "
+                 f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{MOVED_KEY}')")
+        metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}',"
+                    f" '{MOVED_KEY}', {row}metadata -> '{MOVED_KEY}'))"
                     f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}'))")
         assignments: List[str] = []
@@ -634,7 +638,7 @@ class PostsRepository:
             "language_code = %(language_code)s",
             "language_confidence = %(language_confidence)s",
             "normalized_url = %(normalized_url)s",
-            "canonical_url = %(canonical_url)s",
+            f"canonical_url = CASE WHEN {moved} THEN {row}canonical_url ELSE %(canonical_url)s END",
             "url_host = %(url_host)s",
             # Attribution (issue 0066): every feed that brings a tweet as its repost adds its account.
             f"author = COALESCE(%(author)s, {row}author)",
@@ -934,6 +938,8 @@ class PostsRepository:
                 language_code = %(language_code)s,
                 language_confidence = %(language_confidence)s,
                 metadata = metadata || %(metadata)s::jsonb,
+                -- A page that moved (issue 0108): its canonical is where it moved.
+                canonical_url = CASE WHEN %(metadata)s::jsonb ? %(moved_key)s THEN %(canonical_url)s ELSE canonical_url END,
                 links_scanned_at = NULL,
                 updated_at = now()
             WHERE id = %(id)s::uuid
@@ -948,6 +954,8 @@ class PostsRepository:
                 "language_code": fields["language_code"],
                 "language_confidence": fields["language_confidence"],
                 "metadata": self._json_dumps(post.get("metadata") or {}),
+                "moved_key": MOVED_KEY,
+                "canonical_url": fields["canonical_url"],
             },
         )
         PostPartsRepository.write(cur, [post_id])

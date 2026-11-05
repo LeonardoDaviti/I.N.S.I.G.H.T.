@@ -60,6 +60,11 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         [story] = [s for s in sample_stories() if s.origin_url == stamps.PAPER]
         self.assertEqual({p.id for p in story.posts}, {"q1", "q2"})
 
+    def test_a_post_that_moved_is_one_page_with_where_it_moved(self):
+        # Issue 0108: a redirect stub's post is one page with the post at the address it points to.
+        [story] = [s for s in sample_stories() if "m1" in {p.id for p in s.posts}]
+        self.assertEqual({p.id for p in story.posts}, {"m1", "m2"})
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")
@@ -98,6 +103,10 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         with mock.patch.object(story_rules, "paper_id", lambda url: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         story_rules._page_key.cache_clear()
+        # 0108's: a post that moved as a page of its own
+        with mock.patch.object(StoriesService, "_story_post", staticmethod(
+                lambda row, sources, real=StoriesService._story_post: real({**row, "moved_to": None}, sources))):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):
             self.assertNotEqual(posts_service.stored_bodies_stamp.__wrapped__(), bodies)

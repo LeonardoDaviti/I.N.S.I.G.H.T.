@@ -277,6 +277,8 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "consecutive_failures": failures,
         "next_retry_at": iso(stats.next_retry_at),
         "dormant": _dormant(failures, state),
+        # Where its posts now live (issue 0108): {host, followed}; the owner chooses, nothing is switched off.
+        "moved_to": source.get("moved_to"),
         **_doctor_fields(state, source.get("handle_or_url")),
     }
 

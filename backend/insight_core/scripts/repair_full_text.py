@@ -155,7 +155,8 @@ class Repair:
                     return
                 continue
             failures = 0
-            await asyncio.to_thread(self._write, post, found)
+            # Nothing longer for a post with no body is a failed try (issue 0108): read again, here and by 0062.
+            await asyncio.to_thread(self._write, post, found, failed=not found and full_text.empty_read_failed(post))
             self.counts["repaired" if found else "nothing_longer"] += 1
 
     def _stop(self, host: str, reason: str, left: List[Item]) -> None:

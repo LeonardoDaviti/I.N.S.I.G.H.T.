@@ -102,6 +102,7 @@ class StoryPost:
     stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to (0072)
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
     undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
+    moved_to: Optional[str] = None         # where its page moved (issue 0108: a redirect stub's target), normalized
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -271,7 +272,9 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
     pages share (a weekly series' "this-week-in-..." under its dates) names neither.
     A paper (issue 0106) is one page on its host across its paths, its abstract, PDF, HTML and versions:
     its stored page when there is one, else the address that names it among those seen (its page before
-    its file, then without a query, then the shortest: addresses.paper_page_order)."""
+    its file, then without a query, then the shortest: addresses.paper_page_order).
+    A post whose page moved (issue 0108: a redirect stub, its article read where it pointed) is one page
+    with the address it moved to, on any host."""
     own: Dict[Tuple[str, str, Tuple[str, ...]], Set[str]] = defaultdict(set)
     for p in posts:
         if p.kind == "site" and p.on_own_site and _page_key(p.url):
@@ -285,6 +288,7 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
         elif not pages and paper_id(url):
             papers[_page_key(url)].add(url)
     out.update(paper_aliases(papers.values()))
+    out.update({p.url: out.get(p.moved_to, p.moved_to) for p in posts if p.url and p.moved_to and p.moved_to != p.url})
     return out
 
 
@@ -613,7 +617,9 @@ def keys(post: StoryPost) -> Set[str]:
     if post.text_key:
         out.add("h:" + post.text_key)
     out |= {"t:" + key for key in post.title_keys}
-    for url in ([post.url] if post.url else []) + [target for target, stored in post.links if stored or not is_home(target)]:
+    # A post whose page moved (issue 0108) holds the address it moved to: the post stored there is regrouped with it.
+    own = [post.url] if post.url else []
+    for url in own + ([post.moved_to] if post.moved_to else []) + [target for target, stored in post.links if stored or not is_home(target)]:
         out.add("u:" + url)
         if page_key(url):
             out.add(page_key(url))

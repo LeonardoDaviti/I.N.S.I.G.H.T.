@@ -10,7 +10,7 @@ import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
 import SortButton from './SortButton';
-import { STATUS_GLYPH, isTidy, kindLabel, rowFact, rowName, tidyNotes, type SortBy, type SortDir, type SourceGroup } from './sourceList';
+import { STATUS_GLYPH, isTidy, kindLabel, movedNote, rowFact, rowName, tidyNotes, type SortBy, type SortDir, type SourceGroup } from './sourceList';
 import { folderReadPath, sourceReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
@@ -295,7 +295,7 @@ export default function SourceList({
                             'text-[0.75rem]',
                             row.status === 'error' || row.status === 'backoff' ? 'font-medium text-fg' : 'text-fg-3',
                           )}
-                          title={tidyNotes(row, now).join(' · ') || (row.last_error ?? (row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : undefined))}
+                          title={movedNote(row) || tidyNotes(row, now).join(' · ') || (row.last_error ?? (row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : undefined))}
                         >
                           {rowFact(row, now)}
                         </span>

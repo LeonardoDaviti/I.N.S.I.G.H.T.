@@ -10,7 +10,7 @@ import { Button, ExternalLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatCount, plural } from '../../lib/format';
-import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, missingReason, originReason, untitledLine } from '../../lib/discover';
+import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, canArchive, missingReason, originReason, rowNotes, untitledLine } from '../../lib/discover';
 import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { suggestionReason } from '../../lib/story';
 
@@ -46,15 +46,46 @@ function Missing({ missing }: { missing: MissingOrigins }) {
           <h3 className="text-[0.9375rem] font-semibold leading-6 text-fg [overflow-wrap:anywhere]">{sourceLabel(missing.name)}</h3>
           <p className="text-[0.8125rem] leading-5 text-fg-2">{missingReason(missing)}</p>
           {line ? <p className="text-[0.8125rem] leading-5 text-fg-3">{line}</p> : null}
+          {rowNotes(missing).map((note) => <p key={note} className="text-[0.8125rem] leading-5 text-fg-3">{note}</p>)}
           <OriginStories stories={missing.origin_stories} />
         </div>
         {state === 'running' || state === 'finished' ? (
           <Button asChild size="sm" variant="ghost" className="shrink-0"><Link to={archive}>See the archive</Link></Button>
-        ) : (
+        ) : canArchive(missing) ? (
           <Button asChild size="sm" variant="secondary" className="shrink-0"><Link to={archive}>Archive…</Link></Button>
-        )}
+        ) : null}
       </div>
     </li>
+  );
+}
+
+/** A followed source's other channels (issue 0109): the X account or old site its own posts link under its name.
+ *  Folded, one line each; never suggestions. */
+function OtherChannels({ also }: { also: NonNullable<SuggestedSourcesResponse['also']> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section aria-label="Your sources' other channels" className="mt-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="discover-also"
+        onClick={() => setOpen((value) => !value)}
+        className={`-ml-1 inline-flex items-start gap-1 rounded-sm px-1 text-left text-[0.75rem] font-medium text-fg-3 hover:text-fg ${FOCUS_RING}`}
+      >
+        {open ? <ChevronDown aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />}
+        <span>Other channels of sources you follow ({formatCount(also.length)})</span>
+      </button>
+      {open ? (
+        <ul id="discover-also" className="mt-1 flex flex-col gap-0.5 border-l border-line pl-3">
+          {also.map((a) => (
+            <li key={a.key} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
+              <ExternalLink href={a.url} className="min-w-0 truncate text-fg">{a.key}</ExternalLink>
+              <span className="shrink-0 truncate">· also {sourceLabel(a.of)}&rsquo;s</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -70,9 +101,12 @@ function Suggestion({ suggestion, onFollow, onHide }: {
         <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <h3 className="text-[0.9375rem] font-semibold leading-6 text-fg [overflow-wrap:anywhere]">
             {suggestion.key}
+            {suggestion.places && suggestion.places.length > 1 ? (
+              <span className="ml-1.5 text-[0.75rem] font-normal text-fg-3">· also {suggestion.places.slice(1).join(', ')}</span>
+            ) : null}
             {test ? (
               <span className={`ml-2 text-[0.75rem] font-normal ${UNFOLLOWABLE.has(test.label) ? 'text-fg-3' : 'text-fg-2'}`}>
-                {FOLLOW_LABELS[test.label]}{UNFOLLOWABLE.has(test.label) ? ': listed below the ones you can follow' : ''}
+                {FOLLOW_LABELS[test.label]}
               </span>
             ) : null}
           </h3>
@@ -171,11 +205,18 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
   // One box searches the site or account, the sources that link it, its articles' and its stories' titles.
   const matches = (parts: string[]) => words.every((word) => parts.join(' ').toLowerCase().includes(word));
   const stories = (list: OriginStory[] = []) => list.map((story) => `${story.title ?? ''} ${story.url}`);
-  const suggestions = words.length ? all.filter((s) => matches(
+  const shown = (list: SuggestedSource[]) => (words.length ? list.filter((s) => matches(
     [s.key, ...s.voice_names, ...s.articles.map((a) => `${a.title ?? ''} ${a.url}`), ...stories(s.origin_stories)],
-  )) : all;
+  )) : list);
+  const suggestions = shown(all);
+  // Those that can't be followed as a feed: a section of their own, below the followable, above the untested (issue 0109).
+  const apart = suggestions.filter((s) => s.section === 'unfollowable');
+  const start = suggestions.findIndex((s) => s.section === 'unfollowable');
+  const head = start < 0 ? suggestions : suggestions.slice(0, start);
+  const rest = start < 0 ? [] : suggestions.slice(start).filter((s) => s.section !== 'unfollowable');
   const archives = (first.archives ?? []).filter((a) => matches([a.name, ...a.places, ...stories(a.origin_stories)]));
   const unnamed = first.unnamed ?? [];
+  const also = first.also ?? [];
   const references = first.references ?? [];
   if (!all.length && !first.archives?.length && !asked) {
     return (
@@ -209,13 +250,32 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
           <ul>{archives.map((missing) => <Missing key={missing.source_id} missing={missing} />)}</ul>
         </section>
       ) : null}
-      {suggestions.length ? (
+      {head.length ? (
         <ul>
-          {suggestions.map((suggestion) => (
+          {head.map((suggestion) => (
             <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
           ))}
         </ul>
-      ) : archives.length ? null : (
+      ) : null}
+      {apart.length ? (
+        <section aria-label="Can't be followed as a feed" className="mt-2">
+          <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Can't be followed as a feed</h2>
+          <p className="text-[0.75rem] text-fg-3">Their follow test found no feed or page to read; your sources still carry their stories.</p>
+          <ul>
+            {apart.map((suggestion) => (
+              <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {rest.length ? (
+        <ul>
+          {rest.map((suggestion) => (
+            <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
+          ))}
+        </ul>
+      ) : null}
+      {suggestions.length || archives.length ? null : (
         <p className="py-6 text-[0.8125rem] text-fg-3">Nothing in Discover matches “{filter.trim()}”.</p>
       )}
       {query.hasNextPage ? (
@@ -223,6 +283,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
           {query.isFetchingNextPage ? 'Loading…' : `More (${formatCount((first.total ?? all.length) - all.length)})`}
         </Button>
       ) : null}
+      {also.length && !words.length ? <OtherChannels also={also} /> : null}
       {references.length && !words.length ? (
         <p className="pt-3 text-[0.75rem] text-fg-3">
           References your sources use:{' '}

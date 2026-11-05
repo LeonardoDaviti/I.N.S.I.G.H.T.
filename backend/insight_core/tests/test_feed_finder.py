@@ -63,7 +63,7 @@ class FeedFinderTests(unittest.TestCase):
     def test_an_address_that_is_a_feed_is_the_feed_with_its_title(self):
         finding, http = find({"https://x.example/feed.xml": rss("X Weekly")}, "https://x.example/feed.xml")
         self.assertEqual(finding, FeedFinding("feed", (Feed("https://x.example/feed.xml", "X Weekly"),)))
-        self.assertEqual(http.requests, ["https://x.example/feed.xml"])
+        self.assertEqual(http.requests, ["https://x.example/feed.xml", "https://x.example/0"])  # its items have no body: the first one's page is read once (issue 0108)
 
     def test_https_is_added_when_the_address_has_no_scheme(self):
         finding, _ = find({"https://x.example/atom.xml": atom("X")}, "  x.example/atom.xml ")
@@ -85,7 +85,7 @@ class FeedFinderTests(unittest.TestCase):
         }, "https://x.example/ai/post")
         self.assertEqual(finding, found(("https://x.example/ai/feed/", "AI - Ars"), ("https://x.example/feed/", "Ars")))
         self.assertNotIn("https://x.example/feed.json", http.requests)
-        self.assertEqual(len(http.requests), 3, "the page and its two feeds, nothing more")
+        self.assertEqual(len(http.requests), 4, "the page, its two feeds and the first item's page (no body: 0108)")
 
     def test_a_visible_rss_link_is_found_relative_to_the_redirected_page(self):
         # borretti.me: no <link rel="alternate">, only <a href="/feed.xml">RSS</a>.
@@ -116,7 +116,7 @@ class FeedFinderTests(unittest.TestCase):
             "https://x.example/feed/": rss("Blog"),
         }, "https://x.example/p")
         self.assertEqual(finding, found(("https://x.example/feed/", "Blog")))
-        self.assertEqual(http.requests, ["https://x.example/p", "https://x.example/feed/"])
+        self.assertEqual(http.requests, ["https://x.example/p", "https://x.example/feed/", "https://x.example/0"])  # its items have no body: the first one's page is read once (issue 0108)
 
     def test_base_href_resolves_relative_links(self):
         head = '<base href="https://cdn.example/site/"><link rel="alternate" type="application/rss+xml" href="rss.xml">'
@@ -490,6 +490,141 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
     def test_no_menu_is_reported_when_a_page_is_named(self):
         finding, _ = find({f"{SHOP}/": menu('<a href="/blog">Blog</a><a href="/now">Now</a>'), f"{SHOP}/blog": page()}, SHOP)
         self.assertEqual((finding.pages, finding.menu), ((f"{SHOP}/blog",), ()))
+
+
+# ---- issue 0108: a feed whose posts moved, and a blog on another domain ---------------------------
+
+from insight_core.tests.test_moved_pages import NEW, OLD, OLD_FEED, blog_post, empty_feed, stub  # noqa: E402
+
+HOME = "https://home.example/"
+BLOG_FEED = "https://www.blog.example/rss/"
+
+
+def blog_rss(title: str = "The Blog") -> str:
+    """The moved-to blog's RSS (Ghost-shaped: full bodies)."""
+    return (f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>{title}</title>'
+            f"<item><title>The post</title><link>{NEW}</link><description>A summary.</description>"
+            f"<content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[<p>All of it.</p>]]>"
+            "</content:encoded></item></channel></rss>")
+
+
+def moved_site(**more) -> dict:
+    """The measured shape: a home page naming its own feed of empty entries, each post page a stub to the
+    blog's post, whose page names the blog's feed."""
+    return {HOME: page(f'<link rel="alternate" type="application/atom+xml" href="{OLD_FEED}">'),
+            OLD_FEED: empty_feed(OLD, "https://home.example/posts/2020/08/another"), OLD: stub(),
+            NEW: blog_post().replace("<head>", f'<head><link rel="alternate" type="application/rss+xml" href="{BLOG_FEED}">'),
+            BLOG_FEED: blog_rss(), **more}
+
+
+class MovedFeedTests(unittest.TestCase):
+    """Decision 3: the finder looks past a feed whose posts have moved."""
+
+    def test_the_moved_to_feed_comes_first_and_the_old_one_says_where_its_posts_live(self):
+        finding, http = find(moved_site(), HOME)
+        self.assertEqual(finding, found((BLOG_FEED, "The Blog"), (OLD_FEED, "Home")))
+        self.assertEqual([feed.moved_to for feed in finding.feeds], ["", "blog.example"])
+        self.assertIn(OLD, http.requests, "the first entry's page")
+        self.assertNotIn("https://home.example/posts/2020/08/another", http.requests, "only the first")
+
+    def test_a_feed_address_whose_posts_moved_offers_both(self):
+        finding, _ = find(moved_site(), OLD_FEED)
+        self.assertEqual(finding, found((BLOG_FEED, "The Blog"), (OLD_FEED, "Home")))
+
+    def test_an_entry_page_redirected_by_http_to_another_site_counts(self):
+        responses = moved_site()
+        responses[OLD] = responses[NEW]
+        finding, _ = find(responses, HOME, redirects={OLD: NEW})
+        self.assertEqual([feed.url for feed in finding.feeds], [BLOG_FEED, OLD_FEED])
+
+    def test_a_feed_with_bodies_is_not_looked_past(self):
+        responses = moved_site()
+        responses[OLD_FEED] = responses[OLD_FEED].replace('<summary type="html"><![CDATA[]]>',
+                                                          '<summary type="html"><![CDATA[What the post says.]]>')
+        finding, http = find(responses, HOME)
+        self.assertEqual(finding, found((OLD_FEED, "Home")))
+        self.assertNotIn(OLD, http.requests)
+
+    def test_an_entry_page_canonical_on_the_same_site_is_no_move(self):
+        responses = moved_site()
+        responses[OLD] = stub("https://home.example/posts/new-path")
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found((OLD_FEED, "Home")))
+
+    def test_an_entry_page_that_cannot_be_read_leaves_the_feed(self):
+        responses = moved_site()
+        del responses[OLD]
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found((OLD_FEED, "Home")))
+
+    def test_the_route_says_where_the_posts_live(self):
+        body = FollowTheBlogTests.ask(self, moved_site(), "home.example")
+        self.assertEqual(body["feeds"], [{"url": BLOG_FEED, "title": "The Blog"},
+                                         {"url": OLD_FEED, "title": "Home", "moved_to": "blog.example"}])
+
+
+def nav(*links: tuple[str, str], head: str = "", body: str = "") -> str:
+    """A personal site's home page: its menu links in a <nav>."""
+    items = "".join(f'<a href="{href}">{text}</a>' for href, text in links)
+    return page(head, f'<nav id="site-nav">{items}</nav><main>{body}</main>')
+
+
+class BlogOnAnotherDomainTests(unittest.TestCase):
+    """Decision 4: the home page's menu link named Blog (or Writing, Posts, Essays) on another domain
+    is a candidate after the site's own feeds."""
+
+    def test_the_menu_blog_on_another_domain_comes_after_the_sites_own_feed(self):
+        responses = {HOME: nav(("https://home.example/about/", "About"), ("https://blog.example", "Blog"),
+                               head='<link rel="alternate" type="application/rss+xml" href="/feed.xml">'),
+                     "https://home.example/feed.xml": blog_rss("Home"),
+                     "https://blog.example": page(f'<link rel="alternate" type="application/rss+xml" href="{BLOG_FEED}">'),
+                     BLOG_FEED: blog_rss()}
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found(("https://home.example/feed.xml", "Home"), (BLOG_FEED, "The Blog")))
+
+    def test_with_no_feed_of_its_own_the_menu_writing_link_is_the_feed(self):
+        responses = {HOME: nav(("https://home.example/cv/", "CV"), ("https://words.example/", "Writing")),
+                     "https://words.example/": page('<link rel="alternate" type="application/atom+xml" href="/atom.xml">'),
+                     "https://words.example/atom.xml": atom("Words")}
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found(("https://words.example/atom.xml", "Words")))
+
+    def test_each_word_counts_and_only_in_the_menu(self):
+        for word in ("Blog", "Writing", "Posts", "Essays", "blog"):
+            responses = {HOME: nav(("https://words.example/", word)),
+                         "https://words.example/": page('<link rel="alternate" type="application/atom+xml" href="/atom.xml">'),
+                         "https://words.example/atom.xml": atom("Words")}
+            self.assertEqual(find(responses, HOME)[0].status, "found", word)
+        responses = {HOME: nav(body='<a href="https://words.example/">Blog</a>'),
+                     "https://words.example/": page('<link rel="alternate" type="application/atom+xml" href="/atom.xml">'),
+                     "https://words.example/atom.xml": atom("Words")}
+        finding, http = find(responses, HOME)
+        self.assertEqual(finding.status, "none", "a Blog link in the page's text is someone else's")
+        self.assertNotIn("https://words.example/", http.requests)
+
+    def test_another_word_on_another_domain_is_not_a_blog(self):
+        responses = {HOME: nav(("https://work.example/", "Work")),
+                     "https://work.example/": page('<link rel="alternate" type="application/atom+xml" href="/atom.xml">'),
+                     "https://work.example/atom.xml": atom("Work")}
+        finding, http = find(responses, HOME)
+        self.assertEqual(finding.status, "none")
+        self.assertNotIn("https://work.example/", http.requests)
+
+    def test_a_menu_blog_on_a_platform_takes_its_platform_rule(self):
+        responses = {HOME: nav(("https://medium.com/@writer", "Blog")),
+                     "https://medium.com/feed/@writer": rss("Writer on Medium")}
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found(("https://medium.com/feed/@writer", "Writer on Medium")))
+
+    def test_the_moved_site_is_found_both_ways_once(self):
+        # The measured case: the site's feed (posts moved), and its menu's Blog link to where they moved.
+        responses = moved_site()
+        responses[HOME] = nav(("https://www.blog.example", "Blog"),
+                              head=f'<link rel="alternate" type="application/atom+xml" href="{OLD_FEED}">')
+        responses["https://www.blog.example"] = page(f'<link rel="alternate" type="application/rss+xml" href="{BLOG_FEED}">')
+        finding, _ = find(responses, HOME)
+        self.assertEqual(finding, found((BLOG_FEED, "The Blog"), (OLD_FEED, "Home")))
+        self.assertEqual(finding.feeds[1].moved_to, "blog.example")
 
 
 if __name__ == "__main__":

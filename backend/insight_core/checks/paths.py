@@ -87,6 +87,11 @@ def _ids(value: Any) -> set:
     return out
 
 
+def _rank(value: Any) -> Optional[int]:
+    rank = value.get("rank") if isinstance(value, dict) else value
+    return rank if isinstance(rank, int) and not isinstance(rank, bool) else None
+
+
 def _many(x: Any) -> List[Any]:
     return x if isinstance(x, list) else [x]
 
@@ -102,6 +107,9 @@ OPS: Dict[str, Callable[[Any, Any], bool]] = {
     "not_matches": lambda v, x: not (isinstance(v, str) and re.search(x, v) is not None),
     "at_least": lambda v, x: v is not None and v >= x,
     "at_most": lambda v, x: v is not None and v <= x,
+    # A suggestion's place in Discover's list (the discover surface's `rank`, 1 first), read off the
+    # suggestion itself or the path's value: one not listed has none (issue 0109).
+    "rank_at_most": lambda v, x: _rank(v) is not None and _rank(v) <= x,
     "is_null": lambda v, x: (v is None or v == [] or v == "") == bool(x),
     # x: one list of ids per post the case names; a post is there when any of its ids is, anywhere in the value.
     "has_post": lambda v, x: all(_ids(v) & set(ids) for ids in x),

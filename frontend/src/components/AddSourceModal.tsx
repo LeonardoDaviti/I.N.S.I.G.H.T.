@@ -533,6 +533,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                         {feed.title || shortAddress(feed.url)}
                         <span className="block font-mono text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">{shortAddress(feed.url)}</span>
                         {linked > 0 ? <span className="block text-[0.75rem] text-fg-3">{holdsLabel(feed.holds ?? 0, linked)}</span> : null}
+                        {feed.moved_to ? <span className="block text-[0.75rem] text-fg-3">The posts of this feed now live at {feed.moved_to}</span> : null}
                       </span>
                     </label>
                   ))}

@@ -5,7 +5,11 @@ For each suggestion on the first page (StoriesService.discover, FIRST_PAGE), at 
 - **the follow test**: the path every source add takes (where_linked.follow: the feed finder, then page
   watching), labelled "feed" (Feed found), "page" (Page watching: a page whose articles it reads),
   "blocked" (Blocks readers: every request it made was refused with 401 or 403) or "headlines"
-  (Headlines only: anything else, a paywall or no feed and a page it can't read);
+  (Headlines only: anything else, a paywall or no feed and a page it can't read). A platform account
+  INSIGHT follows by a source kind (an X account through the Nitter bridge, a Telegram channel, a
+  subreddit, a YouTube channel: `kind_source`, issue 0109) is tested through that kind instead: one
+  read of the address the kind reads, "feed" when it answers with posts. A test made by older rules
+  (FOLLOW_TEST) is made again wherever its suggestion is listed;
 - **the titles** of the pages it lists that have none (no stored post, no evidence: services/page_titles.py),
   its articles' and the stories they started, and the archive rows' lines (issue 0106); and Classics'
   untitled pages: the page's own title, as page watching reads one (page_watch.page_title), from the
@@ -30,8 +34,10 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.ingestion import where_linked
 from insight_core.ingestion.gates import HostLimiter
 from insight_core.ingestion.http import HttpError
-from insight_core.ingestion.kinds import page_watch
-from insight_core.utils.addresses import host_of, is_tweet, publication_of
+from insight_core.ingestion.kinds import page_watch, parsing
+from insight_core.ingestion.kinds.nitter_rss import NITTER_BASE_URL
+from insight_core.ingestion.kinds.parsing import TELEGRAM_BASE_URL
+from insight_core.utils.addresses import ACCOUNT_NAMESPACES, PLATFORM_SITES, host_of, is_tweet, publication_of, site_of
 from insight_core.utils.discover_rules import CHECK_DAYS, FIRST_PAGE
 
 logger = logging.getLogger(__name__)
@@ -40,7 +46,12 @@ PAGE_BYTES = 512 * 1024      # the start of a page read for its title (its <head
 FAN_OUT = 4                  # hosts read at once
 TITLE_CHARS = 300
 BLOCKED = (401, 403)
-LABELS = ("feed", "page", "headlines", "blocked")
+LABELS = ("feed", "page", "headlines", "blocked", "other_feed")
+# The rules a follow test is made by (issue 0109: platform accounts through their kind): a stored test
+# by other rules is due again.
+FOLLOW_TEST = 3   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages
+KIND_POSTS = 3           # the posts a platform account's kind is asked for
+_ACCOUNT = re.compile(r"^[\w.@-]+$")
 _ADDRESS = re.compile(r"^\s*(?:https?://\S+|[\w-]+(?:\.[\w-]+)+/\S*)\s*$")
 
 
@@ -88,9 +99,17 @@ class Polite:
 
 
 def label(found: Dict[str, Any], polite: Polite) -> str:
-    """The follow test's label of where_linked.follow's answer and the requests it made."""
-    if found.get("status") == "direct" or found.get("feeds"):
+    """The follow test's label of where_linked.follow's answer and the requests it made. A feed is "feed" only
+    when it holds one of the linked pages, or when none were linked (issue 0109 W9: a hub's owners were
+    "Feed found" by the hub's own blog feed); else "other_feed": a feed, but not of these pages."""
+    if found.get("status") == "direct":
         return "feed"
+    feeds = found.get("feeds") or []
+    if feeds:
+        if not found.get("linked") or any(feed.get("holds") for feed in feeds):
+            return "feed"
+        if not any(page.get("items") for page in found.get("pages") or ()):
+            return "other_feed"
     if any(page.get("items") for page in found.get("pages") or ()):
         return "page"
     if not polite.answered and polite.refused and all(status in BLOCKED for status in polite.refused):
@@ -103,12 +122,74 @@ def slot(url: str) -> str:
     return publication_of(host_of(url)) or "?"
 
 
+def own_pages(key: str, linked: Sequence[str]) -> List[str]:
+    """The linked pages that are a suggestion's own (issue 0109): on a platform's owner (hub.example/owner),
+    those under its path; on a site, all its host's (www. aside, case aside in the path)."""
+    host, _, path = key.lower().partition("/")
+    out = []
+    for url in linked:
+        rest = url.split("://", 1)[-1]
+        url_host, _, url_path = rest.partition("/")
+        if publication_of(url_host.lower()) != publication_of(host):
+            continue
+        if not path or url_path.lower() == path or url_path.lower().startswith(path.rstrip("/") + "/"):
+            out.append(url)
+    return out
+
+
+def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
+    """The source a platform account is followed as (issue 0109 W1): the address its source kind reads, as
+    the Add source templates write it (x.com/<user> -> the Nitter bridge's /<user>/rss; t.me/<channel> ->
+    the Telegram bridge's /rss/<channel>; reddit.com/r/<sub> -> r/<sub>; youtube.com/@<channel> -> the
+    channel), when a kind of `registry` reads it (KindRegistry.resolve: not the generic feed reader nor
+    page watching). None for a site, an owner on a platform no kind reads (a code or model hub's) or a
+    kind of page."""
+    host, _, rest = key.partition("/")
+    segments = [s for s in rest.split("/") if s]
+    site = site_of(host)
+    if not segments or not all(_ACCOUNT.match(s) for s in segments):
+        return None
+    source: Optional[Dict[str, str]] = None
+    if site in PLATFORM_SITES["x"] and len(segments) == 1:
+        source = {"platform": "rss", "handle_or_url": f"{NITTER_BASE_URL}/{segments[0].lstrip('@')}/rss"}
+    elif site in PLATFORM_SITES["telegram"] and site != "telegram.org" and len(segments) == 1:
+        source = {"platform": "rss", "handle_or_url": f"{TELEGRAM_BASE_URL}/rss/{segments[0]}?limit=50"}
+    elif site in PLATFORM_SITES["reddit"] and len(segments) == 2 and segments[0] == "r":
+        source = {"platform": "reddit", "handle_or_url": f"r/{segments[1]}"}
+    elif site in PLATFORM_SITES["youtube"] and ((len(segments) == 1 and segments[0].startswith("@"))
+                                                or (len(segments) == 2 and segments[0] in ACCOUNT_NAMESPACES)):
+        source = {"platform": "youtube", "handle_or_url": "https://www.youtube.com/" + "/".join(segments)}
+    if source is None:
+        return None
+    try:
+        kind = registry.resolve(source)
+    except LookupError:
+        return None
+    return source if kind.name not in ("generic_rss", "page_watch") else None
+
+
+async def kind_test(registry: Any, source: Dict[str, str]) -> str:
+    """A platform account's follow test (issue 0109): its kind's latest posts, as a fetch run reads them.
+    "feed" when there are some, "blocked" when the read was refused with 401 or 403, else "headlines"."""
+    try:
+        posts = await registry.resolve(source).fetch_latest(source, KIND_POSTS)
+    except HttpError as exc:
+        return "blocked" if exc.status in BLOCKED else "headlines"
+    except Exception as exc:  # noqa: BLE001 - a bridge that can't be asked: nothing to follow by it now
+        logger.info("Discover: the follow test of %s failed (%s)", source["handle_or_url"], type(exc).__name__)
+        return "headlines"
+    return "feed" if posts else "headlines"
+
+
 async def follow_test(http: Any, registry: Any, url: str, linked: List[str],
                       limiter: Optional[HostLimiter] = None) -> str:
     polite = Polite(http)
+    source = kind_source(url.split("://", 1)[-1], registry)
     try:
-        async with (limiter or HostLimiter()).slot(slot(url)):
-            found = await where_linked.follow(polite, registry, url, linked)
+        async with (limiter or HostLimiter()).slot(slot(source["handle_or_url"] if source else url)):
+            if source is not None:
+                return await kind_test(registry, source)
+            found = await where_linked.follow(polite, registry, url, own_pages(url.split("://", 1)[-1], linked))
     except Exception as exc:  # noqa: BLE001 - a site that can't be asked is labelled by what it answered
         logger.info("Discover: the follow test of %s failed (%s)", url, type(exc).__name__)
         found = {}
@@ -116,9 +197,13 @@ async def follow_test(http: Any, registry: Any, url: str, linked: List[str],
 
 
 def page_title(page: str, url: str) -> Optional[str]:
-    """A page's own title (page_watch.page_title), None when it has none, or only its address."""
+    """A page's own title (page_watch.page_title), None when it has none, only its address, or only its site's
+    name (issue 0109 W7: a wall or a script page answers with its site's <title>, its og:site_name)."""
     title = " ".join(html.unescape(page_watch.page_title(page, url) or "").split())
+    site = " ".join(html.unescape(parsing.meta_content(page, "og:site_name") or "").split())
     if not title or title == url or _ADDRESS.match(title) or len(title) > TITLE_CHARS:
+        return None
+    if site and title.casefold() == site.casefold():
         return None
     return title
 
@@ -131,24 +216,41 @@ async def read_title(polite: Polite, url: str) -> Optional[str]:
     return page_title(body.decode("utf-8", "replace"), here)
 
 
-def due(read: Optional[Dict[str, Any]], now: datetime) -> bool:
-    """Never read, or read CHECK_DAYS ago or more."""
+def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) -> bool:
+    """Never read, or read CHECK_DAYS ago or more; a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
     try:
-        return read is None or now - datetime.fromisoformat(read["at"]) >= timedelta(days=CHECK_DAYS)
-    except (KeyError, TypeError, ValueError):
+        return (read is None or (test and read.get("test") != FOLLOW_TEST)
+                or now - datetime.fromisoformat(read["at"]) >= timedelta(days=CHECK_DAYS))
+    except (AttributeError, KeyError, TypeError, ValueError):
         return True
 
 
+def to_read(answer: Dict[str, Any], *, first_page: int = FIRST_PAGE) -> List[Dict[str, Any]]:
+    """The suggestions whose lines and tests are read (issue 0109): the first page, and the first page's count
+    by score alone wherever they are listed (the tested come first, so an untested one with more stories
+    would otherwise wait behind them, never tested)."""
+    listed = answer["suggestions"]
+    by_score = sorted(listed, key=lambda s: (-s.get("score", 0), s["key"]))[:first_page]
+    page = listed[:first_page]
+    keys = {s["key"] for s in page}
+    return page + [s for s in by_score if s["key"] not in keys]
+
+
 def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
-         archives: Sequence[Dict[str, Any]] = (), classics: Sequence[str] = ()) -> Dict[str, List[str]]:
-    """What the first page asks to read: the suggestions whose follow test is due; the pages whose title is
-    due and that have none (not tweets): its suggestions' articles and the stories they started, the archive
-    rows' lines (issue 0106: one title per page, whichever line shows it) and the untitled `classics`."""
+         archives: Sequence[Dict[str, Any]] = (), classics: Sequence[str] = (),
+         listed: Sequence[Dict[str, Any]] = ()) -> Dict[str, List[str]]:
+    """What the first page asks to read: the suggestions whose follow test is due, and every `listed` one
+    whose stored test was made by older rules (issue 0109: the X accounts the finder called headlines had
+    sunk out of the first page); the pages whose title is due and that have none (not tweets): its
+    suggestions' articles and the stories they started, the archive rows' lines (issue 0106: one title per
+    page, whichever line shows it) and the untitled `classics`."""
     follow, titles = reads.get("follow", {}), reads.get("titles", {})
     lines = [line for s in page for line in (*s.get("articles", ()), *s.get("origin_stories", ()))]
     lines += [line for a in archives for line in a.get("origin_stories", ())]
     untitled = {line["url"] for line in lines if not line["title"]} | set(classics)
-    return {"follow": [s["key"] for s in page if due(follow.get(s["key"]), now)],
+    keys = [s["key"] for s in page if due(follow.get(s["key"]), now, test=True)]
+    keys += [s["key"] for s in listed if s["key"] in follow and due(follow[s["key"]], now, test=True)]
+    return {"follow": list(dict.fromkeys(keys)),
             "titles": sorted(url for url in untitled if not is_tweet(url) and due(titles.get(url), now))}
 
 
@@ -157,11 +259,11 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     """Read what the first page lacks (`work`), and Classics' untitled pages (issue 0106), and store each
     answer with its date; then make and keep Discover's list once (issue 0080 cold open: the answers change
     its inputs, so the next open, in any process, reads it instead of making it). Returns how many."""
-    answer = await asyncio.to_thread(stories.discover, limit=FIRST_PAGE)
+    answer = await asyncio.to_thread(stories.discover)
     classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
-        todo = work(answer["suggestions"], DiscoverRepository.reads(cur), clock(),
-                    archives=answer.get("archives", ()), classics=classics)
+        todo = work(to_read(answer), DiscoverRepository.reads(cur), clock(),
+                    archives=answer.get("archives", ()), classics=classics, listed=answer["suggestions"][FIRST_PAGE:])
     if not todo["follow"] and not todo["titles"]:
         return {"follow": 0, "titles": 0}
     gate = asyncio.Semaphore(FAN_OUT)
@@ -171,7 +273,8 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     async def test(key: str):
         async with gate:
             linked = await asyncio.to_thread(stories.linked_articles, "https://" + key)
-            return key, {"label": await follow_test(http, registry, "https://" + key, linked, limiter), "at": clock().isoformat()}
+            return key, {"label": await follow_test(http, registry, "https://" + key, linked, limiter), "at": clock().isoformat(),
+                         "test": FOLLOW_TEST}
 
     async def title(url: str):
         async with gate:
@@ -209,4 +312,5 @@ def start(stories: Any, http: Any, registry: Any) -> bool:
     return True
 
 
-__all__ = ["read_first_page", "start", "label", "page_title", "work", "due", "Polite", "LABELS", "enabled"]
+__all__ = ["read_first_page", "start", "label", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
+           "FOLLOW_TEST", "enabled"]

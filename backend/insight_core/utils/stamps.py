@@ -130,6 +130,7 @@ GUEST = "https://writer-one.github.io/guest-post-on-indexes"
 SAVED = "https://saved.example/essays/on-careful-measurement"
 PAPER = "https://preprints.example/abs/2603.01234"
 PAPER_PDF = "https://preprints.example/pdf/2603.01234v2"
+MOVED = "https://writer-one.github.io/on-keeping-notes"
 TOOL_PREVIEW = (f'<p>Worth a look</p><blockquote cite="{L4}"><cite><b>Tool Site</b></cite></br>'
                 '<b>Fast Tokenizer Ships</b></br>Tokenizing is now faster.</blockquote>')
 QUOTE = (f'<p>Great thread</p><blockquote><b>Writer X</b>Thread on evaluation methods<footer> — <cite>'
@@ -155,7 +156,8 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
           links: Sequence[Tuple[str, Optional[str]]] = (), texts: Optional[Dict[str, str]] = None,
           html: Optional[str] = None, text: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0,
           author: Optional[str] = None,
-          reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None) -> Dict[str, Any]:
+          reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None,
+          moved_to: Optional[str] = None) -> Dict[str, Any]:
     """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when, with
     its parts as the parser reads them (issue 0076; `html` only on the platforms, as load_posts reads them)."""
     from insight_core.utils.post_parser import parse   # the parser's stamp reads this module
@@ -165,7 +167,8 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
             "reposted_by": list(reposted_by), "links": list(links), "link_texts": dict(texts or {}),
             "stored_at": stored or at + timedelta(hours=1),
             "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
-            "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening}
+            "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening,
+            "moved_to": moved_to}
 
 
 def _at(hours: float, minutes: int = 0) -> datetime:
@@ -334,6 +337,10 @@ def posts() -> List[Dict[str, Any]]:
         p("z3", "s-alpha", _at(210), "Graph Engine Four ships", "https://blog.alpha.example/2026/03/graph-engine-four"),
         p("z4", "s-beta", _at(211), "Graph Engine Four, reviewed", "https://beta.example/graph-engine-four"),
         p("z5", "s-alpha", _at(212), "Graph Engine Four benchmarks", "https://blog.alpha.example/2026/03/graph-benchmarks"),
+        # A blog that moved (issue 0108): the old site's post is a redirect stub, read where it points;
+        # it is one page with the post stored there, so the two are one story
+        p("m1", "s-one", _at(260), "on keeping notes", MOVED),
+        p("m2", "s-new", _at(261), "notes, kept", "https://delta.example/posts/2026/03/notes", moved_to=MOVED),
     ]
 
 
