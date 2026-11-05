@@ -110,6 +110,7 @@ class NewsService:
         stories_now = news(window, held, found)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
         urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
+        urls = self.repo.moved_paths(cur, urls)   # and a page that moved is one with where it moved (0108)
         found_classics = self._classics(cur, sources, urls)
         classics_changed = self.repo.write_classics(cur, found_classics, urls)
         return {"surges_changed": surges_changed, "news_posts": len(group), "news_changed": news_changed,
@@ -166,7 +167,9 @@ class NewsService:
 
     def _cited(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None):
         """The kept links as citations, each paper's paths cited as the one address that names it (issue
-        0106: its abstract and its PDF are one classic), the stored posts they are, and those aliases."""
+        0106: its abstract and its PDF are one classic), a page that moved as where it moved (issue 0108:
+        a redirect stub's post is one page with the post stored there), the stored posts they are, and
+        those aliases."""
         rows = self.repo.citations(cur, reddit=sources.of_kind("reddit"), saved=sources.of_kind("saved"), targets=targets)
         papers: Dict[str, Set[str]] = defaultdict(set)
         at: Dict[str, Optional[str]] = {}
@@ -175,6 +178,10 @@ class NewsService:
             if paper_id(row["target"]):
                 papers[page_key(row["target"]) or row["target"]].add(row["target"])
         aliases = paper_aliases(papers.values(), stored=[t for t, sid in at.items() if sid])
+        for old, (new, post_id) in self.repo.moved_pages(cur, sorted(at) if targets is not None else None).items():
+            if old in at:
+                aliases[old] = new
+                at.setdefault(new, post_id)
         authors: Dict[str, Optional[str]] = {}
         out = []
         for row in rows:

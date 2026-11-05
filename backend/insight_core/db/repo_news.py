@@ -20,6 +20,7 @@ from insight_core.utils.story_rules import page_key
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory, Surge
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.url_normalization import normalize_url
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
@@ -456,6 +457,38 @@ class NewsRepository:
                     "WHERE k.key = ANY(%s) AND NOT pl.boilerplate", (sorted(key[:KEY_CHARS] for key in wanted),))
         found = {url for (url,) in cur.fetchall() if paper_id(url) and page_key(url) in wanted}
         return sorted(set(urls) | found)
+
+    @staticmethod
+    def moved_pages(cur: Cursor, urls: Optional[Sequence[str]] = None) -> Dict[str, Tuple[str, Optional[str]]]:
+        """The stored pages (at `urls`, when given) that moved (issue 0108, metadata.moved_to): address ->
+        (where it moved, the post stored there, if any)."""
+        cur.execute(
+            f"""
+            SELECT p.normalized_url, p.metadata ->> '{MOVED_KEY}',
+                   (SELECT q.id FROM posts q WHERE q.normalized_url = p.metadata ->> '{MOVED_KEY}'
+                    ORDER BY q.fetched_at, q.created_at, q.id LIMIT 1)
+            FROM posts p
+            WHERE p.metadata ? '{MOVED_KEY}' AND p.normalized_url IS NOT NULL
+              AND (%(urls)s::text[] IS NULL OR p.normalized_url = ANY(%(urls)s))
+            """,
+            {"urls": None if urls is None else list(urls)},
+        )
+        return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in cur.fetchall() if r[1] and r[1] != r[0]}
+
+    @staticmethod
+    def moved_paths(cur: Cursor, urls: Sequence[str]) -> List[str]:
+        """`urls`, where the pages among them moved, and the pages that moved to them (issue 0108: one
+        classic), so an incremental batch rewrites both."""
+        if not urls:
+            return list(urls)
+        cur.execute(
+            f"""
+            SELECT p.normalized_url, p.metadata ->> '{MOVED_KEY}' FROM posts p
+            WHERE p.metadata ? '{MOVED_KEY}' AND (p.normalized_url = ANY(%(urls)s) OR p.metadata ->> '{MOVED_KEY}' = ANY(%(urls)s))
+            """,
+            {"urls": list(urls)},
+        )
+        return sorted(set(urls) | {url for row in cur.fetchall() for url in row if url})
 
     @staticmethod
     def classic_urls(cur: Cursor) -> List[str]:

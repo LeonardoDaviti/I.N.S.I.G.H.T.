@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -361,6 +361,74 @@ class MovedSourceRowTests(unittest.TestCase):
             self._post(self.old, f"https://home.example/posts/2020/1{n}/old-{n}", f"https://www.blog.example/new-{n}/")
         row = health_row(self._row(self.old), GenericRssKind(FakeHttp()), Availability(ytdlp_enabled=True, telegram_credentials=True), NOW)
         self.assertEqual(row["moved_to"], {"host": "blog.example", "followed": False})
+
+
+@requires_test_db
+class MovedClassicTests(unittest.TestCase):
+    """Decision 1: Classics count a page that moved once, as the post stored where it moved (a full run
+    and a batch alike)."""
+
+    def setUp(self):
+        import uuid
+        from insight_core.services.news_service import NewsService
+        from insight_core.services.stories_service import StoriesService
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.mark = uuid.uuid4().hex[:8]
+        self.news = NewsService(db_url(), clock=lambda: self.now)
+        self.service = StoriesService(db_url(), clock=lambda: self.now, news=self.news)
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def _source(self, name):
+        from insight_core.tests._stories import insert_source
+        return insert_source(self.cur, f"{name} {self.mark}", in_main_digest=True, followed_days=900)
+
+    def _cite(self, source, url, *, days):
+        import uuid
+        from insight_core.tests._stories import insert_post
+        host = f"{uuid.uuid4().hex[:8]}-{self.mark}.test"
+        insert_post(self.cur, source, f"https://{host}/{uuid.uuid4().hex}", at=self.now - timedelta(days=days),
+                    title="A post", content="Body", html=f'<p><a href="{url}">read this</a></p>',
+                    content_hash=uuid.uuid4().hex, host=host)
+
+    def _fill(self):
+        from insight_core.db.repo_stories import StoriesRepository
+        while StoriesRepository().fill_missing_links(self.cur):
+            pass
+
+    def _mine(self):
+        return {c["url"]: c for c in self.news.classics_on(self.cur, "all")["classics"] if self.mark in c["url"]}
+
+    def test_a_page_that_moved_is_one_classic_at_the_post_where_it_moved(self):
+        from insight_core.tests._stories import insert_post
+        old, new = f"https://home-{self.mark}.test/posts/2020/10/old", f"https://blog-{self.mark}.test/the-new-slug"
+        home, blog = self._source("Home"), self._source("Blog")
+        old_id = insert_post(self.cur, home, old, at=self.now - timedelta(days=500), title="Old", content=ESSAY)
+        self.cur.execute("UPDATE posts SET metadata = jsonb_build_object(%s::text, %s::text) WHERE id = %s",
+                         (MOVED_KEY, new, old_id))
+        new_id = insert_post(self.cur, blog, new, at=self.now - timedelta(days=500), title="The post", content=ESSAY)
+        x, y, z = (self._source(n) for n in ("Xeno", "Yolk", "Zinc"))
+        self._cite(x, old, days=400)
+        self._cite(y, new, days=300)
+        self._cite(z, old, days=100)
+        self._fill()
+        self.service.full_on(self.cur)
+        mine = self._mine()
+        self.assertEqual(list(mine), [new], "no classic at the old address")
+        self.assertEqual((mine[new]["voices"], mine[new]["post_id"]), (3, str(new_id)))
+
+        later = self._source("Later")
+        self._cite(later, old, days=1)
+        self._fill()
+        self.service.update(self.cur)
+        mine = self._mine()
+        self.assertEqual((list(mine), mine[new]["voices"]), ([new], 4), "a batch counts the old address too")
+        self.assertEqual(self.service.full_on(self.cur)["classics_changed"], 0)
 
 
 if __name__ == "__main__":
