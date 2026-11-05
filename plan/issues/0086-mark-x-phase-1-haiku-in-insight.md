@@ -296,9 +296,15 @@ Not merged, not deployed. Nothing was fetched or downloaded, and the real `claud
 - **The valid path, with the recorded answers as the model** (a private replay fake): 107 readings and 34 entity answers valid through both the worker's and the server's checks, stored with their readings and mentions.
 - **For S4 (no change needed):** fake-claude's answers fit the stub's schema, not part C's, and its `FAKE_CLAUDE_STATE`/`_LOG` must be absolute (the worker runs `claude` in the temp directory). Because the server tops up `read` as it drains, `--kinds read,entities` reaches `entities` only when the 30 days are read.
 
-**Tests:** backend suite SUITE_RESULT. Frontend: 708 tests pass; the bundle gate passes (feed route +0.10%, post route +0.09%).
+**Tests:**
+- The whole backend suite: 1,540 tests OK (`./run-tests.sh` in the image, at 4a7ba87).
+- After the last change (the check planner's refactor and `reasked`), the Mark X modules again: `test_markx_api` 27 and `test_markx_validate` 35, OK.
+- Frontend: 708 tests pass, and the bundle gate passes (the feed route +0.10%, the post route +0.09%).
 
-**The real-data check:** REALDATA_RESULT
+**The real-data check** (`scripts/realdata-check.sh --base markx-shadow --head markx-s3-api insight_lab`, head at 4a7ba87; report `plan/research/lab/checks/markx-s3-api-2026-11-05.md`): **PASS**.
+- With `INSIGHT_MARKX` off, Mark IX changes by 0: titles, text starts, link titles, roundups, story membership, origins, News, Classics and Discover.
+- Every invariant is the same, and no case changes state (75 pass, 16 fail, 1 error and 17 not checked, on both sides).
+- Corrections 4's count: 0 tasks re-asked, since no Mark X task exists on the lab or its copies (Mark X is off there). `tasks.reasked` is the count S5's invariants can report.
 
 ## Part D: the worker, Claude Code mode (your device)
 `scripts/markx-worker` is one Python file using the standard library only.
