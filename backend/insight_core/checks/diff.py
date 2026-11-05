@@ -152,26 +152,82 @@ def origins(a: Dict, b: Dict) -> Changes:
     return out
 
 
+# A lead change a reader notices first (issue 0104): listed in full and counted, never a failure on its own.
+NEEDS_READING = "lead changed: needs reading"
+
+
+def _same_rows(gone: Dict[str, Dict], new: Dict[str, Dict]) -> List[Tuple[str, str]]:
+    """The rows of two versions that are one row led by another post: they share at least half the
+    posts of the smaller one; most shared first, each row paired once."""
+    pairs = []
+    for x, rx in gone.items():
+        for y, ry in new.items():
+            shared = len(set(rx["posts"]) & set(ry["posts"]))
+            if shared and 2 * shared >= min(len(rx["posts"]), len(ry["posts"])):
+                pairs.append((-shared, x, y))
+    out, used = [], set()
+    for _, x, y in sorted(pairs):
+        if x not in used and y not in used:
+            used |= {x, y}
+            out.append((x, y))
+    return out
+
+
+def _lead_flags(x: Dict, y: Dict) -> List[str]:
+    """Why a lead change `x` -> `y` (one row in two versions) needs reading: the new lead's title says
+    no row name (the name most of the row's posts joined by, 0083's), or the old lead was the row's
+    origin or first post and the new one is neither. A snapshot without names, origins or first post
+    (one taken before issue 0104) is read for what it has."""
+    flags = []
+    names = y.get("names") or []
+    if names and "said" in y and names[0] not in y["said"]:
+        flags.append(f"lacks the row's name {names[0]!r}")
+    if all(k in r for r in (x, y) for k in ("origins", "row_first")):
+        was = x["lead"] in x["origins"] or x["lead"] == x["row_first"]
+        now = y["lead"] in y["origins"] or y["lead"] == y["row_first"]
+        if was and not now:
+            flags.append("not the origin or first post (the old lead was)")
+    return flags
+
+
 def news(a: Dict, b: Dict) -> Changes:
+    """News rows, by their lead; a row whose lead moved to another of its posts is one row (they share
+    most posts), its lead change listed, and flagged for reading when `_lead_flags` says so."""
     ra = {r["lead"]: r for r in a["rows"]}
     rb = {r["lead"]: r for r in b["rows"]}
     out: Changes = defaultdict(list)
-    for lead in sorted(set(ra) | set(rb)):
-        x, y = ra.get(lead), rb.get(lead)
-        if x is None:
-            out["new row"].append((lead, None, f"{y['title']!r}, {len(y['posts'])} posts"))
-        elif y is None:
-            out["gone row"].append((lead, f"{x['title']!r}, {len(x['posts'])} posts", None))
-        else:
-            if x["posts"] != y["posts"]:
-                out["posts changed"].append((lead, len(x["posts"]), len(y["posts"])))
-            if x["voices"] != y["voices"]:
-                out["voices changed"].append((lead, x["voices"], y["voices"]))
-            if (x["first_at"], x["first"]) != (y["first_at"], y["first"]):
-                out["first changed"].append((lead, x["first_at"], y["first_at"]))
-            if x["title"] != y["title"]:
-                out["title changed"].append((lead, x["title"], y["title"]))
+    relead = _same_rows({k: ra[k] for k in ra.keys() - rb.keys()}, {k: rb[k] for k in rb.keys() - ra.keys()})
+    paired = {k for pair in relead for k in pair}
+    for lead in sorted(ra.keys() - rb.keys() - paired):
+        out["gone row"].append((lead, f"{ra[lead]['title']!r}, {len(ra[lead]['posts'])} posts", None))
+    for lead in sorted(rb.keys() - ra.keys() - paired):
+        out["new row"].append((lead, None, f"{rb[lead]['title']!r}, {len(rb[lead]['posts'])} posts"))
+    for old, new in sorted([(lead, lead) for lead in ra.keys() & rb.keys()] + relead):
+        x, y = ra[old], rb[new]
+        if old != new:
+            flags = _lead_flags(x, y)
+            if flags:
+                name = (y.get("names") or [None])[0]
+                title = " ".join(str(y["title"]).split())
+                title = title if len(title) <= 70 else title[:69] + "…"   # the cell keeps the reasons
+                out[NEEDS_READING].append((old, x["title"], f"{title} · name {name!r} · {len(y['posts'])} posts · "
+                                                            + "; ".join(flags) + f" · new lead {new}"))
+            else:
+                out["lead changed"].append((old, x["title"], y["title"]))
+        if x["posts"] != y["posts"]:
+            out["posts changed"].append((old, len(x["posts"]), len(y["posts"])))
+        if x["voices"] != y["voices"]:
+            out["voices changed"].append((old, x["voices"], y["voices"]))
+        if (x["first_at"], x["first"]) != (y["first_at"], y["first"]):
+            out["first changed"].append((old, x["first_at"], y["first_at"]))
+        if old == new and x["title"] != y["title"]:
+            out["title changed"].append((old, x["title"], y["title"]))
     return out
+
+
+def needs_reading(found: Dict[str, Optional[Changes]]) -> int:
+    """How many changes the report lists for reading (issue 0104)."""
+    return sum(len((ch or {}).get(NEEDS_READING, [])) for ch in found.values())
 
 
 def classics(a: Dict, b: Dict) -> Changes:
@@ -230,10 +286,10 @@ def counts(found: Dict[str, Optional[Changes]]) -> Dict[str, Any]:
             for name, ch in found.items()}
 
 
-def _cell(x: Any) -> str:
+def _cell(x: Any, width: int = 160) -> str:
     text = x if isinstance(x, str) else json.dumps(x, ensure_ascii=False, default=str)
     text = " ".join(str(text).split()).replace("|", "\\|")
-    return text if len(text) <= 160 else text[:159] + "…"
+    return text if len(text) <= width else text[:width - 1] + "…"
 
 
 def report(found: Dict[str, Optional[Changes]], before: Dict, after: Dict, *, labels=("before", "after"), seed: int = 75) -> str:
@@ -248,15 +304,20 @@ def report(found: Dict[str, Optional[Changes]], before: Dict, after: Dict, *, la
         total = sum(len(v) for v in ch.values())
         kinds = ", ".join(f"{k} {len(v)}" for k, v in sorted(ch.items(), key=lambda kv: -len(kv[1])))
         lines.append(f"| {name} | {total} | {kinds or '-'} |")
+    flagged = needs_reading(found)
+    lines += ["", f"**Needs reading: {flagged}**" + (f" ({NEEDS_READING!r}, each listed below; read them, they don't fail the check)."
+                                                       if flagged else " (no lead change to read).")]
     for name, ch in found.items():
         if not ch:
             continue
         lines += ["", f"## {name}"]
-        for kind, changes in sorted(ch.items(), key=lambda kv: -len(kv[1])):
-            shown = rng.sample(changes, EXAMPLES) if len(changes) > EXAMPLES else changes
-            lines += ["", f"### {kind} ({len(changes)}{', 20 at random' if len(changes) > EXAMPLES else ''})", "",
+        for kind, changes in sorted(ch.items(), key=lambda kv: (kv[0] != NEEDS_READING, -len(kv[1]))):
+            sample = len(changes) > EXAMPLES and kind != NEEDS_READING   # what needs reading: every one
+            shown = rng.sample(changes, EXAMPLES) if sample else changes
+            lines += ["", f"### {kind} ({len(changes)}{', 20 at random' if sample else ''})", "",
                       f"| id | {labels[0]} | {labels[1]} |", "|---|---|---|"]
-            lines += [f"| {_cell(i)} | {_cell(x)} | {_cell(y)} |" for i, x, y in shown]
+            wide = 400 if kind == NEEDS_READING else 160
+            lines += [f"| {_cell(i)} | {_cell(x)} | {_cell(y, wide)} |" for i, x, y in shown]
     return "\n".join(lines) + "\n"
 
 

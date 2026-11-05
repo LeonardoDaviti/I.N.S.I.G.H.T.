@@ -20,9 +20,10 @@ import argparse
 import json
 import sys
 import time
+from collections import Counter
 from typing import Any, Dict, List
 
-from insight_core.checks import derive
+from insight_core.checks import compat, derive
 from insight_core.checks.paths import plain
 from insight_core.checks.session import copy_now, open_copy
 
@@ -71,12 +72,45 @@ def _stories(ctx) -> Dict[str, Any]:
     return {"member": member, "mentions": mentions, "stories": stories}
 
 
+def _news_rows(cur, news_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Each News row's names (the surging names its posts joined by, most posts first), its origins (posts
+    that start their 0050 story) and its first post, as the job stored them (issue 0104)."""
+    cur.execute("""SELECT np.news_id::text, np.post_id::text, np.name, np.position,
+                          bool_or(sp.post_id IS NOT NULL AND sp.parent_reason IS NULL)
+                   FROM news_posts np LEFT JOIN story_posts sp ON sp.post_id = np.post_id
+                   WHERE np.news_id = ANY(%s::uuid[])
+                   GROUP BY np.news_id, np.post_id, np.name, np.position
+                   ORDER BY np.news_id, np.position NULLS LAST, np.post_id""", (news_ids,))
+    out: Dict[str, Dict[str, Any]] = {}
+    for nid, pid, name, _, origin in cur.fetchall():
+        row = out.setdefault(nid, {"count": Counter(), "origins": [], "row_first": pid})
+        if name:
+            row["count"][name] += 1
+        if origin:
+            row["origins"].append(pid)
+    for row in out.values():
+        row["names"] = [n for n, _ in sorted(row.pop("count").items(), key=lambda kv: (-kv[1], kv[0]))]
+    return out
+
+
 def _news(ctx) -> Dict[str, Any]:
     from insight_core.services.news_service import NewsService
     answer = plain(NewsService(ctx["db_url"], clock=lambda: ctx["now"]).news_on(ctx["cur"]))
-    return {"rows": [{"lead": i["id"], "title": i.get("title"), "posts": sorted({i["id"], *(p["id"] for p in i["story"]["posts"])}),
-                      "voices": i["story"]["voices"], "first_at": i["news"].get("first_at"), "part": i["news"].get("part"),
-                      "first": (i["story"].get("sources") or [{}])[0].get("id")} for i in answer["items"]]}
+    rows = [{"lead": i["id"], "title": i.get("title"), "posts": sorted({i["id"], *(p["id"] for p in i["story"]["posts"])}),
+             "voices": i["story"]["voices"], "first_at": i["news"].get("first_at"), "part": i["news"].get("part"),
+             "first": (i["story"].get("sources") or [{}])[0].get("id"), "story": i["story"].get("id")} for i in answer["items"]]
+    try:   # a version without these columns snapshots the rows without them (diff reads what it has)
+        stored = _news_rows(ctx["cur"], [r["story"] for r in rows if r["story"]])
+    except Exception:  # noqa: BLE001
+        stored = {}
+    said = compat.phrases_function()
+    for r in rows:
+        extra = stored.get(r["story"])
+        if extra:
+            r.update(extra)
+            if said is not None:   # the names the row's shown title says, as this version's name rule reads it
+                r["said"] = sorted(set(extra["names"]) & said(r["title"]))
+    return {"rows": rows}
 
 
 def _classics(ctx) -> Dict[str, Any]:

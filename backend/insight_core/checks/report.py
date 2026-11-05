@@ -99,8 +99,10 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
     # C. the diff
     before, after = _load(os.path.join(base, "snapshot.json")), _load(os.path.join(head, "snapshot.json"))
     lines += ["", "## C. The diff"]
+    flagged = None
     if before and after:
         found = diff.compare(before, after)
+        flagged = diff.needs_reading(found)
         text = diff.report(found, before, after, labels=labels)
         lines += ["", text.split("\n", 2)[2]]
         with open(os.path.join(work, "diff-counts.json"), "w", encoding="utf-8") as f:
@@ -109,7 +111,10 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         problems.append("a snapshot is missing: no diff")
         lines.append("No diff: a snapshot is missing.")
 
-    lines[2:2] = ["", "**Verdict: " + ("FAIL**: " + "; ".join(problems) if problems else "PASS**"), ""]
+    # Lead changes to read (issue 0104): said under the verdict, never a failure on their own.
+    reading = [] if flagged is None else [f"**Needs reading: {flagged}** News lead change{'s' if flagged != 1 else ''}"
+                                          + (" (C. The diff, News, \"" + diff.NEEDS_READING + "\")." if flagged else "."), ""]
+    lines[2:2] = ["", "**Verdict: " + ("FAIL**: " + "; ".join(problems) if problems else "PASS**"), "", *reading]
     return "\n".join(lines) + "\n", problems
 
 
@@ -127,6 +132,9 @@ def main(argv=None) -> int:
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(text)
     print("verdict:", "FAIL" if problems else "PASS")
+    for line in text.splitlines()[:8]:
+        if line.startswith("**Needs reading"):
+            print(line.replace("**", ""))
     for p in problems:
         print("  -", p)
     return 1 if problems else 0

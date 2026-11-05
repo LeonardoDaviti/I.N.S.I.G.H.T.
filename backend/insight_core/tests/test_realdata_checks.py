@@ -205,6 +205,100 @@ class DiffTests(unittest.TestCase):
         found = diff.discover({"suggestions": [s("a.test"), s("b.test")]}, {"suggestions": [s("b.test", 4), s("a.test")]})
         self.assertEqual(sorted(found), ["moved", "voices changed"])
 
+    @staticmethod
+    def news_row(lead, title, posts, *, names=("model 2",), said=None, origins=(), first=None):
+        return {"lead": lead, "title": title, "posts": sorted(posts), "voices": 3, "first_at": "t", "part": "recent", "first": "s",
+                "names": list(names), "said": list(names if said is None else said), "origins": list(origins),
+                "row_first": first or posts[0]}
+
+    def test_a_row_led_by_another_post_is_one_lead_change_not_a_row_gone_and_a_row_new(self):
+        r = self.news_row
+        before = {"rows": [r("a", "Model 2 is out", ["a", "b", "c", "d"], origins=["a"]), r("x", "Other", ["x", "y"])]}
+        after = {"rows": [r("b", "Model 2 is out, the notes", ["a", "b", "c", "d", "e"], origins=["b"], first="a"), r("x", "Other", ["x", "y"])]}
+        found = diff.news(before, after)
+        self.assertNotIn("gone row", found)
+        self.assertNotIn("new row", found)
+        self.assertEqual([c[0] for c in found["lead changed"]], ["a"])
+        self.assertEqual(found["lead changed"][0][1:], ("Model 2 is out", "Model 2 is out, the notes"))
+        self.assertEqual([c[0] for c in found["posts changed"]], ["a"])
+        self.assertNotIn(diff.NEEDS_READING, found)   # says the name, and the new lead is the row's origin
+
+    def test_a_lead_change_to_a_title_without_the_rows_name_needs_reading(self):
+        r = self.news_row
+        before = {"rows": [r("a", "Model 2 is looking good", ["a", "b", "c"], origins=["a"])]}
+        after = {"rows": [r("g", "Another output from Other 4", ["a", "b", "c", "g"], names=["model 2"], said=[], origins=["g"], first="g")]}
+        found = diff.news(before, after)
+        self.assertNotIn("lead changed", found)
+        (lead, old, new), = found[diff.NEEDS_READING]
+        self.assertEqual(lead, "a")
+        self.assertEqual(old, "Model 2 is looking good")
+        self.assertIn("Another output from Other 4", new)
+        self.assertIn("model 2", new)
+        self.assertIn("4 posts", new)
+        self.assertIn("lacks the row's name", new)
+
+    def test_a_lead_change_away_from_the_origin_and_the_first_post_needs_reading(self):
+        r = self.news_row
+        before = {"rows": [r("a", "Model 2 is out", ["a", "b", "c"], first="a")]}
+        after = {"rows": [r("c", "Model 2: my take", ["a", "b", "c"], first="a")]}
+        (lead, _, new), = diff.news(before, after)[diff.NEEDS_READING]
+        self.assertIn("not the origin or first post", new)
+        # Neither was origin or first: an ordinary lead change.
+        before = {"rows": [r("b", "Model 2 notes", ["a", "b", "c"], first="a")]}
+        self.assertEqual(sorted(diff.news(before, after)), ["lead changed"])
+
+    def test_a_snapshot_without_names_flags_only_by_origin_and_first(self):
+        r = self.news_row
+        old = r("a", "Model 2 is out", ["a", "b", "c"], first="a")
+        new = r("b", "Something else", ["a", "b", "c"], origins=["b"], first="a")
+        for row in (old, new):
+            for k in ("names", "said", "origins", "row_first"):
+                row.pop(k)
+        self.assertEqual(sorted(diff.news({"rows": [old]}, {"rows": [new]})), ["lead changed"])
+
+    def test_rows_sharing_few_posts_are_not_one_row(self):
+        r = self.news_row
+        before = {"rows": [r("a", "Model 2", ["a", "b", "c", "d"])]}
+        after = {"rows": [r("z", "Model 3", ["d", "w", "x", "y", "z"])]}
+        self.assertEqual(sorted(diff.news(before, after)), ["gone row", "new row"])
+
+    def test_main_against_itself_flags_nothing(self):
+        r = self.news_row
+        snap = {"rows": [r("a", "Model 2 is out", ["a", "b"], origins=["a"]), r("g", "Other", ["g", "h"], said=[])]}
+        self.assertEqual(diff.news(snap, snap), {})
+
+    def test_the_report_lists_every_lead_change_that_needs_reading(self):
+        r = self.news_row
+        rows_a = [r(f"a{i}", "Model 2 is out", [f"a{i}", f"b{i}"], origins=[f"a{i}"]) for i in range(25)]
+        rows_b = [r(f"b{i}", "Unrelated", [f"a{i}", f"b{i}"], said=[], origins=[f"b{i}"]) for i in range(25)]
+        before = {"now": "t", "parts": {"news": {"rows": rows_a}}, "missing": {}}
+        after = {"now": "t", "parts": {"news": {"rows": rows_b}}, "missing": {}}
+        found = diff.compare(before, after)
+        self.assertEqual(diff.needs_reading(found), 25)
+        text = diff.report(found, before, after, labels=("main", "branch"))
+        self.assertIn(f"### {diff.NEEDS_READING} (25)\n", text)
+        self.assertEqual(text.count("| Unrelated · name"), 25)
+
+    def test_the_merge_report_says_what_needs_reading_under_a_passing_verdict(self):
+        import json
+        import tempfile
+        from insight_core.checks import report
+        r = self.news_row
+        before = {"now": "t", "parts": {"news": {"rows": [r("a", "Model 2 is out", ["a", "b"], origins=["a"])]}}, "missing": {}}
+        after = {"now": "t", "parts": {"news": {"rows": [r("b", "Unrelated", ["a", "b"], said=[], origins=["b"])]}}, "missing": {}}
+        with tempfile.TemporaryDirectory() as work:
+            for side, snap in (("base", before), ("head", after)):
+                os.makedirs(os.path.join(work, side))
+                with open(os.path.join(work, side, "snapshot.json"), "w") as f:
+                    json.dump(snap, f)
+            text, problems = report.build(work)
+            self.assertEqual(problems, [])
+            self.assertIn("**Verdict: PASS**\n\n**Needs reading: 1** News lead change", text)
+            with open(os.path.join(work, "base", "snapshot.json"), "w") as f:
+                json.dump(after, f)
+            text, _ = report.build(work)
+            self.assertIn("**Needs reading: 0** News lead changes.", text)
+
     def test_the_report_counts_every_thing_and_says_what_wasnt_compared(self):
         before = {"now": "t", "parts": {"posts": {"a": {"title": "x", "text": "y"}}}, "missing": {}}
         after = {"now": "t", "parts": {"posts": {"a": {"title": "x2", "text": "y"}}}, "missing": {"news": "absent"}}
@@ -290,6 +384,17 @@ class RefsAndStoriesTests(unittest.TestCase):
         self.assertEqual(self.ctx.ids({"source": f"Other {self.mark}"}), [self.b, self.c], "first seen first")
         with self.assertRaises(refs.RefError):
             self.ctx.ids(f"https://nowhere-{self.mark}.test/x")
+
+    def test_a_news_rows_names_origins_and_first_post_as_the_job_stored_them(self):
+        from insight_core.checks import snapshot
+        nid = self.a   # a News story is keyed by a post (its first)
+        self.cur.execute("INSERT INTO news_stories (id, first_at, voices, reports, shares, mentions, score) "
+                         "VALUES (%s, now(), 2, 3, 0, 0, 1)", (nid,))
+        for position, (pid, name) in enumerate(((self.b, None), (self.a, "model 2"), (self.c, "model 2"))):
+            self.cur.execute("INSERT INTO news_posts (post_id, news_id, role, voice, name, position) VALUES (%s, %s, 'report', %s, %s, %s)",
+                             (pid, nid, f"voice:{pid}", name, position))
+        row = snapshot._news_rows(self.cur, [nid])[nid]
+        self.assertEqual(row, {"names": ["model 2"], "origins": [self.a, self.c], "row_first": self.b})
 
     def test_together_apart_and_via(self):
         together = {"on": "stories", "together": [f"https://a-{self.mark}.test/2026/one/", f"https://b-{self.mark}.test/two"]}
