@@ -345,6 +345,14 @@ Mark X reads every post beside Mark IX and writes only its own `mx_*` tables (mi
 - **Parallel calls:** start the worker at `--parallel 10` at most and raise it in steps while watching it. About 100 `claude -p` calls at once made the device's Tailscale DNS stop resolving, twice (5 Nov), and the calls failed with "Can't reach the API server".
 - The first decision run after the start (once the story job is done) re-decides v10.0's removals: a post removed on an empty-story check, or a near-copy of another member, is a member again; the empty-story check is asked again with the story shown, and a near-copy is never checked. Run the worker's `check` and `merge` kinds again from then on.
 
+**Updating to the second ask and incremental runs (issues 0112 Decided 8, 0116): update the worker on the device with the server.**
+- **The worker asks each merge alone:** `scripts/markx-worker --per-call`, default `merge=1`. The lease still takes `--batch` tasks; other kinds keep 20 a call. Pull the same commit on the device (or copy `scripts/markx-worker`) when you `./update` the server, and restart its loops. An older worker still works, but it batches merges 20 a call.
+- **Expect about 470 questions reopened by the first decision run** (measured on the 5 Nov server copy: 165 joins, 301 pairs, 6 merges).
+  - A join, pair or merge that changes a story now counts only once a second answer agrees, so every story-changing answer v10.0.1 had is asked again.
+  - Until the worker answers them, those joins and pairs are out of Mark X's stories: `/markx` shows fewer of them. Mark IX's stories and News are unaffected.
+  - Run the worker's `join,pair,merge` kinds after the update. About 1 in 5 then needs a third ask (about 90 more).
+- **Incremental runs need nothing:** the first run after a start is full and the next ones read only what changed. A full run happens each night after 04:00 server time and checks the incremental runs. `/api/markx/status`'s last run shows `counts.run` (kind, dirty tasks, closure, seconds), and `counts.check` after a nightly run. A difference there is logged as "Mark X incremental-run bug".
+
 **The worker** runs on your device (`scripts/markx-worker`, standard library only):
 ```
 # embeddings, with a local llama-server running BGE-M3 (llama-server --embedding -m bge-m3-q8_0.gguf --port 8091)

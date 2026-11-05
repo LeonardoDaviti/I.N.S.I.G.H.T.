@@ -238,9 +238,17 @@ class Rules(unittest.TestCase):
         no = v("different", 0.2, call="c2")
         self.assertEqual(D.settle("pair", [same, no], c), (no, False))                   # disagrees: the "no" counts
         dev = v("development", 0.9, call="c2")
-        self.assertEqual(D.settle("pair", [same, dev], c), (None, True))                 # another relation: a third ask
-        self.assertEqual(D.settle("pair", [same, dev, v("development", 0.7, call="c3")], c)[0].relation, "development")
-        self.assertEqual(D.settle("pair", [same, dev, same2], c), (None, False))         # three asks at most
+        # "both about": a join's two answers agree whatever their relations, at the lower p, the one that says less
+        got, again = D.settle("join", [same, dev], c)
+        self.assertEqual((got.relation, got.p, got.call, again), ("development", 0.9, "c1", False))
+        reaction = v("reaction", 0.7, call="c1")
+        self.assertEqual(D.settle("join", [reaction, same2], c)[0].relation, "reaction")
+        # a pair needs "same event" twice: its development never counts, and isn't asked again
+        self.assertEqual(D.settle("pair", [same, dev], c), (None, False))
+        self.assertEqual(D.settle("pair", [dev], c), (None, False))
+        self.assertEqual(D.settle("pair", [dev, same2], c), (None, True))                # a third ask
+        self.assertEqual(D.settle("pair", [dev, same2, same], c)[0].relation, "same_event")
+        self.assertEqual(D.settle("join", [same, v("mention", 0.2), same2], c), (None, False))   # three asks at most
         against = v("same_event", 0.9, "unrelated to the story's release", call="c1")
         self.assertEqual(D.settle("join", [against], c), (None, True))                   # never accepted: asked again
         self.assertEqual(D.settle("join", [against, same2], c), (None, True))

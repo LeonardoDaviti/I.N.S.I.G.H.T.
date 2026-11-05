@@ -494,12 +494,23 @@ def changes_story(kind: str, v: Verdict, config: Config = Config()) -> bool:
     return kind in ("join", "pair") and v.relation in ABOUT and v.p >= config.tau_join
 
 
+def agreeing(kind: str, v: Verdict, config: Config = Config()) -> bool:
+    """Whether a story-changing answer can count once a second one agrees (0112 Decided 8, the coordinator's "both
+    about"): a join's "about" (same event, development, reaction) at the join bar, a pair's or a merge's "same event"
+    at its bar. A pair's development or reaction never makes a story."""
+    if not changes_story(kind, v, config):
+        return False
+    return kind == "join" or v.relation == "same_event"
+
+
 def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
     """(the verdict that counts, or None for none yet; whether to ask again) from a question's valid answers, oldest
     first. The newest answer decides: one that changes nothing counts as it is; one that would change a story counts
-    only when the answer before it agrees (the same relation, both at the bar, neither reason against it), as one
-    verdict at the lower p, named by the earlier call; one whose reason is against it never counts. Until then the
-    question is asked again, MAX_ASKS times at most."""
+    only when the answer before it agrees: both `agreeing` (for a join both "about", whatever the relations; for a
+    pair or a merge both "same event"), neither reason against it. It counts as one verdict at the lower p, named by
+    the earlier call, with the relation of the two that says less (a development or reaction over a same event: the
+    late-post table reads it). A pair's development or reaction never counts and is not asked again; an answer whose
+    reason is against it never counts. Until then the question is asked again, MAX_ASKS times at most."""
     if not answers:
         return None, False
     last = answers[-1]
@@ -510,11 +521,13 @@ def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> 
         return None, more
     if not config.confirm:
         return last, False
+    if not agreeing(kind, last, config):
+        return None, False
     if len(answers) >= 2:
         prev = answers[-2]
-        if (prev.relation == last.relation and changes_story(kind, prev, config)
-                and not (config.reason_rule and contradicts(prev.reason))):
-            return Verdict(last.relation, min(prev.p, last.p), prev.reason, prev.call), False
+        if agreeing(kind, prev, config) and not (config.reason_rule and contradicts(prev.reason)):
+            relation = last.relation if last.relation != "same_event" else prev.relation
+            return Verdict(relation, min(prev.p, last.p), prev.reason, prev.call), False
     return None, more
 
 
