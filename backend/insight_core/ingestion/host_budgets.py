@@ -18,9 +18,20 @@ same process only counts against the stretch an archive is measuring. An hourly 
 busy window. Requests made by another process are not counted, so a measure can only come out
 smaller than the host allows, never larger.
 
-After LEARN_AFTER measures, an archive paces to ARCHIVE_SHARE of the slowest one (budget per
-window), leaving the rest for the live fetches of that host. Measures older than MEASURE_MAX_AGE
-are forgotten: the host may allow more by then (a bridge given more sessions).
+Once one window is measured (issue 0107's follow-up), a later limit is measured from the start of the
+window it hit, not from the stretch's: that window began with the request its budget's count back (the
+host allowed that many in it), so a stretch slower than the host allows, over several windows, still
+measures one window. The archive's wait then aims at that window's refill (`refill_wait`): each
+measure brackets the window between its latest refusal and its recovery, and the wait goes PROBE_S
+past the latest refusal known, at most to the narrowest recovery measured; a refusal past that falls
+back to the 5, 10, 20, 40 min ladder (the host allows less now). So the second measure is within
+PROBE_S of the window, where the ladder overshot it by up to its last wait.
+
+After LEARN_AFTER measures, an archive paces to ARCHIVE_SHARE of the budget per window: the fewest
+requests measured, over the narrowest window of those measures when their brackets agree (every
+refusal before every recovery), else the slowest measure. The rest is left for the live fetches of
+that host. Measures older than MEASURE_MAX_AGE are forgotten: the host may allow more by then (a
+bridge given more sessions).
 
 Kept per host in system_settings (`host_budget:<host>`) by DbHostBudgetStore (ports.py), so the
 API's archive and the scheduler's continuation of it measure the same host together.
@@ -37,6 +48,9 @@ LEARN_AFTER = 2                          # measured limits before an archive pac
 ARCHIVE_SHARE = 0.8                      # of the learned budget per window an archive may use
 MEASURES_KEPT = 5
 MEASURE_MAX_AGE = timedelta(days=7)
+PROBE_S = 5 * 60                         # a wait aimed at a refill goes this far past the latest refusal
+MIN_WAIT_S = 60
+TIMES_KEPT = 1000                        # a stretch's request times kept, to find a window's start
 
 Record = Dict[str, Any]
 
@@ -101,13 +115,24 @@ def _parse(value: Any) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _fresh(record: Optional[Record], now: datetime) -> List[Record]:
+    return [m for m in (record or {}).get("measures") or []
+            if (_parse(m.get("at")) or now) >= now - MEASURE_MAX_AGE
+            and int(m.get("requests") or 0) >= 1 and float(m.get("window_s") or 0) > 0]
+
+
 def _budget(host: str, record: Optional[Record], now: datetime) -> Optional[LearnedBudget]:
-    """The slowest of the record's fresh measures, or None when it has none."""
-    measures = [m for m in (record or {}).get("measures") or []
-                if (_parse(m.get("at")) or now) >= now - MEASURE_MAX_AGE
-                and int(m.get("requests") or 0) >= 1 and float(m.get("window_s") or 0) > 0]
+    """What the record's fresh measures give, or None when it has none: the fewest requests measured, over
+    the narrowest window of those measures when each one's latest refusal came before each one's recovery
+    (one window, bracketed ever closer); else the slowest measure (the host changed)."""
+    measures = _fresh(record, now)
     if not measures:
         return None
+    fewest = min(int(m["requests"]) for m in measures)
+    same = [m for m in measures if int(m["requests"]) == fewest]
+    narrowest = min(float(m["window_s"]) for m in same)
+    if max(float(m.get("refused_s") or 0) for m in same) < narrowest:
+        return LearnedBudget(host, fewest, narrowest, len(measures))
     slowest = min(measures, key=lambda m: int(m["requests"]) / float(m["window_s"]))
     return LearnedBudget(host, int(slowest["requests"]), float(slowest["window_s"]), len(measures))
 
@@ -120,7 +145,8 @@ class HostBudgets:
         self.store = store if store is not None else MemoryHostBudgetStore()
         self.clock = clock
         self._records: Dict[str, Record] = {}
-        # [stretch, requests through since it began]: the stretch this process saw begin
+        # [stretch, requests through since it began, their times (the last TIMES_KEPT)]: the stretch this
+        # process saw begin
         self._counts: Dict[str, List[Any]] = {}
         self._archives: Dict[str, int] = {}   # archives running on the host in this process
 
@@ -137,8 +163,9 @@ class HostBudgets:
         if record.get("limited_at") or host in self._counts:
             return
         stretch = uuid.uuid4().hex[:12]
-        self._counts[host] = [stretch, 0]
-        await self._save(host, {**record, "stretch": stretch, "recovered_at": _iso(self.clock()), "budget": None})
+        self._counts[host] = [stretch, 0, []]
+        await self._save(host, {**record, "stretch": stretch, "recovered_at": _iso(self.clock()), "budget": None,
+                                "window_started": None, "refused_at": None})
 
     def archive_stopped(self, host: str) -> None:
         self._archives[host] = max(0, self._archives.get(host, 0) - 1)
@@ -148,7 +175,9 @@ class HostBudgets:
     def counted(self, host: str) -> None:
         """A live request to the host went through: it spends the stretch being measured, if any."""
         if host in self._counts:
-            self._counts[host][1] += 1
+            count = self._counts[host]
+            count[1] += 1
+            count[2] = (count[2] + [self.clock()])[-TIMES_KEPT:]
 
     async def succeeded(self, host: str) -> Optional[LearnedBudget]:
         """An archive's request went through. After a limit this is the recovery: it measures the
@@ -159,15 +188,18 @@ class HostBudgets:
             return None
         now = self.clock()
         measures = list(record.get("measures") or [])
-        recovered_at, budget = _parse(record.get("recovered_at")), record.get("budget")
-        measured = recovered_at is not None and isinstance(budget, int) and budget >= 1
+        # From the start of the window the limit hit (the stretch's recovery unless one window was known).
+        started = _parse(record.get("window_started")) or _parse(record.get("recovered_at"))
+        refused, budget = _parse(record.get("refused_at")), record.get("budget")
+        measured = started is not None and isinstance(budget, int) and budget >= 1
         if measured:
-            measures.append({"requests": budget, "window_s": round((now - recovered_at).total_seconds(), 1),
+            measures.append({"requests": budget, "window_s": round((now - started).total_seconds(), 1),
+                             **({"refused_s": round((refused - started).total_seconds(), 1)} if refused else {}),
                              "at": _iso(now)})
         stretch = uuid.uuid4().hex[:12]
         record = {**record, "stretch": stretch, "recovered_at": _iso(now), "limited_at": None, "budget": None,
-                  "measures": measures[-MEASURES_KEPT:]}
-        self._counts[host] = [stretch, 1]
+                  "window_started": None, "refused_at": None, "measures": measures[-MEASURES_KEPT:]}
+        self._counts[host] = [stretch, 1, [now]]
         await self._save(host, record)
         return _budget(host, record, now) if measured else None
 
@@ -179,10 +211,37 @@ class HostBudgets:
         record = await asyncio.to_thread(self.store.load, host) or {}
         self._records[host] = record
         count = self._counts.pop(host, None)
+        now = self.clock()
         if record.get("limited_at"):
+            await self._save(host, {**record, "refused_at": _iso(now)})   # this limit's latest refusal
             return
-        budget = count[1] if count is not None and count[0] == record.get("stretch") else None
-        await self._save(host, {**record, "limited_at": _iso(self.clock()), "budget": budget})
+        ours = count is not None and count[0] == record.get("stretch")
+        budget, started = (count[1], record.get("recovered_at")) if ours else (None, None)
+        known = _budget(host, record, now)
+        if ours and known is not None and len(count[2]) >= known.requests:
+            # The window it hit began with the request its budget's count back (issue 0107's follow-up).
+            budget, started = known.requests, _iso(count[2][-known.requests])
+        await self._save(host, {**record, "limited_at": _iso(now), "budget": budget, "window_started": started,
+                                "refused_at": _iso(now)})
+
+    def refill_wait(self, host: str) -> Optional[float]:
+        """Seconds until the refill of the window a limit hit, once one window is measured (issue 0107's
+        follow-up): the window's start, plus PROBE_S past the latest refusal known (this limit's or a
+        measure's), at most the narrowest window measured; at least MIN_WAIT_S. None for an unmeasured host,
+        a window whose start this process didn't see, or a refusal already past the window measured (the
+        5, 10, 20, 40 min ladder then: the host allows less now)."""
+        record = self._records.get(host) or {}
+        now = self.clock()
+        known = _budget(host, record, now)
+        started, refused = _parse(record.get("window_started")), _parse(record.get("refused_at"))
+        if known is None or started is None or not record.get("limited_at"):
+            return None
+        latest = max([float(m.get("refused_s") or 0) for m in _fresh(record, now)]
+                     + [(refused - started).total_seconds() if refused else 0.0])
+        if latest >= known.window_s:
+            return None
+        aim = started + timedelta(seconds=min(known.window_s, latest + PROBE_S))
+        return max(float(MIN_WAIT_S), (aim - now).total_seconds())
 
     def learned(self, host: str) -> Optional[LearnedBudget]:
         """The budget an archive paces to: known once LEARN_AFTER limits are measured."""
