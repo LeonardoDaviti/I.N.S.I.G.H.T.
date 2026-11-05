@@ -31,6 +31,21 @@ Entities are [0090](issues/0090-mark-x-entities.md) (Shadow ships part A only: e
 - **Commit on your branch; merge and push only when the owner says.**
 - **Don't edit `plan/research/lab/cases.json`** before your branch merges. Don't stop processes you didn't start.
 
+## Corrections before building (2026-11-05, after v9.17's rule changes merged)
+Found when the plan was checked against v9.16–v9.17 (0076, 0080, 0103). Each binds every slice.
+1. **The prototype's baseline is v9.12's stories, not today's.** The prototype read the server's v9.12 stories (`corpus/stories_ix.json`) and posts read by that version's code. Since then 0072, 0076, 0080 and 0103 changed Mark IX's stories. So S5's "reproduces the prototype's decisions exactly" runs on the **recorded** v9.12 stories and recorded answers as a fixture, never on stories recomputed today; S2's candidate overlap is reported against the prototype's text and explained where post_parts (0076) reads a post differently.
+2. **Key Mark X by posts and content, never by a Mark IX story id.** A Mark IX story's id is its first post's id, and its row is deleted and rewritten when the story changes shape. So:
+   - no `mx_*` table has a foreign key to `stories` or `story_posts`;
+   - a task's `input` is built from content only (texts, readings, member post ids in a fixed order), never from a story id, so a re-rooted story with the same members has the same `input_hash` and is never asked twice;
+   - the decision job matches answers to today's Mark IX stories by their member posts.
+3. **Mark X's text is its own versioned function** (`markx text v1`: title plus the first 1,500 characters, read from post_parts). A post_parts change in Mark IX doesn't change Mark X's inputs unless the text version is bumped on purpose (a bump re-reads every post).
+4. **A Mark IX story-rule change reports what it re-asks.** From S3 on, the real-data check counts the open and answered Mark X tasks whose input would change under the head's stories (checks, cards, merges); the merge commit states the number.
+5. **0074 (a post in several stories) is not built in 9.x.** `mx_story_posts` is that edge model; Mark IX reads it at Part G. **0089** is settled by experiment W (bursts are candidates, part B), not a rule.
+6. **The embedder in tests and on this machine:** S2 is built and tested with a fake embedder; measurements use the llama.cpp already built on the development machine. How the server gets the embedder image and the model file is decided at deploy (both are downloaded by the server during `./update`, never by agents).
+7. **The export (0079) includes `mx_*` tables** automatically (it reads the catalog). Embeddings as text add an estimated 150–200 MB to the zip; S2 measures it.
+8. **The worker shares the owner's Claude usage with build agents.** First runs read the last 30 days only (about 500 batches); no backfill while build agents run.
+9. **One merge queue.** Mark X slices merge through the same queue as Mark IX work, one at a time, each with its real-data check report.
+
 ## Slices and order
 ```
 S1  A  storage ──┬──▶ S2  B  embeddings + candidates ──┐
@@ -103,3 +118,18 @@ In the branch's last commit and in a private handoff under `plan/research/markx-
 3. at least two weeks in Shadow per feature, after its labels pass;
 4. the HNSW index now;
 5. "Mark X v10.0 (Shadow)" at S5.
+
+## After Shadow: Mark X Stealth (the owner, 2026-11-05)
+"All this new features we are testing rn will be in next update which is Mark X Stealth update." Shadow's scope stays as 0086 says; nothing below enters S1–S6. Stealth gets its own build plan once each feature passes its bar on the owner's labels.
+
+| Feature | Issue | Where it stands (2026-11-05) |
+|---|---|---|
+| Perspectives inside a story + the story sheet | 0106 | testing (v3.1 run) |
+| How stories are built: an event type per story, leaks resolved ("came true"), the original by links and maker, published time, duplicates collapsed, related posts | 0106, 0086 E | rules decided by the owner; needs `read-v3` with event types |
+| Entity identity: name key, maker-prefix aliases, version hierarchy, merge queue | 0090 B–C | measured; rules decided |
+| Surges per exact version, subjects only | 0090 E | measured: 96% precise |
+| Back in the news | 0092 | measured: trigger changed, judge 73% |
+| Numbers over time | 0095 | measured: extraction 87%; needs a metric list and 0090 C |
+| Discover by attribution | 0101 | measured: which credits count |
+| Questions with citations | 0098 | retrieval measured; answers not yet |
+| Chains across months, since you last looked, noise per source | 0091, 0094, 0093 | need Shadow's data first |

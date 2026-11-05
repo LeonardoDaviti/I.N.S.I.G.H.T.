@@ -1,6 +1,6 @@
 # 0089 — A shared link's 72 hours count from the page's first-ever link
 
-Status: **measured, not adopted** (2026-11-04). It waits for the same-story labels (Mark X experiment W): about half of the joins a fix would add are wrong, and the wrong ones are a meaning-level problem.
+Status: **decided: goes to Mark X** (2026-11-05). Experiment W (0086, Measured) labelled the late bursts: 23 of 35 are one story or a follow-up, 12 are not, so a rule would add a wrong join for every two right ones. Bursts become candidates for the judge (0086 part B, `burst`). Was: measured, not adopted (2026-11-04). It waits for the same-story labels (Mark X experiment W): about half of the joins a fix would add are wrong, and the wrong ones are a meaning-level problem.
 
 ## The rule today
 - `story_rules.py`, the shared-link join: `near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]`.

@@ -1,6 +1,6 @@
 # 0086 — Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first
 
-Status: **spec, ready to build** (2026-11-04; owner: "commit all the issues", 2026-11-05). Not built. How agents build it: [the build plan](../INSIGHT_mark_x_shadow_build_plan.md). It's built as parts A–F, each merged on its own (the merge rule, 0075); G and H come later. It replaces the design draft of the same morning. The storage maths, the time windows and the late-post rules below are that draft's, measured the same day.
+Status: **spec, ready to build** (2026-11-04; owner: "commit all the issues", 2026-11-05). Not built. How agents build it: [the build plan](../INSIGHT_mark_x_shadow_build_plan.md); read its "Corrections before building" (2026-11-05) first: the prototype's baseline is v9.12's recorded stories, and Mark X is keyed by posts and content, never by a Mark IX story id. It's built as parts A–F, each merged on its own (the merge rule, 0075); G and H come later. It replaces the design draft of the same morning. The storage maths, the time windows and the late-post rules below are that draft's, measured the same day.
 
 **Constraints:**
 - No real channel names in this file or in fixtures.

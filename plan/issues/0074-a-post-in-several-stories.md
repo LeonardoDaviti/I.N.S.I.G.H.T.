@@ -1,6 +1,6 @@
 # 0074 — A post in several stories: membership is an edge, not glue
 
-Status: **spec (draft, 2026-11-01)**, for v9.14 together with the incremental story job (0071 points there). Owner, 2026-11-01: "if it touches multiple stories, it should touch them. that's the whole complexity of the news, they are nonlinear and multiconnectable." It is the step from tree (0064) to graph (0004, Mark X). Real-data examples stay in `plan/research/` (private); this file uses neutral names.
+Status: **moved to Mark X Part G** (2026-11-05): Shadow's `mx_story_posts` is this edge model, and Mark IX reads it when a feature switches on (0086 G; the build plan's corrections, 5). Not built in 9.x. Was: spec (draft, 2026-11-01), for v9.14 together with the incremental story job (0071 points there). Owner, 2026-11-01: "if it touches multiple stories, it should touch them. that's the whole complexity of the news, they are nonlinear and multiconnectable." It is the step from tree (0064) to graph (0004, Mark X). Real-data examples stay in `plan/research/` (private); this file uses neutral names.
 
 ## Why a post sits in one story today
 - **The story job groups with a union-find** (`story_rules._UnionFind`). Every join merges two groups. A post that joins two stories therefore *fuses* them into one.

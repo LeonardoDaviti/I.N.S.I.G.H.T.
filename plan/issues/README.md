@@ -85,7 +85,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | built, not deployed (v9.13) |
 | [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); A (memory), B, C, D1–D4 built, not deployed; A (incremental job, stored connections, date-only starts) to do |
 | [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built, not deployed |
-| [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft); after the incremental job |
+| [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | moved to Mark X Part G |
 | [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | built (v9.15), not merged |
 | [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | built, pushed (v9.16) |
 | [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | F + K built, pushed (v9.16) |
@@ -98,7 +98,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | A built, pushed (v9.16); B spec |
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
 | [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, pushed (v9.16) |
-| [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | measured |
+| [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | decided: goes to Mark X (burst candidates) |
 | [0086](0086-mark-x-phase-1-haiku-in-insight.md) | Mark X Shadow: Haiku reads and judges every post beside Mark IX, from your device first; storage, tasks, the worker, decisions, the Mark X page, labels | spec, ready to build ([build plan](../INSIGHT_mark_x_shadow_build_plan.md)) |
 | [0087](0087-gemma-fine-tuned-on-haiku.md) | A local Mark X: Gemma 4 E4B fine-tuned on Haiku's answers | future |
 | [0090](0090-mark-x-entities.md) | Mark X entities: one name per thing, its versions and role, and what connects through it | spec, draft (measured) |
@@ -114,9 +114,9 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0100](0100-study-pages.md) | Study pages: one question or topic, everything needed to understand it on one page | future |
 | [0101](0101-discover-with-mark-x.md) | Discover with Mark X: coverage gaps by entity, sources found by attribution, and tracks | future |
 | [0102](0102-archives-for-history.md) | Archives for history: back to a date, and a feed's past through its site | spec, draft (9.x) |
-| [0103](0103-v9.17-threads-and-news-leads.md) | v9.17: a thread follows the tweet it quotes; a News row with no origin leads with the release and names followed sources first | spec (v9.17) |
-| [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | spec (v9.17) |
-| [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | spec (v9.17) |
+| [0103](0103-v9.17-threads-and-news-leads.md) | v9.17: a thread follows the tweet it quotes; a News row with no origin leads with the release and names followed sources first | built, merged (v9.17) |
+| [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | built, merged (v9.17) |
+| [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | built, merged (v9.17) |
 
 ## Analysis archive
 
