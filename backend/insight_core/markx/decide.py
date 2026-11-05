@@ -67,7 +67,8 @@ class Config:
     connect_lo: float = 0.60        # connect questions: story pairs at this centroid cosine ...
     connect_days: int = 30          # ... at most this far apart ...
     connect_voices: int = 2         # ... both stories of this many voices or more ...
-    connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first
+    connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first ...
+    connect_open: int = 100         # ... and none while this many connect tasks wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
@@ -812,7 +813,8 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     """Typed connections (F6): the merges' developments, the late posts', and the connect questions' between News
     stories of `connect_voices`+ voices at most `connect_days` apart whose centroids are at `connect_lo` or more and
     that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
-    the run's cap on new connect tasks (`connect_new`, the Ask's) keeps the newest; the rest wait for later runs."""
+    the run's cap on new connect tasks (the Ask's: `connect_new`, less what `connect_open` leaves room for) keeps the
+    newest; the rest wait for later runs."""
     from insight_core.markx import tasks
     rows: List[Dict[str, Any]] = []
 
@@ -882,7 +884,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     run_id = repo.start_run(cur, code_version=CODE_VERSION,
                             config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
     world = load(cur, now, config)
-    ask = Ask(cur, now, caps={"connect": config.connect_new})
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
+    waiting = cur.fetchone()[0]
+    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
     out, counts = think(cur, world, config, ask, now)
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]

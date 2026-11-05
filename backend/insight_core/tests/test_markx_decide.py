@@ -355,6 +355,24 @@ class Job(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect'")
         self.assertEqual(self.cur.fetchone()[0], 2)
 
+    def test_no_new_connect_question_while_the_backlog_is_full(self):
+        for n in range(3):                                   # three alike 2-voice stories: three pairs
+            a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
+            self.vector(a, 1 + 2 * n)
+            self.vector(b, 2 + 2 * n)
+            self.ix_story(a, b)
+        config = D.Config(connect_new=5, connect_open=2)
+        first = D.run(self.cur, config=config, now=self.now)
+        self.assertEqual((first["tasks_added"].get("connect"), first["tasks_waiting"].get("connect")), (2, 1))
+        self.assertNotIn("connect", D.run(self.cur, config=config, now=self.now)["tasks_added"])   # 2 open: full
+        self.assertEqual(len(repo.lease_tasks(self.cur, kinds=["connect"], limit=10, worker="w")), 2)   # leased still waits
+        self.assertNotIn("connect", D.run(self.cur, config=config, now=self.now)["tasks_added"])
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'connect' LIMIT 1")
+        repo.answer_task(self.cur, self.cur.fetchone()[0])                                   # one answered: room for one
+        self.assertEqual(D.run(self.cur, config=config, now=self.now)["tasks_added"].get("connect"), 1)
+        self.cur.execute("SELECT config->>'connect_open' FROM mx_runs LIMIT 1")
+        self.assertEqual(self.cur.fetchone()[0], "2")
+
     def test_the_lock_skips_a_second_run(self):
         other = psycopg.connect(db_url())
         self.addCleanup(other.close)
