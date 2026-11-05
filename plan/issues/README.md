@@ -117,6 +117,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0103](0103-v9.17-threads-and-news-leads.md) | v9.17: a thread follows the tweet it quotes; a News row with no origin leads with the release and names followed sources first | built, merged (v9.17) |
 | [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | built, merged (v9.17) |
 | [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | built, merged (v9.17) |
+| [0106](0106-v9.17-titles-of-pages-you-dont-follow.md) | v9.17: titles of pages you don't follow (Discover, Classics); a paper is one page | built, merged (v9.17) |
 
 ## Analysis archive
 
