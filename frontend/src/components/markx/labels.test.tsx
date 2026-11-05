@@ -31,8 +31,9 @@ describe('the labels tab (issue 0086 F)', () => {
     const getMarkxLabelItem = vi.fn((id: string) => Promise.resolve(id === 't1' ? ITEM
       : { ...ITEM, id: 't2', feature: 'merge', name: 'Merges', question: 'Are STORY A and STORY B the same event?', position: 2,
         evidence: 'STORY A\nHeadline: one\n\nSTORY B\nHeadline: two' }));
-    renderWithProviders(<MarkXLabels />, { api: makeFakeApi({
-      getMarkxLabels: vi.fn().mockResolvedValue(QUEUE), getMarkxLabelItem, labelMarkxItem }) });
+    const getMarkxLabels = vi.fn().mockResolvedValueOnce(QUEUE)          // after the answer: t1 is no longer next
+      .mockResolvedValue({ ...QUEUE, done: 1, next: ['t2'], answered: ['t1'] });
+    renderWithProviders(<MarkXLabels />, { api: makeFakeApi({ getMarkxLabels, getMarkxLabelItem, labelMarkxItem }) });
     expect(await screen.findByText(/Headline: Acme released Widget 4/)).toBeInTheDocument();
     expect(screen.getByText(/0 of 2 items answered · dev before 2100-03-04/)).toBeInTheDocument();
     expect(screen.queryByText(/The same release/)).not.toBeInTheDocument();          // blind before the answer
@@ -42,6 +43,8 @@ describe('the labels tab (issue 0086 F)', () => {
     expect(labelMarkxItem).toHaveBeenCalledWith('t1', 'related', 'only background');
     expect(await screen.findByText(/Haiku: same event 0.62/)).toBeInTheDocument();
     expect(screen.getByText(/Bar 0.60: joined/)).toBeInTheDocument();
+    await waitFor(() => expect(getMarkxLabels).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Headline: Acme released Widget 4/)).toBeInTheDocument();   // still on the answered item
     expect(within(answers).getByRole('button', { name: 'related' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(screen.getByRole('button', { name: 'next' }));
     expect(await screen.findByText('Are STORY A and STORY B the same event?')).toBeInTheDocument();

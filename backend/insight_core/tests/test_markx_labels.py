@@ -95,10 +95,12 @@ class Queue(unittest.TestCase):
         items = [item(n, p=0.6 + n * 0.035, day=n % 4) for n in range(10)]           # p 0.60 .. 0.915
         q = L.build(items, L.Settings(sample=99, near=0.0))
         answers = {i.id: ("same_event" if i.p >= 0.7 else "different", q.split_of(i)) for i in items}
-        f, = L.score(q, answers, L.Settings(sample=99, near=0.0, target=0.95))
+        f, = L.score(q, answers, L.Settings(sample=99, near=0.0, target=0.95, min_dev=5))
         self.assertEqual(f["repick"]["bar"], 0.7)
         self.assertEqual(f["repick"]["dev"]["precision"], 1.0)
         self.assertEqual(f["splits"]["all"]["acted"]["precision"], 0.7)               # at today's 0.6 bar
+        f, = L.score(q, answers, L.Settings(sample=99, near=0.0, target=0.95))
+        self.assertIsNone(f["repick"])                                                # 5 dev labels: too few to re-pick
 
 
 @requires_test_db

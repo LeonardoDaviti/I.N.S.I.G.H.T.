@@ -35,8 +35,8 @@ function Verdict({ verdict, item }: { verdict: MarkxVerdict; item: MarkxLabelIte
   );
 }
 
-function Item({ id, onNext, onSkip, nextLabel }: { id: string; onNext: (next: string | null) => void; onSkip: () => void;
-  nextLabel: string }) {
+function Item({ id, onNext, onSkip, onAnswered, nextLabel }: { id: string; onNext: (next: string | null) => void;
+  onSkip: () => void; onAnswered: () => void; nextLabel: string }) {
   const api = useApi();
   const client = useQueryClient();
   const query = useQuery({ queryKey: ['markx-label-item', id], queryFn: () => api.getMarkxLabelItem(id) });
@@ -54,6 +54,7 @@ function Item({ id, onNext, onSkip, nextLabel }: { id: string; onNext: (next: st
         label: { answer: got.label.answer, note: got.label.note, split: got.label.split, created_at: new Date().toISOString() },
       });
       setNext(got.next);
+      onAnswered();   // stay on this item (its verdict) while the queue refetches
       void client.invalidateQueries({ queryKey: [...QUEUE_KEY] });
       void client.invalidateQueries({ queryKey: ['markx-precision'] });
     },
@@ -93,11 +94,11 @@ function Item({ id, onNext, onSkip, nextLabel }: { id: string; onNext: (next: st
       ) : null}
       <pre
         aria-label="The evidence, as the judge saw it"
-        className="mt-3 max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface p-3 font-mono text-[0.78125rem] leading-[1.55] text-fg [overflow-wrap:anywhere] sm:max-h-[32rem]"
+        className="mt-3 whitespace-pre-wrap rounded-md border border-line bg-surface p-3 font-mono text-[0.78125rem] leading-[1.55] text-fg [overflow-wrap:anywhere] sm:max-h-[32rem] sm:overflow-auto"
       >
         {item.evidence}
       </pre>
-      <div className="sticky bottom-0 z-10 -mx-1 mt-3 bg-bg px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+      <div className="sticky bottom-0 z-10 -mx-1 mt-3 border-t border-line bg-bg px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:static sm:border-t-0 sm:pb-0">
         <div role="group" aria-label="Your answer" className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
           {item.answers.map((a, n) => (
             <Button
@@ -114,6 +115,21 @@ function Item({ id, onNext, onSkip, nextLabel }: { id: string; onNext: (next: st
             </Button>
           ))}
         </div>
+        {item.verdict ? (
+          <div className="mt-2 max-h-[30vh] overflow-auto border-t border-line pt-2 sm:max-h-none">
+            <p className="mb-1 text-[0.75rem] text-fg-3">
+              You: {ANSWER_WORDS[chosen ?? ''] ?? chosen}{item.label?.note ? ` — “${item.label.note}”` : ''}. Answer again to change it (kept as a new label).
+            </p>
+            <Verdict verdict={item.verdict} item={item} />
+          </div>
+        ) : null}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {item.verdict ? (
+            <Button variant="primary" onClick={() => onNext(next ?? null)}>{nextLabel}</Button>
+          ) : (
+            <Button variant="ghost" onClick={onSkip}>skip for now</Button>
+          )}
+        </div>
       </div>
       <label className="mt-2 block">
         <span className="sr-only">Note</span>
@@ -121,21 +137,6 @@ function Item({ id, onNext, onSkip, nextLabel }: { id: string; onNext: (next: st
           className="min-h-[2.75rem]" rows={1} />
       </label>
       {answer.isError ? <p role="alert" className="mt-2 text-[0.8125rem] text-fg">{errorMessage(answer.error)}</p> : null}
-      {item.verdict ? (
-        <div className="mt-3 border-t border-line pt-3">
-          <p className="mb-1 text-[0.75rem] text-fg-3">
-            You: {ANSWER_WORDS[chosen ?? ''] ?? chosen}{item.label?.note ? ` — “${item.label.note}”` : ''}. Answer again to change it (kept as a new label).
-          </p>
-          <Verdict verdict={item.verdict} item={item} />
-        </div>
-      ) : null}
-      <div className="mt-4 flex flex-wrap gap-2">
-        {item.verdict ? (
-          <Button variant="primary" onClick={() => onNext(next ?? null)}>{nextLabel}</Button>
-        ) : (
-          <Button variant="ghost" onClick={onSkip}>skip for now</Button>
-        )}
-      </div>
     </article>
   );
 }
@@ -182,6 +183,7 @@ function Queue() {
           key={shown}
           id={shown}
           nextLabel={pending.filter((i) => i !== shown).length ? 'next' : 'done'}
+          onAnswered={() => setCurrent(shown)}
           onNext={(next) => {
             setCurrent(next && next !== shown ? next : pending.find((i) => i !== shown) ?? null);
           }}
@@ -224,7 +226,7 @@ function FeatureCard({ f, target }: { f: MarkxFeaturePrecision; target: number }
           <thead className="text-[0.75rem] text-fg-3">
             <tr>
               <th scope="col" className="w-12 font-medium" />
-              <th scope="col" className="font-medium">{f.acted}: right</th>
+              <th scope="col" className="font-medium">{f.feature === 'entities' ? 'named right' : `${f.acted}: right`}</th>
               {f.feature !== 'entities' ? <th scope="col" className="font-medium">the rest: right</th> : null}
             </tr>
           </thead>
@@ -246,7 +248,7 @@ function FeatureCard({ f, target }: { f: MarkxFeaturePrecision; target: number }
           {f.repick.test.labelled ? ` on ${f.repick.test.labelled}` : ''}.
         </p>
       ) : f.sweep.length && f.labelled ? (
-        <p className="mt-2 text-[0.8125rem] leading-5 text-fg-3">No bar reaches {percent(target)} on dev yet.</p>
+        <p className="mt-2 text-[0.8125rem] leading-5 text-fg-3">No bar reaches {percent(target)} on dev yet (on 10 or more labels).</p>
       ) : null}
       {flags.length ? (
         <p className="mt-1 text-[0.8125rem] leading-5 text-fg-2">

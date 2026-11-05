@@ -43,6 +43,7 @@ class Settings:
     sample: int = 6             # of each pool's rest, this many (E1: about two hours; measured, 0086 F Built)
     test_share: float = 0.25    # the newest quarter of the queue's days are test (the prototype held out 4 of 16)
     target: float = 0.95        # the precision a bar is re-picked for on dev (the owner's to set)
+    min_dev: int = 10           # a re-picked bar needs at least this many labelled decisions on dev
     seed: str = "markx-e1"      # the sample's order: a stable hash of the seed and the task
     bars: Tuple[float, ...] = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95)
 
@@ -528,7 +529,8 @@ def score(q: Queue, answers: Dict[str, Tuple[str, str]], settings: Settings = Se
         if f != "entities":
             for b in settings.bars:
                 sweep.append({"bar": b, "dev": _stat(rows(f, "dev"), True, b), "test": _stat(rows(f, "test"), True, b)})
-            ok = [s for s in sweep if s["dev"]["precision"] is not None and s["dev"]["precision"] >= settings.target]
+            ok = [s for s in sweep if s["dev"]["precision"] is not None and s["dev"]["precision"] >= settings.target
+                  and s["dev"]["labelled"] >= settings.min_dev]
             if ok:
                 pick = (max if f == "check" else min)(ok, key=lambda s: s["bar"])
                 repick = {"bar": pick["bar"], "dev": pick["dev"], "test": pick["test"]}
