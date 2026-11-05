@@ -18,6 +18,10 @@ One search, cheapest first, stopping at the first stage that finds something:
      links (header and navigation, then footer) are reported instead, unread: the preview
      chooses among them by their articles (issue 0047).
   4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
+A feed found whose entries carry no body may be a blog that moved (issue 0108): its first entry's
+page is read, and when it redirects (by HTTP, a meta refresh or a canonical link) to another site,
+the finder runs on that page too. Its feeds come first; the old feed follows, saying where its
+posts now live (Feed.moved_to).
 A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
 be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
 run at once, each within REQUEST_TIMEOUT_S, the whole search within BUDGET_S: a slow or
@@ -38,8 +42,8 @@ from typing import Iterable, List, Literal, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.parsing import local_name, origin_from_source, path_segments, web_address
-from insight_core.utils.addresses import BLOG_HOSTS, blog_site, host_of, publication_of
+from insight_core.ingestion.kinds.parsing import local_name, moved_to, origin_from_source, path_segments, web_address
+from insight_core.utils.addresses import BLOG_HOSTS, blog_site, host_of, publication_of, same_site
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
 
@@ -67,6 +71,8 @@ FEED_ROOTS = {"rss", "feed", "rdf"}
 FEED_SEGMENTS = {"rss", "atom", "feed"}
 FEED_ENDINGS = (".rss", ".atom", "feed.xml", "rss.xml", "atom.xml", "index.xml")
 FEED_LINK_TEXTS = {"rss", "atom", "feed", "rss feed", "atom feed"}
+# An item's body: RSS's description and content:encoded, Atom's summary and content (issue 0108).
+BODY_ELEMENTS = frozenset({"description", "encoded", "summary", "content"})
 
 Status = Literal["feed", "found", "direct", "none"]
 
@@ -79,6 +85,10 @@ class Feed:
     items: Tuple[str, ...] = field(default=(), compare=False)
     # Their titles, in feed order (issue 0072: the source doctor's evidence and preview).
     titles: Tuple[str, ...] = field(default=(), compare=False)
+    # Every entry read carries no body (issue 0108: its posts may have moved).
+    bodiless: bool = field(default=False, compare=False)
+    # The site its posts now live at ("blog.example"), when its first entry's page moved there (0108).
+    moved_to: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -153,6 +163,35 @@ class _Search:
         self.home_menu: Tuple[str, ...] = ()
 
     async def run(self, url: str) -> FeedFinding:
+        return await self._past_moved(await self._run(url))
+
+    async def _past_moved(self, finding: FeedFinding) -> FeedFinding:
+        """The finding, and when the first of its feeds whose entries carry no body has posts on
+        another site now (issue 0108), the feeds found from that post's page first, the old feed
+        then saying where its posts live. Its status is "found" then: a choice."""
+        old = next((feed for feed in finding.feeds if feed.bodiless and feed.items), None)
+        if old is None:
+            return finding
+        got = await self._get(old.items[0], FEED_BYTES)
+        if got is None:
+            return finding
+        body, landed = got
+        target = landed if not same_site(host_of(landed), host_of(old.items[0])) else \
+            moved_to(body.decode("utf-8", errors="replace"), landed)
+        if not target or same_site(host_of(target), host_of(old.items[0])):
+            return finding
+        there = _Search(self.http)
+        moved = await there._run(target)
+        self.requests += there.requests
+        new = [feed for feed in moved.feeds if feed.url not in {f.url for f in finding.feeds}]
+        if not new:
+            return finding
+        host = publication_of(host_of(target))
+        feeds = tuple(new) + tuple(replace(feed, moved_to=host) if feed is old else feed for feed in finding.feeds)
+        logger.info("Feed finder: the posts of %s now live at %s", old.url, host)
+        return replace(finding, status="found", feeds=feeds)
+
+    async def _run(self, url: str) -> FeedFinding:
         if urllib.parse.urlparse(url).scheme not in ("http", "https"):
             return FeedFinding("none")
         rule = _platform_feed(url)
@@ -318,26 +357,32 @@ def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
     return _feed_entries(start, feed_url)[0]
 
 
-def _feed_entries(start: bytes, feed_url: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
-    """(the item addresses, the item titles) in start, as far as it reads, in feed order. An
-    address is absolute, once each: an RSS item's <link> (else a permalink <guid>), an Atom
-    entry's alternate <link href>. A title is the item's <title> text, its spaces single."""
+def _feed_entries(start: bytes, feed_url: str) -> Tuple[Tuple[str, ...], Tuple[str, ...], bool]:
+    """(the item addresses, the item titles, whether no item read carries a body) in start, as far
+    as it reads, in feed order. An address is absolute, once each: an RSS item's <link> (else a
+    permalink <guid>), an Atom entry's alternate <link href>. A title is the item's <title> text, its
+    spaces single. A body is a description, summary or content with any text (issue 0108)."""
     parser = ET.XMLPullParser(events=("start", "end"))
     found: List[str] = []
     titles: List[str] = []
     depth = 0           # inside an item or entry
     link: Optional[str] = None
     titled = False      # an item's first title only (not a media:title after it)
+    entries = bodies = 0
+    body = False        # the item read so far has a body
     try:
         for offset in range(0, len(start), PARSE_CHUNK):
             parser.feed(start[offset:offset + PARSE_CHUNK])
             for event, element in parser.read_events():
                 name = local_name(element.tag).lower()
+                if depth and event == "end" and name in BODY_ELEMENTS and "".join(element.itertext()).strip():
+                    body = True
                 if name in ("item", "entry"):
                     if event == "start":
-                        depth, link, titled = depth + 1, None, False
+                        depth, link, titled, body = depth + 1, None, False, False
                     else:
                         depth -= 1
+                        entries, bodies = entries + 1, bodies + body
                         if link and (url := _absolute(feed_url, link)):
                             found.append(url)
                 elif depth and event == "end" and name == "title" and not titled:
@@ -355,7 +400,7 @@ def _feed_entries(start: bytes, feed_url: str) -> Tuple[Tuple[str, ...], Tuple[s
                         link = text if text.startswith(("http://", "https://")) else None
     except ET.ParseError:
         pass
-    return tuple(dict.fromkeys(found)), tuple(titles)
+    return tuple(dict.fromkeys(found)), tuple(titles), entries > 0 and bodies == 0
 
 
 def _feed_links(body: bytes, page_url: str) -> List[str]:

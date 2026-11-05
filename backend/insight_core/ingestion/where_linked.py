@@ -196,6 +196,12 @@ def page_place(offer: Dict[str, Any]) -> Optional[Place]:
     return (parts[0], page_watch.normalise_prefix(offer.get("prefix"))) if parts else None
 
 
+def feed_row(feed: feed_finder.Feed, **more: Any) -> Dict[str, Any]:
+    """A feed as the answer lists it: {url, title}, and `moved_to` when its posts now live on another
+    site (issue 0108: the site, "blog.example")."""
+    return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}), **more}
+
+
 def rank(articles: Sequence[str], feeds: Sequence[feed_finder.Feed], pages: Sequence[Dict[str, Any]],
          move: Optional[Move] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """The feeds ({url, title, holds}) and the pages ({..., holds}), each the most held first,
@@ -203,8 +209,7 @@ def rank(articles: Sequence[str], feeds: Sequence[feed_finder.Feed], pages: Sequ
     feed_rows = []
     for order, feed in enumerate(feeds):
         place = feed_place(feed.items)
-        feed_rows.append(({"url": feed.url, "title": feed.title,
-                           "holds": holds(articles, place=place, items=feed.items, move=move)},
+        feed_rows.append((feed_row(feed, holds=holds(articles, place=place, items=feed.items, move=move)),
                           _depth(place[1]) if place else 0, order))
     page_rows = []
     for order, offer in enumerate(pages):
@@ -277,7 +282,7 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         # The section's feeds beside the home page's own: the narrower is not always the one
         # holding the most (a newspaper's tech feed and its feed of everything).
         found += _others(found, await feed_finder.page_feeds(http, address))
-    feeds = [{"url": feed.url, "title": feed.title} for feed in found]
+    feeds = [feed_row(feed) for feed in found]
     if articles:
         move = await where_moved(http, articles, found, pages)
         feeds, pages = rank(articles, found, pages, move)

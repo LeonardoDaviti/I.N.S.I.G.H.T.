@@ -763,6 +763,8 @@ export interface FoundFeed {
   title: string;
   /** How many of the site's articles your sources linked it holds (issue 0060); only when they linked some. */
   holds?: number;
+  /** The site its posts now live at (issue 0108: its posts' pages redirect there); that site's feed is offered first. */
+  moved_to?: string;
 }
 
 /** Discover's follow test (issue 0080): what following it would give, read once in 30 days. */
