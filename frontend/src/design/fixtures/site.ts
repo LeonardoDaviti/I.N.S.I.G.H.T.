@@ -226,6 +226,16 @@ function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusRes
   };
 }
 
+/** Linked, not stored (issue 0084 B): a few of the source's own pages its posts link. */
+function linkedPages({ params }: FixtureRequest, site: Site) {
+  const entry = archiveCatalog(site).find((candidate) => candidate.source_id === params.sourceId);
+  const count = entry?.platform === 'rss' ? 17 : 0;
+  return {
+    success: true,
+    linked: { count, readable: true, estimated_seconds: count * 3, archive_holds: false, archive_ran: false, pages: [] },
+  };
+}
+
 /** The tail of a backend log: a few fetches around the last run. */
 function logTail({ query }: FixtureRequest, site: Site) {
   const log = query.get('log') ?? 'application';
@@ -281,6 +291,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     // The archive: the ingestion tab's catalog, and each source's status (the sheet and the tab).
     { path: '/api/archive/catalog', respond: () => ({ success: true, sources: archiveCatalog(site), total: archiveCatalog(site).length }) },
     { path: '/api/archive/:sourceId/status', respond: (request) => archiveStatus(request, site) },
+    { path: '/api/archive/:sourceId/linked', respond: (request) => linkedPages(request, site) },
     { path: '/api/ingestion/logs', respond: (request) => logTail(request, site) },
   ];
 }

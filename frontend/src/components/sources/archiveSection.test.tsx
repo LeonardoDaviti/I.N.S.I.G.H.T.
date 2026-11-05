@@ -234,6 +234,69 @@ describe('ArchiveSection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 429 from youtube');
   });
 
+  const linked = (over = {}) => ({ count: 17, readable: true, estimated_seconds: 40, archive_holds: false,
+    archive_ran: false, pages: [], ...over });
+
+  it('pages your posts link and no post is: counted, and fetched as a job it follows (issue 0084 B)', async () => {
+    const fetchLinkedPages = vi.fn().mockResolvedValue({ job_id: 'job-7' });
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status()),
+      getLinkedPages: vi.fn().mockResolvedValue(linked()),
+      fetchLinkedPages,
+      getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ id: 'job-7', progress: 30,
+        payload: { linked: true, events: [{ at: '2026-10-11T10:00:00Z', level: 'info', message: 'Read linked page 5 of 17' }] } }) }),
+    });
+    expect(await screen.findByText('Linked by your posts, not stored: 17')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch them' }));
+    expect(fetchLinkedPages).toHaveBeenCalledWith('s1');
+    expect(await screen.findByText('Read linked page 5 of 17')).toBeInTheDocument();
+  });
+
+  it('a source whose archive holds them offers the archive first, and these alone as well', async () => {
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status()),
+      getLinkedPages: vi.fn().mockResolvedValue(linked({ archive_holds: true })),
+    });
+    expect(await screen.findByText(/^Run the archive: it holds them\. Or fetch only these/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fetch them' })).toBeInTheDocument();
+  });
+
+  it('pages no reader can read one by one are only counted', async () => {
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status()),
+      getLinkedPages: vi.fn().mockResolvedValue(linked({ readable: false, count: 250 })),
+    });
+    expect(await screen.findByText('Linked by your posts, not stored: 250')).toBeInTheDocument();
+    expect(screen.getByText('Its pages can’t be fetched one by one')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Fetch them' })).not.toBeInTheDocument();
+  });
+
+  it('a source with nothing older to archive still fetches its linked pages', async () => {
+    const fetchLinkedPages = vi.fn().mockResolvedValue({ job_id: 'job-8' });
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status({ support: support({ archivable: false,
+        reason: 'This feed only lists its latest 20 posts, and every fetch already reads up to 20.' }) })),
+      getLinkedPages: vi.fn().mockResolvedValue(linked({ count: 3 })),
+      fetchLinkedPages,
+      getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ id: 'job-8', status: 'success',
+        message: 'Fetched 2 of 3 linked pages; 1 not stored (listed)', payload: { linked: true, posts_fetched: 2 } }) }),
+    });
+    expect(await screen.findByText(/No archive: This feed only lists/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fetch them' }));
+    expect(await screen.findByText(/Fetched 2 of 3 linked pages; 1 not stored \(listed\)/)).toBeInTheDocument();
+  });
+
+  it('the last linked fetch is told by its own words, not as an archive run', async () => {
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status({
+        latest_job: { id: 'job-5', status: 'success', message: 'Fetched 15 of 17 linked pages; 2 not stored (listed)',
+          finished_at: '2026-10-11T10:05:00Z', result: { linked: true, posts_fetched: 15, posts_inserted: 15, pages_fetched: 17 } },
+      })),
+      getLinkedPages: vi.fn().mockResolvedValue(linked({ count: 2 })),
+    });
+    expect(await screen.findByText(/Fetched 15 of 17 linked pages; 2 not stored \(listed\)/)).toBeInTheDocument();
+  });
+
   it('a status it cannot read is a quiet error, not a broken sheet', async () => {
     setup({ getSourceArchive: vi.fn().mockRejectedValue(new Error('HTTP 500')) });
     expect(await screen.findByText(/Archive status unavailable: HTTP 500/)).toBeInTheDocument();

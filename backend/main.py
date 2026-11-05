@@ -464,6 +464,7 @@ async def _run_archive(
     resume: bool = True,
     rate_limit_overrides: Dict[str, Any] | None = None,
     job_id: str | None = None,
+    linked: bool = False,
 ) -> Dict[str, Any]:
     """Archive posts for a single source into the shared posts table (services/archive_jobs.py).
 
@@ -473,7 +474,7 @@ async def _run_archive(
     limits it leaves the job waiting, and the scheduler continues it (issue 0107).
     """
     return await _archive_jobs().run(source_id, resume=resume, rate_limit_overrides=rate_limit_overrides,
-                                     job_id=job_id)
+                                     job_id=job_id, linked=linked)
 
 
 # Sources with an archive running in this process. One uvicorn worker runs every background
@@ -522,7 +523,8 @@ def _accept_archive_run(
         reason = "An archive of this source is already running"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     resume = bool(request.resume)
-    if resume and (latest or {}).get("status") == "waiting":
+    linked_waiting = bool(((latest or {}).get("result") or {}).get("linked"))
+    if resume and (latest or {}).get("status") == "waiting" and not linked_waiting:
         # Resume by hand while it waits out a host's limit: the same job continues now.
         _archiving_sources.add(source_id)
         background_tasks.add_task(_continue_archive_once, source_id, latest["id"])
@@ -1116,6 +1118,52 @@ async def get_archive_status(source_id: str):
         "support": support,
         "latest_job": latest_job,
     }
+
+@app.get("/api/archive/{source_id}/linked")
+@error_detail("count the linked pages")
+async def get_linked_pages(source_id: str):
+    """Linked, not stored (issue 0084 B): the source's own pages that stored posts link and no post is,
+    whether they can be fetched one by one, how long that takes, and whether the archive holds them."""
+    try:
+        summary = await asyncio.to_thread(services().source_fetch.linked_summary, source_id)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
+    return {"success": True, "source_id": source_id, "linked": summary}
+
+
+@app.post("/api/archive/{source_id}/linked")
+@error_detail("fetch the linked pages")
+async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
+    """Fetch them (issue 0084 B): an archive_source job that reads each linked, not stored page of the
+    source once with its own reader (202). One archive job per source at a time; a waiting one is
+    continued (it is the same list), anything else running is 409."""
+    try:
+        summary = await asyncio.to_thread(services().source_fetch.linked_summary, source_id)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
+    if not summary["readable"]:
+        return _unavailable("This source's pages can't be read one page at a time")
+    latest = services().operations.latest_job_for_source("archive_source", source_id)
+    if source_id in _archiving_sources or (latest or {}).get("status") == "running":
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    if (latest or {}).get("status") == "waiting" and ((latest or {}).get("result") or {}).get("linked"):
+        _archiving_sources.add(source_id)
+        background_tasks.add_task(_continue_archive_once, source_id, latest["id"])
+        return JSONResponse(status_code=202, content=_accepted_job_response(latest["id"], "archive_source",
+                                                                            message="Fetching linked pages continues"))
+    if (latest or {}).get("status") == "waiting":
+        reason = "This source's archive is waiting for its host; it continues by itself"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    job_id = services().operations.try_start_job("archive_source", trigger="manual", source_id=source_id,
+                                                  message="Fetch linked pages", payload={"linked": True})
+    if not job_id:
+        return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    _archiving_sources.add(source_id)
+    background_tasks.add_task(_run_archive_once, source_id, job_id=job_id, linked=True)
+    return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source",
+                                                                        message="Fetching linked pages"))
+
 
 @app.get("/api/archive/catalog")
 @error_detail("load the archive catalog")

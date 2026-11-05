@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from insight_core.db import database as db
 
-from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
+from insight_core.db.repo_linked import LinkedPage, linked_not_stored
+from insight_core.db.repo_posts import BACKLOG_KEY, PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import (
     ArchiveMetadataWriter,
     archive_estimate,
@@ -67,11 +69,15 @@ MAX_WAITS = 6
 LIVE_CHECK_S = 60
 LIVE_YIELD_STEP_S = 30
 LIVE_YIELD_MAX_S = 15 * 60
+# The checkpoint of a linked fetch (issue 0084 B): the list it reads, where it is, what was not stored.
+LINKED_MODE = "linked"
+LINKED_SHOWN = 5   # the pages the Archive section names
+CANNOT_READ = "This source's pages can't be read one page at a time"
 # A leg's own result keys: what is left of a waiting leg's result is the plan the next leg reuses.
 _LEG_KEYS = frozenset({
     "success", "posts_fetched", "pages_fetched", "posts_inserted", "posts_updated", "stored_posts",
     "archive_status", "message", "paused", "paused_reason", "waiting", "waiting_until", "waiting_host",
-    "waiting_reason", "waits", "events", "progress",
+    "waiting_reason", "waits", "events", "progress", "missing",
 })
 
 
@@ -353,6 +359,10 @@ class SourceFetchService:
         measurement reused). It ends completed, paused, or waiting for a host's limit (issue
         0107: the scheduler continues it, carrying the counts)."""
         rate = kind.profile.rate_limit(plan.get("rate_limit"))
+        linked = (plan.get("checkpoint") or {}).get("mode") == LINKED_MODE
+        # A linked fetch (issue 0084 B) keeps its list and its result in its job: the source's archive
+        # (its checkpoint, status and counts) is left as it was.
+        record = _no_record if linked else self._record_archive_metadata
         # An archive has no limit: a kind stops where the source ends. The target only caps
         # the count, at the source's size when it reports one.
         available = plan.get("available_posts")
@@ -373,8 +383,9 @@ class SourceFetchService:
                 "older_posts": older_posts,
                 "estimated_pages": plan.get("estimated_pages"),
                 "estimated_seconds": plan.get("estimated_seconds"),
-                "message": "Planning complete: " + (
-                    "size unknown" if older_posts is None else f"about {older_posts} older posts"),
+                "message": (f"Planning complete: {plural(older_posts or 0, 'linked page')} to read" if linked
+                            else "Planning complete: " + (
+                                "size unknown" if older_posts is None else f"about {older_posts} older posts")),
                 "progress": 0.0,
             })
 
@@ -389,9 +400,10 @@ class SourceFetchService:
                 "posts_updated": 0,
                 "stored_posts": post_stats["post_count"],
                 "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
-                "message": "The archive already reaches the source's oldest post",
+                "message": ("Every page your posts link is stored" if linked
+                            else "The archive already reaches the source's oldest post"),
             }
-            await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
+            await record(source_id, result, mode="archive", kind=kind)
             return result
 
         gates = self.gates or FetchGates.shared()
@@ -405,7 +417,8 @@ class SourceFetchService:
         await gates.budgets.archive_started(host)
         try:
             while True:
-                pages = kind.archive_pages(source, target_posts, checkpoint, rate)
+                pages = (self._linked_pages(kind, source, checkpoint) if linked
+                         else kind.archive_pages(source, target_posts, checkpoint, rate))
                 try:
                     async for page in self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched, pace):
                         retried = False
@@ -425,7 +438,7 @@ class SourceFetchService:
                             checkpoint = {"mode": kind.name, "pages_fetched": total_pages_fetched,
                                           "collected_posts": collected}
 
-                        await self._record_archive_metadata(source_id, {
+                        await record(source_id, {
                             **plan,
                             "pages_fetched": total_pages_fetched,
                             "posts_fetched": total_posts_fetched,
@@ -440,7 +453,8 @@ class SourceFetchService:
                             "posts_collected": collected,
                             "progress": (min(100.0, total_posts_fetched / older_posts * 100.0)
                                          if older_posts else None),
-                            "message": f"Fetched {kind.name} page {total_pages_fetched}",
+                            "message": (f"Read linked page {total_pages_fetched} of {len(checkpoint.get('urls') or ())}"
+                                        if linked else f"Fetched {kind.name} page {total_pages_fetched}"),
                         })
                     break
                 except HttpError as exc:
@@ -480,10 +494,16 @@ class SourceFetchService:
             refill = gates.budgets.refill_wait(host) if stopped.status == 429 and not stopped.timed_out else None
             return await self._stopped(source_id, kind, plan, result, host, stopped,
                                        waits=0 if pages_this_leg else int(carried.get("waits") or 0),
-                                       refill_s=refill, progress_callback=progress_callback)
+                                       refill_s=refill, progress_callback=progress_callback, record=record)
         result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
+        message = f"Archive completed with {total_posts_fetched} posts"
+        if linked:
+            result["missing"] = list((checkpoint or {}).get("missing") or [])
+            listed = len((checkpoint or {}).get("urls") or ())
+            message = result["message"] = (f"Fetched {total_posts_fetched} of {plural(listed, 'linked page')}"
+                                           + (f"; {len(result['missing'])} not stored (listed)" if result["missing"] else ""))
 
-        await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
+        await record(source_id, result, mode="archive", kind=kind)
         await self._emit_progress(progress_callback, {
             "stage": "completed",
             "source_type": kind.name,
@@ -492,26 +512,27 @@ class SourceFetchService:
             "posts_inserted": total_inserted,
             "posts_updated": total_updated,
             "stored_posts": post_stats["post_count"],
-            "message": f"Archive completed with {total_posts_fetched} posts",
+            "message": message,
             "progress": 100,
         })
         return result
 
     async def _stopped(self, source_id: str, kind: SourceKind, plan: Dict[str, Any], result: Dict[str, Any],
                        host: str, exc: HttpError, *, waits: int, refill_s: Optional[float] = None,
-                       progress_callback: ProgressCallback) -> Dict[str, Any]:
+                       progress_callback: ProgressCallback, record: Any = None) -> Dict[str, Any]:
         """A host refused twice in a row. The archive waits for its window (first 5 min, then
         doubling up to 60 min while no page comes; once one window of the host is measured, until
         the refill of the window this limit hit: `refill_s`, HostBudgets.refill_wait) and the
         scheduler continues it; after
         MAX_WAITS waits with no page gained it pauses, saying why. Its checkpoint is kept either
         way (no completed_at), so Resume continues from it."""
+        record = record or self._record_archive_metadata
         progress = {"source_type": kind.name, "pages_fetched": result["pages_fetched"],
                     "posts_fetched": result["posts_fetched"], "level": "warning"}
         if waits >= MAX_WAITS:
             reason = f"{host} {'is still not answering' if exc.timed_out else 'is still limiting us'} after {MAX_WAITS} waits"
             result.update(paused=True, paused_reason=reason, message=f"Paused: {reason}; resume later")
-            await self._record_archive_metadata(source_id, {**result, "waiting": None}, mode="archive_progress", kind=kind)
+            await record(source_id, {**result, "waiting": None}, mode="archive_progress", kind=kind)
             await self._emit_progress(progress_callback, {"stage": "paused", **progress, "message": result["message"]})
             return result
         ladder = refill_s is None
@@ -521,9 +542,9 @@ class SourceFetchService:
         result.update(waiting=True, waiting_until=until.isoformat(), waiting_host=host,
                       waiting_reason="timeout" if exc.timed_out else "limit", waits=waits + 1,
                       message=f"Waiting for {what}")
-        await self._record_archive_metadata(source_id, {**result, "waiting": {"host": host, "until": until.isoformat(),
-                                                                  "reason": result["waiting_reason"]}},
-                                            mode="archive_progress", kind=kind)
+        await record(source_id, {**result, "waiting": {"host": host, "until": until.isoformat(),
+                                                       "reason": result["waiting_reason"]}},
+                     mode="archive_progress", kind=kind)
         await self._emit_progress(progress_callback, {
             "stage": "waiting", **progress, "host": host, "waiting_until": until.isoformat(), "wait_s": wait_s,
             "timed_out": exc.timed_out, "refill": not ladder,
@@ -552,6 +573,112 @@ class SourceFetchService:
             await pace.succeeded()
             pages_fetched += 1
             yield page
+
+    # ------------------------------------------------------------------ linked, not stored (issue 0084 B)
+
+    def linked_pages(self, source_id: str) -> List[LinkedPage]:
+        """The source's own pages that stored posts link and no stored post is (repo_linked)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return linked_not_stored(cur, source_ids=[source_id]).get(str(source_id), [])
+
+    def linked_summary(self, source_id: str) -> Dict[str, Any]:
+        """What the Archive section says: how many pages are linked and not stored, whether one fetch
+        can read them (the kind reads one page), how long that takes, and whether the source's archive
+        pages back so it would hold them (offered first, until it has run). No network."""
+        source = self.sources_service.get_source_with_settings(source_id)
+        kind = self.kinds.resolve(source)
+        pages = self.linked_pages(source_id)
+        settings = source.get("settings") or {}
+        archive = settings.get("archive") or {}
+        support = self._support(kind, settings, self.availability())
+        sitemap = archive.get("sitemap_posts")
+        pages_back = support["archivable"] and (kind.available_basis != "feed_window" or (
+            isinstance(sitemap, int) and not isinstance(sitemap, bool) and sitemap > 0))
+        return {
+            "count": len(pages),
+            # A feed with nothing older to archive still reads its linked pages one by one.
+            "readable": bool(getattr(kind, "reads_posts", False)) and not support["unavailable"],
+            "estimated_seconds": self._linked_estimate(kind, source, len(pages)),
+            "archive_holds": bool(pages_back),
+            "archive_ran": bool(archive.get("last_archived_at")) and not archive.get("resume_ready"),
+            "pages": [{"url": page.url, "posts": page.posts, "first_linked_at": iso(page.first_linked_at)}
+                      for page in pages[:LINKED_SHOWN]],
+        }
+
+    def _linked_estimate(self, kind: SourceKind, source: Dict[str, Any], pages: int) -> int:
+        """One second a page and every wait between pages, as an archive's estimate (no learned budget)."""
+        rate = kind.profile.rate_limit(((source.get("settings") or {}).get("archive") or {}).get("rate_limit"))
+        floors = (self.gates or FetchGates.shared()).host_limiter.host_floors
+        return kind.profile.estimate_seconds(pages, rate, float(floors.get(kind.host_key(source), 0.0)))
+
+    async def plan_linked(self, source_id: str) -> Dict[str, Any]:
+        """The list a linked fetch reads, as the plan an archive leg runs from: its checkpoint holds
+        the pages (never more), so a wait and a continuation read the same list."""
+        source = self.sources_service.get_source_with_settings(source_id)
+        if not source:
+            raise LookupError(f"Source {source_id} not found")
+        kind = self.kinds.resolve(source)
+        pages = await asyncio.to_thread(self.linked_pages, source_id)
+        rate = kind.profile.rate_limit(((source.get("settings") or {}).get("archive") or {}).get("rate_limit"))
+        return {
+            "source_id": source_id,
+            "source_type": kind.name,
+            "linked": len(pages),
+            "available_posts": None,
+            "older_posts": len(pages),
+            "estimated_pages": len(pages),
+            "estimated_seconds": self._linked_estimate(kind, source, len(pages)),
+            "rate_limit": rate.as_settings(),
+            "checkpoint": {"mode": LINKED_MODE, "urls": [page.url for page in pages], "next_index": 0,
+                           "missing": [], "pages_fetched": 0, "collected_posts": 0},
+        }
+
+    async def fetch_linked(self, source_id: str, progress_callback: ProgressCallback = None) -> Dict[str, Any]:
+        """Read the source's linked, not stored pages, one each with its own reader (kind.read_post),
+        as an archive leg: the same gate slot per page, 0107's budgets and waits. Each is saved as a
+        post of the source through the normal save path, so the story job joins it. A kind that can't
+        read one page raises KindUnavailable."""
+        source = self.sources_service.get_source_by_id(source_id)
+        if not source:
+            raise LookupError(f"Source {source_id} not found")
+        kind = self.kinds.resolve(source)
+        self._check_available(kind)
+        if not getattr(kind, "reads_posts", False):
+            raise KindUnavailable(CANNOT_READ)
+        async with self._kind_session(kind):
+            plan = await self.plan_linked(source_id)
+            return await self._archive(source_id, source, kind, plan, progress_callback)
+
+    async def _linked_pages(self, kind: SourceKind, source: Dict[str, Any], checkpoint: Dict[str, Any]
+                            ) -> AsyncIterator[ArchivePage]:
+        """One page per listed address, from the checkpoint's next_index. A host limiting us (429, a
+        timeout) raises (the loop waits and asks again from the last checkpoint); a page that fails
+        otherwise, or holds no post, is listed in `missing` and never asked again."""
+        urls = list(checkpoint.get("urls") or [])
+        missing = list(checkpoint.get("missing") or [])
+        collected, pages_fetched = resume_counts(checkpoint)
+        index = int(checkpoint.get("next_index") or 0)
+        while index < len(urls):
+            url = urls[index]
+            post: Optional[Dict[str, Any]] = None
+            try:
+                post = await kind.read_post(source, url)  # type: ignore[attr-defined]
+                if post is None:
+                    missing.append({"url": url, "reason": "no post on the page"})
+            except KindUnavailable:
+                raise
+            except ValueError as exc:   # HttpError, and a request that failed another way
+                if isinstance(exc, HttpError) and exc.limiting:
+                    raise
+                missing.append(_missing(url, exc))
+            index += 1
+            pages_fetched += 1
+            if post is not None:
+                post[BACKLOG_KEY] = True   # an older page: never new to you
+                collected += 1
+            yield ArchivePage([post] if post else [], {
+                **checkpoint, "next_index": index, "missing": missing,
+                "pages_fetched": pages_fetched, "collected_posts": collected})
 
     # ------------------------------------------------------------------ persistence
 
@@ -640,6 +767,24 @@ class _Pace:
             if not await asyncio.to_thread(due_now, self.host):
                 break
         self.last_live_check = self.gates.clock()
+
+
+async def _no_record(*_args: Any, **_kwargs: Any) -> None:
+    """A linked fetch writes nothing into settings.archive (its job holds its list and its result)."""
+
+
+def _missing(url: str, exc: Exception) -> Dict[str, Any]:
+    """A page not stored, and why: its HTTP status when it has one (404, 410: gone)."""
+    status = getattr(exc, "status", None)
+    if status is None:
+        found = re.match(r"HTTP (\d{3})", str(exc))
+        status = int(found.group(1)) if found else None
+    return ({"url": url, "reason": f"HTTP {status}", "status": status} if status
+            else {"url": url, "reason": str(exc)[:120]})
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 def _budget_fields(budget: Any) -> Dict[str, Any]:
