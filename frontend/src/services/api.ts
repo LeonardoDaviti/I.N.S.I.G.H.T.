@@ -578,6 +578,8 @@ export interface SourceHealthRow {
   opened_posts?: number;
   /** When the owner last kept it from Tidy up; the marks hide for 90 days from then. */
   tidy_kept_at?: string | null;
+  /** Its posts now live on another site (issue 0108: their pages redirect there); `followed`: a source of yours is there. */
+  moved_to?: { host: string; followed: boolean } | null;
 }
 
 /** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */

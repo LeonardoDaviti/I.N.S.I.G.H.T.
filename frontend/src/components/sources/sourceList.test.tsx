@@ -7,6 +7,7 @@ import {
   filterSources,
   groupSources,
   kindLabel,
+  movedNote,
   nextSort,
   rangeIds,
   readSourcesView,
@@ -266,5 +267,25 @@ describe('source hygiene notes and the Tidy up filter (issue 0046)', () => {
     expect(filterSources([quiet, unread, both, fine], { q: '', status: 'tidy' }).map((r) => r.source_id)).toEqual(['quiet', 'unread', 'both']);
     expect(readSourcesView(new URLSearchParams('status=tidy')).status).toBe('tidy');
     expect(writeSourcesView(new URLSearchParams(''), { q: '', status: 'tidy', group: 'none', sort: 'status', dir: 'desc' }).toString()).toBe('status=tidy');
+  });
+});
+
+describe('a source whose posts moved (issue 0108)', () => {
+  const now = new Date('2026-11-05T12:00:00Z');
+
+  it('says where its posts now live and asks, first on its row', () => {
+    const row = healthRow({ moved_to: { host: 'blog.example', followed: false }, quiet: true }, now);
+    expect(movedNote(row)).toBe('Its posts now live at blog.example: follow that instead?');
+    expect(rowFact(row, now)).toBe('Its posts now live at blog.example: follow that instead?');
+  });
+
+  it('says so plainly when you follow the new site already', () => {
+    const row = healthRow({ moved_to: { host: 'blog.example', followed: true } }, now);
+    expect(rowFact(row, now)).toBe('Its posts now live at blog.example, which you follow too');
+  });
+
+  it('says nothing for a source that did not move, or that is off', () => {
+    expect(movedNote(healthRow({}, now))).toBeNull();
+    expect(rowFact(healthRow({ moved_to: { host: 'blog.example', followed: false }, enabled: false }, now), now)).toBe('off');
   });
 });

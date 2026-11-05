@@ -296,5 +296,72 @@ class EmptyReadOfAPostWithNoBodyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post["metadata"][PAGE_TRIES_KEY]["count"], 2)
 
 
+@requires_test_db
+class MovedSourceRowTests(unittest.TestCase):
+    """Decision 6: a source whose posts moved says so on its row (the health row's `moved_to`); nothing
+    is disabled or deleted."""
+
+    def setUp(self):
+        self.url = db_url()
+        self.repo = PostsRepository(self.url)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.old = insert_scratch_source(cur)
+            self.other = insert_scratch_source(cur)
+            conn.commit()
+
+    def tearDown(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            cur.execute("DELETE FROM sources WHERE id = %s", (self.other,))   # re-addressed by a test: no scratch name
+            conn.commit()
+
+    def _post(self, source: str, url: str, moved: str | None = None) -> None:
+        post = {"url": url, "title": url, "content": "", "date": AT, "media_urls": [], "categories": [], "metadata": {}}
+        if moved:
+            post = full_text.with_full_text(post, f"<p>{ESSAY}</p>", ESSAY, None, None, moved)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            self.repo.upsert_post(cur, post, source)
+            conn.commit()
+
+    def _row(self, source: str) -> dict:
+        from insight_core.db.repo_fetch_state import FetchStateRepository
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            [row] = FetchStateRepository().load_schedule_view(cur, [source])
+        return row
+
+    def test_a_source_whose_posts_moved_names_where(self):
+        for n in range(3):
+            self._post(self.old, f"https://home.example/posts/2020/1{n}/old-{n}", f"https://www.blog.example/new-{n}/")
+        self.assertEqual(self._row(self.old)["moved_to"], {"host": "blog.example", "followed": False})
+
+    def test_it_says_when_you_follow_where_they_moved(self):
+        for n in range(2):
+            self._post(self.old, f"https://home.example/posts/2020/1{n}/old-{n}", f"https://www.blog.example/new-{n}/")
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE sources SET handle_or_url = 'https://www.blog.example/rss/' WHERE id = %s", (self.other,))
+            conn.commit()
+        self.assertEqual(self._row(self.old)["moved_to"], {"host": "blog.example", "followed": True})
+
+    def test_a_few_moved_posts_among_its_newest_are_no_move(self):
+        self._post(self.old, "https://home.example/posts/2020/10/old", "https://www.blog.example/new/")
+        for n in range(3):
+            self._post(self.old, f"https://home.example/posts/2021/0{n + 1}/here-{n}")
+        self.assertIsNone(self._row(self.old)["moved_to"])
+
+    def test_a_source_with_no_moved_posts_has_none(self):
+        self._post(self.other, "https://other.example/a")
+        self.assertIsNone(self._row(self.other)["moved_to"])
+
+    def test_the_health_row_carries_it(self):
+        from insight_core.services.operations_service import health_row
+        from insight_core.ingestion.kinds.generic_rss import GenericRssKind
+        from insight_core.ingestion.schedule import Availability
+        for n in range(2):
+            self._post(self.old, f"https://home.example/posts/2020/1{n}/old-{n}", f"https://www.blog.example/new-{n}/")
+        row = health_row(self._row(self.old), GenericRssKind(FakeHttp()), Availability(ytdlp_enabled=True, telegram_credentials=True), NOW)
+        self.assertEqual(row["moved_to"], {"host": "blog.example", "followed": False})
+
+
 if __name__ == "__main__":
     unittest.main()
