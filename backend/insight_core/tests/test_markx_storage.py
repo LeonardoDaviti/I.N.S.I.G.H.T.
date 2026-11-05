@@ -302,5 +302,48 @@ class ValidToTests(_Rollback):
                               "INSERT INTO mx_labels (item_kind, answer) VALUES ('nonsense', 'x')")
 
 
+REOPEN = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0069_markx_reopen_unnamed_mentions.sql"
+BUG1 = "answer.mentions[{}]: name missing"
+
+
+class ReopenTests(_Rollback):
+    """0112 Decided 5 (migration 0069): the read tasks that failed only from bug 1 (read-v2 never names the mention
+    field) are opened again once, with their tries back; their failed answers stay recorded."""
+
+    def failed(self, kind, errors, status="failed", text=None):
+        g = self.guide(f"test-{kind}-v1", kind)
+        tid, _ = self.task(g, text or uuid.uuid4().hex, kind=kind)
+        for e in errors:
+            repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=False, answer={}, error=e)
+        self.cur.execute("UPDATE mx_tasks SET status = %s, attempts = %s, last_error = %s WHERE id = %s",
+                         (status, len(errors), errors[-1] if errors else None, tid))
+        return tid
+
+    def row(self, tid):
+        self.cur.execute("SELECT status, attempts, lease_until, leased_by FROM mx_tasks WHERE id = %s", (tid,))
+        return self.cur.fetchone()
+
+    def calls(self, tid):
+        self.cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s", (tid,))
+        return self.cur.fetchone()[0]
+
+    def test_only_reads_that_failed_from_bug_1_alone_are_reopened(self):
+        bug1 = self.failed("read", [BUG1.format(0), BUG1.format(2), BUG1.format(0)])
+        mixed = self.failed("read", [BUG1.format(0), "answer.kind: not one of report, commentary", BUG1.format(1)])
+        other = self.failed("read", ["answer.main: missing"] * 3)
+        entities = self.failed("entities", [BUG1.format(0)] * 3)
+        waiting = self.failed("read", [BUG1.format(0)], status="open")
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))
+        self.assertEqual(self.row(bug1), ("open", 0, None, None))
+        self.assertEqual(self.calls(bug1), 3)                      # the failed answers stay recorded
+        self.assertEqual(self.row(mixed)[:2], ("failed", 3))
+        self.assertEqual(self.row(other)[:2], ("failed", 3))
+        self.assertEqual(self.row(entities)[:2], ("failed", 3))
+        self.assertEqual(self.row(waiting)[:2], ("open", 1))
+        self.cur.execute(REOPEN.read_text(encoding="utf-8"))       # idempotent: nothing more changes
+        self.assertEqual(self.row(bug1), ("open", 0, None, None))
+        self.assertEqual(self.row(mixed)[:2], ("failed", 3))
+
+
 if __name__ == "__main__":
     unittest.main()
