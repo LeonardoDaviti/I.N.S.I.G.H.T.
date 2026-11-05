@@ -1496,3 +1496,8 @@ async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressReq
         completed=request.completed,
     )
     return {"success": True, "progress": progress}
+
+
+# ============= MARK X SHADOW (issue 0086 C: the worker API; INSIGHT_MARKX off answers 404) =============
+from insight_core.markx.api import router as markx_router  # noqa: E402
+app.include_router(markx_router)

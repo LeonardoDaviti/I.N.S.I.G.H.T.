@@ -1,0 +1,473 @@
+"""Mark X Shadow's questions (issue 0086 C): each kind's input, built from content only, and the tasks.
+
+The input is the exact text the worker sends after the guide. It is built from content alone (the posts'
+texts, their readings, a story's members in a fixed order), never from a Mark IX story id (build plan,
+corrections 2): a story Mark IX re-roots with the same members asks the same question, so its input_hash
+is the same and it is never asked twice. A story's answer is found again by building its input from
+today's members (`repo.task_for`), not by an id. A task's `a` and `b` are posts (a story task's are its
+earliest member posts) or Mark X stories when S5 passes them; never a Mark IX story id.
+
+Mark X's text is its own function, `markx text v1` (corrections 3): the title every page shows and the
+first 1,500 characters of the text every page shows, both read from post_parts (issue 0076), the post's
+kept links in order and the tweet it quotes. A post_parts change in Mark IX changes Mark X's inputs only
+when TEXT_VERSION is bumped on purpose (a bump re-reads every post). Translation reads 2,500 characters,
+as the prototype measured it (F5).
+
+The renders are the prototype's (plan/research/lab/markx/proto: read.block, judge.render*, cards.model_card,
+exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits it (hybrid.py):
+  - read, entities: the post;
+  - check: the raw post and the story's members, no reading (judge-raw-v1);
+  - join, pair: the post with its reading, and the story's card and members (judge-read-v1);
+  - merge: both stories as cards and up to 3 members each (judge-story-v1);
+  - connect: both stories by up to 5 members each, with dates (connect-v1);
+  - card, headline: the story's members (with their readings for the card);
+  - briefing: the day's top stories, keyed s1..sN, with a few posts each;
+  - translate: the post's title and text.
+
+Who creates which tasks: `plan_posts` (read, entities: the newest posts of the last 30 days first,
+corrections 8) and `plan_checks` (check: Mark IX's uncertain members) here, called when the worker asks
+for work (markx/api.py). Joins, pairs, merges and connections come from S2's candidates, and cards,
+headlines, briefings and translations from S5's decisions and News: they call the builders below.
+"""
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from uuid import UUID
+
+from psycopg import Cursor
+
+from insight_core.markx import repo, schemas
+from insight_core.utils.post_links import source_kind
+from insight_core.utils.post_parts import Body, shown
+
+TEXT_VERSION = "markx-text-v1"
+TEXT_CHARS = 1500            # corrections 3
+TRANSLATE_CHARS = 2500       # the prototype's F5
+READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
+STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
+CARD_MEMBERS, HEADLINE_MEMBERS, CONNECT_MEMBERS, BRIEFING_POSTS = 8, 6, 5, 4
+PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
+NOT_VOICE = {"saved"}
+CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
+MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
+PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only
+PLAN_LIMIT = 500
+
+
+# ---- the posts, as Mark X reads them (markx text v1) ----------------------------------------------
+
+@dataclass
+class Post:
+    id: str
+    kind: str                 # the platform as the reader names it (site, telegram, x, reddit, hn, arxiv, ...)
+    source: str
+    source_id: str
+    at: datetime
+    title: str
+    text: str                 # the whole shown text; each render cuts it
+    links: List[Tuple[str, Optional[str]]] = field(default_factory=list)
+    quote: Optional[str] = None
+    lang: Optional[str] = None
+
+    @property
+    def iso(self) -> str:
+        return self.at.astimezone(timezone.utc).isoformat()
+
+
+def _squash(s: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", s or "").strip()
+
+
+def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
+    """{id: Post} for the posts that exist (markx text v1: post_parts' title and text, kept links in order)."""
+    ids = [str(i) for i in ids]
+    if not ids:
+        return {}
+    cur.execute(
+        """SELECT p.id, s.platform, s.handle_or_url,
+                  COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
+                           s.handle_or_url),
+                  p.source_id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), COALESCE(pp.title, p.title),
+                  p.content, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.quoted,
+                  p.language_code
+             FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+            WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    out: Dict[str, Post] = {}
+    for (pid, platform, handle, name, source_id, at, title, content, cut, decode, brk, copy, quoted,
+         lang) in cur.fetchall():
+        text = shown(content, Body(cut=cut, decode_entities=bool(decode), cut_leaves_break=bool(brk), copy=copy))
+        out[str(pid)] = Post(id=str(pid), kind=source_kind(platform, handle), source=name or "", source_id=str(source_id),
+                             at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang)
+    cur.execute("""SELECT post_id, target_url, link_text FROM post_links
+                    WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (ids,))
+    for pid, url, anchor in cur.fetchall():
+        if str(pid) in out:
+            out[str(pid)].links.append((url, anchor))
+    return out
+
+
+def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:
+    """{post id: reading} of the posts Mark X has read under `guide`."""
+    return {str(k): v["reading"] for k, v in repo.readings(cur, list(ids), guide).items()}
+
+
+def words(p: Post) -> int:
+    return len((p.title + " " + p.text).split())
+
+
+def voices(posts: Iterable[Post]) -> int:
+    return len({p.source_id for p in posts if p.kind not in NOT_VOICE})
+
+
+def _cut(text: str, n: int) -> str:
+    return text[:n] + (" […]" if len(text) > n else "")
+
+
+# ---- the renders (the prototype's) ----------------------------------------------------------------
+
+def post_block(p: Post, nlinks: int) -> str:
+    """read.block: the post as every reader sees it: platform, source, title, text, links in order, the quote."""
+    lines = [f"Platform: {p.kind} | Source: {p.source}", f"Title: {p.title}"]
+    if p.text:
+        lines.append("Text: " + _cut(p.text, TEXT_CHARS))
+    if p.links:
+        lines.append("Links, in order:")
+        for n, (url, anchor) in enumerate(p.links[:nlinks]):
+            lines.append(f"{n + 1}. {url}" + (f' "{anchor[:80]}"' if anchor else ""))
+        if len(p.links) > nlinks:
+            lines.append(f"(+{len(p.links) - nlinks} more links)")
+    if p.quote:
+        lines.append(f"Quotes the tweet: {p.quote}")
+    return "\n".join(lines)
+
+
+def render_post(p: Post, reading: Optional[dict]) -> str:
+    """judge.render_post: the post a judge question asks about, with its reading when it has one."""
+    lines = ["POST", f"Platform: {p.kind} | Source: {p.source}", f"Title: {p.title}"]
+    if p.text:
+        lines.append("Text: " + _cut(p.text, TEXT_CHARS))
+    if p.links:
+        lines.append("Links: " + " | ".join(url + (f' "{anchor[:60]}"' if anchor else "")
+                                            for url, anchor in p.links[:JUDGE_LINKS]))
+    if reading:
+        m = reading.get("main") or {}
+        lines.append(f"Reading of the post: kind={reading.get('kind')}, events={reading.get('events')}, "
+                     f"main={m.get('headline_en', '') if m else ''}; mentions="
+                     + ", ".join(f"{x.get('name')} ({x.get('role')})" for x in (reading.get("mentions") or [])[:6]))
+    return "\n".join(lines)
+
+
+def render_story(card: dict, members: Sequence[Post]) -> str:
+    """judge.render_story: a story by its card (headline, slots, summary) and its first members."""
+    lines = ["STORY", f"Headline: {card.get('headline_en') or ''}"]
+    slots = [f"{k}: {card[k] if isinstance(card[k], str) else ', '.join(map(str, card[k]))}"
+             for k in ("actors", "object", "action", "date") if card.get(k)]
+    if slots:
+        lines.append("Event: " + "; ".join(slots))
+    if card.get("summary_en"):
+        lines.append("Summary: " + card["summary_en"])
+    if members:
+        lines.append("Members (earliest first):")
+        for m in members[:STORY_MEMBERS]:
+            lines.append(f"- [{m.source}, {m.kind}] {m.title[:160]} — {m.text[:240]}")
+    return "\n".join(lines)
+
+
+def rule_card(members: Sequence[Post], rd: Dict[str, dict]) -> dict:
+    """cards.rule_card without embeddings: the earliest report's main event (a publisher's first), else the most
+    common object's, else the earliest member's title."""
+    rs = [(m, rd.get(m.id)) for m in members]
+    reports = [(m, r) for m, r in rs if r and r.get("kind") == "report" and r.get("main")]
+    pick = None
+    if reports:
+        pubs = [(m, r) for m, r in reports if m.kind in PUBLISHER_KINDS]
+        pick = (pubs or reports)[0]
+    else:
+        objs = Counter((r["main"].get("object") or "").lower() for m, r in rs if r and r.get("main"))
+        if objs:
+            top = objs.most_common(1)[0][0]
+            pick = next(((m, r) for m, r in rs if r and r.get("main")
+                         and (r["main"].get("object") or "").lower() == top), None)
+    if not pick:
+        return {"headline_en": members[0].title[:140] if members else ""}
+    main = pick[1]["main"]
+    return {k: main.get(k, "") for k in ("headline_en", "actors", "object", "action", "date")}
+
+
+def _earliest(posts: Iterable[Post]) -> List[Post]:
+    return sorted(posts, key=lambda p: (p.at, p.id))
+
+
+def _member_line(p: Post, chars: int, when: str) -> str:
+    return f"- [{p.source}, {p.kind}, {when}] {p.title[:160]} — {p.text[:chars]}"
+
+
+# ---- the inputs, one function a kind --------------------------------------------------------------
+
+def read_input(p: Post) -> str:
+    return post_block(p, READ_LINKS)
+
+
+def entities_input(p: Post) -> str:
+    return post_block(p, ENTITY_LINKS)
+
+
+def check_input(post: Post, members: Sequence[Post]) -> str:
+    """The raw-text form (plan_noread): the story by its earliest other member's title and its first members, the
+    post without its reading."""
+    ms = [m for m in _earliest(members) if m.id != post.id]
+    card = {"headline_en": ms[0].title} if ms else {}
+    return render_story(card, ms[:STORY_MEMBERS]) + "\n\n" + render_post(post, None)
+
+
+def join_input(post: Post, reading: Optional[dict], members: Sequence[Post], card: dict) -> str:
+    ms = [m for m in _earliest(members) if m.id != post.id]
+    return render_story(card, ms[:STORY_MEMBERS]) + "\n\n" + render_post(post, reading)
+
+
+def pair_input(anchor: Post, post: Post, rd: Dict[str, dict]) -> str:
+    return render_story(rule_card([anchor], rd), [anchor]) + "\n\n" + render_post(post, rd.get(post.id))
+
+
+def merge_input(card_a: dict, members_a: Sequence[Post], card_b: dict, members_b: Sequence[Post]) -> str:
+    a = render_story(card_a, _earliest(members_a)[:STORY_MEMBERS]).replace("STORY", "STORY A", 1)
+    b = render_story(card_b, _earliest(members_b)[:STORY_MEMBERS]).replace("STORY", "STORY B", 1)
+    return a + "\n\n" + b
+
+
+def connect_input(members_a: Sequence[Post], members_b: Sequence[Post]) -> str:
+    """exp_f6.render: each story first seen when, by how many sources, by its first members with dates. The
+    prototype showed the members nearest the story's centroid; until S2's vectors, the earliest."""
+    def one(tag: str, ps: Sequence[Post]) -> str:
+        ps = _earliest(ps)
+        lines = [f"STORY {tag} — first seen {ps[0].iso[:10]}; {voices(ps)} sources", "Members (earliest first):"]
+        lines += [_member_line(p, 300, p.iso[:10]) for p in ps[:CONNECT_MEMBERS]]
+        return "\n".join(lines)
+    return one("A", members_a) + "\n\n" + one("B", members_b)
+
+
+def card_input(members: Sequence[Post], rd: Dict[str, dict]) -> str:
+    """cards.model_card: the first 8 members, earliest first, each by an 8-character id the card's `odd` names."""
+    lines = []
+    for m in _earliest(members)[:CARD_MEMBERS]:
+        r = rd.get(m.id) or {}
+        main = (r.get("main") or {}).get("headline_en", "")
+        lines.append(f"- id {m.id[:8]} [{m.source}, {m.kind}, {m.iso[:16]}] {m.title[:160]} | {m.text[:300]} | "
+                     f"reading: {r.get('kind')}, {main}")
+    return "MEMBERS:\n" + "\n".join(lines)
+
+
+def headline_input(members: Sequence[Post]) -> str:
+    """exp_f4.story_text: up to 6 members, earliest first (the prototype took the 6 nearest the centroid)."""
+    return "Members (earliest first):\n" + "\n".join(_member_line(p, 400, p.iso[:10])
+                                                     for p in _earliest(members)[:HEADLINE_MEMBERS])
+
+
+def briefing_input(day: date, stories: Sequence[Tuple[str, Sequence[Post]]]) -> str:
+    """exp_f12: the day's stories (at most 10, the caller's order: most voices first) keyed s1..sN, each with its
+    headline, its sources and up to 4 posts."""
+    parts = [f"DAY {day.isoformat()}: {len(stories[:10])} stories"]
+    for n, (headline, posts) in enumerate(stories[:10], 1):
+        ps = _earliest(posts)
+        sources = list(dict.fromkeys(p.source for p in ps))
+        parts.append(f"\n[s{n}] {headline} — {voices(ps)} sources: {', '.join(sources[:8])}")
+        parts += [f"  - [{p.source}, {p.kind}, {p.iso[11:16]}] {p.title[:160]} — {p.text[:250]}"
+                  for p in ps[:BRIEFING_POSTS]]
+    return "\n".join(parts)
+
+
+def translate_input(p: Post) -> str:
+    return f"Title: {p.title}\nText: {p.text[:TRANSLATE_CHARS]}"
+
+
+# ---- tasks ---------------------------------------------------------------------------------------
+
+def add(cur: Cursor, kind: str, input: str, *, a: Any = None, b: Any = None, day: Optional[date] = None,
+        priority: int = 0) -> Tuple[UUID, bool]:
+    """The task asking `input` under `kind`'s guide: (its id, whether it is new)."""
+    spec = schemas.KINDS[kind]
+    return repo.add_task(cur, kind=kind, guide=spec.guide, subject_kind=spec.subject, input=input, a=a, b=b, day=day,
+                         priority=priority)
+
+
+def _posts(cur: Cursor, ids: Sequence[Any]) -> List[Post]:
+    got = load_posts(cur, ids)
+    missing = [str(i) for i in ids if str(i) not in got]
+    if missing:
+        raise LookupError(f"no post {missing[0]}")
+    return [got[str(i)] for i in ids]
+
+
+def read_task(cur: Cursor, post_id: Any, priority: int = 0):
+    p, = _posts(cur, [post_id])
+    return add(cur, "read", read_input(p), a=p.id, priority=priority)
+
+
+def entities_task(cur: Cursor, post_id: Any, priority: int = 0):
+    p, = _posts(cur, [post_id])
+    return add(cur, "entities", entities_input(p), a=p.id, priority=priority)
+
+
+def translate_task(cur: Cursor, post_id: Any, priority: int = 0):
+    p, = _posts(cur, [post_id])
+    return add(cur, "translate", translate_input(p), a=p.id, priority=priority)
+
+
+def check_task(cur: Cursor, post_id: Any, members: Sequence[Any], *, story: Any = None):
+    """Is this member of the story (its other members, `members`) about the story's event? `story`: a Mark X story,
+    never a Mark IX story id."""
+    post, *ms = _posts(cur, [post_id, *[m for m in members if str(m) != str(post_id)]])
+    return add(cur, "check", check_input(post, ms), a=post.id, b=story)
+
+
+def join_task(cur: Cursor, post_id: Any, members: Sequence[Any], *, card: Optional[dict] = None, story: Any = None):
+    """Does the post belong in the story of `members`? Its card: `card` (a card-v1 answer), else the rule card."""
+    post, *ms = _posts(cur, [post_id, *[m for m in members if str(m) != str(post_id)]])
+    rd = readings(cur, [post.id, *[m.id for m in ms]])
+    return add(cur, "join", join_input(post, rd.get(post.id), ms, card or rule_card(_earliest(ms), rd)),
+               a=post.id, b=story)
+
+
+def pair_task(cur: Cursor, anchor_id: Any, post_id: Any):
+    anchor, post = _posts(cur, [anchor_id, post_id])
+    return add(cur, "pair", pair_input(anchor, post, readings(cur, [anchor.id, post.id])), a=anchor.id, b=post.id)
+
+
+def merge_task(cur: Cursor, members_a: Sequence[Any], members_b: Sequence[Any], *, card_a: Optional[dict] = None,
+               card_b: Optional[dict] = None, a: Any = None, b: Any = None):
+    pa, pb = _posts(cur, members_a), _posts(cur, members_b)
+    rd = readings(cur, [p.id for p in pa + pb])
+    pa, pb = _earliest(pa), _earliest(pb)
+    return add(cur, "merge", merge_input(card_a or rule_card(pa, rd), pa, card_b or rule_card(pb, rd), pb),
+               a=a or pa[0].id, b=b or pb[0].id)
+
+
+def connect_task(cur: Cursor, members_a: Sequence[Any], members_b: Sequence[Any], *, a: Any = None, b: Any = None):
+    pa, pb = _earliest(_posts(cur, members_a)), _earliest(_posts(cur, members_b))
+    return add(cur, "connect", connect_input(pa, pb), a=a or pa[0].id, b=b or pb[0].id)
+
+
+def card_task(cur: Cursor, members: Sequence[Any], *, story: Any = None):
+    ps = _earliest(_posts(cur, members))
+    return add(cur, "card", card_input(ps, readings(cur, [p.id for p in ps])), a=story or ps[0].id)
+
+
+def headline_task(cur: Cursor, members: Sequence[Any], *, story: Any = None):
+    ps = _earliest(_posts(cur, members))
+    return add(cur, "headline", headline_input(ps), a=story or ps[0].id)
+
+
+def briefing_task(cur: Cursor, day: date, stories: Sequence[Tuple[str, Sequence[Any]]]):
+    """The day's briefing from its top News rows: [(headline, member post ids)], most voices first."""
+    rows = [(headline, _posts(cur, members)) for headline, members in stories]
+    return add(cur, "briefing", briefing_input(day, rows), day=day)
+
+
+# ---- planning: what is asked without S2 or S5 ------------------------------------------------------
+
+def plan_posts(cur: Cursor, kind: str, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT,
+               now: Optional[datetime] = None) -> int:
+    """`read` or `entities` tasks for the newest posts of the last `days` that have none under the kind's guide,
+    newest first (priority: the post's age in days, so a lease takes today's first): how many were added."""
+    spec = schemas.KINDS[kind]
+    cur.execute(
+        """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
+             FROM posts p
+            WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s)
+              AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
+            LIMIT %(limit)s""", {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit})
+    rows = cur.fetchall()
+    posts = load_posts(cur, [r[0] for r in rows])
+    render = read_input if kind == "read" else entities_input
+    added = 0
+    for pid, age in rows:
+        p = posts.get(str(pid))
+        if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+            added += 1
+    return added
+
+
+def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+    """F1's checks over Mark IX's current stories with a member in the last `days` (pipeline.plan): every member of
+    a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
+    roundup, of 20 words or more unless a roundup. Mark IX is only read. How many tasks were added."""
+    cur.execute(
+        """SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
+            WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
+                                   WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                         >= COALESCE(%s, now()) - make_interval(days => %s))""", (now, days))
+    stories: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
+    for story, post, role, reason in cur.fetchall():
+        stories.setdefault(str(story), []).append((str(post), role, reason))
+    posts = load_posts(cur, {p for ms in stories.values() for p, _, _ in ms})
+    rd = readings(cur, list(posts))
+    added = 0
+    for ms in stories.values():
+        members = _earliest(posts[p] for p, _, _ in ms if p in posts)
+        if voices(members) < 2:
+            continue
+        why = {p: reason for p, _, reason in ms}
+        reports = {p for p, role, _ in ms if role == "report"}
+        side = [m for m in members if m.id in reports] or members
+        for p in members[1:]:
+            if p.kind in NOT_VOICE:
+                continue
+            roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
+            if (why.get(p.id) in CERTAIN or words(p) < MIN_WORDS) and not roundup:
+                continue
+            if add(cur, "check", check_input(p, [m for m in side if m.id != p.id]), a=p.id)[1]:
+                added += 1
+                if added >= limit:
+                    return added
+    return added
+
+
+PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
+            "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
+            "check": plan_checks}
+
+
+# ---- what a valid answer writes besides its call ----------------------------------------------------
+
+_DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−⁃﹘﹣－"), "-")
+
+
+def name_key(name: Optional[str]) -> str:
+    """0090's name key (the prototype's entparse.key): NFKC, every dash as '-', no soft hyphen, casefold, ё as е,
+    letters glued to digits split, separators as one space. key("Qwen3.8‑Flash") == key("qwen 3.8 flash")."""
+    s = unicodedata.normalize("NFKC", name or "").translate(_DASHES).replace("­", "")
+    s = s.casefold().replace("ё", "е")
+    s = re.sub(r"(?<=[a-zа-я])(?=\d)", " ", s)
+    return re.sub(r"[\s_\-/·,:;()\[\]\"'«»“”]+", " ", s).strip()
+
+
+def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> None:
+    """The rows a task's first valid answer adds: a post's reading (mx_readings) or its entities (mx_mentions)."""
+    if task["a"] is None:
+        return
+    if task["kind"] == "read":
+        main = answer.get("main") or {}
+        repo.add_reading(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, kind=answer.get("kind"),
+                         events=answer.get("events"), lang=answer.get("lang"), headline=main.get("headline_en"),
+                         reading=answer)
+    elif task["kind"] == "entities":
+        mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")))
+                    for e in answer.get("entities") or []]
+        repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions)
+
+
+def release(cur: Cursor, worker: str, task_ids: Optional[Sequence[Any]] = None) -> int:
+    """Hand back `worker`'s leased tasks (all, or those of `task_ids`) without counting a try: how many."""
+    if task_ids is None:
+        return repo.release_tasks(cur, worker)
+    cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL "
+                "WHERE status = 'leased' AND leased_by = %s AND id = ANY(%s::uuid[])",
+                (worker, [str(t) for t in task_ids]))
+    return cur.rowcount

@@ -1,0 +1,478 @@
+"""Mark X Shadow's worker API (issue 0086 C) over ASGI, against the run's own _test database: the switch
+(off answers 404), the bearer token, leases, answers checked and stored (valid, invalid, the third try, a
+second answer), releases, the status, the guides loaded by sha256, the tasks built from content only, and
+every kind round-tripped with synthetic answers.
+
+These suites commit (the API opens its own transactions), so they run only on a database whose name ends
+in _test; each test starts from empty mx_* tables there. Every post and source is synthetic."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import sys
+import unittest
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+from urllib.parse import urlencode
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND_DIR))
+
+import psycopg
+
+from insight_core.ingestion.credentials import SecretBox
+from insight_core.markx import api, repo, schemas, tasks
+from insight_core.services import registry
+from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+
+MX_TABLES = ("mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
+             "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides")
+
+
+def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
+         token: Optional[str] = None):
+    """(status, parsed body) of one request through the app, with a bearer token when given."""
+    import main
+    return asyncio.run(_call(main.app, method, path, query, body, token))
+
+
+async def _call(app, method, path, query, body, token):
+    raw = b"" if body is None else json.dumps(body).encode()
+    headers = [(b"host", b"test"), (b"content-type", b"application/json"), (b"content-length", str(len(raw)).encode())]
+    if token is not None:
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
+             "path": path, "raw_path": path.encode(), "root_path": "", "query_string": urlencode(query or {}).encode(),
+             "headers": headers, "client": ("127.0.0.1", 1), "server": ("test", 80)}
+    sent, status, chunks = False, 0, []
+    done = asyncio.Event()
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            await done.wait()
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    async def send(message):
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+        elif message["type"] == "http.response.body":
+            chunks.append(message.get("body", b""))
+            if not message.get("more_body"):
+                done.set()
+
+    await app(scope, receive, send)
+    data = b"".join(chunks)
+    return status, (json.loads(data) if data else None)
+
+
+def reading(**over):
+    r = {"kind": "report", "events": "one", "main": {"headline_en": "Acme released Widget 4.1", "actors": ["Acme"],
+         "object": "Widget 4.1", "action": "released"}, "items": [], "mentions": [], "lang": "en"}
+    r.update(over)
+    return r
+
+
+@requires_test_db
+class _Api(unittest.TestCase):
+    plan = False
+
+    def setUp(self):
+        self.env = os.environ.get("INSIGHT_MARKX")
+        os.environ["INSIGHT_MARKX"] = "on"
+        self.addCleanup(self._restore_env)
+        self.addCleanup(registry.use, registry.use(SimpleNamespace(db_url=db_url())))
+        self.addCleanup(setattr, api, "token_store", api.token_store)
+        api.token_store = api.TokenStore(box=SecretBox(SecretBox.generate_key()))
+        api._loaded.clear()
+        api._contacts.clear()
+        if not self.plan:
+            self.addCleanup(setattr, tasks, "PLANNERS", tasks.PLANNERS)
+            tasks.PLANNERS = {}
+        self.conn = psycopg.connect(db_url(), autocommit=True)
+        self.addCleanup(self.conn.close)
+        self.cur = self.conn.cursor()
+        # a scratch _test database: each test starts from empty mx_* tables and no worker token
+        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
+        self.source = insert_scratch_source(self.cur, platform="telegram",
+                                            settings_json=json.dumps({"display_name": "Example Channel"}))
+        self.other = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Site"}))
+        self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = ANY(%s::uuid[])", ([self.source, self.other],))
+        status, body = call("POST", "/api/markx/token")
+        self.assertEqual(status, 200, body)
+        self.token = body["token"]
+        with self.conn.transaction():
+            schemas.load_guides(self.cur)
+
+    def _restore_env(self):
+        if self.env is None:
+            os.environ.pop("INSIGHT_MARKX", None)
+        else:
+            os.environ["INSIGHT_MARKX"] = self.env
+
+    def post(self, title="Acme released Widget 4.1", text=None, *, source=None, at=None, links=()) -> str:
+        """A synthetic post; by default each with a text of its own (the same content is the same question)."""
+        url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
+        if text is None:
+            text = ("Acme released Widget 4.1 today, with 27B parameters and a price of $20 a month for every user "
+                    f"who signs up this week and next (note {url[-8:]}).")
+        self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
+                         "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                         (source or self.source, url, url, title, text, at or datetime.now(timezone.utc)))
+        pid = str(self.cur.fetchone()[0])
+        for n, (target, anchor) in enumerate(links):
+            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
+                             "VALUES (%s, %s, 'example.com', %s, %s)", (pid, target, n, anchor))
+        return pid
+
+    def task(self, kind="read", post=None):
+        with self.conn.transaction():
+            return getattr(tasks, f"{kind}_task")(self.cur, post or self.post())[0]
+
+    def lease(self, kind="read", limit=20, worker="device-1", token=None):
+        return call("GET", "/api/markx/work", query={"kinds": kind, "limit": limit, "worker": worker},
+                    token=self.token if token is None else token)
+
+    def answer(self, *rows, worker="device-1", executor="claude-code", model="claude-haiku-5-5"):
+        return call("POST", "/api/markx/answers", token=self.token,
+                    body={"worker": worker, "executor": executor, "model": model,
+                          "answers": [{"task_id": str(t), "answer": a, "tokens_in": 100, "tokens_out": 20, "ms": 900,
+                                       "cost_usd": 0.0001} for t, a in rows]})
+
+    def row(self, task_id):
+        return repo.get_task(self.cur, task_id)
+
+
+class TheSwitchAndTheToken(_Api):
+    def test_off_every_path_answers_404(self):
+        os.environ["INSIGHT_MARKX"] = "off"
+        for method, path in (("GET", "/api/markx/work"), ("POST", "/api/markx/answers"), ("POST", "/api/markx/release"),
+                             ("GET", "/api/markx/status"), ("GET", "/api/markx/token"), ("POST", "/api/markx/token")):
+            with self.subTest(path=path):
+                self.assertEqual(call(method, path, token=self.token, body={} if method == "POST" else None)[0], 404)
+        os.environ.pop("INSIGHT_MARKX")
+        self.assertEqual(call("GET", "/api/markx/status", token=self.token)[0], 404)   # the default is off
+
+    def test_the_worker_routes_need_the_token(self):
+        self.assertEqual(call("GET", "/api/markx/status")[0], 401)
+        self.assertEqual(call("GET", "/api/markx/status", token="not-the-token")[0], 401)
+        self.assertEqual(call("GET", "/api/markx/status", token=self.token)[0], 200)
+
+    def test_the_token_is_stored_encrypted_and_shown_once(self):
+        status, view = call("GET", "/api/markx/token")
+        self.assertEqual((status, view["set"], view["last4"]), (200, True, self.token[-4:]))
+        self.assertNotIn("token", view)
+        self.cur.execute("SELECT ciphertext FROM credentials WHERE provider = 'markx' AND key = 'worker_token'")
+        self.assertNotIn(self.token.encode(), bytes(self.cur.fetchone()[0]))
+
+    def test_a_new_token_replaces_the_old_one(self):
+        status, body = call("POST", "/api/markx/token")
+        self.assertEqual(status, 200)
+        self.assertNotEqual(body["token"], self.token)
+        self.assertEqual(call("GET", "/api/markx/status", token=self.token)[0], 401)
+        self.assertEqual(call("GET", "/api/markx/status", token=body["token"])[0], 200)
+
+
+class Leases(_Api):
+    def test_work_leases_by_priority_then_age_with_the_guides(self):
+        old, new = self.task(), self.task()
+        with self.conn.transaction():
+            urgent = tasks.read_task(self.cur, self.post(title="Globex raised $300m"), priority=-1)[0]
+        status, body = self.lease(limit=2)
+        self.assertEqual(status, 200, body)
+        self.assertEqual([t["id"] for t in body["tasks"]][0], str(urgent))
+        self.assertEqual(len(body["tasks"]), 2)
+        guide = body["guides"]["read-v2"]
+        self.assertEqual(guide["sha256"], hashlib.sha256(guide["body"].encode()).hexdigest())
+        self.assertEqual(guide["schema"], schemas.READ_SCHEMA)
+        until = datetime.fromisoformat(body["lease_until"])
+        self.assertIsNotNone(until.tzinfo)
+        self.assertAlmostEqual((until - datetime.now(timezone.utc)).total_seconds(), 1800, delta=60)
+        self.assertEqual(self.row(urgent)["status"], "leased")
+        self.assertEqual(self.row(urgent)["leased_by"], "device-1")
+        _, rest = self.lease(limit=20, worker="device-2")
+        self.assertEqual(len(rest["tasks"]), 1)     # the third; the two leased are not leased again
+        _, none = self.lease(limit=20, worker="device-2")
+        self.assertEqual((none["tasks"], none["guides"]), ([], {}))
+
+    def test_a_task_input_is_sent_as_built(self):
+        pid = self.post(links=[("https://example.com/a", "Widget notes"), ("https://example.com/b", None)])
+        self.task(post=pid)
+        _, body = self.lease()
+        text = body["tasks"][0]["input"]
+        self.assertTrue(text.startswith("Platform: telegram | Source: Example Channel\nTitle: Acme released Widget 4.1"))
+        self.assertIn('Links, in order:\n1. https://example.com/a "Widget notes"\n2. https://example.com/b', text)
+
+    def test_an_unknown_kind_or_a_bad_limit_is_refused(self):
+        self.assertEqual(self.lease(kind="summarise")[0], 400)
+        self.assertEqual(self.lease(limit=0)[0], 422)
+        self.assertEqual(self.lease(limit=101)[0], 422)
+
+    def test_an_expired_lease_is_leased_again(self):
+        t = self.task()
+        self.lease(worker="device-1")
+        self.cur.execute("UPDATE mx_tasks SET lease_until = now() - interval '1 minute' WHERE id = %s", (t,))
+        _, body = self.lease(worker="device-2")
+        self.assertEqual([x["id"] for x in body["tasks"]], [str(t)])
+        self.assertEqual(self.row(t)["leased_by"], "device-2")
+
+    def test_release_hands_back_some_or_all_without_a_try(self):
+        a, b, c = self.task(), self.task(), self.task()
+        self.lease()
+        status, body = call("POST", "/api/markx/release", token=self.token, body={"worker": "device-1", "task_ids": [str(a)]})
+        self.assertEqual((status, body), (200, {"released": 1}))
+        self.assertEqual(self.row(a)["status"], "open")
+        self.assertEqual(self.row(b)["status"], "leased")
+        self.assertEqual(call("POST", "/api/markx/release", token=self.token, body={"worker": "device-2"})[1], {"released": 0})
+        self.assertEqual(call("POST", "/api/markx/release", token=self.token, body={"worker": "device-1"})[1], {"released": 2})
+        self.assertEqual([self.row(x)["attempts"] for x in (a, b, c)], [0, 0, 0])
+
+
+class Answers(_Api):
+    def test_a_valid_answer_closes_its_task_and_writes_the_reading(self):
+        pid = self.post()
+        t = self.task(post=pid)
+        self.lease()
+        status, body = self.answer((t, reading()))
+        self.assertEqual((status, body), (200, {"stored": 1, "valid": 1, "invalid": [], "repeated": 0}))
+        self.assertEqual(self.row(t)["status"], "answered")
+        call_row, = repo.calls(self.cur, t)
+        self.assertEqual((call_row["valid"], call_row["executor"], call_row["model"], call_row["tokens_in"]),
+                         (True, "claude-code", "claude-haiku-5-5", 100))
+        got = repo.readings(self.cur, [pid], "read-v2")[uuid.UUID(pid)]
+        self.assertEqual((got["kind"], got["headline"], got["call_id"]), ("report", "Acme released Widget 4.1", call_row["id"]))
+
+    def test_an_answer_wrapped_in_its_name_is_unwrapped(self):
+        t = self.task()
+        self.assertEqual(self.answer((t, {"reading": reading()}))[1]["valid"], 1)
+        self.assertEqual(repo.calls(self.cur, t)[0]["answer"]["kind"], "report")
+
+    def test_an_invalid_answer_goes_back_to_open_with_its_error_and_fails_at_the_third(self):
+        t = self.task()
+        for attempt in (1, 2, 3):
+            self.lease()
+            status, body = self.answer((t, reading(kind="news")))
+            self.assertEqual(status, 200)
+            self.assertEqual(body["invalid"], [{"task_id": str(t), "error": body["invalid"][0]["error"]}])
+            self.assertIn("'news' is not one of", body["invalid"][0]["error"])
+            row = self.row(t)
+            self.assertEqual((row["attempts"], row["status"]), (attempt, "open" if attempt < 3 else "failed"))
+            self.assertIn("kind", row["last_error"])
+        self.assertEqual([c["valid"] for c in repo.calls(self.cur, t)], [False, False, False])
+        self.assertEqual(self.lease()[1]["tasks"], [])
+
+    def test_a_second_answer_is_kept_as_a_call_and_changes_nothing(self):
+        pid = self.post()
+        t = self.task(post=pid)
+        self.answer((t, reading()))
+        answered_at = self.row(t)["answered_at"]
+        _, body = self.answer((t, reading(kind="commentary")), worker="device-2")
+        self.assertEqual((body["valid"], body["repeated"]), (1, 1))
+        _, body = self.answer((t, reading(kind="news")))
+        self.assertEqual((body["stored"], body["repeated"], len(body["invalid"])), (1, 1, 1))
+        row = self.row(t)
+        self.assertEqual((row["status"], row["answered_at"], row["attempts"]), ("answered", answered_at, 0))
+        self.assertEqual(len(repo.calls(self.cur, t)), 3)
+        self.assertEqual(repo.readings(self.cur, [pid], "read-v2")[uuid.UUID(pid)]["kind"], "report")
+
+    def test_an_answer_after_the_lease_ended_is_taken(self):
+        t = self.task()
+        self.lease(worker="device-1")
+        self.cur.execute("UPDATE mx_tasks SET lease_until = now() - interval '1 minute' WHERE id = %s", (t,))
+        self.lease(worker="device-2")
+        self.assertEqual(self.answer((t, reading()), worker="device-1")[1]["valid"], 1)
+        self.assertEqual(self.row(t)["status"], "answered")
+
+    def test_a_task_id_that_names_no_task_is_listed_and_not_stored(self):
+        t = self.task()
+        _, body = self.answer((uuid.uuid4(), reading()), ("not-a-uuid", reading()), (t, reading()))
+        self.assertEqual((body["stored"], body["valid"]), (1, 1))
+        self.assertEqual([x["error"] for x in body["invalid"]], ["no such task", "no such task"])
+
+    def test_the_executor_and_model_are_checked(self):
+        t = self.task()
+        self.assertEqual(self.answer((t, reading()), executor="laptop")[0], 400)
+        self.assertEqual(self.answer((t, reading()), model="")[0], 400)
+        self.assertEqual(repo.calls(self.cur, t), [])
+
+    def test_entities_are_written_with_their_name_key(self):
+        pid = self.post(title="Acme released Widget‑4.1 Pro")
+        t = self.task("entities", post=pid)
+        ents = [{"span": "Widget‑4.1 Pro", "name": "Widget 4.1 Pro", "type": "product", "role": "subject", "maker": "Acme",
+                 "family": "Widget", "version": "4.1", "variant": "Pro", "size": None, "build": None},
+                {"span": "Acme", "name": "Acme", "type": "org", "role": "actor"}]
+        self.assertEqual(self.answer((t, {"entities": ents, "relations": []}))[1]["valid"], 1)
+        got = repo.mentions(self.cur, pid, "ent-v3")
+        self.assertEqual([(m["n"], m["name"], m["name_key"], m["version"]) for m in got],
+                         [(0, "Widget 4.1 Pro", "widget 4.1 pro", "4.1"), (1, "Acme", "acme", None)])
+
+    def test_the_status_counts_the_queue_the_answers_and_the_workers(self):
+        a, b = self.task(), self.task()
+        self.lease()
+        self.answer((a, reading()), (b, reading(events="none")))
+        status, body = call("GET", "/api/markx/status", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["queue"], {"read": {"answered": 1, "open": 1}})
+        self.assertEqual(body["tokens"], {"calls": 2, "tokens_in": 200, "tokens_out": 40, "cost_usd": 0.0002})
+        self.assertEqual(body["answers_per_day"][0]["valid"], 1)
+        self.assertEqual([w["worker"] for w in body["workers"]], ["device-1"])
+        self.assertIsNone(body["last_run"])
+        self.assertEqual(set(body["guides"]), set(schemas.guide_ids()))
+
+
+class GuidesAndInputs(_Api):
+    def test_the_guides_are_loaded_by_sha256_and_never_edited(self):
+        got = repo.guides(self.cur)
+        self.assertEqual(set(got), set(schemas.guide_ids()))
+        for gid, g in got.items():
+            body = (schemas.GUIDES_DIR / f"{gid}.md").read_text(encoding="utf-8")
+            self.assertEqual((g["body"], g["sha256"]), (body, hashlib.sha256(body.encode()).hexdigest()))
+        with self.conn.transaction():
+            schemas.load_guides(self.cur)            # at every start: the same bodies, no change
+        with self.assertRaises(ValueError):
+            with self.conn.transaction():
+                repo.put_guide(self.cur, "read-v2", "read", "another body")
+
+    def test_the_text_is_markx_text_v1_the_first_1500_characters(self):
+        long = "word " * 400
+        with self.conn.transaction():
+            p = tasks.load_posts(self.cur, [self.post(text=long)])
+        text = tasks.read_input(next(iter(p.values())))
+        self.assertIn("Text: " + long.strip()[:1500] + " […]", text)
+        self.assertEqual(tasks.TEXT_VERSION, "markx-text-v1")
+
+    def test_a_story_question_is_keyed_by_its_members_content_not_by_order_or_story(self):
+        post = self.post(title="Widget 4.1 is out", source=self.other)
+        a = self.post(title="Acme ships Widget 4.1")
+        b = self.post(title="Widget 4.1 benchmarks", at=datetime.now(timezone.utc) - timedelta(hours=1))
+        with self.conn.transaction():
+            first, new = tasks.check_task(self.cur, post, [a, b])
+            again, new_again = tasks.check_task(self.cur, post, [b, a])
+        self.assertEqual((first, new, new_again), (again, True, False))
+        text = self.row(first)["input"]
+        self.assertTrue(text.startswith("STORY\nHeadline: Widget 4.1 benchmarks\n"))   # the earliest other member
+        self.assertNotIn("Reading of the post", text)                                    # the raw form
+        self.assertIsNone(self.row(first)["b"])                                         # no Mark IX story id
+
+    def test_plan_posts_takes_the_newest_of_the_last_30_days_once(self):
+        now = datetime.now(timezone.utc) + timedelta(days=3650)    # a window no other suite's posts reach
+        fresh = self.post(at=now - timedelta(hours=2))
+        older = self.post(at=now - timedelta(days=3, hours=1))
+        self.post(at=now - timedelta(days=40))
+        with self.conn.transaction():
+            self.assertEqual(tasks.plan_posts(self.cur, "read", now=now), 2)
+            self.assertEqual(tasks.plan_posts(self.cur, "read", now=now), 0)
+        self.cur.execute("SELECT a, priority FROM mx_tasks WHERE kind = 'read' ORDER BY priority")
+        self.assertEqual([(str(a), p) for a, p in self.cur.fetchall()], [(fresh, 0), (older, 3)])
+
+
+class EveryKindRoundTrips(_Api):
+    """Each kind built by its builder, leased, answered with a valid answer, then the invalid cases 0086 C names."""
+
+    def setUp(self):
+        super().setUp()
+        t0 = datetime.now(timezone.utc) - timedelta(hours=5)
+        self.a1 = self.post(title="Acme ships Widget 4.1 Pro", text="Acme released Widget 4.1 Pro with 27B parameters, "
+                            "priced at $20 a month for teams.", source=self.other, at=t0)
+        self.a2 = self.post(title="Widget 4.1 Pro is out", text="Acme's Widget 4.1 Pro arrived today for everyone "
+                            "who builds agents.", at=t0 + timedelta(hours=1))
+        self.b1 = self.post(title="Globex raised $987m", text="Globex raised $987m in a round led by Initech to build "
+                            "chips.", source=self.other, at=t0 + timedelta(hours=2))
+        self.b2 = self.post(title="Globex funding round", text="The round values Globex at $2bn, its founders said "
+                            "on Tuesday.", at=t0 + timedelta(hours=3))
+
+    def build(self):
+        with self.conn.transaction():
+            c = self.cur
+            return {
+                "read": tasks.read_task(c, self.a1)[0],
+                "entities": tasks.entities_task(c, self.a1)[0],
+                "check": tasks.check_task(c, self.a2, [self.a1])[0],
+                "join": tasks.join_task(c, self.a2, [self.a1])[0],
+                "pair": tasks.pair_task(c, self.a1, self.a2)[0],
+                "merge": tasks.merge_task(c, [self.a1, self.a2], [self.b1, self.b2])[0],
+                "connect": tasks.connect_task(c, [self.a1, self.a2], [self.b1, self.b2])[0],
+                "card": tasks.card_task(c, [self.a1, self.a2])[0],
+                "headline": tasks.headline_task(c, [self.a1, self.a2])[0],
+                "briefing": tasks.briefing_task(c, date(2026, 11, 2), [("Acme ships Widget 4.1 Pro", [self.a1, self.a2]),
+                                                                      ("Globex raised $987m", [self.b1, self.b2])])[0],
+                "translate": tasks.translate_task(c, self.b2)[0],
+            }
+
+    VALID = {
+        "read": reading(),
+        "entities": {"entities": [{"span": "Widget 4.1 Pro", "name": "Widget 4.1 Pro", "type": "product", "role": "subject",
+                                   "version": "4.1"}], "relations": []},
+        "check": {"relation": "same_event", "confidence": 90, "reason": "Same launch."},
+        "join": {"relation": "reaction", "confidence": 70, "reason": "Reacts to it."},
+        "pair": {"relation": "same_event", "confidence": 85, "reason": "Same launch."},
+        "merge": {"relation": "different", "confidence": 95, "reason": "Another event."},
+        "connect": {"relation": "different", "confidence": 90, "reason": "Unrelated."},
+        "card": {"headline_en": "Acme released Widget 4.1 Pro", "actors": ["Acme"], "object": "Widget 4.1 Pro",
+                 "action": "released", "date": None, "summary_en": "Acme released it.", "odd": []},
+        "headline": {"headline_en": "Acme ships Widget 4.1 Pro at $20 a month", "summary_en": "Acme released it."},
+        "briefing": {"lines": [{"text": "Acme shipped Widget 4.1 Pro at $20 a month.", "stories": ["s1"]},
+                               {"text": "Globex raised $987m.", "stories": ["s2"]}]},
+        "translate": {"title_en": "Globex funding round", "text_en": "The round values Globex at $2bn, its founders said on Tuesday."},
+    }
+    INVALID = {
+        "read": ({**reading(), "events": "none"}, "main must be null when events is none"),
+        "entities": ({"entities": [{"span": "Widget 5", "name": "Widget 5", "type": "product", "role": "subject"}]},
+                     "entities[0].span 'Widget 5' does not occur in the post"),
+        "check": ({"relation": "related", "confidence": 50}, "answer.relation: 'related' is not one of"),
+        "join": ({"relation": "same_event", "confidence": 150}, "answer.confidence: above 100"),
+        "pair": ({"relation": "same_event"}, "answer: confidence missing"),
+        "merge": ({"relation": "merged", "confidence": 90}, "answer.relation: 'merged' is not one of"),
+        "connect": ({"relation": "builds_on", "confidence": 90}, "answer.relation: 'builds_on' is not one of"),
+        "card": ({"headline_en": "Acme released Widget 4.1 Pro", "actors": [], "object": "", "action": "released",
+                  "odd": ["ffffffff"]}, "odd names 'ffffffff', not a member"),
+        "headline": ({"headline_en": "Acme ships Widget 4.1 Pro at $99"}, "headline_en: the figure 99 occurs in no member"),
+        "briefing": ({"lines": [{"text": "Globex raised $987m.", "stories": ["s1"]},
+                                {"text": "Acme shipped.", "stories": ["s2"]}]},
+                     "lines[0]: the figure 987 occurs in none of its stories (s1)"),
+        "translate": ({"title_en": "Globex funding round", "text_en": "The round values Globex highly, its founders said."},
+                      "the number 2 of the post is not in the translation"),
+    }
+
+    def test_every_kind_is_leased_and_answered(self):
+        ids = self.build()
+        for kind, task_id in ids.items():
+            with self.subTest(kind=kind):
+                _, body = self.lease(kind)
+                self.assertEqual([t["id"] for t in body["tasks"]], [str(task_id)])
+                self.assertEqual(set(body["guides"]), {schemas.KINDS[kind].guide})
+                _, got = self.answer((task_id, self.VALID[kind]))
+                self.assertEqual(got, {"stored": 1, "valid": 1, "invalid": [], "repeated": 0}, got)
+                self.assertEqual(self.row(task_id)["status"], "answered")
+
+    def test_every_kind_returns_its_invalid_case_with_its_error(self):
+        ids = self.build()
+        for kind, task_id in ids.items():
+            with self.subTest(kind=kind):
+                answer, error = self.INVALID[kind]
+                _, got = self.answer((task_id, answer))
+                self.assertEqual(got["valid"], 0)
+                self.assertTrue(got["invalid"][0]["error"].startswith(error), got["invalid"][0]["error"])
+                self.assertEqual(self.row(task_id)["status"], "open")
+                self.assertTrue(self.row(task_id)["last_error"].startswith(error))
+
+    def test_too_many_entities_and_a_version_not_in_the_post(self):
+        t = self.build()["entities"]
+        one = {"span": "Acme", "name": "Acme", "type": "org", "role": "actor"}
+        _, got = self.answer((t, {"entities": [one] * 21}))
+        self.assertEqual(got["invalid"][0]["error"], "answer.entities: 21 items, more than 20")
+        _, got = self.answer((t, {"entities": [dict(one, span="Widget 4.1 Pro", version="4.2")]}))
+        self.assertEqual(got["invalid"][0]["error"], "entities[0].version '4.2' does not occur in the post")
+
+
+if __name__ == "__main__":
+    unittest.main()
