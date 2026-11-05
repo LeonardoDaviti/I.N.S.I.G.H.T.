@@ -346,6 +346,29 @@ class Switch(unittest.TestCase):
         self.assertIsNone(s.run_now())
         self.assertEqual(ran, [])
 
+    def test_uploads_close_together_make_one_run_after_the_last(self):
+        import contextlib
+        import threading
+        import time
+        ran, done = [], threading.Event()
+
+        @contextlib.contextmanager
+        def transaction():
+            yield "cur"
+
+        def fake_run(cur):
+            ran.append(cur)
+            done.set()
+            return {"stories": 0}
+        with mock.patch.object(D, "run", fake_run):
+            s = D.Scheduler(transaction=transaction, debounce=0.2, every=None, enabled=lambda: True)
+            for _ in range(3):
+                s.note()
+                time.sleep(0.05)
+            self.assertTrue(done.wait(2))
+            time.sleep(0.3)
+        self.assertEqual(ran, ["cur"])
+
     def test_on_a_failed_run_never_raises(self):
         def broken():
             raise RuntimeError("no database")
