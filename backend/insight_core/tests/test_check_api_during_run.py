@@ -70,5 +70,27 @@ class WhatTheRunAdds(unittest.TestCase):
         self.assertEqual((count, note["expected"]), (2, 0))
 
 
+class AQuietMachineFirst(unittest.TestCase):
+    """A window with most requests slow and no run says nothing of a run (lab, 6 Nov, two checks at once: 37 of 40
+    slow before, 40 of 40 after): the run waits for a quiet window, and with none the invariant is not measured,
+    which the report fails, never passes."""
+
+    def test_a_window_is_quiet_when_at_most_one_in_ten_is_slow(self):
+        self.assertTrue(job_checks.quiet(rows(40, slow=4)))
+        self.assertFalse(job_checks.quiet(rows(40, slow=5)))
+        self.assertFalse(job_checks.quiet(rows(40, failed=37)))
+        self.assertFalse(job_checks.quiet([]))   # no answer at all is no quiet machine
+
+    def test_not_measured_for_load_fails_the_report(self):
+        with tempfile.TemporaryDirectory() as work:
+            for side, count, note in (("base", 0, ""), ("head", -1, job_checks.LOADED_NOTE + " (37 of 40 slow)")):
+                os.makedirs(os.path.join(work, side))
+                with open(os.path.join(work, side, "jobs.json"), "w") as fh:
+                    json.dump({"found": [{"name": "markx.api_during_run", "what": "slow", "count": count, "of": 0,
+                                          "examples": [], "note": note}]}, fh)
+            _, problems = report.build(work)
+        self.assertTrue(any("markx.api_during_run" in p and "not measured" in p for p in problems), problems)
+
+
 if __name__ == "__main__":
     unittest.main()

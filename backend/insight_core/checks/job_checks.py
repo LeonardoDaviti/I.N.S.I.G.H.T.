@@ -154,6 +154,15 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
 SLOW_MS = 1000
 PROBES = ("/api/version", "/api/feed?limit=20")
 BASELINE_S = 10.0   # the probes' window before the run, and again after it: the machine's own slowness
+QUIET = 0.1         # a window with no run is quiet when at most this share of its requests is slow or fails
+QUIET_WAIT_S = 600  # how long the run waits for a quiet window before the invariant is not measured
+LOADED_NOTE = "not measured: the API was slow with no run (the machine's load); rerun the check when it is quieter"
+
+
+def quiet(window: List[Dict[str, Any]]) -> bool:
+    """A window of probes with no run in it is quiet enough to measure a run against: some answers, at most QUIET of
+    them slow. A loaded one (most slow) can't show what a run adds."""
+    return bool(window) and sum(map(_slow, window)) <= QUIET * len(window)
 
 
 def _slow(row: Dict[str, Any]) -> bool:
@@ -256,7 +265,20 @@ def api_during_run(db_url: str, now: datetime) -> Found:
             time.sleep(1)
         prober = threading.Thread(target=probe, daemon=True)
         prober.start()
-        stop.wait(BASELINE_S)
+        waited, loaded = time.monotonic() + QUIET_WAIT_S, []
+        while True:   # the run starts after a quiet 10 s window; the loaded ones before it are set aside
+            stop.wait(BASELINE_S)
+            window = [r for r in rows if r["phase"] == "before"]
+            if quiet(window):
+                break
+            loaded.append(f"{sum(map(_slow, window))} of {len(window)}")
+            for r in window:
+                r["phase"] = "loaded"
+            if time.monotonic() > waited:
+                return Found("markx.api_during_run", "mark x", what, -1, 0, round(time.monotonic() - started, 1),
+                             note=f"{LOADED_NOTE} (slow in each 10 s window over {QUIET_WAIT_S} s: {', '.join(loaded)})")
+            stop.wait(20)
+        note_extra["loaded_windows_before"] = loaded
         phase[0] = "during"
         t0 = time.monotonic()
         if out_of_api:   # as insight-ingestion runs it: the candidate flush then the decision run, in a process
