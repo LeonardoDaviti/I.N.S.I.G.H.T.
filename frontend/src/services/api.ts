@@ -517,6 +517,18 @@ export interface CredentialsResponse {
   providers: CredentialProviderView[];
 }
 
+/** GET /api/markx/token: the Mark X worker token's state, never the token. */
+export interface MarkxTokenView {
+  set: boolean;
+  last4: string | null;
+  updated_at: string | null;
+}
+
+/** POST /api/markx/token: the new token, the only time it is shown. */
+export interface MarkxTokenCreated extends MarkxTokenView {
+  token: string;
+}
+
 export type TelegramLoginStep = { stage: 'code' } | { stage: 'password' } | { stage: 'done'; account: string };
 
 export interface SourceHealthRow {
@@ -1150,6 +1162,10 @@ export function createApi() {
     telegramLoginPassword: (password: string) =>
       request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
     telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
+    /** Mark X's worker token (issue 0086 C): whether one is set. 404 while INSIGHT_MARKX is off. */
+    getMarkxToken: () => request<MarkxTokenView>('/api/markx/token'),
+    /** A new worker token, shown once; it replaces the old one. */
+    createMarkxToken: () => request<MarkxTokenCreated>('/api/markx/token', { method: 'POST' }),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 
