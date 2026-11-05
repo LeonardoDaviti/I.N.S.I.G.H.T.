@@ -395,21 +395,24 @@ def plan_posts(cur: Cursor, kind: str, *, days: int = PLAN_DAYS, limit: int = PL
     return added
 
 
-def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
-    """F1's checks over Mark IX's current stories with a member in the last `days` (pipeline.plan): every member of
-    a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
-    roundup, of 20 words or more unless a roundup. Mark IX is only read. How many tasks were added."""
+def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS,
+                    now: Optional[datetime] = None) -> Iterable[Tuple[Post, str]]:
+    """F1's checks over Mark IX's current stories (pipeline.plan), as (post, input), without writing: every member
+    of a 2+ voice story but its earliest, joined by a guess (a citation, a time, a copy, a repost, no reason) or a
+    roundup, of 20 words or more unless a roundup. Stories with a member in the last `days` (None: every story).
+    Mark IX is only read."""
     cur.execute(
         """SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
-            WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
+            WHERE %(days)s::int IS NULL
+               OR sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
                                    WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
-                                         >= COALESCE(%s, now()) - make_interval(days => %s))""", (now, days))
+                                         >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))""",
+        {"now": now, "days": days})
     stories: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
     for story, post, role, reason in cur.fetchall():
         stories.setdefault(str(story), []).append((str(post), role, reason))
     posts = load_posts(cur, {p for ms in stories.values() for p, _, _ in ms})
     rd = readings(cur, list(posts))
-    added = 0
     for ms in stories.values():
         members = _earliest(posts[p] for p, _, _ in ms if p in posts)
         if voices(members) < 2:
@@ -423,11 +426,28 @@ def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, 
             roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
             if (why.get(p.id) in CERTAIN or words(p) < MIN_WORDS) and not roundup:
                 continue
-            if add(cur, "check", check_input(p, [m for m in side if m.id != p.id]), a=p.id)[1]:
-                added += 1
-                if added >= limit:
-                    return added
+            yield p, check_input(p, [m for m in side if m.id != p.id])
+
+
+def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+    """The checks `check_questions` asks of the last `days`, as tasks: how many were added."""
+    added = 0
+    for p, text in check_questions(cur, days=days, now=now):
+        if add(cur, "check", text, a=p.id)[1]:
+            added += 1
+            if added >= limit:
+                break
     return added
+
+
+def reasked(cur: Cursor) -> Dict[str, Dict[str, int]]:
+    """Build plan corrections 4: of the open and answered check tasks, how many today's Mark IX stories would no
+    longer ask (their story changed shape: a member came or went, a post moved): {"check": {"tasks", "would_change"}}.
+    The real-data check reports it for a story-rule change; cards and merges join it with S2's and S5's planners."""
+    today = {repo.sha256_hex(text) for _p, text in check_questions(cur, days=None)}
+    cur.execute("SELECT input_hash FROM mx_tasks WHERE kind = 'check' AND status IN ('open', 'leased', 'answered')")
+    hashes = [h for (h,) in cur.fetchall()]
+    return {"check": {"tasks": len(hashes), "would_change": sum(1 for h in hashes if h not in today)}}
 
 
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),

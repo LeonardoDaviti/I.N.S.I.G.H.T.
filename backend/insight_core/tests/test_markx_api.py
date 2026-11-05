@@ -371,6 +371,34 @@ class GuidesAndInputs(_Api):
         self.assertNotIn("Reading of the post", text)                                    # the raw form
         self.assertIsNone(self.row(first)["b"])                                         # no Mark IX story id
 
+    def test_checks_are_planned_from_mark_ix_stories_and_a_changed_story_is_counted_as_re_asked(self):
+        """F1's checks read Mark IX's stories (never writing them, never keying by their id); when a story changes
+        shape its check's input changes, and `reasked` counts it (build plan, corrections 4)."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        origin = self.post(title="Acme ships Widget 4.1", source=self.other, at=t0)
+        member = self.post(title="Widget 4.1 thoughts", at=t0 + timedelta(hours=1))
+        late = self.post(title="Widget 4.1 benchmarks", source=self.other, at=t0 + timedelta(hours=2))
+        story = origin                     # a Mark IX story is keyed by its first post
+        self.addCleanup(self.cur.execute, "DELETE FROM stories WHERE id = %s", (story,))
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (story, t0))
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v', NULL), (%s, %s, 'report', 'v', 'citation')", (story, origin, story, member))
+        with self.conn.transaction():
+            tasks.plan_checks(self.cur, days=1)
+        self.cur.execute("SELECT input, b FROM mx_tasks WHERE kind = 'check' AND a = %s", (member,))
+        (text, b), = self.cur.fetchall()
+        self.assertIsNone(b)
+        self.assertNotIn(story, text)
+        self.assertIn("Headline: Acme ships Widget 4.1", text)
+        with self.conn.transaction():
+            self.assertEqual(tasks.reasked(self.cur)["check"]["would_change"], 0)
+        self.cur.execute("INSERT INTO story_posts (story_id, post_id, role, voice, parent_reason) VALUES "
+                         "(%s, %s, 'report', 'v', 'citation')", (story, late))
+        with self.conn.transaction():
+            got = tasks.reasked(self.cur)["check"]
+        self.assertGreaterEqual(got["tasks"], 1)
+        self.assertEqual(got["would_change"], 1)     # the member's question now shows the late post too
+
     def test_plan_posts_takes_the_newest_of_the_last_30_days_once(self):
         now = datetime.now(timezone.utc) + timedelta(days=3650)    # a window no other suite's posts reach
         fresh = self.post(at=now - timedelta(hours=2))

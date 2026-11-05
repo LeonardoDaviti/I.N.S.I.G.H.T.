@@ -239,6 +239,67 @@ Not merged, not deployed. Nothing was fetched or downloaded; measured on scratch
   - `GET /api/markx/status`: the queue by kind and status, answers per day, tokens, the last contact of each worker, the last decision run.
 - **Done when** 200 tasks of every kind round-trip on a copy, with recorded prototype answers as the "model", and the invalid cases come back with their errors.
 
+### Built (S3, branch `markx-s3-api` from `markx-shadow` b897369, 2026-11-05)
+Not merged, not deployed. Nothing was fetched or downloaded, and the real `claude` was never run. Measured on a scratch copy of `insight_lab` (`insight_lab_check_<pid>_a`, migrated to 0066), never on the lab itself.
+
+**What changed** (the slice's files):
+- `markx/schemas.py`: the 11 kinds (guide, subject, answer schema in the worker's JSON Schema subset), their sets, and the guides loaded into `mx_guides` by sha256 once per process and database, before the first lease or task (`ensure_guides`).
+- `markx/guides/*.md`: 10 guides copied from the prototype: `read-v2`, `ent-v3`, `judge-raw-v1` and `judge-read-v1` (both `judge.md`), `card-v1`, `judge-story-v1`, `connect-v1`, `headline-v1`, `briefing-v1`, and `translate-v1` (written from F5's measured prompt). Checked against the lab's 380 source names and handles: none occurs, except "Hacker News" in ent-v3's venue examples, a product name kept as the guide was measured.
+- `markx/validate.py`: the checks of the table above, after the schema. Text is compared folded (NFKC, case, dashes, ё).
+- `markx/tasks.py`: `markx text v1` (corrections 3: post_parts' title and first 1,500 characters, the kept links, the quoted tweet), one input builder per kind ported from the prototype's renders, the task builders S2 and S5 call, and two planners: `read`/`entities` for the newest posts of the last 30 days (priority = the post's age in days), and `check` from Mark IX's current stories (`check_questions`, read only). A valid answer writes the post's reading (`mx_readings`) or its entities (`mx_mentions`, with 0090's name key). `reasked` counts the check tasks today's stories would no longer ask (corrections 4).
+- `markx/api.py`: the router, with the contract frozen in its docstring. `INSIGHT_MARKX` off (the default): every path answers 404 and nothing runs.
+- `backend/main.py`: one `include_router` line (and its import).
+- The worker token: `GET`/`POST /api/markx/token` (in `markx/api.py`), stored encrypted in `credentials` (provider `markx`), and one button in Sources → Connections (`MarkXToken.tsx`, hidden while the route answers 404; the token is shown once; the design frames' fixtures answer 404).
+- Tests: `test_markx_validate.py` (35), `test_markx_api.py` (27), `markxToken.test.tsx` (3).
+
+**How the build plan's corrections are kept:**
+- **No Mark IX story id in a task.** Inputs are content only; a check's `b` is null, a story task's `a`/`b` are its earliest member posts (or Mark X stories from S5). The same members in another order are the same task (tested), and a re-rooted story asks nothing new.
+- **Mark X's text is versioned** (`TEXT_VERSION = "markx-text-v1"`); translation reads 2,500 characters, as F5 measured.
+
+**S4's open points, settled** (the worker needs no change): answers posted as `{task_id, answer}` (an answer wrapped in its own name, `{"reading": {..}}`, is unwrapped); ids are uuid strings; `valid` is a count; `release` honours `task_ids`; an answer after its lease, or to a task another worker holds, is taken like any other, and one to an answered or failed task is a call that changes nothing (`repeated`); `schema` is the worker's subset, never null; tokens are per answer; `lease_until` always has its offset.
+
+**Decided here, for the owner to confirm:**
+- `connect` uses F6's guide (`bg_judge_story_dates.md`, story pairs with their members and dates), not `bg_graph.md`: this table's row (story pairs ≤ 30 days, both with dates) and F6's measured "development 13 of 15" are that experiment; `bg_graph` is the across-years post graph (0091).
+- A judge question shows 3 members, as the prototype's renders (and its numbers) did, not "up to 5".
+- Until S2's vectors, headline, connect and briefing inputs show the earliest members; the prototype showed those nearest the story's centroid.
+
+**The round trip** (the prototype's recorded answers as the model, every request through the app; inputs built by `tasks.py` from the copy's posts and the prototype's recorded v9.12 members, corrections 1). Kinds below 200 are bounded by the recorded answers whose posts are in the copy (the lab ends 30 Oct; the prototype read to 5 Nov):
+
+| Kind | Tasks | Valid | Invalid, with their errors |
+|---|---|---|---|
+| read | 200 | 200 | 0 |
+| entities | 200 | 197 | 3: a version the post doesn't state ("6" for a model the posts call by its variant only) — right |
+| translate | 87 | 86 | 1: "2 years" written as "two years" — strict |
+| card | 43 | 43 | 0 |
+| check | 54 | 54 | 0 |
+| join | 111 | 111 | 0 |
+| pair | 200 | 200 | 0 |
+| merge | 43 | 43 | 0 |
+| connect | 143 | 143 | 0 |
+| headline | 138 | 135 | 3: one right (a version no member has), two false ("Q2" from "the second quarter", "November 6" from "11.6") |
+| briefing | 5 | 4 | 1: a figure in a post outside the 4 shown (member choice, above) |
+| **all** | **1,224** | **1,216 (99.3%)** | **8** |
+
+- **The first run had 16 invalid; 9 errors were the checks', fixed as classes and measured again:**
+  - a reading with 7 actors (the prototype's schema capped 6; neither the guide nor this table does);
+  - 6 of 43 cards naming odd members by position (`odd` is kept as given: no decision reads it, and a position's base can't be told);
+  - a headline's "GPT-5.6" from "their 5.6 versions" (a version is now found by its number);
+  - a briefing's year from the day's own line (the same briefing then failed on a later line, above).
+
+  A test then found "02" read against "2"; figures now drop leading zeros.
+- **The invalid cases** (each answered task of every kind answered again wrongly, 5 a kind): a span or a version not in the post, a type or a relation out of its set, 21 entities, a confidence of 150, an odd member that isn't one, a 15-word headline, a figure or version in no member, a key not of the day, 8 lines, numbers dropped, three times the length. **Every one came back with its error**; the one exception was a "numbers dropped" case on a post with no number.
+- **Mark IX's tables** (every non-`mx_*` table's rows and md5, before and after): only `credentials` changed, its new `markx` token row.
+
+**The worker end to end** (`scripts/markx-worker` and `scripts/tests/fake-claude`, both unchanged, against the API in a container of its own on the scratch copy, Mark X on):
+- **valid plan:** 60 tasks leased (planned by the server from the copy's last 30 days), the fake's answers refused by the worker's check of the server's schema, retried once, posted; the server stored 60 invalid calls with their errors and re-opened the tasks;
+- **usage limit:** exit 4, 60 leases released; **auth:** exit 5, released; **missing lines:** retried, then released; **a wrong token:** exit 6.
+- **The valid path, with the recorded answers as the model** (a private replay fake): 107 readings and 34 entity answers valid through both the worker's and the server's checks, stored with their readings and mentions.
+- **For S4 (no change needed):** fake-claude's answers fit the stub's schema, not part C's, and its `FAKE_CLAUDE_STATE`/`_LOG` must be absolute (the worker runs `claude` in the temp directory). Because the server tops up `read` as it drains, `--kinds read,entities` reaches `entities` only when the 30 days are read.
+
+**Tests:** backend suite SUITE_RESULT. Frontend: 708 tests pass; the bundle gate passes (feed route +0.10%, post route +0.09%).
+
+**The real-data check:** REALDATA_RESULT
+
 ## Part D: the worker, Claude Code mode (your device)
 `scripts/markx-worker` is one Python file using the standard library only.
 ```
