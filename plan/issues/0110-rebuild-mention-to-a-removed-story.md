@@ -42,7 +42,17 @@ After the branch's rebuild there are 2,206 stories and 6,170 posts in stories; t
 - **Tests:** `test_incremental_stories.test_a_roundup_listing_a_page_its_story_left_mentions_nothing` shows the same shape in an ordinary batch. It went red with the same `story_mentions_story_id_fkey` error, then green, and checks every story row is whole and a full run then changes nothing. Two more tests: `test_realdata_checks.test_a_deploy_start_that_raises_fails_the_check_even_when_main_raises_too` and the scratch-name test. Backend suite (`./run-tests.sh`, image `insight-backend:i0110`): 1,462 tests, 1 failure under load (`test_deploy_finishes`, a 30 s thread wait on search vectors), which passes run alone (5 of 5).
 - **The real-data check:**
   - `--base main --head issue-0110-rebuild-fk insight_lab`: **PASS**, no `--allow`. No case changes state (75 pass, 16 fail, 1 error, 17 not checked). The diff is 0 in every part. On the lab the deploy start is the queue only (its rows are of main's rules): 0.6 s, identity 0 of 8,908.
-  - On `insight_server_1105`: see the handoff (the run is long: the branch's side rebuilds 48k posts).
+  - `... insight_server_1105` (2,743 s): the verdict is **FAIL, on the cases only**. The cases are the lab's: 13 marked pass fail on main and on the branch alike ("no stored post" on the server's data), and against main no case changes state. B, the invariants, have no rise:
+
+    | | main | branch |
+    |---|---|---|
+    | `story.deploy_start` | 1 (the server's FK, 18 s) | 0 (a rule change's rebuild, about 25 min) |
+    | `story.deploy_identity` | 3,338 | 0 of 11,200 |
+    | `story.deploy_lost` | 746 | 0 |
+    | `story.dangling` | 0 | 0 |
+    | `story.identity`, `story.rebuild_identity`, `story.id_changes` | 0 | 0 |
+
+    C, the diff after the full job: 0 in titles, text, roundups, story membership, origins, News and Classics. Discover differs by 1,582 (moved 1,232, names changed 142, voices changed 140, 64 gone, 4 new). That is the check, not the fix. Discover keeps its counts by a stamp that holds the last story run's time. On the check's one frozen clock, the branch's deploy start and the full job after it have the same time, so the full job kept the counts the start left. Main's start raised, so its full job counted again. Measured on a copy: a full job on the same clock keeps altered counts (1,432 kept), and one a millisecond later counts them (1,433). A deploy's clock moves, so the server isn't affected. Fixed in the check: the start runs a millisecond before the full job. That run was not repeated on the server copy.
 
 ## Open
 - `table_rows.story_ids` reads story_posts as (story, post), but the table's columns are (post_id, story_id). So `story.id_changes` compares the wrong thing. Not changed here.

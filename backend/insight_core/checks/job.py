@@ -20,7 +20,7 @@ import sys
 import time
 import traceback
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from insight_core.checks import table_rows
@@ -112,7 +112,9 @@ def main(argv=None) -> int:
         now = copy_now(cur, args.now)
     start = after = rows_after = None
     if args.deploy_json:
-        start = run_deploy_start(args.db, now)
+        # A moment before the full job: the stamp Discover keeps its counts by holds the last run's time, so on
+        # one frozen clock the full job would keep the counts the start left rather than count (a deploy's clock moves).
+        start = run_deploy_start(args.db, now - timedelta(milliseconds=1))
         print(json.dumps({"deploy_start": start}, default=str), file=sys.stderr)
         with open_copy(args.db, writable=True) as conn, conn.cursor() as cur:
             after, rows_after = table_rows.read_tables(cur), story_rows(cur)
