@@ -124,6 +124,14 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, pushed (v9.17 hotfix) |
 | [0111](0111-v10.0.1-news-from-the-v10-review.md) | v10.0.1 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v10.0.1) |
 | [0112](0112-mark-x-v10.0.1-live-fixes.md) | Mark X v10.0.1 (Shadow): readings the server accepts (the worker sends each guide's schema), checks never show an empty story, near-copies never checked, guides loaded safely, bug-failed readings reopened | built, merged (v10.0.1) |
+| [0113](0113-discover-pages-save-a-single-origin.md) | Discover's second tab, Pages: a story's origin page you don't follow, saved as one post with one tap (the existing save path), so the story gets its original | draft spec |
+| [0114](0114-fetch-a-followed-source-when-a-story-links-it.md) | A story links a page of a source you follow that isn't stored yet: that source is fetched now (within politeness), so the original arrives with its story | spec |
+| [0115](0115-mark-x-entities-list-and-entity-page.md) | Mark X entities: one list ranked like News (no today/week split), an entity page with every post and source in every role, grouped by story; nothing hidden when read | superseded by 0119 A3 |
+| [0116](0116-mark-x-incremental-decisions.md) | Mark X incremental decisions: a run recomputes only the stories new answers touched (and their merge groups), News only for changed rows; a nightly full run checks it | spec |
+| [0117](0117-restart-an-unhealthy-api.md) | An API that stops answering is restarted by itself: a health check on /api/version, a watchdog (default: in ingestion) after 2 min, at most 3 restarts an hour, a stack dump saved first | spec |
+| [0118](0118-source-track-record.md) | Source track record (Mark X Stalker): per source and topic, rumors confirmed / wrong / pending, lead time, first or repeat, accurate details; every count opens its cases; recording starts when Stealth's leak rule passes | future |
+| [0119](0119-mark-x-v10.1-entities-and-perspectives.md) | Mark X v10.1 (Stealth in Shadow): A. entity identity, surges per exact version, the entity list, page and review queue (0090 B–C, E, 0115); B. perspectives and the story sheet (0106 v3.2f) with label buttons; new task kinds alias, perspective, sheet | spec |
+| [0120](0120-perspectives-inside-a-story.md) | Perspectives inside a story: what each source adds, and one story sheet (built in 0119 B) | spec |
 
 ## Analysis archive
 
