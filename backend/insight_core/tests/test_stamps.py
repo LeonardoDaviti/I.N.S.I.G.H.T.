@@ -18,7 +18,7 @@ from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import posts_service
 from insight_core.services.stories_service import StoriesService, rules_stamp
 from insight_core.tests._db import db_url, requires_test_db
-from insight_core.utils import addresses, discover_rules, stamps, story_rules, tree_rules
+from insight_core.utils import addresses, discover_rules, stamps, story_rules, tree_rules, url_normalization
 from insight_core.utils.discover_rules import discover_address
 from insight_core.utils.story_rules import REASONS, group
 from insight_core.utils.tree_rules import PARENT_REASONS
@@ -65,6 +65,12 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         [story] = [s for s in sample_stories() if "m1" in {p.id for p in s.posts}]
         self.assertEqual({p.id for p in story.posts}, {"m1", "m2"})
 
+    def test_a_mail_trackers_query_is_the_page_it_marks(self):
+        # Issue 0109 B1: two voices linking one page through their own ?_hsenc= are one story at the page.
+        [story] = [s for s in sample_stories() if "w1" in {p.id for p in s.posts}]
+        self.assertEqual({p.id for p in story.posts}, {"w1", "w2"})
+        self.assertEqual(story.origin_url, stamps.JOURNAL)
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")
@@ -106,6 +112,9 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         # 0108's: a post that moved as a page of its own
         with mock.patch.object(StoriesService, "_story_post", staticmethod(
                 lambda row, sources, real=StoriesService._story_post: real({**row, "moved_to": None}, sources))):
+            self.assertNotEqual(rules_stamp.__wrapped__(), stories)
+        # 0109's: a mail tracker's query as another page
+        with mock.patch.object(url_normalization, "is_tracking_key", lambda key: key.startswith("utm_")):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):

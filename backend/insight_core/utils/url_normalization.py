@@ -7,21 +7,27 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-TRACKING_QUERY_PREFIXES = ("utm_",)
-TRACKING_QUERY_KEYS = {
-    "fbclid",
-    "gclid",
-    "igshid",
-    "mc_cid",
-    "mc_eid",
-    "mkt_tok",
-    "ref",
-    "ref_src",
-    "spm",
-    "si",
-    "source",
-    "ved",
+# A query key that marks who sent a reader or how, not which page (issue 0109 B1: the mail and analytics
+# families). On the server's data a newsletter's HubSpot ?_hsenc= made one essay 3 Discover lines and split
+# its story's key. A key of a page's own query (id, p, t, v, q, tag, cid, share) is never one.
+TRACKING_QUERY_PREFIXES = ("utm_", "hsa_")   # Google's campaign tags; HubSpot's ad tags
+BEFORE_0109 = frozenset({"fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "mkt_tok", "ref", "ref_src", "spm", "si",
+                         "source", "ved"})
+TRACKING_QUERY_KEYS = BEFORE_0109 | {
+    # mail: HubSpot, Mailchimp, Marketo (above), ConvertKit, beehiiv, Vero, Omeda, Eloqua, MailerLite, Drip, Klaviyo
+    "_hsenc", "_hsmi", "__hstc", "__hssc", "__hsfp", "hsctatracking", "ck_subscriber_id", "_bhlid", "vero_id",
+    "vero_conv", "oly_anon_id", "oly_enc_id", "elqtrackid", "elqtrack", "elqaid", "elqat", "ml_subscriber",
+    "ml_subscriber_hash", "__s", "_kx",
+    # analytics handed over between sites (Google's linker), and ad click ids
+    "_ga", "_gl", "gclsrc", "dclid", "gbraid", "wbraid", "msclkid", "yclid", "ysclid", "_openstat", "twclid",
+    "ttclid", "li_fat_id", "wickedid", "s_cid", "rb_clickid",
 }
+
+
+def is_tracking_key(key: str) -> bool:
+    """Whether a query key (lower case) only tracks the reader: the page is the same without it."""
+    return key in TRACKING_QUERY_KEYS or key.startswith(TRACKING_QUERY_PREFIXES)
+
 
 HOST_ALIASES = {
     "m.youtube.com": "youtube.com",
@@ -164,9 +170,7 @@ def _normalize_query(host: str, query: str, path: str) -> str:
     items = []
     for key, value in parse_qsl(query, keep_blank_values=True):
         lowered = key.lower()
-        if lowered in TRACKING_QUERY_KEYS:
-            continue
-        if any(lowered.startswith(prefix) for prefix in TRACKING_QUERY_PREFIXES):
+        if is_tracking_key(lowered):
             continue
         # A trailing slash in a value is the same value (issue 0070: ?p=112711/ and ?p=112711).
         items.append((key, value.rstrip("/") if value.strip("/") else value))

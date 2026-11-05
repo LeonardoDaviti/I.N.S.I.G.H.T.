@@ -32,6 +32,27 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertEqual({normalize_url(form) for form in forms},
                          {"https://simonwillison.net/2026/Aug/10/openclaw"})
 
+    def test_a_mail_or_analytics_tracker_names_no_other_page(self):
+        """Issue 0109 B1: a newsletter's mail tracker (HubSpot, Mailchimp, Marketo, ConvertKit, beehiiv, Vero,
+        Omeda, Eloqua, MailerLite, Drip, Klaviyo), an analytics cookie handed over (_ga, _gl) or an ad click
+        id is the page it marks: on the server's data one essay was 3 Discover lines by its ?_hsenc= alone."""
+        page = "https://journal.example/2017/feature-visualization"
+        tracked = [
+            "?_hsenc=p2ANqtz-8abc&_hsmi=2", "?_ga=2.1.2-3", "?_gl=1*abc*_ga*MTE", "?__hstc=1.2&__hssc=3&__hsfp=4",
+            "?hsa_acc=1&hsa_cam=2&hsa_grp=3&hsa_ad=4&hsa_src=g&hsa_tgt=k&hsa_kw=w&hsa_mt=b&hsa_net=a&hsa_ver=3",
+            "?hsCtaTracking=a%7Cb", "?mc_cid=a1&mc_eid=b2", "?mkt_tok=abc", "?ck_subscriber_id=12", "?_bhlid=abc",
+            "?vero_id=1&vero_conv=2", "?oly_anon_id=1&oly_enc_id=2", "?elqTrackId=1&elqTrack=true&elqaid=2&elqat=1",
+            "?ml_subscriber=1&ml_subscriber_hash=x", "?__s=abc", "?_kx=abc", "?gclid=1&gclsrc=aw.ds&dclid=2&gbraid=3&wbraid=4",
+            "?msclkid=1", "?yclid=1&ysclid=2&_openstat=3", "?twclid=1", "?ttclid=1", "?li_fat_id=1", "?wickedid=1",
+            "?s_cid=1", "?rb_clickid=1", "?_hsenc=x&utm_source=hs_email",
+        ]
+        self.assertEqual({normalize_url(page + query) for query in tracked}, {page})
+        # The page's own query stays: an id, a page number, a search, a video's time.
+        self.assertEqual(normalize_url(page + "?_hsenc=x&id=7&p=2"), page + "?id=7&p=2")
+        self.assertEqual(normalize_url("https://forum.example/viewtopic?t=12&_ga=1"), "https://forum.example/viewtopic?t=12")
+        for kept in ("?cid=3", "?share=1", "?tag=models", "?_x_tr_sl=auto", "?ga=1", "?hs=2"):
+            self.assertEqual(normalize_url(page + kept), page + kept, kept)
+
     def test_a_fragment_that_is_the_address_is_kept(self):
         self.assertEqual(normalize_url("https://app.test/#!/post/1"), "https://app.test/#!/post/1")
         self.assertEqual(normalize_url("https://app.test/#/post/2"), "https://app.test/#/post/2")
