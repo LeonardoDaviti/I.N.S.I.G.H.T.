@@ -886,16 +886,21 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     return changed
 
 
-def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) -> Dict[str, Any]:
+def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
+        stage: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
-    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot."""
+    insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
+    `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
+    raises stops the run between stages, and the caller's transaction rolls back: nothing half done."""
     from insight_core.markx import news as mx_news, repo, schemas
+    mark = stage or (lambda name: None)
     cur.execute("SHOW transaction_isolation")
     isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
     if not cur.fetchone()[0]:
         return {"skipped": "another decision run holds the lock"}
     now = now or _now()
+    mark("load")
     schemas.ensure_guides(cur)
     run_id = repo.start_run(cur, code_version=CODE_VERSION,
                             config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
@@ -903,12 +908,17 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None) 
     cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
     waiting = cur.fetchone()[0]
     ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
+    mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
     out, counts = think(cur, world, config, ask, now)
+    mark("write")
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
+    mark("connections")
     conns = connections(cur, out, ids, world, ask, config, news_keys)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
+    mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
+    mark("news")
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),

@@ -41,7 +41,9 @@ POST /api/markx/release
 GET /api/markx/status
     200 {"queue": {kind: {status: n}}, "answers_per_day": [{day, calls, valid, invalid, tokens_in, tokens_out,
          cost_usd}], "tokens": {calls, tokens_in, tokens_out, cost_usd}, "workers": [{worker, last_contact,
-         leased}], "last_run": {..} | null, "guides": {id: sha256}}
+         leased}], "last_run": {..} | null, "guides": {id: sha256},
+         "jobs": {"decide" | "candidates": {running, started_at, stage, stage_at, wanted_at, finished_at, last}}}
+    (jobs: added by 0112 Decided 12; a running decision run shows its start and stage)
 
 S4's open points, settled: the answer is posted as {"task_id", "answer"} (and an answer the model wrapped in
 one key named for it, {"reading": {..}}, is unwrapped); ids are uuid strings, posted back as leased; "valid"
@@ -347,6 +349,7 @@ def status():
         leased = {w: (k, until) for w, k, until in cur.fetchall()}
         run = repo.last_run(cur)
         guide_hashes = {gid: g["sha256"] for gid, g in repo.guides(cur).items()}
+        job_view = jobs.view(cur)
     workers = []
     for w in sorted(set(_contacts) | set(leased)):
         seen = _contacts.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
@@ -356,7 +359,7 @@ def status():
             "workers": workers,
             "last_run": None if run is None else {k: (_iso(v) if isinstance(v, datetime) else str(v) if isinstance(v, UUID) else v)
                                                   for k, v in run.items()},
-            "guides": guide_hashes}
+            "guides": guide_hashes, "jobs": job_view}
 
 
 class Vectors(BaseModel):
@@ -475,7 +478,7 @@ def mx_post(post_id: str):
 @router.get("/overview")
 def mx_overview():
     with transaction() as cur:
-        return {"worker": news.worker(cur, dict(_contacts)), "briefing": news.briefings(cur),
+        return {"worker": {**news.worker(cur, dict(_contacts)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}}
 
@@ -486,7 +489,7 @@ def mx_decide():
     (0112 Decided 10): {"wanted": true, "jobs": the jobs' state}."""
     with transaction() as cur:
         jobs.want(cur, "decide")
-        return {"wanted": True, "jobs": jobs.state(cur)}
+        return {"wanted": True, "jobs": jobs.view(cur)}
 
 
 # ---- the labels tab (S6, 0086 F) --------------------------------------------------------------------------

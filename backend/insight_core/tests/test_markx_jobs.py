@@ -212,6 +212,67 @@ class TheRunner(_Api):
         self.assertIn("markx_jobs.start()", source)
 
 
+class TheLimitAndTheStages(_Api):
+    """0112 Decided 12: at most one run per 5 minutes, a 120 s limit between stages, stage logs, the running state."""
+
+    def test_uploads_streaming_in_start_at_most_one_run_per_five_minutes(self):
+        recent = {"started_at": T0 - timedelta(minutes=4), "wanted_at": T0 - timedelta(minutes=3)}
+        self.assertIsNone(jobs.due(_states(decide=recent), T0))                       # wanted, settled, but too soon
+        later = {"started_at": T0 - timedelta(minutes=5, seconds=1), "wanted_at": T0 - timedelta(minutes=3)}
+        self.assertEqual(jobs.due(_states(decide=later), T0), "decide")
+        # a stream that keeps marking can't push the run back: the first mark's time stays
+        streaming = {"started_at": T0 - timedelta(minutes=6), "wanted_at": T0 - timedelta(minutes=2)}
+        self.assertEqual(jobs.due(_states(decide=streaming), T0), "decide")
+        # the candidates still run between two decision runs
+        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
+
+    def test_each_stage_is_logged_with_its_duration(self):
+        with self.assertLogs(jobs.log, "INFO") as logs:
+            out = jobs.Jobs(db_url()).decide()
+        self.assertIn("run", out)
+        text = "\n".join(logs.output)
+        self.assertIn("Mark X decision run started", text)
+        for name in ("candidates", "load", "questions and decisions", "write", "connections", "headlines", "news"):
+            self.assertIn(f"Mark X decision run: {name} took", text, name)
+        self.assertIn("Mark X decision run finished in", text)
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertEqual([s for s, _ in last["stages"]], ["candidates", "load", "questions and decisions", "write", "connections",
+                                                "headlines", "news"])
+
+    def test_a_run_over_the_limit_stops_between_stages_and_writes_nothing(self):
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        before = self.cur.fetchone()[0]
+        clock = iter(range(0, 10_000, 50))                     # each look at the clock: 50 s later
+        with mock.patch.object(jobs.time, "monotonic", lambda: next(clock)), self.assertLogs(jobs.log, "WARNING") as logs:
+            self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
+        self.assertIn("stopped before", "\n".join(logs.output))
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        self.assertEqual(self.cur.fetchone()[0], before)       # its one transaction rolled back: no mx_runs row
+        s = jobs.state(self.cur)["decide"]
+        self.assertFalse(s["last"]["ok"])
+        self.assertTrue(s["last"]["error"].startswith("over 120 s"))
+        self.assertIsNotNone(s["wanted_at"])                   # retried at the next look (after the 5-minute gap)
+        self.assertIsNone(s["stage"])
+
+    def test_the_status_shows_a_running_run_with_its_start_and_stage(self):
+        seen = {}
+
+        def think(*a, **kw):
+            seen["status"] = call("GET", "/api/markx/status", token=self.token)[1]["jobs"]["decide"]
+            seen["overview"] = call("GET", "/api/markx/overview")[1]["worker"]["jobs"]["decide"]
+            return real_think(*a, **kw)
+        real_think = decide.think
+        with mock.patch.object(decide, "think", think):
+            jobs.Jobs(db_url()).decide()
+        for where in ("status", "overview"):
+            self.assertTrue(seen[where]["running"], where)
+            self.assertEqual(seen[where]["stage"], "questions and decisions")
+            self.assertIsNotNone(seen[where]["started_at"])
+        done = call("GET", "/api/markx/status", token=self.token)[1]["jobs"]["decide"]
+        self.assertFalse(done["running"])
+        self.assertTrue(done["last"]["ok"])
+
+
 def _sleep_forever(db_url, job):   # module level: a spawned child imports it by name
     import time
     time.sleep(60)

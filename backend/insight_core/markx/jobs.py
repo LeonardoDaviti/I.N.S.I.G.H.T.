@@ -12,7 +12,12 @@ at 101% CPU and every /api/* request timed out.
       - the candidate finder, when vectors arrived (the posts waiting in mx_candidate_posts) and before every
         decision run (also the posts whose entities were written since its last run);
       - the decision run: SETTLE seconds after work arrived (answers, vectors, POST /api/markx/decide, the API
-        start's story job), and every EVERY seconds.
+        start's story job), at most one every GAP seconds (a steady stream of uploads can't push it back, nor run it
+        back to back), and every EVERY seconds.
+  - **A decision run has a time limit and stage logs** (0112 Decided 12): "Mark X decision run started", each stage
+    with its duration (candidates, load, questions and decisions, write, connections, headlines, news), the finish.
+    Past LIMIT seconds it stops before the next stage and logs which; its one transaction rolls back (nothing half
+    done) and the run is wanted again. A stage that never ends is killed with its process at HARD_LIMIT.
   - One run at a time: this process runs one job at a time, and `decide.run` holds a Postgres advisory lock across
     processes (a second run is skipped).
   - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
@@ -34,11 +39,17 @@ log = logging.getLogger(__name__)
 
 POLL = 30.0                      # seconds between the runner's looks (work is picked up within this)
 SETTLE = 60.0                    # a decision run waits this long after work arrived, so a burst of uploads is one run
+GAP = 300.0                      # and at most one starts every 5 minutes while uploads stream in (0112 Decided 12)
 EVERY = 3600.0                   # and runs at least hourly
+LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries (Decided 12)
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 JOBS = ("candidates", "decide")
+
+
+class TooLong(Exception):
+    """A decision run past LIMIT seconds, stopped before its next stage."""
 
 
 def enabled() -> bool:
@@ -81,6 +92,16 @@ def state(cur: Any) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def view(cur: Any) -> Dict[str, Dict[str, Any]]:
+    """The jobs as /api/markx/status and the /markx page show them: each {running, started_at, stage, stage_at (the
+    running stage's start), wanted_at (work waiting for a run), finished_at, last (how the last run ended)}; times
+    ISO 8601 UTC."""
+    def iso(v: Any) -> Any:
+        return v.astimezone(timezone.utc).isoformat() if isinstance(v, datetime) else v
+    return {job: {"running": s["stage"] is not None, **{k: iso(v) for k, v in s.items() if k != "job"}}
+            for job, s in state(cur).items()}
+
+
 # ---- the runner's side: the jobs (in insight-ingestion) ---------------------------------------------
 
 def waiting_posts(cur: Any) -> List[str]:
@@ -97,8 +118,8 @@ class Jobs:
     """The two jobs on one database, each run in the calling process (the runner calls them in a child process).
     Every state write is a short transaction of its own."""
 
-    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now) -> None:
-        self.db_url, self.clock = db_url, clock
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT) -> None:
+        self.db_url, self.clock, self.limit = db_url, clock, limit
 
     def _tx(self):
         from insight_core.db import database
@@ -153,37 +174,64 @@ class Jobs:
         return counts
 
     def decide(self) -> Optional[Dict[str, Any]]:
-        """The candidate finder, then one decision run in its own snapshot; a failed run is retried at the next tick."""
+        """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
+        stage logged with its duration; a failed or stopped run is wanted again."""
         from insight_core.markx import decide
-        self.candidates()
-        self._begin("decide", "decide")
+        log.info("Mark X decision run started")
         t0 = time.monotonic()
+        self._begin("decide", "candidates")
+        stages: List[List[Any]] = []          # [[stage, seconds]] in order (jsonb keeps no key order)
+        current = ["candidates", t0]
+
+        def stage(name: str) -> None:
+            at = time.monotonic()
+            stages.append([current[0], round(at - current[1], 1)])
+            log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
+            if at - t0 > self.limit:
+                raise TooLong(f"over {self.limit:.0f} s ({at - t0:.0f} s): stopped before {name}")
+            current[:] = [name, at]
+            self._stage("decide", name)
+
+        self.candidates()
         try:
             with decide.snapshot(self.db_url) as cur:
-                out = decide.run(cur)
+                out = decide.run(cur, stage=stage)
+        except TooLong as exc:
+            log.warning("Mark X decision run %s; nothing written, it runs again at the next look", exc)
+            self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).rsplit(" ", 1)[-1],
+                                    "stages": stages, "seconds": round(time.monotonic() - t0, 1)}, again=True)
+            return None
         except Exception as exc:
             log.exception("Mark X decisions: the run failed")
-            self._finish("decide", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
-                         again=True)
+            self._finish("decide", {"ok": False, "error": str(exc)[:500], "stages": stages,
+                                    "seconds": round(time.monotonic() - t0, 1)}, again=True)
             return None
-        seconds = round(time.monotonic() - t0, 1)
-        log.info("Mark X decisions: %s in %.1f s", {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")},
-                 seconds)
+        end = time.monotonic()
+        if "skipped" not in out:
+            stages.append([current[0], round(end - current[1], 1)])
+            log.info("Mark X decision run: %s took %.1f s", current[0], end - current[1])
+        seconds = round(end - t0, 1)
+        log.info("Mark X decision run finished in %.1f s: %s", seconds,
+                 {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
-                                "skipped": out.get("skipped"),
+                                "skipped": out.get("skipped"), "stages": stages,
                                 "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
                      again="skipped" in out)
         return out
 
 
-def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY) -> Optional[str]:
+def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
+        gap: float = GAP) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
-    one started (or never ran); else the candidate finder when vectors arrived."""
+    one started (or never ran), never within GAP seconds of the last start; else the candidate finder when vectors
+    arrived."""
     d = states["decide"]
-    if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
-        return "decide"
-    if d["started_at"] is None or (now - d["started_at"]).total_seconds() >= every:
-        return "decide"
+    since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
+    if since is None or since >= gap:
+        if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
+            return "decide"
+        if since is None or since >= every:
+            return "decide"
     if states["candidates"]["wanted_at"] is not None:
         return "candidates"
     return None
@@ -202,10 +250,10 @@ class Runner:
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
                  on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
-                 hard_limit: float = HARD_LIMIT) -> None:
+                 gap: float = GAP, hard_limit: float = HARD_LIMIT) -> None:
         self.db_url, self.clock, self.spawn = db_url, clock, spawn
         self.on = on or enabled
-        self.settle, self.every, self.hard_limit = settle, every, hard_limit
+        self.settle, self.every, self.gap, self.hard_limit = settle, every, gap, hard_limit
         self.stop = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -234,7 +282,7 @@ class Runner:
             return None
         try:
             states = self._states()
-            job = due(states, self._db_now, settle=self.settle, every=self.every)
+            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap)
             if job is None:
                 return None
             if self.spawn:

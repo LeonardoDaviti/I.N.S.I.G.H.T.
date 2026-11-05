@@ -9,8 +9,8 @@ import MarkXPage from '../../pages/MarkXPage';
 import MarkXPanel from './MarkXPanel';
 import { ApiError } from '../../lib/apiError';
 import type { Api } from '../../services/api';
-import type { MarkxNews, MarkxOverview, MarkxPostPanel } from '../../services/markx';
-import { MarkXWorker } from './MarkXOverview';
+import type { MarkxJob, MarkxNews, MarkxOverview, MarkxPostPanel } from '../../services/markx';
+import { DecisionJob, MarkXWorker } from './MarkXOverview';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
@@ -116,6 +116,43 @@ describe('the reading window', () => {
     await userEvent.click(within(section).getByRole('button', { name: 'set' }));
     expect(setMarkxReadingWindow).toHaveBeenLastCalledWith(45);
     await waitFor(() => expect(within(section).getByText(/the last 45 days/)).toBeInTheDocument());
+  });
+});
+
+describe('the decision job', () => {
+  const overview = (jobs: MarkxOverview['worker']['jobs']): MarkxOverview => ({
+    worker: { queue: {}, days: [], tokens: { calls: 0, tokens_in: 0, tokens_out: 0, paid_usd: 0, api_usd: 0 }, failed: [],
+      invalid: [], workers: [], last_run: null, jobs },
+    briefing: { day: null, briefings: [] }, entities: { today: [], week: [] },
+    reading_window: { days: 30, default: 30 },
+  });
+  const job = (over: Partial<MarkxJob>): MarkxJob => ({ running: false, started_at: null, stage: null, stage_at: null,
+    wanted_at: null, finished_at: null, last: null, ...over });
+
+  it('shows a running run with its stage, and the button only asks', async () => {
+    const getMarkxOverview = vi.fn(async () => overview({ decide: job({ running: true, stage: 'questions and decisions', started_at: now }),
+      candidates: job({}) }));
+    const runMarkxDecisions = vi.fn(async () => ({ wanted: true }));
+    renderWithProviders(<MarkXWorker />, { api: makeFakeApi({ getMarkxOverview, setMarkxReadingWindow: vi.fn(), runMarkxDecisions }) });
+    expect(await screen.findByText(/Deciding now: questions and decisions/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'run the decisions now' }));
+    expect(runMarkxDecisions).toHaveBeenCalled();
+    expect(await screen.findByText('asked')).toBeInTheDocument();
+  });
+
+  it('says when a run is asked for', () => {
+    renderWithProviders(<DecisionJob job={job({ wanted_at: now })} />, { api: makeFakeApi({}) });
+    expect(screen.getByRole('status')).toHaveTextContent('A decision run is asked for');
+  });
+
+  it('says how the last run stopped', () => {
+    renderWithProviders(<DecisionJob job={job({ last: { ok: false, error: 'over 120 s (130 s): stopped before news' } })} />, { api: makeFakeApi({}) });
+    expect(screen.getByRole('status')).toHaveTextContent('The last decision run stopped: over 120 s (130 s): stopped before news.');
+  });
+
+  it('shows nothing on an older API', () => {
+    const { container } = renderWithProviders(<DecisionJob job={undefined} />, { api: makeFakeApi({}) });
+    expect(container.textContent).toBe('');
   });
 });
 
