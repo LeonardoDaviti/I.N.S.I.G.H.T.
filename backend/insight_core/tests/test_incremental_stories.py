@@ -253,6 +253,37 @@ class IncrementalJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], self.now - timedelta(hours=10), "it starts at the earlier post")
         self.assert_same_as_full()
 
+    def _relink(self, pid, links):
+        html = "".join(f'<p><a href="{target}">read</a></p>' for target in links) or "<p>Body</p>"
+        self.cur.execute("UPDATE posts SET content_html = %s, links_scanned_at = NULL WHERE id = %s", (html, pid))
+
+    def assert_every_story_row_is_whole(self):
+        """Issue 0110: every story_posts and story_mentions row names a stored story."""
+        self.cur.execute("SELECT count(*) FROM story_posts sp LEFT JOIN stories s ON s.id = sp.story_id WHERE s.id IS NULL")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.cur.execute("SELECT count(*) FROM story_mentions m LEFT JOIN stories s ON s.id = m.story_id WHERE s.id IS NULL")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
+    def test_a_roundup_listing_a_page_its_story_left_mentions_nothing(self):
+        """Issue 0110 (the server's v9.17 rebuild failed on it): a page is outside the scope's stories
+        once the posts joined through it stop linking it, and a roundup of the same batch lists it. Its
+        story was read from the stored link edges, of those very posts: a story this batch removes,
+        so the mention named a story no longer stored (story_mentions_story_id_fkey)."""
+        page, first, other = self._page("left"), self._page("first"), self._page("other")
+        a = self._post(self._source("A"), links=[page], stored_hours_ago=3)
+        b = self._post(self._source("B"), links=[page], stored_hours_ago=2)
+        self._incremental()
+        self.assertEqual(self._story(b), a, "a story through the page")
+        self._relink(a, [])
+        self._relink(b, [])
+        roundup = self._post(self._source("Weekly"), links=[first, page, other])
+        self._incremental()
+        self.assertEqual([self._story(a), self._story(b)], [None, None], "the page joins no one now")
+        self.cur.execute("SELECT story_id::text FROM story_mentions WHERE post_id = %s", (roundup,))
+        self.assertEqual(self.cur.fetchall(), [], "the page is in no story: the roundup mentions none")
+        self.assert_every_story_row_is_whole()
+        self.assert_same_as_full()
+
     def test_nothing_new_writes_nothing(self):
         self.assertEqual(self._incremental(), {}, "an empty queue and the same clock: no step")
 

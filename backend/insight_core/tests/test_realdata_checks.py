@@ -299,6 +299,24 @@ class DiffTests(unittest.TestCase):
             text, _ = report.build(work)
             self.assertIn("**Needs reading: 0** News lead changes.", text)
 
+    def test_a_deploy_start_that_raises_fails_the_check_even_when_main_raises_too(self):
+        """Issue 0110: the server's v9.17 rebuild raised on main's code; the check never ran that path."""
+        import json
+        import tempfile
+        from insight_core.checks import report
+
+        def deploy(count):
+            return {"found": [{"name": "story.deploy_start", "area": "stories", "what": "raised", "count": count, "of": 1,
+                               "examples": ["ForeignKeyViolation"] if count else []}]}
+        with tempfile.TemporaryDirectory() as work:
+            for base, head, failed in ((1, 1, True), (1, 0, False), (0, 0, False), (0, 1, True)):
+                for side, count in (("base", base), ("head", head)):
+                    os.makedirs(os.path.join(work, side), exist_ok=True)
+                    with open(os.path.join(work, side, "deploy.json"), "w") as f:
+                        json.dump(deploy(count), f)
+                _, problems = report.build(work)
+                self.assertEqual(any("story.deploy_start" in p for p in problems), failed, (base, head))
+
     def test_the_report_counts_every_thing_and_says_what_wasnt_compared(self):
         before = {"now": "t", "parts": {"posts": {"a": {"title": "x", "text": "y"}}}, "missing": {}}
         after = {"now": "t", "parts": {"posts": {"a": {"title": "x2", "text": "y"}}}, "missing": {"news": "absent"}}
@@ -315,7 +333,8 @@ class GuardTests(unittest.TestCase):
         for name in ("insight", "insight_lab", "insight_server_copy", "insight_preview", "insight_lab_copy"):
             with self.assertRaises(SystemExit, msg=name):
                 scratch_only(f"postgresql://u:p@h:5432/{name}")
-        for name in ("insight_lab_check_a", "insight_lab_check_b", "insight_lab_check_4242_a", "insight_lab_0075a", "insight_run_1_test"):
+        for name in ("insight_lab_check_a", "insight_lab_check_b", "insight_lab_check_4242_a", "insight_lab_0075a", "insight_run_1_test",
+                     "insight_server_1105_check_4242_a"):
             scratch_only(f"postgresql://u:p@h:5432/{name}")
 
     def test_rows_compared_by_table_and_story_ids_by_their_posts(self):

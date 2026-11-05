@@ -491,18 +491,21 @@ class StoriesRepository:
         return {r[0] for r in cur.fetchall()}
 
     @staticmethod
-    def stories_holding(cur: Cursor, nodes: Sequence[str]) -> Dict[str, str]:
-        """The stored story each node is in: a post's, and a page's (the story its link edges join)."""
+    def stories_holding(cur: Cursor, nodes: Sequence[str], *, besides: Sequence[str] = ()) -> Dict[str, str]:
+        """The stored story each node is in: a post's, and a page's (the story its link edges join), read
+        from posts not in `besides` (a batch's scope: its stories are rewritten now, and a page only its
+        posts linked joins no story outside it, issue 0110)."""
         posts = [n for n in nodes if not n.startswith(_PAGE)]
         pages = [n[len(_PAGE):] for n in nodes if n.startswith(_PAGE)]
         cur.execute(
             """
             SELECT post_id::text, story_id::text FROM story_posts WHERE post_id IN (SELECT unnest(%(posts)s::uuid[]))
+              AND post_id NOT IN (SELECT unnest(%(besides)s::uuid[]))
             UNION
             SELECT DISTINCT %(page)s || e.dst_url, sp.story_id::text FROM post_edges e JOIN story_posts sp ON sp.post_id = e.src_post
-            WHERE e.kind = 'link' AND e.dst_url = ANY(%(pages)s)
+            WHERE e.kind = 'link' AND e.dst_url = ANY(%(pages)s) AND e.src_post NOT IN (SELECT unnest(%(besides)s::uuid[]))
             """,
-            {"posts": posts, "pages": pages, "page": _PAGE},
+            {"posts": posts, "pages": pages, "page": _PAGE, "besides": list(besides)},
         )
         return dict(cur.fetchall())
 
