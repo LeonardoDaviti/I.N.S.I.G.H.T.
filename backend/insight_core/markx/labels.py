@@ -3,7 +3,7 @@
 The queue (the prototype's E1, plan/research/lab/markx/proto: e1_items.py, fresh_items.py, merge_items.py):
   - the questions behind the decision job's decisions, read as the last run would (decide.think, with an Ask that
     never adds a task) plus the answered connect (F6) and entities (F7) tasks;
-  - every decision within `Settings.near` of its bar, and every merge question;
+  - every decision within `Settings.near` (0.05) of its bar, and every merge question;
   - of the rest, a sample of `Settings.sample` per pool (a feature's accepted side and its rejected side), in a stable
     hash order, weighted back to the pool's size when precision is counted (eval_fresh.py's weights).
 Each item is a task (keyed by its content, never by a Mark IX story id): its evidence is the task's input, the exact
@@ -38,8 +38,9 @@ from insight_core.markx import decide, repo, schemas
 
 @dataclass(frozen=True)
 class Settings:
-    near: float = 0.10          # a decision this close to its bar is asked, every one
-    sample: int = 12            # of each pool's rest, this many (E1's ~120 items, about two hours)
+    near: float = 0.05          # a decision this close to its bar is asked, every one (one step of the judge's
+                                # confidence, which comes in fives: 0.55, 0.60 and 0.65 around the 0.6 bar)
+    sample: int = 6             # of each pool's rest, this many (E1: about two hours; measured, 0086 F Built)
     test_share: float = 0.25    # the newest quarter of the queue's days are test (the prototype held out 4 of 16)
     target: float = 0.95        # the precision a bar is re-picked for on dev (the owner's to set)
     seed: str = "markx-e1"      # the sample's order: a stable hash of the seed and the task
