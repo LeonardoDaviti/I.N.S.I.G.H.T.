@@ -134,7 +134,7 @@ _FILE_SEGMENTS = frozenset({"pdf", "epdf", "pdfdirect", "download"})
 @lru_cache(maxsize=1 << 15)
 def paper_id(url: Optional[str]) -> Optional[str]:
     """The paper an address names on its host (issue 0106), whatever the path around it: the abstract,
-    its PDF, its HTML and each version are one page (`arxiv.org/abs/2005.14165`, `/pdf/2005.14165v2`;
+    its PDF, its HTML and each version are one page (`preprints.example/abs/2005.14165`, `/pdf/2005.14165v2`;
     `/doi/10.1145/123`, `/doi/pdf/10.1145/123`). The id sits in the first three segments; None when the
     address names none."""
     _, _, rest = bare(url or "").partition("/")
