@@ -113,6 +113,8 @@ class OwnerTests(unittest.TestCase):
         self.assertIsNone(own.owner("https://x.com/someone"), "a profile is no post")
         self.assertIsNone(own.owner("https://x.com/another/status/1111111111111111111"))
         self.assertEqual(own.owner("https://t.me/achannel/3"), "chan")
+        self.assertIsNone(own.owner("https://t.me/achannel/A-FILE-NAME-OF-FOUR-WORDS.md"),
+                          "an article-like address under a channel is no post of it")
         self.assertIsNone(own.owner("https://youtube.com/watch?v=xyz"), "a video's address names no channel")
 
     def test_a_repost_does_not_make_another_accounts_posts_yours(self):

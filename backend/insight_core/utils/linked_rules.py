@@ -10,8 +10,9 @@ SIGNATURE_SHARE, SIGNATURE_MIN_POSTS: a subscribe page, a series index), not a p
 
 **Whose page an address is** (`OwnPages.owner`):
 - *on a platform* (Discover's platforms: X, Telegram, Reddit, YouTube) a post of the account a source
-  follows, as 0065 reads it (discover_address, discover_article): x.com/<user>/status/<id> is the
-  followed <user>'s; youtube.com/watch?v=… names no channel, so no one's;
+  follows, its account as 0065 reads it (discover_address) and a post by its shape (a tweet, a
+  Telegram /<channel>/<number>, a Reddit thread): x.com/<user>/status/<id> is the followed <user>'s;
+  youtube.com/watch?v=… names no channel, so no one's;
 - *elsewhere* an address of the same shape as the source's stored posts on the same publication
   (its host without www.). A shape is the path's segments, each a number (`#`) or a word (`*`), and
   the query's keys; its first segment stays as written when 2+ of the source's posts there share it
@@ -34,7 +35,7 @@ from typing import Collection, Dict, Iterable, List, Mapping, Optional, Sequence
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from insight_core.utils.addresses import host_of, publication_of, site_of
-from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, discover_address, discover_article
+from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, PLATFORM_POST, TWEET, discover_address
 from insight_core.utils.post_links import HREF, MEDIA, NUMBERISH, REFERENCE, SECTION_MIN
 from insight_core.utils.story_rules import NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE
 from insight_core.utils.url_normalization import normalize_url
@@ -94,6 +95,13 @@ def signature_links(links_by_post: Mapping[str, Iterable[str]]) -> Set[str]:
     posts = len(links_by_post)
     seen = Counter(url for links in links_by_post.values() for url in set(links))
     return {url for url, n in seen.items() if n >= SIGNATURE_MIN_POSTS and n >= SIGNATURE_SHARE * posts}
+
+
+def _platform_post(url: str) -> bool:
+    """A post of an account on a platform by its address: a tweet, /<channel>/<number> (Telegram), a
+    Reddit thread. Not an article-like address there (a file name under a channel is no post)."""
+    path = urlsplit(url).path or "/"
+    return bool(TWEET.match(path) or PLATFORM_POST.match(path) or "/comments/" in path)
 
 
 def _loose(shape: Shape) -> bool:
@@ -161,7 +169,7 @@ class OwnPages:
             return None
         if site_of(host) in DISCOVER_PLATFORMS:   # a tweet on any host is normalized to x.com
             key = discover_address(url)[0]
-            found = self.of_account.get(key) if key and discover_article(url) else None
+            found = self.of_account.get(key) if key and _platform_post(url) else None
             return (found, url) if found else None
         found = self._held(url, host)
         if found is None and urlsplit(url).query:
