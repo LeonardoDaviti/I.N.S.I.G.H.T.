@@ -1,5 +1,6 @@
 """The real-data check's markx.api_during_run (0112 Decided 13): the API is measured while Mark X decides, and a
-request over 1 s fails the merge."""
+request over 1 s fails the merge. What counts is what the run adds: the same probes before and after the run are the
+machine's own slowness (other checks share the database), and only the slow requests over that rate count."""
 from __future__ import annotations
 
 import json
@@ -32,6 +33,41 @@ class TheCheck(unittest.TestCase):
                                           "examples": [], "note": ""}]}, fh)
             _, problems = report.build(work)
         self.assertTrue(any("markx.api_during_run: 2" in p for p in problems), problems)
+
+
+def rows(n: int, slow: int = 0, failed: int = 0):
+    """n probe answers: `slow` of them over 1 s, `failed` of them failing (status -1 after the 10 s timeout)."""
+    out = [{"path": "/api/version", "ms": 2, "status": 200} for _ in range(n - slow - failed)]
+    out += [{"path": "/api/feed", "ms": 1500, "status": 200} for _ in range(slow)]
+    out += [{"path": "/api/feed", "ms": 10010, "status": -1} for _ in range(failed)]
+    return out
+
+
+class WhatTheRunAdds(unittest.TestCase):
+    def test_on_a_quiet_machine_every_slow_or_failing_request_counts(self):
+        count, note = job_checks.added_by_run(rows(40), rows(30, slow=2, failed=1), rows(40))
+        self.assertEqual(count, 3)
+        self.assertEqual(note["expected"], 0)
+
+    def test_a_machine_as_slow_before_and_after_as_during_the_run_counts_none(self):
+        # the lab's 6 Nov check: other checks' story jobs made /api/feed slow, and /api/version waited behind it
+        count, note = job_checks.added_by_run(rows(40, slow=20, failed=8), rows(38, slow=19, failed=8), rows(40, slow=20, failed=8))
+        self.assertEqual(count, 0)
+        self.assertAlmostEqual(note["baseline_rate"], 0.7)
+
+    def test_a_run_that_slows_a_loaded_api_further_counts_what_it_adds(self):
+        # 10% slow without the run, all 30 slow with it: 27 more than the machine's own rate
+        count, note = job_checks.added_by_run(rows(40, slow=4), rows(30, slow=30), rows(40, slow=4))
+        self.assertEqual(count, 27)
+        self.assertEqual(note["expected"], 3)
+
+    def test_the_expected_number_is_rounded_to_whole_requests(self):
+        count, _ = job_checks.added_by_run(rows(40, slow=1), rows(30, slow=1), rows(40))   # 1/80 of 30 = 0.4: none expected
+        self.assertEqual(count, 1)
+
+    def test_no_baseline_is_a_quiet_machine(self):
+        count, note = job_checks.added_by_run([], rows(10, slow=2), [])
+        self.assertEqual((count, note["expected"]), (2, 0))
 
 
 if __name__ == "__main__":

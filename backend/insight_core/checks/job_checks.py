@@ -153,6 +153,27 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
 
 SLOW_MS = 1000
 PROBES = ("/api/version", "/api/feed?limit=20")
+BASELINE_S = 10.0   # the probes' window before the run, and again after it: the machine's own slowness
+
+
+def _slow(row: Dict[str, Any]) -> bool:
+    return row["ms"] >= SLOW_MS or row["status"] != 200
+
+
+def added_by_run(before: List[Dict[str, Any]], during: List[Dict[str, Any]],
+                 after: List[Dict[str, Any]]) -> "tuple[int, Dict[str, Any]]":
+    """The slow or failing requests the run adds: those during it, less what the same probes' rate before and after it
+    (the API with no run, on the same machine at the same time) predicts for as many requests. The check shares the
+    machine and its database with other checks, and the API's routes read the database on their event loop, so a busy
+    database slows even /api/version: that slowness is the machine's, not the run's. With no slow request before or
+    after (a quiet machine) every slow one during the run counts, as the rule says."""
+    base = before + after
+    rate = sum(map(_slow, base)) / len(base) if base else 0.0
+    expected = round(rate * len(during))
+    slow = sum(map(_slow, during))
+    return max(0, slow - expected), {"slow_during": slow, "expected": expected, "baseline_rate": round(rate, 3),
+                                     "before": f"{sum(map(_slow, before))} of {len(before)}",
+                                     "after": f"{sum(map(_slow, after))} of {len(after)}"}
 
 
 def _api_workers(app_dir: str) -> int:
@@ -178,11 +199,13 @@ def api_during_run(db_url: str, now: datetime) -> Found:
     start script runs, Mark X on) serves the copy; a full decision run with the entity-candidate flush happens where
     the version runs it (insight-ingestion's job in a process of its own, or, before 0112 Decided 10, inside the API:
     its start's run and POST /api/markx/decide); meanwhile /api/version and /api/feed are asked every 0.5 s. Each
-    request slower than 1 s, or failing, counts."""
+    request slower than 1 s, or failing, counts, less the rate the same probes show for 10 s before the run and 10 s
+    after it (added_by_run): what is measured is the run's slowdown, not the machine's load."""
     import subprocess
     import threading
     import urllib.request
-    what = "API requests (/api/version, /api/feed) slower than 1 s or failing while a decision run and the candidate flush run"
+    what = ("API requests (/api/version, /api/feed) slower than 1 s or failing while a decision run and the candidate flush run, "
+            "over the rate before and after it")
     app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     try:
         from insight_core.markx import decide  # noqa: F401
@@ -198,6 +221,7 @@ def api_during_run(db_url: str, now: datetime) -> Found:
     api = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--app-dir", app_dir, "--host", "127.0.0.1",
                             "--port", str(port), "--workers", str(workers)], env=env, stdout=log, stderr=subprocess.STDOUT)
     rows: List[Dict[str, Any]] = []
+    phase = ["before"]   # each probe is of the window it was asked in
     stop = threading.Event()
 
     def get(path: str, timeout: float = 10.0) -> Dict[str, Any]:
@@ -215,7 +239,7 @@ def api_during_run(db_url: str, now: datetime) -> Found:
         pending: List[threading.Thread] = []
         while not stop.is_set():
             for path in PROBES:
-                th = threading.Thread(target=lambda p=path: rows.append(get(p)), daemon=True)
+                th = threading.Thread(target=lambda p=path, w=phase[0]: rows.append({**get(p), "phase": w}), daemon=True)
                 th.start()
                 pending.append(th)
             stop.wait(0.5)
@@ -232,6 +256,8 @@ def api_during_run(db_url: str, now: datetime) -> Found:
             time.sleep(1)
         prober = threading.Thread(target=probe, daemon=True)
         prober.start()
+        stop.wait(BASELINE_S)
+        phase[0] = "during"
         t0 = time.monotonic()
         if out_of_api:   # as insight-ingestion runs it: the candidate flush then the decision run, in a process
             job = subprocess.run([sys.executable, "-c", "import sys; from insight_core.markx.jobs import Jobs; "
@@ -258,6 +284,8 @@ def api_during_run(db_url: str, now: datetime) -> Found:
                 note_extra["start_run"] = "not seen in 1200 s"
         run_seconds = round(time.monotonic() - t0, 1)
         stop.wait(5)
+        phase[0] = "after"
+        stop.wait(BASELINE_S)
     finally:
         stop.set()
         api.terminate()
@@ -266,15 +294,18 @@ def api_during_run(db_url: str, now: datetime) -> Found:
         except subprocess.TimeoutExpired:
             api.kill()
         log.close()
-    slow = [r for r in rows if r["ms"] >= SLOW_MS or r["status"] != 200]
+    windows = {w: [r for r in rows if r["phase"] == w] for w in ("before", "during", "after")}
+    count, added = added_by_run(windows["before"], windows["during"], windows["after"])
     by_path = {}
-    for path in {r["path"] for r in rows}:
-        ms = sorted(r["ms"] for r in rows if r["path"] == path)
-        by_path[path] = {"n": len(ms), "p50": ms[len(ms) // 2], "p95": ms[min(len(ms) - 1, int(len(ms) * .95))], "max": ms[-1]}
-    worst = sorted(slow, key=lambda r: -r["ms"])[:EXAMPLES]
-    return Found("markx.api_during_run", "mark x", what, len(slow), len(rows),
+    for w, of in windows.items():
+        for path in sorted({r["path"] for r in of}):
+            ms = sorted(r["ms"] for r in of if r["path"] == path)
+            by_path.setdefault(w, {})[path] = {"n": len(ms), "p50": ms[len(ms) // 2],
+                                                "p95": ms[min(len(ms) - 1, int(len(ms) * .95))], "max": ms[-1]}
+    worst = sorted((r for r in windows["during"] if _slow(r)), key=lambda r: -r["ms"])[:EXAMPLES]
+    return Found("markx.api_during_run", "mark x", what, count, len(windows["during"]),
                  [f"{r['path']} {r['ms']} ms (status {r['status']})" for r in worst], round(time.monotonic() - started, 1),
-                 note=json.dumps({"where": where, "api_processes": workers, "run_seconds": run_seconds,
+                 note=json.dumps({"where": where, "api_processes": workers, "run_seconds": run_seconds, **added,
                                   "paths": by_path, **note_extra}, default=str))
 
 
