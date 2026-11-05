@@ -77,8 +77,8 @@ def recompute_stories() -> None:
 
 
 def start_stories() -> None:
-    """The start's story job in its own process, then Mark X's first decisions over its stories (issue 0112 A:
-    they waited for the hourly clock); the second is nothing when INSIGHT_MARKX is off."""
+    """The start's story job in its own process, then Mark X's first decisions over its stories are asked for (issue
+    0112 A; insight-ingestion runs them, 0112 Decided 10); the second is nothing when INSIGHT_MARKX is off."""
     in_own_process(recompute_stories)
     markx_router_module.after_start_stories()
 
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     threading.Thread(target=start_stories, name="stories", daemon=True).start()
-    markx_router_module.start_jobs()   # Mark X's hourly decisions (issue 0086 E); nothing when INSIGHT_MARKX is off
+    # Mark X's jobs never run here (0112 Decided 10): insight-ingestion runs them (markx/jobs.py).
     yield
     database.close_all()
 

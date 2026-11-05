@@ -127,7 +127,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
                 copied.append(p.id)
         if added >= limit or len(rows) < limit:
             break
-    jobs.pending.note(copied)
+    jobs.note_posts(cur, copied)
     return added
 
 

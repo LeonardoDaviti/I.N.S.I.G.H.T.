@@ -32,7 +32,7 @@ from insight_core.tests._db import db_url, insert_scratch_source, requires_test_
 
 MX_TABLES = ("mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
-             "mx_settings")
+             "mx_settings", "mx_jobs", "mx_candidate_posts", "mx_workers")
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,

@@ -64,8 +64,8 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
                                    and `gone`: the Mark IX rows no Mark X row holds.
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
-POST /api/markx/decide             one decision run now: {run, ...counts} or {"skipped"} (the hourly and after-upload
-                                   runs are jobs.scheduler's)
+POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a
+                                   minute, as it runs the hourly and after-upload ones (markx/jobs.py, 0112 Decided 10)
 
 S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
 --------------------------------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, StrictInt
 
-from insight_core.markx import decide, embed, jobs, labels, news, repo, schemas, tasks, validate
+from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -311,8 +311,8 @@ def post_answers(body: Answers):
     _contact(worker)
     with transaction() as cur:
         result = store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
-    if result["valid"]:
-        jobs.scheduler.note()   # S5: the decisions, once the uploads go quiet
+        if result["valid"]:
+            jobs.want(cur, "decide")   # insight-ingestion decides (markx/jobs.py); never here (0112 Decided 10)
     return result
 
 
@@ -374,13 +374,13 @@ def post_embeddings(body: Vectors):
     try:
         with transaction() as cur:
             result = embed.store(cur, model=body.model, model_sha256=body.model_sha256, vectors=body.vectors)
+            jobs.note_posts(cur, result.pop("posts"))   # their candidates, found by insight-ingestion (markx/jobs.py)
+            if result["stored"]:
+                jobs.want(cur, "decide")
     except embed.BuildMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    jobs.pending.note(result.pop("posts"))
-    if result["stored"]:
-        jobs.scheduler.note()   # S5: after the candidates' own debounce
     return result
 
 
@@ -401,11 +401,6 @@ def token_generate():
 
 
 # ---- the Mark X page's routes (S5, 0086 E) -------------------------------------------------------------
-
-def start_jobs() -> bool:
-    """At the API's start (main.py's lifespan): the decision job's hourly clock, only when Mark X is on."""
-    return jobs.scheduler.start()
-
 
 MAX_DAYS = 36500
 
@@ -445,8 +440,16 @@ def mx_set_reading_window(body: WindowIn):
 
 
 def after_start_stories() -> None:
-    """When the start's story job has finished (main.py): Mark X's first decision run, only when Mark X is on."""
-    jobs.scheduler.after_stories()
+    """When the start's story job has finished (main.py): Mark X's first decision run is wanted, only when Mark X is
+    on; insight-ingestion runs it within a minute (markx/jobs.py). Never raises into the start."""
+    if not enabled():
+        return
+    try:
+        with transaction() as cur:
+            jobs.want(cur, "decide")
+    except Exception:   # noqa: BLE001 - the hourly run comes anyway
+        import logging
+        logging.getLogger(__name__).exception("Mark X: could not ask for the first decision run")
 
 
 @router.get("/on")
@@ -479,8 +482,11 @@ def mx_overview():
 
 @router.post("/decide")
 def mx_decide():
-    with decide.snapshot(db_url()) as cur:
-        return decide.run(cur)
+    """Asks for a decision run: insight-ingestion runs it within a minute (markx/jobs.py). Never one in the request
+    (0112 Decided 10): {"wanted": true, "jobs": the jobs' state}."""
+    with transaction() as cur:
+        jobs.want(cur, "decide")
+        return {"wanted": True, "jobs": jobs.state(cur)}
 
 
 # ---- the labels tab (S6, 0086 F) --------------------------------------------------------------------------

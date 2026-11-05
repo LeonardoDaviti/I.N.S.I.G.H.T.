@@ -1,163 +1,277 @@
 """Mark X Shadow's jobs: when the candidate finder (markx/candidates.py) and the decision run (markx/decide.py) run.
 
 The rules and the work stay in their modules (`candidates.run`, `decide.run`); this module only decides when they
-run and keeps them out of a request:
-  - `Pending`, the candidates' debounce: the posts of each upload collected, one run DEBOUNCE seconds after the
-    last upload (0086 B);
-  - `Scheduler`, the decisions' clock: after the worker's uploads (debounced), hourly, and when the start's story
-    job finishes (0086 E, 0112 A); one run at a time (and a Postgres advisory lock across processes, in
-    `decide.run`).
-Both only when INSIGHT_MARKX is on, and never raise into a request or their thread.
+run, and where: **never in the API process** (0112 Decided 10). On 5 Nov a decision run in the API's one process sat
+at 101% CPU and every /api/* request timed out.
+
+  - **The API only marks that work arrived** (`want`, `note_posts`): a stamp in mx_jobs (`wanted_at`, set once until
+    a run takes it) and, for new vectors, their posts in mx_candidate_posts. Each is one short statement in the
+    request's own transaction; nothing runs in the request or in a thread of the API.
+  - **insight-ingestion's scheduler runs them** (`Runner.tick`, every POLL seconds, in a thread beside the ingestion
+    ticks; each job in a process of its own, so a run's CPU and memory never touch the scheduler's):
+      - the candidate finder, when vectors arrived (the posts waiting in mx_candidate_posts) and before every
+        decision run (also the posts whose entities were written since its last run);
+      - the decision run: SETTLE seconds after work arrived (answers, vectors, POST /api/markx/decide, the API
+        start's story job), and every EVERY seconds.
+  - One run at a time: this process runs one job at a time, and `decide.run` holds a Postgres advisory lock across
+    processes (a second run is skipped).
+  - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
+    never waits for a run.
+
+Both only when INSIGHT_MARKX is on; nothing here raises into the scheduler.
 """
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import threading
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, Optional, Set
-
-from insight_core.markx import candidates, decide
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 log = logging.getLogger(__name__)
 
-DEBOUNCE = 30.0                   # the candidates: seconds of quiet after the last upload
+POLL = 30.0                      # seconds between the runner's looks (work is picked up within this)
+SETTLE = 60.0                    # a decision run waits this long after work arrived, so a burst of uploads is one run
+EVERY = 3600.0                   # and runs at least hourly
+MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
+FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
+HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
+JOBS = ("candidates", "decide")
 
 
-# ---- the candidates' debounce -----------------------------------------------------------------------
+def enabled() -> bool:
+    from insight_core.markx.api import enabled as on
+    return on()
 
-class Pending:
-    """The debounce: posts collected after each upload, one run DEBOUNCE seconds after the last (delay None: no
-    timer, `flush` runs it; the tests). Never raises into a request; a failed run keeps its posts for the next."""
 
-    def __init__(self, delay: Optional[float] = DEBOUNCE, transaction: Optional[Callable[[], Any]] = None) -> None:
-        self.delay = delay
-        self.transaction = transaction
-        self.posts: Set[str] = set()
-        self.last_run: Optional[datetime] = None
-        self.lock = threading.Lock()
-        self.timer: Optional[threading.Timer] = None
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
-    def note(self, post_ids: Iterable[str]) -> None:
-        with self.lock:
-            self.posts |= set(map(str, post_ids))
-            if self.delay is None or not self.posts:
-                return
-            if self.timer is not None:
-                self.timer.cancel()
-            self.timer = threading.Timer(self.delay, self.flush)
-            self.timer.daemon = True
-            self.timer.start()
 
-    def flush(self) -> Optional[Counter]:
-        with self.lock:
-            ids, self.posts, self.timer = self.posts, set(), None
-            since = self.last_run or datetime.now(timezone.utc) - timedelta(days=1)
-            started = datetime.now(timezone.utc)
+# ---- the API's side: work arrived ------------------------------------------------------------------
+
+def want(cur: Any, job: str) -> None:
+    """Work for `job` arrived: stamp wanted_at once (the runner clears it when a run takes it). A row already wanted is
+    not written again, so many uploads at once don't queue on the row."""
+    cur.execute("UPDATE mx_jobs SET wanted_at = now() WHERE job = %s AND wanted_at IS NULL", (job,))
+    if cur.rowcount == 0:
+        cur.execute("INSERT INTO mx_jobs (job, wanted_at) VALUES (%s, now()) ON CONFLICT (job) DO NOTHING", (job,))
+
+
+def note_posts(cur: Any, post_ids: Iterable[str]) -> int:
+    """New vectors for these posts: they wait for the candidate finder (mx_candidate_posts), and it is wanted."""
+    ids = sorted({str(p) for p in post_ids})
+    if not ids:
+        return 0
+    cur.execute("""INSERT INTO mx_candidate_posts (post_id) SELECT unnest(%s::uuid[])
+                   ON CONFLICT (post_id) DO UPDATE SET noted_at = now()""", (ids,))
+    want(cur, "candidates")
+    return len(ids)
+
+
+def state(cur: Any) -> Dict[str, Dict[str, Any]]:
+    cur.execute("SELECT job, wanted_at, started_at, stage, stage_at, finished_at, last FROM mx_jobs")
+    out = {j: {"job": j, "wanted_at": None, "started_at": None, "stage": None, "stage_at": None, "finished_at": None,
+               "last": None} for j in JOBS}
+    for job, wanted, started, stage, stage_at, finished, last in cur.fetchall():
+        out[job] = {"job": job, "wanted_at": wanted, "started_at": started, "stage": stage, "stage_at": stage_at,
+                    "finished_at": finished, "last": last}
+    return out
+
+
+# ---- the runner's side: the jobs (in insight-ingestion) ---------------------------------------------
+
+def waiting_posts(cur: Any) -> List[str]:
+    cur.execute("SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at")
+    return [r[0] for r in cur.fetchall()]
+
+
+def _json(value: Any) -> str:
+    import json
+    return json.dumps(value, default=str)
+
+
+class Jobs:
+    """The two jobs on one database, each run in the calling process (the runner calls them in a child process).
+    Every state write is a short transaction of its own."""
+
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now) -> None:
+        self.db_url, self.clock = db_url, clock
+
+    def _tx(self):
+        from insight_core.db import database
+        return database.transaction(self.db_url)
+
+    def _begin(self, job: str, stage: str) -> datetime:
+        with self._tx() as cur:
+            cur.execute("""INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING""", (job,))
+            cur.execute("""UPDATE mx_jobs SET wanted_at = NULL, started_at = now(), stage = %s, stage_at = now()
+                            WHERE job = %s RETURNING started_at""", (stage, job))
+            return cur.fetchone()[0]
+
+    def _stage(self, job: str, stage: str) -> None:
+        with self._tx() as cur:
+            cur.execute("UPDATE mx_jobs SET stage = %s, stage_at = now() WHERE job = %s", (stage, job))
+
+    def _finish(self, job: str, last: Dict[str, Any], *, again: bool = False) -> None:
+        """The run ended: no stage, the outcome in `last`; `again` wants the job once more (a failed run is retried)."""
+        with self._tx() as cur:
+            cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
+            cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
+                                  wanted_at = CASE WHEN %s THEN COALESCE(wanted_at, now()) ELSE wanted_at END
+                            WHERE job = %s""", (_json(last), again, job))
+
+    def last(self, job: str) -> Dict[str, Any]:
+        with self._tx() as cur:
+            return state(cur)[job]
+
+    def candidates(self) -> Optional[Counter]:
+        """The candidate finder over the waiting posts and the posts whose entities were written since its last run.
+        A failed run leaves its posts waiting and the job wanted."""
+        from insight_core.markx import candidates
+        previous = (self.last("candidates").get("last") or {})
+        started = self._begin("candidates", "candidates")
+        since_text = previous.get("mentions_since")
+        since = datetime.fromisoformat(since_text) if since_text else started - FIRST_SINCE
+        t0 = time.monotonic()
         try:
-            transaction = self.transaction or _candidates_transaction
-            with transaction() as cur:
+            with self._tx() as cur:
+                ids = waiting_posts(cur)
                 counts = candidates.run(cur, ids, since=since)
-        except Exception:   # never into a request or the timer thread; the posts wait for the next run
-            log.exception("Mark X candidates: the run failed; %d posts kept for the next", len(ids))
-            with self.lock:
-                self.posts |= ids
+                cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
+        except Exception as exc:   # the posts wait for the next run
+            log.exception("Mark X candidates: the run failed; the posts wait for the next")
+            self._finish("candidates", {"ok": False, "error": str(exc)[:500], "mentions_since": since_text,
+                                        "seconds": round(time.monotonic() - t0, 1)}, again=True)
             return None
-        with self.lock:
-            self.last_run = started
-        log.info("Mark X candidates: %d posts, %s", len(ids), dict(counts))
+        seconds = round(time.monotonic() - t0, 1)
+        log.info("Mark X candidates: %d posts, %s in %.1f s", len(ids), dict(counts), seconds)
+        self._finish("candidates", {"ok": True, "posts": len(ids), "counts": dict(counts), "seconds": seconds,
+                                    "mentions_since": (started - MENTIONS_MARGIN).isoformat()})
         return counts
 
+    def decide(self) -> Optional[Dict[str, Any]]:
+        """The candidate finder, then one decision run in its own snapshot; a failed run is retried at the next tick."""
+        from insight_core.markx import decide
+        self.candidates()
+        self._begin("decide", "decide")
+        t0 = time.monotonic()
+        try:
+            with decide.snapshot(self.db_url) as cur:
+                out = decide.run(cur)
+        except Exception as exc:
+            log.exception("Mark X decisions: the run failed")
+            self._finish("decide", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
+                         again=True)
+            return None
+        seconds = round(time.monotonic() - t0, 1)
+        log.info("Mark X decisions: %s in %.1f s", {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")},
+                 seconds)
+        self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
+                                "skipped": out.get("skipped"),
+                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
+                     again="skipped" in out)
+        return out
 
-def _candidates_transaction():
-    from insight_core.db import database
-    from insight_core.services.registry import services
-    return database.transaction(services().db_url)
+
+def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY) -> Optional[str]:
+    """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
+    one started (or never ran); else the candidate finder when vectors arrived."""
+    d = states["decide"]
+    if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
+        return "decide"
+    if d["started_at"] is None or (now - d["started_at"]).total_seconds() >= every:
+        return "decide"
+    if states["candidates"]["wanted_at"] is not None:
+        return "candidates"
+    return None
 
 
-pending = Pending()
+def _job_main(db_url: str, job: str) -> None:
+    """A child process: one job, then exit (what it read goes back to the OS)."""
+    from insight_core.logs.core.logger_config import setup_logging
+    setup_logging(debug_mode=False)
+    getattr(Jobs(db_url), job)()
 
 
-# ---- the decisions' clock ---------------------------------------------------------------------------
+class Runner:
+    """insight-ingestion's Mark X loop: every POLL seconds, the job that is due, in a process of its own (or inline:
+    `spawn=False`, the tests and the real-data check). Only when INSIGHT_MARKX is on; never raises."""
 
-def _transaction():
-    return decide.snapshot()
-
-
-class Scheduler:
-    """After the worker's uploads (`note`, DEBOUNCE seconds after the last) and every EVERY seconds, one run at a
-    time; only when INSIGHT_MARKX is on. Never raises into a request or its thread."""
-    DEBOUNCE = 60.0
-    EVERY = 3600.0
-
-    def __init__(self, transaction: Optional[Callable[[], Any]] = None, debounce: Optional[float] = DEBOUNCE,
-                 every: Optional[float] = EVERY, enabled: Optional[Callable[[], bool]] = None) -> None:
-        self.transaction = transaction
-        self.debounce, self.every = debounce, every
-        self.enabled = enabled
-        self.lock = threading.Lock()
-        self.running = threading.Lock()
-        self.timer: Optional[threading.Timer] = None
-        self.thread: Optional[threading.Thread] = None
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
+                 on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
+                 hard_limit: float = HARD_LIMIT) -> None:
+        self.db_url, self.clock, self.spawn = db_url, clock, spawn
+        self.on = on or enabled
+        self.settle, self.every, self.hard_limit = settle, every, hard_limit
         self.stop = threading.Event()
-        self.last: Optional[Dict[str, Any]] = None
+        self.thread: Optional[threading.Thread] = None
 
-    def on(self) -> bool:
-        if self.enabled is not None:
-            return self.enabled()
-        from insight_core.markx.api import enabled
-        return enabled()
+    def _states(self) -> Dict[str, Dict[str, Any]]:
+        from insight_core.db import database
+        with database.transaction(self.db_url) as cur:
+            cur.execute("SELECT now()")
+            self._db_now = cur.fetchone()[0]
+            return state(cur)
 
-    def note(self) -> None:
-        """An upload arrived: one run DEBOUNCE seconds after the last."""
-        if self.debounce is None or not self.on():
-            return
-        with self.lock:
-            if self.timer is not None:
-                self.timer.cancel()
-            self.timer = threading.Timer(self.debounce, self.run_now)
-            self.timer.daemon = True
-            self.timer.start()
+    def recover(self) -> None:
+        """At the runner's start: a run a restart ended mid-way shows no stage, and its job is wanted again."""
+        from insight_core.db import database
+        try:
+            with database.transaction(self.db_url) as cur:
+                cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, wanted_at = COALESCE(wanted_at, now())
+                                WHERE stage IS NOT NULL""")
+                if cur.rowcount:
+                    log.info("Mark X jobs: %d runs a restart ended are wanted again", cur.rowcount)
+        except Exception:
+            log.exception("Mark X jobs: could not recover the runs a restart ended")
 
-    def start(self) -> bool:
-        """The hourly clock, at the API's start: False (nothing runs) when Mark X is off."""
-        if self.every is None or self.thread is not None or not self.on():
-            return False
-        self.thread = threading.Thread(target=self._hourly, name="markx-decide", daemon=True)
-        self.thread.start()
-        return True
-
-    def after_stories(self) -> Optional[Dict[str, Any]]:
-        """The API's start: its story job has finished, so Mark X decides now over Mark IX's new stories (0112 A),
-        not up to EVERY seconds later; nothing when Mark X is off."""
+    def tick(self) -> Optional[str]:
+        """One look: the job that ran, or None."""
         if not self.on():
-            return None
-        return self.run_now(candidates_first=True)
-
-    def _hourly(self) -> None:
-        while not self.stop.wait(self.every):
-            self.run_now(candidates_first=True)
-
-    def run_now(self, candidates_first: bool = False) -> Optional[Dict[str, Any]]:
-        if not self.on():
-            return None
-        with self.lock:
-            self.timer = None
-        if not self.running.acquire(blocking=False):
             return None
         try:
-            if candidates_first:   # the posts whose entities arrived since the candidates' last run (S2)
-                pending.flush()
-            transaction = self.transaction or _transaction
-            with transaction() as cur:
-                self.last = decide.run(cur)
-            log.info("Mark X decisions: %s", {k: v for k, v in self.last.items() if k in ("stories", "changes", "news")})
-            return self.last
-        except Exception:   # never into a request or the timer thread
-            log.exception("Mark X decisions: the run failed")
+            states = self._states()
+            job = due(states, self._db_now, settle=self.settle, every=self.every)
+            if job is None:
+                return None
+            if self.spawn:
+                self._in_own_process(job)
+            else:
+                getattr(Jobs(self.db_url, clock=self.clock), job)()
+            return job
+        except Exception:
+            log.exception("Mark X jobs: the tick failed")
             return None
-        finally:
-            self.running.release()
 
+    def _in_own_process(self, job: str) -> None:
+        process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, job),
+                                                               name=f"markx-{job}", daemon=True)
+        process.start()
+        process.join(self.hard_limit)
+        if process.is_alive():
+            process.kill()
+            process.join(10)
+            log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", job, self.hard_limit)
+            try:
+                Jobs(self.db_url)._finish(job, {"ok": False, "error": f"killed after {self.hard_limit:.0f} s"}, again=True)
+            except Exception:
+                log.exception("Mark X jobs: could not record the killed run")
+        elif process.exitcode:
+            log.error("Mark X jobs: the %s run ended with exit code %s", job, process.exitcode)
 
-scheduler = Scheduler()
+    def start(self, poll: float = POLL) -> bool:
+        """The loop in a daemon thread (run_scheduler.py); False when Mark X is off at the start."""
+        if self.thread is not None or not self.on():
+            return False
+        self.recover()
+
+        def loop() -> None:
+            while not self.stop.wait(poll):
+                self.tick()
+        self.thread = threading.Thread(target=loop, name="markx-jobs", daemon=True)
+        self.thread.start()
+        log.info("Mark X jobs: running here, every %.0f s", poll)
+        return True

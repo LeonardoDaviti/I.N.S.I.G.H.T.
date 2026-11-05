@@ -15,6 +15,8 @@ Two clocks:
   the same job, in this process (so its pages and the hourly fetches of that host share one
   host limiter). A continuation runs as its own task beside the ticks; one that comes due during a
   tick starts after it, which leaves the hourly fetches the host first.
+- Mark X's jobs (issue 0112 Decided 10), when INSIGHT_MARKX is on: markx/jobs.py's Runner, in a thread of its own,
+  looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process.
 
 tick() is the testable unit: it takes its collaborators as arguments.
 """
@@ -235,6 +237,15 @@ async def main() -> None:
         logger.exception("Could not read the scheduler state; starting fresh")
         state = SchedulerState()
 
+    # Mark X's jobs (0112 Decided 10): the candidate finder and the decision run, here and never in the API, each
+    # in a process of its own; the API only marks that work arrived. Nothing when INSIGHT_MARKX is off.
+    from insight_core.markx.jobs import Runner as MarkxJobs
+    markx_jobs = MarkxJobs(db_url)
+    try:
+        markx_jobs.start()
+    except Exception:  # noqa: BLE001 - Mark X never stops ingestion
+        logger.exception("Could not start Mark X's jobs")
+
     archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
     last_archive_poll = 0.0
     loop = asyncio.get_running_loop()
@@ -259,6 +270,7 @@ async def main() -> None:
         # Sleep in 1s steps so SIGTERM is honoured promptly.
         await asyncio.sleep(1)
 
+    markx_jobs.stop.set()
     logger.info("Scheduler stopped")
 
 
