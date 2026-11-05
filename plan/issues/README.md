@@ -123,6 +123,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | built, pushed (v9.18) |
 | [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, pushed (v9.17 hotfix) |
 | [0111](0111-v10.0.1-news-from-the-v10-review.md) | v10.0.1 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v10.0.1) |
+| [0112](0112-mark-x-v10.0.1-live-fixes.md) | Mark X v10.0.1 (Shadow): readings the server accepts (the worker sends each guide's schema), checks never show an empty story, near-copies never checked, guides loaded safely, bug-failed readings reopened | built, merged (v10.0.1) |
 
 ## Analysis archive
 
