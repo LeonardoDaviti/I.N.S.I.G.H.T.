@@ -1015,6 +1015,51 @@ describe('SourcesConfig deep links', () => {
     expect(await within(dialog).findByText('Found the feed for this page: openai.com/news/rss.xml')).toBeInTheDocument();
   });
 
+  // Issue 0109 B2: a platform account is followed through its platform's template, filled in, not as an
+  // address the feed finder reads (x.com/<user> found nothing: "Headlines only").
+  it.each([
+    ['x.com/writer_x', 'Nitter', 'Username', 'writer_x',
+      { platform: 'rss', handle_or_url: 'https://nitter.local/writer_x/rss', display_name: 'writer_x', fetch_delay_seconds: 10 }],
+    ['t.me/sample_channel', 'Telegram RSS', 'Channel Username', 'sample_channel',
+      { platform: 'rss', handle_or_url: 'https://telegram.local/rss/sample_channel?limit=50', display_name: 'sample_channel', fetch_delay_seconds: 5 }],
+    ['youtube.com/@SampleChannel', 'YouTube', 'Channel', '@SampleChannel',
+      { platform: 'youtube', handle_or_url: 'https://www.youtube.com/@SampleChannel', display_name: 'SampleChannel' }],
+    ['youtube.com/channel/UCabc123', 'YouTube', 'Channel', 'channel/UCabc123',
+      { platform: 'youtube', handle_or_url: 'https://www.youtube.com/channel/UCabc123', display_name: 'UCabc123' }],
+    ['reddit.com/r/samplesub', 'Reddit', 'Subreddit', 'samplesub',
+      { platform: 'reddit', handle_or_url: 'r/samplesub', display_name: 'r/samplesub' }],
+  ])('Follow… on %s opens Add source with the %s template filled in', async (key, template, field, value, added) => {
+    const suggestion = { key, url: `https://${key}`, voices: 2, article_count: 1, link_count: 3, voice_names: ['Voice A'],
+      articles: [{ url: `https://${key}/1`, title: null, linked_by: ['Voice A'] }] };
+    const findFeed = vi.fn();
+    const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
+    setup('/settings/sources?tab=suggested', {
+      getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [suggestion] }), findFeed, addSource,
+      fetchSourceNow: vi.fn().mockResolvedValue(runReport()),
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Follow…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: template })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByLabelText(new RegExp(`^${field}`))).toHaveValue(value);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+    await waitFor(() => expect(addSource).toHaveBeenCalledTimes(1));
+    expect(addSource.mock.calls[0][0]).toEqual(added);
+    expect(findFeed).not.toHaveBeenCalled();
+  });
+
+  it('Follow… on a site still opens Add source on its address, through the feed finder', async () => {
+    const suggestion = { key: 'x.com', url: 'https://x.com', voices: 2, article_count: 1, link_count: 3, voice_names: ['Voice A'],
+      articles: [] };
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'none', feeds: [] });
+    setup('/settings/sources?tab=suggested', {
+      getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [suggestion] }), findFeed,
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Follow…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Feed URL or handle')).toHaveValue('https://x.com');
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://x.com'));
+  });
+
   it('Discover is its own tab, and one box searches sites, the sources linking them and their articles', async () => {
     const one = {
       key: 'openai.com', url: 'https://openai.com', voices: 2, article_count: 1, link_count: 1, classics: 0,

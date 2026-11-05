@@ -67,9 +67,10 @@ class HostBudgetsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(learned, self.budgets.learned(HOST))
         self.assertEqual(learned.limits, 2)
         self.assertEqual(learned.requests, 40)
-        # The slower of the two measures: 40 per (400 s + 12 min), not per the 12 min waited.
-        self.assertEqual(learned.window_s, 400 + 12 * 60)
-        self.assertEqual(learned.line(), f"{HOST}: about 40 requests per 19 min, learned from 2 limits")
+        # From recovery to recovery, not the minutes waited: 40 per 400 s + 10 min and per 400 s + 12 min. Both
+        # refused at 400 s, so one window under 400 s + 10 min: the narrower (issue 0107's follow-up).
+        self.assertEqual(learned.window_s, 400 + 10 * 60)
+        self.assertEqual(learned.line(), f"{HOST}: about 40 requests per 17 min, learned from 2 limits")
 
     async def test_an_archive_paces_to_80_percent_of_the_budget(self):
         budget = LearnedBudget(HOST, requests=40, window_s=900, limits=2)
@@ -140,6 +141,103 @@ class HostBudgetsTests(unittest.IsolatedAsyncioTestCase):
         await self.window(20, then_wait_min=20)             # 20 per 200 s + 20 min
         learned = await self.budgets.succeeded(HOST)
         self.assertEqual((learned.requests, learned.window_s), (20, 200 + 20 * 60))
+
+
+class AWindowMeasuredOnceTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0107's follow-up: once one window is measured for a host, a limit is measured from the start of
+    the window it hit (its budget's requests back), and the wait aims at that window's refill, 5 min past
+    the latest refusal at most, instead of 5, 10, 20, 40 min."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.budgets = HostBudgets(MemoryHostBudgetStore(), clock=self.clock)
+
+    async def requests(self, n: int, apart_s: float):
+        for _ in range(n):
+            await self.budgets.succeeded(HOST)
+            self.clock.advance(seconds=apart_s)
+
+    async def first_window(self):
+        """40 requests 12 s apart from the archive's start, a limit at 480 s, refused again at 14 min, then the
+        recovery at 15 min: 40 per 15 min, refused at 14 min."""
+        await self.budgets.archive_started(HOST)
+        await self.requests(40, 12)
+        await self.budgets.limited(HOST)
+        self.clock.now = T0 + timedelta(minutes=14)
+        await self.budgets.limited(HOST)
+        self.clock.now = T0 + timedelta(minutes=15)
+
+    async def test_an_unmeasured_host_has_no_refill_to_aim_at(self):
+        await self.budgets.archive_started(HOST)
+        await self.requests(40, 12)
+        await self.budgets.limited(HOST)
+        self.assertIsNone(self.budgets.refill_wait(HOST), "the 5, 10, 20, 40 min ladder")
+
+    async def test_a_stretch_over_several_windows_is_measured_from_the_window_it_hit(self):
+        await self.first_window()
+        measured = await self.budgets.succeeded(HOST)
+        self.assertEqual((measured.requests, measured.window_s), (40, 900))
+        self.clock.advance(seconds=25)
+        await self.requests(60, 25)                      # slower than the host allows: windows pass unseen
+        await self.requests(40, 12)                      # then a window spent
+        start = self.clock.now - timedelta(seconds=40 * 12)   # the 40th request back
+        await self.budgets.limited(HOST)
+        self.clock.advance(minutes=1)
+        await self.budgets.limited(HOST)                 # the retry
+        wait = self.budgets.refill_wait(HOST)
+        self.assertEqual(self.clock.now + timedelta(seconds=wait), start + timedelta(minutes=15),
+                         "its refill: the window's start and the window measured (refusals seen until 14 min)")
+        self.clock.now = start + timedelta(minutes=15)
+        second = await self.budgets.succeeded(HOST)
+        self.assertEqual((second.requests, second.window_s), (40, 900), "not the stretch's 101 requests per its 40 min")
+        self.assertEqual(self.budgets.learned(HOST).archive_gap_s(), 900 / 32)
+
+    async def test_a_wide_first_bracket_is_probed_5_min_past_its_latest_refusal(self):
+        # Refused at 26 min, recovered at 46 min (the ladder's 20 min wait): the window is 26 to 46 min.
+        await self.budgets.archive_started(HOST)
+        await self.requests(40, 12)
+        await self.budgets.limited(HOST)
+        self.clock.now = T0 + timedelta(minutes=26)
+        await self.budgets.limited(HOST)
+        self.clock.now = T0 + timedelta(minutes=46)
+        await self.budgets.succeeded(HOST)
+        start = self.clock.now
+        await self.requests(39, 12)
+        await self.budgets.limited(HOST)
+        aim = self.clock.now + timedelta(seconds=self.budgets.refill_wait(HOST))
+        self.assertEqual(aim, start + timedelta(minutes=31), "the latest refusal (26 min) and 5")
+        self.clock.now = aim
+        await self.budgets.limited(HOST)                 # refused again: 5 more
+        self.assertEqual(self.clock.now + timedelta(seconds=self.budgets.refill_wait(HOST)), start + timedelta(minutes=36))
+        self.clock.now = start + timedelta(minutes=36)
+        await self.budgets.succeeded(HOST)
+        learned = self.budgets.learned(HOST)
+        self.assertEqual((learned.requests, learned.window_s), (40, 36 * 60),
+                         "the window is under 36 min (31 refused): the narrower bracket, not 46 min")
+
+    async def test_a_refusal_past_the_measured_window_falls_back_to_the_ladder(self):
+        await self.first_window()
+        await self.budgets.succeeded(HOST)
+        start = self.clock.now
+        await self.requests(39, 12)
+        await self.budgets.limited(HOST)
+        self.clock.now = start + timedelta(minutes=15)
+        await self.budgets.limited(HOST)                 # the host allows less now
+        self.assertIsNone(self.budgets.refill_wait(HOST))
+
+    async def test_brackets_that_disagree_keep_the_slowest_measure(self):
+        # A host that became stricter: refused at 25 min of a window once measured as 15 min.
+        await self.first_window()
+        await self.budgets.succeeded(HOST)
+        start = self.clock.now
+        await self.requests(39, 12)
+        await self.budgets.limited(HOST)
+        self.clock.now = start + timedelta(minutes=25)
+        await self.budgets.limited(HOST)
+        self.clock.now = start + timedelta(minutes=30)
+        await self.budgets.succeeded(HOST)
+        learned = self.budgets.learned(HOST)
+        self.assertEqual((learned.requests, learned.window_s), (40, 30 * 60))
 
 
 @requires_test_db

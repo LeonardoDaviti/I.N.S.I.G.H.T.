@@ -109,6 +109,8 @@ class NewsService:
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
         stories_now = news(window, held, found)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
+        # A classic no link points to any more (its links read into another address, 0109 B1) goes, as in a full run.
+        urls = sorted(set(urls) | set(self.repo.unlinked_classics(cur)))
         urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
         urls = self.repo.moved_paths(cur, urls)   # and a page that moved is one with where it moved (0108)
         found_classics = self._classics(cur, sources, urls)

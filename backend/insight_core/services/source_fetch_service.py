@@ -168,7 +168,8 @@ class SourceFetchService:
         A kind this process cannot fetch (yt-dlp off, no Telegram credentials) cannot
         archive. A feed (available_basis feed_window) has no history beyond what it lists
         now, so archiving only adds anything when the feed lists more than one live fetch
-        reads; an unmeasured feed stays archivable so a plan can measure it.
+        reads, or the site's sitemap lists older posts of its section (issue 0108); an
+        unmeasured feed stays archivable so a plan can measure it.
         """
         # Merged settings (the kind's defaults under the user's), as every fetch reads them.
         source = self.sources_service.get_source_with_settings(source_id)
@@ -194,8 +195,14 @@ class SourceFetchService:
         if kind.archive_refused:
             return {**support, "archivable": False, "reason": kind.archive_refused}
         if kind.available_basis == "feed_window":
-            available = (settings.get("archive") or {}).get("available_posts")
-            if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:
+            archive = settings.get("archive") or {}
+            available = archive.get("available_posts")
+            # A sitemap listing older posts than the feed (issue 0108, inspect's raw.sitemap_posts) is read
+            # post by post, however few: the feed's window is not all there is.
+            sitemap = archive.get("sitemap_posts")
+            from_sitemap = isinstance(sitemap, int) and not isinstance(sitemap, bool) and sitemap > 0
+            if (isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit
+                    and not from_sitemap):
                 return {**support, "archivable": False, "reason": (
                     f"This feed only lists its latest {available} post{'' if available == 1 else 's'}, "
                     f"and every fetch already reads up to {live_fetch_limit}.")}
@@ -469,9 +476,11 @@ class SourceFetchService:
             "checkpoint": checkpoint,
         }
         if stopped is not None:
+            # Once one window is measured, the wait aims at the refill of the one this limit hit (0107's follow-up).
+            refill = gates.budgets.refill_wait(host) if stopped.status == 429 and not stopped.timed_out else None
             return await self._stopped(source_id, kind, plan, result, host, stopped,
                                        waits=0 if pages_this_leg else int(carried.get("waits") or 0),
-                                       progress_callback=progress_callback)
+                                       refill_s=refill, progress_callback=progress_callback)
         result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
 
         await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
@@ -489,9 +498,12 @@ class SourceFetchService:
         return result
 
     async def _stopped(self, source_id: str, kind: SourceKind, plan: Dict[str, Any], result: Dict[str, Any],
-                       host: str, exc: HttpError, *, waits: int, progress_callback: ProgressCallback) -> Dict[str, Any]:
+                       host: str, exc: HttpError, *, waits: int, refill_s: Optional[float] = None,
+                       progress_callback: ProgressCallback) -> Dict[str, Any]:
         """A host refused twice in a row. The archive waits for its window (first 5 min, then
-        doubling up to 60 min while no page comes) and the scheduler continues it; after
+        doubling up to 60 min while no page comes; once one window of the host is measured, until
+        the refill of the window this limit hit: `refill_s`, HostBudgets.refill_wait) and the
+        scheduler continues it; after
         MAX_WAITS waits with no page gained it pauses, saying why. Its checkpoint is kept either
         way (no completed_at), so Resume continues from it."""
         progress = {"source_type": kind.name, "pages_fetched": result["pages_fetched"],
@@ -502,7 +514,8 @@ class SourceFetchService:
             await self._record_archive_metadata(source_id, {**result, "waiting": None}, mode="archive_progress", kind=kind)
             await self._emit_progress(progress_callback, {"stage": "paused", **progress, "message": result["message"]})
             return result
-        wait_s = min(LAST_WAIT_S, FIRST_WAIT_S * 2 ** waits)
+        ladder = refill_s is None
+        wait_s = min(LAST_WAIT_S, FIRST_WAIT_S * 2 ** waits if ladder else refill_s)
         until = self.clock() + timedelta(seconds=wait_s)
         what = f"{host} to answer" if exc.timed_out else f"{host}'s limit"
         result.update(waiting=True, waiting_until=until.isoformat(), waiting_host=host,
@@ -513,7 +526,8 @@ class SourceFetchService:
                                             mode="archive_progress", kind=kind)
         await self._emit_progress(progress_callback, {
             "stage": "waiting", **progress, "host": host, "waiting_until": until.isoformat(), "wait_s": wait_s,
-            "timed_out": exc.timed_out, "message": f"Waiting for {what}: continues at {until:%H:%M} UTC"})
+            "timed_out": exc.timed_out, "refill": not ladder,
+            "message": f"Waiting for {what}: continues at {until:%H:%M} UTC{'' if ladder else ', when its window refills'}"})
         return result
 
     async def _gated(self, pages: AsyncIterator[ArchivePage], gates: FetchGates, kind: SourceKind, host: str,

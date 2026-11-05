@@ -131,6 +131,10 @@ SAVED = "https://saved.example/essays/on-careful-measurement"
 PAPER = "https://preprints.example/abs/2603.01234"
 PAPER_PDF = "https://preprints.example/pdf/2603.01234v2"
 MOVED = "https://writer-one.github.io/on-keeping-notes"
+# One page as two newsletters' mail trackers wrote it (issue 0109 B1), and the page they mark
+TRACKED = ("https://journal.example/issue/417?_hsenc=p2ANqtz-aaa&_hsmi=11",
+           "https://journal.example/issue/417?_ga=2.1.2-3&_hsenc=p2ANqtz-bbb")
+JOURNAL = "https://journal.example/issue/417"
 TOOL_PREVIEW = (f'<p>Worth a look</p><blockquote cite="{L4}"><cite><b>Tool Site</b></cite></br>'
                 '<b>Fast Tokenizer Ships</b></br>Tokenizing is now faster.</blockquote>')
 QUOTE = (f'<p>Great thread</p><blockquote><b>Writer X</b>Thread on evaluation methods<footer> — <cite>'
@@ -169,6 +173,12 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
             "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
             "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening,
             "moved_to": moved_to}
+
+
+def _stored(url: str) -> str:
+    """A link's address as the saver stores it (post_links.target_url, utils/post_links.extract_links)."""
+    from insight_core.utils.url_normalization import normalize_url
+    return normalize_url(url) or url
 
 
 def _at(hours: float, minutes: int = 0) -> datetime:
@@ -341,6 +351,12 @@ def posts() -> List[Dict[str, Any]]:
         # it is one page with the post stored there, so the two are one story
         p("m1", "s-one", _at(260), "on keeping notes", MOVED),
         p("m2", "s-new", _at(261), "notes, kept", "https://delta.example/posts/2026/03/notes", moved_to=MOVED),
+        # A mail tracker's query names the page it marks (issue 0109 B1): two voices link one page, each
+        # through its own ?_hsenc=, stored as the saver keeps a link (normalize_url), so they are one story
+        p("w1", "s-gamma", _at(340), "This week's reading", "https://gamma.example/research/weekly-reading",
+          links=[(_stored(TRACKED[0]), None)]),
+        p("w2", "s-two", _at(341), "Links for the week", "https://writer-two.github.io/links-for-the-week",
+          links=[(_stored(TRACKED[1]), None)]),
     ]
 
 

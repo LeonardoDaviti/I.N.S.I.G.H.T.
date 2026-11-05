@@ -9,6 +9,7 @@ import type { FeedFinding, FoundFeed, PageOffer, PageWatchPreview } from '../ser
 import BookmarkletHint from './BookmarkletHint';
 import AddSeveralSources, { type AddedSource } from './AddSeveralSources';
 import { HOMEPAGE_WARNING, sameAddress, shortAddress, siteName, withScheme } from '../lib/addresses';
+import { platformAccount, type AccountPlatform } from '../lib/platformAccount';
 
 interface Template {
   id: string;
@@ -26,6 +27,8 @@ interface Template {
   addedName?: (value: string) => string;
   // Seconds to wait after fetching it; 1 when unset.
   fetchDelay?: number;
+  // The source kind it is read by, when not a feed (YouTube, Reddit): sent as the source's platform.
+  platform?: string;
 }
 
 // Hardcoded templates
@@ -51,6 +54,31 @@ const TEMPLATES: Template[] = [
     buildHandle: (value) => `https://telegram.local/rss/${value.replace(/^@/, '').trim()}?limit=50`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     fetchDelay: 5,
+  },
+  {
+    id: 'youtube',
+    name: 'YouTube',
+    variableName: 'channel',
+    variableLabel: 'Channel',
+    placeholder: '@channel',
+    helperText: 'Creates a source like https://www.youtube.com/@channel: its videos, read by yt-dlp',
+    buildHandle: (value) => {
+      const channel = value.trim().replace(/^https?:\/\/(www\.)?youtube\.com\//, '');
+      return `https://www.youtube.com/${channel.includes('/') ? channel : `@${channel.replace(/^@/, '')}`}`;
+    },
+    buildDisplayName: (value) => value.trim().replace(/^@/, '').split('/').pop() ?? '',
+    platform: 'youtube',
+  },
+  {
+    id: 'reddit',
+    name: 'Reddit',
+    variableName: 'subreddit',
+    variableLabel: 'Subreddit',
+    placeholder: 'Enter subreddit...',
+    helperText: 'Creates a source like r/{subreddit}: its new posts with their links',
+    buildHandle: (value) => `r/${value.trim().replace(/^\/?r\//, '')}`,
+    buildDisplayName: (value) => `r/${value.trim().replace(/^\/?r\//, '')}`,
+    platform: 'reddit',
   },
   {
     id: 'lesswrong',
@@ -147,6 +175,16 @@ function calendarDate(value: string | null): string {
 }
 
 /** What a finding holds of the site's articles your sources linked (issue 0060). */
+// The template a platform account is followed by (issue 0109 B2: Follow… on a Discover suggestion).
+const ACCOUNT_TEMPLATES: Record<AccountPlatform, string> = { x: 'nitter', telegram: 'telegram-rss', youtube: 'youtube', reddit: 'reddit' };
+
+/** The template and its value an address starts from, when it names a platform account. */
+function startingTemplate(address: string | undefined): { template: Template; value: string } | null {
+  const account = address ? platformAccount(address) : null;
+  const template = account ? TEMPLATES.find((t) => t.id === ACCOUNT_TEMPLATES[account.platform]) : undefined;
+  return account && template ? { template, value: account.value } : null;
+}
+
 function holdsLabel(holds: number, linked: number): string {
   if (linked === 1) return holds ? 'Holds the article your sources linked' : 'Does not hold the article your sources linked';
   return `Holds ${holds} of the ${linked} articles your sources linked`;
@@ -161,22 +199,25 @@ interface AddSourceModalProps {
     display_name: string;
     fetch_delay_seconds?: number;
     page_watch?: { prefix: string };
+    platform?: string;
   }) => void;
   /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
   onAddMany?: (added: AddedSource[], close: boolean) => void;
-  /** An address to start from (Follow… on a suggested source, issue 0050): looked up as if typed. */
+  /** An address to start from (Follow… on a suggested source, issue 0050): looked up as if typed; a
+   * platform account's opens its platform's template with the account filled in (issue 0109 B2). */
   initialAddress?: string;
 }
 
 export default function AddSourceModal({ existingAddresses = [], onClose, onAdd, onAddMany, initialAddress }: AddSourceModalProps) {
   const api = useApi();
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [templateVariable, setTemplateVariable] = useState('');
-  const [handleOrUrl, setHandleOrUrl] = useState(initialAddress ?? '');
+  const [start] = useState(() => startingTemplate(initialAddress));
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(start?.template ?? null);
+  const [templateVariable, setTemplateVariable] = useState(start?.value ?? '');
+  const [handleOrUrl, setHandleOrUrl] = useState(start ? '' : initialAddress ?? '');
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   // A template's own pace (Nitter, the Telegram bridge); a source typed in takes the default.
-  const [fetchDelay, setFetchDelay] = useState<number | undefined>(undefined);
+  const [fetchDelay, setFetchDelay] = useState<number | undefined>(start?.template.fetchDelay);
   const [several, setSeveral] = useState(false);
   // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
   const substack = isSubstackUrl(handleOrUrl);
@@ -343,6 +384,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
       display_name: displayName.trim() || (canFollow && followed !== address ? siteName(address) : ''),
       ...(fetchDelay ? { fetch_delay_seconds: fetchDelay } : {}),
       ...(canFollow && pagePreview?.prefix ? { page_watch: { prefix: pagePreview.prefix } } : {}),
+      ...(selectedTemplate?.platform ? { platform: selectedTemplate.platform } : {}),
     });
 
     onClose();

@@ -447,6 +447,16 @@ class NewsRepository:
         return [r[0] for r in cur.fetchall()]
 
     @staticmethod
+    def unlinked_classics(cur: Cursor) -> List[str]:
+        """The classics at an address no kept link points to and no stored post is at (issue 0109 B1): their
+        links were read again into another address (a tracker's query dropped), so no batch's links name
+        them; a full run has none of them."""
+        cur.execute("SELECT c.target_url FROM classics c "
+                    "WHERE NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = c.target_url AND NOT pl.boilerplate) "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = c.target_url) ORDER BY 1")
+        return [r[0] for r in cur.fetchall()]
+
+    @staticmethod
     def paper_paths(cur: Cursor, urls: Sequence[str]) -> List[str]:
         """`urls` and every other kept link target of the papers among them (issue 0106: a paper's paths
         are one classic), found by the page key every post linking one of its paths holds (story_keys)."""
