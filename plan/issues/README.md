@@ -121,6 +121,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0107](0107-archive-that-waits-out-a-limit.md) | An archive that waits out a host's limit and carries on; each host's budget learned; room left for the hourly fetches | spec (v9.18) |
 | [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | spec (v9.18) |
 | [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | spec (v9.18) |
+| [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, merged (v9.18) |
 
 ## Analysis archive
 
