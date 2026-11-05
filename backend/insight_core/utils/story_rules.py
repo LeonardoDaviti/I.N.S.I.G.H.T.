@@ -21,8 +21,8 @@ the reference the real code reproduces. The thresholds are here, in one place.
 - **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
   - `repost`: a repost stored apart from its original (one address, 0049) hangs from it; a repost
     is a share, and never its address's own page;
-  - `thread`: an author's reply to itself hangs from the stored tweet of its own it quotes (issue
-    0103), else from the post right before it in its source's timeline, when that is the author's own
+  - `thread`: an author's reply to itself hangs from the tweet of its own it quotes, stored from the
+    24 hours before (issue 0103), else from the post right before it in its source's timeline, when that is the author's own
     (not a repost, not a reply to another account); within 24 hours. Its posts are one story, whatever
     the sources: a thread is one item;
   - `quote`: a quoting tweet hangs from the tweet it quotes; a stored one joins its story
@@ -277,21 +277,23 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
 
 
 def own_quote(post: StoryPost) -> Optional[str]:
-    """The tweet of its own account a tweet quotes, when that tweet is stored (its link resolves to a
-    stored post): what a reply of the author to itself continues (issue 0103)."""
-    if not (post.quoted and post.author and (tweet_author(post.quoted) or "").lower() == post.author.lower()):
-        return None
-    return post.quoted if dict(post.links).get(post.quoted) else None
+    """The tweet of its own account a tweet quotes (issue 0103): what a reply of the author to itself
+    continues, when its source holds it from the 24 hours before."""
+    if post.quoted and post.author and (tweet_author(post.quoted) or "").lower() == post.author.lower():
+        return post.quoted
+    return None
 
 
 def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
     """Each reply of an author to itself -> its parent (issue 0066), its author's own tweet within 24
     hours. A thread starts at the author's own post, never at a repost of another account.
-    - A reply that quotes a stored tweet of its own account continues that tweet (issue 0103): its
-      source's row of it, when that is within 24 hours before; else none (its quote still joins the
-      tweet it quotes). The account's previous tweet may be about something else.
-    - Otherwise (its target isn't stored, or it quotes no tweet of its own) the post right before it
-      in its source's timeline (reposts included)."""
+    - A reply that quotes a tweet of its own account continues that tweet (issue 0103), when its source
+      holds it from the 24 hours before: the account's previous tweet may be about something else
+      (a self-quote of the 15:19 tweet at 16:39 is no reply to the 16:22 thread on another model).
+    - Otherwise (that tweet isn't stored, or is older: "a related tweet from earlier", a reference
+      within the thread before it) the post right before it in its source's timeline (reposts included).
+      Measured on the lab (0103): the 2 of 44 stored self-quotes past 24 hours both continue the
+      tweet right before them."""
     timeline: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in sorted(posts, key=_order):
         if p.kind == "x":
@@ -305,15 +307,11 @@ def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
         for i, p in enumerate(run):
             if not (p.own_tweet and p.reply_to):
                 continue
-            target = own_quote(p)
-            if target is not None:
-                parent: Optional[StoryPost] = own_row.get(target)
-                if parent is not None and not _order(parent) < _order(p):
-                    parent = None
-            else:
-                parent = run[i - 1] if i and run[i - 1].own_tweet else None
-            if parent is not None and p.t - parent.t <= THREAD_WITHIN:
-                out[p.id] = parent.id
+            quoted = own_row.get(own_quote(p) or "")
+            if quoted is not None and _order(quoted) < _order(p) and p.t - quoted.t <= THREAD_WITHIN:
+                out[p.id] = quoted.id
+            elif i and run[i - 1].own_tweet and p.t - run[i - 1].t <= THREAD_WITHIN:
+                out[p.id] = run[i - 1].id
     return out
 
 

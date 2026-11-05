@@ -186,14 +186,14 @@ class XRulesTests(unittest.TestCase):
         """An account's tweet on one subject, then a thread on another, then a reply quoting the first."""
         first = f"https://x.com/ann/status/{ID}"
         second = f"https://x.com/ann/status/{ID + 10}"
-        return [tweet("a", "ann", "ann", n=ID),                                            # subject A
+        return [tweet("a", "ann", "ann", n=ID)] * stored + [                                # subject A
                 tweet("b", "ann", "ann", n=ID + 10, minutes=60),                           # subject B
                 tweet("b1", "ann", "ann", n=ID + 11, minutes=61, reply_to="ann", quoted=second,
                       links=[(second, "b")]),
                 tweet("b2", "ann", "ann", n=ID + 12, minutes=62, reply_to="ann", quoted=second,
                       links=[(second, "b")]),
                 tweet("a1", "ann", "ann", n=ID + 13, minutes=80, reply_to="ann", quoted=first,
-                      links=[(first, "a" if stored else None)])]
+                      links=[(first, "a" if stored else None)])]   # not stored: its link resolves to none
 
     def test_a_self_reply_hangs_under_the_own_tweet_it_quotes_not_the_one_before_it(self):
         posts = self._two_subjects()
@@ -208,14 +208,16 @@ class XRulesTests(unittest.TestCase):
         posts = self._two_subjects(stored=False)
         self.assertEqual(threads(posts)["a1"], "b2", "its target isn't stored: the post before it")
 
-    def test_a_self_reply_quoting_its_stored_tweet_from_two_days_ago_continues_no_other_tweet(self):
+    def test_a_self_reply_quoting_its_stored_tweet_from_two_days_ago_continues_the_tweet_before_it(self):
+        # Measured on the lab (0103): "Related tweet from earlier…", "oh yeah i should have linked…" quote
+        # an older tweet as a reference, inside the thread right before them.
         old = f"https://x.com/ann/status/{ID}"
         posts = [tweet("a", "ann", "ann", n=ID),
                  tweet("b", "ann", "ann", n=ID + 10, minutes=47 * 60),
                  tweet("a1", "ann", "ann", n=ID + 11, minutes=48 * 60, reply_to="ann", quoted=old, links=[(old, "a")])]
-        self.assertEqual(threads(posts), {}, "it is about its quoted tweet, past 24 hours: no thread, not the post before")
+        self.assertEqual(threads(posts), {"a1": "b"}, "past a thread's 24 hours, its quote is no reply target")
         [story] = group(posts)
-        self.assertEqual(sorted(p.id for p in story.posts), ["a", "a1"], "its quote still joins the tweet it quotes")
+        self.assertEqual(sorted(p.id for p in story.posts), ["a", "a1", "b"], "its quote still joins the tweet it quotes")
 
     def test_a_self_reply_quoting_its_tweet_held_as_another_rows_link_finds_its_own_row(self):
         first = f"https://x.com/ann/status/{ID}"
