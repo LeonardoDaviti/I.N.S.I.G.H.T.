@@ -103,12 +103,23 @@ REFERENCE = re.compile(r"/(docs?|documentation|products?|pricing|support|help|ap
                        r"|changelog|wiki|articles|collections|download|login|signup)(/|$)")
 
 
+# A licence or a legal page (issue 0111): a licences section or a LICENSE file, and a page whose last segment
+# names terms, privacy or the like. Measured on the server's copy and the lab (2026-11-05): of the kept link targets
+# linked by 2+ sources, 12 and 10 have the shape, all licences or terms; it takes 2 classics on each (a Creative
+# Commons and an Apache licence). Wider shapes were tried: a /legal/ or /terms/ segment anywhere took a news
+# site's legal section and a glossary's entries, a /policies/ one a regulator's code of practice.
+LEGAL = re.compile(r"/licen[cs]es?(/|$)|/(licen[cs]e|copying)([.\-][^/]*)?$|/(terms|terms-of-service|terms-of-use|tos"
+                   r"|privacy|privacy-policy|consumer-terms|commercial-terms|usage-polic(y|ies)|acceptable-use(-policy)?"
+                   r"|cookie-policy|cookies|copyright|dmca|imprint|impressum|eula)/?$", re.I)
+
+
 def is_reference(url: str) -> bool:
-    """A docs, product, pricing, help ... page, or a home page: a page you look things up in."""
+    """A docs, product, pricing, help, licence, terms ... page, or a home page: a page you look things up in."""
     if is_home(url):
         return True
     _, _, rest = bare(url).partition("/")
-    return bool(REFERENCE.search("/" + rest))
+    path = "/" + rest.split("?", 1)[0].split("#", 1)[0]
+    return bool(REFERENCE.search("/" + rest) or LEGAL.search(path))
 
 
 def titled_link_text(text: Optional[str]) -> bool:

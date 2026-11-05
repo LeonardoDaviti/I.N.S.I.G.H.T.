@@ -14,7 +14,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from insight_core.markx import candidates, embed, repo, schemas, tasks
+from insight_core.markx import embed, jobs, repo, schemas, tasks
 from insight_core.tests._db import requires_test_db
 from insight_core.tests.test_markx_api import _Api, call
 
@@ -40,8 +40,6 @@ def f16(v):
 class _Embed(_Api):
     def setUp(self):
         super().setUp()
-        self.addCleanup(setattr, candidates, "pending", candidates.pending)
-        candidates.pending = candidates.Pending(delay=None)
 
     def embed_task(self, post=None, priority=0):
         with self.conn.transaction():
@@ -99,11 +97,11 @@ class Planning(_Embed):
         task_a = repo.task_for(self.cur, kind="embed", guide="embed-v1", input=rows[1][2])["id"]
         self.lease("embed", limit=10)
         self.assertEqual(self.upload((task_a, unit((0, 1.0))))[1]["stored"], 1)
-        candidates.pending.posts.clear()
+        self.cur.execute("UPDATE mx_candidate_posts SET found_at = now()")   # found: none waits
         with self.conn.transaction():
             self.assertEqual(embed.plan(self.cur, days=10, now=now), 0)
         self.assertEqual(repo.embedding(self.cur, b, "bge-m3"), repo.embedding(self.cur, a, "bge-m3"))
-        self.assertEqual(candidates.pending.posts, {b})
+        self.assertEqual(jobs.waiting_posts(self.cur), [b])
         self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 2})
 
     def test_work_plans_and_leases_embed_tasks_with_their_guide(self):
@@ -130,7 +128,8 @@ class Uploads(_Embed):
         self.assertEqual(f16(repo.embedding(self.cur, pid, "bge-m3")), f16(v))   # halfvec: the float16 sent
         self.cur.execute("SELECT model_sha256, text_hash FROM mx_embeddings WHERE post_id = %s", (pid,))
         self.assertEqual(self.cur.fetchone(), (BUILD, self.row(t)["input_hash"]))
-        self.assertEqual(candidates.pending.posts, {pid})
+        self.assertEqual(jobs.waiting_posts(self.cur), [pid])
+        self.assertIsNotNone(jobs.state(self.cur)["candidates"]["wanted_at"])   # the API marks; ingestion finds
         self.assertEqual(repo.calls(self.cur, t), [])          # a vector is not a model call
 
     def test_a_second_vector_changes_nothing(self):

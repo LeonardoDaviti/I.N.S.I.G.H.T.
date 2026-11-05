@@ -49,6 +49,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.utils.addresses import host_of
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, ORIGIN_MIN_VOICES, OWNER_DEPTH,
                                                Origin, Platforms, address_stamp, discover_address, discover_article,
@@ -417,11 +418,12 @@ class DiscoverRepository:
                        FROM job_runs WHERE job_type = 'archive_source' AND source_id = ANY(%s::uuid[])
                        ORDER BY source_id, started_at DESC""", (ids,))
         jobs = {sid: (status, paused, pages) for sid, status, paused, pages in cur.fetchall()}
-        cur.execute("SELECT id::text, settings->'archive'->'checkpoint'->>'completed_at', settings->'page_watch'->>'prefix' "
-                    "FROM sources WHERE id = ANY(%s::uuid[])", (ids,))
+        cur.execute("SELECT id::text, settings->'archive'->'checkpoint'->>'completed_at', settings->'page_watch'->>'prefix', "
+                    "handle_or_url FROM sources WHERE id = ANY(%s::uuid[])", (ids,))
         rows = cur.fetchall()
-        done = {sid for sid, completed, _ in rows if completed}
-        prefixes = {sid: prefix for sid, _, prefix in rows if prefix}
+        done = {sid for sid, completed, _, _ in rows if completed}
+        prefixes = {sid: prefix for sid, _, prefix, _ in rows if prefix}
+        hosts = {sid: host_of(handle).removeprefix("www.") for sid, _, prefix, handle in rows if prefix and handle}
         cur.execute("SELECT DISTINCT source_id::text, normalized_url FROM posts p, unnest(%s::uuid[], %s::text[]) AS m(sid, url) "
                     "WHERE p.source_id = m.sid AND p.normalized_url = m.url",
                     ([sid for sid in ids for _ in missing[sid]], [url for sid in ids for url in missing[sid]]))
@@ -439,7 +441,8 @@ class DiscoverRepository:
                      else "finished" if sid in done else None)
             out[sid] = {"state": state, "found": len(stored[sid]),
                         **({"pages_fetched": pages} if isinstance(pages, int) else {}),
-                        "stored_urls": sorted(stored[sid]), "newest": newest.get(sid), "prefix": prefixes.get(sid)}
+                        "stored_urls": sorted(stored[sid]), "newest": newest.get(sid), "prefix": prefixes.get(sid),
+                        "host": hosts.get(sid)}   # the host a page watch reads (issue 0111)
         return out
 
     @staticmethod

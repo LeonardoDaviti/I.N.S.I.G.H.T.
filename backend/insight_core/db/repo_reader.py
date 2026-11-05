@@ -33,7 +33,7 @@ import uuid
 from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
@@ -278,13 +278,19 @@ def repost_of(platform: str | None, handle: str | None, author: str | None,
     return {"by": [a for a in reposted_by or () if a.lower() != own], "author": author}
 
 
-def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[str, Dict[str, str]]]) -> List[Dict[str, Any]]:
+def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[str, Dict[str, str]]],
+                 owners: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]:
     """A story's voices, named (story_rules.named_voices, issue 0082: the count's names), from its
     posts as the reader reads them, in the order to name them: each {source_id, name, platform,
     handle, voice (story_posts.voice), content_hash, text_chars, author, reposted_by}. Who else of
     yours wrote or reposted a tweet is read as the story job reads it (StoriesService._story_post);
     `followed` (followed_accounts) is asked only when a post may hold one. A story of one voice has no
-    count ("also shared by", 0072): its names are that voice's sources (voice_sources)."""
+    count ("also shared by", 0072): its names are that voice's sources (voice_sources). `owners` (News,
+    issue 0111: SourceFacts.owners, as the job kept them): a voice -> its owner's, one owner's channels one voice."""
+    owners = owners or {}
+
+    def owner(voice: str) -> Optional[str]:
+        return owners.get(voice.lower() if voice.startswith("reddit:") else voice)
     shaped = []
     for p in posts:
         kind = source_kind(p["platform"], p["handle"])
@@ -295,8 +301,11 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
             others = [author] if author and author["id"] != p["source_id"] else []
             by = {s["id"]: s for s in (accounts.get(x_account(a)) for a in p["reposted_by"] or ()) if s}
             others += [by[i] for i in sorted(set(by) - {p["source_id"], author and author["id"]})]
+        voice = p["voice"] or "source:" + p["source_id"]
+        if owners:
+            others = [{**o, "owner": owner("source:" + o["id"])} for o in others]
         shaped.append({"source_id": p["source_id"], "name": p["name"], "kind": kind, "others": others,
-                       "voice": p["voice"] or "source:" + p["source_id"],
+                       "voice": voice, "owner": owner(voice) if owners else None,
                        "text_key": text_key(p["content_hash"], p["text_chars"] or 0)})
     voices = named_voices(shaped)
     return voice_sources(voices) if len(voices) == 1 else voices

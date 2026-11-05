@@ -162,6 +162,7 @@ def paid_publication_hosts(data: Any) -> Optional[Subscriptions]:
 
 class SubstackKind(BaseKind):
     name = "substack"
+    reads_posts = True            # read_post: one post from the API (the repair, and issue 0084 B's linked pages)
     available_basis = "unknown"   # /api/v1/archive pages carry no total
     profile = SUBSTACK_PROFILE
 

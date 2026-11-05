@@ -7,12 +7,17 @@ feature overview; this file covers deploying, updating and troubleshooting.
 | --- | --- | --- |
 | `postgres` | `insight-db` | PostgreSQL 15 with pgvector. Internal to the Docker network only. |
 | `backend` | `insight-api` | FastAPI on port 8000 (`BACKEND_PORT` on the host, `127.0.0.1` only). Runs migrations on start, and imports `sources.json` once per database (add-only). |
-| `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`. |
+| `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`; Mark X's jobs when it is on; the API watchdog. |
 | `frontend` | `insight-frontend` | The built React app behind Nginx (`FRONTEND_PORT`), proxying `/api` to the backend. |
 
-The API runs as one uvicorn worker. Its start refuses `API_WORKERS` other than 1, with a line in
-`docker compose logs backend` saying why (issue 0071): two workers would close each other's jobs,
-lose an archive's or a Telegram sign-in's state between requests, and repeat the start's work.
+The API runs as two uvicorn processes (`API_WORKERS`, default 2; issue 0112 Decided 11), so one stuck
+request or one process hung on its CPU can't freeze the reader: uvicorn replaces a process that stops
+answering its ping. They run under a small supervisor (`scripts/api_supervisor.py`) that does the start's
+work once per container: it closes the jobs a restart ended before any process serves, then runs the
+search refill and the start's story job in a child process. What one process used to keep in memory is
+shared: a Telegram sign-in's waiting code (encrypted, in the database), an export's progress (a file per
+token), a Mark X worker's last contact (`mx_workers`), an archive's start (one lock). `API_WORKERS=1`
+runs one process; anything that isn't a number of 1 or more stops the start with a line saying why.
 
 ## Networking
 
@@ -206,8 +211,8 @@ an older `.env` that still holds them works the same without them:
   `INSIGHT_GENERATE_TOPIC_BRIEFING`;
 - older settings: `API_HOST`, `SAFE_INGEST_SKIP_THRESHOLD_HOURS`;
 - gone in v9.13 (issue 0071): `INSIGHT_SYNC_SOURCES_EACH_CYCLE` (no file sync runs) and
-  `INSIGHT_ALLOW_BULK_SOURCE_DELETE` (nothing deletes sources in bulk). `API_WORKERS` is not read
-  either, except that a value other than 1 stops the API's start.
+  `INSIGHT_ALLOW_BULK_SOURCE_DELETE` (nothing deletes sources in bulk). `API_WORKERS` is read again
+  since v10.0.2 (the number of API processes, default 2): remove it unless you want another number.
 - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and `SUBSTACK_SID` are read only by `import_env_secrets`
   (above): remove them once they are in Connections.
 
@@ -321,7 +326,15 @@ Mark X reads every post beside Mark IX and writes only its own `mx_*` tables (mi
 2. Settings → Sources → Connections → **Mark X worker token**: generate it and copy it once to the device that runs the worker, as `~/.config/insight/markx-token` (mode 600).
 3. The menu shows **mark x** (`/markx`): Mark X News beside Mark IX's, the briefing, entities, the worker's queue and the labels.
 
-**What runs on the server when it's on** (in the API process): the decision job, once the start's story job finishes, then hourly and 60 s after the worker's last upload (one at a time, one snapshot; about 1.6 s on 49k posts), and the candidate finder, 30 s after the last vectors arrive. Nothing calls a model from the server.
+**What runs on the server when it's on: in `insight-ingestion`, never in the API** (issue 0112 Decided 10, v10.0.2). On 5 Nov a decision run inside the API's one process sat at 101% CPU and every `/api/*` request timed out.
+- The API only marks that work arrived (`mx_jobs`; new vectors' posts in `mx_candidate_posts`): a valid answer, new vectors, **run the decisions now** on `/markx` (`POST /api/markx/decide` only asks), the start's story job.
+- Ingestion's scheduler looks every 30 s and runs the job due, each in a child process of its own (killed after 15 minutes):
+  - the candidate finder, when vectors arrived;
+  - a decision run (the candidate finder first, with the posts whose entities arrived), 60 s after work arrived and at least hourly, **at most one every 5 minutes** however the uploads stream in (Decided 12).
+- One at a time: one process runs them, and the decision run holds a database lock (a second one is skipped and asked again).
+- **A decision run has a 120-second limit** (Decided 12). Past it, it stops before its next stage, writes nothing (its one transaction rolls back), logs which stage, and runs again at the next look. Its logs: `Mark X decision run started`, each stage with its duration (`candidates`, `load`, `questions and decisions`, `write`, `connections`, `headlines`, `news`), `Mark X decision run finished in N s` (`docker compose logs ingestion`). Measured on the server's 5 Nov copy: 62 s for the first run after a day's entities (59 s of it the candidate finder over 5,031 posts), 3 s after.
+- `/markx` → Worker shows a running run's stage and start, a run asked for, or how the last one stopped (`/api/markx/status` → `jobs`).
+- Nothing calls a model from the server.
 
 **Updating to v10.0.1 (issue 0112): update the worker on the device with the server.**
 - The fix for refused readings lives in `scripts/markx-worker`: it sends each guide's answer schema with the guide, so Haiku writes the field names the server checks. A v10.0 worker against a v10.0.1 server keeps failing about 45% of reading items (`answer.mentions[i]: name missing`). Pull the same commit on the device (or copy `scripts/markx-worker`) when you `./update` the server, and restart its loops.
@@ -344,6 +357,39 @@ scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/
 Start with `--batches 1`, read what was refused (`markx-worker status`), then the last 30 days. It stops cleanly at a usage limit (exit 4) or a sign-in error (exit 5) and hands its tasks back.
 
 **Turning it off:** `INSIGHT_MARKX=off` (or remove the line) and `./update`. Every Mark X job stops and the page hides; its tables stay as they are (keep everything).
+
+**Updating to v10.0.2 (issue 0112 Decided 10-13):** `./update` rebuilds both images; migration 0070 adds `mx_jobs`, `mx_candidate_posts` and `mx_workers` (Mark X tables only). Mark X's jobs move to `insight-ingestion` by themselves; nothing to set. Remove `API_WORKERS=1` from `.env` if it is there, so the API runs its two processes.
+
+## When the API stops answering (issue 0117)
+Docker restarts nothing for being unhealthy: `restart: unless-stopped` acts only when the process exits. On 5 Nov the API answered nothing for over 20 minutes until the owner looked.
+
+- **The health check asks `/api/version`** (what the reader needs; `/health` answered on 5 Nov while every `/api/*` request hung), every 30 s, 5 s at most; 4 failures in a row (2 minutes) mark `insight-api` unhealthy. `/health` stays the database check.
+- **A watchdog in `insight-ingestion`** (the owner's option A; `INSIGHT_API_WATCHDOG=on`, set in compose) asks `http://backend:8000/api/version` every 30 s. After 4 failures in a row (2 minutes) it asks the API container to restart, then judges nothing for 5 minutes.
+- **How, without the Docker socket:** a container that holds the socket can do anything on the host as root, so it is never mounted. Ingestion writes a request file in the logs volume both containers mount (`/app/logs/api-restart-request.json`). The API container's supervisor, a process of its own that a hung API process can't block, sees it within a second, saves the evidence, stops uvicorn and exits; Docker's restart policy starts the container again. Only the API restarts: never the database, ingestion or the frontend.
+- **The evidence first:** each API process writes every thread's stack to `/app/logs/api-stacks.log` on SIGUSR1 (`faulthandler`, which works while Python is stuck). The supervisor sends it to each API process before the restart; the watchdog prints the dump in its log and attaches it to the restart's record. By hand, any time, without a restart: `docker kill -s USR1 insight-api` (the supervisor passes it to each API process), then read `/app/logs/api-stacks.log` (`docker compose exec backend tail -n 200 /app/logs/api-stacks.log`).
+- **No restart loop:** at most 3 restarts an hour (counted from the records, so a restart of ingestion doesn't reset it). After that it stops restarting and records once that the API keeps failing.
+- **Every restart is recorded** as an `API restart` job (Settings → Sources → Ingestion, and the overview's alerts): "The API was restarted at 22:45 after 2 min of no answer", the failing check, the last 50 log lines, and the stack dump.
+- Measured on a copy (both API processes made to spin, `INSIGHT_DEBUG_SPIN=on`, `POST /api/debug/spin`): restarted 2 min 36 s after the hang began, the dump named the spinning function in both processes, the API answered again 2 s after the restart, nothing else restarted.
+- **Option C, if you'd rather keep it outside the containers** (set `INSIGHT_API_WATCHDOG=off` in `.env` then): a systemd timer on the host. It has no cap of its own beyond `StartLimit`, and keeps no record in INSIGHT.
+```
+# /etc/systemd/system/insight-api-watchdog.service
+[Unit]
+Description=Restart insight-api when /api/version stops answering
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for i in 1 2 3 4; do curl -fsS -m 5 -o /dev/null http://127.0.0.1:8000/api/version && exit 0; sleep 30; done; docker kill -s USR1 insight-api; sleep 3; docker restart insight-api'
+# /etc/systemd/system/insight-api-watchdog.timer
+[Unit]
+Description=Check insight-api every 5 minutes
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+```
+  `sudo systemctl enable --now insight-api-watchdog.timer`. Its `docker kill -s USR1` writes the stacks to `api-stacks.log` before the restart.
 
 ## Development mode
 

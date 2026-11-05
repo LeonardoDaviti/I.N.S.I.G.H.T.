@@ -52,6 +52,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def register_stack_dump() -> Optional[Any]:
+    """SIGUSR1 writes every thread's stack to <logs>/api-stacks.log (issue 0117): the watchdog's door sends it before
+    a restart, so the next hang names its function. faulthandler writes from its C handler, so it works while Python
+    is stuck. The open file is returned (it must stay open)."""
+    import faulthandler
+    import signal as signals
+    try:
+        directory = os.getenv("INSIGHT_LOG_DIR") or "logs"
+        os.makedirs(directory, exist_ok=True)
+        stacks = open(os.path.join(directory, "api-stacks.log"), "a", encoding="utf-8")
+        faulthandler.register(signals.SIGUSR1, file=stacks, all_threads=True, chain=False)
+        return stacks
+    except (OSError, ValueError, AttributeError):   # no such file system or signal: stderr then
+        try:
+            faulthandler.register(signals.SIGUSR1, all_threads=True, chain=False)
+        except (ValueError, AttributeError):
+            pass
+        return None
+
+
+_STACKS_FILE = register_stack_dump()
+
+
 def fill_search_vectors() -> None:
     """The posts stored before search (issue 0040), or indexed by an older rule (issue 0056's
     version names, migration 0042), become searchable as search reads them now, in the background."""
@@ -77,15 +100,17 @@ def recompute_stories() -> None:
 
 
 def start_stories() -> None:
-    """The start's story job in its own process, then Mark X's first decisions over its stories (issue 0112 A:
-    they waited for the hourly clock); the second is nothing when INSIGHT_MARKX is off."""
+    """The start's story job in its own process, then Mark X's first decisions over its stories are asked for (issue
+    0112 A; insight-ingestion runs them, 0112 Decided 10); the second is nothing when INSIGHT_MARKX is off."""
     in_own_process(recompute_stories)
     markx_router_module.after_start_stories()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    services()  # build the services at boot, so a bad configuration fails here
+def start_once() -> None:
+    """The start's work when this process is the API's only one (`uvicorn main:app` by hand): the API's jobs a
+    restart ended are closed (issue 0070), then the search refill and the story job run in the background. In the
+    container the API runs as several processes, and the supervisor does this once (scripts/api_supervisor.py,
+    0112 Decided 11): each process doing it would close the other's running jobs and run the story job twice."""
     try:   # the API's jobs a restart ended (issue 0070): no request has started one yet
         closed = services().operations.close_interrupted_jobs("manual")
         if closed:
@@ -94,7 +119,14 @@ async def lifespan(app: FastAPI):
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     threading.Thread(target=start_stories, name="stories", daemon=True).start()
-    markx_router_module.start_jobs()   # Mark X's hourly decisions (issue 0086 E); nothing when INSIGHT_MARKX is off
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    services()  # build the services at boot, so a bad configuration fails here
+    if os.getenv("INSIGHT_API_SUPERVISED") != "1":
+        start_once()
+    # Mark X's jobs never run here (0112 Decided 10): insight-ingestion runs them (markx/jobs.py).
     yield
     database.close_all()
 
@@ -464,6 +496,7 @@ async def _run_archive(
     resume: bool = True,
     rate_limit_overrides: Dict[str, Any] | None = None,
     job_id: str | None = None,
+    linked: bool = False,
 ) -> Dict[str, Any]:
     """Archive posts for a single source into the shared posts table (services/archive_jobs.py).
 
@@ -473,11 +506,12 @@ async def _run_archive(
     limits it leaves the job waiting, and the scheduler continues it (issue 0107).
     """
     return await _archive_jobs().run(source_id, resume=resume, rate_limit_overrides=rate_limit_overrides,
-                                     job_id=job_id)
+                                     job_id=job_id, linked=linked)
 
 
-# Sources with an archive running in this process. One uvicorn worker runs every background
-# job, so a set is the whole truth; a restart empties it, as it ends the runs it tracked.
+# Sources with an archive running in this process (a restart empties it, as it ends the runs it tracked). With two
+# API processes (0112 Decided 11) it is only this one's: the database's running job is the truth, and a new
+# archive starts only through operations.start_job_unless_running, which checks and inserts under one lock.
 _archiving_sources: set[str] = set()
 
 
@@ -522,7 +556,8 @@ def _accept_archive_run(
         reason = "An archive of this source is already running"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     resume = bool(request.resume)
-    if resume and (latest or {}).get("status") == "waiting":
+    linked_waiting = bool(((latest or {}).get("result") or {}).get("linked"))
+    if resume and (latest or {}).get("status") == "waiting" and not linked_waiting:
         # Resume by hand while it waits out a host's limit: the same job continues now.
         _archiving_sources.add(source_id)
         background_tasks.add_task(_continue_archive_once, source_id, latest["id"])
@@ -532,15 +567,19 @@ def _accept_archive_run(
         # A new archive replaces the waiting one.
         services().operations.try_finish_job(latest["id"], status="success", message="Replaced by a new archive",
                                              payload={"waiting": False})
-    job_id = services().operations.try_start_job(
-        "archive_source",
-        trigger="manual",
-        source_id=source_id,
-        message="Archive",
-        payload={"resume": resume, "rate_limit": rate_limit_overrides},
-    )
-    if not job_id:
+    try:
+        job_id = services().operations.start_job_unless_running(
+            "archive_source",
+            trigger="manual",
+            source_id=source_id,
+            message="Archive",
+            payload={"resume": resume, "rate_limit": rate_limit_overrides},
+        )
+    except Exception:   # logged by the operations service
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    if not job_id:   # the other API process started one between the check above and here
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     _archiving_sources.add(source_id)
     background_tasks.add_task(
         _run_archive_once, source_id, resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
@@ -1117,6 +1156,56 @@ async def get_archive_status(source_id: str):
         "latest_job": latest_job,
     }
 
+@app.get("/api/archive/{source_id}/linked")
+@error_detail("count the linked pages")
+async def get_linked_pages(source_id: str):
+    """Linked, not stored (issue 0084 B): the source's own pages that stored posts link and no post is,
+    whether they can be fetched one by one, how long that takes, and whether the archive holds them."""
+    try:
+        summary = await asyncio.to_thread(services().source_fetch.linked_summary, source_id)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
+    return {"success": True, "source_id": source_id, "linked": summary}
+
+
+@app.post("/api/archive/{source_id}/linked")
+@error_detail("fetch the linked pages")
+async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
+    """Fetch them (issue 0084 B): an archive_source job that reads each linked, not stored page of the
+    source once with its own reader (202). One archive job per source at a time; a waiting one is
+    continued (it is the same list), anything else running is 409."""
+    try:
+        summary = await asyncio.to_thread(services().source_fetch.linked_summary, source_id)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
+    if not summary["readable"]:
+        return _unavailable("This source's pages can't be read one page at a time")
+    latest = services().operations.latest_job_for_source("archive_source", source_id)
+    if source_id in _archiving_sources or (latest or {}).get("status") == "running":
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    if (latest or {}).get("status") == "waiting" and ((latest or {}).get("result") or {}).get("linked"):
+        _archiving_sources.add(source_id)
+        background_tasks.add_task(_continue_archive_once, source_id, latest["id"])
+        return JSONResponse(status_code=202, content=_accepted_job_response(latest["id"], "archive_source",
+                                                                            message="Fetching linked pages continues"))
+    if (latest or {}).get("status") == "waiting":
+        reason = "This source's archive is waiting for its host; it continues by itself"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    try:   # under the start lock, as an archive (0112 Decided 11: two API processes)
+        job_id = services().operations.start_job_unless_running("archive_source", trigger="manual", source_id=source_id,
+                                                                message="Fetch linked pages", payload={"linked": True})
+    except Exception:   # logged by the operations service
+        return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    if not job_id:   # the other API process started one between the check above and here
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    _archiving_sources.add(source_id)
+    background_tasks.add_task(_run_archive_once, source_id, job_id=job_id, linked=True)
+    return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source",
+                                                                        message="Fetching linked pages"))
+
+
 @app.get("/api/archive/catalog")
 @error_detail("load the archive catalog")
 async def get_archive_catalog():
@@ -1354,6 +1443,19 @@ async def health_check():
         logger.warning("Health check: the database did not answer (%s)", type(exc).__name__)
         return JSONResponse(status_code=503, content={"status": "unhealthy", "database": False})
     return {"status": "healthy", "database": True, "timestamp": str(time.time())}
+
+
+@app.post("/api/debug/spin")
+async def debug_spin(seconds: float = Query(default=300, ge=1, le=900)):
+    """Measuring the watchdog (issue 0117) only, behind INSIGHT_DEBUG_SPIN=on (404 otherwise): busy-loops this API
+    process's event loop for `seconds`, so it answers nothing meanwhile (the 5 Nov shape: one thread at 100% CPU)."""
+    if os.getenv("INSIGHT_DEBUG_SPIN", "off").strip().lower() != "on":
+        raise HTTPException(status_code=404, detail="Not Found")
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        pass
+    return {"spun": seconds}
 
 
 @app.get("/api/version")

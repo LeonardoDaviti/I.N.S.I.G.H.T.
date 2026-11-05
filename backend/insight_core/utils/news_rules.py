@@ -44,6 +44,10 @@ NEWS_RECENT = timedelta(hours=48)   # ... the API's part "recent" the last 48 ho
                                     # week); neither measured
 NEWS_KEEP = timedelta(days=30)      # the story job writes News for the stories begun in the last 30 days (search's
                                     # "News, last 30 days"); the rows before stay (issue 0077); not measured
+# A row is in the window by its first post (issue 0111): the job reads the posts of NEWS_EDGE before the window too,
+# so a row whose first post just left it is found whole, and left as it was, never re-led by its second post. A
+# name joins posts within NAME_WINDOW, so a post joined to one in the window is at most that much older.
+NEWS_EDGE = timedelta(hours=48)
 SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first (0077)
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
@@ -93,6 +97,22 @@ def _lower(words: Sequence[str]) -> List[str]:
     return [" ".join(SEPARATOR.sub(" ", w.lower().strip(_TRIM)).split()) for w in words]
 
 
+# A date is no name (issue 0111): a month beside a day or a year ("Nov 2026", "02 Nov", "March 20") names a
+# day, not one event. On the server's copy (2026-11-05) the only three date surges ever ("may 2026", "july 2026",
+# "nov 2026") each joined unrelated posts (a column's dated issues, "the best model at <month>?" questions,
+# monthly roundups). English and Russian months, their short forms; a day 1-31 (its 1st, 2nd...); a year.
+MONTH = re.compile(r"^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?"
+                   r"|nov(ember)?|dec(ember)?|январ[ьяе]|феврал[ьяе]|марта?|апрел[ьяе]|ма[йяе]|июн[ьяе]|июл[ьяе]"
+                   r"|августа?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])$")
+DAY_OR_YEAR = re.compile(r"^(0?[1-9]|[12]\d|3[01])(st|nd|rd|th)?$|^(1\d|2\d)\d\d$")
+
+
+def dated(words: Sequence[str]) -> bool:
+    """Whether a name's words (lowercase) hold a date: a month beside a day or a year."""
+    return any(MONTH.match(w) and any(DAY_OR_YEAR.match(x) for x in words[max(i - 1, 0):i] + words[i + 1:i + 2])
+               for i, w in enumerate(words))
+
+
 def names(title: Optional[str]) -> Set[str]:
     """The names in a title, lowercase, its parts' separators one ("steam frame", "gpt 6", "opus 5.5")."""
     words = _words(title)
@@ -105,6 +125,8 @@ def names(title: Optional[str]) -> Set[str]:
             if not all(x[0].isupper() or any(c.isdigit() for c in x) for x in w):
                 continue
             if all(x.replace(".", "").replace("$", "").isdigit() for x in w):
+                continue
+            if dated([x.lower().strip(_TRIM) for x in w]):
                 continue
             if n == 1:
                 letters = [c for c in w[0] if c.isalpha()]
@@ -240,17 +262,18 @@ def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: 
     roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
     best: Dict[str, str] = {}
     posts = [p for p in posts if p.kind != "saved"]   # a page you saved is no voice (issue 0070)
-    for p in posts:
+    for p in posts:   # each voice as its owner's (issue 0111)
         role = post_roles[p.id]
-        if best.get(p.voice) != "report":
-            best[p.voice] = role
+        if best.get(p.owner_voice) != "report":
+            best[p.owner_voice] = role
     for p in posts:
+        voices = dict(zip(p.other_sources, p.other_voices(by_owner=True)))
         if p.author_source:
-            best[reposter_voice(p.author_source)] = "report"
+            best[voices[p.author_source]] = "report"
         for source_id in p.reposters:
-            best.setdefault(reposter_voice(source_id), "share")
+            best.setdefault(voices[source_id], "share")
     reports = sum(1 for role in best.values() if role == "report")
-    mentions = len({p.voice for p in mentioned_by} - set(best))
+    mentions = len({p.owner_voice for p in mentioned_by} - set(best))
     return reports, len(best) - reports, mentions
 
 
@@ -301,7 +324,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         group = sorted(group, key=lambda p: (times[p.id], not p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
-        voices = count_voices(group)
+        voices = count_voices(group, by_owner=True)   # one owner's channels one voice (issue 0111)
         if voices < NEWS_MIN_VOICES:
             continue
         ids = {p.id for p in group}
@@ -343,4 +366,30 @@ def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups
     return None
 
 
-__all__ = ["names", "surges", "name_surges", "phrases", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead"]
+def main_story(posts: Sequence[Tuple[str, Optional[str], int, Optional[str]]]) -> Optional[Set[str]]:
+    """The posts a row's lead may come from (issue 0111), of `posts` ((id, its 0050 story or None, that
+    story's voices, the surging name that joined it), first posted first): its main story's (the most
+    voices, then the most posts, then the first), and the stories and posts joined to it by the name its
+    posts say most (the first said at a tie). A story joined only by another name (a thread naming the
+    row's model in a comparison) never leads. None: the row holds no 0050 story, every post may lead."""
+    stories: Dict[str, List[Tuple[str, Optional[str]]]] = defaultdict(list)
+    voices: Dict[str, int] = {}
+    for pid, story, n, name in posts:
+        if story:
+            stories[story].append((pid, name))
+            voices[story] = n
+    if not stories:
+        return None
+    order = list(stories)
+    main = min(order, key=lambda s: (-voices[s], -len(stories[s]), order.index(s)))
+    said = [name for _, name in stories[main] if name]
+    if not said:
+        return {pid for pid, _ in stories[main]}
+    counts = {name: said.count(name) for name in said}
+    own = max(said, key=lambda name: (counts[name], -said.index(name)))
+    joined = {s for s, ps in stories.items() if s == main or any(name == own for _, name in ps)}
+    return {pid for pid, story, _, name in posts if (story in joined if story else name == own)}
+
+
+__all__ = ["names", "surges", "name_surges", "phrases", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead",
+           "main_story", "dated"]

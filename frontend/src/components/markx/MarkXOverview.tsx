@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxOverview } from '../../services/markx';
+import type { MarkxJob, MarkxOverview } from '../../services/markx';
 import { Button, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { feedFullTime, postBylineTime } from '../../lib/dates';
@@ -14,7 +14,28 @@ const OVERVIEW_KEY = ['markx-overview'] as const;
 
 function useOverview() {
   const api = useApi();
-  return useQuery({ queryKey: [...OVERVIEW_KEY], queryFn: () => api.getMarkxOverview(), staleTime: 30_000 });
+  return useQuery({
+    queryKey: [...OVERVIEW_KEY], queryFn: () => api.getMarkxOverview(), staleTime: 30_000,
+    // while a decision run runs or is waited for, the page follows it
+    refetchInterval: (q) => {
+      const job = q.state.data?.worker.jobs?.decide;
+      return job && (job.running || job.wanted_at) ? 5_000 : false;
+    },
+  });
+}
+
+/** The decision job's state (issue 0112 Decided 12): running with its stage, asked for, or how the last run ended. */
+export function DecisionJob({ job }: { job: MarkxJob | undefined }) {
+  if (!job) return null;
+  let text: string | null = null;
+  if (job.running) {
+    text = `Deciding now: ${job.stage ?? 'starting'}${job.started_at ? ` · started ${postBylineTime(job.started_at)}` : ''}`;
+  } else if (job.wanted_at) {
+    text = 'A decision run is asked for: it starts within a few minutes.';
+  } else if (job.last && job.last.ok === false && job.last.error) {
+    text = `The last decision run stopped: ${job.last.error}. It runs again at the next look.`;
+  }
+  return text ? <p className="mt-2 text-[0.8125rem] tabular-nums text-fg-2" role="status">{text}</p> : null;
 }
 
 function Loaded({ children }: { children: (data: MarkxOverview) => ReactElement }) {
@@ -250,12 +271,13 @@ export function MarkXWorker() {
                   </>
                 ) : 'No decision run yet.'}
               </p>
+              <DecisionJob job={worker.jobs?.decide} />
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button size="sm" variant="secondary" onClick={() => run.mutate()} disabled={run.isPending} aria-busy={run.isPending || undefined}>
-                  {run.isPending ? 'deciding…' : 'run the decisions now'}
+                  {run.isPending ? 'asking…' : 'run the decisions now'}
                 </Button>
                 {run.isError ? <span className="text-[0.8125rem] text-fg">× {errorMessage(run.error)}</span> : null}
-                {run.isSuccess ? <span className="text-[0.8125rem] text-fg-2">done</span> : null}
+                {run.isSuccess ? <span className="text-[0.8125rem] text-fg-2">asked</span> : null}
               </div>
             </section>
           </div>

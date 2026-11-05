@@ -142,6 +142,23 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertGreater(after["estimate_bytes"], info["estimate_bytes"], "grown with the rows")
         self.assertEqual(after["estimate_bytes"], estimate_now()[0])
 
+    def test_the_progress_reaches_the_other_api_process(self):
+        """0112 Decided 11: two API processes; the export streams from one, its progress is asked of the other."""
+        import tempfile
+        shared = tempfile.mkdtemp()
+        streaming, other = ExportService(self.url, progress_dir=shared), ExportService(self.url, progress_dir=shared)
+        self.assertIsNone(other.progress("tok-abcdefgh"))
+        stream = streaming.stream(include_logins=False, token="tok-abcdefgh")
+        next(stream)
+        seen = other.progress("tok-abcdefgh")
+        self.assertEqual((seen["done"], seen["error"]), (False, None))
+        for _ in stream:
+            pass
+        done = other.progress("tok-abcdefgh")
+        self.assertTrue(done["done"])
+        self.assertEqual(done["bytes"], streaming.progress("tok-abcdefgh")["bytes"])
+        self.assertIsNone(other.progress("../etc/passwd"))      # a token names a file only when it is one
+
     def test_a_stopped_export_keeps_no_size(self):
         self._forget_last_export()
         stream = ExportService(self.url).stream(include_logins=False)

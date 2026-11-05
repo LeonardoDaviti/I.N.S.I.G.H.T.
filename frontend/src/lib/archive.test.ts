@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { ArchivePlan } from '../services/api';
-import { archiveResultLine, describeAvailable, describePlan, describeRate } from './archive.ts';
+import { archiveResultLine, describeAvailable, describeLinked, describePlan, describeRate } from './archive.ts';
 
 test('an exact count is the figure, with nothing to qualify', () => {
   assert.deepEqual(describeAvailable({ available: 1722, basis: 'exact', stored: 25 }), { figure: '1,722', note: null });
@@ -85,4 +85,28 @@ test('an archive result reads as counts, leaving out what was not recorded', () 
   );
   assert.equal(archiveResultLine({ posts_fetched: 1, posts_inserted: 1, pages_fetched: 1 }), '1 post fetched, 1 new · 1 page');
   assert.equal(archiveResultLine({}), null);
+});
+
+const linked = (over = {}) => ({ count: 17, readable: true, estimated_seconds: 40, archive_holds: false, archive_ran: false,
+  pages: [], ...over });
+
+test('pages your posts link and no post is: a count and Fetch them (issue 0084 B)', () => {
+  assert.deepEqual(describeLinked(linked(), '~1m'),
+    { line: 'Linked by your posts, not stored: 17', fetch: true, archiveFirst: false, note: '~1m, one page at a time' });
+  assert.equal(describeLinked(linked({ count: 0 }), null), null, 'nothing to say');
+});
+
+test('a source whose archive pages back offers the archive first, until it has run, and these alone after', () => {
+  assert.deepEqual(describeLinked(linked({ archive_holds: true }), '~1m'),
+    { line: 'Linked by your posts, not stored: 17', fetch: true, archiveFirst: true,
+      note: 'Run the archive: it holds them. Or fetch only these: ~1m, one page at a time' });
+  assert.equal(describeLinked(linked({ archive_holds: true, archive_ran: true }), null)?.archiveFirst, false,
+    'what the archive did not bring');
+});
+
+test('pages that cannot be read one by one are only counted', () => {
+  assert.deepEqual(describeLinked(linked({ readable: false, count: 1250 }), null),
+    { line: 'Linked by your posts, not stored: 1,250', fetch: false, archiveFirst: false, note: 'Its pages can’t be fetched one by one' });
+  assert.deepEqual(describeLinked(linked({ readable: false, archive_holds: true }), null),
+    { line: 'Linked by your posts, not stored: 17', fetch: false, archiveFirst: true, note: 'Run the archive: it holds them' });
 });

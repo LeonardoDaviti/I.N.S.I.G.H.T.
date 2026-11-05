@@ -24,7 +24,7 @@ The four sources, at 0086 B's thresholds (none tuned here):
     page are not pages; a roundup counts its first link only). Not already in one Mark IX story. 23 of 35 such
     pairs were one story or a follow-up: a question, never a rule.
 
-When: `pending.note(post_ids)` after vectors are stored (POST /api/markx/embeddings) collects the posts, and the
+When (markx/jobs.py): `jobs.pending.note(post_ids)` after vectors are stored (POST /api/markx/embeddings) collects the posts, and the
 job runs DEBOUNCE seconds after the last upload, in a thread with a transaction of its own (`run`). Every source
 is idempotent, so running a post twice adds nothing. Entities arrive later than vectors (they are Haiku's): the
 job also takes the posts whose mentions were written since its last run (the first run in a process: the last
@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import bisect
 import logging
-import threading
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -58,7 +57,6 @@ ENTITY_GUIDE = "ent-v3"
 SPECIFIC_TYPES = ("model", "product", "software", "paper", "dataset")
 NOT_VOICE = ("saved",)
 POST_POST, STORY_STORY = "post_post", "story_story"
-DEBOUNCE = 30.0                   # seconds of quiet after the last upload
 
 
 # ---- what every source reads -----------------------------------------------------------------------
@@ -310,54 +308,3 @@ def run(cur: Cursor, post_ids: Iterable[str] = (), *, since: Optional[datetime] 
         ids |= set(mentioned_since(cur, since))
     return find(cur, ids, model=model)
 
-
-class Pending:
-    """The debounce: posts collected after each upload, one run DEBOUNCE seconds after the last (delay None: no
-    timer, `flush` runs it; the tests). Never raises into a request; a failed run keeps its posts for the next."""
-
-    def __init__(self, delay: Optional[float] = DEBOUNCE, transaction: Optional[Callable[[], Any]] = None) -> None:
-        self.delay = delay
-        self.transaction = transaction
-        self.posts: Set[str] = set()
-        self.last_run: Optional[datetime] = None
-        self.lock = threading.Lock()
-        self.timer: Optional[threading.Timer] = None
-
-    def note(self, post_ids: Iterable[str]) -> None:
-        with self.lock:
-            self.posts |= set(map(str, post_ids))
-            if self.delay is None or not self.posts:
-                return
-            if self.timer is not None:
-                self.timer.cancel()
-            self.timer = threading.Timer(self.delay, self.flush)
-            self.timer.daemon = True
-            self.timer.start()
-
-    def flush(self) -> Optional[Counter]:
-        with self.lock:
-            ids, self.posts, self.timer = self.posts, set(), None
-            since = self.last_run or datetime.now(timezone.utc) - timedelta(days=1)
-            started = datetime.now(timezone.utc)
-        try:
-            transaction = self.transaction or _transaction
-            with transaction() as cur:
-                counts = run(cur, ids, since=since)
-        except Exception:   # never into a request or the timer thread; the posts wait for the next run
-            log.exception("Mark X candidates: the run failed; %d posts kept for the next", len(ids))
-            with self.lock:
-                self.posts |= ids
-            return None
-        with self.lock:
-            self.last_run = started
-        log.info("Mark X candidates: %d posts, %s", len(ids), dict(counts))
-        return counts
-
-
-def _transaction():
-    from insight_core.db import database
-    from insight_core.services.registry import services
-    return database.transaction(services().db_url)
-
-
-pending = Pending()

@@ -43,17 +43,28 @@ class StartScriptTests(unittest.TestCase):
                 self.assertIn("starting anyway", result.stderr)
 
 
-class OneWorkerTests(unittest.TestCase):
-    def test_the_api_start_refuses_more_than_one_worker_and_says_why(self):
-        result, calls = run_start("start-backend.sh", env={"API_WORKERS": "2"})
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("one worker", result.stderr)
-        self.assertEqual(calls, "", "nothing runs: no migration, no import, no server")
+class TwoProcessesTests(unittest.TestCase):
+    """0112 Decided 11: two API processes by default, under the supervisor that does the start's work once."""
 
-    def test_the_api_starts_one_worker_even_when_uvicorn_would_read_more(self):
+    def test_the_api_starts_two_processes_under_the_supervisor(self):
+        result, calls = run_start("start-backend.sh", env={"WEB_CONCURRENCY": "4"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        last = calls.splitlines()[-1]
+        self.assertIn("-m insight_core.scripts.api_supervisor uvicorn main:app", last)
+        self.assertTrue(last.endswith("--workers 2"), calls)
+
+    def test_api_workers_sets_the_number(self):
         result, calls = run_start("start-backend.sh", env={"API_WORKERS": "1", "WEB_CONCURRENCY": "4"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(calls.splitlines()[-1].endswith("--workers 1"), calls)
+
+    def test_a_number_that_isnt_one_is_refused_before_anything_runs(self):
+        for bad in ("0", "two", "-1"):
+            with self.subTest(bad=bad):
+                result, calls = run_start("start-backend.sh", env={"API_WORKERS": bad})
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("refused", result.stderr)
+                self.assertEqual(calls, "", "nothing runs: no migration, no import, no server")
 
 
 class PendingMigrationsTests(unittest.TestCase):

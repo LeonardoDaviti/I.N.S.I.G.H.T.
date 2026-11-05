@@ -4,7 +4,7 @@
  * Honest by construction: a figure the source did not report is never shown as one.
  * Pure.
  */
-import type { ArchivePlan, ArchiveRateLimit, AvailableBasis } from '../services/api';
+import type { ArchivePlan, ArchiveRateLimit, AvailableBasis, LinkedPagesSummary } from '../services/api';
 import { formatCount, plural } from './format.ts';
 
 /** The available figure and, when the number needs it, what it means. */
@@ -88,4 +88,24 @@ export function archiveResultLine(result: {
     typeof result.stored_posts === 'number' ? `${formatCount(result.stored_posts)} stored` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : null;
+}
+
+/**
+ * Linked, not stored (issue 0084 B) in one line and what to offer: "Linked by your posts, not stored: 17"
+ * with Fetch them (`fetch`) when one fetch can read them; the archive first (`archiveFirst`) when it pages
+ * back and has not run ("Run the archive: it holds them"), these alone still offered beside it (fewer
+ * requests than a whole archive); only the count when nothing reads them one by one. Null when none.
+ */
+export function describeLinked(linked: Pick<LinkedPagesSummary, 'count' | 'readable' | 'archive_holds' | 'archive_ran'>,
+  estimate: string | null): { line: string; fetch: boolean; archiveFirst: boolean; note: string } | null {
+  if (!linked.count) return null;
+  const line = `Linked by your posts, not stored: ${formatCount(linked.count)}`;
+  const archiveFirst = linked.archive_holds && !linked.archive_ran;
+  const pace = `${estimate ? `${estimate}, ` : ''}one page at a time`;
+  if (archiveFirst) {
+    const note = 'Run the archive: it holds them';
+    return { line, fetch: linked.readable, archiveFirst, note: linked.readable ? `${note}. Or fetch only these: ${pace}` : note };
+  }
+  if (!linked.readable) return { line, fetch: false, archiveFirst, note: 'Its pages can’t be fetched one by one' };
+  return { line, fetch: true, archiveFirst, note: pace };
 }

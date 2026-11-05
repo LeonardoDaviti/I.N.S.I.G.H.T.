@@ -633,68 +633,7 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
 
 
-class Switch(unittest.TestCase):
-    def test_off_nothing_runs(self):
-        ran = []
-        s = D.Scheduler(transaction=lambda: ran.append(1), debounce=0.01, every=0.01, enabled=lambda: False)
-        s.note()
-        self.assertFalse(s.start())
-        self.assertIsNone(s.run_now())
-        self.assertEqual(ran, [])
-
-    def test_uploads_close_together_make_one_run_after_the_last(self):
-        import contextlib
-        import threading
-        import time
-        ran, done = [], threading.Event()
-
-        @contextlib.contextmanager
-        def transaction():
-            yield "cur"
-
-        def fake_run(cur):
-            ran.append(cur)
-            done.set()
-            return {"stories": 0}
-        with mock.patch.object(D, "run", fake_run):
-            s = D.Scheduler(transaction=transaction, debounce=0.2, every=None, enabled=lambda: True)
-            for _ in range(3):
-                s.note()
-                time.sleep(0.05)
-            self.assertTrue(done.wait(2))
-            time.sleep(0.3)
-        self.assertEqual(ran, ["cur"])
-
-    def test_the_first_run_follows_the_starts_story_job(self):
-        """0112 A: the start's story job ends, then Mark X decides at once (it waited up to an hour for the clock)."""
-        import contextlib
-        ran = []
-
-        @contextlib.contextmanager
-        def transaction():
-            yield "cur"
-        with mock.patch.object(D, "run", lambda cur: ran.append(cur) or {"stories": 0}):
-            D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: False).after_stories()
-            self.assertEqual(ran, [])
-            with mock.patch("insight_core.markx.candidates.pending.flush") as flush:
-                D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: True).after_stories()
-            flush.assert_called_once()
-        self.assertEqual(ran, ["cur"])
-
-    def test_the_api_start_runs_mark_x_after_the_story_job(self):
-        import main
-        order = []
-        with mock.patch.object(main, "in_own_process", lambda job: order.append(job.__name__)), \
-                mock.patch.object(D.scheduler, "after_stories", lambda: order.append("markx")):
-            main.start_stories()
-        self.assertEqual(order, ["recompute_stories", "markx"])
-
-    def test_on_a_failed_run_never_raises(self):
-        def broken():
-            raise RuntimeError("no database")
-        s = D.Scheduler(transaction=broken, debounce=None, every=None, enabled=lambda: True)
-        self.assertIsNone(s.run_now())
-
+class Routes(unittest.TestCase):
     def test_the_page_routes_are_404_when_off(self):
         from insight_core.tests.test_markx_api import call
         with mock.patch.dict(os.environ, {"INSIGHT_MARKX": "off"}):

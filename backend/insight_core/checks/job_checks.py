@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 import time
 from dataclasses import asdict
@@ -112,7 +113,11 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     started = time.monotonic()
     try:
         os.environ["INSIGHT_MARKX"] = "off"
-        off = decide.Scheduler(debounce=None, every=None).run_now()
+        try:   # 0112 Decided 10: insight-ingestion's runner (markx/jobs.py); a version before has decide.Scheduler
+            from insight_core.markx.jobs import Runner
+            off = Runner(db_url, spawn=False).tick()
+        except ImportError:
+            off = decide.Scheduler(debounce=None, every=None).run_now()
         with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
             off_rows = _mx_rows(cur) - mx_before
         os.environ["INSIGHT_MARKX"] = "on"
@@ -146,11 +151,139 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     return out
 
 
+SLOW_MS = 1000
+PROBES = ("/api/version", "/api/feed?limit=20")
+
+
+def _api_workers(app_dir: str) -> int:
+    """The number of API processes the version's start script runs (docker/start-backend.sh), 1 when it says none."""
+    import re
+    try:
+        text = open(os.path.join(app_dir, "docker", "start-backend.sh"), encoding="utf-8").read()
+    except OSError:
+        return 1
+    found = re.search(r"API_WORKERS:-(\d+)", text) or re.search(r"--workers\s+(\d+)", text)
+    return int(found.group(1)) if found else 1
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def api_during_run(db_url: str, now: datetime) -> Found:
+    """0112 Decided 13: the reader's API answers while Mark X decides. The version's API (as many processes as its
+    start script runs, Mark X on) serves the copy; a full decision run with the entity-candidate flush happens where
+    the version runs it (insight-ingestion's job in a process of its own, or, before 0112 Decided 10, inside the API:
+    its start's run and POST /api/markx/decide); meanwhile /api/version and /api/feed are asked every 0.5 s. Each
+    request slower than 1 s, or failing, counts."""
+    import subprocess
+    import threading
+    import urllib.request
+    what = "API requests (/api/version, /api/feed) slower than 1 s or failing while a decision run and the candidate flush run"
+    app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        from insight_core.markx import decide  # noqa: F401
+    except ImportError:
+        return Found("markx.api_during_run", "mark x", what, -1, 0, note="not measured: this version has no decision job")
+    import importlib.util
+    out_of_api = importlib.util.find_spec("insight_core.markx.jobs") is not None
+    workers, port = _api_workers(app_dir), _free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = {**os.environ, "DATABASE_URL": db_url, "INSIGHT_MARKX": "on", "INSIGHT_API_SUPERVISED": "1",
+           "PYTHONPATH": app_dir, "PYTHONDONTWRITEBYTECODE": "1"}
+    log = open("api_during_run.log", "w", encoding="utf-8")
+    api = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--app-dir", app_dir, "--host", "127.0.0.1",
+                            "--port", str(port), "--workers", str(workers)], env=env, stdout=log, stderr=subprocess.STDOUT)
+    rows: List[Dict[str, Any]] = []
+    stop = threading.Event()
+
+    def get(path: str, timeout: float = 10.0) -> Dict[str, Any]:
+        t = time.monotonic()
+        status = 0
+        try:
+            with urllib.request.urlopen(base + path, timeout=timeout) as r:
+                r.read()
+                status = r.status
+        except Exception as exc:  # noqa: BLE001
+            status = getattr(exc, "code", -1) or -1
+        return {"path": path.split("?")[0], "ms": round((time.monotonic() - t) * 1000), "status": status}
+
+    def probe() -> None:
+        pending: List[threading.Thread] = []
+        while not stop.is_set():
+            for path in PROBES:
+                th = threading.Thread(target=lambda p=path: rows.append(get(p)), daemon=True)
+                th.start()
+                pending.append(th)
+            stop.wait(0.5)
+        for th in pending:
+            th.join(12)
+
+    started = time.monotonic()
+    run_seconds, where, note_extra = None, "insight-ingestion (a process of its own)" if out_of_api else "inside the API", {}
+    try:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline and get("/api/version", 2)["status"] != 200:
+            if api.poll() is not None:
+                return Found("markx.api_during_run", "mark x", what, 1, 0, note="the API did not start (api_during_run.log)")
+            time.sleep(1)
+        prober = threading.Thread(target=probe, daemon=True)
+        prober.start()
+        t0 = time.monotonic()
+        if out_of_api:   # as insight-ingestion runs it: the candidate flush then the decision run, in a process
+            job = subprocess.run([sys.executable, "-c", "import sys; from insight_core.markx.jobs import Jobs; "
+                                  "out = Jobs(sys.argv[1]).decide(); print(out and {k: out.get(k) for k in ('run', 'skipped')})",
+                                  db_url], env=env, capture_output=True, text=True, timeout=1800)
+            note_extra["job"] = (job.stdout.strip() or job.stderr.strip()[-300:])
+            get("/api/markx/decide", 10)   # the route only asks now; it is measured with the rest
+        else:            # the start's run (flush + decisions) is running in the API; then the page's button
+            req = urllib.request.Request(base + "/api/markx/decide", method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=1800) as r:
+                    note_extra["job"] = json.loads(r.read() or b"{}").get("run") or "skipped"
+            except Exception as exc:  # noqa: BLE001
+                note_extra["job"] = f"POST /api/markx/decide failed: {exc}"
+            # and the start's run, with the candidate flush first, to its end (its scheduler logs one line)
+            end = time.monotonic() + 1200
+            while time.monotonic() < end:
+                log.flush()
+                with open("api_during_run.log", encoding="utf-8", errors="replace") as fh:
+                    if "Mark X decisions:" in fh.read():
+                        break
+                time.sleep(1)
+            else:
+                note_extra["start_run"] = "not seen in 1200 s"
+        run_seconds = round(time.monotonic() - t0, 1)
+        stop.wait(5)
+    finally:
+        stop.set()
+        api.terminate()
+        try:
+            api.wait(30)
+        except subprocess.TimeoutExpired:
+            api.kill()
+        log.close()
+    slow = [r for r in rows if r["ms"] >= SLOW_MS or r["status"] != 200]
+    by_path = {}
+    for path in {r["path"] for r in rows}:
+        ms = sorted(r["ms"] for r in rows if r["path"] == path)
+        by_path[path] = {"n": len(ms), "p50": ms[len(ms) // 2], "p95": ms[min(len(ms) - 1, int(len(ms) * .95))], "max": ms[-1]}
+    worst = sorted(slow, key=lambda r: -r["ms"])[:EXAMPLES]
+    return Found("markx.api_during_run", "mark x", what, len(slow), len(rows),
+                 [f"{r['path']} {r['ms']} ms (status {r['status']})" for r in worst], round(time.monotonic() - started, 1),
+                 note=json.dumps({"where": where, "api_processes": workers, "run_seconds": run_seconds,
+                                  "paths": by_path, **note_extra}, default=str))
+
+
 def check(db_url: str, now: datetime, identity: str = IDENTITY) -> List[Found]:
     scratch_only(db_url)
     found = rebuild_twice(db_url, now)
     found += markx_unchanged(db_url, now)
-    found.append(incremental_identity(db_url, now, identity))   # last: it holds posts back and brings them in again
+    found.append(incremental_identity(db_url, now, identity))   # it holds posts back and brings them in again
+    found.append(api_during_run(db_url, now))                  # last: the API's own start may run the story job
     return found
 
 

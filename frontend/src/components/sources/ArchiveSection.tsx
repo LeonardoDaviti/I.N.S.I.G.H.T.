@@ -1,12 +1,12 @@
 import { useEffect, useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, ArchiveWaiting, JobRun } from '../../services/api';
+import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, ArchiveWaiting, JobRun, LinkedPagesSummary } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
 import { useOperationJob } from '../../hooks/useOperations';
 import { SOURCES_HEALTH_KEY } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
-import { archiveResultLine, describeAvailable, describePlan, describeRate } from '../../lib/archive';
+import { archiveResultLine, describeAvailable, describeLinked, describePlan, describeRate } from '../../lib/archive';
 import { waitingLine } from '../../lib/archiveWaiting';
 import { jobWaiting } from '../../lib/jobRuns';
 import { formatRelativeTime } from '../../lib/dates';
@@ -16,6 +16,7 @@ import { Button, Input, StatusGlyph } from '../ui';
 import { Notice } from '../states';
 
 const archiveStatusKey = (sourceId: string) => ['archive-status', sourceId] as const;
+const linkedKey = (sourceId: string) => ['archive-linked', sourceId] as const;
 /** Every source's archive state (the ingestion tab's catalog); refreshed when an archive here moves. */
 export const ARCHIVE_CATALOG_KEY = ['archive-catalog'] as const;
 
@@ -74,6 +75,8 @@ interface RunView {
   pausedReason?: string;
   /** What it waits for (issue 0107: a host's limit); the scheduler continues it. */
   waiting?: ArchiveWaiting | null;
+  /** It read the source's linked, not stored pages (issue 0084 B), not its archive. */
+  linked?: boolean;
 }
 
 const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
@@ -95,6 +98,7 @@ function fromJob(job: JobRun): RunView {
     pages: count(payload.pages_fetched),
     pausedReason: pausedReason(payload),
     waiting: jobWaiting(job),
+    linked: Boolean(payload.linked),
   };
 }
 
@@ -111,10 +115,13 @@ function fromSummary(job: ArchiveJobSummary): RunView {
     pages: job.result?.pages_fetched,
     pausedReason: pausedReason(job.result),
     waiting: jobWaiting({ status: job.status, payload: job.result }),
+    linked: Boolean(job.result?.linked),
   };
 }
 
 function resultLine(run: RunView): string {
+  // A linked fetch's own words say what it read and what it could not store (issue 0084 B).
+  if (run.linked && run.message && run.status !== 'running' && !run.waiting) return run.message;
   return archiveResultLine({ posts_fetched: run.fetched, posts_inserted: run.inserted, pages_fetched: run.pages })
     ?? run.message ?? 'Finished';
 }
@@ -141,7 +148,7 @@ function Progress({ run, now }: { run: RunView; now: Date }) {
   return (
     <div className="space-y-1.5" role="status">
       <div className="flex items-center justify-between gap-3 text-[0.8125rem]">
-        <StatusGlyph status="running" label="archiving…" />
+        <StatusGlyph status="running" label={run.linked ? 'fetching linked pages…' : 'archiving…'} />
         <span className="tabular-nums text-fg">{percent}%</span>
       </div>
       <ArchiveProgressBar percent={percent} />
@@ -167,6 +174,18 @@ export default function ArchiveSection({ sourceId, pacing = false }: { sourceId:
     queryKey: [...archiveStatusKey(sourceId)],
     queryFn: () => api.getSourceArchive(sourceId),
   });
+  // Its own request: counting reads every stored post's links (about a second on a large source).
+  const linked = useQuery({
+    queryKey: [...linkedKey(sourceId)],
+    queryFn: () => api.getLinkedPages(sourceId),
+    retry: false,
+  });
+  const onChanged = () => {
+    void queryClient.invalidateQueries({ queryKey: [...archiveStatusKey(sourceId)] });
+    void queryClient.invalidateQueries({ queryKey: [...linkedKey(sourceId)] });
+    void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
+    void queryClient.invalidateQueries({ queryKey: [...ARCHIVE_CATALOG_KEY] });
+  };
 
   if (status.isPending) return <p className="text-[0.75rem] text-fg-3">Loading archive…</p>;
   if (status.isError) {
@@ -174,7 +193,14 @@ export default function ArchiveSection({ sourceId, pacing = false }: { sourceId:
   }
   const support = supportOf(status.data);
   if (!support.archivable) {
-    return <p className="text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">No archive: {support.reason}</p>;
+    // A feed with nothing older to archive can still read the pages its posts link (issue 0084 B).
+    return (
+      <div className="space-y-3">
+        <p className="text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">No archive: {support.reason}</p>
+        <ArchiveControls sourceId={sourceId} status={status.data} support={support} pacing={false}
+          linked={linked.data ?? null} onChanged={onChanged} linkedOnly />
+      </div>
+    );
   }
   return (
     <ArchiveControls
@@ -182,21 +208,36 @@ export default function ArchiveSection({ sourceId, pacing = false }: { sourceId:
       status={status.data}
       support={support}
       pacing={pacing}
-      onChanged={() => {
-        void queryClient.invalidateQueries({ queryKey: [...archiveStatusKey(sourceId)] });
-        void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
-        void queryClient.invalidateQueries({ queryKey: [...ARCHIVE_CATALOG_KEY] });
-      }}
+      linked={linked.data ?? null}
+      onChanged={onChanged}
     />
   );
 }
 
-function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
+/** "Linked by your posts, not stored: 17 · Fetch them", or the archive first, or only the count. */
+function LinkedLine({ linked, busy, onFetch }: { linked: LinkedPagesSummary | null; busy: boolean; onFetch: () => void }) {
+  const said = linked ? describeLinked(linked, formatEstimate(linked.estimated_seconds)) : null;
+  if (!said) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem]" aria-label="Linked pages">
+      <span className="tabular-nums text-fg">{said.line}</span>
+      {said.fetch ? (
+        <Button variant="secondary" size="sm" onClick={onFetch} disabled={busy} aria-busy={busy}>Fetch them</Button>
+      ) : null}
+      {said.note ? <span className="text-[0.75rem] text-fg-3">{said.note}</span> : null}
+    </div>
+  );
+}
+
+function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged, linkedOnly = false }: {
   sourceId: string;
   status: ArchiveStatusResponse;
   support: ArchiveSupport;
   pacing: boolean;
+  linked: LinkedPagesSummary | null;
   onChanged: () => void;
+  /** No archive (a feed with nothing older): only the linked pages and their fetch's progress. */
+  linkedOnly?: boolean;
 }) {
   const api = useApi();
   const ids = useId();
@@ -265,10 +306,63 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
     }
   };
 
+  const fetchLinked = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const { job_id: started } = await api.fetchLinkedPages(sourceId);
+      setJobId(started);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+  // A waiting job continues on what it was reading: the archive, or the linked list.
+  const continueRun = () => void (run?.linked ? fetchLinked() : start(true));
+
   const label = 'block text-[0.75rem] text-fg-3';
   const checkpoint = archive.checkpoint;
   const estimate = plan ? formatEstimate(plan.estimated_seconds) : null;
   const rate = plan ? describeRate(plan.rate_limit) : null;
+
+  const lastRun = run && !running ? (
+    run.status === 'failed' ? (
+      <Notice tone="error" title={run.linked ? 'The last fetch of linked pages failed' : 'The last archive failed'}
+        message={run.message || 'No reason was recorded.'} />
+    ) : run.waiting ? (
+      <Notice
+        tone="warning"
+        title={waitingLine(run.waiting, now)}
+        message={resultLine(run)}
+        action={starting ? undefined : { label: 'Continue now', onClick: continueRun }}
+      />
+    ) : run.pausedReason ? (
+      <Notice
+        tone="warning"
+        title={`Paused: ${run.pausedReason}`}
+        message={resultLine(run)}
+        action={starting ? undefined : { label: 'Resume', onClick: continueRun }}
+      />
+    ) : (
+      <p className="text-[0.75rem] text-fg-2">
+        <StatusGlyph status="ok" label="last run" />
+        <span className="tabular-nums">
+          {' '}{run.finishedAt ? `${formatRelativeTime(run.finishedAt, now)}: ` : ''}{resultLine(run)}
+        </span>
+      </p>
+    )
+  ) : null;
+
+  if (linkedOnly) {
+    return (
+      <div className="space-y-3">
+        {running && run ? <Progress run={run} now={now} /> : <LinkedLine linked={linked} busy={starting} onFetch={() => void fetchLinked()} />}
+        {error ? <Notice tone="error" title={error} /> : null}
+        {lastRun}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -292,6 +386,7 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
 
       {running && run ? <Progress run={run} now={now} /> : (
         <>
+          <LinkedLine linked={linked} busy={starting || planning} onFetch={() => void fetchLinked()} />
           {resumeReady ? (
             <label className="flex items-start gap-2 text-[0.8125rem] text-fg-2">
               <input
@@ -355,32 +450,7 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
 
       {error ? <Notice tone="error" title={error} /> : null}
 
-      {run && !running ? (
-        run.status === 'failed' ? (
-          <Notice tone="error" title="The last archive failed" message={run.message || 'No reason was recorded.'} />
-        ) : run.waiting ? (
-          <Notice
-            tone="warning"
-            title={waitingLine(run.waiting, now)}
-            message={resultLine(run)}
-            action={starting ? undefined : { label: 'Continue now', onClick: () => void start(true) }}
-          />
-        ) : run.pausedReason ? (
-          <Notice
-            tone="warning"
-            title={`Paused: ${run.pausedReason}`}
-            message={resultLine(run)}
-            action={starting ? undefined : { label: 'Resume', onClick: () => void start(true) }}
-          />
-        ) : (
-          <p className="text-[0.75rem] text-fg-2">
-            <StatusGlyph status="ok" label="last run" />
-            <span className="tabular-nums">
-              {' '}{run.finishedAt ? `${formatRelativeTime(run.finishedAt, now)}: ` : ''}{resultLine(run)}
-            </span>
-          </p>
-        )
-      ) : null}
+      {lastRun}
     </div>
   );
 }

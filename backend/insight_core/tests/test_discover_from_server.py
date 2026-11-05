@@ -164,6 +164,17 @@ class OneCardPerDomainTests(unittest.TestCase):
         got = discover_rules.one_card_per_domain(found, federations={"blogs.example"})
         self.assertEqual([s["key"] for s in got], ["ann.blogs.example", "bob.blogs.example"])
 
+    def test_a_catalog_subdomain_is_no_companys_own_place(self):
+        """Issue 0111: a company's podcast or app directory lists many owners' shows and apps: its own card, not
+        one of the company's places."""
+        found = [self.suggestion("maker.example", 5.0, ["a", "b"]), self.suggestion("research.maker.example", 3.0, ["c"]),
+                 self.suggestion("podcasts.maker.example", 2.0, ["d"]), self.suggestion("apps.maker.example", 1.0, ["e"])]
+        got = {s["key"]: s for s in discover_rules.one_card_per_domain(found, federations=set())}
+        self.assertEqual(sorted(got), ["apps.maker.example", "maker.example", "podcasts.maker.example"])
+        self.assertEqual(got["maker.example"]["places"], ["maker.example", "research.maker.example"])
+        self.assertIsNone(discover_rules.owner_domain("music.maker.example"))
+        self.assertEqual(discover_rules.owner_domain("musicians.example"), "musicians.example", "a site, not a label")
+
     def test_a_federation_by_its_many_thinly_linked_hosts(self):
         self.assertTrue(discover_rules.federation(hosts=51, posts=100), "a blog host: 51 hosts, 2 posts each")
         self.assertTrue(discover_rules.federation(hosts=47, posts=167), "a school's units")

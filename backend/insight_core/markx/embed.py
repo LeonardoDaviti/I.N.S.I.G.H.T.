@@ -90,7 +90,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
     None), newest first (priority: the post's age in days): how many tasks were added. A post whose text another
     post's task already asks gets that post's vector once it is stored (and goes to the candidates' run), else
     waits for it."""
-    from insight_core.markx import candidates
+    from insight_core.markx import jobs
     spec = schemas.KINDS[KIND]
     added = 0
     seen: set = set()
@@ -127,7 +127,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
                 copied.append(p.id)
         if added >= limit or len(rows) < limit:
             break
-    candidates.pending.note(copied)
+    jobs.note_posts(cur, copied)
     return added
 
 

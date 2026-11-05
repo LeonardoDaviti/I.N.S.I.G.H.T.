@@ -32,7 +32,7 @@ from insight_core.tests._db import db_url, insert_scratch_source, requires_test_
 
 MX_TABLES = ("mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
-             "mx_settings")
+             "mx_settings", "mx_jobs", "mx_candidate_posts", "mx_workers")
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
@@ -389,6 +389,16 @@ class Answers(_Api):
         self.assertEqual([w["worker"] for w in body["workers"]], ["device-1"])
         self.assertIsNone(body["last_run"])
         self.assertEqual(set(body["guides"]), set(schemas.guide_ids()))
+
+    def test_a_workers_last_contact_is_seen_by_the_other_api_process(self):
+        """0112 Decided 11: the worker reached one process; the page asks the other, which has nothing in memory."""
+        self.lease(worker="device-7")
+        api._contacts.clear()                                    # the other process
+        status, body = call("GET", "/api/markx/status", token=self.token)
+        seen = {w["worker"]: w["last_contact"] for w in body["workers"]}
+        self.assertIsNotNone(seen.get("device-7"))
+        overview = call("GET", "/api/markx/overview")[1]
+        self.assertIn("device-7", [w["worker"] for w in overview["worker"]["workers"]])
 
 
 class GuidesAndInputs(_Api):

@@ -27,6 +27,7 @@ class BaseSourceAdapter(BaseKind):
     # The discovered index is the whole archive; Gwern overrides (candidate pages).
     available_basis = "exact"
     page_based = True        # its posts come from the site's own lists (issue 0039)
+    reads_posts = True       # read_post: one page of its site, as the site reader reads it (issue 0084 B)
     PAGE_DELAY_SECONDS: ClassVar[float] = 1
     # Checkpoint modes this adapter writes; a checkpoint is resumable when its mode is one
     # of these and it carries RESUME_KEY.
@@ -41,6 +42,12 @@ class BaseSourceAdapter(BaseKind):
         super().__init_subclass__(**kwargs)
         cls.name = cls.adapter_type
         cls.profile = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=cls.PAGE_DELAY_SECONDS)
+
+    async def read_post(self, source: Source, url: str) -> Optional[Dict[str, Any]]:
+        """One page of the site as its post, read as any website's (page_watch.read_page_post)."""
+        from insight_core.ingestion.kinds.page_watch import read_page_post   # page_watch imports this module
+
+        return await read_page_post(self.http, source, url, adapter=self.adapter_type)
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         return (

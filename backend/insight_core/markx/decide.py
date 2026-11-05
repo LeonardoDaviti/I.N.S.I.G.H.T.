@@ -29,7 +29,7 @@ Two layers:
     answers into verdicts; and writes Mark X's stories, memberships and connections (closing what changed, never
     deleting), then Mark X's News (markx/news.py). Each run is one mx_runs row. It writes only mx_* tables.
 
-When it runs (`Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
+When it runs (markx/jobs.py's `Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
 vectors, debounced), and hourly, only when
 INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processes).
 """
@@ -39,7 +39,6 @@ import contextlib
 import logging
 import os
 import re
-import threading
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -1068,9 +1067,12 @@ def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dic
 
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
-        full: Optional[bool] = None) -> Dict[str, Any]:
+        stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
-    The scheduler and the API run it in `snapshot()`, so every read of Mark IX's tables sees one snapshot.
+    insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
+    `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
+    raises stops the run between stages, and the caller's transaction rolls back: nothing half done (and, 0116, the
+    run leaves no memo: the next run is full).
 
     0116: a run is incremental (it reads again only what changed since the last run: markx/incremental.py) unless
     `full`, or there is no memo of the last run in this process, the code, config or a guide changed, or no full run
@@ -1079,6 +1081,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     import json as _json
     import time as _time
     from insight_core.markx import incremental, news as mx_news, repo, schemas
+    mark = stage or (lambda name: None)
     cur.execute("SHOW transaction_isolation")
     isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
@@ -1086,6 +1089,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         return {"skipped": "another decision run holds the lock"}
     started = _time.monotonic()
     now = now or _now()
+    mark("load")
     schemas.ensure_guides(cur)
     guides = {k.name: k.guide for k in schemas.KINDS.values()}
     key = _json.dumps([CODE_VERSION, config.as_dict(), guides], sort_keys=True, default=str)
@@ -1104,13 +1108,18 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         check = _digest(p_out, p_ids, p_world, p_conns, p_news)
     memo.run_id = None                              # until this run finishes: a failed run leaves no memo
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
+    mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
     world, ask, out, counts = _reading(cur, memo, now, config)
     counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
+    mark("write")
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
+    mark("connections")
     conns = connections(cur, out, ids, world, ask, config, news_keys)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
+    mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
+    mark("news")
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
     if check is not None:
         diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
@@ -1153,86 +1162,3 @@ def snapshot(url: Optional[str] = None):
         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         yield cur
 
-
-def _transaction():
-    return snapshot()
-
-
-class Scheduler:
-    """After the worker's uploads (`note`, DEBOUNCE seconds after the last) and every EVERY seconds, one run at a
-    time; only when INSIGHT_MARKX is on. Never raises into a request or its thread."""
-    DEBOUNCE = 60.0
-    EVERY = 3600.0
-
-    def __init__(self, transaction: Optional[Callable[[], Any]] = None, debounce: Optional[float] = DEBOUNCE,
-                 every: Optional[float] = EVERY, enabled: Optional[Callable[[], bool]] = None) -> None:
-        self.transaction = transaction
-        self.debounce, self.every = debounce, every
-        self.enabled = enabled
-        self.lock = threading.Lock()
-        self.running = threading.Lock()
-        self.timer: Optional[threading.Timer] = None
-        self.thread: Optional[threading.Thread] = None
-        self.stop = threading.Event()
-        self.last: Optional[Dict[str, Any]] = None
-
-    def on(self) -> bool:
-        if self.enabled is not None:
-            return self.enabled()
-        from insight_core.markx.api import enabled
-        return enabled()
-
-    def note(self) -> None:
-        """An upload arrived: one run DEBOUNCE seconds after the last."""
-        if self.debounce is None or not self.on():
-            return
-        with self.lock:
-            if self.timer is not None:
-                self.timer.cancel()
-            self.timer = threading.Timer(self.debounce, self.run_now)
-            self.timer.daemon = True
-            self.timer.start()
-
-    def start(self) -> bool:
-        """The hourly clock, at the API's start: False (nothing runs) when Mark X is off."""
-        if self.every is None or self.thread is not None or not self.on():
-            return False
-        self.thread = threading.Thread(target=self._hourly, name="markx-decide", daemon=True)
-        self.thread.start()
-        return True
-
-    def after_stories(self) -> Optional[Dict[str, Any]]:
-        """The API's start: its story job has finished, so Mark X decides now over Mark IX's new stories (0112 A),
-        not up to EVERY seconds later; nothing when Mark X is off."""
-        if not self.on():
-            return None
-        return self.run_now(candidates_first=True)
-
-    def _hourly(self) -> None:
-        while not self.stop.wait(self.every):
-            self.run_now(candidates_first=True)
-
-    def run_now(self, candidates_first: bool = False) -> Optional[Dict[str, Any]]:
-        if not self.on():
-            return None
-        with self.lock:
-            self.timer = None
-        if not self.running.acquire(blocking=False):
-            return None
-        try:
-            if candidates_first:   # the posts whose entities arrived since the candidates' last run (S2)
-                from insight_core.markx import candidates
-                candidates.pending.flush()
-            transaction = self.transaction or _transaction
-            with transaction() as cur:
-                self.last = run(cur)
-            log.info("Mark X decisions: %s", {k: v for k, v in self.last.items() if k in ("stories", "changes", "news")})
-            return self.last
-        except Exception:   # never into a request or the timer thread
-            log.exception("Mark X decisions: the run failed")
-            return None
-        finally:
-            self.running.release()
-
-
-scheduler = Scheduler()

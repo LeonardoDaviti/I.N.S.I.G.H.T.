@@ -101,6 +101,7 @@ SOURCES: Tuple[Tuple[str, str, str, str, datetime], ...] = (
     ("s-saved", "saved", "saved", "Saved", FOLLOWED),
     ("s-new", "rss", "https://delta.example/feed", "Delta", T0 - timedelta(days=1)),
     ("s-press", "rss", "https://feeds.example/press", "Press Room", FOLLOWED),
+    ("s-wx", "rss", "https://writerx.example/feed", "Writer X Notes", FOLLOWED),
 )
 # (source id, host, posts): where each source's posts are
 HOSTS: Tuple[Tuple[str, str, int], ...] = (
@@ -110,7 +111,11 @@ HOSTS: Tuple[Tuple[str, str, int], ...] = (
     ("s-red", "reddit.com", 8), ("s-hn", "db.example", 1), ("s-hn", "blog.alpha.example", 1),
     ("s-hn", "writer-one.github.io", 1), ("s-saved", "saved.example", 1), ("s-new", "delta.example", 3),
     ("s-press", "press.example", 2), ("s-press", "mirror-a.example", 1), ("s-press", "mirror-b.example", 1),
+    ("s-wx", "writerx.example", 2),
 )
+# (linking source, linked source): which source's posts link another's posts or place, as SourceFacts reads it for
+# the pairs that may be one owner (issue 0111): a writer's notes link the writer's X account
+LINKED: Tuple[Tuple[str, str], ...] = (("s-wx", "s-x1"),)
 
 L1 = "https://launch.example/news/lab-model-seven-released"
 L1_CARD = "https://launch.example/blog/lab-model-seven-card"
@@ -357,6 +362,15 @@ def posts() -> List[Dict[str, Any]]:
           links=[(_stored(TRACKED[0]), None)]),
         p("w2", "s-two", _at(341), "Links for the week", "https://writer-two.github.io/links-for-the-week",
           links=[(_stored(TRACKED[1]), None)]),
+        # A date is no name (issue 0111): a column's two dated issues and a question "at <month> <year>" join nothing
+        p("dt1", "s-gamma", _at(380), "Gamma Column: On Tools (18 Mar 2026)", "https://gamma.example/research/column-on-tools"),
+        p("dt2", "s-one", _at(381), "Which small model is best at Mar 2026?", "https://writer-one.github.io/2026/03/which-model"),
+        p("dt3", "s-gamma", _at(404), "Gamma Column: On Lists (19 Mar 2026)", "https://gamma.example/research/column-on-lists"),
+        # One owner's two channels are one News voice (issue 0111): a writer's tweet and notes on a new name are no News
+        p("ow1", "s-x1", _at(420), "Kernel Pack Two is out", "https://x.com/writer_x/status/1900000000000000401",
+          author="writer_x", html="<p>Kernel Pack Two is out</p>"),
+        p("ow2", "s-wx", _at(421), "Kernel Pack Two, the notes", "https://writerx.example/kernel-pack-two"),
+        p("ow3", "s-wx", _at(430), "Kernel Pack Two benchmarks", "https://writerx.example/kernel-pack-two-bench"),
     ]
 
 

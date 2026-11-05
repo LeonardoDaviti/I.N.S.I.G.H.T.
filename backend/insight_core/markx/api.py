@@ -41,7 +41,9 @@ POST /api/markx/release
 GET /api/markx/status
     200 {"queue": {kind: {status: n}}, "answers_per_day": [{day, calls, valid, invalid, tokens_in, tokens_out,
          cost_usd}], "tokens": {calls, tokens_in, tokens_out, cost_usd}, "workers": [{worker, last_contact,
-         leased}], "last_run": {..} | null, "guides": {id: sha256}}
+         leased}], "last_run": {..} | null, "guides": {id: sha256},
+         "jobs": {"decide" | "candidates": {running, started_at, stage, stage_at, wanted_at, finished_at, last}}}
+    (jobs: added by 0112 Decided 12; a running decision run shows its start and stage)
 
 S4's open points, settled: the answer is posted as {"task_id", "answer"} (and an answer the model wrapped in
 one key named for it, {"reading": {..}}, is unwrapped); ids are uuid strings, posted back as leased; "valid"
@@ -64,8 +66,8 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
                                    and `gone`: the Mark IX rows no Mark X row holds.
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
-POST /api/markx/decide             one decision run now: {run, ...counts} or {"skipped"} (the hourly and after-upload
-                                   runs are decide.scheduler's)
+POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a
+                                   minute, as it runs the hourly and after-upload ones (markx/jobs.py, 0112 Decided 10)
 
 S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
 --------------------------------------------------------------------------------------------------------------
@@ -111,7 +113,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, StrictInt
 
-from insight_core.markx import candidates, decide, embed, labels, news, repo, schemas, tasks, validate
+from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -189,7 +191,10 @@ class TokenStore:
 
 token_store = TokenStore()
 
-_contacts: Dict[str, datetime] = {}   # the last request of each worker, since this process started
+# Each worker's last request is kept in mx_workers (0112 Decided 11: with two API processes each saw half of them);
+# this process writes a worker's row at most once every CONTACT_EVERY (its own last write, in _contacts).
+_contacts: Dict[str, datetime] = {}
+CONTACT_EVERY = timedelta(seconds=10)
 
 
 def _worker_auth(authorization: Optional[str] = Header(default=None)) -> None:
@@ -209,7 +214,20 @@ def _name(worker: Any) -> str:
 
 
 def _contact(worker: str) -> None:
-    _contacts[worker] = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if worker in _contacts and now - _contacts[worker] < CONTACT_EVERY:
+        return
+    _contacts[worker] = now
+    with transaction() as cur:
+        cur.execute("INSERT INTO mx_workers (worker, last_contact) VALUES (%s, now()) "
+                    "ON CONFLICT (worker) DO UPDATE SET last_contact = GREATEST(mx_workers.last_contact, EXCLUDED.last_contact)",
+                    (worker,))
+
+
+def contacts(cur) -> Dict[str, datetime]:
+    """Each worker's last request, whichever API process it reached."""
+    cur.execute("SELECT worker, last_contact FROM mx_workers")
+    return dict(cur.fetchall())
 
 
 def _uuid(value: Any) -> Optional[UUID]:
@@ -311,8 +329,8 @@ def post_answers(body: Answers):
     _contact(worker)
     with transaction() as cur:
         result = store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
-    if result["valid"]:
-        decide.scheduler.note()   # S5: the decisions, once the uploads go quiet
+        if result["valid"]:
+            jobs.want(cur, "decide")   # insight-ingestion decides (markx/jobs.py); never here (0112 Decided 10)
     return result
 
 
@@ -345,18 +363,20 @@ def status():
         n, ti, to, c = cur.fetchone()
         cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
         leased = {w: (k, until) for w, k, until in cur.fetchall()}
+        seen_at = contacts(cur)
         run = repo.last_run(cur)
         guide_hashes = {gid: g["sha256"] for gid, g in repo.guides(cur).items()}
+        job_view = jobs.view(cur)
     workers = []
-    for w in sorted(set(_contacts) | set(leased)):
-        seen = _contacts.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
+    for w in sorted(set(seen_at) | set(leased)):
+        seen = seen_at.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
         workers.append({"worker": w, "last_contact": _iso(seen), "leased": leased.get(w, (0, None))[0]})
     return {"queue": queue, "answers_per_day": days,
             "tokens": {"calls": n, "tokens_in": int(ti), "tokens_out": int(to), "cost_usd": round(float(c), 6)},
             "workers": workers,
             "last_run": None if run is None else {k: (_iso(v) if isinstance(v, datetime) else str(v) if isinstance(v, UUID) else v)
                                                   for k, v in run.items()},
-            "guides": guide_hashes}
+            "guides": guide_hashes, "jobs": job_view}
 
 
 class Vectors(BaseModel):
@@ -374,13 +394,13 @@ def post_embeddings(body: Vectors):
     try:
         with transaction() as cur:
             result = embed.store(cur, model=body.model, model_sha256=body.model_sha256, vectors=body.vectors)
+            jobs.note_posts(cur, result.pop("posts"))   # their candidates, found by insight-ingestion (markx/jobs.py)
+            if result["stored"]:
+                jobs.want(cur, "decide")
     except embed.BuildMismatch as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    candidates.pending.note(result.pop("posts"))
-    if result["stored"]:
-        decide.scheduler.note()   # S5: after the candidates' own debounce
     return result
 
 
@@ -401,11 +421,6 @@ def token_generate():
 
 
 # ---- the Mark X page's routes (S5, 0086 E) -------------------------------------------------------------
-
-def start_jobs() -> bool:
-    """At the API's start (main.py's lifespan): the decision job's hourly clock, only when Mark X is on."""
-    return decide.scheduler.start()
-
 
 MAX_DAYS = 36500
 
@@ -445,8 +460,16 @@ def mx_set_reading_window(body: WindowIn):
 
 
 def after_start_stories() -> None:
-    """When the start's story job has finished (main.py): Mark X's first decision run, only when Mark X is on."""
-    decide.scheduler.after_stories()
+    """When the start's story job has finished (main.py): Mark X's first decision run is wanted, only when Mark X is
+    on; insight-ingestion runs it within a minute (markx/jobs.py). Never raises into the start."""
+    if not enabled():
+        return
+    try:
+        with transaction() as cur:
+            jobs.want(cur, "decide")
+    except Exception:   # noqa: BLE001 - the hourly run comes anyway
+        import logging
+        logging.getLogger(__name__).exception("Mark X: could not ask for the first decision run")
 
 
 @router.get("/on")
@@ -472,15 +495,18 @@ def mx_post(post_id: str):
 @router.get("/overview")
 def mx_overview():
     with transaction() as cur:
-        return {"worker": news.worker(cur, dict(_contacts)), "briefing": news.briefings(cur),
+        return {"worker": {**news.worker(cur, contacts(cur)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}}
 
 
 @router.post("/decide")
 def mx_decide():
-    with decide.snapshot(db_url()) as cur:
-        return decide.run(cur)
+    """Asks for a decision run: insight-ingestion runs it within a minute (markx/jobs.py). Never one in the request
+    (0112 Decided 10): {"wanted": true, "jobs": the jobs' state}."""
+    with transaction() as cur:
+        jobs.want(cur, "decide")
+        return {"wanted": True, "jobs": jobs.view(cur)}
 
 
 # ---- the labels tab (S6, 0086 F) --------------------------------------------------------------------------

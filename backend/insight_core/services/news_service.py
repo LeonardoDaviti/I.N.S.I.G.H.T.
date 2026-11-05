@@ -31,8 +31,8 @@ from insight_core.services import page_titles
 from insight_core.utils.addresses import paper_id
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
 from insight_core.utils.story_rules import page_key, paper_aliases
-from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
-                                          Surge, lead, longest, name_surges, names, news, phrases)
+from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_EDGE, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
+                                          Surge, lead, longest, main_story, name_surges, names, news, phrases)
 from insight_core.utils.story_rules import Story, StoryPost
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week, issue 0077)
@@ -62,6 +62,7 @@ class NewsService:
         since = self.clock() - NEWS_KEEP
         stories_now = self.rows(posts=posts, stories=stories, found=found, since=since)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
+        self.repo.write_owners(cur, getattr(sources, "owners", {}))   # how News named its voices (issue 0111)
         found_classics = self._classics(cur, sources)
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
@@ -72,11 +73,14 @@ class NewsService:
     def rows(*, posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
              since: datetime) -> List[Any]:
         """A full run's News rows, written by no one here (`refresh` writes them; Mark X writes its own, issue 0086
-        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names."""
-        shown = [s for s in stories if s.first_at >= since]
+        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names. A
+        row is in the window by its first post (issue 0111): those of NEWS_EDGE before are read too, and a row they
+        begin is no row of the window (the one stored stays as it was)."""
+        edge = since - NEWS_EDGE
+        shown = [s for s in stories if s.first_at >= edge]
         in_story = {p.id for s in stories for p in s.posts}
-        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
-        return news([p for p in posts if p.id in ids], shown, found)
+        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= edge}
+        return [s for s in news([p for p in posts if p.id in ids], shown, found) if s.first_at >= since]
 
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
@@ -91,8 +95,9 @@ class NewsService:
         raw = self.repo.stored_surges(cur)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
         seeds = set(touched) | {p for name, at, ps in old ^ {(s.name, s.at, tuple(s.posts)) for s in found} for p in ps}
+        edge = since - NEWS_EDGE   # a row is in the window by its first post (issue 0111): read from the edge before it
         if before is not None and before != since:
-            lo, hi = min(before, since), max(before, since)
+            lo, hi = min(before, since) - NEWS_EDGE, max(before, since)
             seeds |= set(self.repo.window_posts(cur, lo, hi))
         surges_of: Dict[str, List[Surge]] = defaultdict(list)
         for s in found:
@@ -102,20 +107,22 @@ class NewsService:
         # the surges they are in, until nothing more joins (news_rules.news).
         group, frontier, stories = set(seeds), set(seeds), {}
         while frontier:
-            held = self.repo.stories_of(cur, sorted(frontier), since)
+            held = self.repo.stories_of(cur, sorted(frontier), edge)
             stories.update(held)
             more = self.repo.news_mates(cur, sorted(frontier))
             more |= {pid for story in held.values() for pid in (*story["posts"], *story["mentions"])}
             more |= {pid for f in frontier for s in surges_of.get(f, ()) for pid in s.posts}
             frontier = more - group
             group |= frontier
-        shown = set(self.repo.window_posts(cur, since, ids=sorted(group)))
+        shown = set(self.repo.window_posts(cur, edge, ids=sorted(group)))
         load(shown)
         window = [posts[pid] for pid in sorted(shown) if pid in posts]
-        held = [Story(id=sid, first_at=since, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
+        held = [Story(id=sid, first_at=edge, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
-        stories_now = news(window, held, found)
+        stories_now = [s for s in news(window, held, found) if s.first_at >= since]   # a row begun before is left whole
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
+        # How News named its voices (issue 0111); a source whose owner changed has its posts queued (_facts).
+        self.repo.write_owners(cur, getattr(sources, "owners", {}))
         # A classic no link points to any more (its links read into another address, 0109 B1) goes, as in a full run.
         urls = sorted(set(urls) | set(self.repo.unlinked_classics(cur)))
         urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
@@ -232,6 +239,7 @@ class NewsService:
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
+        owners = self.repo.owners(cur)   # one owner's channels one voice, as the job counted them (issue 0111)
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_story[row["_news"]].append(row)
@@ -243,13 +251,19 @@ class NewsService:
             roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead (issue 0083)
             # Without an origin, the first share of a story's outside origin page leads (issue 0103).
             sharers = [p["id"] for p in posts if p["_shares_origin"]]
-            lead_id = (lead([(p["id"], p["role"]) for p in shown], origins, roundups, sharers)
-                       or lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers))
-            first_report = lead([(p["id"], p["role"]) for p in posts], origins, roundups, sharers)
+            # The lead comes from the row's main story, or what its own name joined (issue 0111), in the scope first.
+            may = main_story([(p["id"], p["_story"], p["_story_voices"], p["_name"]) for p in posts])
+            main = posts if may is None else [p for p in posts if p["id"] in may]
+
+            def first(of: Sequence[Dict[str, Any]]) -> Optional[str]:
+                return lead([(p["id"], p["role"]) for p in of], origins, roundups, sharers)
+            in_main = {p["id"] for p in main}
+            lead_id = (first([p for p in shown if p["id"] in in_main]) or first(shown) or first(main) or first(posts))
+            first_report = first(main) or first(posts)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
-            sources = story_voices([p["_voiced"] for p in covered], followed)
+            sources = story_voices([p["_voiced"] for p in covered], followed, owners)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
             # A lead whose own words are a short reaction reads what it quotes (post_parts.subject, issue 0076).
             item["title"] = head["_subject"] or item["title"]

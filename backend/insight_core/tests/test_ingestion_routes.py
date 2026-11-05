@@ -58,6 +58,16 @@ class FakeArchive:
             raise self.error
         return {"older_posts": None}
 
+    linked: dict = {"count": 2, "readable": True, "estimated_seconds": 3, "archive_holds": False,
+                    "archive_ran": False, "pages": []}
+
+    def linked_summary(self, source_id):
+        return self.linked
+
+    async def fetch_linked(self, source_id, **kwargs):
+        self.awaited.append(("fetch_linked", (source_id,), kwargs))
+        return {"success": True, "posts_fetched": 2, "message": "Fetched 2 of 2 linked pages"}
+
 
 class BrokenOperations(OperationsService):
     def start_job(self, *args, **kwargs):
@@ -244,6 +254,48 @@ class IngestionRouteTests(unittest.TestCase):
             self._drain(tasks)
         self.assertEqual((self.job(job_id)["status"], self.job(job_id)["message"]), ("failed", "network down"))
         self.assertEqual(run(main.run_archive(self.s1, main.ArchiveRequest(background=True), BackgroundTasks())).status_code, 202)
+
+    def test_the_linked_pages_are_counted_and_fetched_as_an_archive_job(self):
+        """Issue 0084 B: GET says how many; POST starts an archive_source job that reads them."""
+        self.assertEqual(run(main.get_linked_pages(self.s1))["linked"]["count"], 2)
+        tasks = BackgroundTasks()
+        response = run(main.fetch_linked_pages(self.s1, tasks))
+        self.assertEqual(response.status_code, 202)
+        job_id = body(response)["job_id"]
+        self.assertTrue(self.job(job_id)["payload"]["linked"])
+        again = run(main.run_archive(self.s1, main.ArchiveRequest(background=True), BackgroundTasks()))
+        self.assertEqual(again.status_code, 409, "one archive job of a source at a time")
+        self._drain(tasks)
+        self.assertEqual([name for name, *_ in self.archive.awaited], ["fetch_linked"])
+        self.assertEqual((self.job(job_id)["status"], self.job(job_id)["message"]), ("success", "Fetched 2 of 2 linked pages"))
+        self.assertTrue(self.ops.latest_job_for_source("archive_source", self.s1)["result"]["linked"],
+                        "the sheet tells a linked fetch from an archive")
+
+    def test_linked_pages_of_a_kind_that_reads_no_single_page_are_409(self):
+        self.archive.linked = {**FakeArchive.linked, "readable": False}
+        tasks = BackgroundTasks()
+        response = run(main.fetch_linked_pages(self.s1, tasks))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(len(tasks.tasks), 0)
+
+    def test_two_api_processes_never_start_two_archives_of_one_source(self):
+        """0112 Decided 11: both pass the route's check at once (the other process's set is not this one's); the
+        start under its lock lets only one through."""
+        import threading
+        ops = [OperationsService(db_url()), OperationsService(db_url())]
+        got, barrier = [], threading.Barrier(2)
+
+        def start(o):
+            barrier.wait()
+            got.append(o.start_job_unless_running("archive_source", source_id=self.s1, message="Archive"))
+        threads = [threading.Thread(target=start, args=(o,)) for o in ops]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual(sorted(x is None for x in got), [False, True])
+        response = run(main.run_archive(self.s1, main.ArchiveRequest(background=True), BackgroundTasks()))
+        self.assertEqual(response.status_code, 409)
 
     def test_a_background_archive_without_job_tracking_is_503(self):
         self.use_operations(BrokenOperations(db_url()))
