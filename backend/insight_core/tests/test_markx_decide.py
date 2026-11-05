@@ -316,6 +316,46 @@ class Job(unittest.TestCase):
         self.assertTrue(out["news"]["written"])
         self.assertFalse(self.go()["news"]["written"])                # the same rows are not written again
 
+    def test_removals_made_under_bugs_2_and_3_are_re_decided_by_the_next_run(self):
+        """0112 Decided 6: v10.0 removed b on a check that showed an empty story (b its story's only report) and d, a
+        copy of a. The next run doesn't trust those answers: b's check is asked again with the story shown, d is never
+        asked; both are members again (a new row, the closed ones kept) and b's new answer decides it."""
+        a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 hands-on"), self.post(2, "Widget 4 price")
+        d = self.post(3, "Acme released Widget 4")
+        self.cur.execute("UPDATE posts SET content = (SELECT content FROM posts WHERE id = %s) WHERE id = %s", (a, d))
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        self.cur.execute("DELETE FROM post_parts WHERE post_id = %s", (d,))
+        PostPartsRepository.write(self.cur, [d])
+        story = self.ix_story(a, b, c, d)
+        self.cur.execute("UPDATE story_posts SET role = 'share' WHERE story_id = %s AND post_id <> %s", (story, b))
+        first = self.go()
+        sid = {s for s, _, _, _ in self.current()}.pop()
+        # v10.0's questions and answers: b against an empty story, d against the story, both "different"
+        text = tasks.load_posts(self.cur, [a, b, c, d])
+        old = {b: tasks.check_input(text[b], []), d: tasks.check_input(text[d], [text[b]])}
+        self.assertIn("Headline: \n", old[b])
+        for pid, question in old.items():
+            tid, new = tasks.add(self.cur, "check", question, a=pid)
+            self.assertTrue(new)
+            call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                                 answer={"id": "x", "relation": "different", "confidence": 90, "reason": "no relation"})
+            repo.answer_task(self.cur, tid)
+            repo.close_membership(self.cur, story_id=sid, post_id=pid, at=self.now)   # v10.0's removal
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, c})
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'check' AND status = 'open'")
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, {b, c})      # d, a copy of a, is never asked
+        again = self.go()
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, c, d})   # not trusted: members again
+        self.assertNotIn("remove", again["changes"])
+        self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE post_id = ANY(%s::uuid[]) AND valid_to IS NOT NULL",
+                         ([b, d],))
+        self.assertEqual(self.cur.fetchone()[0], 2)                        # the closed rows stay
+        self.answer("check", lambda t: {"relation": "same_event" if str(t["a"]) == b else "different", "confidence": 90})
+        third = self.go()
+        self.assertEqual(third["changes"], {"remove": 1})                  # c, asked once, says different
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, d})
+        self.assertEqual(first["tasks_added"].get("check"), 2)
+
     def test_a_short_pair_is_never_asked(self):
         a = self.post(0, "Widget")
         b = self.post(1, "Acme released Widget 4")
