@@ -332,7 +332,8 @@ class StoriesService:
         nodes = {node for node, root in found.root.items() if root in roots} | scope
         # A roundup of the scope mentions the stories outside it as they are stored (they are unchanged).
         outside = {n for pid, listed in found.listed.items() if pid in scope for n in listed if n not in nodes}
-        held = self.repo.stories_holding(cur, sorted(outside))
+        # Read past the scope: a page only its posts linked is in no story now (issue 0110).
+        held = self.repo.stories_holding(cur, sorted(outside), besides=sorted(scope))
         mentioned = self.repo.mentioned_by(cur, sorted(scope))   # the stories its roundups mentioned before
         mentions = [Edge(pid, n, "mention") for pid, listed in found.listed.items() if pid in scope
                     for n in dict.fromkeys(listed) if n in held]
