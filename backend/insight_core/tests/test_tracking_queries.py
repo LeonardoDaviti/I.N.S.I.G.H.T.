@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 import sys
 import unittest
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -16,8 +18,11 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import StoriesRepository
+from insight_core.services.stories_service import SETTINGS_KEY, StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils import url_normalization
 
 MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0067_tracking_queries.sql"
@@ -84,6 +89,50 @@ class MigrationTests(unittest.TestCase):
         finally:
             conn.rollback()
             conn.close()
+
+
+@requires_test_db
+class ADeploysFirstStartTests(unittest.TestCase):
+    """What a deploy's first start makes of it (issue 0110's check): the links read again, then the rule
+    change's rebuild in batches, leave what a full run leaves. On the lab's copy the rebuild kept a classic
+    at a tracked address no link points to any more, where the full run has it at the page's own."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.mark = uuid.uuid4().hex[:8]
+        self.service = StoriesService(db_url(), clock=lambda: self.now)
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def _classics(self, page):
+        self.cur.execute("SELECT target_url, voices FROM classics WHERE target_url LIKE %s ORDER BY 1", (page + "%",))
+        return self.cur.fetchall()
+
+    def test_a_classic_at_a_tracked_address_moves_to_the_page_in_the_rebuild(self):
+        page = f"https://journal-{self.mark}.test/issue/417"
+        tracked = page + "?_hsenc=p2A"
+        sources = {name: insert_source(self.cur, f"{name} {self.mark}", in_main_digest=True) for name in ("Letter", "Forward")}
+        for name, days in (("Letter", 400), ("Forward", 300), ("Letter", 10)):   # two voices, cited 290 days on
+            source = sources[name]
+            insert_post(self.cur, source, f"https://{name.lower()}-{self.mark}.test/p/{days}", at=self.now - timedelta(days=days),
+                        title=f"{name} post", content="Body", html=f'<p><a href="{tracked}">the issue</a></p>',
+                        content_hash=uuid.uuid4().hex, links=[tracked])   # stored as the rules before 0109 read it
+        self.service.full_on(self.cur)
+        self.assertEqual(self._classics(page), [(tracked, 2)], "before: the classic at the tracked address")
+        self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
+        setting = SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
+        SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, {**setting, "rules": "the rules before 0109"})
+        while StoriesRepository().fill_missing_links(self.cur):
+            pass
+        self.service.update(self.cur)                    # the deploy's first start: the rebuild, to the end
+        self.assertEqual(self._classics(page), [(page, 2)], "after: at the page's own address, once")
+        rebuilt = self.service.full_on(self.cur)
+        self.assertEqual(rebuilt["classics_changed"], 0, "a full run after it changes nothing")
 
 
 if __name__ == "__main__":
