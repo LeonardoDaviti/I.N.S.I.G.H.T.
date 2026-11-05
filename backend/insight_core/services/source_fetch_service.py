@@ -168,7 +168,8 @@ class SourceFetchService:
         A kind this process cannot fetch (yt-dlp off, no Telegram credentials) cannot
         archive. A feed (available_basis feed_window) has no history beyond what it lists
         now, so archiving only adds anything when the feed lists more than one live fetch
-        reads; an unmeasured feed stays archivable so a plan can measure it.
+        reads, or the site's sitemap lists older posts of its section (issue 0108); an
+        unmeasured feed stays archivable so a plan can measure it.
         """
         # Merged settings (the kind's defaults under the user's), as every fetch reads them.
         source = self.sources_service.get_source_with_settings(source_id)
@@ -194,8 +195,14 @@ class SourceFetchService:
         if kind.archive_refused:
             return {**support, "archivable": False, "reason": kind.archive_refused}
         if kind.available_basis == "feed_window":
-            available = (settings.get("archive") or {}).get("available_posts")
-            if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:
+            archive = settings.get("archive") or {}
+            available = archive.get("available_posts")
+            # A sitemap listing older posts than the feed (issue 0108, inspect's raw.sitemap_posts) is read
+            # post by post, however few: the feed's window is not all there is.
+            sitemap = archive.get("sitemap_posts")
+            from_sitemap = isinstance(sitemap, int) and not isinstance(sitemap, bool) and sitemap > 0
+            if (isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit
+                    and not from_sitemap):
                 return {**support, "archivable": False, "reason": (
                     f"This feed only lists its latest {available} post{'' if available == 1 else 's'}, "
                     f"and every fetch already reads up to {live_fetch_limit}.")}

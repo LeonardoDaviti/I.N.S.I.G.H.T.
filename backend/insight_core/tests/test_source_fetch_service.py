@@ -193,10 +193,10 @@ class PlanArchiveRateOverrideTests(unittest.IsolatedAsyncioTestCase):
 
 
 class _SupportSources(_Sources):
-    def __init__(self, max_posts_per_fetch=50, available=None):
+    def __init__(self, max_posts_per_fetch=50, available=None, **archive):
         super().__init__()
         self.max_posts_per_fetch = max_posts_per_fetch
-        self.current = {} if available is None else {"available_posts": available}
+        self.current = ({} if available is None else {"available_posts": available}) | archive
 
     def get_source_by_id(self, source_id):
         # The raw row: a setting the user never set is absent (issue 0027: it was read as 50).
@@ -248,6 +248,15 @@ class ArchiveSupportTests(unittest.TestCase):
         self.assertFalse(support["unavailable"])
         self.assertEqual(support["reason"],
                          "This feed only lists its latest 20 posts, and every fetch already reads up to 50.")
+
+    def test_a_feed_whose_sitemap_lists_older_posts_can_archive_them(self):
+        # Issue 0108 Left open: a blog's sitemap holding 16 posts the feed doesn't (inspect's raw.sitemap_posts) is
+        # archived from the sitemap, though the two together (20) are no more than one fetch reads.
+        support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=20, sitemap_posts=16))
+        self.assertTrue(support["archivable"])
+        self.assertIsNone(support["reason"])
+        refused = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=20, sitemap_posts=0))
+        self.assertFalse(refused["archivable"], "a sitemap of none is no more than the feed")
 
     def test_a_feed_longer_than_one_fetch_can_archive_its_window(self):
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50, available=503))
