@@ -118,6 +118,8 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0104](0104-v9.17-check-reads-lead-changes.md) | v9.17: the real-data check reads News lead changes | built, merged (v9.17) |
 | [0105](0105-v9.17-small-fixes.md) | v9.17 small: Classics on a source's page, the export's estimate, the source list's size | built, merged (v9.17) |
 | [0106](0106-v9.17-titles-of-pages-you-dont-follow.md) | v9.17: titles of pages you don't follow (Discover, Classics); a paper is one page | built, merged (v9.17) |
+| [0107](0107-archive-that-waits-out-a-limit.md) | An archive that waits out a host's limit and carries on; each host's budget learned; room left for the hourly fetches | spec (v9.18) |
+| [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | spec (v9.18) |
 
 ## Analysis archive
 

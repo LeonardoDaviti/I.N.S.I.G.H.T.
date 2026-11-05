@@ -41,7 +41,14 @@ Found when the plan was checked against v9.16–v9.17 (0076, 0080, 0103). Each b
 3. **Mark X's text is its own versioned function** (`markx text v1`: title plus the first 1,500 characters, read from post_parts). A post_parts change in Mark IX doesn't change Mark X's inputs unless the text version is bumped on purpose (a bump re-reads every post).
 4. **A Mark IX story-rule change reports what it re-asks.** From S3 on, the real-data check counts the open and answered Mark X tasks whose input would change under the head's stories (checks, cards, merges); the merge commit states the number.
 5. **0074 (a post in several stories) is not built in 9.x.** `mx_story_posts` is that edge model; Mark IX reads it at Part G. **0089** is settled by experiment W (bursts are candidates, part B), not a rule.
-6. **The embedder in tests and on this machine:** S2 is built and tested with a fake embedder; measurements use the llama.cpp already built on the development machine. How the server gets the embedder image and the model file is decided at deploy (both are downloaded by the server during `./update`, never by agents).
+6. **The embedder runs on the owner's device for the first experiments, not on the server** (owner, 2026-11-05: no extra service on the server). So S2 changes:
+   - **no `embedder` compose service and no embedding in the ingestion runner.** The server only stores vectors and finds candidates;
+   - **embedding is a task kind, `embed`,** leased like the others. The worker embeds it with a local `llama-server --embedding` (BGE-M3, the GGUF on the device) and posts the vectors to `POST /api/markx/embeddings`;
+   - **vectors travel as base64 little-endian float16** (2 KB a post, not ~9 KB of JSON numbers): the last 30 days are about 10 MB, all 41.6k posts about 85 MB;
+   - **every vector records its model and the GGUF's sha256.** The server refuses a vector from another build than the one already stored, since cosines across builds don't compare;
+   - **candidates are found on the server when vectors arrive** (debounced), with pgvector, as before;
+   - **the server never embeds a query in Shadow:** nothing searches by meaning yet. Embedding on the server comes back at Part H, or with search by meaning.
+   - The `embed` kind is added to `scripts/markx-worker` by S2, after S4 merges, so the two never share a file. Tests use a fake embedder.
 7. **The export (0079) includes `mx_*` tables** automatically (it reads the catalog). Embeddings as text add an estimated 150–200 MB to the zip; S2 measures it.
 8. **The worker shares the owner's Claude usage with build agents.** First runs read the last 30 days only (about 500 batches); no backfill while build agents run.
 9. **One merge queue.** Mark X slices merge through the same queue as Mark IX work, one at a time, each with its real-data check report.
@@ -65,7 +72,7 @@ Version: S1–S4 are invisible and merge under the current Mark IX version. **S5
   - tests: the uniques (task per kind, guide, input hash; one current membership per story and post), `valid_to` closing.
 
 ### S2 — Part B: embeddings and candidates
-- **Files:** `markx/embed.py`, `markx/candidates.py`, `docker-compose.yml` (the `embedder` service, behind `INSIGHT_MARKX`), `backend/insight_core/ingestion/runner.py` (one hook after `self.stories`, never raising), the place the runner is constructed (one argument), tests `test_markx_embed.py`, `test_markx_candidates.py`.
+- **Files** (as corrected, item 6): `markx/embed.py` (the `embed` tasks and the vectors' check and store), `markx/candidates.py`, the `embed` kind in `scripts/markx-worker` (after S4 merges), `POST /api/markx/embeddings` in `markx/api.py` (after S3 merges, or S2 adds it to S3's router), tests `test_markx_embed.py`, `test_markx_candidates.py`. No compose service, no runner hook.
 - **Build:** 0086 B: title plus the first 1,500 characters; newest first, at most 500 posts a run; the four candidate sources (`embedding`, `link`, `entity` for specific subjects only, `burst`) at 0086's thresholds.
 - **Test without the model:** a fake embedder returning fixed vectors, so the suite never needs the GGUF.
 - **Done when:**
