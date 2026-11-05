@@ -122,6 +122,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | spec (v9.18) |
 | [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | spec (v9.18) |
 | [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, merged (v9.18) |
+| [0111](0111-v9.19-news-from-the-v10-review.md) | v9.19 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v9.19) |
 
 ## Analysis archive
 
