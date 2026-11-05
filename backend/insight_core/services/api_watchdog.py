@@ -125,7 +125,7 @@ class Watchdog:
         if self.check():
             if self.failures:
                 logger.info("API watchdog: the API answers again")
-            self.failures, self.failing_since, self.gave_up_at = 0, None, None
+            self.failures, self.failing_since = 0, None   # gave_up_at stays: "keeps failing" is said once an hour
             return "ok"
         self.failures += 1
         if self.failing_since is None:
@@ -143,6 +143,7 @@ class Watchdog:
                 logger.error("API watchdog: %s", message)
                 self._record("gave_up", message, failing_for)
             return "gave_up"
+        self.gave_up_at = None   # under the cap again
         message = f"The API was restarted at {_hm(now)} after {failing_for / 60:.0f} min of no answer"
         logger.error("API watchdog: %s (%s)", message, self.url)
         job_id = self._record("restart", message, failing_for)

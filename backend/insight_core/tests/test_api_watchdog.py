@@ -96,6 +96,16 @@ class Judge(unittest.TestCase):
         self.assertIn("The API keeps failing", self.ops.jobs[-1]["message"])
         self.assertEqual(sum("keeps failing" in line for line in logs.output), 1)
 
+    def test_keeps_failing_is_recorded_once_even_with_an_answer_between(self):
+        """Measured on a copy: the API answered once between two hangs, and the give-up was recorded twice."""
+        self.ops = FakeOps(recent=[self.now[0] - 600] * 3)
+        dog = self.dog()
+        self.answers = [False, False, False, False, True, False, False, False, False]
+        with self.assertLogs(W.logger, "WARNING"):
+            outcomes = [self.step(dog) for _ in range(9)]
+        self.assertEqual(outcomes.count("gave_up"), 2)
+        self.assertEqual([j["payload"]["kind"] for j in self.ops.jobs], ["gave_up"])
+
     def test_the_cap_survives_a_restart_of_ingestion(self):
         self.ops = FakeOps(recent=[self.now[0] - 600] * 3)
         dog = self.dog()
