@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { exportPath, formatBytes, formatDuration, newExportToken, restoreCommand } from './exportText.ts';
+import { estimateBasis, exportPath, formatBytes, formatDuration, newExportToken, restoreCommand } from './exportText.ts';
 
 test('formatBytes: decimal units, one decimal under ten', () => {
   assert.equal(formatBytes(0), '0 bytes');
@@ -31,4 +31,13 @@ test('restoreCommand: the file mounted, restored into a new database', () => {
   const command = restoreCommand('insight-2026-11-05-1200.zip');
   assert.ok(command.startsWith('docker compose run --rm -v "$PWD/insight-2026-11-05-1200.zip:/tmp/insight-2026-11-05-1200.zip:ro" backend'));
   assert.ok(command.endsWith('import_export.py /tmp/insight-2026-11-05-1200.zip --into insight_restored'));
+});
+
+test('estimateBasis says what the estimate is from (issue 0105)', () => {
+  assert.equal(estimateBasis({ estimate_basis: 'live_rows', last_export: null }), 'from the rows stored now');
+  assert.equal(estimateBasis({
+    estimate_basis: 'last_export',
+    last_export: { bytes: 243_246_920, seconds: 27.9, at: '2026-11-05T10:12:00+00:00', logins_included: false },
+  }), 'from the last export, 5 Nov: 243 MB in about 28 seconds');
+  assert.equal(estimateBasis({}), null, 'an older API says nothing');
 });

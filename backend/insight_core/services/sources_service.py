@@ -178,7 +178,18 @@ class SourcesService:
                     source["settings"] = self.repo.get_source_settings(cur, source["id"])
                 
                 return sources_with_counts
-    
+
+    def list_sources(self) -> List[Dict[str, Any]]:
+        """GET /api/sources (issue 0105): every source with its settings and post count, as
+        get_all_sources_with_settings, without each source's archive history (kept in the database:
+        the source's own settings and the archive status still read it)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            sources = self.repo.get_sources_with_post_counts(cur)
+            settings = self.repo.listed_settings(cur)
+        for source in sources:
+            source["settings"] = settings.get(source["id"], {})
+        return sources
+
     def update_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update settings for a source.

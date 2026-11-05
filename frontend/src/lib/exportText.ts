@@ -2,6 +2,7 @@
  * Settings → Data's words (issue 0079): sizes, times, the export's link and the
  * restore command. Pure, so `node --test` checks them.
  */
+import type { ExportInfo } from '../services/api';
 
 /** 1,234,567,890 → "1.2 GB" (decimal units, as a file manager shows them). */
 export function formatBytes(bytes: number): string {
@@ -21,6 +22,20 @@ export function formatDuration(seconds: number): string {
   if (seconds < 1.5) return 'about a second';
   if (seconds < 90) return `about ${Math.round(seconds)} seconds`;
   return `about ${Math.round(seconds / 60)} minutes`;
+}
+
+const dayMonth = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+
+/** What the estimate is from (issue 0105): "from the rows stored now", or "from the last export, 5 Nov:
+ *  243 MB in about 28 seconds"; null when the API doesn't say. */
+export function estimateBasis(info: Pick<ExportInfo, 'estimate_basis' | 'last_export'>): string | null {
+  const last = info.last_export;
+  if (info.estimate_basis === 'last_export' && last) {
+    const at = new Date(last.at);
+    const when = Number.isNaN(at.getTime()) ? '' : `, ${dayMonth.format(at)}`;
+    return `from the last export${when}: ${formatBytes(last.bytes)} in ${formatDuration(last.seconds)}`;
+  }
+  return info.estimate_basis === 'live_rows' ? 'from the rows stored now' : null;
 }
 
 /** The path the download opens; `token` lets the page follow its progress. */

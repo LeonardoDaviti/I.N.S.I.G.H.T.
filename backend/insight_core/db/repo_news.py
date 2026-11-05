@@ -398,6 +398,14 @@ class NewsRepository:
         return list(out.values())
 
     @staticmethod
+    def source_name(cur: Cursor, source_id: str) -> Optional[str]:
+        """A source's name as its voices are named (SourceFacts.name): its display name, else its address."""
+        cur.execute("SELECT COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources WHERE id = %s",
+                    (source_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    @staticmethod
     def hide_classic(cur: Cursor, url: str) -> None:
         cur.execute("INSERT INTO classic_hidden (target_url) VALUES (%s) ON CONFLICT DO NOTHING", (url,))
 

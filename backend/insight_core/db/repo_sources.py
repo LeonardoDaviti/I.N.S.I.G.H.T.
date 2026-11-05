@@ -276,6 +276,18 @@ class SourcesRepository:
         self.logger.debug(f"Merged settings for source {source_id}: {merged}")
         return merged
 
+    def listed_settings(self, cur: Cursor) -> Dict[str, Dict[str, Any]]:
+        """Every source's settings as the list shows them (issue 0105): merged with the defaults, as
+        get_source_settings, in one query, without the archive's history. The history stays in the row
+        (left out in the query, so it is never read); the source's own settings still carry it."""
+        cur.execute("SELECT id, platform, settings #- '{archive,history}' FROM sources")
+        out = {}
+        for source_id, platform, settings in cur.fetchall():
+            merged = self.merge_with_defaults(platform, settings)
+            merged.get("archive", {}).pop("history", None)   # nor the default's empty list: the list doesn't say
+            out[str(source_id)] = merged
+        return out
+
     def merge_with_defaults(self, platform: str, source_settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """A source's stored settings over its platform defaults (and the archive defaults)."""
         source_settings = source_settings or {}

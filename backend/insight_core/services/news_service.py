@@ -253,6 +253,7 @@ class NewsService:
         feed_scope = FeedScope.parse(scope)
         now = self.clock()
         rows = self.repo.classics(cur, feed_scope)
+        named = self.repo.source_name(cur, feed_scope.id) if feed_scope.kind == "source" else None
         out = []
         for row in sorted(rows, key=lambda r: classic_order(r["last_at"], r["voices"], r["days"], r["url"], now)):
             title = row["post_title"] if row["post_id"] else row["title"]
@@ -260,12 +261,27 @@ class NewsService:
                 "url": row["url"], "post_id": row["post_id"], "title": title or None, "voices": row["voices"],
                 "days": row["days"], "first_at": row["first_at"], "last_at": row["last_at"],
                 "cited_again": cited_again(row["last_at"], now),
-                "citers": [{"name": c["name"], "at": c["at"]} for c in row["citers"]],
+                "citers": self._citers(row["citers"], feed_scope.id if named is not None else None, named),
                 "read_at": row["read_at"], "later_at": row["later_at"],
             })
             if feed_scope.kind == "source":   # issue 0077: the source's own page, else a page it cites
                 out[-1]["scope_role"] = "origin" if row["own"] else "report"
         return {"success": True, "classics": out}
+
+    @staticmethod
+    def _citers(citers: Sequence[Dict[str, Any]], source_id: Optional[str], name: Optional[str]) -> List[Dict[str, Any]]:
+        """A classic's citers as the API sends them ({name, at}), first citation first. On one source's
+        page (issue 0105) that source's own voices come first, a Reddit author with the subreddit as its
+        `place` ("u/a in r/x", as on News), so the page names its source among the first shown."""
+        if source_id is None:
+            return [{"name": c["name"], "at": c["at"]} for c in citers]
+        own = [c for c in citers if source_id in (c.get("source_ids") or ())]
+        out = []
+        for c in own:
+            out.append({"name": c["name"], "at": c["at"]})
+            if name and str(c.get("voice", "")).startswith("reddit:"):
+                out[-1]["place"] = name
+        return out + [{"name": c["name"], "at": c["at"]} for c in citers if c not in own]
 
     def hide(self, url: str) -> Dict[str, Any]:
         """Hide a classic ("I know it", "not for me"): it never comes back."""

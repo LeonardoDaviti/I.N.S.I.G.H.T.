@@ -738,8 +738,9 @@ async def get_media(post: str, url: str):
 @app.get("/api/sources")
 @error_detail("load the sources")
 async def list_sources():
-    """Every source with its settings (platform defaults merged), post_count and in_main_digest."""
-    sources = services().sources.get_all_sources_with_settings()
+    """Every source with its settings (platform defaults merged), post_count and in_main_digest; the
+    archive's history left out (issue 0105: 98.7% of the answer; GET /api/archive/{id}/status has it)."""
+    sources = services().sources.list_sources()
     return {"success": True, "sources": sources, "total": len(sources),
             "total_posts": sum(int(s.get("post_count") or 0) for s in sources)}
 

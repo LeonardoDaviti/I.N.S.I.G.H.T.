@@ -167,7 +167,8 @@ describe('News and Classics on a source page (issue 0077)', () => {
     ] });
     render(base({ getClassics }), `/read/source/${SOURCE}?view=classics`);
     const list = await screen.findByRole('list', { name: 'Classics' });
-    expect(within(list).getByRole('listitem')).toHaveTextContent('Covered · Source A, Aug 2025');
+    // Issue 0105: a source cites a classic, it doesn't cover it.
+    expect(within(list).getByRole('listitem')).toHaveTextContent('Cited it · Source A, Aug 2025');
     expect(getClassics).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` }));
   });
 

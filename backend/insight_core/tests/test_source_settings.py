@@ -8,6 +8,7 @@ Tests:
 - Update platform defaults
 - Settings merging logic
 """
+import json
 import os
 import unittest
 import psycopg
@@ -140,6 +141,39 @@ class TestSourceSettings(unittest.TestCase):
         self.assertIsNotNone(test_source)
         self.assertIn("settings", test_source)
         self.assertIsInstance(test_source["settings"], dict)
+
+    def test_the_list_leaves_out_the_archive_history_and_the_database_keeps_it(self):
+        """Issue 0105: GET /api/sources was 1.8 MB, 98.7% each source's archive history, which the list
+        doesn't show. The list leaves it out; the row keeps it, and a source's own settings still read it."""
+        history = [{"mode": "live", "at": f"2026-11-0{n}T00:00:00+00:00", "stored_posts": n} for n in range(1, 4)]
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE sources SET settings = %s::jsonb WHERE id = %s",
+                        (json.dumps({"display_name": "Listed", "archive": {"status": "partial", "history": history}}),
+                         self.test_source_id))
+        listed = next(s for s in self.service.list_sources() if s["id"] == self.test_source_id)
+        self.assertEqual(listed["settings"]["display_name"], "Listed")
+        self.assertEqual(listed["settings"]["archive"]["status"], "partial")
+        self.assertNotIn("history", listed["settings"]["archive"], "not even the empty default")
+        self.assertEqual(listed["settings"]["fetch_delay_seconds"], 1, "the platform defaults, as before")
+        every = next(s for s in self.service.get_all_sources_with_settings() if s["id"] == self.test_source_id)
+        self.assertEqual({k: v for k, v in listed.items() if k != "settings"}, {k: v for k, v in every.items() if k != "settings"})
+        self.assertEqual(every["settings"]["archive"]["history"], history)
+        self.assertEqual(self.service.get_source_with_settings(self.test_source_id)["settings"]["archive"]["history"], history)
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            cur.execute("SELECT settings->'archive'->'history' FROM sources WHERE id = %s", (self.test_source_id,))
+            self.assertEqual(cur.fetchone()[0], history)
+
+    def test_the_route_answers_the_list(self):
+        from types import SimpleNamespace
+        import main
+        from insight_core.services import registry
+        from insight_core.tests._asgi import call
+        rows = [{"id": "a", "platform": "rss", "handle_or_url": "https://a.test.invalid/feed", "post_count": 2, "settings": {}}]
+        fake = SimpleNamespace(list_sources=lambda: rows)
+        self.addCleanup(registry.use, registry.use(SimpleNamespace(sources=fake)))
+        status, _, body = call(main.app, "GET", "/api/sources")
+        self.assertEqual(status, 200)
+        self.assertEqual((body["sources"], body["total"], body["total_posts"]), (rows, 1, 2))
 
 
 @requires_test_db

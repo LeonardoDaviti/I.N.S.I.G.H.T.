@@ -31,7 +31,8 @@ export interface SourceSettingsResponse extends Envelope {
   source?: SourceWithSettings;
 }
 
-/** GET /api/sources: every source with its settings and post count. */
+/** GET /api/sources: every source with its settings and post count; `settings.archive` without its `history`
+ *  (issue 0105: kept in the database, read by GET /api/archive/{id}/status). */
 export interface SourcesResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
@@ -158,8 +159,9 @@ export interface Classic {
   first_at: string; last_at: string;
   /** One of your sources cited it in the last 7 days. */
   cited_again: boolean;
-  /** Each voice once, at its first citation, first first. */
-  citers: { name: string; at: string }[];
+  /** Each voice once, at its first citation, first first; on one source's page its own voices first, a Reddit
+   *  author with `place` its subreddit (issue 0105). */
+  citers: { name: string; at: string; place?: string | null }[];
   read_at: string | null; later_at: string | null;
 }
 export interface ClassicsResponse { success: true; classics: Classic[]; }
@@ -1165,6 +1167,18 @@ export interface ExportInfo {
   login_tables: string[];
   /** What "Include stored logins" adds, in words. */
   logins_include: string;
+  /** What the estimate is from (issue 0105): the last whole export, grown with the rows since, else the
+   *  live rows' stored bytes. Optional: an API before 0105 sends neither. */
+  estimate_basis?: 'last_export' | 'live_rows';
+  last_export?: ExportRecord | null;
+}
+
+/** The last whole export, kept for the next estimate (issue 0105). */
+export interface ExportRecord {
+  bytes: number;
+  seconds: number;
+  at: string;
+  logins_included: boolean;
 }
 
 /** GET /api/export/progress/{token}: how far the download started with that token got. */
