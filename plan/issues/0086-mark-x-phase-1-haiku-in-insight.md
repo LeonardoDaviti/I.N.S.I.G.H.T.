@@ -188,6 +188,58 @@ markx-worker cycle --server http://<server>:5173 --token-file ~/.config/insight/
   Each batch is one kind, so its guide is sent once.
 - **Done when** the last 30 days are read and judged through it, and every answer is stored.
 
+### Built (S4, branch `markx-s4-worker`, 2026-11-05)
+The worker, ported from the prototype's `markx_worker.py` (the same `claude -p` call, the same instruction and item blocks, the same JSON-line parser, the same one retry in batches of their own). Not yet run against S3 or the real `claude`: **the owner runs the real-Haiku part** once S3 merges.
+- **Files:**
+  - `scripts/markx-worker`: one executable Python file, standard library only;
+  - `scripts/tests/fake-claude`: a fake binary that checks the exact flags and answers by plan (valid, invalid, missing, usage limit, auth, errors, sleeps);
+  - `scripts/tests/test_markx_worker.py`: a stub of part C's API (`http.server`, in memory: leases, expiry, checks, 3 tries, releases) and 36 tests.
+- **What it does:** `cycle` (also `status` and `release`):
+  - leases one kind per batch, kinds in the order given (default: part D's order);
+  - batches of 20, 3 at a time, at most `--batches` leases a cycle;
+  - checks each line against the guide's JSON schema (a subset), posts the valid ones, and retries what's missing or invalid once;
+  - posts the still-invalid ones after the retry, so the server stores them with their errors;
+  - releases what is still unanswered at the end of the cycle.
+- **Tokens and cost** come from Claude Code's JSON:
+  - in = input + cache read + cache creation;
+  - out = output;
+  - `total_cost_usd`, and the model from `modelUsage`.
+
+  Each call is logged with them. Each answer is posted with its share of its batch (a retried task carries both calls' shares), so the posted totals add up to the spend on answered tasks.
+- **Stops:** exit codes 4 (usage limit) and 5 (auth). On either, it starts no new call, posts what the running calls return, releases all its leases, and exits.
+- **Leases:**
+  - no call starts with under `--lease-margin` (120 s) left on its lease;
+  - a running call isn't killed when its lease ends (its tokens are spent either way): its answers are posted, never retried.
+- **The server unreachable:** exit 3. An answer whose post fails 3 times goes to a local spool, and the next cycle posts the spool first, so nothing is paid for twice. A wrong token exits 6.
+- **The contract** S3 must match is in the worker's docstring: the four endpoints, their bodies and responses, and the bearer token. It lists where part C is ambiguous:
+  - the answer line's shape (flat, as measured, then posted as `{task_id, answer}`);
+  - the id type;
+  - `valid` as a count or a list;
+  - `release`'s body (`worker`, optional `task_ids`);
+  - answers after a lease ended;
+  - the schema dialect;
+  - tokens per answer only;
+  - `lease_until` without an offset.
+- **Tests:** 36 pass (`python3 -m unittest discover -s scripts/tests -p 'test_markx_worker.py'`, about 25 s; run 4 times, no flakes). They cover:
+  - valid: 45 tasks in calls of 20, 20 and 5, with the exact flags; tokens and cost posted and logged;
+  - one kind per batch, in order; the `--batches` cap;
+  - string ids, fenced and nested lines;
+  - invalid then retried; still invalid after the retry; missing lines; missing after the retry (released);
+  - retries combined by kind; the server's invalid answers left to the server; a non-fatal error; unparsable output;
+  - usage limit (alone, and with calls in flight); auth (JSON and plain text); `claude` not found;
+  - leases: about to end, ending during the call, the call's timeout;
+  - a guide whose sha256 doesn't match;
+  - the server unreachable; a post failing, spooled, then posted by the next cycle; a post failing once; the spool with the server still down;
+  - a wrong token; a missing or empty token file; `status` and `release`;
+  - the parser, the schema subset, the shares, the error classes and the lease times.
+
+  The real `claude` was never run.
+- **Real-data check** (`scripts/realdata-check.sh --base 58ba6ae --head markx-s4-worker insight_lab`, report `plan/research/lab/checks/markx-s4-worker-2026-11-05.md`): **0 change**, as expected with no app code touched.
+  - Every derived thing is unchanged (titles, text starts, link titles, roundups, membership, origins, News, Classics, Discover), and so is every invariant. No case changes state.
+  - The verdict says FAIL only for `discover-one-title-per-page` and `classic-paper-one-page`. Those are 0106's cases: marked pass after 0106 merged into main (5c1a375), they fail at the base 58ba6ae as well.
+  - A first run against `main` (by then 543830d) showed 0106's own changes, reversed (Classics 230, Discover 740, membership 32). That run doesn't measure this branch.
+- **Backend suite** (`./run-tests.sh`, unchanged code): 1,446 tests, 1 failure. `test_deploy_finishes`'s held-rows test timed out on a thread while the real-data check ran beside it; that module run alone passes (5/5).
+
 ## Part E: decisions and the Mark X page
 **The decision job** (`markx/decide.py`):
 - **How it runs:** a pure function from (Mark IX's current stories, the valid answers, `config`) to Mark X's stories, memberships and connections. It runs after each upload (debounced) and hourly, in the ingestion container.
