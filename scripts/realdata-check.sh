@@ -22,7 +22,8 @@
 # NETWORK (insight_insight-network).
 #
 # Each version's code runs over its own scratch copy (one pg_restore of the dump, then a file copy of it), in a
-# container of its own, both at once. Nothing is fetched or downloaded. The report (it names the owner's
+# container of its own, both at once: first what a deploy's first start runs (the incremental job to the end, a
+# rule change's rebuild when the copy's rows are of other rules: issue 0110), then the full job. Nothing is fetched or downloaded. The report (it names the owner's
 # posts) goes to $OUT/<head>-<date>.md, private; its path goes in the merge notes. Exit 1: don't merge.
 set -euo pipefail
 
@@ -152,7 +153,7 @@ elapsed=$(( $(date +%s) - started ))
 { cat "$WORK/report.md"; echo; echo "Took ${elapsed} s ($(( elapsed / 60 )) min $(( elapsed % 60 )) s), image $IMAGE."; } > "$REPORT"
 mkdir -p "${REPORT%.md}"
 for side in base head; do
-  for f in invariants.json jobs.json cases.json job.json; do
+  for f in deploy.json invariants.json jobs.json cases.json job.json; do
     [ -f "$WORK/$side/$f" ] && cp "$WORK/$side/$f" "${REPORT%.md}/$side-$f"
   done
 done
