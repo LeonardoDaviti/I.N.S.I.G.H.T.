@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { JobRun } from '../services/api';
-import { formatJobDuration, jobDuration, jobEvents, jobGlyph, jobSummary, runningFetchJob, runProgressLine } from './jobRuns.ts';
+import { formatJobDuration, jobDuration, jobEvents, jobGlyph, jobSummary, jobWaiting, runningFetchJob, runProgressLine } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -84,4 +84,25 @@ test('jobEvents: the per-source lines, without the lines that repeat the summary
   const run = { id: 'r', status: 'failed', job_type: 'ingestion_run', message: '0 due, 222 deferred, 1 failed; 3 new posts', payload: { events } } as unknown as JobRun;
   assert.deepEqual(jobEvents(run).map((event) => event.at), ['2', '3', '4']);
   assert.deepEqual(jobEvents({ id: 'a', status: 'success', job_type: 'archive_source' } as JobRun), []);
+});
+
+test('a waiting archive (issue 0107) is scheduled, not running, and says when it continues', () => {
+  assert.equal(jobGlyph('waiting'), 'scheduled');
+  const job = {
+    id: 'j', job_type: 'archive_source', status: 'waiting', trigger: 'manual', message: "Waiting for bridge.example's limit",
+    payload: { waiting_until: '2099-01-01T10:05:00Z', waiting_host: 'bridge.example', waiting_reason: 'limit' },
+  } as JobRun;
+  assert.deepEqual(jobWaiting(job), { host: 'bridge.example', until: '2099-01-01T10:05:00Z', reason: 'limit' });
+  assert.match(jobSummary(job) ?? '', /^Waiting for bridge\.example's limit: continues at \d\d:\d\d$/);
+  assert.equal(runningFetchJob([job]), null, 'the top bar does not say fetching while it waits');
+  assert.equal(jobWaiting({ ...job, status: 'success' }), null, 'a finished job waits for nothing');
+});
+
+test('a waiting event reads in the reader\'s time, as of when it was written', () => {
+  const job = {
+    id: 'j', job_type: 'archive_source', status: 'running', trigger: 'scheduler',
+    payload: { events: [{ at: '2026-11-05T10:00:00Z', level: 'warning', message: "Waiting for bridge.example's limit: continues at 10:05 UTC",
+                          data: { stage: 'waiting', host: 'bridge.example', waiting_until: '2026-11-05T10:05:00Z' } }] },
+  } as JobRun;
+  assert.match(jobEvents(job)[0].message ?? '', /^Waiting for bridge\.example's limit: continues at \d\d:\d\d$/);
 });

@@ -161,6 +161,28 @@ describe('ArchiveSection', () => {
     expect(startSourceArchive).toHaveBeenCalledWith('s1', true);
   });
 
+  it('an archive waiting out a host\'s limit says when it continues, and can continue now (issue 0107)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-11T10:00:00Z') });
+    const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'job-2' });
+    const waiting = { posts_fetched: 800, posts_inserted: 800, pages_fetched: 40,
+      waiting_until: '2026-10-11T10:05:00Z', waiting_host: 'bridge.example', waiting_reason: 'limit' };
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status({
+        archive: { stored_posts: 845, available_posts: 9600, resume_ready: true, checkpoint: { collected_posts: 800, pages_fetched: 40 } },
+        latest_job: { id: 'job-2', status: 'waiting', message: "Waiting for bridge.example's limit",
+          started_at: '2026-10-11T09:50:00Z', result: waiting },
+      })),
+      startSourceArchive,
+      getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ id: 'job-2', status: 'waiting', payload: waiting }) }),
+    });
+    const notice = await screen.findByRole('alert');
+    expect(within(notice).getByText(/^Waiting for bridge\.example's limit: continues at \d\d:\d\d$/)).toBeInTheDocument();
+    expect(within(notice).getByText(/800 posts fetched/)).toBeInTheDocument();
+    fireEvent.click(within(notice).getByRole('button', { name: 'Continue now' }));
+    expect(startSourceArchive).toHaveBeenCalledWith('s1', true);
+    vi.useRealTimers();
+  });
+
   it('offers to resume a checkpointed run', async () => {
     const planSourceArchive = vi.fn().mockResolvedValue(plan({ resume: true, resume_available: true, continues_from: null,
       checkpoint: { collected_posts: 120 } }));

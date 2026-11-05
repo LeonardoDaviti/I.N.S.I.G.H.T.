@@ -4,7 +4,7 @@
  * Honest by construction: a figure the source did not report is never shown as one.
  * Pure.
  */
-import type { ArchivePlan, ArchiveRateLimit, AvailableBasis } from '../services/api';
+import type { ArchivePlan, ArchiveRateLimit, ArchiveWaiting, AvailableBasis } from '../services/api';
 import { formatCount, plural } from './format.ts';
 
 /** The available figure and, when the number needs it, what it means. */
@@ -88,4 +88,22 @@ export function archiveResultLine(result: {
     typeof result.stored_posts === 'number' ? `${formatCount(result.stored_posts)} stored` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : null;
+}
+
+const clockFormats = new Map<string, Intl.DateTimeFormat>();
+/** "Waiting for bridge.example's limit: continues at 14:05" (issue 0107), the time in the reader's zone
+ *  ("Waiting for bridge.example to answer" when it timed out); "continues shortly" once the time has
+ *  come (the scheduler takes it up within a minute). */
+export function waitingLine({ host, until, reason }: ArchiveWaiting, now: Date = new Date(), timeZone?: string): string {
+  const at = new Date(until);
+  const lead = reason === 'timeout' ? `Waiting for ${host} to answer` : `Waiting for ${host}'s limit`;
+  if (Number.isNaN(at.getTime())) return lead;
+  if (at.getTime() <= now.getTime()) return `${lead}: continues shortly`;
+  const key = timeZone ?? '';
+  let format = clockFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    clockFormats.set(key, format);
+  }
+  return `${lead}: continues at ${format.format(at)}`;
 }

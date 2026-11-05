@@ -5,7 +5,8 @@
  * top bar's activity sign. Pure.
  */
 import type { Status } from '../components/ui/styles';
-import type { JobRun } from '../services/api';
+import type { ArchiveWaiting, JobRun } from '../services/api';
+import { waitingLine } from './archive.ts';
 import { toDate } from './dates.ts';
 import { formatElapsed } from './duration.ts';
 import { asRunReport, summarizeRunReport } from './runReport.ts';
@@ -20,7 +21,16 @@ function isActive(status?: string | null): boolean {
 export function jobGlyph(status?: string | null): Status {
   if (status === 'failed' || status === 'interrupted') return 'failing';   // interrupted: a restart ended it (0070)
   if (isActive(status)) return 'running';
+  if (status === 'waiting') return 'scheduled';   // an archive waiting out a host's limit (0107)
   return 'ok';
+}
+
+/** What a waiting archive job waits for (issue 0107: a host's limit; it continues by itself), or null. */
+export function jobWaiting(job: Pick<JobRun, 'status' | 'payload'>): ArchiveWaiting | null {
+  const payload = job.payload ?? {};
+  if (job.status !== 'waiting' || typeof payload.waiting_until !== 'string' || typeof payload.waiting_host !== 'string') return null;
+  return { host: payload.waiting_host, until: payload.waiting_until,
+    reason: typeof payload.waiting_reason === 'string' ? payload.waiting_reason : null };
 }
 
 /** "<1s", "42s", "2m 5s", "1h 2m"; null until the job has finished. */
@@ -80,6 +90,8 @@ export function runProgressLine(job: JobRun): string | null {
 export function jobSummary(job: JobRun): string | null {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
   if (report) return summarizeRunReport(report).headline;
+  const waiting = jobWaiting(job);
+  if (waiting) return waitingLine(waiting);
   const message = job.message || null;
   return message && job.source_id && job.source_display_name
     ? message.replace(`source ${job.source_id}`, job.source_display_name).replace(job.source_id, job.source_display_name) : message;
@@ -97,7 +109,16 @@ export function jobEvents(job: JobRun): JobEvent[] {
     const phase = isRecord(event.data) ? event.data.phase : undefined;
     if (typeof phase === 'string' && NOISE_PHASES.has(phase)) return false;
     return !('status' in event && event.message === job.message);
-  }) as JobEvent[];
+  }).map(localWaitingEvent) as JobEvent[];
+}
+
+/** A waiting event (issue 0107) says when it continues in the reader's time, as of when it was written. */
+function localWaitingEvent(event: Record<string, unknown>): Record<string, unknown> {
+  const data = isRecord(event.data) ? event.data : null;
+  if (!data || data.stage !== 'waiting' || typeof data.host !== 'string' || typeof data.waiting_until !== 'string') return event;
+  const written = toDate(event.at as string | undefined) ?? new Date(0);
+  const reason = data.timed_out ? 'timeout' : 'limit';
+  return { ...event, message: waitingLine({ host: data.host, until: data.waiting_until, reason }, written) };
 }
 
 /** The newest ingestion run, when it failed and finished under an hour ago; else null. */

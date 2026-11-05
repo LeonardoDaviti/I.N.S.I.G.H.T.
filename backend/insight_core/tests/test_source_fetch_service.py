@@ -421,7 +421,8 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["page"], 1)
         self.assertNotIn("completed_at", saved, "a waiting archive's checkpoint stays resumable")
         self.assertTrue(self.sources.saved["resume_ready"])
-        self.assertEqual(self.sources.saved["waiting"], {"host": "tg.i-c-a.su", "until": result["waiting_until"]})
+        self.assertEqual(self.sources.saved["waiting"], {"host": "tg.i-c-a.su", "until": result["waiting_until"],
+                                                         "reason": "limit"})
 
         self.sources.current = self.sources.saved
         await service.archive_source("s1", resume=True)

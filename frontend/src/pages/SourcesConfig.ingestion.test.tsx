@@ -309,6 +309,54 @@ describe('Sources → ingestion tab', () => {
     expect(await within(detail).findByText('500 posts fetched, 475 new, 25 updated · 25 pages · 500 stored')).toBeInTheDocument();
   });
 
+  it('an archive waiting out a host\'s limit says so in the history, in its events and on its catalog row (issue 0107)', async () => {
+    const waitingUntil = new Date(Date.now() + 5 * MINUTE).toISOString();
+    const waitingJob = job({ id: 'w1', job_type: 'archive_source', job_label: 'Archive', status: 'waiting', finished_at: null,
+      source_display_name: 'Bridge channel', message: "Waiting for bridge.example's limit",
+      payload: { waiting_until: waitingUntil, waiting_host: 'bridge.example', waiting_reason: 'limit',
+        events: [{ at: new Date().toISOString(), level: 'warning', message: "Waiting for bridge.example's limit: continues at 00:00 UTC",
+          data: { stage: 'waiting', host: 'bridge.example', waiting_until: waitingUntil } }] } });
+    setup({
+      overrides: {
+        getOperationJob: vi.fn().mockResolvedValue({ success: true, job: waitingJob }),
+        getOperationsOverview: vi.fn().mockResolvedValue({ success: true, alerts: [], jobs: [waitingJob] }),
+        getArchiveCatalog: vi.fn().mockResolvedValue({ success: true, total: 1, sources: [
+          catalogEntry({ source_id: 'bridge', display_name: 'Bridge channel', resume_ready: true,
+            waiting: { host: 'bridge.example', until: waitingUntil, reason: 'limit' } }),
+        ] }),
+      },
+    });
+    const line = /^Waiting for bridge\.example's limit: continues at \d\d:\d\d$/;
+    await userEvent.click(await screen.findByRole('link', { name: 'jobs' }));
+    const history = await screen.findByRole('region', { name: 'Recent jobs' });
+    const row = (await within(history).findByText(/Bridge channel/)).closest('button') as HTMLElement;
+    expect(within(row).getByText(line)).toBeInTheDocument();
+    expect(within(row).getByText('waiting')).toBeInTheDocument();
+    await userEvent.click(row);
+    const detail = await screen.findByRole('region', { name: 'Archive' });
+    expect(await within(within(detail).getByRole('list', { name: 'Events' })).findByText(line)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('link', { name: 'archive' }));
+    const catalog = await screen.findByRole('region', { name: 'Catalog' });
+    const entry = (await within(catalog).findByText('Bridge channel')).closest('li') as HTMLElement;
+    expect(within(entry).getByText(line)).toBeInTheDocument();
+  });
+
+  it('the overview shows each host\'s learned limit (issue 0107)', async () => {
+    setup({
+      overrides: {
+        getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [job()], alerts: [],
+          source_health: { summary: {}, rows: [], host_limits: [
+            { host: 'bridge.example', requests: 40, window_s: 960, limits: 2, archive_gap_s: 30,
+              line: 'bridge.example: about 40 requests per 16 min, learned from 2 limits' },
+          ] } }),
+      },
+    });
+    const limits = await screen.findByRole('region', { name: 'Site limits' });
+    expect(within(limits).getByText('bridge.example: about 40 requests per 16 min, learned from 2 limits')).toBeInTheDocument();
+    expect(within(limits).getByText(/archives page every 30 s/)).toBeInTheDocument();
+  });
+
   it('archive lists every source with its archive status and backlog', async () => {
     setup({
       overrides: {

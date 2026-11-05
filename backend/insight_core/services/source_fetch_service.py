@@ -506,7 +506,8 @@ class SourceFetchService:
         result.update(waiting=True, waiting_until=until.isoformat(), waiting_host=host,
                       waiting_reason="timeout" if exc.timed_out else "limit", waits=waits + 1,
                       message=f"Waiting for {what}")
-        await self._record_archive_metadata(source_id, {**result, "waiting": {"host": host, "until": until.isoformat()}},
+        await self._record_archive_metadata(source_id, {**result, "waiting": {"host": host, "until": until.isoformat(),
+                                                                  "reason": result["waiting_reason"]}},
                                             mode="archive_progress", kind=kind)
         await self._emit_progress(progress_callback, {
             "stage": "waiting", **progress, "host": host, "waiting_until": until.isoformat(), "wait_s": wait_s,

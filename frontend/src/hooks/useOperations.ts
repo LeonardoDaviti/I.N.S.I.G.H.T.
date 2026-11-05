@@ -38,7 +38,8 @@ export function useSchedulerConfig() {
   });
 }
 
-/** One job in full; polled every 5 seconds while it runs. Idle without an id. */
+/** One job in full; polled every 5 seconds while it runs, every 30 while it waits (an archive waiting
+ *  out a host's limit, issue 0107, which the scheduler continues). Idle without an id. */
 export function useOperationJob(id: string | null) {
   const api = useApi();
   return useQuery({
@@ -49,6 +50,9 @@ export function useOperationJob(id: string | null) {
       return response.job;
     },
     enabled: Boolean(id),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5_000 : false),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'running' ? 5_000 : status === 'waiting' ? 30_000 : false;
+    },
   });
 }

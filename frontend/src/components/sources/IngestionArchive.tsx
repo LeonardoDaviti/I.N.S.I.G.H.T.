@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { ArchiveCatalogEntry } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
+import { waitingLine } from '../../lib/archive';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
@@ -111,6 +112,9 @@ export default function IngestionArchive() {
                       <StatusGlyph status={glyph.status} label={glyph.label} className="shrink-0" />
                     </div>
                     <p className="mt-0.5 truncate text-[0.75rem] tabular-nums text-fg-3">{entryLine(entry, now)}</p>
+                    {entry.waiting ? (
+                      <p className="mt-0.5 text-[0.75rem] tabular-nums text-fg-2 [overflow-wrap:anywhere]">{waitingLine(entry.waiting, now)}</p>
+                    ) : null}
                   </button>
                 </li>
               );

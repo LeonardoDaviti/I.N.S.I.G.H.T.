@@ -16,6 +16,11 @@ from insight_core.ingestion.host_budgets import (  # noqa: E402
     LearnedBudget,
     MemoryHostBudgetStore,
 )
+from insight_core.ingestion.ports import DbHostBudgetStore  # noqa: E402
+from insight_core.services.operations_service import OperationsService  # noqa: E402
+from insight_core.tests._db import db_url, requires_test_db  # noqa: E402
+
+import psycopg  # noqa: E402
 
 HOST = "bridge.example"
 T0 = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
@@ -135,6 +140,29 @@ class HostBudgetsTests(unittest.IsolatedAsyncioTestCase):
         await self.window(20, then_wait_min=20)             # 20 per 200 s + 20 min
         learned = await self.budgets.succeeded(HOST)
         self.assertEqual((learned.requests, learned.window_s), (20, 200 + 20 * 60))
+
+
+@requires_test_db
+class HostLimitsInHealthTests(unittest.TestCase):
+    """Health shows each learned budget: "<host>: about N requests per M min, learned from K limits"."""
+
+    HOST = "budget-0107.test"
+
+    def setUp(self):
+        self.store = DbHostBudgetStore(db_url())
+
+    def tearDown(self):
+        with psycopg.connect(db_url()) as conn:
+            conn.execute("DELETE FROM system_settings WHERE key = %s", (DbHostBudgetStore.PREFIX + self.HOST,))
+
+    def test_the_health_answer_lists_the_learned_budgets(self):
+        at = datetime.now(timezone.utc).isoformat()
+        self.store.save(self.HOST, {"measures": [{"requests": 40, "window_s": 960, "at": at},
+                                                 {"requests": 42, "window_s": 1000, "at": at}]})
+        limits = OperationsService(db_url()).get_source_health()["host_limits"]
+        mine = [row for row in limits if row["host"] == self.HOST]
+        self.assertEqual(mine[0]["line"], f"{self.HOST}: about 40 requests per 16 min, learned from 2 limits")
+        self.assertEqual((mine[0]["requests"], mine[0]["limits"], mine[0]["archive_gap_s"]), (40, 2, 30.0))
 
 
 if __name__ == "__main__":

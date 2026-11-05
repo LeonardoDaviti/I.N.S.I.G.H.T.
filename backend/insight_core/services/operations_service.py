@@ -830,7 +830,8 @@ class OperationsService:
             "success": True,
             "scheduler": self.get_scheduler_config(),
             "jobs": jobs,
-            "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS]},
+            "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS],
+                              "host_limits": health["host_limits"]},
             "alerts": alerts,
             "stats": {
                 "recent_failures": len([job for job in jobs if job["status"] == "failed"]),
@@ -896,7 +897,21 @@ class OperationsService:
             "generated_at": now.isoformat(),
             "rows": rows,
             "summary": summarize_health(rows),
+            "host_limits": self.host_limits(),
         }
+
+    def host_limits(self) -> List[Dict[str, Any]]:
+        """Each host's budget as learned from the limits archives met (issue 0107), by host:
+        [{host, requests, window_s, limits, archive_gap_s, line}]. An archive paces to it once
+        learned from LEARN_AFTER limits. Never raises: health does not fail for it."""
+        from insight_core.ingestion.host_budgets import HostBudgets
+        from insight_core.ingestion.ports import DbHostBudgetStore
+
+        try:
+            return [budget.as_dict() for budget in HostBudgets(DbHostBudgetStore(self.db_url), clock=self.clock).learned_all()]
+        except Exception:  # noqa: BLE001
+            self.logger.exception("Could not read the learned host budgets")
+            return []
 
     def get_source_health_row(self, source_id: str) -> Optional[Dict[str, Any]]:
         rows = self._health_rows(self._load_schedule_view([source_id]), self.clock())
