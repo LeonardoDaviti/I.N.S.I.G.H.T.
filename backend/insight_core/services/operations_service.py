@@ -39,12 +39,13 @@ JOB_LABELS: Dict[str, str] = {
     "ingestion_run": "Ingestion run",
     "scheduler_cycle": "Daily work",
     "archive_source": "Archive",
+    "api_restart": "API restart",   # issue 0117: the watchdog in insight-ingestion
 }
 
 
 # The job types INSIGHT still runs. Rows of any other type (retired analysis jobs, kept by
 # 0027_drop_analysis.sql; old safe_ingest rows) stay in job_runs but leave the job list.
-LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source")
+LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source", "api_restart")
 
 
 def job_label(job_type: Optional[str]) -> str:
@@ -640,6 +641,38 @@ class OperationsService:
 
     # Tracked work (an archive, a fetch, a comment fetch) goes on when its job_runs row
     # cannot be written: these log the failure and return, instead of raising.
+
+    def start_job_unless_running(self, job_type: str, *, source_id: str, trigger: str = "manual",
+                                 message: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """start_job, unless a job of this type for this source is running: None then. The check and the insert run
+        under one lock on (type, source), so two API processes (0112 Decided 11) can't both start one. A failure to
+        write the row is logged and raised."""
+        key = f"job_runs:{job_type}:{source_id}"
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
+            try:
+                cur.execute("SELECT 1 FROM job_runs WHERE job_type = %s AND source_id = %s AND status = 'running' LIMIT 1",
+                            (job_type, source_id))
+                if cur.fetchone() is not None:
+                    return None
+                try:
+                    return self.start_job(job_type, trigger=trigger, source_id=source_id, message=message,
+                                          payload=payload)
+                except Exception:
+                    self.logger.exception("Could not start a %s job", job_type)
+                    raise
+            finally:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
+
+    def recent_job_times(self, job_type: str, seconds: float, *, kind: Optional[str] = None) -> List[float]:
+        """The start times (epoch seconds) of this type's jobs in the last `seconds`, with payload.kind = `kind` when
+        given (the API watchdog's restarts of the last hour, issue 0117)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("""SELECT extract(epoch FROM started_at) FROM job_runs
+                            WHERE job_type = %s AND started_at > now() - make_interval(secs => %s)
+                              AND (%s::text IS NULL OR payload->>'kind' = %s) ORDER BY started_at""",
+                        (job_type, seconds, kind, kind))
+            return [float(r[0]) for r in cur.fetchall()]
 
     def try_start_job(self, job_type: str, **kwargs: Any) -> Optional[str]:
         """start_job, or None (logged) when the row cannot be written."""

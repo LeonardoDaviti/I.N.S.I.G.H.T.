@@ -1,0 +1,325 @@
+"""Mark X Shadow's jobs: when the candidate finder (markx/candidates.py) and the decision run (markx/decide.py) run.
+
+The rules and the work stay in their modules (`candidates.run`, `decide.run`); this module only decides when they
+run, and where: **never in the API process** (0112 Decided 10). On 5 Nov a decision run in the API's one process sat
+at 101% CPU and every /api/* request timed out.
+
+  - **The API only marks that work arrived** (`want`, `note_posts`): a stamp in mx_jobs (`wanted_at`, set once until
+    a run takes it) and, for new vectors, their posts in mx_candidate_posts. Each is one short statement in the
+    request's own transaction; nothing runs in the request or in a thread of the API.
+  - **insight-ingestion's scheduler runs them** (`Runner.tick`, every POLL seconds, in a thread beside the ingestion
+    ticks; each job in a process of its own, so a run's CPU and memory never touch the scheduler's):
+      - the candidate finder, when vectors arrived (the posts waiting in mx_candidate_posts) and before every
+        decision run (also the posts whose entities were written since its last run);
+      - the decision run: SETTLE seconds after work arrived (answers, vectors, POST /api/markx/decide, the API
+        start's story job), at most one every GAP seconds (a steady stream of uploads can't push it back, nor run it
+        back to back), and every EVERY seconds.
+  - **A decision run has a time limit and stage logs** (0112 Decided 12): "Mark X decision run started", each stage
+    with its duration (candidates, load, questions and decisions, write, connections, headlines, news), the finish.
+    Past LIMIT seconds it stops before the next stage and logs which; its one transaction rolls back (nothing half
+    done) and the run is wanted again. A stage that never ends is killed with its process at HARD_LIMIT.
+  - One run at a time: this process runs one job at a time, and `decide.run` holds a Postgres advisory lock across
+    processes (a second run is skipped).
+  - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
+    never waits for a run.
+
+Both only when INSIGHT_MARKX is on; nothing here raises into the scheduler.
+"""
+from __future__ import annotations
+
+import logging
+import multiprocessing
+import threading
+import time
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Iterable, List, Optional
+
+log = logging.getLogger(__name__)
+
+POLL = 30.0                      # seconds between the runner's looks (work is picked up within this)
+SETTLE = 60.0                    # a decision run waits this long after work arrived, so a burst of uploads is one run
+GAP = 300.0                      # and at most one starts every 5 minutes while uploads stream in (0112 Decided 12)
+EVERY = 3600.0                   # and runs at least hourly
+LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries (Decided 12)
+MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
+FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
+HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
+JOBS = ("candidates", "decide")
+
+
+class TooLong(Exception):
+    """A decision run past LIMIT seconds, stopped before its next stage."""
+
+
+def enabled() -> bool:
+    from insight_core.markx.api import enabled as on
+    return on()
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# ---- the API's side: work arrived ------------------------------------------------------------------
+
+def want(cur: Any, job: str) -> None:
+    """Work for `job` arrived: stamp wanted_at once (the runner clears it when a run takes it). A row already wanted is
+    not written again, so many uploads at once don't queue on the row."""
+    cur.execute("UPDATE mx_jobs SET wanted_at = now() WHERE job = %s AND wanted_at IS NULL", (job,))
+    if cur.rowcount == 0:
+        cur.execute("INSERT INTO mx_jobs (job, wanted_at) VALUES (%s, now()) ON CONFLICT (job) DO NOTHING", (job,))
+
+
+def note_posts(cur: Any, post_ids: Iterable[str]) -> int:
+    """New vectors for these posts: they wait for the candidate finder (mx_candidate_posts), and it is wanted."""
+    ids = sorted({str(p) for p in post_ids})
+    if not ids:
+        return 0
+    cur.execute("""INSERT INTO mx_candidate_posts (post_id) SELECT unnest(%s::uuid[])
+                   ON CONFLICT (post_id) DO UPDATE SET noted_at = now()""", (ids,))
+    want(cur, "candidates")
+    return len(ids)
+
+
+def state(cur: Any) -> Dict[str, Dict[str, Any]]:
+    cur.execute("SELECT job, wanted_at, started_at, stage, stage_at, finished_at, last FROM mx_jobs")
+    out = {j: {"job": j, "wanted_at": None, "started_at": None, "stage": None, "stage_at": None, "finished_at": None,
+               "last": None} for j in JOBS}
+    for job, wanted, started, stage, stage_at, finished, last in cur.fetchall():
+        out[job] = {"job": job, "wanted_at": wanted, "started_at": started, "stage": stage, "stage_at": stage_at,
+                    "finished_at": finished, "last": last}
+    return out
+
+
+def view(cur: Any) -> Dict[str, Dict[str, Any]]:
+    """The jobs as /api/markx/status and the /markx page show them: each {running, started_at, stage, stage_at (the
+    running stage's start), wanted_at (work waiting for a run), finished_at, last (how the last run ended)}; times
+    ISO 8601 UTC."""
+    def iso(v: Any) -> Any:
+        return v.astimezone(timezone.utc).isoformat() if isinstance(v, datetime) else v
+    return {job: {"running": s["stage"] is not None, **{k: iso(v) for k, v in s.items() if k != "job"}}
+            for job, s in state(cur).items()}
+
+
+# ---- the runner's side: the jobs (in insight-ingestion) ---------------------------------------------
+
+def waiting_posts(cur: Any) -> List[str]:
+    cur.execute("SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at")
+    return [r[0] for r in cur.fetchall()]
+
+
+def _json(value: Any) -> str:
+    import json
+    return json.dumps(value, default=str)
+
+
+class Jobs:
+    """The two jobs on one database, each run in the calling process (the runner calls them in a child process).
+    Every state write is a short transaction of its own."""
+
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT) -> None:
+        self.db_url, self.clock, self.limit = db_url, clock, limit
+
+    def _tx(self):
+        from insight_core.db import database
+        return database.transaction(self.db_url)
+
+    def _begin(self, job: str, stage: str) -> datetime:
+        with self._tx() as cur:
+            cur.execute("""INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING""", (job,))
+            cur.execute("""UPDATE mx_jobs SET wanted_at = NULL, started_at = now(), stage = %s, stage_at = now()
+                            WHERE job = %s RETURNING started_at""", (stage, job))
+            return cur.fetchone()[0]
+
+    def _stage(self, job: str, stage: str) -> None:
+        with self._tx() as cur:
+            cur.execute("UPDATE mx_jobs SET stage = %s, stage_at = now() WHERE job = %s", (stage, job))
+
+    def _finish(self, job: str, last: Dict[str, Any], *, again: bool = False) -> None:
+        """The run ended: no stage, the outcome in `last`; `again` wants the job once more (a failed run is retried)."""
+        with self._tx() as cur:
+            cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
+            cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
+                                  wanted_at = CASE WHEN %s THEN COALESCE(wanted_at, now()) ELSE wanted_at END
+                            WHERE job = %s""", (_json(last), again, job))
+
+    def last(self, job: str) -> Dict[str, Any]:
+        with self._tx() as cur:
+            return state(cur)[job]
+
+    def candidates(self) -> Optional[Counter]:
+        """The candidate finder over the waiting posts and the posts whose entities were written since its last run.
+        A failed run leaves its posts waiting and the job wanted."""
+        from insight_core.markx import candidates
+        previous = (self.last("candidates").get("last") or {})
+        started = self._begin("candidates", "candidates")
+        since_text = previous.get("mentions_since")
+        since = datetime.fromisoformat(since_text) if since_text else started - FIRST_SINCE
+        t0 = time.monotonic()
+        try:
+            with self._tx() as cur:
+                ids = waiting_posts(cur)
+                counts = candidates.run(cur, ids, since=since)
+                cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
+        except Exception as exc:   # the posts wait for the next run
+            log.exception("Mark X candidates: the run failed; the posts wait for the next")
+            self._finish("candidates", {"ok": False, "error": str(exc)[:500], "mentions_since": since_text,
+                                        "seconds": round(time.monotonic() - t0, 1)}, again=True)
+            return None
+        seconds = round(time.monotonic() - t0, 1)
+        log.info("Mark X candidates: %d posts, %s in %.1f s", len(ids), dict(counts), seconds)
+        self._finish("candidates", {"ok": True, "posts": len(ids), "counts": dict(counts), "seconds": seconds,
+                                    "mentions_since": (started - MENTIONS_MARGIN).isoformat()})
+        return counts
+
+    def decide(self) -> Optional[Dict[str, Any]]:
+        """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
+        stage logged with its duration; a failed or stopped run is wanted again."""
+        from insight_core.markx import decide
+        log.info("Mark X decision run started")
+        t0 = time.monotonic()
+        self._begin("decide", "candidates")
+        stages: List[List[Any]] = []          # [[stage, seconds]] in order (jsonb keeps no key order)
+        current = ["candidates", t0]
+
+        def stage(name: str) -> None:
+            at = time.monotonic()
+            stages.append([current[0], round(at - current[1], 1)])
+            log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
+            if at - t0 > self.limit:
+                raise TooLong(f"over {self.limit:.0f} s ({at - t0:.0f} s): stopped before {name}")
+            current[:] = [name, at]
+            self._stage("decide", name)
+
+        self.candidates()
+        try:
+            with decide.snapshot(self.db_url) as cur:
+                out = decide.run(cur, stage=stage)
+        except TooLong as exc:
+            log.warning("Mark X decision run %s; nothing written, it runs again at the next look", exc)
+            self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).rsplit(" ", 1)[-1],
+                                    "stages": stages, "seconds": round(time.monotonic() - t0, 1)}, again=True)
+            return None
+        except Exception as exc:
+            log.exception("Mark X decisions: the run failed")
+            self._finish("decide", {"ok": False, "error": str(exc)[:500], "stages": stages,
+                                    "seconds": round(time.monotonic() - t0, 1)}, again=True)
+            return None
+        end = time.monotonic()
+        if "skipped" not in out:
+            stages.append([current[0], round(end - current[1], 1)])
+            log.info("Mark X decision run: %s took %.1f s", current[0], end - current[1])
+        seconds = round(end - t0, 1)
+        log.info("Mark X decision run finished in %.1f s: %s", seconds,
+                 {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
+        self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
+                                "skipped": out.get("skipped"), "stages": stages,
+                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
+                     again="skipped" in out)
+        return out
+
+
+def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
+        gap: float = GAP) -> Optional[str]:
+    """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
+    one started (or never ran), never within GAP seconds of the last start; else the candidate finder when vectors
+    arrived."""
+    d = states["decide"]
+    since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
+    if since is None or since >= gap:
+        if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
+            return "decide"
+        if since is None or since >= every:
+            return "decide"
+    if states["candidates"]["wanted_at"] is not None:
+        return "candidates"
+    return None
+
+
+def _job_main(db_url: str, job: str) -> None:
+    """A child process: one job, then exit (what it read goes back to the OS)."""
+    from insight_core.logs.core.logger_config import setup_logging
+    setup_logging(debug_mode=False)
+    getattr(Jobs(db_url), job)()
+
+
+class Runner:
+    """insight-ingestion's Mark X loop: every POLL seconds, the job that is due, in a process of its own (or inline:
+    `spawn=False`, the tests and the real-data check). Only when INSIGHT_MARKX is on; never raises."""
+
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
+                 on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
+                 gap: float = GAP, hard_limit: float = HARD_LIMIT) -> None:
+        self.db_url, self.clock, self.spawn = db_url, clock, spawn
+        self.on = on or enabled
+        self.settle, self.every, self.gap, self.hard_limit = settle, every, gap, hard_limit
+        self.stop = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+
+    def _states(self) -> Dict[str, Dict[str, Any]]:
+        from insight_core.db import database
+        with database.transaction(self.db_url) as cur:
+            cur.execute("SELECT now()")
+            self._db_now = cur.fetchone()[0]
+            return state(cur)
+
+    def recover(self) -> None:
+        """At the runner's start: a run a restart ended mid-way shows no stage, and its job is wanted again."""
+        from insight_core.db import database
+        try:
+            with database.transaction(self.db_url) as cur:
+                cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, wanted_at = COALESCE(wanted_at, now())
+                                WHERE stage IS NOT NULL""")
+                if cur.rowcount:
+                    log.info("Mark X jobs: %d runs a restart ended are wanted again", cur.rowcount)
+        except Exception:
+            log.exception("Mark X jobs: could not recover the runs a restart ended")
+
+    def tick(self) -> Optional[str]:
+        """One look: the job that ran, or None."""
+        if not self.on():
+            return None
+        try:
+            states = self._states()
+            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap)
+            if job is None:
+                return None
+            if self.spawn:
+                self._in_own_process(job)
+            else:
+                getattr(Jobs(self.db_url, clock=self.clock), job)()
+            return job
+        except Exception:
+            log.exception("Mark X jobs: the tick failed")
+            return None
+
+    def _in_own_process(self, job: str) -> None:
+        process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, job),
+                                                               name=f"markx-{job}", daemon=True)
+        process.start()
+        process.join(self.hard_limit)
+        if process.is_alive():
+            process.kill()
+            process.join(10)
+            log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", job, self.hard_limit)
+            try:
+                Jobs(self.db_url)._finish(job, {"ok": False, "error": f"killed after {self.hard_limit:.0f} s"}, again=True)
+            except Exception:
+                log.exception("Mark X jobs: could not record the killed run")
+        elif process.exitcode:
+            log.error("Mark X jobs: the %s run ended with exit code %s", job, process.exitcode)
+
+    def start(self, poll: float = POLL) -> bool:
+        """The loop in a daemon thread (run_scheduler.py); False when Mark X is off at the start."""
+        if self.thread is not None or not self.on():
+            return False
+        self.recover()
+
+        def loop() -> None:
+            while not self.stop.wait(poll):
+                self.tick()
+        self.thread = threading.Thread(target=loop, name="markx-jobs", daemon=True)
+        self.thread.start()
+        log.info("Mark X jobs: running here, every %.0f s", poll)
+        return True

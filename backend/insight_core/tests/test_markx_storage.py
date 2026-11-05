@@ -60,7 +60,8 @@ class MigrationTests(_Rollback):
     def test_the_fourteen_tables_exist_and_0069s_settings(self):
         self.cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace "
                          "AND relkind = 'r' AND relname LIKE 'mx\\_%'")
-        self.assertEqual({r[0] for r in self.cur.fetchall()}, TABLES | {"mx_settings"})
+        self.assertEqual({r[0] for r in self.cur.fetchall()},
+                         TABLES | {"mx_settings"} | {"mx_jobs", "mx_candidate_posts", "mx_workers"})   # 0069, 0070
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -84,7 +85,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 15)       # 0069 adds mx_settings
+        self.assertEqual(self.cur.fetchone()[0], 18)       # 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")

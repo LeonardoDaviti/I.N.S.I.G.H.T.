@@ -234,45 +234,5 @@ class Bursts(_Cands):
         self.assertEqual(self.pairs("burst"), set())
 
 
-class Debounce(unittest.TestCase):
-    def test_posts_wait_for_one_run_and_a_failed_run_keeps_them(self):
-        runs = []
-
-        class Tx:
-            def __enter__(self):
-                return "cursor"
-
-            def __exit__(self, *exc):
-                return False
-
-        pending = C.Pending(delay=None, transaction=Tx)
-        original = C.run
-        self.addCleanup(setattr, C, "run", original)
-        C.run = lambda cur, ids, since=None: runs.append((cur, set(ids), since)) or {"embedding": len(ids)}
-        pending.note(["p1", "p2"])
-        pending.note(["p2", "p3"])
-        self.assertEqual(runs, [])
-        self.assertEqual(pending.flush(), {"embedding": 3})
-        self.assertEqual(runs[0][1], {"p1", "p2", "p3"})
-        self.assertIsNotNone(pending.last_run)
-
-        def boom(cur, ids, since=None):
-            raise RuntimeError("database gone")
-        C.run = boom
-        pending.note(["p4"])
-        with self.assertLogs(C.log, "ERROR"):
-            self.assertIsNone(pending.flush())
-        self.assertEqual(pending.posts, {"p4"})
-
-    def test_a_timer_runs_it_after_the_last_note(self):
-        pending = C.Pending(delay=0.05, transaction=None)
-        done = []
-        pending.flush = lambda: done.append(set(pending.posts))
-        pending.note(["p1"])
-        pending.note(["p2"])
-        pending.timer.join(2)
-        self.assertEqual(done, [{"p1", "p2"}])
-
-
 if __name__ == "__main__":
     unittest.main()

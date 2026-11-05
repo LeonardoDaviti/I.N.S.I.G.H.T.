@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 import zipfile
@@ -142,10 +143,19 @@ def live_bytes(cur: Any, tables: List[str]) -> int:
     return total
 
 
+# An export's progress, as GET /api/export/progress/<token> reads it, is also kept in a file per token here
+# (issue 0112 Decided 11): with two API processes the progress is asked of the one that isn't streaming.
+PROGRESS_DIR = os.path.join(os.getenv("INSIGHT_RUNTIME_DIR") or os.path.join(tempfile.gettempdir(), "insight-runtime"),
+                            "export-progress")
+PUBLISH_EVERY = 1.0               # seconds between two writes of a running export's progress file
+
+
 class ExportService:
-    def __init__(self, db_url: str) -> None:
+    def __init__(self, db_url: str, progress_dir: Optional[str] = None) -> None:
         self.db_url = db_url
+        self.progress_dir = progress_dir or PROGRESS_DIR
         self._progress: Dict[str, Dict[str, Any]] = {}
+        self._published: Dict[str, float] = {}
         self._lock = threading.Lock()
 
     def info(self) -> Dict[str, Any]:
@@ -184,7 +194,38 @@ class ExportService:
     def progress(self, token: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             state = self._progress.get(token)
-            return dict(state) if state else None
+            if state:
+                return dict(state)
+        if not TOKEN.match(token or ""):
+            return None
+        try:   # the other API process's export
+            with open(os.path.join(self.progress_dir, f"{token}.json"), encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return None
+
+    def _publish(self, token: Optional[str], state: Dict[str, Any], force: bool = False) -> None:
+        """The progress file for the other API process: at most once a PUBLISH_EVERY, and at the end. Never fails
+        the export."""
+        if not token or not TOKEN.match(token):
+            return
+        now = time.monotonic()
+        if not force and now - self._published.get(token, 0.0) < PUBLISH_EVERY:
+            return
+        self._published[token] = now
+        try:
+            os.makedirs(self.progress_dir, exist_ok=True)
+            path = os.path.join(self.progress_dir, f"{token}.json")
+            with open(path + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(state, fh)
+            os.replace(path + ".tmp", path)
+            if force and state.get("bytes") == 0:   # a new export: the oldest files beyond KEPT_PROGRESS go
+                files = sorted((e for e in os.scandir(self.progress_dir) if e.name.endswith(".json")),
+                               key=lambda e: e.stat().st_mtime)
+                for old in files[:-KEPT_PROGRESS]:
+                    os.remove(old.path)
+        except OSError:
+            logger.warning("Export: could not write its progress for the other API process")
 
     def _track(self, token: Optional[str], name: str) -> Dict[str, Any]:
         state = {"file_name": name, "bytes": 0, "done": False, "error": None}
@@ -193,6 +234,7 @@ class ExportService:
                 self._progress[token] = state
                 for old in list(self._progress)[:-KEPT_PROGRESS]:
                     del self._progress[old]
+            self._publish(token, state, force=True)
         return state
 
     def stream(self, *, include_logins: bool = False, token: Optional[str] = None,
@@ -203,6 +245,11 @@ class ExportService:
         state = self._track(token, name)
         started = time.monotonic()
         sink = _Sink()
+
+        def sent() -> bytes:
+            out = self._sent(state, sink)
+            self._publish(token, state)
+            return out
         conn = db.session_connection(self.db_url)
         try:
             conn.isolation_level = IsolationLevel.REPEATABLE_READ
@@ -216,7 +263,7 @@ class ExportService:
                 archive.writestr(_entry("README.txt", now), README.format(exported_at=now.isoformat(timespec="seconds"),
                                                                           logins=logins, name=name))
                 archive.writestr(_entry("schema.sql", now), schema_sql([m["version"] for m in migrations]))
-                yield self._sent(state, sink)
+                yield sent()
                 listed = []
                 for table in tables:
                     left_out = table in LOGIN_TABLES and not include_logins
@@ -231,10 +278,10 @@ class ExportService:
                                     entry.write(buffer)
                                     buffer.clear()
                                     if sink.size:
-                                        yield self._sent(state, sink)
+                                        yield sent()
                         entry.write(buffer)
                     listed.append({"name": table, "file": f"{table}.csv", "rows": 0 if left_out else cur.rowcount})
-                    yield self._sent(state, sink)
+                    yield sent()
                 manifest = {
                     "format": FORMAT, "format_version": FORMAT_VERSION,
                     "insight_version": os.getenv("INSIGHT_VERSION") or None,
@@ -248,14 +295,17 @@ class ExportService:
                     "sequences": sequences(cur),
                 }
                 archive.writestr(_entry("manifest.json", now), json.dumps(manifest, indent=2) + "\n")
-            yield self._sent(state, sink)
+            yield sent()
             state["done"] = True
+            self._publish(token, state, force=True)
             self._remember(state["bytes"], time.monotonic() - started, stored, include_logins, now)
         except GeneratorExit:
             state["error"] = "stopped before the end"
+            self._publish(token, state, force=True)
             raise
         except Exception:
             state["error"] = "failed: check the backend logs"
+            self._publish(token, state, force=True)
             logger.exception("Export: %s failed", name)
             raise
         finally:

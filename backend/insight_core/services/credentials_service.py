@@ -17,9 +17,10 @@ substack.com whether the cookie is signed in); telegram connects and calls get_m
 """
 from __future__ import annotations
 
+import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -158,7 +159,6 @@ class CredentialsService:
     monotonic: Callable[[], float] = time.monotonic
     repo: CredentialsRepository = field(default_factory=CredentialsRepository)
     _tests: Dict[str, TestResult] = field(default_factory=dict)
-    _pending: Optional[PendingLogin] = None
 
     def __post_init__(self) -> None:
         if self.credentials is None:
@@ -355,6 +355,30 @@ class CredentialsService:
 
     # ------------------------------------------------------------------ Telegram sign-in
 
+    # The sign-in waiting for its code or password lives in the database, encrypted like every Connection
+    # (issue 0112 Decided 11): with two API processes the code can reach the one that never sent it.
+    PENDING_PROVIDER, PENDING_KEY = "telegram_sign_in", "pending"
+
+    @property
+    def _pending(self) -> Optional[PendingLogin]:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            ciphertext = self.repo.ciphertexts(cur).get((self.PENDING_PROVIDER, self.PENDING_KEY))
+        if ciphertext is None:
+            return None
+        try:
+            return PendingLogin(**json.loads(self._box().decrypt(bytes(ciphertext))))
+        except Exception:  # noqa: BLE001 - another key, or a broken row: no sign-in waiting
+            return None
+
+    @_pending.setter
+    def _pending(self, pending: Optional[PendingLogin]) -> None:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            if pending is None:
+                self.repo.delete(cur, self.PENDING_PROVIDER, self.PENDING_KEY)
+            else:
+                self.repo.upsert(cur, self.PENDING_PROVIDER, self.PENDING_KEY,
+                                 self._box().encrypt(json.dumps(asdict(pending))), None)
+
     def _live_pending(self) -> Optional[PendingLogin]:
         pending = self._pending
         if pending is not None and self.monotonic() >= pending.expires_at:
@@ -396,6 +420,7 @@ class CredentialsService:
                 pending.stage = "password"
                 pending.session = client.session_string()
                 pending.expires_at = self.monotonic() + LOGIN_TTL_S
+                self._pending = pending
                 return {"stage": "password"}
             except TelegramLoginError as exc:
                 if exc.restart:

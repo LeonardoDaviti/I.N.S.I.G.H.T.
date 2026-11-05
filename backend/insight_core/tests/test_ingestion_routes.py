@@ -278,6 +278,25 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(len(tasks.tasks), 0)
 
+    def test_two_api_processes_never_start_two_archives_of_one_source(self):
+        """0112 Decided 11: both pass the route's check at once (the other process's set is not this one's); the
+        start under its lock lets only one through."""
+        import threading
+        ops = [OperationsService(db_url()), OperationsService(db_url())]
+        got, barrier = [], threading.Barrier(2)
+
+        def start(o):
+            barrier.wait()
+            got.append(o.start_job_unless_running("archive_source", source_id=self.s1, message="Archive"))
+        threads = [threading.Thread(target=start, args=(o,)) for o in ops]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual(sorted(x is None for x in got), [False, True])
+        response = run(main.run_archive(self.s1, main.ArchiveRequest(background=True), BackgroundTasks()))
+        self.assertEqual(response.status_code, 409)
+
     def test_a_background_archive_without_job_tracking_is_503(self):
         self.use_operations(BrokenOperations(db_url()))
         tasks = BackgroundTasks()

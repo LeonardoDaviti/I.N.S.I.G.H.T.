@@ -94,6 +94,17 @@ export interface MarkxPostPanel {
     other: string; title?: string | null; reason: string | null }[];
 }
 
+/** One Mark X job's state: a running run's start and stage, work waiting for a run, how the last run ended. */
+export interface MarkxJob {
+  running: boolean;
+  started_at: string | null;
+  stage: string | null;
+  stage_at: string | null;
+  wanted_at: string | null;
+  finished_at: string | null;
+  last: { ok?: boolean; error?: string; seconds?: number } | null;
+}
+
 export interface MarkxOverview {
   worker: {
     queue: Record<string, Record<string, number>>;
@@ -104,6 +115,8 @@ export interface MarkxOverview {
     workers: { worker: string; last_contact: string | null; leased: number }[];
     last_run: { id: string; started_at: string; finished_at: string | null; code_version: string | null;
       counts: Record<string, unknown> | null } | null;
+    /** Mark X's jobs, run by insight-ingestion (issue 0112 Decided 10, 12); absent from an older API. */
+    jobs?: Record<'decide' | 'candidates', MarkxJob>;
   };
   briefing: { day: string | null; briefings: { created_at: string; guide: string | null;
     lines: { text: string; keys: string[]; stories: string[]; rows?: string[] }[] }[] };
