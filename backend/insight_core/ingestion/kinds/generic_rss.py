@@ -1,29 +1,41 @@
 """generic_rss: any RSS/Atom feed (the fallback kind). A new post whose feed gave only a
 summary is expanded from its article page (ingestion/full_text.py), and a stored teaser whose
 page read failed is read again on a later fetch (issue 0062). A live fetch asks for the feed
-conditionally (issue 0044): an unchanged feed answers 304 and is no new posts."""
+conditionally (issue 0044): an unchanged feed answers 304 and is no new posts.
+
+The archive (issue 0108): the feed, and when the site's sitemap lists more posts under the feed's
+section than the feed holds, each older one read from its page (page watch's reader: its body,
+title and date; not a post without a date or og:type article), one per archive page so the host
+gate spaces them, resumable by its checkpoint (mode "sitemap"). Nothing stored is removed."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import urllib.parse
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.ingestion import full_text
 from insight_core.ingestion.http import AddressMemory, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
+from insight_core.db.repo_posts import BACKLOG_KEY
 from insight_core.ingestion.kinds.base import (
+    ArchivePage,
     BaseKind,
     Inspection,
     PolitenessProfile,
-    SingleShotArchive,
     Source,
+    resume_counts,
 )
+from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
+from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.generic_rss")
 
 GENERIC_RSS_PROFILE = PolitenessProfile(concurrency_pool="host-lock")
+# The archive's checkpoint past the feed: an index into the site's sitemap posts (issue 0108).
+SITEMAP_MODE = "sitemap"
 
 # Which of these urls are already stored (blocking; run in a thread).
 StoredUrls = Callable[[Sequence[str]], set]
@@ -32,7 +44,7 @@ StoredUrls = Callable[[Sequence[str]], set]
 TeasersDue = Callable[..., List[Dict[str, Any]]]
 
 
-class GenericRssKind(SingleShotArchive, BaseKind):
+class GenericRssKind(BaseKind):
     name = "generic_rss"
     available_basis = "feed_window"
     conditional = True
@@ -65,15 +77,119 @@ class GenericRssKind(SingleShotArchive, BaseKind):
         return await self._read_again(source, posts)
 
     async def inspect(self, source: Source) -> Inspection:
+        """The feed's posts, and the sitemap's when it lists more of the feed's section (issue 0108):
+        then each older post is one archive page."""
         url = str(source["handle_or_url"])
         feed_text, _ = await self.http.get_text(url)
         posts = parsing.parse_feed_posts(feed_text, url)
         oldest = posts[-1]["date"] if posts else None
+        site, prefix, listed = await self._sitemap_posts(posts)
+        older = [loc for loc, _ in listed if normalize_url(loc) not in _addresses(posts)]
         return Inspection(
-            available_posts=len(posts),
-            page_size=max(1, len(posts)),
+            available_posts=len(posts) + len(older),
+            page_size=1 if older else max(1, len(posts)),
             first_post_date=iso(oldest),
+            raw={"sitemap_posts": len(older), "sitemap_prefix": prefix} if older else {},
         )
+
+    def checkpoint_resumable(self, checkpoint: Any) -> bool:
+        """An archive stopped in the sitemap's posts (issue 0108) continues there."""
+        return (isinstance(checkpoint, dict) and checkpoint.get("mode") == SITEMAP_MODE
+                and int(checkpoint.get("next_index") or 0) < int(checkpoint.get("total_candidates") or 0))
+
+    async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: Any):
+        """The feed's posts (one page), then the sitemap's older posts one page each (issue 0108),
+        resumable from the checkpoint's next_index. A feed holding the whole sitemap is one page with
+        no checkpoint, as a single fetch."""
+        url = str(source["handle_or_url"])
+        collected, pages_fetched = resume_counts(checkpoint)
+        if self.checkpoint_resumable(checkpoint):
+            held: set = set()
+            site, prefix, listed = await self._sitemap_posts([], site=checkpoint.get("site"), prefix=checkpoint.get("prefix"))
+            start = int(checkpoint["next_index"])
+        else:
+            feed_text, _ = await self.http.get_text(url)
+            feed = parsing.parse_feed_posts(feed_text, url)
+            posts = await self._read_again(source, await self._maybe_expand(source, feed[:target]))
+            held = _addresses(feed)
+            site, prefix, listed = await self._sitemap_posts(feed)
+            if not any(normalize_url(loc) not in held for loc, _ in listed):
+                yield ArchivePage(posts, None)
+                return
+            collected, pages_fetched, start = collected + len(posts), pages_fetched + 1, 0
+            yield ArchivePage(posts, self._checkpoint(site, prefix, 0, pages_fetched, collected, len(listed)))
+        stored = (await asyncio.to_thread(self.stored_urls, [loc for loc, _ in listed[start:]])
+                  if self.stored_urls and listed[start:] else set())
+        index = start
+        while index < len(listed) and collected < target:
+            loc, lastmod = listed[index]
+            index += 1
+            if loc in stored or normalize_url(loc) in held:
+                continue
+            post = await self._sitemap_post(source, loc, lastmod)
+            collected += 1 if post else 0
+            pages_fetched += 1
+            yield ArchivePage([post] if post else [], self._checkpoint(site, prefix, index, pages_fetched, collected, len(listed)))
+
+    @staticmethod
+    def _checkpoint(site: str, prefix: str, next_index: int, pages_fetched: int, collected: int, total: int) -> dict:
+        return {"mode": SITEMAP_MODE, "site": site, "prefix": prefix, "next_index": next_index,
+                "pages_fetched": pages_fetched, "collected_posts": collected, "total_candidates": total}
+
+    async def _sitemap_posts(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None,
+                             prefix: Optional[str] = None) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]]]:
+        """(the site, the feed's section, the sitemap's posts under it): the feed's items' site and the
+        path they share ("/posts/" for /posts/2021/03/a and /posts/2020/12/b; "/" for /a/ and /b/), and the
+        sitemap's addresses there, newest lastmod first, once each. No posts when the sitemap lists no more
+        of them than the feed holds, or cannot be read (issue 0108)."""
+        from insight_core.ingestion.kinds.page_watch import sitemap_entries   # page_watch imports this module
+
+        links = [p["url"] for p in posts if isinstance(p.get("url"), str) and p["url"].startswith("http")]
+        if site is None or prefix is None:
+            if not links:
+                return "", "/", []
+            site, prefix = parsing.origin_from_source(links[0], ""), feed_section(links)
+        try:
+            entries = await sitemap_entries(self.http, site + "/", prefix, posts_only=True)
+        except Exception as exc:  # noqa: BLE001 - no sitemap: the feed is the archive
+            logger.debug("Sitemap of %s not read: %s", site, exc)
+            return site, prefix, []
+        publication = publication_of(host_of(site))
+        found: Dict[str, Tuple[str, Optional[datetime]]] = {}
+        for order, (loc, lastmod) in enumerate(entries):
+            path = urllib.parse.urlparse(loc).path or "/"
+            key = normalize_url(loc)
+            if (key and publication_of(host_of(loc)) == publication and path.startswith(prefix)
+                    and path.rstrip("/") + "/" != prefix):
+                found.setdefault(key, (loc, parsing.parse_datetime_value(lastmod)))
+        if len(found) <= len(_addresses(links)) and links:
+            return site, prefix, []
+        epoch = datetime.min.replace(tzinfo=timezone.utc)
+        listed = sorted(found.values(), key=lambda entry: entry[1] or epoch, reverse=True)
+        return site, prefix, listed
+
+    async def _sitemap_post(self, source: Source, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
+        """One older post from the sitemap, read from its page as page watch reads one; None when the
+        page is no post or cannot be read (a host limiting us stops the archive: it resumes)."""
+        from insight_core.ingestion.kinds.page_watch import article_post, page_date
+
+        try:
+            page, _ = await self.http.get_text(url)
+        except HttpError as exc:
+            if exc.limiting:
+                raise
+            logger.info("Archive: %s could not be read (%s)", url, exc)
+            return None
+        except ValueError as exc:
+            logger.info("Archive: %s could not be read (%s)", url, exc)
+            return None
+        date = page_date(page)
+        if date is None and parsing.meta_content(page, "og:type").lower() != "article":
+            return None
+        post = article_post(page, str(source["handle_or_url"]), url, date or lastmod, adapter=self.name)
+        if post is not None:
+            post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
+        return post
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Read the article page of each new teaser post, one page at a time.
@@ -159,3 +275,23 @@ class GenericRssKind(SingleShotArchive, BaseKind):
                         sum(1 for post in read_again.values() if post["metadata"].get(full_text.FULL_TEXT_FLAG)))
         # A teaser still in the feed is the read-again post, once.
         return [post for post in posts if post.get("url") not in read_again] + list(read_again.values())
+
+
+def _addresses(posts_or_urls: Sequence[Any]) -> set:
+    """The normalized addresses of posts (or of addresses)."""
+    return {normalize_url(item["url"] if isinstance(item, dict) else item) for item in posts_or_urls} - {None}
+
+
+def feed_section(links: Sequence[str]) -> str:
+    """The path a feed's items share, their own last segment and a date's folders after it aside
+    (issue 0108): "/posts/" for /posts/2021/03/a and /posts/2020/12/b (or /posts/2020/10/a alone),
+    "/" for /a/ and /b/."""
+    folders = [parsing.path_segments(link)[:-1] for link in links]
+    shared: List[str] = []
+    for parts in zip(*folders):
+        if len(set(parts)) != 1:
+            break
+        shared.append(parts[0])
+    while shared and shared[-1].isdigit():
+        shared.pop()
+    return "/" + "".join(f"{part}/" for part in shared)

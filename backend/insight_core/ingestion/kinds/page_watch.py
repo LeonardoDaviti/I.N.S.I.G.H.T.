@@ -229,8 +229,16 @@ async def _shared(reads: Optional[SiteReads], url: str,
     return await asyncio.shield(reads[url])
 
 
+async def sitemap_entries(http: KindHttp, listing: str, prefix: str, *, posts_only: bool = False
+                          ) -> List[Tuple[str, Optional[str]]]:
+    """(loc, lastmod) of the site's sitemap, as discovery reads it (robots.txt's Sitemap lines, else
+    /sitemap.xml; an index followed). posts_only: of an index, only the children naming posts, when
+    it has any (issue 0108: a feed's archive reads a blog's post sitemap, not its tags or authors)."""
+    return await _sitemap_entries(http.get_start, http, listing, prefix, posts_only=posts_only)
+
+
 async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: str,
-                           reads: Optional[SiteReads] = None) -> List[Tuple[str, Optional[str]]]:
+                           reads: Optional[SiteReads] = None, *, posts_only: bool = False) -> List[Tuple[str, Optional[str]]]:
     origin = parsing.origin_from_source(listing, "")
     try:
         robots, _ = await _shared(reads, f"{origin}/robots.txt", lambda: http.get_text(f"{origin}/robots.txt"))
@@ -255,6 +263,8 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
+            if posts_only:
+                children = [child for child in children if "post" in child.rsplit("/", 1)[-1].lower()] or children
             queue.extend(sorted(children, key=lambda child: not (section and section in child or "post" in child)))
         else:
             entries.extend((loc, lastmod) for loc, lastmod in locs if loc)
@@ -543,4 +553,4 @@ class PageWatchKind(BaseSourceAdapter):
 
 
 __all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "discover_changed", "infer_prefix", "is_home",
-           "normalise_prefix", "offers", "page_date", "page_title", "preview"]
+           "normalise_prefix", "offers", "page_date", "page_title", "preview", "sitemap_entries"]
