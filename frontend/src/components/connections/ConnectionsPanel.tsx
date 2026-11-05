@@ -8,6 +8,7 @@ import ConnectionField from './ConnectionField';
 import SubstackHowTo from './SubstackHowTo';
 import TelegramSignIn from './TelegramSignIn';
 import TestButton from './TestButton';
+import MarkXToken from './MarkXToken';
 import { providerStatus } from './connectionStatus';
 import { useConnections } from './useConnections';
 
@@ -98,6 +99,7 @@ export default function ConnectionsPanel({ initialOpen }: { initialOpen?: string
           />
         ))}
       </ul>
+      <MarkXToken />
     </section>
   );
 }
