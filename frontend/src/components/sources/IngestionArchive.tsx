@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { ArchiveCatalogEntry } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
-import { waitingLine } from '../../lib/archive';
+import { waitingLine } from '../../lib/archiveWaiting';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';

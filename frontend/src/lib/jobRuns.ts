@@ -6,7 +6,7 @@
  */
 import type { Status } from '../components/ui/styles';
 import type { ArchiveWaiting, JobRun } from '../services/api';
-import { waitingLine } from './archive.ts';
+import { waitingLine } from './archiveWaiting.ts';
 import { toDate } from './dates.ts';
 import { formatElapsed } from './duration.ts';
 import { asRunReport, summarizeRunReport } from './runReport.ts';
