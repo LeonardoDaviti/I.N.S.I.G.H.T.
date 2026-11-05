@@ -398,6 +398,11 @@ def start_jobs() -> bool:
     return decide.scheduler.start()
 
 
+def after_start_stories() -> None:
+    """When the start's story job has finished (main.py): Mark X's first decision run, only when Mark X is on."""
+    decide.scheduler.after_stories()
+
+
 @router.get("/on")
 def switched_on():
     return {"on": True}

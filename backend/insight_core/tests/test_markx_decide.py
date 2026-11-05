@@ -559,6 +559,30 @@ class Switch(unittest.TestCase):
             time.sleep(0.3)
         self.assertEqual(ran, ["cur"])
 
+    def test_the_first_run_follows_the_starts_story_job(self):
+        """0112 A: the start's story job ends, then Mark X decides at once (it waited up to an hour for the clock)."""
+        import contextlib
+        ran = []
+
+        @contextlib.contextmanager
+        def transaction():
+            yield "cur"
+        with mock.patch.object(D, "run", lambda cur: ran.append(cur) or {"stories": 0}):
+            D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: False).after_stories()
+            self.assertEqual(ran, [])
+            with mock.patch("insight_core.markx.candidates.pending.flush") as flush:
+                D.Scheduler(transaction=transaction, debounce=None, every=None, enabled=lambda: True).after_stories()
+            flush.assert_called_once()
+        self.assertEqual(ran, ["cur"])
+
+    def test_the_api_start_runs_mark_x_after_the_story_job(self):
+        import main
+        order = []
+        with mock.patch.object(main, "in_own_process", lambda job: order.append(job.__name__)), \
+                mock.patch.object(D.scheduler, "after_stories", lambda: order.append("markx")):
+            main.start_stories()
+        self.assertEqual(order, ["recompute_stories", "markx"])
+
     def test_on_a_failed_run_never_raises(self):
         def broken():
             raise RuntimeError("no database")

@@ -26,7 +26,8 @@ Two layers:
     answers into verdicts; and writes Mark X's stories, memberships and connections (closing what changed, never
     deleting), then Mark X's News (markx/news.py). Each run is one mx_runs row. It writes only mx_* tables.
 
-When it runs (`Scheduler`): after the worker's uploads (answers and vectors, debounced), and hourly, only when
+When it runs (`Scheduler`): when the API start's story job finishes, after the worker's uploads (answers and
+vectors, debounced), and hourly, only when
 INSIGHT_MARKX is on, one run at a time (a Postgres advisory lock across processes).
 """
 from __future__ import annotations
@@ -983,6 +984,13 @@ class Scheduler:
         self.thread = threading.Thread(target=self._hourly, name="markx-decide", daemon=True)
         self.thread.start()
         return True
+
+    def after_stories(self) -> Optional[Dict[str, Any]]:
+        """The API's start: its story job has finished, so Mark X decides now over Mark IX's new stories (0112 A),
+        not up to EVERY seconds later; nothing when Mark X is off."""
+        if not self.on():
+            return None
+        return self.run_now(candidates_first=True)
 
     def _hourly(self) -> None:
         while not self.stop.wait(self.every):
