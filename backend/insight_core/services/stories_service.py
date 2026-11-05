@@ -980,7 +980,7 @@ def _archive_rows(rows: List[Dict[str, Any]], states: Dict[str, Dict[str, Any]],
     for a in rows:
         state = dict(states.get(a["source_id"], {"state": None, "found": 0}))
         stored = set(state.pop("stored_urls", ()))
-        newest, prefix = state.pop("newest", None), _prefix(state.pop("prefix", None))
+        newest, prefix, host = state.pop("newest", None), _prefix(state.pop("prefix", None)), state.pop("host", None)
         missing = [url for url in a["pages"] if url not in stored]
         if not missing:
             continue
@@ -995,9 +995,13 @@ def _archive_rows(rows: List[Dict[str, Any]], states: Dict[str, Dict[str, Any]],
         stopped = newest is not None and (now - newest).days >= STOPPED_DAYS
         if stopped:
             row["stopped"] = newest.isoformat()
-        under = [url for url in missing if not prefix or _url_path(url).startswith(prefix)]
+        # A page watch reads its own host's section (issue 0111): another host's page is named by its host.
+        def own(url: str) -> bool:
+            return not host or host_of(url).removeprefix("www.") == host
+        under = [url for url in missing if not prefix or (own(url) and _url_path(url).startswith(prefix))]
         if prefix and len(under) < len(missing):
-            row["watches"] = {"prefix": prefix, "not": sorted({"/" + _url_path(url).strip("/").split("/")[0]
+            row["watches"] = {"prefix": prefix, "not": sorted({("/" + _url_path(url).strip("/").split("/")[0]) if own(url)
+                                                               else host_of(url).removeprefix("www.")
                                                                for url in missing if url not in under})}
         row["archivable"] = 0 if stopped else len(under)
         out.append(row)
