@@ -383,6 +383,7 @@ class PageWatchPreviewRequest(BaseModel):
 class SavePageRequest(BaseModel):
     url: str = ""
     title: str | None = None     # the page's title as the bookmarklet read it
+    after_fetch: bool = False    # issue 0122: the fetch it waited for is done; save now, fetch nothing
 
 
 class SwitchSourceRequest(BaseModel):
@@ -886,17 +887,44 @@ async def preview_page_watch(request: PageWatchPreviewRequest):
     return {"success": True, **await page_watch.preview(FEED_FINDER_HTTP, request.url, request.prefix)}
 
 
+@app.get("/api/saved/source")
+@error_detail("find the page's source")
+async def get_saved_page_source(url: str = Query("", max_length=4000)):
+    """Whose page this is (issue 0122): {source: {id, name}} of the followed source whose post page
+    the address is (0084 B's rule), else {source: null}. The save page says "Fetch <source>". Read
+    only; nothing is fetched."""
+    address = web_address(url, "An address is needed")
+    return {"success": True, "source": await asyncio.to_thread(services().saved.page_source, address)}
+
+
 @app.post("/api/saved")
 @error_detail("save the page")
-async def save_page(request: SavePageRequest):
+async def save_page(request: SavePageRequest, background_tasks: BackgroundTasks):
     """Save any page (issue 0031) as an unread post of the Saved source, created by the first
-    save. {status: saved, post_id, title, source_id, readable, reason, feed} or, for a page
-    already stored, {status: already, post_id, title}. readable false: the page could not be
-    read as an article and was saved with its title and address (reason says why, never the
-    site's answer). feed: a feed of the site that is not a source yet ({url, title}), or null.
+    save. {status: saved, post_id, title, source_id, source, readable, reason, feed} or, for a page
+    already stored, {status: already, post_id, title, source_id, source}. readable false: the page
+    could not be read as an article and was saved with its title and address (reason says why, never
+    the site's answer). feed: a feed of the site that is not a source yet ({url, title}), or null.
     400 when url is empty or not http(s). A POST from INSIGHT's own save page: a website cannot
-    save silently."""
-    return await services().saved.save(FEED_FINDER_HTTP, request.url, request.title)
+    save silently.
+
+    A page of a source you follow (issue 0122): {status: fetching, job_id, source {id, name}, title}
+    first, the source's live fetch (an ingestion_run job, as Fetch now; one already running is that
+    one; none when the source was tried in the last 15 minutes or is in backoff). Wait for the job,
+    then POST again with after_fetch: "already" when the fetch brought the page, else saved as the
+    source's post (source {id, name}, metadata.saved_by_owner). Only this click fetches."""
+    async def fetch(source_id: str) -> Optional[str]:
+        run = FetchRequest(SourceSelector.source(source_id), Trigger.MANUAL, force=True)
+        job_id = await asyncio.to_thread(
+            services().operations.start_job_unless_running, "ingestion_run", trigger="manual", source_id=source_id,
+            message=f"Fetch source {source_id} before saving its page",
+            payload={"selector": run.selector.as_dict(), "force": True, "limit": None, "for_save": True})
+        if job_id:
+            background_tasks.add_task(_run_async_job_background, "ingestion_run", _run_ingestion_job, run, job_id=job_id)
+        return job_id
+
+    return await services().saved.save(FEED_FINDER_HTTP, request.url, request.title, fetch=fetch,
+                                       after_fetch=request.after_fetch)
 
 
 @app.get("/api/news")

@@ -29,6 +29,9 @@ TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.|\[(?:…|\.\.\.)\])\s*$")
 # metadata key of where a post's page moved (issue 0108): the normalized address its page's
 # redirect stub named, where its article was read. The story job makes the two one page.
 MOVED_KEY = "moved_to"
+# metadata key of a page you saved (issue 0122): when you saved it. A page of a source you follow is
+# saved as that source's post with it; a feed that brings the page later keeps it (one post).
+SAVED_KEY = "saved_by_owner"
 REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more

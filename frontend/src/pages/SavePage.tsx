@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Button, Input, Page, PageHeader, TextLink } from '../components/ui';
 import { Notice } from '../components/states';
 import { useApi } from '../services/ApiContext';
-import type { FoundFeed, SavedPage } from '../services/api';
+import type { FoundFeed, PageSource, SavedPage } from '../services/api';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { SOURCES_HEALTH_KEY } from '../hooks/useSourcesHealth';
 import { useIngestionRun } from '../hooks/useIngestionRun';
@@ -47,11 +47,26 @@ function FeedNudge({ feed }: { feed: FoundFeed }) {
 
 function SavedResult({ result }: { result: SavedPage }) {
   const read = result.post_id ? <TextLink to={postHref(result.post_id, null)}>Read it</TextLink> : null;
-  const saved = result.source_id ? <TextLink to={sourceReadPath(result.source_id)}>Saved</TextLink> : 'Saved';
+  // A followed source's page (issue 0122) is its post; any other page is the Saved source's.
+  const name = result.source ? sourceLabel(result.source.name) : 'Saved';
+  const saved = result.source_id ? <TextLink to={sourceReadPath(result.source_id)}>{name}</TextLink> : name;
   // Every save goes to Later at the time it was saved (issue 0022, owner's decision).
   const later = <TextLink to={LATER_PATH}>Later</TextLink>;
   if (result.status === 'already') {
-    return <Notice tone="status" title="Already in INSIGHT" message={<>{result.title ? `${result.title}. ` : null}It’s in {later}. {read}</>} />;
+    const title = result.fetched && result.source ? `Found in ${name}` : 'Already in INSIGHT';
+    return <Notice tone="status" title={title} message={<>{result.title ? `${result.title}. ` : null}It’s in {later}. {read}</>} />;
+  }
+  if (result.source) {
+    // Looked for under its source first (issue 0122): the feed doesn't list it, so it is kept as the source's post.
+    const why = result.fetched ? `${name}’s feed doesn’t list it, so it’s kept` : 'It’s kept';
+    const text = result.readable === false ? ` (its text couldn’t be read${result.reason ? `: ${result.reason}` : ''})` : '';
+    return (
+      <Notice
+        tone={result.readable === false ? 'warning' : 'completion'}
+        title={`Saved as ${name}’s post`}
+        message={<>{why} in {saved} as saved by you{text}, and in {later}, unread. {read}</>}
+      />
+    );
   }
   if (result.readable === false) {
     return (
@@ -80,15 +95,25 @@ export default function SavePage() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<SavedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fetching, setFetching] = useState<PageSource | null>(null);
   const url = given || typed.trim();
+  // A page of a source you follow (issue 0122): Save fetches that source first, and says so.
+  const owner = useQuery({
+    queryKey: ['saved-source', given],
+    queryFn: () => api.pageSource(given),
+    enabled: Boolean(given),
+    staleTime: 60_000,
+    retry: false,
+  }).data ?? null;
 
   const save = async (event?: FormEvent) => {
     event?.preventDefault();
     if (!url || saving) return;
     setSaving(true);
     setError(null);
-    const response = await api.savePage(url, given ? givenTitle : undefined);
+    const response = await api.savePage(url, given ? givenTitle : undefined, { onFetching: setFetching });
     setSaving(false);
+    setFetching(null);
     if (!response.success) {
       setError(response.error || 'Could not save the page');
       return;
@@ -112,6 +137,11 @@ export default function SavePage() {
           <div className="space-y-1 rounded-md border border-line p-4">
             <p className="break-words text-[1rem] font-semibold text-fg">{givenTitle || publicationOf(given) || given}</p>
             <p className="text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">{publicationOf(given) || given}</p>
+            {owner && !result ? (
+              <p className="text-[0.8125rem] text-fg-2">
+                A page of {sourceLabel(owner.name)}, which you follow: its feed is fetched first, and the page is saved as its post if the feed doesn’t list it.
+              </p>
+            ) : null}
           </div>
         ) : !result ? (
           <form id="save-page" onSubmit={(event) => void save(event)} className="space-y-1.5">
@@ -151,7 +181,7 @@ export default function SavePage() {
                 disabled={!url || saving}
                 aria-busy={saving}
               >
-                {saving ? 'Saving…' : 'Save'}
+                {fetching ? `Fetching ${sourceLabel(fetching.name)}…` : saving ? 'Saving…' : owner ? `Fetch ${sourceLabel(owner.name)}` : 'Save'}
               </Button>
               {given ? <Button variant="ghost" onClick={() => window.close()}>Cancel</Button> : null}
             </div>

@@ -2,7 +2,8 @@
 link and that no stored post is.
 
 One function, `linked_not_stored`, for the Archive section's count, the job that fetches them, and
-0114's wanted links (the same set with `since`: only the links of posts published since then).
+0114's wanted links (the same set with `since`: only the links of posts published since then). And
+`page_source`, the same rule for one address: the followed source a page you save belongs to (issue 0122).
 
 - **Whose page** a link is: utils/linked_rules.OwnPages, learned from every source's stored posts (the
   shapes of its post pages on its publication; on a platform, the account it follows, as 0065 reads it).
@@ -49,22 +50,11 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
     """{followed source: its pages linked and not stored, the most linked first, then the first linked},
     for every followed source or those of `source_ids`; with `since`, only links of posts published
     since then. A source with none is left out."""
-    cur.execute("SELECT id::text, platform, handle_or_url, enabled FROM sources")
-    rows = cur.fetchall()
-    kinds = {sid: source_kind(platform, handle) for sid, platform, handle, _ in rows}
-    followed = {sid for sid, *_, enabled in rows if enabled and kinds[sid] != "saved"}
-    wanted = followed if source_ids is None else followed & {str(s) for s in source_ids}
+    followed = _followed(cur)
+    wanted = set(followed) if source_ids is None else set(followed) & {str(s) for s in source_ids}
     if not wanted:
         return {}
-    cur.execute("SELECT source_id::text, COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%s::uuid[])",
-                (sorted(followed),))
-    addresses: Dict[str, List[str]] = defaultdict(list)
-    for sid, url in cur.fetchall():
-        addresses[sid].append(url)
-    facts = SourceFacts(cur)
-    homes = {sid: {facts.handle_site.get(sid), facts.home_site(sid)} - {None, ""} for sid in followed}
-    own = OwnPages({sid: (kinds[sid], source_account(platform, handle), homes[sid], addresses.get(sid, ()))
-                    for sid, platform, handle, _ in rows if sid in followed})
+    own, addresses, homes = _own_pages(cur, followed)
 
     links: Dict[str, Dict[str, Optional[datetime]]] = defaultdict(dict)   # page -> {linking post: its date}
 
@@ -102,6 +92,42 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
     for pages in out.values():
         pages.sort(key=lambda page: (-page.posts, page.first_linked_at or LAST, page.url))
     return dict(out)
+
+
+def page_source(cur: Cursor, url: str) -> Optional[str]:
+    """The followed (enabled) source whose post page this address is (OwnPages.owner, the rule above),
+    else None. Issue 0122: a page you save is first looked for under its source."""
+    followed = _followed(cur)
+    if not followed or not normalize_url(url):
+        return None
+    own, _, _ = _own_pages(cur, followed)
+    return own.owner(url)
+
+
+def _followed(cur: Cursor) -> Dict[str, Tuple[str, Optional[str], Optional[str]]]:
+    """The followed sources: enabled, not Saved. {id: (kind, platform, address)}."""
+    cur.execute("SELECT id::text, platform, handle_or_url, enabled FROM sources")
+    out = {}
+    for sid, platform, handle, enabled in cur.fetchall():
+        kind = source_kind(platform, handle)
+        if enabled and kind != "saved":
+            out[sid] = (kind, platform, handle)
+    return out
+
+
+def _own_pages(cur: Cursor, followed: Dict[str, Tuple[str, Optional[str], Optional[str]]]
+               ) -> Tuple[OwnPages, Dict[str, List[str]], Dict[str, Set[str]]]:
+    """(OwnPages learned from the followed sources' stored posts, their posts' addresses, their sites)."""
+    cur.execute("SELECT source_id::text, COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%s::uuid[])",
+                (sorted(followed),))
+    addresses: Dict[str, List[str]] = defaultdict(list)
+    for sid, url in cur.fetchall():
+        addresses[sid].append(url)
+    facts = SourceFacts(cur)
+    homes = {sid: {facts.handle_site.get(sid), facts.home_site(sid)} - {None, ""} for sid in followed}
+    own = OwnPages({sid: (kind, source_account(platform, handle), homes[sid], addresses.get(sid, ()))
+                    for sid, (kind, platform, handle) in followed.items()})
+    return own, addresses, homes
 
 
 def _own_links(cur: Cursor, hosts: List[str], since: Optional[datetime]
@@ -147,4 +173,4 @@ def _stored(cur: Cursor, urls: List[str]) -> Set[str]:
     return stored
 
 
-__all__ = ["LinkedPage", "linked_not_stored"]
+__all__ = ["LinkedPage", "linked_not_stored", "page_source"]

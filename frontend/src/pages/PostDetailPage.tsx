@@ -1110,6 +1110,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               </span>
             )}
             {post.repost ? <span>{repostLine(post.repost)}</span> : null}
+            {/* A page you saved that is its source's post (issue 0122): "<source> · saved by you". */}
+            {post.metadata?.saved_by_owner && post.platform !== 'saved' ? <span className="whitespace-nowrap">· saved by you</span> : null}
             {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
             {publishedLabel ? (
               <span className="whitespace-nowrap">

@@ -312,6 +312,8 @@ function FeedItem({
                 {middleTruncate(source, 56)}
               </TextLink>
             ) : null}
+            {/* A page you saved that is its source's post (issue 0122). */}
+            {item.saved_by_you ? <span className="shrink-0">{showSource ? '· ' : ''}saved by you</span> : null}
             {/* On a phone the time column's time joins the meta line (issue 0073). */}
             <Dot wide={false} phone={showSource} />
             <time dateTime={time} title={fullTime} className="shrink-0 sm:hidden">
