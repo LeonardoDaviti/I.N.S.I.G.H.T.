@@ -138,15 +138,18 @@ class Watchdog:
         if len(self.restarts) >= self.cap:
             if self.gave_up_at is None:
                 self.gave_up_at = now
-                message = (f"The API keeps failing: {len(self.restarts)} restarts in the last hour, so no more until "
-                           f"{_hm(min(self.restarts) + self.window)}; it has not answered for {failing_for / 60:.0f} min")
-                logger.error("API watchdog: %s", message)
-                self._record("gave_up", message, failing_for)
+                until = min(self.restarts) + self.window
+                # No clock time in the message (0124): the container's zone is UTC, the reader's isn't. The times
+                # are ISO UTC in the payload ("at", "until"), and the page writes them in the reader's zone.
+                message = (f"The API keeps failing: {len(self.restarts)} restarts in the last hour, so no more for "
+                           f"{max(0.0, until - now) / 60:.0f} min; it has not answered for {failing_for / 60:.0f} min")
+                logger.error("API watchdog: %s (until %s)", message, _iso(until))
+                self._record("gave_up", message, failing_for, at=now, until=until, restarts=len(self.restarts))
             return "gave_up"
         self.gave_up_at = None   # under the cap again
-        message = f"The API was restarted at {_hm(now)} after {failing_for / 60:.0f} min of no answer"
+        message = f"The API was restarted after {failing_for / 60:.0f} min of no answer"
         logger.error("API watchdog: %s (%s)", message, self.url)
-        job_id = self._record("restart", message, failing_for)
+        job_id = self._record("restart", message, failing_for, at=now)
         try:
             _write_json(self._path(REQUEST), {"at": _iso(now), "reason": f"{self.url} did not answer {self.failures} times",
                                               "failing_seconds": round(failing_for), "job_id": job_id})
@@ -157,9 +160,14 @@ class Watchdog:
         self.quiet_until = now + self.cooldown
         return "restart"
 
-    def _record(self, kind: str, message: str, failing_for: float) -> Optional[str]:
-        payload = {"kind": kind, "check": self.url, "failing_seconds": round(failing_for),
-                   "log_tail": tail(self._path(APP_LOG))}
+    def _record(self, kind: str, message: str, failing_for: float, *, at: float, until: Optional[float] = None,
+                restarts: Optional[int] = None) -> Optional[str]:
+        payload: Dict[str, Any] = {"kind": kind, "check": self.url, "failing_seconds": round(failing_for), "at": _iso(at),
+                                   "log_tail": tail(self._path(APP_LOG))}
+        if until is not None:
+            payload["until"] = _iso(until)
+        if restarts is not None:
+            payload["restarts"] = restarts
         try:
             job_id = self.ops.start_job(JOB_TYPE, trigger="watchdog", message=message, payload=payload)
             self.ops.finish_job(job_id, status="failed", message=message, payload=payload)
@@ -202,10 +210,6 @@ class Watchdog:
         thread.start()
         logger.info("API watchdog: checking %s every %.0f s", self.url, interval)
         return thread
-
-
-def _hm(t: float) -> str:
-    return datetime.fromtimestamp(t).strftime("%H:%M")
 
 
 def _iso(t: float) -> str:

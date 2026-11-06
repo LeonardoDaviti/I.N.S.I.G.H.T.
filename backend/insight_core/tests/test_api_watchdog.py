@@ -69,7 +69,7 @@ class Judge(unittest.TestCase):
         self.assertEqual(req["job_id"], "job-1")
         job = self.ops.jobs[0]
         self.assertEqual((job["job_type"], job["trigger"], job["finished"]["status"]), ("api_restart", "watchdog", "failed"))
-        self.assertIn("The API was restarted at", job["message"])
+        self.assertIn("The API was restarted after", job["message"])
         self.assertEqual(job["payload"]["log_tail"], [f"line {n}" for n in range(30, 80)])   # the last 50 lines
         # five minutes of quiet: no judging, however it fails
         self.assertEqual([self.step(dog) for _ in range(9)], ["cooling"] * 9)
@@ -125,6 +125,40 @@ class Judge(unittest.TestCase):
         self.assertEqual(self.ops.events[0][0], "job-7")
         self.assertIn("debug_spin", self.ops.events[0][1]["fields"]["stacks"])
         self.assertFalse(os.path.exists(os.path.join(self.dir, W.DONE)))
+
+
+class TimesForTheReader(unittest.TestCase):
+    """0124 (the v10.0.2 review's W7): "The API was restarted at 10:53" (the container's UTC) sat over the page's
+    "2:53:23 PM". The record says no clock time: the times are ISO UTC in its payload, and the page writes them in
+    the reader's zone."""
+
+    def setUp(self):
+        Judge.setUp(self)
+
+    dog, step = Judge.dog, Judge.step
+
+    def test_a_restart_record_has_its_time_in_the_payload_not_in_the_message(self):
+        dog = self.dog()
+        with self.assertLogs(W.logger, "WARNING"):
+            for _ in range(4):
+                self.step(dog)
+        job = self.ops.jobs[0]
+        self.assertEqual(job["message"], "The API was restarted after 2 min of no answer")
+        self.assertEqual(job["payload"]["at"], "1970-01-12T13:48:40+00:00")
+        self.assertNotRegex(job["finished"]["message"], r"\d:\d\d")
+
+    def test_a_give_up_record_has_until_in_the_payload(self):
+        self.ops = FakeOps(recent=[self.now[0] - 600, self.now[0] - 500, self.now[0] - 400])
+        dog = self.dog()
+        with self.assertLogs(W.logger, "WARNING"):
+            for _ in range(4):
+                self.step(dog)
+        job = self.ops.jobs[-1]
+        self.assertEqual(job["payload"]["kind"], "gave_up")
+        self.assertEqual(job["payload"]["restarts"], 3)
+        self.assertEqual(job["payload"]["until"], W._iso(1_000_000 - 600 + 3600))
+        self.assertNotRegex(job["message"], r"\d:\d\d")
+        self.assertIn("no more for 48 min", job["message"])
 
 
 class Door(unittest.TestCase):
