@@ -94,3 +94,5 @@ From main e162228 with 0122's branch merged (its save path and its dedup are the
 - `services/operations_service.py`, `main.py`: `collect_originals` in the scheduler's settings (default false).
 - Frontend: the switch in the Scheduler dialog; "· collected original" on the post page.
 - Tests: `test_originals_rules.py` (7), `schedulerDialog.test.tsx` (1), `test_story_originals.py` (9: 0114 due once, settles, no story/no credit/recent fetch; the credit; off by default; on: read once, its own date, not in Later, joins as root, never asked again; walled: no request, no token kept; unreadable not stored; a tweet from its quote).
+
+**The real-data check** (`scripts/realdata-check.sh --base main --head 83cfb69 insight_lab`, 2026-11-06): **PASS**, no case changes state, no invariant rises, 0 News lead changes, News, Classics, Discover and story origins unchanged. The diff is 0113's (below). 0123 and 0114 change nothing until the scheduler runs them (the check runs no fetch), and Collect originals is off.

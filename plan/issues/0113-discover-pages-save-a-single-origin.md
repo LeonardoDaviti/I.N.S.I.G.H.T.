@@ -78,3 +78,8 @@ Status: **built** (branch `issue-0113-0114-0123`, 2026-11-06), changed by its me
 - Frontend: Discover's tabs **Sources** and **Pages** (`components/sources/DiscoverPages.tsx`): Save page (`api.savePage`, 0122's path: a followed source's page is fetched there first), Follow site… (Discover's follow), Hide.
 - On the server's copy the built list is 50 rows: 3 with no article, 12 tweets, 5 "probably can't be read".
 - Tests: `test_discover_pages.py` (4), `discoverPages.test.tsx` (5).
+
+**The real-data check** (`--base main --head 83cfb69 insight_lab`, 2026-11-06): **PASS**; no case changes state, no invariant rises, 0 News lead changes. The diff is this rule on the lab's one affected saved page, a code repository saved at the copy's clock and linked by 5 sources in March:
+- main: the saved page joined nothing, so the link join among its linkers was gone: the author's thread was a story of 4 posts, the 4 channels' and the blog's posts linking the repository in no story;
+- now: one story of 9 (the thread, the 4 others and the saved page as its root): 5 posts "joined a story", the thread "gained posts", 2 parent reasons (the author's first post cites the saved page);
+- 16 roundup counts: posts listing that repository among their links now list a story (8 "a roundup of other stories", 7 "became a roundup"), and the saved page itself is no longer counted as one.

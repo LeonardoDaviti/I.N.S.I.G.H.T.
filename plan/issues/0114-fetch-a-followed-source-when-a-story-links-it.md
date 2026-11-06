@@ -81,3 +81,4 @@ As written it was +1.44% requests (26 days) and 4 in 5 early fetches found nothi
 - The runner runs it after a scheduler run's story job (`runner.originals`); never a Fetch now in the API.
 - Tests: `test_fetch_schedule.py` (+1), `test_originals_rules.py`, `test_story_originals.py` (FetchLinkedTests).
 - Not built: "the original arrived 12 min after a story linked it" in the story's post panel, and the source's health row's link (the decision's detail carries it).
+- The real-data check (`--base main --head 83cfb69 insight_lab`): PASS; no change of its own (the check runs no fetch; the decision only exists once the planner asks).
