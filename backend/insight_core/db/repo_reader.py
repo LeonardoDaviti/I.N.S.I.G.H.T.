@@ -46,7 +46,7 @@ from insight_core.utils.addresses import x_account
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.story_rules import named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
-from insight_core.utils.post_fields import TITLE_TEXT_CHARS
+from insight_core.utils.post_fields import SAVED_KEY, TITLE_TEXT_CHARS
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -335,7 +335,7 @@ _ITEM_COLUMNS = f"""
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
-    pp.quote_only, pp.counts
+    pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved'
 """
 
 
@@ -375,6 +375,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "update": row[17],
         # A repost (issue 0066): "↻ @by, from @author".
         "repost": repost_of(platform, row[20], row[18], row[19]),
+        # A page you saved that is a followed source's post (issue 0122): "<source> · saved by you".
+        "saved_by_you": bool(row[23]),
     }
 
 

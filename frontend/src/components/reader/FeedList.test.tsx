@@ -163,6 +163,17 @@ describe('FeedList', () => {
     expect((await row('Plain post')).querySelector('[data-page-note]')).toBeNull();
   });
 
+  it('a page you saved that is its source’s post says “<source> · saved by you” (issue 0122)', async () => {
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Saved essay', source_display_name: 'Example Blog', saved_by_you: true }),
+      feedItem({ id: ID(2), title: 'Fetched essay', source_display_name: 'Example Blog' }),
+    ])) });
+    const row = async (title: string) => (await screen.findByRole('link', { name: title })).closest('article') as HTMLElement;
+    expect(within(await row('Saved essay')).getByText('· saved by you')).toBeInTheDocument();
+    expect(within(await row('Saved essay')).getByRole('link', { name: 'Example Blog' })).toBeInTheDocument();
+    expect(within(await row('Fetched essay')).queryByText(/saved by you/)).not.toBeInTheDocument();
+  });
+
   it('coming back from a post selects and focuses the post read last', async () => {
     rememberSelection(ID(2));
     setup();

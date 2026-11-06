@@ -16,7 +16,7 @@ const ARTICLE = 'https://www.example.com/2026/10/an-essay';
 function renderSave(route: string, answer: Partial<SavedPage> = {}, extra: Record<string, unknown> = {}) {
   const savePage = vi.fn().mockResolvedValue({ success: true, status: 'saved', post_id: 'p1', title: 'An essay',
     source_id: 's1', readable: true, reason: null, feed: null, ...answer });
-  const api = makeFakeApi({ savePage, ...extra });
+  const api = makeFakeApi({ savePage, pageSource: vi.fn().mockResolvedValue(null), ...extra });
   renderWithProviders(<Routes><Route path="/save" element={<SavePage />} /></Routes>, { api, route });
   return { savePage, api };
 }
@@ -31,7 +31,7 @@ describe('/save from the bookmarklet', () => {
     expect(screen.getByText('example.com')).toBeInTheDocument();
     expect(savePage).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(savePage).toHaveBeenCalledWith(ARTICLE, 'An essay | Example');
+    expect(savePage).toHaveBeenCalledWith(ARTICLE, 'An essay | Example', expect.anything());
     expect(await screen.findByText('Saved to INSIGHT')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Read it' })).toHaveAttribute('href', '/posts/p1');
     expect(screen.getByRole('link', { name: 'Saved' })).toHaveAttribute('href', '/read/source/s1');
@@ -77,12 +77,48 @@ describe('/save from the bookmarklet', () => {
   });
 });
 
+describe('/save, a page of a source you follow (issue 0122)', () => {
+  const BLOG = { id: 's9', name: 'Example Blog' };
+  const owned = { pageSource: vi.fn().mockResolvedValue(BLOG) };
+
+  it('offers to fetch the source, and says so while it fetches', async () => {
+    let finish: (value: SavedPage) => void = () => {};
+    const savePage = vi.fn((_url: string, _title?: string, options?: { onFetching?: (source: typeof BLOG) => void }) => {
+      options?.onFetching?.(BLOG);
+      return new Promise<SavedPage>((resolve) => { finish = resolve; });
+    });
+    renderSave(fromBookmarklet, {}, { ...owned, savePage });
+    const fetch = await screen.findByRole('button', { name: 'Fetch Example Blog' });
+    expect(screen.getByText(/A page of Example Blog, which you follow: its feed is fetched first/)).toBeInTheDocument();
+    await userEvent.click(fetch);
+    expect(await screen.findByRole('button', { name: 'Fetching Example Blog…' })).toBeDisabled();
+    finish({ success: true, status: 'already', post_id: 'p9', title: 'An essay', source_id: 's9', source: BLOG, fetched: true });
+    expect(await screen.findByText('Found in Example Blog')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Read it' })).toHaveAttribute('href', '/posts/p9');
+  });
+
+  it('the feed doesn’t list it: saved as the source’s post, saved by you', async () => {
+    renderSave(fromBookmarklet, { source_id: 's9', source: BLOG, fetched: true }, owned);
+    await userEvent.click(await screen.findByRole('button', { name: 'Fetch Example Blog' }));
+    expect(await screen.findByText('Saved as Example Blog’s post')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Read it' }).parentElement).toHaveTextContent(
+      'Example Blog’s feed doesn’t list it, so it’s kept in Example Blog as saved by you, and in Later, unread. Read it');
+    expect(screen.getByRole('link', { name: 'Example Blog' })).toHaveAttribute('href', '/read/source/s9');
+  });
+
+  it('a page no source of yours owns keeps Save', async () => {
+    renderSave(fromBookmarklet);
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.queryByText(/which you follow/)).not.toBeInTheDocument();
+  });
+});
+
 describe('/save from ⌘K', () => {
   it('takes a pasted address and saves it on Enter', async () => {
     const { savePage } = renderSave('/save');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await userEvent.type(screen.getByLabelText('Page address'), `${ARTICLE}{Enter}`);
-    expect(savePage).toHaveBeenCalledWith(ARTICLE, undefined);
+    expect(savePage).toHaveBeenCalledWith(ARTICLE, undefined, expect.anything());
     expect(await screen.findByText('Saved to INSIGHT')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Save another page' }));
     expect(screen.getByLabelText('Page address')).toHaveValue('');

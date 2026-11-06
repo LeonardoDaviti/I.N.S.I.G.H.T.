@@ -10,7 +10,7 @@ import { UNREAD_COUNTS_KEY } from '../../hooks/useFeed';
 import { errorMessage } from '../../lib/apiError';
 import { postHref } from '../../lib/feedContext';
 import { citedBy, classicRoleWords, classicTitle, type ScopedClassic } from '../../lib/classics';
-import { sourceLabelList } from '../../lib/sourceLabel';
+import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:opacity-60 coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
@@ -121,12 +121,15 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
     ));
   };
 
-  /** An outside page becomes a post of the Saved source (fetched now); a stored one is that post. */
+  /** An outside page becomes a post of the Saved source (fetched now); a stored one is that post. A page of a
+   *  source you follow is looked for there first: that source is fetched, and the page is its post (issue 0122). */
   const stored = async (classic: Classic): Promise<string | null> => {
     if (classic.post_id) return classic.post_id;
     setBusy(classic.url);
     try {
-      const saved = await api.savePage(classic.url, classic.title ?? undefined);
+      const saved = await api.savePage(classic.url, classic.title ?? undefined, {
+        onFetching: (source) => toast(`Fetching ${sourceLabel(source.name)}…`),
+      });
       if (!saved.success || !saved.post_id) {
         toast.error(`Could not save the page: ${saved.error ?? 'it could not be read'}`);
         return null;
