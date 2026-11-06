@@ -281,12 +281,14 @@ class TheHelpers(unittest.TestCase):
 class TheKindsAndGuides(unittest.TestCase):
     def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
-                                              "headline", "briefing", "translate", "embed"})   # embed: S2
+                                              "headline", "briefing", "translate", "embed",   # embed: S2
+                                              "alias", "collide", "embed_name"})               # 0119 A1
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
                 self.assertIsInstance(kind.schema, dict)
-                self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day"))
+                self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
+                                             "entity", "entity_entity"))
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
         """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide."""
