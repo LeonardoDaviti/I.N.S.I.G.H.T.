@@ -24,18 +24,26 @@ function useOverview() {
   });
 }
 
-/** The decision job's state (issue 0112 Decided 12): running with its stage, asked for, or how the last run ended. */
+/** The decision job's state (issue 0112 Decided 12): running with its stage; else asked for, and under it how the
+ *  last run stopped (a stopped run is always asked again, so the stop line must not wait for the ask to clear:
+ *  issue 0124, the v10.0.2 review's W6). */
 export function DecisionJob({ job }: { job: MarkxJob | undefined }) {
   if (!job) return null;
-  let text: string | null = null;
+  const lines: string[] = [];
   if (job.running) {
-    text = `Deciding now: ${job.stage ?? 'starting'}${job.started_at ? ` · started ${postBylineTime(job.started_at)}` : ''}`;
-  } else if (job.wanted_at) {
-    text = 'A decision run is asked for: it starts within a few minutes.';
-  } else if (job.last && job.last.ok === false && job.last.error) {
-    text = `The last decision run stopped: ${job.last.error}. It runs again at the next look.`;
+    lines.push(`Deciding now: ${job.stage ?? 'starting'}${job.started_at ? ` · started ${postBylineTime(job.started_at)}` : ''}`);
+  } else {
+    if (job.wanted_at) lines.push('A decision run is asked for: it starts within a few minutes.');
+    if (job.last && job.last.ok === false && job.last.error) {
+      lines.push(`The last decision run stopped: ${job.last.error}. It runs again within 5 minutes.`);
+    }
   }
-  return text ? <p className="mt-2 text-[0.8125rem] tabular-nums text-fg-2" role="status">{text}</p> : null;
+  if (!lines.length) return null;
+  return (
+    <>
+      {lines.map((text) => <p key={text} className="mt-2 text-[0.8125rem] tabular-nums text-fg-2" role="status">{text}</p>)}
+    </>
+  );
 }
 
 function Loaded({ children }: { children: (data: MarkxOverview) => ReactElement }) {

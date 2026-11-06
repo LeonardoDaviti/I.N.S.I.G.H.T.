@@ -227,8 +227,9 @@ class Jobs:
             with decide.snapshot(self.db_url) as cur:
                 out = decide.run(cur, stage=stage)
         except TooLong as exc:
-            log.warning("Mark X decision run %s; nothing written, it runs again at the next look", exc)
-            self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).rsplit(" ", 1)[-1],
+            # the retry waits for the 5-minute gap between two starts (GAP), not the next 30 s look (0124)
+            log.warning("Mark X decision run %s; nothing written, it runs again within %.0f minutes", exc, GAP / 60)
+            self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).split("stopped before ", 1)[-1],
                                     "stages": stages, "seconds": round(time.monotonic() - t0, 1)}, again=True)
             return None
         except Exception as exc:

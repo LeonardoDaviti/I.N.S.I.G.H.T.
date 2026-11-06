@@ -150,6 +150,20 @@ describe('the decision job', () => {
     expect(screen.getByRole('status')).toHaveTextContent('The last decision run stopped: over 120 s (130 s): stopped before news.');
   });
 
+  it('says the last run stopped under the asked line: a stopped run is always asked again (v10.0.2 review W6)', () => {
+    renderWithProviders(<DecisionJob job={job({ wanted_at: now, last: { ok: false, error: 'over 120 s (174 s): stopped before questions and decisions' } })} />, { api: makeFakeApi({}) });
+    const lines = screen.getAllByRole('status').map((el) => el.textContent);
+    expect(lines).toEqual([
+      'A decision run is asked for: it starts within a few minutes.',
+      'The last decision run stopped: over 120 s (174 s): stopped before questions and decisions. It runs again within 5 minutes.',
+    ]);
+  });
+
+  it('says nothing of the last run when it ended well', () => {
+    renderWithProviders(<DecisionJob job={job({ wanted_at: now, last: { ok: true } })} />, { api: makeFakeApi({}) });
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
   it('shows nothing on an older API', () => {
     const { container } = renderWithProviders(<DecisionJob job={undefined} />, { api: makeFakeApi({}) });
     expect(container.textContent).toBe('');
