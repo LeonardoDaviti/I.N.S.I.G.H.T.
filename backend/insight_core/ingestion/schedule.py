@@ -60,6 +60,7 @@ class DecisionKind(str, Enum):
     FETCH_DUE = "fetch_due"                  # interval elapsed since last_success_at
     FETCH_RETRY = "fetch_retry"              # in error state and next_retry_at elapsed
     FETCH_FORCED = "fetch_forced"            # request.force
+    FETCH_LINKED = "fetch_linked"            # a story links one of its pages not stored (issue 0114)
     SKIP_NOT_DUE = "skip_not_due"
     SKIP_BACKOFF = "skip_backoff"
     SKIP_UNAVAILABLE = "skip_unavailable"    # yt-dlp off / no Telegram credentials or session
@@ -91,6 +92,9 @@ class CadenceStats:
     last_outcome: OutcomeStatus | None
     consecutive_failures: int
     next_retry_at: datetime | None
+    # Issue 0114: a story linked one of its pages not stored at this time; due until a fetch succeeds after it.
+    linked_wanted_at: datetime | None = None
+    linked_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,6 +210,8 @@ def cadence_stats(source: Mapping[str, Any], state: "FetchStateRow | None") -> C
         last_outcome=last_outcome,
         consecutive_failures=max(0, int(state.consecutive_failures or 0)) if state else 0,
         next_retry_at=_aware(state.next_retry_at) if state else None,
+        linked_wanted_at=_aware(getattr(state, "linked_wanted_at", None)) if state else None,
+        linked_url=getattr(state, "linked_url", None) if state else None,
     )
 
 
@@ -339,6 +345,12 @@ def decide_fetch(
 
     # 5. Due check, counted from the last successful fetch (empty fetches count), DUE_SLACK early.
     due = (stats.last_success_at or _EPOCH) + interval
+    # 4b. A story links one of its pages not stored (issue 0114): due now, until a fetch succeeds after it.
+    # The planner (services/originals_service.py) asks only outside 15 minutes of the last fetch, outside
+    # backoff, and once per interval.
+    if (stats.linked_wanted_at is not None and now < due - DUE_SLACK
+            and (stats.last_success_at is None or stats.last_success_at < stats.linked_wanted_at)):
+        return decision(DecisionKind.FETCH_LINKED, now, f"A story links its page {stats.linked_url or ''}".rstrip())
     if now >= due - DUE_SLACK:
         if stats.last_success_at is None:
             detail = f"No recorded successful fetch ({stats.post_count} posts, {_hours(interval)} {basis})"

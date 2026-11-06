@@ -40,7 +40,7 @@ import random
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion import full_text, page_changes
@@ -74,6 +74,7 @@ from insight_core.ingestion.types import (
     OutcomeStatus,
     RunReport,
     SourceFailure,
+    Trigger,
 )
 
 logger = logging.getLogger("insight.ingestion.runner")
@@ -155,6 +156,7 @@ class IngestionRunner:
         doctor: Optional[Any] = None,
         watch: Optional[PageWatchStore] = None,
         stories: Optional[Callable[[], Any]] = None,
+        originals: Optional[Callable[[], Awaitable[Any]]] = None,
     ) -> None:
         self.catalog = catalog
         self.state = state
@@ -169,6 +171,8 @@ class IngestionRunner:
         self.doctor = doctor    # SourceDoctor (ingestion/source_doctor.py), or None
         self.watch = watch      # watched pages (issue 0039), or None: nothing is re-checked
         self.stories = stories  # the story job (issue 0050), run after a run that saved posts, or None
+        # A story's original fetched when INSIGHT lacks it (issues 0114, 0123), after the story job, or None.
+        self.originals = originals
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
         started = self.clock()
@@ -328,6 +332,13 @@ class IngestionRunner:
         if self.stories is not None and (saved.inserted or saved.updated):
             # Posts were written: their stories are recomputed (issue 0050). It never raises.
             await asyncio.to_thread(self.stories)
+            if self.originals is not None and request.trigger == Trigger.SCHEDULER:
+                # The originals the new stories lack (issues 0114, 0123), asked within their budget: by the
+                # scheduler's runs only (ingestion), never a Fetch now in the API. Never raises.
+                try:
+                    await self.originals()
+                except Exception as exc:  # noqa: BLE001 - the run stands
+                    logger.warning("Could not ask for the stories' originals: %s", exc)
 
         failed_sources = {f.source_id for f in failures}
         if failed_sources and len(failed_sources) >= len(fetched):

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import type { SchedulerConfig } from '../../services/api';
-import { Button, Dialog, DialogContent, DialogFooter, Input } from '../ui';
+import { Button, Dialog, DialogContent, DialogFooter, Input, Switch } from '../ui';
 
 const fieldLabel = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
 
@@ -21,6 +21,7 @@ export default function SchedulerDialog({
   onSave: (next: SchedulerConfig) => Promise<boolean>;
 }) {
   const [tick, setTick] = useState(String(config.ingest_tick_minutes ?? 60));
+  const [collect, setCollect] = useState(Boolean(config.collect_originals));
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -28,6 +29,7 @@ export default function SchedulerDialog({
     const saved = await onSave({
       ...config,
       ingest_tick_minutes: Math.max(15, Math.round(Number(tick)) || 15),
+      collect_originals: collect,
     });
     setSaving(false);
     if (saved) onClose();
@@ -45,6 +47,16 @@ export default function SchedulerDialog({
               <label htmlFor="ingestion-tick" className={fieldLabel}>Check for due sources every (minutes)</label>
               <Input id="ingestion-tick" type="number" min={15} step={5} value={tick} onChange={(e) => setTick(e.target.value)} className="tabular-nums" />
               <p className="mt-1 text-[0.75rem] text-fg-3">At least 15. Each source still waits for its own cadence.</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Switch id="collect-originals" checked={collect} onCheckedChange={setCollect} className="mt-0.5" />
+            <div>
+              <label htmlFor="collect-originals" className="text-[0.8125rem] font-medium text-fg">Collect originals</label>
+              <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                When a News story starts at a page you don&rsquo;t have, fetch that one page, without following its site.
+                Never a paywalled page; at most 1% more requests than the schedule makes. Off until you switch it on.
+              </p>
             </div>
           </div>
           <DialogFooter>

@@ -204,6 +204,18 @@ class FetchFirstTests(unittest.TestCase):
         self.assertNotIn("saved_by_owner", metadata)
         self.job.assert_not_awaited()
 
+    def test_a_page_no_source_owns_that_states_no_date_is_dated_by_its_first_link_too(self):
+        """Issue 0113 (0122's open point 5): a Saved page with no date of its own takes its first link's, not the
+        save time, so its story's 72 hours are its links'. It still sorts at the save."""
+        url = f"{ELSEWHERE}/an-undated-essay"
+        other = self._source("rss", "https://chan.ffchans.example/feed.xml")
+        first_link = self.now - timedelta(days=6)
+        self._post(other, "https://chan.ffchans.example/p/1", "A retelling", first_link, links=[url])
+        body = self.save({url: article("An undated essay", date=None)}, url=url)
+        ((published_at, surfaced_at),) = self._rows("SELECT published_at, surfaced_at FROM posts WHERE id = %s::uuid",
+                                                    body["post_id"])
+        self.assertEqual((published_at, surfaced_at), (first_link, self.now))
+
     # ---- 2. the feed brings it later: one post
 
     def _feed_brings(self, source_id, url, title, at):

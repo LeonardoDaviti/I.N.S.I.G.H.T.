@@ -47,7 +47,8 @@ from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, saved
 from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
 from insight_core.services.reader_service import ReaderService
-from insight_core.utils.post_fields import SAVED_KEY
+from insight_core.utils.originals_rules import strip_access_tokens
+from insight_core.utils.post_fields import COLLECTED_KEY, SAVED_KEY
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.saved")
@@ -127,11 +128,12 @@ class SavedService:
         stored = post["url"] != address and await asyncio.to_thread(self.stored_post, [post["url"]])
         if stored:
             return await self._already(stored, saved_at)
+        if post.get("date") is None:   # no date of its own: no later than the first post linking it (0122;
+            # 0113: every page, a source's or Saved's, so its story's 72 hours are its links', never the save's)
+            post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         if owner:
             source_id = owner["id"]
             post = {**post, "metadata": {**post.get("metadata", {}), SAVED_KEY: saved_at.isoformat()}}
-            if post.get("date") is None:   # no date of its own: no later than the first post linking it
-                post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         else:
             source_id = await asyncio.to_thread(self.saved_source_id)
         post_id = await asyncio.to_thread(self._insert, source_id, *dated_by_page(post, saved_at))
@@ -148,6 +150,52 @@ class SavedService:
             "reason": reason,
             "feed": await asyncio.to_thread(self.unfollowed_feed, finding),
         }
+
+    # ------------------------------------------------------------------ collected originals (issue 0123)
+
+    async def collect(self, http: KindHttp, url: str, title: Optional[str] = None) -> Dict[str, Any]:
+        """A News story's original no followed source owns, read once and stored as a Saved post by itself:
+        never in Later (no tap of yours), sorted by its own date, `metadata.collected_original` the time.
+        Its address keeps no access or gift token. A page that can't be read as an article is not stored
+        ("unreadable"). Stored or owned already: "already" or "followed", nothing read. One request."""
+        address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
+        if not _web_page(address):
+            raise ValueError("Only an http or https page can be collected")
+        now = self.clock()
+        stored = await asyncio.to_thread(self.stored_post, [address])
+        if stored:
+            return {"status": "already", **stored}
+        if await asyncio.to_thread(self.page_source, address):
+            return {"status": "followed"}
+        post, reason = await self.read(http, address, (title or "").strip())
+        if reason is not None:
+            return {"status": "unreadable", "reason": reason, "requests": 1}
+        landed = strip_access_tokens(post["url"])
+        stored = landed != address and await asyncio.to_thread(self.stored_post, [landed])
+        if stored:
+            return {"status": "already", "requests": 1, **stored}
+        post = {**post, "url": landed, "external_id": landed, "guid": landed,
+                "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat()}}
+        if not isinstance(post.get("date"), datetime) or post["date"] >= now:
+            post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
+        source_id = await asyncio.to_thread(self.saved_source_id)
+        post_id = await asyncio.to_thread(self._insert, source_id, post)
+        return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
+
+    def collect_quote(self, url: str, words: str, *, title: Optional[str], at: datetime) -> Dict[str, Any]:
+        """A tweet a member quotes, stored from the quote (its words as Nitter shows them, its time by its
+        id): no request. As `collect` stores a page."""
+        address = normalize_url(url) or url
+        stored = self.stored_post([address])
+        if stored:
+            return {"status": "already", **stored}
+        text = (words or "").strip()
+        post = {"platform": saved.PLATFORM, "source": saved.HANDLE, "url": address, "external_id": address,
+                "guid": address, "title": (title or "").strip() or text[:120], "content": text,
+                "content_html": None, "date": at, "media_urls": [], "categories": [],
+                "metadata": {"adapter": ADAPTER, COLLECTED_KEY: self.clock().isoformat(), "from_quote": True}}
+        post_id = self._insert(self.saved_source_id(), post)
+        return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 0}
 
     async def _fetch_first(self, source_id: str, now: datetime, fetch: StartFetch) -> Optional[str]:
         """The fetch job a save of this source's page waits for: one running, else one started now; None
