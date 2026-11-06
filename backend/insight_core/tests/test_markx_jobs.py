@@ -44,6 +44,25 @@ class Due(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
 
 
+class TheOrderOfRuns(unittest.TestCase):
+    """0121 Decided 3 (the v10.0.1 review's W6): a decision run ran during Mark IX's first-start rebuild, at 0 of
+    49,384 posts, and queued 159 checks against stories about to change; one started 29 s before the candidate finder
+    it depended on had finished."""
+
+    def test_no_decision_run_while_mark_ix_is_busy_it_waits_then_runs_once(self):
+        wanted = {"started_at": T0 - timedelta(minutes=10), "wanted_at": T0 - timedelta(minutes=2)}
+        self.assertIsNone(jobs.due(_states(decide=wanted), T0, busy="Mark IX's story job is running"))
+        self.assertIsNone(jobs.due(_states(), T0, busy="a rule change's rebuild is in progress"))   # nor the first
+        self.assertEqual(jobs.due(_states(decide=wanted, candidates={"wanted_at": T0}), T0, busy="rebuild"),
+                         "candidates")                                                           # the finder may run
+        self.assertEqual(jobs.due(_states(decide=wanted), T0), "decide")
+
+    def test_no_decision_run_while_the_candidate_finder_runs(self):
+        wanted = {"started_at": T0 - timedelta(minutes=10), "wanted_at": T0 - timedelta(minutes=2)}
+        running = {"stage": "candidates", "started_at": T0 - timedelta(seconds=20)}
+        self.assertIsNone(jobs.due(_states(decide=wanted, candidates=running), T0))
+
+
 class TheApiOnlyMarks(_Api):
     """No decision run, no candidate run and no Mark X thread in the API process: a request leaves a mark."""
 
@@ -170,6 +189,73 @@ class TheRunner(_Api):
             jobs.Jobs(db_url()).candidates()
         first, second = sinces
         self.assertGreater(second, first + timedelta(hours=23))          # the first looks back a day, then the last run
+
+    def stories_setting(self, value):
+        self.cur.execute("SELECT value FROM system_settings WHERE key = 'stories'")
+        row = self.cur.fetchone()
+        self.addCleanup(self._put_stories, row[0] if row else None)
+        self._put_stories(value)
+
+    def _put_stories(self, value):
+        import json
+        if value is None:
+            self.cur.execute("DELETE FROM system_settings WHERE key = 'stories'")
+        else:
+            self.cur.execute("INSERT INTO system_settings (key, value, updated_at) VALUES ('stories', %s::jsonb, now()) "
+                             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (json.dumps(value),))
+
+    def test_no_decision_run_while_mark_ix_s_story_job_holds_its_lock(self):
+        from insight_core.services.stories_service import LOCK_KEY
+        other = psycopg.connect(db_url())
+        self.addCleanup(other.close)
+        other.execute("BEGIN")
+        other.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (LOCK_KEY,))   # as the story job takes it
+        self.assertEqual(jobs.mark_ix_busy(self.cur), "Mark IX's story job is running")
+        with self.assertLogs(jobs.log, "INFO") as logs:
+            self.assertIsNone(self.runner().tick())
+        self.assertIn("waits for Mark IX", "\n".join(logs.output))
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        other.execute("ROLLBACK")
+        self.assertIsNone(jobs.mark_ix_busy(self.cur))
+        self.assertEqual(self.runner().tick(), "decide")                 # then it runs, once
+        self.assertIsNone(self.runner().tick())
+
+    def test_no_decision_run_during_a_rule_change_rebuild(self):
+        from insight_core.services.stories_service import rules_stamp
+        self.stories_setting({"rules": "older rules", "rebuild": {"rules": rules_stamp(), "done": 0, "total": 49384}})
+        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")
+        self.assertIsNone(self.runner().tick())
+        self.stories_setting({"rules": "older rules"})                  # stored by other rules: one is due
+        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is due")
+        self.stories_setting({"rules": rules_stamp()})
+        self.assertIsNone(jobs.mark_ix_busy(self.cur))
+        self.assertEqual(self.runner().tick(), "decide")
+
+    def test_a_decision_run_waits_for_its_candidate_finder(self):
+        """New vectors: the run finds their candidates first; when that fails, no decision runs on candidates that
+        aren't there, and both are wanted again."""
+        self.runner().tick()
+        self.cur.execute("UPDATE mx_jobs SET started_at = now() - interval '10 minutes' WHERE job = 'decide'")
+        pid = self.post()
+        with self.conn.transaction():
+            jobs.note_posts(self.cur, [pid])
+            jobs.want(self.cur, "decide")
+        self.cur.execute("UPDATE mx_jobs SET wanted_at = now() - interval '2 minutes' WHERE job = 'decide'")
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        runs = self.cur.fetchone()[0]
+
+        def boom(cur, ids, since=None):
+            raise RuntimeError("database gone")
+        with mock.patch("insight_core.markx.candidates.run", boom), self.assertLogs(jobs.log, "ERROR"):
+            self.assertEqual(self.runner().tick(), "decide")
+        self.cur.execute("SELECT count(*) FROM mx_runs")
+        self.assertEqual(self.cur.fetchone()[0], runs)                  # no decision run without its candidates
+        s = jobs.state(self.cur)
+        self.assertFalse(s["decide"]["last"]["ok"])
+        self.assertIn("candidate finder", s["decide"]["last"]["error"])
+        self.assertIsNotNone(s["decide"]["wanted_at"])
+        self.assertEqual(jobs.waiting_posts(self.cur), [pid])
 
     def test_a_failed_decision_run_is_retried(self):
         with mock.patch.object(decide, "run", side_effect=RuntimeError("boom")), self.assertLogs(jobs.log, "ERROR"):

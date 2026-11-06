@@ -14,6 +14,9 @@ at 101% CPU and every /api/* request timed out.
       - the decision run: SETTLE seconds after work arrived (answers, vectors, POST /api/markx/decide, the API
         start's story job), at most one every GAP seconds (a steady stream of uploads can't push it back, nor run it
         back to back), and every EVERY seconds.
+  - **The order of runs** (0121 Decided 3): no decision run while Mark IX's story job holds its lock or a rule
+    change's rebuild is in progress or due (`mark_ix_busy`): it waits, then runs once. Nor while the candidate finder
+    runs; and a run whose own candidate finder failed doesn't run on candidates that aren't there: both wait.
   - **A decision run has a time limit and stage logs** (0112 Decided 12): "Mark X decision run started", each stage
     with its duration (candidates, load, questions and decisions, write, connections, headlines, news), the finish.
     Past LIMIT seconds it stops before the next stage and logs which; its one transaction rolls back (nothing half
@@ -104,6 +107,28 @@ def view(cur: Any) -> Dict[str, Dict[str, Any]]:
 
 # ---- the runner's side: the jobs (in insight-ingestion) ---------------------------------------------
 
+def mark_ix_busy(cur: Any) -> Optional[str]:
+    """Why a decision run must wait for Mark IX now, or None (0121 Decided 3): its story job holds its lock (a batch
+    regrouping posts), or a rule change's rebuild is in progress (its progress in the story job's setting) or due (the
+    stored rows are of other rules than this code's). A run then would decide over stories about to change."""
+    from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY, rules_stamp
+    cur.execute("""SELECT (SELECT value FROM system_settings WHERE key = %(key)s),
+                          EXISTS (SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+                                   WHERE d.datname = current_database() AND l.locktype = 'advisory'
+                                     AND l.objsubid = 1 AND l.granted
+                                     AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtext(%(lock)s)::bigint)""",
+                {"key": SETTINGS_KEY, "lock": LOCK_KEY})
+    value, locked = cur.fetchone()
+    if locked:
+        return "Mark IX's story job is running"
+    if isinstance(value, dict):
+        if value.get("rebuild"):
+            return "a rule change's rebuild is in progress"
+        if value.get("rules") and value["rules"] != rules_stamp():
+            return "a rule change's rebuild is due"
+    return None
+
+
 def waiting_posts(cur: Any) -> List[str]:
     cur.execute("SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at")
     return [r[0] for r in cur.fetchall()]
@@ -192,7 +217,12 @@ class Jobs:
             current[:] = [name, at]
             self._stage("decide", name)
 
-        self.candidates()
+        if self.candidates() is None:   # 0121 Decided 3: never on candidates that aren't there
+            log.warning("Mark X decision run: the candidate finder failed; the run waits for it")
+            self._finish("decide", {"ok": False, "error": "waiting for the candidate finder (it failed)",
+                                    "stages": [["candidates", round(time.monotonic() - t0, 1)]],
+                                    "seconds": round(time.monotonic() - t0, 1)}, again=True)
+            return None
         try:
             with decide.snapshot(self.db_url) as cur:
                 out = decide.run(cur, stage=stage)
@@ -221,13 +251,14 @@ class Jobs:
 
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
-        gap: float = GAP) -> Optional[str]:
+        gap: float = GAP, busy: Optional[str] = None) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
-    one started (or never ran), never within GAP seconds of the last start; else the candidate finder when vectors
+    one started (or never ran), never within GAP seconds of the last start, never while Mark IX is `busy` (why, from
+    `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
     arrived."""
     d = states["decide"]
     since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
-    if since is None or since >= gap:
+    if busy is None and states["candidates"]["stage"] is None and (since is None or since >= gap):
         if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
             return "decide"
         if since is None or since >= every:
@@ -262,6 +293,7 @@ class Runner:
         with database.transaction(self.db_url) as cur:
             cur.execute("SELECT now()")
             self._db_now = cur.fetchone()[0]
+            self._busy = mark_ix_busy(cur)
             return state(cur)
 
     def recover(self) -> None:
@@ -282,7 +314,11 @@ class Runner:
             return None
         try:
             states = self._states()
-            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap)
+            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy)
+            if self._busy != getattr(self, "_told", None):
+                if self._busy:
+                    log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
+                self._told = self._busy
             if job is None:
                 return None
             if self.spawn:

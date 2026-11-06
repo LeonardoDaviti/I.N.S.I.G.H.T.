@@ -39,7 +39,8 @@ RELATIONS = ["same_event", "development", "reaction", "mention", "digest_item", 
 ABOUT = ["same_event", "development", "reaction"]
 
 READ_HEADLINE_WORDS = 25     # 0086 C (the guide asks for 20)
-STORY_HEADLINE_WORDS = 14    # card and headline
+STORY_HEADLINE_WORDS = 14    # card and headline: what the guides ask
+HEADLINE_WORDS = STORY_HEADLINE_WORDS + 2   # the headline check's slack, as readings have (0121 Decided 2)
 BRIEFING_LINES = (5, 7)      # fewer when the day has fewer stories
 TRANSLATE_LENGTH = (0.5, 2.0)
 
