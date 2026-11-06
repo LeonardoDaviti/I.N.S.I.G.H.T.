@@ -405,7 +405,7 @@ def api_during_rebuild(db_url: str, now: datetime) -> Found:
                     "WHERE key = %s", (FORCED_RULES, SETTINGS_KEY))
 
     def progress() -> Dict[str, Any]:
-        with open_copy(db_url) as conn, conn.cursor() as cur:
+        with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:   # never read_only(): it is process-wide
             cur.execute("SELECT value FROM system_settings WHERE key = %s", (SETTINGS_KEY,))
             row = cur.fetchone()
         value = (row[0] if row else None) or {}
