@@ -133,8 +133,10 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
         after = table_checksums(cur)
         run = invariants.Run(db_url, cur, now)
-        mx = [invariants.Found(i.name, i.area, i.what, len(ids), of, run.sample(ids))
-              for i in invariants.INVARIANTS if i.name.startswith("markx.") for ids, of in [i.count(run)]]
+        # as run_all asks them: an invariant this version's schema can't answer (the checks package is the head's,
+        # run over the base's code too: 0119's mx_entity* tables on main) is not measured, never a failed job check
+        mx = [f for f in invariants.run_all(run, only=[i.name for i in invariants.INVARIANTS
+                                                       if i.name.startswith("markx.")]) if f.count >= 0]
     seconds = round(time.monotonic() - started, 1)
     changed = sorted(t for t in set(before) | set(after) if before.get(t) != after.get(t))
     first, second = runs
