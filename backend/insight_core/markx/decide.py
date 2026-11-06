@@ -1225,6 +1225,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         p_news = mx_news.write(cur, None, out=p_out, ids=p_ids, world=p_world, now=now, store=False)["made_rows"]
         check = _digest(p_out, p_ids, p_world, p_conns, p_news)
     memo.run_id = None                              # until this run finishes: a failed run leaves no memo
+    cur.execute("SELECT max(started_at) FROM mx_runs WHERE finished_at IS NOT NULL")
+    previous = cur.fetchone()[0]                    # 0119: what the entities stage reads as new since
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
     world, ask, out, counts = _reading(cur, memo, now, config)
@@ -1245,6 +1247,13 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
+    mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
+    from insight_core.markx import entity_stage
+    counts["entities"], days = entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
+                                                     full=full)
+    mark("surges")                      # 0119 A2
+    counts["surges"] = entity_stage.surges(cur, now=now, run_id=run_id, days=days, since=previous,
+                                           window_days=config.days)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),

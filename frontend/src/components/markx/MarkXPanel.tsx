@@ -50,7 +50,10 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                   {data.entities.map((e, n) => (
                     <li key={n} className="[overflow-wrap:anywhere]">
-                      <span className={e.role === 'subject' ? 'font-semibold text-fg' : 'text-fg'}>{e.name}</span>
+                      {e.entity_id ? (
+                        <TextLink to={`/markx/entities/${encodeURIComponent(e.entity_id)}`}
+                                  className={e.role === 'subject' ? 'font-semibold text-fg' : 'text-fg'}>{e.name}</TextLink>
+                      ) : <span className={e.role === 'subject' ? 'font-semibold text-fg' : 'text-fg'}>{e.name}</span>}
                       <span className="text-fg-3"> {e.type}{e.version ? ` ${e.version}` : ''} · {e.role}</span>
                     </li>
                   ))}

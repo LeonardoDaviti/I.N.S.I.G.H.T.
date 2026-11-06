@@ -274,9 +274,36 @@ def _translate(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_MENTION_LINE = re.compile(r"^(\d+)\. written ", re.M)
+
+
+def collide_mentions(input: str) -> int:
+    """How many numbered mentions a collision question shows."""
+    return len(_MENTION_LINE.findall(input))
+
+
+def _collide(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0119 A1 (the lab's valid_for): every mention number appears once, in one sense or in `unclear`; `related` links
+    senses by their 1-based positions."""
+    n = collide_mentions(input)
+    seen: List[int] = []
+    for s in a["senses"]:
+        seen += [int(x) for x in s["m"]]
+    seen += [int(x) for x in a.get("unclear") or []]
+    if sorted(seen) != list(range(1, n + 1)):
+        return f"the senses and unclear name mentions {sorted(seen)}, not each of 1-{n} once"
+    for r in a.get("related") or []:
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in r[:2]):
+            return f"related {r!r}: two sense positions"
+        if not (1 <= r[0] <= len(a["senses"]) and 1 <= r[1] <= len(a["senses"])):
+            return f"related {r!r} names a sense that isn't one (1-{len(a['senses'])})"
+    return None
+
+
+_EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
-          "translate": _translate,
-          "embed": lambda answer, input: "an embed task is answered at POST /api/markx/embeddings, not here"}
+          "translate": _translate, "collide": _collide,
+          "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 
 def unwrap(kind: str, answer: Any) -> Any:
