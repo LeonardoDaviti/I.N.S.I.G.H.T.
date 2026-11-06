@@ -21,6 +21,10 @@ Two layers:
       8. Asked again (0112 Decided 8, `settle`): a join, pair or merge that would change a story counts only once a
          second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept. An "about" answer whose
          own reason says the post is not about the story (`contradicts`) never counts, and is asked again.
+      9. Checks and links (0121 Decided 1): a check never removes a member Mark IX joined by a link to the story's
+         page (a citation of its parent or the origin page, a quote, the same address: `LINKED`); it demotes it to a
+         mention at most. A check that would take out a 2-voice story's second voice counts only once a second answer
+         agrees (`settle_check`), as joins do.
     A question is a `Question` with the prototype's id (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
     `merge2:`); a story is keyed, inside one run only, by its Mark IX story's key or a pair's anchor post. Nothing
     keyed so is stored: the job matches its stories to Mark X's by their member posts.
@@ -50,6 +54,7 @@ log = logging.getLogger(__name__)
 
 CODE_VERSION = "markx-decide-v1"
 CERTAIN = frozenset({"thread", "quote", "address"})    # a tree reason that is not a guess: no check (unless a roundup)
+LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to the story's page (0121 Decided 1)
 NOT_VOICE = frozenset({"saved"})
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
@@ -78,11 +83,14 @@ class Config:
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
+    link_keeps: bool = True         # a check demotes a member Mark IX joined by a link at most, never removes it (0121 D1)
+    confirm_check: bool = True      # a check taking out a 2-voice story's second voice counts once asked again (0121 D1)
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
+                      link_keeps=False, confirm_check=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -121,6 +129,7 @@ class Question:
     side: Tuple[str, ...] = ()                # the story's posts the question shows
     side_b: Tuple[str, ...] = ()              # merge: the other story's posts shown
     second: bool = False                      # merge: asked by the second pass
+    last_voice: bool = False                  # check: taking it out leaves its story one voice (0121 Decided 1)
 
 
 @dataclass(frozen=True)
@@ -224,8 +233,9 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             shown = tuple(q for q in side(key) if q != m.post)[:3] or tuple(x.post for x in ms if x.post != m.post)[:3]
             if not shown:
                 continue                                       # a story's only post: nothing to check it against
+            last = voices(posts, [x.post for x in ms if x.post != m.post]) < 2
             out.append(Question(f"check:{key}:{m.post}", "check", story=key, post=m.post, voices=nv[key], why=m.why,
-                                roundup=roundup, side=shown))
+                                roundup=roundup, side=shown, last_voice=last))
     seen: Set[Any] = set()
     for a, b, cos in candidates:
         if cos is not None and cos < config.cand_lo:
@@ -351,15 +361,19 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
             if pa < strict:
                 ev = about[q.story].pop(q.post, None)
                 kind = "demote" if rel in ("mention", "digest_item") else "remove"
-                guarded = kind == "remove" and config.two_event_guard and events.get(q.post) == "several"
+                guarded = None
+                if kind == "remove" and config.two_event_guard and events.get(q.post) == "several":
+                    guarded = "two-event"
+                elif kind == "remove" and config.link_keeps and q.why in LINKED:
+                    guarded = "link"           # it links the story's page: a mention at most (0121 Decided 1)
                 if guarded:
                     kind = "demote"
                 if kind == "demote":
                     mentions[q.story][q.post] = {"by": "judge", "relation": rel, "reason": v.reason, "p_about": pa,
-                                                 "call": v.call, **({"guard": "two-event"} if guarded else {})}
+                                                 "call": v.call, **({"guard": guarded} if guarded else {})}
                 log.append({"tid": q.tid, "change": kind, "story": q.story, "post": q.post, "relation": rel,
                             "p_about": pa, "reason": v.reason, "was": ev, "call": v.call,
-                            **({"guard": "two-event"} if guarded else {})})
+                            **({"guard": guarded} if guarded else {})})
         elif q.type in ("join", "pair"):
             if rel in ABOUT and pa >= config.tau_join:
                 key = q.story or q.anchor
@@ -529,6 +543,25 @@ def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> 
             relation = last.relation if last.relation != "same_event" else prev.relation
             return Verdict(relation, min(prev.p, last.p), prev.reason, prev.call), False
     return None, more
+
+
+def settle_check(answers: Sequence[Verdict], bar: float, config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
+    """(the verdict that counts, or None; whether to ask again) from the valid answers, oldest first, of a check that
+    would take out a 2-voice story's second voice (0121 Decided 1, as `settle` for joins). The newest answer decides:
+    one that keeps the post (p "about" at `bar` or more) counts at once; one that takes it out counts only when the
+    answer before it takes it out too, as one verdict that says less: a mention over a removal, the higher p, named
+    by the earlier call. Until then the check is asked again, MAX_ASKS times at most; then the post stays."""
+    if not answers:
+        return None, False
+    last = answers[-1]
+    if last.p is None or last.p >= bar or not config.confirm_check:
+        return last, False
+    if len(answers) >= 2 and answers[-2].p is not None and answers[-2].p < bar:
+        prev = answers[-2]
+        demoting = [x for x in (prev, last) if x.relation in ("mention", "digest_item")]
+        relation = demoting[0].relation if demoting else prev.relation
+        return Verdict(relation, max(prev.p, last.p), prev.reason, prev.call), False
+    return None, len(answers) < MAX_ASKS
 
 
 def answered_pairs(questions: Sequence[Question], verdicts: Dict[str, Verdict]) -> List[Tuple[Question, Verdict]]:
@@ -798,8 +831,18 @@ class Questions:
         if q.type == "check":
             if q.post not in t:
                 return None
-            return self.ask.verdict("check", tasks.check_input(t[q.post], self._p(q.side)), a=q.post,
-                                    priority=self._priority(q.post))
+            got = self.ask.answer("check", tasks.check_input(t[q.post], self._p(q.side)), a=q.post,
+                                  priority=self._priority(q.post))
+            if got is None:
+                return None
+            first = Verdict.of(got[0], got[1])
+            if not (q.last_voice and self.config.confirm_check):
+                return first
+            bar = self.config.tau_keep2 if q.voices <= 2 else self.config.tau_keep
+            v, again = settle_check([first] + self.ask.later(got[1]), bar, self.config)
+            if again:
+                self.ask.ask_again("check", got[1])
+            return v
         if q.type == "join":
             ms = [p for p in self.story_posts(q.story) if p != q.post]
             if q.post not in t or not self._read([q.post]):

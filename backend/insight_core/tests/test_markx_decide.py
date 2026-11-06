@@ -33,8 +33,8 @@ def post(pid, source, hours=0.0, kind="telegram", words=LONG):
     return D.Post(pid, source, kind, T + hours * H, words)
 
 
-def story(*members, why="citation"):
-    """Mark IX's members: the first the root, the others joined by `why`."""
+def story(*members, why="time"):
+    """Mark IX's members: the first the root, the others joined by `why` (a time: a guess no link backs)."""
     return [D.Member(m, "report", None if n == 0 else why) for n, m in enumerate(members)]
 
 
@@ -111,6 +111,45 @@ class Rules(unittest.TestCase):
         self.assertIn("f", out.about["E"])                  # rule B: 0.2 keeps a 2-voice story's member
         out = D.decide(self.posts, self.stories, [(q2, v("different", 0.1))])
         self.assertNotIn("f", out.about["E"])
+
+    def test_a_check_never_removes_a_member_joined_by_a_link_to_the_storys_page(self):
+        """0121 Decided 1: Mark IX joined it by a citation (it links its parent or the origin page), a quote or the
+        same address. A check can demote it to a mention at most, never remove it. A time join can go."""
+        q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
+        for why in ("citation", "quote", "address"):
+            self.stories["A"] = story("a", "b", "c", why=why)
+            out = D.decide(self.posts, self.stories, [(replace(q, why=why), v("different", 0.05))])
+            self.assertEqual(out.log[0]["change"], "demote", why)
+            self.assertEqual(out.mentions["A"]["b"]["guard"], "link")
+            self.assertNotIn("b", out.about["A"])
+        out = D.decide(self.posts, self.stories, [(replace(q, why="time"), v("different", 0.05))])
+        self.assertEqual(out.log[0]["change"], "remove")
+        out = D.decide(self.posts, self.stories, [(replace(q, why="citation"), v("different", 0.05))], D.Config.prototype())
+        self.assertEqual(out.log[0]["change"], "remove")                 # the prototype had no such guard
+
+    def test_a_check_knows_when_it_would_take_out_a_storys_last_second_voice(self):
+        """0121 Decided 1: a check of a 2-voice story's member whose source is its only one there."""
+        self.posts["b2"] = post("b2", "s2", 1.5)
+        self.stories = {"A": story("a", "b", "c"), "E": story("e", "f"), "B": story("a", "b", "b2")}
+        qs = {q.tid: q for q in self.plan() if q.type == "check"}
+        self.assertTrue(qs["check:E:f"].last_voice)
+        self.assertFalse(qs["check:A:b"].last_voice)                     # 3 voices: two are left
+        self.assertFalse(qs["check:B:b"].last_voice)                     # b2 is the same voice
+        self.assertFalse(qs["check:B:b2"].last_voice)
+
+    def test_taking_out_a_second_voice_counts_only_once_asked_again_and_agreeing(self):
+        """0121 Decided 1: as 0112 Decided 8 for joins. (verdict, ask again) from a check's answers, oldest first."""
+        c = D.Config()
+        out1, out2 = v("different", 0.05, call="c1"), v("mention", 0.10, call="c2")
+        keep = v("same_event", 0.9, call="c2")
+        self.assertEqual(D.settle_check([out1], 0.15, c), (None, True))              # once: not yet
+        got, again = D.settle_check([out1, out2], 0.15, c)                           # both out: the one that says less
+        self.assertEqual((got.relation, got.p, got.call, again), ("mention", 0.10, "c1", False))
+        self.assertEqual(D.settle_check([out1, keep], 0.15, c), (keep, False))       # a keep counts at once
+        self.assertEqual(D.settle_check([keep], 0.15, c), (keep, False))
+        self.assertEqual(D.settle_check([out1, keep, out2], 0.15, c), (None, False)) # three asks at most: it stays
+        self.assertEqual(D.settle_check([keep, out1], 0.15, c), (None, True))
+        self.assertEqual(D.settle_check([out1], 0.15, D.Config(confirm_check=False)), (out1, False))
 
     def test_mention_and_digest_item_demote(self):
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
@@ -363,10 +402,10 @@ class Job(unittest.TestCase):
 
     def test_a_run_mirrors_mark_ix_then_checks_remove_with_the_row_kept(self):
         a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
-        self.ix_story(a, b, c)
+        self.ix_story(a, b, c, reason="time")   # a guess no link backs: a check can remove it (0121 Decided 1)
         first = self.go()
         self.assertEqual(first["stories"], 1)
-        self.assertEqual({(p, r) for _, p, _, r in self.current()}, {(a, "rule:none"), (b, "rule:citation"), (c, "rule:citation")})
+        self.assertEqual({(p, r) for _, p, _, r in self.current()}, {(a, "rule:none"), (b, "rule:time"), (c, "rule:time")})
         self.assertEqual(first["tasks_added"].get("check"), 2)          # b and c are uncertain members
         # the same run again changes nothing
         again = self.go()
@@ -378,6 +417,41 @@ class Job(unittest.TestCase):
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
         self.cur.execute("SELECT valid_to IS NOT NULL FROM mx_story_posts WHERE post_id = %s", (c,))
         self.assertEqual(self.cur.fetchall(), [(True,)])
+
+    def test_a_two_voice_storys_second_voice_goes_only_when_asked_twice_and_a_linked_one_stays_a_mention(self):
+        """0121 Decided 1, the v10.0.1 review's W1: a post linking the page its story's other post links (Mark IX's
+        citation) was removed on one "different" 95, and a 2-voice News row went with it. Now the removal of a
+        2-voice story's second voice is asked again before it counts, and a linked member is demoted at most."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        c, d = self.post(2, "Beta shipped Gizmo 2"), self.post(3, "Gizmo 2 hands-on")
+        self.ix_story(a, b)                                  # b cites a's page
+        self.ix_story(c, d, reason="time")                  # d joined by its time only
+        self.go()
+        different = lambda t: {"relation": "different", "confidence": 95, "reason": "another event"}   # noqa: E731
+        self.assertEqual(self.answer("check", different), 2)
+        first = self.go()
+        self.assertEqual(first["changes"], {})                         # once is not enough
+        self.assertEqual(first["tasks_reasked"], {"check": 2})
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, c, d})
+        self.assertEqual(self.answer("check", different), 2)
+        out = self.go()
+        # linked, b is a mention at most; d, joined by its time only, is removed. Each story is one post now: no row
+        self.assertEqual(out["changes"], {"demote": 1, "remove": 1})
+        self.assertEqual(self.current(), [])
+        self.cur.execute("SELECT count(*) FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id WHERE t.kind = 'check'")
+        self.assertEqual(self.cur.fetchone()[0], 4)                    # every call kept
+
+    def test_a_second_answer_that_keeps_the_second_voice_keeps_the_story(self):
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        self.ix_story(a, b, reason="time")
+        self.go()
+        self.answer("check", lambda t: {"relation": "different", "confidence": 95, "reason": "another event"})
+        self.go()
+        self.answer("check", lambda t: {"relation": "same_event", "confidence": 80, "reason": "the same release"})
+        out = self.go()
+        self.assertEqual(out["changes"], {})
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
+        self.assertEqual(out["news"]["rows"], 1)
 
     def test_a_pair_makes_a_new_story_and_news_tags_it(self):
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
@@ -403,7 +477,7 @@ class Job(unittest.TestCase):
         from insight_core.db.repo_post_parts import PostPartsRepository
         self.cur.execute("DELETE FROM post_parts WHERE post_id = %s", (d,))
         PostPartsRepository.write(self.cur, [d])
-        story = self.ix_story(a, b, c, d)
+        story = self.ix_story(a, b, c, d, reason="time")
         self.cur.execute("UPDATE story_posts SET role = 'share' WHERE story_id = %s AND post_id <> %s", (story, b))
         first = self.go()
         sid = {s for s, _, _, _ in self.current()}.pop()

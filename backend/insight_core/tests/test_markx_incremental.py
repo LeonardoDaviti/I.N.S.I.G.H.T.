@@ -55,7 +55,7 @@ class Incremental(unittest.TestCase):
         for n, m in enumerate(members):
             self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice, parent_id, parent_reason) "
                              "VALUES (%s, %s, 'report', %s, %s, %s)",
-                             (m, members[0], f"v{n}", members[n - 1] if n else None, "citation" if n else None))
+                             (m, members[0], f"v{n}", members[n - 1] if n else None, "time" if n else None))
         return members[0]
 
     def answer(self, kind, answer_of, limit=None):
@@ -145,7 +145,8 @@ class Incremental(unittest.TestCase):
         out = self.go()
         self.assertEqual(out["run"]["dirty_tasks"], 3)
         self.assertEqual(out["run"]["dirty_posts"], 3)
-        self.assertEqual(out["changes"], {"remove": 3})
+        self.assertEqual(out["changes"], {"remove": 2})                 # e, the second voice of d and e: asked again
+        self.assertEqual(out["tasks_reasked"], {"check": 1})
         self.assertGreaterEqual(out["run"]["closure"], 1)
         self.assertEqual(out["news"]["made"], "incremental")
 
