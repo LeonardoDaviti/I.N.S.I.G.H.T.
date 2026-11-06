@@ -65,6 +65,8 @@ export interface MarkxRow {
   story: string | null;
   posts: MarkxLine[];
   removed: MarkxLeftOut[];
+  /** 0119 A2: the entities its posts make surge (3+ voices that day). */
+  surging?: { id: string; name: string; day: string; voices: number }[];
   ix: { id: string; title: string | null; voices?: number; first_at?: string }[];
 }
 
@@ -88,7 +90,7 @@ export interface MarkxPostPanel {
     mentions: { name: string; role: string }[];
   } | null;
   entities: { name: string; type: string | null; role: string | null; maker: string | null; family: string | null;
-    version: string | null; variant: string | null; span: string }[];
+    version: string | null; variant: string | null; span: string; entity_id?: string | null }[];
   stories: (MarkxWhy & { id: string; headline: string | null; first_at: string | null; posts: number })[];
   connections: { relation: string; p: number | null; rule: string | null; from: 'post' | 'story'; other_kind: 'post' | 'story';
     other: string; title?: string | null; reason: string | null }[];
@@ -216,4 +218,110 @@ export interface MarkxPrecision {
   stale: number;
   unsure: number;
   flags: Record<string, Partial<Record<MarkxFlag, number>>>;
+}
+
+// ---- 0119 A3: entities (the list, an entity's page, the review queue) ------------------------------------------
+
+export interface MarkxEntityRef {
+  id: string;
+  name: string;
+  type: string | null;
+  maker: string | null;
+  level: 'thing' | 'family' | 'version' | 'variant' | 'checkpoint';
+  version: string | null;
+  variant: string | null;
+  size: string | null;
+  build: string | null;
+  status: 'provisional' | 'confirmed' | 'not_entity';
+  family: { id: string; name: string } | null;
+}
+
+export interface MarkxSurge { day: string; voices: number; posts: number; via: { entity: string; name: string | null; posts: number }[] }
+
+export interface MarkxEntityPost {
+  id: string;
+  title: string | null;
+  source: string | null;
+  kind?: string | null;
+  at: string | null;
+  url?: string | null;
+  read?: boolean;
+  roles?: string[];
+}
+
+export interface MarkxEntityRow extends MarkxEntityRef {
+  voices: number;
+  posts: number;
+  reports: number;
+  mentions: number;
+  last_at: string;
+  last_seen: string | null;
+  stories: { id: string; headline: string | null }[];
+  newest: MarkxEntityPost[];
+  surges: MarkxSurge[];
+}
+
+export type MarkxEntityAccuracy = Record<'merges' | 'surges' | 'collisions', string>;
+
+export interface MarkxEntityList {
+  window_days: number;
+  total: number;
+  items: MarkxEntityRow[];
+  accuracy: MarkxEntityAccuracy;
+  queue: number;
+}
+
+export interface MarkxEntityPage {
+  entity: MarkxEntityRef;
+  asked: string;
+  redirected: boolean;
+  aliases: string[];
+  maker: { id: string; name: string } | null;
+  family: { id: string; name: string } | null;
+  versions: { id: string; name: string; version: string | null; variant: string | null; level: string }[];
+  posts: number;
+  voices: number;
+  stories: { story: string; headline: string | null; voices: number; newest: string; posts: MarkxEntityPost[] }[];
+  loose: MarkxEntityPost[];
+  sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number }[];
+  surges: MarkxSurge[];
+  accuracy: MarkxEntityAccuracy;
+  queue: MarkxQueueItem[];
+}
+
+export type MarkxEntityAnswer = 'same' | 'other_version' | 'different' | 'not_entity';
+
+export interface MarkxQueueSide extends MarkxEntityRef {
+  root: string;
+  posts: { id: string; title: string | null; source: string | null; at: string | null; span: string; role: string | null }[];
+}
+
+export interface MarkxQueueItem {
+  id: string;
+  kind: 'alias' | 'collision';
+  a: MarkxQueueSide;
+  b: MarkxQueueSide | null;
+  proposal: 'same' | 'other_version' | 'different' | 'split';
+  reason: string;
+  confidence: number | null;
+  answer: MarkxEntityAnswer | null;
+  answered_at: string | null;
+  created_at: string;
+  evidence: {
+    judge?: { relation?: string; confidence?: number; evidence?: string } | null;
+    rules?: string[] | null;
+    senses?: { m: number[]; what?: string }[] | null;
+    mentions?: { n: number; span: string; type: string; maker: string | null }[];
+    split_runs?: number | null;
+    runs?: number | null;
+  };
+}
+
+export interface MarkxEntityQueue {
+  open: MarkxQueueItem[];
+  answered: MarkxQueueItem[];
+  merges: { id: string; from: { id: string; name: string | null }; to: { id: string; name: string | null }; by: string;
+    automatic: boolean; at: string; undone_at: string | null; confidence: number | null }[];
+  counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
+  accuracy: MarkxEntityAccuracy;
 }

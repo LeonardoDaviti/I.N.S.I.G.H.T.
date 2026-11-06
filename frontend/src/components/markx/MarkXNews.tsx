@@ -127,6 +127,9 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               {added && row.tag !== 'NEW' ? ` · +${added}` : ''}
               {row.removed.length ? ` · −${row.removed.length}` : ''}
               {row.headline.from === 'haiku' ? ' · headline by Haiku' : ''}
+              {row.surging?.length ? (
+                <span data-surging> · surging: {row.surging.map((s) => s.name).join(', ')}</span>
+              ) : null}
             </span>
             {row.tag !== 'NEW' && (row.ix.length > 1 || (ixTitle && ixTitle !== row.headline.text)) ? (
               <span className="block text-[0.75rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
