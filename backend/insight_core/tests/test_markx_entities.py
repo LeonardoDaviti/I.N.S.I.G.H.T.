@@ -383,6 +383,40 @@ class Collisions(_Db):
         self.assertEqual(entity_views.queue(self.cur)["open"], [])
 
 
+class CollisionsAgree(_Db):
+    def test_two_runs_that_agree_settle_it_without_a_third(self):
+        ps = [self.post(n, T0 + n * H) for n in range(2)]
+        self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[1], ("Luma", "product", "subject", "Orbit"))
+        self.stage()
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'collide'")
+        tid, = self.cur.fetchone()
+        for _ in range(2):
+            repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                          answer={"senses": [{"m": [1, 2], "what": "one model"}]})
+        repo.answer_task(self.cur, tid)
+        out = self.stage(since=self.since)
+        self.assertEqual((out["collide"]["asked_again"], out["collide"]["one_thing"]), (0, 1))
+
+
+class Anchors(_Db):
+    def test_an_address_names_a_thing_only_by_its_whole_name(self):
+        """A short name inside a longer repository name is no anchor (the scratch copy: a maker's model merged into
+        its coding tool by the lab's containment test); a build tag after the name is dropped."""
+        url = "https://github.com/acme/kestrel-coder"
+        a = self.post(0, T0, links=[url])
+        b = self.post(1, T0 + H, links=[url])
+        c = self.post(2, T0 + 2 * H, links=["https://huggingface.co/acme/Nimbus-7-GGUF"])
+        self.mentions(a, ("Kestrel", "model", "subject"))
+        self.mentions(b, ("Kestrel Coder", "software", "subject"))
+        self.mentions(c, ("Nimbus 7", "model", "subject"))
+        self.stage()
+        an = I.anchors(self.cur, self.book(), "ent-v3")
+        self.assertIn(self.entity_of(b), an)
+        self.assertNotIn(self.entity_of(a), an)
+        self.assertIn(self.entity_of(c), an)
+
+
 class Surges(_Db):
     def test_three_voices_a_day_with_the_roll_up_through_the_child(self):
         v = {"family": "Nimbus", "version": "5", "variant": None, "size": None, "build": None}

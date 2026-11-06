@@ -508,8 +508,13 @@ def anchors(cur: Any, book: Book, guide: str) -> Dict[str, Set[str]]:
         mm = ANCHOR_RE.search(url or "")
         if e is None or not mm:
             continue
-        repo = N.squash(mm.group(3).casefold())
-        if e.sq and len(repo) >= 4 and (e.sq in repo or repo in e.sq):
+        # the address names it: the repository's name is its name (a build tag after it dropped: "-GGUF"). Not a name
+        # inside a longer one: the lab's containment test merged a maker's product into a repository of its tool.
+        words = N.tokens(mm.group(3).replace(".", " "))
+        while len(words) > 1 and N.BUILD.match(words[-1]):
+            words = words[:-1]
+        repo = N.squash(" ".join(words))
+        if e.sq and len(repo) >= 4 and (e.sq == repo or e.sq == N.squash(mm.group(3).casefold())):
             out[eid].add(f"{mm.group(1).lower()}/{mm.group(2).lower()}/{mm.group(3).lower()}")
     return out
 
@@ -1081,13 +1086,15 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         if status != "answered" or not calls:
             out["waiting"] += 1
             continue
-        if len(calls) < COLLIDE_RUNS:
+        from insight_core.markx import validate
+        n = validate.collide_mentions(text)
+        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already
+        settled = len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)
+        if len(calls) < COLLIDE_RUNS and not settled:
             if status == "answered" and _savepoint(cur, "UPDATE mx_tasks SET status = 'open', lease_until = NULL, "
                                                         "leased_by = NULL WHERE id = %s AND status = 'answered'", (tid,)):
                 out["asked_again"] += 1
             continue
-        from insight_core.markx import validate
-        n = validate.collide_mentions(text)
         prop = split_of([a for _, a in calls[:COLLIDE_RUNS]], n)
         if prop is None:
             out["one_thing"] += 1
