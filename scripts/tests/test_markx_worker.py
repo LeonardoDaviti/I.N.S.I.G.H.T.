@@ -40,8 +40,9 @@ def guide(gid, body):
 
 
 GUIDES = {"read-v2": guide("read-v2", "GUIDE read-v2: read the post."),
-          "ent-v3": guide("ent-v3", "GUIDE ent-v3: list the entities.")}
-KIND_GUIDE = {"read": "read-v2", "entities": "ent-v3"}
+          "ent-v3": guide("ent-v3", "GUIDE ent-v3: list the entities."),
+          "judge-story-v1": guide("judge-story-v1", "GUIDE judge-story-v1: are the two stories one?")}
+KIND_GUIDE = {"read": "read-v2", "entities": "ent-v3", "merge": "judge-story-v1"}
 
 
 # ---------------------------------------------------------------------------------------------- the stub
@@ -331,6 +332,31 @@ class TestValid(Base):
             kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}
             self.assertEqual(len(kinds), 1)
             self.assertEqual(c["system"], W.system_for(GUIDES[KIND_GUIDE[kinds.pop()]]))
+
+    def test_merges_are_asked_one_per_call_and_leased_twenty_at_a_time(self):
+        """0112 Decided 8: a merge is asked alone (313 of 313 answered live at --batch 1); the lease stays --batch, so
+        --batches still counts leases, and the other kinds keep 20 a call."""
+        self.stub.add("merge", 7, start=1)
+        self.stub.add("read", 25, start=101)
+        p = self.run_worker("--kinds", "merge,read", "--parallel", "4", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 32)
+        sizes = {}
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            kind = self.stub.tasks[str(ids[0])]["kind"]
+            sizes.setdefault(kind, []).append(len(ids))
+        self.assertEqual(sizes["merge"], [1] * 7)
+        self.assertEqual(sorted(sizes["read"]), [5, 20])
+        self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "20")])
+
+    def test_per_call_sets_a_kinds_call_size(self):
+        self.stub.add("merge", 7)
+        p = self.run_worker("--kinds", "merge", "--per-call", "merge=3")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(sorted(c["stdin"].count("### ITEM id:") for c in self.fake_calls()), [1, 3, 3])
+        for bad in ("merge", "merge=0", "merge=x", "=2"):
+            self.assertEqual(self.run_worker("--kinds", "merge", "--per-call", bad).returncode, 2, bad)
 
     def test_batches_caps_the_leases(self):
         self.stub.add("read", 100)

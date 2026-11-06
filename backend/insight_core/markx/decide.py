@@ -18,6 +18,9 @@ Two layers:
       7. Late posts (the late-post table): a join of a post more than 72 hours after its story began needs the
          judge's "same event" at the merge bar; a development is a "follows up" connection instead, a reaction
          a "background" one, anything else about it "related"; the story's date never moves.
+      8. Asked again (0112 Decided 8, `settle`): a join, pair or merge that would change a story counts only once a
+         second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept. An "about" answer whose
+         own reason says the post is not about the story (`contradicts`) never counts, and is asked again.
     A question is a `Question` with the prototype's id (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
     `merge2:`); a story is keyed, inside one run only, by its Mark IX story's key or a pair's anchor post. Nothing
     keyed so is stored: the job matches its stories to Mark X's by their member posts.
@@ -35,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -72,11 +76,13 @@ class Config:
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
+    confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
+    reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False, check_threads=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -438,6 +444,93 @@ def _first_key(posts: Dict[str, Post], ms: Dict[str, Any]):
     return (0, min(known)) if known else (1,)
 
 
+# ---- asked again (0112 Decided 8) ---------------------------------------------------------------------
+# v10.0's accepted joins and pairs were right 62 of 80 (78%) by a blind judge; the same questions asked again at batch
+# 20 kept 53/59 and 50/54 right (90%, 93%). So a join, pair or merge that would change a story counts only when a
+# second answer agrees; and an "about" answer whose own reason says the post is not about the story never counts.
+
+MAX_ASKS = 3       # a question is asked at most this many times (a first answer, its second, one more on a split)
+
+# The class of reason text that says "not this story", read from v10.0's 1,814 accepted "about" answers (35 match:
+# 1.9%; of the 80 judged, it fires on 4 wrong joins and no right one). Three families, never a name or a site:
+#   1. the reason names another relation or another thing for the post: "so it is a different event", "this is closer
+#      to a mention", "a mention rather than a retelling", "the relation should be different", "a mismatch", "a
+#      different model from ...", "a different commentary post", "a related but distinct event" (but not "a
+#      different angle/reading/framing" of the same event, nor "not a distinct release event");
+#   2. it says the story's subject is not the post's: "<the story's subject> is not its (main) subject";
+#   3. it says unrelated, absent, no relation, not mentioned ("the family is absent from its text").
+# Not in the class: "rather than the release itself" (a reaction or a hands-on report: still about it), "only as
+# background" (as often said of a side subject as of the story), "does not mention <a detail>".
+_OTHER_RELATION = (r"\b(?:relation|it|this|which)\s+(?:is|should be|falls under|reads as|is best read as|is closer to"
+                   r"|is actually)\s+(?:actually\s+|best read as\s+|closer to\s+)?(?:an?\s+)?"
+                   r"(?:different|mention|unrelated|digest item)\b"
+                   r"(?!\s+(?:angle|reading|aspect|take|framing|view|perspective|detail))"
+                   r"|\bfalls under different\b|\bshould be different\b|\ba mention rather than\b|\bis a mismatch\b"
+                   r"|\bmismatch in subject\b"
+                   r"|\bis a different (?:event|happening|story|model|release|product|project|company|claim"
+                   r"|announcement|report|subject)\b"
+                   r"|\ba different (?:event|happening|model|release|product|project|company|claim) from\b"
+                   # "a different commentary post", "a different piece" (the v10.0.1 review: a pair at 0.95)
+                   r"|(?<!not )\ban? different (?:\w+\s+){0,2}(?:post|piece|article|video|thread|tweet)\b"
+                   # "a related but distinct event", "distinct from"; never "not a distinct release event"
+                   r"|(?<!not )(?<!no )\b(?:related but|but|is|are|as|a|an) distinct\b|(?<!not )\bdistinct from\b")
+_NOT_ITS_SUBJECT = r"\bnot (?:its|the post's) (?:main )?(?:subject|topic)\b"
+_UNRELATED = r"\bunrelated\b|\babsent from\b|\bno relation\b|\bnot related\b|\bnot mentioned\b"
+NOT_THIS_STORY = re.compile("|".join((_OTHER_RELATION, _NOT_ITS_SUBJECT, _UNRELATED)), re.I)
+
+
+def contradicts(reason: Optional[str]) -> bool:
+    """Whether an answer's own reason says the post is not about the story (the class above)."""
+    return bool(reason) and NOT_THIS_STORY.search(reason) is not None
+
+
+def changes_story(kind: str, v: Verdict, config: Config = Config()) -> bool:
+    """Whether this answer, if it counted, would change a story: a join or pair "about" at the join bar (a member, or a
+    late post's connection), a merge's "same event" at the merge bar. A merge's development is a typed connection."""
+    if v.p is None:
+        return False
+    if kind == "merge":
+        return v.relation == "same_event" and v.p >= config.tau_merge
+    return kind in ("join", "pair") and v.relation in ABOUT and v.p >= config.tau_join
+
+
+def agreeing(kind: str, v: Verdict, config: Config = Config()) -> bool:
+    """Whether a story-changing answer can count once a second one agrees (0112 Decided 8, the coordinator's "both
+    about"): a join's "about" (same event, development, reaction) at the join bar, a pair's or a merge's "same event"
+    at its bar. A pair's development or reaction never makes a story."""
+    if not changes_story(kind, v, config):
+        return False
+    return kind == "join" or v.relation == "same_event"
+
+
+def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
+    """(the verdict that counts, or None for none yet; whether to ask again) from a question's valid answers, oldest
+    first. The newest answer decides: one that changes nothing counts as it is; one that would change a story counts
+    only when the answer before it agrees: both `agreeing` (for a join both "about", whatever the relations; for a
+    pair or a merge both "same event"), neither reason against it. It counts as one verdict at the lower p, named by
+    the earlier call, with the relation of the two that says less (a development or reaction over a same event: the
+    late-post table reads it). A pair's development or reaction never counts and is not asked again; an answer whose
+    reason is against it never counts. Until then the question is asked again, MAX_ASKS times at most."""
+    if not answers:
+        return None, False
+    last = answers[-1]
+    if not changes_story(kind, last, config):
+        return last, False
+    more = len(answers) < MAX_ASKS
+    if config.reason_rule and contradicts(last.reason):
+        return None, more
+    if not config.confirm:
+        return last, False
+    if not agreeing(kind, last, config):
+        return None, False
+    if len(answers) >= 2:
+        prev = answers[-2]
+        if agreeing(kind, prev, config) and not (config.reason_rule and contradicts(prev.reason)):
+            relation = last.relation if last.relation != "same_event" else prev.relation
+            return Verdict(relation, min(prev.p, last.p), prev.reason, prev.call), False
+    return None, more
+
+
 def answered_pairs(questions: Sequence[Question], verdicts: Dict[str, Verdict]) -> List[Tuple[Question, Verdict]]:
     """The questions that have a verdict, with it."""
     return [(q, verdicts[q.tid]) for q in questions if q.tid in verdicts]
@@ -461,13 +554,17 @@ class Ask:
     """The answers a run reads, and the tasks it adds for the questions not asked yet (content-only inputs: the same
     question is one task whatever ids come with it)."""
 
-    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None) -> None:
+    def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None, memo: Any = None,
+                 dry: bool = False) -> None:
         self.cur, self.now = cur, now
         self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
+        self.memo = memo                      # 0116: the tasks and calls of this snapshot, read once (incremental.refresh)
+        self.dry = dry                        # nothing added, nothing reopened (the check's incremental reading)
         self.added: Counter = Counter()
         self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
+        self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind (0112 D8)
 
     def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -475,24 +572,37 @@ class Ask:
         `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
         seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
         answered in this snapshot, so the run goes on (`raced` counts them)."""
-        from insight_core.markx import repo, schemas, tasks
+        from insight_core.markx import incremental, repo, schemas, tasks
         spec = schemas.KINDS[kind]
-        task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
+        memo = self.memo if kind in incremental.KINDS else None
+        if memo is not None:
+            h = repo.sha256_hex(text)
+            got = memo.tasks.get((kind, h))
+            task = None if got is None else {"id": got[0], "status": got[1]}
+        else:
+            task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
         if task is None:
-            if self.added[kind] >= self.caps.get(kind, CAP):
+            if self.dry or self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
             try:
                 with self.cur.connection.transaction():
-                    tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+                    tid, _new = tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
                 return None
             self.added[kind] += 1
+            if memo is not None:
+                memo.tasks[(kind, h)] = (str(tid), "open", 0)
+                memo.keys[str(tid)] = (kind, h)
             return None
         if task["status"] != "answered":
             return None
-        call = repo.valid_call(self.cur, task["id"])
+        if memo is not None:
+            calls = memo.calls.get(task["id"]) or []
+            call = {"id": calls[0][1], "answer": calls[0][0]} if calls else None
+        else:
+            call = repo.valid_call(self.cur, task["id"])
         if call is None:
             return None
         self.answered[kind] += 1
@@ -501,6 +611,39 @@ class Ask:
     def verdict(self, kind: str, text: str, **kw) -> Optional[Verdict]:
         got = self.answer(kind, text, **kw)
         return None if got is None else Verdict.of(got[0], got[1])
+
+    def later(self, first_call: str) -> List[Verdict]:
+        """The question's valid answers after its first (`first_call`), oldest first. Read only."""
+        if self.memo is not None and first_call in self.memo.call_task:
+            return [Verdict.of(ans, cid) for ans, cid in self.memo.calls[self.memo.call_task[first_call]][1:]]
+        self.cur.execute("""SELECT id::text, answer FROM mx_calls
+                             WHERE task_id = (SELECT task_id FROM mx_calls WHERE id = %s) AND valid
+                             ORDER BY created_at, ctid""", (first_call,))
+        return [Verdict.of(ans, cid) for cid, ans in self.cur.fetchall() if cid != first_call]
+
+    def ask_again(self, kind: str, first_call: Optional[str]) -> None:
+        if first_call and not self.dry:
+            self.again[first_call] = kind
+
+    def reopen(self) -> Dict[str, int]:
+        """The questions to ask again: their tasks open once more (their calls stay), {kind: how many}. An answered
+        task only; one another transaction changed since the run's snapshot is left for the next run."""
+        out: Counter = Counter()
+        for call, kind in sorted(self.again.items()):
+            try:
+                with self.cur.connection.transaction():
+                    self.cur.execute("""UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL
+                                         WHERE status = 'answered'
+                                           AND id = (SELECT task_id FROM mx_calls WHERE id = %s)""", (call,))
+                    if self.cur.rowcount:
+                        out[kind] += 1
+                        tid = self.memo.call_task.get(call) if self.memo is not None else None
+                        if tid and tid in self.memo.keys:
+                            key = self.memo.keys[tid]
+                            self.memo.tasks[key] = (tid, "open", self.memo.tasks[key][2])
+            except psycopg_errors.SerializationFailure:
+                self.raced[kind] += 1
+        return dict(out)
 
 
 @dataclass
@@ -514,6 +657,7 @@ class World:
     readings: Dict[str, dict]
     candidates: List[Tuple[str, str, Optional[float]]]
     ix_mentions: Dict[str, Set[str]] = field(default_factory=dict)   # Mark IX story -> the roundups mentioning it
+    memo: Any = None                           # 0116: what the last run read (incremental.Memo), when kept
 
     def kinds(self) -> Dict[str, Optional[str]]:
         return {k: r.get("kind") for k, r in self.readings.items()}
@@ -524,18 +668,20 @@ class World:
     def copies(self) -> Dict[str, Set[str]]:
         """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
         from insight_core.markx import tasks
+        from insight_core.markx import incremental
         out = {}
         for key, ms in self.stories.items():
-            found = tasks.near_copies([self.text[m.post] for m in ms if m.post in self.text])
+            members = [self.text[m.post] for m in ms if m.post in self.text]
+            found = incremental.copies(self.memo, members) if self.memo is not None else tasks.near_copies(members)
             if found:
                 out[key] = found
         return out
 
 
-def load(cur: Any, now: datetime, config: Config) -> World:
+def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
-    candidate pairs, and their readings."""
-    from insight_core.markx import tasks
+    candidate pairs, and their readings. With `memo` (0116), the texts are read again only where a row changed."""
+    from insight_core.markx import incremental, tasks
     since = now - timedelta(days=config.days)
     cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
@@ -551,8 +697,13 @@ def load(cur: Any, now: datetime, config: Config) -> World:
         elif cos is not None and (pairs[(a, b)] is None or cos > pairs[(a, b)]):
             pairs[(a, b)] = cos
     ids = {r[1] for r in rows} | {p for ab in pairs for p in ab}
-    text = tasks.load_posts(cur, ids)
-    posts = {pid: Post(pid, p.source_id, p.kind, p.at, tasks.words(p)) for pid, p in text.items()}
+    text = incremental.texts(cur, memo, ids) if memo is not None else tasks.load_posts(cur, ids)
+    rules = memo.rules if memo is not None else {}
+    posts = {}
+    for pid, p in text.items():
+        if pid not in rules:
+            rules[pid] = Post(pid, p.source_id, p.kind, p.at, tasks.words(p))
+        posts[pid] = rules[pid]
     stories: Dict[str, List[Member]] = defaultdict(list)
     for sid, pid, role, why in rows:
         if pid in posts:
@@ -566,7 +717,8 @@ def load(cur: Any, now: datetime, config: Config) -> World:
     for sid, pid in cur.fetchall():
         ix_mentions[sid].add(pid)
     return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts,
-                 readings=tasks.readings(cur, ids), candidates=window, ix_mentions=dict(ix_mentions))
+                 readings=incremental.readings(cur, memo, ids) if memo is not None else tasks.readings(cur, ids),
+                 candidates=window, ix_mentions=dict(ix_mentions), memo=memo)
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
@@ -592,8 +744,8 @@ def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
 class Questions:
     """Each question's input, built from content (markx/tasks.py's renders), and its verdict when answered."""
 
-    def __init__(self, world: World, ask: Ask, now: datetime) -> None:
-        self.w, self.ask, self.now = world, ask, now
+    def __init__(self, world: World, ask: Ask, now: datetime, config: Config = Config()) -> None:
+        self.w, self.ask, self.now, self.config = world, ask, now, config
         self.members = ix_members(world.posts, world.stories)
         self.cards: Dict[str, Optional[dict]] = {}
 
@@ -625,6 +777,21 @@ class Questions:
             return [m.post for m in self.members[key]]
         return sorted((outcome.about.get(key, {}) if outcome else {}), key=lambda p: _at_key(self.w.posts, p))
 
+    def settled(self, q: Question, text: str, **kw) -> Optional[Verdict]:
+        """A join's, pair's or merge's verdict as it counts (`settle`): asked again when it would change a story and
+        no second answer agrees yet (the run reopens it: `Ask.reopen`)."""
+        got = self.ask.answer(q.type, text, **kw)
+        if got is None:
+            return None
+        first = Verdict.of(got[0], got[1])
+        c = self.config
+        if not (c.confirm or c.reason_rule) or not changes_story(q.type, first, c):
+            return first
+        v, again = settle(q.type, [first] + self.ask.later(got[1]), c)
+        if again:
+            self.ask.ask_again(q.type, got[1])
+        return v
+
     def verdict(self, q: Question, outcome: Optional[Outcome] = None) -> Optional[Verdict]:
         from insight_core.markx import tasks
         rd, t = self.w.readings, self.w.text
@@ -638,20 +805,20 @@ class Questions:
             if q.post not in t or not self._read([q.post]):
                 return None
             card = tasks.rule_card(tasks._earliest(self._p(ms)), rd)
-            return self.ask.verdict("join", tasks.join_input(t[q.post], rd.get(q.post), self._p(q.side), card),
-                                    a=q.post, priority=self._priority(q.post))
+            return self.settled(q, tasks.join_input(t[q.post], rd.get(q.post), self._p(q.side), card),
+                                a=q.post, priority=self._priority(q.post))
         if q.type == "pair":
             if q.post not in t or q.anchor not in t or not self._read([q.post, q.anchor]):
                 return None
-            return self.ask.verdict("pair", tasks.pair_input(t[q.anchor], t[q.post], rd), a=q.anchor, b=q.post,
-                                    priority=self._priority(q.post))
+            return self.settled(q, tasks.pair_input(t[q.anchor], t[q.post], rd), a=q.anchor, b=q.post,
+                                priority=self._priority(q.post))
         if q.type == "merge":
             pa, pb = self.story_posts(q.story, outcome), self.story_posts(q.other, outcome)
             ca, cb = self.card(q.story, pa), self.card(q.other, pb)
             if ca is None or cb is None or not pa or not pb:
                 return None
-            return self.ask.verdict("merge", tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
-                                    a=pa[0], b=pb[0], priority=self._priority(pb[0]))
+            return self.settled(q, tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
+                                a=pa[0], b=pb[0], priority=self._priority(pb[0]))
         return None
 
 
@@ -659,7 +826,7 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
           answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
     extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
-    q = Questions(world, ask, now)
+    q = Questions(world, ask, now, config)
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
     multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= 2}
     first = {k: world.posts[ps[0]].at for k, ps in multi.items()}
@@ -731,9 +898,11 @@ def _same(a: Row, b: Row) -> bool:
     return a[0] == b[0] and a[1] == b[1] and _p(a[2]) == _p(b[2]) and (a[3] or None) == (b[3] or None)
 
 
-def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime) -> Tuple[Dict[str, str], Counter]:
+def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
+            write: bool = True) -> Tuple[Dict[str, str], Counter]:
     """Match each final story to the Mark X story holding most of its members (one each), open what is new and
-    close what changed (valid_to; nothing is deleted). Returns {final key: Mark X story id} and the counts."""
+    close what changed (valid_to; nothing is deleted). Returns {final key: Mark X story id} and the counts. With
+    `write` False (0116's check), only the match: a new story is "new:<key>", nothing is written."""
     from insight_core.markx import repo
     want = wanted(out, world.posts)
     counts: Counter = Counter()
@@ -765,8 +934,10 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime) ->
             claimed.add(best)
         else:
             first = min((world.posts[p].at for p in want[key] if p in world.posts), default=None)
-            ids[key] = str(repo.add_story(cur, first_at=first, run_id=run_id))
+            ids[key] = str(repo.add_story(cur, first_at=first, run_id=run_id)) if write else f"new:{key}"
             counts["stories_new"] += 1
+    if not write:
+        return ids, counts
     for key, sid in ids.items():
         old = have.get(sid, {})
         for pid, row in old.items():
@@ -831,7 +1002,7 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
     the run's cap on new connect tasks (the Ask's: `connect_new`, less what `connect_open` leaves room for) keeps the
     newest; the rest wait for later runs."""
-    from insight_core.markx import tasks
+    from insight_core.markx import incremental, tasks
     rows: List[Dict[str, Any]] = []
 
     def sid(key: str) -> Optional[str]:
@@ -854,8 +1025,8 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
         pairs.append((x0, y0, cos))
     pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
     for x0, y0, _cos in pairs:
-        text = tasks.connect_input(tasks._earliest([world.text[p] for p in groups[x0]]),
-                                   tasks._earliest([world.text[p] for p in groups[y0]]))
+        text = incremental.rendered(world.memo, "connect", (*groups[x0], "|", *groups[y0]), lambda: tasks.connect_input(
+            tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])))
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0])
         if v is None or v.relation not in CONNECT_RELATIONS:
             continue
@@ -871,6 +1042,9 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     """Haiku's headline (F4) for every News story, from its first 6 members: asked once, stored when answered."""
     from insight_core.markx import repo, tasks
     changed = 0
+    cur.execute("SELECT id::text, headline, headline_call::text FROM mx_stories WHERE id = ANY(%s::uuid[])",
+                ([ids[k] for k in news_keys],))
+    stored = {sid: {"headline": h, "headline_call": c} for sid, h, c in cur.fetchall()}
     for key in news_keys:
         ps = tasks._earliest([world.text[p] for p in out.about[key] if p in world.text])
         if not ps:
@@ -878,7 +1052,7 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
         got = ask.answer("headline", tasks.headline_input(ps), a=ps[0].id)
         if got is None:
             continue
-        story = repo.get_story(cur, ids[key])
+        story = stored.get(ids[key])
         text = (got[0].get("headline_en") or "").strip()
         if story and text and (story.get("headline") != text or str(story.get("headline_call") or "") != got[1]):
             repo.set_story_headline(cur, ids[key], headline=text, headline_call=got[1])
@@ -886,30 +1060,75 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     return changed
 
 
+def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = False):
+    """A run's reading of its snapshot through `memo` (0116: incremental.refresh, then load and think): (world, ask,
+    outcome, counts). `dry`: nothing is added or asked again (the check's incremental reading)."""
+    from insight_core.markx import incremental
+    incremental.refresh(cur, memo)
+    world = load(cur, now, config, memo=memo)
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
+    waiting = cur.fetchone()[0]
+    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))}, memo=memo,
+              dry=dry)
+    out, counts = think(cur, world, config, ask, now)
+    return world, ask, out, counts
+
+
+def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dict[str, Any]],
+            news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """incremental.digest of a reading: a story connection's ends as its member posts (ids differ between readings)."""
+    from insight_core.markx import incremental
+    members = {sid: tuple(sorted(out.about.get(key, {}))) for key, sid in ids.items()}
+    ends = [dict(c, a=c["a"] if c["a_kind"] == "post" else members.get(c["a"], c["a"]),
+                 b=c["b"] if c["b_kind"] == "post" else members.get(c["b"], c["b"])) for c in conns]
+    return incremental.digest(wanted(out, world.posts), ends, news_rows)
+
+
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
-        stage: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
-    raises stops the run between stages, and the caller's transaction rolls back: nothing half done."""
-    from insight_core.markx import news as mx_news, repo, schemas
+    raises stops the run between stages, and the caller's transaction rolls back: nothing half done (and, 0116, the
+    run leaves no memo: the next run is full).
+
+    0116: a run is incremental (it reads again only what changed since the last run: markx/incremental.py) unless
+    `full`, or there is no memo of the last run in this process, the code, config or a guide changed, or no full run
+    started since the night's NIGHTLY_HOUR. A nightly full run with a memo first reads the snapshot as an incremental
+    run would, writing nothing, and logs any difference from the full reading (`counts.check`)."""
+    import json as _json
+    import time as _time
+    from insight_core.markx import incremental, news as mx_news, repo, schemas
     mark = stage or (lambda name: None)
     cur.execute("SHOW transaction_isolation")
     isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
     if not cur.fetchone()[0]:
         return {"skipped": "another decision run holds the lock"}
+    started = _time.monotonic()
     now = now or _now()
     mark("load")
     schemas.ensure_guides(cur)
-    run_id = repo.start_run(cur, code_version=CODE_VERSION,
-                            config={**config.as_dict(), "guides": {k.name: k.guide for k in schemas.KINDS.values()}})
-    world = load(cur, now, config)
-    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
-    waiting = cur.fetchone()[0]
-    ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))})
+    guides = {k.name: k.guide for k in schemas.KINDS.values()}
+    key = _json.dumps([CODE_VERSION, config.as_dict(), guides], sort_keys=True, default=str)
+    memo, warm = incremental.memo_for(cur, key)
+    nightly = warm and full is None and incremental.nightly_due(cur, now)
+    kind = "full" if (full or not warm or nightly) else "incremental"
+    check = None
+    if kind == "full" and warm:
+        prev = memo
+        memo = incremental.fresh(prev.db, key)
+        p_world, p_ask, p_out, _ = _reading(cur, prev, now, config, dry=True)
+        p_ids, _ = persist(cur, None, p_out, p_world, now, write=False)
+        p_keys = [s["story"] for s in p_out.stories(p_world.posts) if voices(p_world.posts, s["posts"]) >= 2]
+        p_conns = connections(cur, p_out, p_ids, p_world, p_ask, config, p_keys)
+        p_news = mx_news.write(cur, None, out=p_out, ids=p_ids, world=p_world, now=now, store=False)["made_rows"]
+        check = _digest(p_out, p_ids, p_world, p_conns, p_news)
+    memo.run_id = None                              # until this run finishes: a failed run leaves no memo
+    run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
-    out, counts = think(cur, world, config, ask, now)
+    world, ask, out, counts = _reading(cur, memo, now, config)
+    counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     mark("write")
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
@@ -920,12 +1139,27 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
+    if check is not None:
+        diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
+        counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
+        if diff:
+            log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
+    want = wanted(out, world.posts)
+    counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
+                     "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
+                     "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
+                     "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),
+                     **(incremental.closure(memo, want, world.stories) if kind == "incremental" else
+                        {"closure": len(want), "stories": len(want)}),
+                     "seconds": round(_time.monotonic() - started, 3)}
+    memo.want = want
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
+    memo.run_id = str(run_id)
     return {"run": str(run_id), **counts}
 
 
