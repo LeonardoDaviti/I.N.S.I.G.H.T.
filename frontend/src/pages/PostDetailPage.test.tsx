@@ -27,6 +27,13 @@ describe('PostDetailPage header', () => {
     expect(original).toHaveAttribute('target', '_blank');
   });
 
+  it('a page you saved that is its source’s post reads “<source> · saved by you” (issue 0122)', async () => {
+    render(baseApi(rssPost({ source_id: 's9', source_display_name: 'Example Blog', metadata: { saved_by_owner: '2026-11-06T10:00:00+00:00' } })));
+    const header = (await screen.findByRole('heading', { level: 1 })).closest('header')!;
+    expect(within(header).getByRole('link', { name: 'Example Blog' })).toBeInTheDocument();
+    expect(within(header).getByText('· saved by you')).toBeInTheDocument();
+  });
+
   it('the source name reads the source; the post page has no settings link (owner, 2026-10-31)', async () => {
     render(baseApi(rssPost({ source_id: 'src-1' })));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });

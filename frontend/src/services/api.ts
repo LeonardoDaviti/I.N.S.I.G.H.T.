@@ -143,6 +143,8 @@ export interface FeedItem {
   repost?: Repost | null;
   /** A Hacker News item's points and comments (issue 0070): "1,675 points · 1,628 comments". */
   counts?: Counts | null;
+  /** A page you saved that is its source's post (issue 0122): "<source> · saved by you". */
+  saved_by_you?: boolean;
 }
 /** A News story's numbers (issue 0051): each voice once, in its strongest role. */
 export interface NewsScore {
@@ -965,12 +967,23 @@ export interface PageOffer {
   holds?: number;
 }
 
-/** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. */
+/** A followed source a page belongs to (issue 0122). */
+export interface PageSource { id: string; name: string; }
+
+/** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. A page of a
+ *  source you follow (issue 0122) is looked for under it first: `fetching` while that source is fetched
+ *  (`savePage` waits and asks again), then `already` (its post) or `saved` as the source's post. */
 export interface SavedPage extends Envelope {
-  status?: 'saved' | 'already';
+  status?: 'saved' | 'already' | 'fetching';
   post_id?: string;
   title?: string;
   source_id?: string;
+  /** The followed source it is a post of; null or absent for the Saved source. */
+  source?: PageSource | null;
+  /** `fetching` only: the source's fetch job. */
+  job_id?: string;
+  /** Set by `savePage`: the source was fetched first (the page was looked for there). */
+  fetched?: boolean;
   /** False: the page could not be read as an article; its title and address were kept. */
   readable?: boolean;
   /** Why it could not be read ("HTTP 403", "no article on the page"). */
@@ -1097,8 +1110,22 @@ export function createApi() {
     /** The feeds for any page address (issue 0026); takes up to about 10 seconds. */
     findFeed: (url: string) => settle(request<FeedFinding>('/api/sources/find-feed', { method: 'POST', body: { url } })),
     /** What following a page without a feed would give (issue 0028); reads a few of its pages. */
-    savePage: (url: string, title?: string) =>
-      settle(request<SavedPage>('/api/saved', { method: 'POST', body: { url, ...(title ? { title } : {}) } })),
+    /** Save any page (issue 0031). A page of a source you follow is looked for there first (issue 0122):
+     *  that source is fetched (`onFetching` says which), then the page is its post, or saved as one. */
+    savePage: (url: string, title?: string, { onFetching }: { onFetching?: (source: PageSource) => void } = {}) =>
+      settle((async () => {
+        const body = { url, ...(title ? { title } : {}) };
+        const first = await request<SavedPage>('/api/saved', { method: 'POST', body });
+        if (first.status !== 'fetching' || !first.job_id) return first;
+        if (first.source) onFetching?.(first.source);
+        // The fetch's outcome doesn't matter here: found or not, the second answer says.
+        await waitForJob<unknown>(first.job_id).catch(() => undefined);
+        const after = await request<SavedPage>('/api/saved', { method: 'POST', body: { ...body, after_fetch: true } });
+        return { ...after, fetched: true };
+      })()),
+    /** The followed source whose page an address is (issue 0122), or null. Nothing is fetched. */
+    pageSource: (url: string) =>
+      request<{ success: true; source: PageSource | null }>(`/api/saved/source?url=${enc(url)}`).then((r) => r.source),
     previewPageWatch: (url: string, prefix?: string) =>
       settle(request<PageWatchPreview>('/api/sources/page-watch/preview', { method: 'POST', body: { url, ...(prefix ? { prefix } : {}) } })),
     updateSourceSettings: (sourceId: string, settings: SourceSettings) =>

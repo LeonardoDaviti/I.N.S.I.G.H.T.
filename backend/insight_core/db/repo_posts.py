@@ -15,7 +15,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
-from insight_core.utils.post_fields import MOVED_KEY, build_post_fields
+from insight_core.utils.post_fields import MOVED_KEY, SAVED_KEY, build_post_fields
 from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
@@ -225,6 +225,17 @@ class PostsRepository:
          LIMIT 1
     """
 
+    # Issue 0122: a page you saved that a feed now brings. The Saved source's rows at the address
+    # (normalised), and this source's own saved rows (saved_by_owner); _saved_copy decides.
+    _SAVED_COPY_SQL = """
+        SELECT p.id, p.url = %(url)s, p.source_id = %(source_id)s::uuid, s.platform = 'saved'
+          FROM posts p JOIN sources s ON s.id = p.source_id
+         WHERE (p.url = %(url)s OR p.normalized_url = %(normalized_url)s::text) AND p.album_of IS NULL
+           AND (s.platform = 'saved' OR (p.source_id = %(source_id)s::uuid AND p.metadata ? '{saved}'))
+         ORDER BY p.url = %(url)s DESC, p.fetched_at, p.id
+         LIMIT 1
+    """.replace("{saved}", SAVED_KEY)
+
     # Bounded because each retry only happens when another writer moved the rows under us.
     # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
     # this means something is genuinely wrong rather than merely contended.
@@ -390,8 +401,9 @@ class PostsRepository:
                 # later statement fails with 25P02, so the caller's single terminal commit is
                 # never reached and every post gathered that cycle is rolled back.
                 with self._savepoint(cur, "insight_upsert_post"):
-                    other_form = self._other_form(cur, params)
-                    row = None if other_form else self._same_post_elsewhere(cur, params)
+                    row = self._saved_copy(cur, params)
+                    other_form = row is None and self._other_form(cur, params)
+                    row = row if row is not None or other_form else self._same_post_elsewhere(cur, params)
                     if not other_form and row is None:
                         cur.execute(query, params)
                         row = cur.fetchone()
@@ -444,6 +456,44 @@ class PostsRepository:
         cur.execute(self._ADDRESS_LOCK_SQL, params)
         cur.execute(self._OTHER_FORM_SQL, params)
         return bool(cur.fetchone()[0])
+
+    def _saved_copy(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
+        """A page you saved that this post is (issue 0122): that row, updated with this post at its
+        address, as (id, False); None when there is none (the other paths go on).
+
+        - Saved as this source's post (metadata.saved_by_owner) at another form of the address: the
+          feed's form and title win. At the same address ON CONFLICT (url) already updates it.
+        - Saved under the Saved source at this address, normalised, when this source owns the page
+          (repo_linked.page_source, 0084 B's rule): the row moves to this source and stays one you
+          saved. A source that doesn't own the page (a link blog, an aggregator) leaves it as it was.
+
+        One row, its id kept: the reader state, notes and opens stay; nothing is deleted. Left as it
+        was when another row holds this address or this source's external_id (no unique clash)."""
+        if params.get("normalized_url") is None:
+            return None
+        cur.execute(self._SAVED_COPY_SQL, params)
+        found = cur.fetchone()
+        if found is None:
+            return None
+        target, exact, here, in_saved = found
+        if here and (exact or in_saved):
+            return None   # the same row by ON CONFLICT (url), or the Saved source's own save
+        if not here:
+            from insight_core.db.repo_linked import page_source   # repo_linked reads the sources' facts
+            if not in_saved or page_source(cur, params["url"]) != str(params["source_id"]):
+                return None
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE id <> %(target)s::uuid AND (url = %(url)s"
+                    " OR (%(external_id)s::text IS NOT NULL AND source_id = %(source_id)s::uuid"
+                    " AND external_id = %(external_id)s::text)))", dict(params, target=target))
+        if cur.fetchone()[0]:
+            return None
+        cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = metadata || jsonb_build_object("
+                    f"'{SAVED_KEY}', COALESCE(metadata -> '{SAVED_KEY}', to_jsonb(fetched_at))) WHERE id = %(target)s::uuid",
+                    dict(params, target=target))
+        cur.execute("UPDATE posts SET {assignments} WHERE id = %(target_id)s::uuid RETURNING id".format(
+            assignments=self._post_update_assignments(set_url=True)), dict(params, target_id=target))
+        self.logger.info("A saved page is the post of source %s now: %s", params["source_id"], params["url"][:80])
+        return (cur.fetchone()[0], False)
 
     def _same_post_elsewhere(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
         """This post stored by its source under another address (_ELSEWHERE_SQL): that row, moved to
@@ -620,7 +670,9 @@ class PostsRepository:
         metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}',"
                     f" '{MOVED_KEY}', {row}metadata -> '{MOVED_KEY}'))"
                     f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
-                    f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}'))")
+                    f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}',"
+                    # A page you saved stays one you saved (issue 0122), whatever the feed brings.
+                    f" '{SAVED_KEY}', {row}metadata -> '{SAVED_KEY}'))")
         assignments: List[str] = []
         if set_url:
             assignments.append("url = %(url)s")

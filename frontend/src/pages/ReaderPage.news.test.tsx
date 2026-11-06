@@ -212,7 +212,8 @@ describe('Classics (issue 0051)', () => {
     expect(await screen.findByRole('link', { name: 'Golden Gate Claude' })).toHaveAttribute('href', `/posts/${ID(5)}`);
     expect(savePage).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Machines of Loving Grace' }));
-    expect(savePage).toHaveBeenCalledWith('https://darioamodei.com/essay/machines-of-loving-grace', 'Machines of Loving Grace');
+    expect(savePage).toHaveBeenCalledWith('https://darioamodei.com/essay/machines-of-loving-grace', 'Machines of Loving Grace',
+      expect.objectContaining({ onFetching: expect.any(Function) }));
     expect(await screen.findByText('the post page')).toBeInTheDocument();
   });
 
