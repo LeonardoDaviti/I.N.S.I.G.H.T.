@@ -60,6 +60,22 @@ TWITTER_EPOCH_MS = 1288834974657
 ADDRESS_DATE = re.compile(r"/((?:19|20)\d\d)[/-](0[1-9]|1[0-2])(?:[/-]([0-3]\d))?(?=/|$|-|\.)")
 
 
+# Collect originals' switch (issue 0126 (4), the owner 2026-11-07: on by default). A stored false counts as your
+# choice only when this default wrote it (the row carries COLLECT_CHOSEN): before, the dialog wrote false on every
+# save, touched or not, so that false is no choice and reads as the default.
+COLLECT_DEFAULT = True
+COLLECT_CHOSEN = ("collect_originals_default", "on")
+
+
+def collect_setting(stored: Optional[Mapping]) -> bool:
+    """Whether Collect originals is on, from the scheduler's stored settings (None: never saved)."""
+    stored = stored or {}
+    value = stored.get("collect_originals")
+    if value is None or (value is False and stored.get(COLLECT_CHOSEN[0]) != COLLECT_CHOSEN[1]):
+        return COLLECT_DEFAULT
+    return bool(value)
+
+
 def access_keys(url: str) -> Tuple[str, ...]:
     """The query keys of `url` that carry an access or gift token."""
     try:
@@ -213,7 +229,7 @@ def collect_order(rows: Sequence[Tuple[str, int, datetime]]) -> list:
 
 
 __all__ = [
-    "EXTRA_SHARE", "FOLLOWED", "FROM_QUOTE", "NO_ARTICLE", "PAGE", "SiteReads", "TWEET_UNHELD", "WALLED",
-    "access_keys", "collect_order", "credit_after", "early_fetch_blocked", "linked_wanted", "page_date", "site_reads_of",
+    "COLLECT_CHOSEN", "COLLECT_DEFAULT", "EXTRA_SHARE", "FOLLOWED", "FROM_QUOTE", "NO_ARTICLE", "PAGE", "SiteReads", "TWEET_UNHELD", "WALLED",
+    "access_keys", "collect_order", "collect_setting", "credit_after", "early_fetch_blocked", "linked_wanted", "page_date", "site_reads_of",
     "strip_access_tokens", "tokened", "trigger_kind", "tweet_time", "whole",
 ]

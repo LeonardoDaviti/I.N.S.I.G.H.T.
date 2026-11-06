@@ -469,7 +469,7 @@ export interface SchedulerConfig {
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
   /** Collect originals (issue 0123): a News story's original INSIGHT lacks is collected, one page, within the
-   *  shared budget (under 1% of the schedule's requests). Off unless you switch it on. */
+   *  shared budget (under 1% of the schedule's requests). On unless you switched it off (issue 0126). */
   collect_originals?: boolean;
   updated_at?: string | null;
   /** Only on GET /api/operations/scheduler. */

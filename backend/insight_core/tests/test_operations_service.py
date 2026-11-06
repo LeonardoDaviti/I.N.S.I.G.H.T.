@@ -90,6 +90,40 @@ class SchedulerConfigTests(unittest.TestCase):
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 5})["ingest_tick_minutes"], 15)
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 30})["ingest_tick_minutes"], 30)
 
+    def test_collect_originals_is_on_by_default_and_keeps_an_owner_s_choice(self):
+        """Issue 0126 (4): on unless you switched it off. A false written while off was the default (the
+        dialog wrote it whether or not you touched it) reads as the default; one this version wrote is kept."""
+        normalize = self.service._normalize_scheduler_config
+        self.assertTrue(normalize({})["collect_originals"], "never set: on")
+        self.assertTrue(normalize({"collect_originals": False})["collect_originals"], "written under the old default")
+        self.assertFalse(normalize({"collect_originals": False, "collect_originals_default": "on"})["collect_originals"],
+                         "switched off under this default: kept")
+        self.assertTrue(normalize({"collect_originals": True})["collect_originals"])
+
+    def test_the_originals_job_reads_the_row_the_dialog_writes(self):
+        """Issue 0126: 0123's job read a 'scheduler' row nothing wrote, so the switch never reached it."""
+        from insight_core.services import originals_service
+        self.assertEqual(originals_service.SCHEDULER_KEY, OperationsService.SETTINGS_KEY_SCHEDULER)
+
+    def test_saving_the_scheduler_marks_the_switch_as_chosen(self):
+        from unittest import mock
+        written = {}
+        service = self.service
+        service.get_scheduler_config = lambda: service._normalize_scheduler_config({})  # type: ignore[method-assign]
+        with mock.patch("insight_core.services.operations_service.db.connection"), \
+                mock.patch("insight_core.services.operations_service.SystemSettingsRepository.upsert",
+                           side_effect=lambda cur, key, value: written.update({key: value}) or datetime.now(timezone.utc)):
+            merged = service.update_scheduler_config({"collect_originals": False})
+        self.assertFalse(merged["collect_originals"])
+        self.assertEqual(written["scheduler_config"]["collect_originals"], False)
+        self.assertEqual(written["scheduler_config"]["collect_originals_default"], "on")
+        self.assertFalse(service._normalize_scheduler_config(written["scheduler_config"])["collect_originals"], "read back: off")
+        with mock.patch("insight_core.services.operations_service.db.connection"), \
+                mock.patch("insight_core.services.operations_service.SystemSettingsRepository.upsert",
+                           side_effect=lambda cur, key, value: written.update({key: value}) or datetime.now(timezone.utc)):
+            service.update_scheduler_config({"ingest_tick_minutes": 30})
+        self.assertTrue(written["scheduler_config"]["collect_originals"], "a save that doesn't name it keeps the setting (on)")
+
     def test_malformed_env_defaults_fall_back(self):
         from unittest import mock
         with mock.patch.dict("os.environ", {"INSIGHT_INGEST_INTERVAL_HOURS": "daily",

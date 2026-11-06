@@ -79,7 +79,7 @@ class OriginalsCase(unittest.TestCase):
             cur.execute("DELETE FROM story_originals WHERE url LIKE %s OR url LIKE %s", LIKE)
             cur.execute("DELETE FROM posts WHERE url LIKE %s OR url LIKE %s", LIKE)
             cur.execute("DELETE FROM sources WHERE handle_or_url LIKE %s OR handle_or_url LIKE %s", LIKE)
-            cur.execute("DELETE FROM system_settings WHERE key IN ('scheduler', 'originals_budget')")
+            cur.execute("DELETE FROM system_settings WHERE key IN ('scheduler_config', 'originals_budget')")
 
     def _rows(self, sql, *args):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
@@ -221,12 +221,21 @@ class CollectTests(OriginalsCase):
                        "ON CONFLICT (post_id) DO NOTHING", post_id, story, f"v{n}", n)
         return story, posts
 
-    def switch(self, on):
-        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler', %s::jsonb) "
-                   "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", json.dumps({"collect_originals": on}))
+    def switch(self, on, **more):
+        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler_config', %s::jsonb) "
+                   "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                   json.dumps({"collect_originals": on, "collect_originals_default": "on", **more}))
 
-    def test_off_by_default_collects_nothing(self):
+    def test_on_by_default_and_an_explicit_off_collects_nothing(self):
+        """Issue 0126 (4): on unless you switched it off; a false the dialog wrote while off was the default is no choice."""
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertTrue(collect_on(cur), "no scheduler row: on")
+        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler_config', %s::jsonb)",
+                   json.dumps({"interval_hours": 20, "collect_originals": False}))
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertTrue(collect_on(cur), "written by the old default's dialog: on")
         self.news_story(ESSAY, self.a, self.b)
+        self.switch(False)
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             self.assertFalse(collect_on(cur))
         http = FakeHttp({ESSAY: essay()})
