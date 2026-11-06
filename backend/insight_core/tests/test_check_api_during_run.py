@@ -7,8 +7,12 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
+
+import psycopg
 
 from insight_core.checks import job_checks, report
+from insight_core.tests._db import db_url, requires_test_db
 
 
 class TheCheck(unittest.TestCase):
@@ -33,6 +37,97 @@ class TheCheck(unittest.TestCase):
                                           "examples": [], "note": ""}]}, fh)
             _, problems = report.build(work)
         self.assertTrue(any("markx.api_during_run: 2" in p for p in problems), problems)
+
+
+class DuringTheFirstStart(unittest.TestCase):
+    """0121 Decided 8: the same gate during a deploy's first start after a rule change (the v10.0.1 review saw 2.0-5.8 s
+    stalls of the whole API during the first start's rebuild), with the same baseline-relative count."""
+
+    def test_the_gate_fails_above_zero_whatever_main_does_and_main_may_not_have_it(self):
+        self.assertIn("markx.api_during_rebuild", report.MUST_BE_ZERO)
+        self.assertIn("markx.api_during_rebuild", report.ZERO_EVEN_IF_FELL)
+        for base, head, fails in (([], 1, True), ([], 0, False), ([5], 1, True)):
+            with tempfile.TemporaryDirectory() as work:
+                for side, found in (("base", [{"name": "markx.api_during_rebuild", "count": c, "of": 9, "what": "slow",
+                                               "examples": [], "note": ""} for c in base]),
+                                    ("head", [{"name": "markx.api_during_rebuild", "count": head, "of": 9, "what": "slow",
+                                               "examples": [], "note": ""}])):
+                    os.makedirs(os.path.join(work, side))
+                    with open(os.path.join(work, side, "jobs.json"), "w") as fh:
+                        json.dump({"found": found}, fh)
+                _, problems = report.build(work)
+            self.assertEqual(any("markx.api_during_rebuild" in p for p in problems), fails, (base, head, problems))
+
+    def test_the_check_measures_the_first_start_last(self):
+        order = []
+        with mock.patch.object(job_checks, "scratch_only", lambda url: None), \
+                mock.patch.object(job_checks, "rebuild_twice", lambda *a: order.append("rebuild") or []), \
+                mock.patch.object(job_checks, "markx_unchanged", lambda *a: order.append("ix") or []), \
+                mock.patch.object(job_checks, "incremental_identity", lambda *a: order.append("identity") or "i"), \
+                mock.patch.object(job_checks, "api_during_run", lambda *a: order.append("run") or "r"), \
+                mock.patch.object(job_checks, "api_during_rebuild", lambda *a: order.append("start") or "s"):
+            found = job_checks.check("postgresql://x/y_test", None)
+        self.assertEqual(order, ["rebuild", "ix", "identity", "run", "start"])
+        self.assertEqual(found[-2:], ["r", "s"])
+
+    @requires_test_db
+    def test_the_copy_is_made_to_need_a_rebuild_and_the_versions_start_work_runs_as_its_container_runs_it(self):
+        from insight_core.services.stories_service import SETTINGS_KEY
+        url = db_url()
+        with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute("SELECT value FROM system_settings WHERE key = %s", (SETTINGS_KEY,))
+            kept = cur.fetchone()
+            cur.execute("INSERT INTO system_settings (key, value, updated_at) VALUES (%s, %s::jsonb, now()) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                        (SETTINGS_KEY, json.dumps({"rules": "this code's", "rebuild": {"done": 3}})))
+        self.addCleanup(self._put, url, SETTINGS_KEY, kept[0] if kept else None)
+        seen = {}
+
+        def measured(db, name, what, log_name, work):
+            seen.update(name=name, log=log_name, work=work)
+            return "found"
+        with mock.patch.object(job_checks, "_measured", measured):
+            self.assertEqual(job_checks.api_during_rebuild(url, None), "found")
+        self.assertEqual(seen["name"], "markx.api_during_rebuild")
+        with psycopg.connect(url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT value FROM system_settings WHERE key = %s", (SETTINGS_KEY,))
+            self.assertEqual(cur.fetchone()[0], {"rules": job_checks.FORCED_RULES})   # a rule change, no rebuild begun
+        calls = []
+
+        class Child:
+            pid, returncode = 4242, 0
+
+            def wait(self, timeout=None):
+                return 0
+        fake = type("Api", (), {"env": {"X": "1"}})()
+        with mock.patch("subprocess.Popen", lambda args, **kw: calls.append((args, kw)) or Child()), \
+                tempfile.TemporaryDirectory() as here, _cwd(here):
+            note = seen["work"](fake)
+        (args, kw), = calls
+        self.assertIn("from insight_core.scripts.api_supervisor import start_work", args[-1])
+        self.assertTrue(kw["start_new_session"])
+        self.assertEqual(kw["env"], {"X": "1"})
+        self.assertEqual(note["start_work"], "finished")
+
+    @staticmethod
+    def _put(url, key, value):
+        with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+            if value is None:
+                cur.execute("DELETE FROM system_settings WHERE key = %s", (key,))
+            else:
+                cur.execute("UPDATE system_settings SET value = %s::jsonb WHERE key = %s", (json.dumps(value), key))
+
+
+class _cwd:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        self.was = os.getcwd()
+        os.chdir(self.path)
+
+    def __exit__(self, *exc):
+        os.chdir(self.was)
 
 
 def rows(n: int, slow: int = 0, failed: int = 0):
