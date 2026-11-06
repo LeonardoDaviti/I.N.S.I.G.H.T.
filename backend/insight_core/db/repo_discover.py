@@ -239,7 +239,7 @@ SELECT DISTINCT ON (voice) voice, source_id FROM (
 # Each story's root (0064): its outside page, else its one post with no parent and no reason.
 _ORIGINS = f"""
 SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, {shown_title()}, p.source_id,
-       s.first_at,
+       s.first_at, EXISTS (SELECT 1 FROM posts held WHERE s.origin_url IS NOT NULL AND held.normalized_url = s.origin_url),
        (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id),
        (SELECT array_agg(DISTINCT rp.source_id::text) FROM story_posts sp JOIN posts rp ON rp.id = sp.post_id
         WHERE sp.story_id = s.id AND sp.voice LIKE 'reddit:%%')
@@ -495,8 +495,8 @@ class DiscoverRepository:
             cur, kinds, own_sites, {v for *_, voices, _ in rows for v in voices if v.startswith("site:")})
         return [Origin(str(story_id), url, title if source_id else origin_title,
                        str(source_id) if source_id else None, first_at, {v: voice_source(v, namers) or "" for v in voices},
-                       reddit_sources=tuple(reddit or ()))
-                for story_id, url, origin_title, title, source_id, first_at, voices, reddit in rows]
+                       reddit_sources=tuple(reddit or ()), at_post=bool(held))
+                for story_id, url, origin_title, title, source_id, first_at, held, voices, reddit in rows]
 
     @staticmethod
     def stored_titles(cur: Cursor, urls: Sequence[str]) -> Dict[str, str]:

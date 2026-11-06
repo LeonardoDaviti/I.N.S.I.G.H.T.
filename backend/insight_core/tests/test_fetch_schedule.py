@@ -70,6 +70,17 @@ def decide(s: CadenceStats, profile: PolitenessProfile = RSS, **kwargs):
 
 
 class DecideFetchTests(unittest.TestCase):
+    def test_a_story_linking_its_page_makes_it_due_once(self):
+        """Issue 0114: due now while no fetch succeeded since the link; backoff still wins."""
+        page = "https://lab.example.com/news/a-release"
+        d = decide(stats(linked_wanted_at=NOW - H / 2, linked_url=page))
+        self.assertEqual((d.kind, d.fetch), (DecisionKind.FETCH_LINKED, True))
+        self.assertIn(page, d.detail)
+        self.assertEqual(decide(stats(linked_wanted_at=NOW - 2 * H, linked_url=page)).kind, DecisionKind.SKIP_NOT_DUE,
+                         "a fetch succeeded after the link")
+        backoff = stats(linked_wanted_at=NOW - H / 2, consecutive_failures=2, next_retry_at=NOW + H)
+        self.assertEqual(decide(backoff).kind, DecisionKind.SKIP_BACKOFF)
+
     def test_new_source_is_fetched(self):
         d = decide(stats(post_count=0, last_success_at=None, last_outcome=None,
                          tier=CadenceTier.UNKNOWN, mean_gap=None, sample_size=0))
@@ -237,7 +248,7 @@ class DecideFetchTests(unittest.TestCase):
     def test_decision_kind_knows_whether_it_fetches(self):
         fetching = {k for k in DecisionKind if k.fetches}
         self.assertEqual(fetching, {DecisionKind.FETCH_NEW_SOURCE, DecisionKind.FETCH_DUE,
-                                    DecisionKind.FETCH_RETRY, DecisionKind.FETCH_FORCED})
+                                    DecisionKind.FETCH_RETRY, DecisionKind.FETCH_FORCED, DecisionKind.FETCH_LINKED})
 
 
 class CadenceStatsTests(unittest.TestCase):

@@ -27,7 +27,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from functools import lru_cache
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -40,14 +40,16 @@ from insight_core.services import page_titles
 from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
-from insight_core.utils.addresses import host_of, site_of, x_account
+from insight_core.utils.addresses import host_of, is_tweet, site_of, x_account
 from insight_core.utils.post_links import PLATFORM_KINDS
-from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, Origin,
+from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, PAGES_WITHIN_DAYS, Origin,
                                               REFERENCE_KINDS, discover_address, discover_open, discover_place, federation,
                                               one_card_per_domain, order, origins, owner_domain, own_names,
                                               place_kind, same_owner, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, reposter_voice, threads)
+from insight_core.utils.discover_rules import page_key_of, pages as pages_of
+from insight_core.utils.originals_rules import SiteReads, site_reads_of, strip_access_tokens, tokened
 from insight_core.utils.tree_rules import _PAGE, slug_title
 from insight_core.utils.url_normalization import normalize_url
 
@@ -772,7 +774,18 @@ class StoriesService:
         archives.sort(key=lambda a: (-a["origins"], a["name"].lower()))
         unnamed = sorted(({"place": place, "origins": len(stories)} for place, stories in started.unnamed.items()
                           if len(stories) >= DISCOVER_MIN_ARTICLES), key=lambda u: (-u["origins"], u["place"]))
+        # Pages (issue 0113): each story's root you can save as one post, with what the server's reads say of
+        # its site (Discover's reads: a site whose pages all came back untitled, or a blocked follow test).
+        walls = site_reads_of(reads)
+        page_rows = [{
+            "url": strip_access_tokens(url), "title": title_of(url), "site": site_of(host_of(url)), "hide_key": page_key_of(url),
+            "video": video, "tweet": is_tweet(url), "first_linked_at": min(r.first_at for r in roots).isoformat(),
+            "voices": len({v for root in roots for v in root.voices}),
+            "readable": not (tokened(url) or walls.get(site_of(host_of(url)), SiteReads()).walled),
+            "stories": [_story(root, title_of) for root in _first(roots)[:ORIGIN_STORIES_SHOWN]],
+        } for url, roots, video in pages_of(started, since=now - timedelta(days=PAGES_WITHIN_DAYS), hidden=hidden)]
         result = {"success": True, "suggestions": out, "also": also, "archives": archives, "unnamed": unnamed,
+                  "pages": page_rows,
                   "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],
                   "first_page": FIRST_PAGE}
         try:
@@ -872,7 +885,7 @@ class StoriesService:
     def hide(self, key: str) -> Dict[str, Any]:
         """Not interested: the suggestion is never shown again."""
         key = (key or "").strip().lower()
-        if not key or len(key) > 300:
+        if not key or len(key) > (2048 if key.startswith("page:") else 300):   # a Pages row hides one page (0113)
             raise ValueError("key must be a suggestion's key")
         with db.transaction(self.db_url) as cur:
             self.repo.hide(cur, [key], "not_interested")

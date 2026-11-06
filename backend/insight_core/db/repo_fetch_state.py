@@ -68,6 +68,9 @@ class FetchStateRow:
     updated_at: Optional[datetime] = None
     doctor_checked_at: Optional[datetime] = None    # the source doctor last looked (issue 0036)
     doctor_finding: Optional[Dict[str, Any]] = None  # what it found: {replacement, dismissed}
+    linked_wanted_at: Optional[datetime] = None   # a story linked one of its pages not stored (issue 0114)
+    linked_url: Optional[str] = None
+    linked_fetched_at: Optional[datetime] = None  # the last early fetch decided: one per interval
 
 
 _COLUMNS = [f.name for f in fields(FetchStateRow)]
@@ -196,7 +199,9 @@ class FetchStateRepository:
                 last_decision_kind = EXCLUDED.last_decision_kind,
                 last_decision_at = EXCLUDED.last_decision_at,
                 next_due_at = EXCLUDED.next_due_at,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                linked_fetched_at = CASE WHEN EXCLUDED.last_decision_kind = 'fetch_linked'
+                                         THEN EXCLUDED.last_decision_at ELSE source_fetch_state.linked_fetched_at END
             """,
             [
                 (str(source_id), _value(decision.kind), now, decision.next_due_at, now)
