@@ -128,11 +128,12 @@ class SavedService:
         stored = post["url"] != address and await asyncio.to_thread(self.stored_post, [post["url"]])
         if stored:
             return await self._already(stored, saved_at)
+        if post.get("date") is None:   # no date of its own: no later than the first post linking it (0122;
+            # 0113: every page, a source's or Saved's, so its story's 72 hours are its links', never the save's)
+            post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         if owner:
             source_id = owner["id"]
             post = {**post, "metadata": {**post.get("metadata", {}), SAVED_KEY: saved_at.isoformat()}}
-            if post.get("date") is None:   # no date of its own: no later than the first post linking it
-                post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         else:
             source_id = await asyncio.to_thread(self.saved_source_id)
         post_id = await asyncio.to_thread(self._insert, source_id, *dated_by_page(post, saved_at))

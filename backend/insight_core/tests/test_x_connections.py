@@ -150,6 +150,19 @@ class XRulesTests(unittest.TestCase):
                                           "t3": ("t2", "thread")})
         self.assertEqual(story.voices, 1, "one source's thread is a story of one voice")
 
+    def test_a_page_saved_days_after_a_thread_about_it_is_in_the_thread(self):
+        """0113: one account's thread links the page you saved later, dated by its first link (the save path): one
+        place, no link join, but its date joins it to the thread (the lab's case: a saved essay under its author's thread)."""
+        page = "https://essays.example/blog/matmul"
+        saved = StoryPost(id="s", source_id="saved-src", kind="saved", own_site="", home_site="",
+                          t=NOON, url=page, title="Inside the GPU")   # no date of its own: its first link's
+        posts = [saved, tweet("t0", "ag", "author_a", n=ID, links=[(page, "s")]),
+                 tweet("t1", "ag", "author_a", n=ID + 1, minutes=5, reply_to="author_a", links=[(page, "s")]),
+                 tweet("t2", "ag", "author_a", n=ID + 2, minutes=10, reply_to="author_a")]
+        [story] = group(posts)
+        self.assertEqual({p.id for p in story.posts}, {"s", "t0", "t1", "t2"})
+        self.assertEqual(story.voices, 1)
+
     def test_tweets_of_one_second_follow_their_ids(self):
         posts = [tweet("z0", "pa", "predict_addict", n=ID),
                  tweet("a2", "pa", "predict_addict", n=ID + 2, reply_to="predict_addict"),

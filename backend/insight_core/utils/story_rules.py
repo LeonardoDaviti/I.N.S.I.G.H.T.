@@ -505,18 +505,17 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             if cited.kind == "saved":
                 # A page you saved is still the outside page its linkers link (issue 0113): they keep that
                 # page's link join among themselves (2+ places within 72 hours of its first link), and the
-                # saved page joins them, whatever its own date or the save's; it joins nothing else. Dated by
-                # its time, a page saved days after its links pulled their story apart (0113's measure: 31 of
-                # 50), and one saved now pulled in the posts linking it in the 72 hours before the save (0123's:
-                # 3 of 44). Joining its first linker when there is no link join was measured too: it hung a
-                # page linked for months on a months-old thread (the lab's saved-is-not-a-voice case).
+                # saved page joins them, whatever its own date or the save's. Without it a page dated far from
+                # its links (saved days later, or stating an older date) pulled their story apart: 0113's
+                # measure, 31 of 50. The citation below still joins its other linkers by its date, which the
+                # save path makes its first link's when the page states none (saved_service, 0122's rule).
                 near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
                 if len({p.place for p in near}) >= 2:
                     for p in near:
                         join(p.id, cited.id, "citation")
                         why[p.id].add("citation")
                         why[cited.id].add("citation")
-                continue
+                    ps = [p for p in ps if p not in near]
             for p in ps:
                 if p.place != cited.place and abs(p.t - cited.t) <= LINK_WITHIN:
                     join(p.id, cited.id, "citation")

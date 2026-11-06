@@ -259,19 +259,29 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         story = trees.only(posts)
         self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"})
 
-    def test_a_saved_page_with_no_link_join_joins_nothing(self):
-        """Two posts one story by their title, linking the page four days apart (no link join): the saved page
-        joins neither (as its outside page wouldn't), and their story stays (0113's measure: a video page)."""
+    def test_a_saved_page_dated_by_its_first_link_joins_by_its_date(self):
+        """No link join (two posts one story by their title, linking the page four days apart): a page that states
+        no date is dated by its first link (the save path), and joins the post linking it within 72 hours of it,
+        so it is in their story (0113's measure: a video page)."""
         title = "A new open video model ships today"
-        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 10)
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=0)
         posts = [saved, trees.post("a", "channel-a", kind="telegram", title=title, links=[(self.PAGE, "saved")]),
                  trees.post("b", "channel-b", kind="telegram", title=title, hours=96, links=[(self.PAGE, "saved")])]
-        self.assertEqual({p.id for p in trees.only(posts).posts}, {"a", "b"})
+        self.assertEqual({p.id for p in trees.only(posts).posts}, {"saved", "a", "b"})
 
-    def test_a_save_pulls_in_no_post_its_page_would_not(self):
-        """A post linking the page a week after its first links, and in no story of theirs, stays apart,
-        however near the save is to it."""
-        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 8)
+    def test_a_saved_page_linked_once_by_each_of_two_stories_joins_neither(self):
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 30)
+        posts = [saved]
+        for n, day in (("1", 0), ("2", 10)):
+            title = f"Story number {n} about another thing entirely"
+            posts += [trees.post(f"a{n}", f"chan-a{n}", kind="telegram", hours=24 * day, title=title, links=[(self.PAGE, "saved")]),
+                      trees.post(f"b{n}", f"chan-b{n}", kind="telegram", hours=24 * day + 1, title=title)]
+        self.assertEqual(sorted(sorted(p.id for p in s.posts) for s in group(posts)), [["a1", "b1"], ["a2", "b2"]])
+
+    def test_a_saved_page_dated_by_its_first_link_pulls_in_no_later_post(self):
+        """A post linking the page a week after its first links, in no story of theirs, stays apart: the page is
+        dated by its first link (the save path), so only its first 72 hours count."""
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=0)
         posts = [saved, trees.post("dh", "account-x", kind="x", links=[(self.PAGE, "saved")]),
                  trees.post("tg", "channel-y", kind="telegram", hours=1, links=[(self.PAGE, "saved")]),
                  trees.post("pr", "a-repo", kind="site", hours=24 * 7, links=[(self.PAGE, "saved")])]

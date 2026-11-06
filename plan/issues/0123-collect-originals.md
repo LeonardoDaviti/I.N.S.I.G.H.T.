@@ -70,7 +70,7 @@ Status: **built** (branch `issue-0113-0114-0123`, 2026-11-06), with 0113 and 011
   A rolling "1% of the sources fetched in 24 hours, whole requests" budget allowed about 1 a day and let 2 of 10 of 0114's fetches through (the schedule overtook the rest): not adopted.
 
 ## Does it join the right story? (scratch copy, the story job)
-- The 44 collectable then (33 pages, stored at the collection time, the worst date; 11 tweets from their quotes): **43 joined their story, all as its root; 0 dissolved;** 1 didn't join (a repository page linked for months: its link window is its first links'), its story intact. One story grew by one post that links the same release.
+- The 44 collectable then (33 pages dated as `collect` dates them: by the page, else its first link; 11 tweets from their quotes, dated by their ids): **43 joined their story, all as its root; 0 dissolved;** 1 didn't join (a repository page linked for months: its link window is its first links'), its story intact. One story grew by one post that links the same release. Stored at the collection time instead (the worst date), still 0 dissolved, but 3 stories pulled in a later post linking the page: why a page with no date is dated by its first link.
 
 ## Decided
 1. **Default off.** It reverses an owner decision (0065: nothing is fetched until you follow), and whether the 31 pages read as articles is unmeasured without fetching (12 of their sites the server never read). The cost is bounded by the credit and the joins are right, so switching it on is safe; the first week's `story_originals` rows show what it did.
