@@ -60,33 +60,33 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0046](0046-source-hygiene.md) | Source hygiene: quiet and never-opened sources | built, on the server (v9.5) |
 | [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, on the server (v9.5) |
 | [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, on the server (v9.5) |
-| [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | built, not deployed (v9.6) |
-| [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | built, not deployed (v9.7) |
-| [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | built, not deployed (v9.7) |
-| [0052](0052-what-i-read.md) | What I read: find again a post I read yesterday | built, not deployed (v9.6) |
-| [0053](0053-reader-gaps.md) | Reader gaps: pages built from tables, code in figures, and the gaps nobody has listed yet | built, not deployed (v9.6) |
-| [0054](0054-source-anatomy.md) | Source anatomy: how each source is read, and what it gives | built, not deployed (v9.6) |
-| [0055](0055-covered-by-on-the-post.md) | "Covered by" on the post page, not only in the feed | built, not deployed (v9.8) |
-| [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | built, not deployed (v9.8) |
-| [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | built, not deployed (v9.8) |
-| [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
+| [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | built, on the server (v9.6) |
+| [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | built, on the server (v9.7) |
+| [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | built, on the server (v9.7) |
+| [0052](0052-what-i-read.md) | What I read: find again a post I read yesterday | built, on the server (v9.6) |
+| [0053](0053-reader-gaps.md) | Reader gaps: pages built from tables, code in figures, and the gaps nobody has listed yet | built, on the server (v9.6) |
+| [0054](0054-source-anatomy.md) | Source anatomy: how each source is read, and what it gives | built, on the server (v9.6) |
+| [0055](0055-covered-by-on-the-post.md) | "Covered by" on the post page, not only in the feed | built, on the server (v9.8) |
+| [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | built, on the server (v9.8) |
+| [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | built, on the server (v9.8) |
+| [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, on the server (v9.8) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
-| [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | built, not deployed (v9.8) |
-| [0061](0061-smooth-loading.md) | Smooth loading: no broken tab after a deploy, no wait on the first post, a budget that measures what you wait for | built, not deployed (v9.8) |
-| [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | built, not deployed (v9.9) |
-| [0063](0063-saved-pages-keep-their-date.md) | Saved pages keep their own date, and link labels stay out of the text | built, not deployed (v9.9) |
-| [0064](0064-stories-as-trees.md) | Stories as trees: each post knows where it came from | built, not deployed (v9.9) |
-| [0065](0065-discover-the-sources-your-stories-start-from.md) | Discover suggests the sources your stories start from | built, not deployed (v9.9) |
-| [0066](0066-x-reposts-quotes-and-threads.md) | X: reposts, quotes and threads become connections | built, not deployed (v9.9) |
-| [0067](0067-discover-clean-less-noise.md) | Discover: cleaner, less noise (a roundup weighs half in the order; languages and mirrors aren't sites) | built, not deployed (v9.9) |
-| [0068](0068-reading-v9.9-gaps.md) | What reading v9.9 would show: threads, roundups, reposts, origin titles, phones, labels, shared blog hosts | built, not deployed (v9.10) |
-| [0069](0069-v9.11-deploy-reading-voices.md) | v9.11: a deploy that finishes, text that reads, one voice per publication | built, not deployed (v9.11) |
-| [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, not deployed (A9 measured, not built) |
-| [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | built, not deployed (v9.13) |
-| [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); A (memory), B, C, D1–D4 built, not deployed; A (incremental job, stored connections, date-only starts) to do |
-| [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built, not deployed |
+| [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | built, on the server (v9.8) |
+| [0061](0061-smooth-loading.md) | Smooth loading: no broken tab after a deploy, no wait on the first post, a budget that measures what you wait for | built, on the server (v9.8) |
+| [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | built, on the server (v9.9) |
+| [0063](0063-saved-pages-keep-their-date.md) | Saved pages keep their own date, and link labels stay out of the text | built, on the server (v9.9) |
+| [0064](0064-stories-as-trees.md) | Stories as trees: each post knows where it came from | built, on the server (v9.9) |
+| [0065](0065-discover-the-sources-your-stories-start-from.md) | Discover suggests the sources your stories start from | built, on the server (v9.9) |
+| [0066](0066-x-reposts-quotes-and-threads.md) | X: reposts, quotes and threads become connections | built, on the server (v9.9) |
+| [0067](0067-discover-clean-less-noise.md) | Discover: cleaner, less noise (a roundup weighs half in the order; languages and mirrors aren't sites) | built, on the server (v9.9) |
+| [0068](0068-reading-v9.9-gaps.md) | What reading v9.9 would show: threads, roundups, reposts, origin titles, phones, labels, shared blog hosts | built, on the server (v9.10) |
+| [0069](0069-v9.11-deploy-reading-voices.md) | v9.11: a deploy that finishes, text that reads, one voice per publication | built, on the server (v9.11) |
+| [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, on the server (A9 measured, not built) |
+| [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | built, on the server (v9.13) |
+| [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); A (memory), B, C, D1–D4 built, on the server; A (incremental job, stored connections, date-only starts) to do |
+| [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built, on the server |
 | [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | moved to Mark X Part G |
-| [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | built (v9.15), not merged |
+| [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | built, on the server (v9.15) |
 | [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | built, pushed (v9.16) |
 | [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | F + K built, pushed (v9.16) |
 | [0078](0078-channels-one-source-per-voice.md) | Channels: one source for one company, person or blog, made of its channels | on hold (owner) |
@@ -95,7 +95,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0081](0081-reading-walled-and-feedless-sites.md) | Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that is all | on hold (owner) |
 | [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, pushed (v9.16) |
 | [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row; a post page says "In News" | 1–3 built, pushed (v9.16) |
-| [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | A built, pushed (v9.16); B spec |
+| [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | A built, on the server (v9.16); B built, merged (v10.0.2, not pushed) |
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
 | [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, pushed (v9.16) |
 | [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | decided: goes to Mark X (burst candidates) |
@@ -122,17 +122,17 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0108](0108-moved-blogs-and-redirect-pages.md) | A blog that moved: follow a page's redirect, find the feed it moved to, read its older posts from the sitemap | built, pushed (v9.18) |
 | [0109](0109-v9.18-discover-from-the-server-review.md) | v9.18 Discover: platform accounts that can be followed, the best not sunk, a followed owner's other channels, things that aren't sources | built, pushed (v9.18) |
 | [0110](0110-rebuild-mention-to-a-removed-story.md) | A rebuild that mentions a story it removed (the v9.17 server rebuild stuck); the check runs a deploy's first start | built, pushed (v9.17 hotfix) |
-| [0111](0111-v10.0.1-news-from-the-v10-review.md) | v10.0.1 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | spec (v10.0.1) |
+| [0111](0111-v10.0.1-news-from-the-v10-review.md) | v10.0.1 News: a name-only story never leads, a date is no name, one owner one voice, a row leaves the window whole | built, merged (v10.0.2, not pushed) |
 | [0112](0112-mark-x-v10.0.1-live-fixes.md) | Mark X v10.0.1 (Shadow): readings the server accepts (the worker sends each guide's schema), checks never show an empty story, near-copies never checked, guides loaded safely, bug-failed readings reopened | built, merged (v10.0.1) |
 | [0113](0113-discover-pages-save-a-single-origin.md) | Discover's second tab, Pages: a story's origin page you don't follow, saved as one post with one tap (the existing save path), so the story gets its original | draft spec |
 | [0114](0114-fetch-a-followed-source-when-a-story-links-it.md) | A story links a page of a source you follow that isn't stored yet: that source is fetched now (within politeness), so the original arrives with its story | spec |
 | [0115](0115-mark-x-entities-list-and-entity-page.md) | Mark X entities: one list ranked like News (no today/week split), an entity page with every post and source in every role, grouped by story; nothing hidden when read | superseded by 0119 A3 |
-| [0116](0116-mark-x-incremental-decisions.md) | Mark X incremental decisions: a run recomputes only the stories new answers touched (and their merge groups), News only for changed rows; a nightly full run checks it | spec |
-| [0117](0117-restart-an-unhealthy-api.md) | An API that stops answering is restarted by itself: a health check on /api/version, a watchdog (default: in ingestion) after 2 min, at most 3 restarts an hour, a stack dump saved first | spec |
+| [0116](0116-mark-x-incremental-decisions.md) | Mark X incremental decisions: a run recomputes only the stories new answers touched (and their merge groups), News only for changed rows; a nightly full run checks it | built, merged (v10.0.3, not pushed) |
+| [0117](0117-restart-an-unhealthy-api.md) | An API that stops answering is restarted by itself: a health check on /api/version, a watchdog (default: in ingestion) after 2 min, at most 3 restarts an hour, a stack dump saved first | built, merged (v10.0.2, not pushed) |
 | [0118](0118-source-track-record.md) | Source track record (Mark X Stalker): per source and topic, rumors confirmed / wrong / pending, lead time, first or repeat, accurate details; every count opens its cases; recording starts when Stealth's leak rule passes | future |
 | [0119](0119-mark-x-v10.1-entities-and-perspectives.md) | Mark X v10.1 (Stealth in Shadow): A. entity identity, surges per exact version, the entity list, page and review queue (0090 B–C, E, 0115); B. perspectives and the story sheet (0106 v3.2f) with label buttons; new task kinds alias, perspective, sheet | spec |
 | [0120](0120-perspectives-inside-a-story.md) | Perspectives inside a story: what each source adds, and one story sheet (built in 0119 B) | spec |
-| [0121](0121-mark-x-v10.0.3-from-the-v10.0.1-review.md) | Mark X v10.0.3: checks never remove a post that links the story's page, a headline per row, runs in the right order, the reading window at once | spec (v10.0.3) |
+| [0121](0121-mark-x-v10.0.3-from-the-v10.0.1-review.md) | Mark X v10.0.3: checks never remove a post that links the story's page, a headline per row, runs in the right order, the reading window at once | building (v10.0.3) |
 
 ## Analysis archive
 
