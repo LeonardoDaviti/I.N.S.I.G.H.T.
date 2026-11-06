@@ -292,7 +292,7 @@ def api_during_run(db_url: str, now: datetime) -> Found:
                 r["phase"] = "loaded"
             asked.pop("before", None)
             if time.monotonic() > waited:
-                return Found("markx.api_during_run", "mark x", what, -1, 0, round(time.monotonic() - started, 1),
+                return Found("markx.api_during_run", "mark x", what, -1, 0, seconds=round(time.monotonic() - started, 1),
                              note=f"{LOADED_NOTE} (slow in each 10 s window over {QUIET_WAIT_S} s: {', '.join(loaded)})")
             stop.wait(20)
             phase[0] = "before"
