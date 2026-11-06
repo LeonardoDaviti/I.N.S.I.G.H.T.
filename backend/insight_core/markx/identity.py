@@ -53,7 +53,7 @@ from insight_core.markx import names as N
 log = logging.getLogger(__name__)
 
 LINK_LIMIT = 6000           # mentions linked a run (the rest wait: the 120 s run limit)
-PAIR_LIMIT = 20000          # pool pairs decided a run
+PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap: the 120-day full pass pools about 29,000)
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
@@ -592,13 +592,22 @@ class Decision:
     rules: Tuple[str, ...] = ()
 
 
+_STATED: Dict[Tuple[int, str, str], bool] = {}
+
+
 def stated_maker(cur: Any, bare: Ent, maker: str, guide: str) -> bool:
-    """The bare name's maker is written in one of its posts (not only guessed: the maker-prefix rule's condition)."""
+    """The bare name's maker is written in one of its posts (not only guessed: the maker-prefix rule's condition).
+    Remembered for the cursor's transaction (one run)."""
     from insight_core.markx import tasks, validate
-    cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions WHERE guide = %s AND entity_id = %s LIMIT 20",
-                (guide, bare.id))
-    posts = tasks.load_posts(cur, [r[0] for r in cur.fetchall()])
-    return any(validate.occurs(maker, p.title + "\n" + p.text) for p in posts.values())
+    k = (id(cur), bare.id, maker)
+    if k not in _STATED:
+        if len(_STATED) > 50000:
+            _STATED.clear()
+        cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions WHERE guide = %s AND entity_id = %s LIMIT 20",
+                    (guide, bare.id))
+        posts = tasks.load_posts(cur, [r[0] for r in cur.fetchall()])
+        _STATED[k] = any(validate.occurs(maker, p.title + "\n" + p.text) for p in posts.values())
+    return _STATED[k]
 
 
 def rules_of(cur: Any, book: Book, p: Pooled, handle_extra: Dict[Tuple[str, str], bool],
@@ -929,6 +938,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     import time as _time
     t0 = _time.monotonic()
     guide = schemas.KINDS["entities"].guide
+    _STATED.clear()
     book = load_book(cur)
     w = Writer(cur, book, run_id)
     out: Dict[str, Any] = {"kind": "full" if full else "incremental"}
