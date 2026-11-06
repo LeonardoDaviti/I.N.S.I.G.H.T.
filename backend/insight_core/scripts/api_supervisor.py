@@ -13,7 +13,8 @@ must happen once per container start, not once per API process (issue 0112 Decid
 - **The watchdog's door (issue 0117):** every second it looks for a restart request from the watchdog in
   insight-ingestion (services/api_watchdog.py). Asked, it saves every API process's thread stacks, stops uvicorn and
   exits with RESTART_EXIT, so Docker's restart policy starts the container again. Being a process of its own, a hung
-  API process can't block it.
+  API process can't block it. A request written before this process started, or over a minute old, is set aside,
+  never honoured (0124: one left from a stop or a deploy killed the fresh API 4 s into its start).
 """
 from __future__ import annotations
 
@@ -147,6 +148,7 @@ class Supervisor:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    started = time.time()   # a restart request written before this is never honoured (0124: stopped, or a deploy)
     from insight_core.logs.core.logger_config import setup_logging
     setup_logging(debug_mode=False)
     command = list(sys.argv[1:] if argv is None else argv)
@@ -158,7 +160,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     signal.signal(signal.SIGINT, supervisor.forward)
     child = supervisor.start()
     from insight_core.services.api_watchdog import RestartDoor, api_processes
-    door = RestartDoor(processes=lambda: api_processes(child.pid))
+    door = RestartDoor(processes=lambda: api_processes(child.pid), since=started)
     signal.signal(signal.SIGUSR1, lambda signum, frame: supervisor.dump_stacks(lambda: api_processes(child.pid)))
 
     def tick() -> None:
