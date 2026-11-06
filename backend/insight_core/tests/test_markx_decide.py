@@ -520,7 +520,7 @@ class Job(unittest.TestCase):
                          "VALUES (%s, %s, 'test.invalid', 0, NULL)", (pid, url))
 
     def test_two_stories_linking_one_document_within_30_days_are_asked_a_merge(self):
-        """0121 Decided 5 (the owner's call, default yes; the v10.0.1 review's W4): a document's later analyses are
+        """0121 Decided 5 (off by default since the owner's call of 2026-11-06; when on, the v10.0.1 review's W4): a document's later analyses are
         a merge question with its story, when their members link the same document page (a paper, a filing: the
         address shapes of 0106 and 0109) within 30 days. A question, never a rule."""
         a, b = self.post(0, "Acme files its prospectus"), self.post(1, "Acme's prospectus is out")
@@ -533,15 +533,15 @@ class Job(unittest.TestCase):
         self.ix_story(a, b), self.ix_story(c, d), self.ix_story(e, f)
         self.read_all([a, b, c, d, e, f])
         self.now = T + 24 * 21 * H
-        self.go()
+        on = replace(D.Config(), document_merges=True)
+        D.run(self.cur, now=self.now, config=on)
         self.answer("card", lambda t: {"headline_en": "Acme files a prospectus", "actors": ["Acme"],
                                        "object": "prospectus", "action": "filed", "odd": []})
-        out = self.go()
+        self.assertNotIn("merge", D.run(self.cur, now=self.now)["questions"], "off by default (the owner, 2026-11-06)")
+        out = D.run(self.cur, now=self.now, config=on)
         self.assertEqual(out["questions"].get("merge"), 1)
         self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'merge'")
         self.assertEqual(self.cur.fetchall(), [(a, c)])
-        off = D.run(self.cur, now=self.now, config=replace(D.Config(), document_merges=False))
-        self.assertNotIn("merge", off["questions"])
 
     def edge_row(self, first_hours):
         """Mark IX's story (a, b) inside News' window, and e, a post of no story joined to it by a surging name.
