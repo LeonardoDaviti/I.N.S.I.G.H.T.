@@ -131,6 +131,24 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
     return added
 
 
+NAME_KIND = "embed_name"
+
+
+def plan_names(cur: Cursor, *, limit: int = PLAN_LIMIT, **_kw) -> int:
+    """0119 A1: embed_name tasks for the entities (not marked not-an-entity) with no name vector and no task, the
+    newest first: how many were added. The input is the entity's shown name."""
+    cur.execute("""SELECT e.id::text, e.name FROM mx_entities e
+                    WHERE e.status <> 'not_entity'
+                      AND NOT EXISTS (SELECT 1 FROM mx_entity_vectors v WHERE v.entity_id = e.id)
+                      AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %s AND t.a = e.id)
+                    ORDER BY e.created_at DESC, e.id LIMIT %s""", (NAME_KIND, limit))
+    added = 0
+    for eid, name in cur.fetchall():
+        if tasks.add(cur, NAME_KIND, name, a=eid)[1]:
+            added += 1
+    return added
+
+
 # ---- the vectors -----------------------------------------------------------------------------------
 
 def encode(vector: Sequence[float]) -> str:
@@ -188,7 +206,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
         except (TypeError, ValueError):
             task_id = None
         task = repo.get_task(cur, task_id) if task_id else None
-        if task is None or task["kind"] != KIND:
+        if task is None or task["kind"] not in (KIND, NAME_KIND):
             invalid.append({"task_id": raw_id, "error": "no such embed task"})
             continue
         try:
@@ -200,6 +218,13 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
             continue
         if task["status"] in ("answered", "failed"):
             repeated += 1
+            continue
+        if task["kind"] == NAME_KIND:      # 0119 A1: a name's vector, for the alias candidates
+            cur.execute("""INSERT INTO mx_entity_vectors (entity_id, model, model_sha256, text_hash, v)
+                           VALUES (%s, %s, %s, %s, %s::halfvec) ON CONFLICT (entity_id, model) DO NOTHING""",
+                        (task["a"], model, model_sha256, task["input_hash"], repo.vector_text(v)))
+            repo.answer_task(cur, task_id)
+            stored += 1
             continue
         if repo.put_embedding(cur, post_id=task["a"], model=model, text_hash=task["input_hash"], vector=v,
                               model_sha256=model_sha256):

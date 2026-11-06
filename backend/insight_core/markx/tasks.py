@@ -552,11 +552,18 @@ def _plan_embeds(cur: Cursor, **kw) -> int:
     return embed.plan(cur, **kw)
 
 
+def _plan_names(cur: Cursor) -> int:
+    """0119 A1: the entities' name vectors (embed.plan_names)."""
+    from insight_core.markx import embed
+    return embed.plan_names(cur)
+
+
 WINDOWED = ("read", "entities", "embed")   # the planners the reading window (and a lease's `days`) applies to
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
             "check": plan_checks,
-            "embed": _plan_embeds}
+            "embed": _plan_embeds,
+            "embed_name": lambda cur, **kw: _plan_names(cur)}
 
 
 # ---- what a valid answer writes besides its call ----------------------------------------------------
