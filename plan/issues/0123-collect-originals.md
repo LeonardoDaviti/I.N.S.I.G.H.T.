@@ -93,4 +93,4 @@ From main e162228 with 0122's branch merged (its save path and its dedup are the
 - `db/repo_posts.py`: a collected Saved row moving to its source (0122) never gains `saved_by_owner`; `collected_original` is kept on every update.
 - `services/operations_service.py`, `main.py`: `collect_originals` in the scheduler's settings (default false).
 - Frontend: the switch in the Scheduler dialog; "· collected original" on the post page.
-- Tests: `test_originals_rules.py` (8), `test_story_originals.py` (9: 0114 due once, settles, no story/no credit/recent fetch; the credit; off by default; on: read once, its own date, not in Later, joins as root, never asked again; walled: no request, no token kept; unreadable not stored; a tweet from its quote).
+- Tests: `test_originals_rules.py` (7), `schedulerDialog.test.tsx` (1), `test_story_originals.py` (9: 0114 due once, settles, no story/no credit/recent fetch; the credit; off by default; on: read once, its own date, not in Later, joins as root, never asked again; walled: no request, no token kept; unreadable not stored; a tweet from its quote).
