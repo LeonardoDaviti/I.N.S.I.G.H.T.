@@ -342,8 +342,7 @@ class RestartDoor:
         except OSError:
             return None
         if why:
-            logger.warning("API restart asked by the watchdog ignored: %s (before this API started, or no API ran "
-                           "to see it)", why)
+            logger.warning("API restart asked by the watchdog ignored: %s", why)
             try:
                 _write_json(self._path(DONE), {"request": request, "stale": why,
                                                "at": datetime.now(timezone.utc).isoformat()})

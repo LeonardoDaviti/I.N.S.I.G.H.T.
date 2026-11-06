@@ -108,7 +108,7 @@ test('a waiting event reads in the reader\'s time, as of when it was written', (
 });
 
 test('apiRestartLine: an API restart record says its times in the reader zone, not the container UTC (issue 0124)', () => {
-  const restart = { id: 'r', status: 'failed', job_type: 'api_restart', started_at: '2026-11-06T10:53:23Z',
+  const restart = { id: 'r', status: 'failed', job_type: 'api_restart', trigger: 'watchdog', started_at: '2026-11-06T10:53:23Z',
     message: 'The API was restarted after 2 min of no answer',
     payload: { kind: 'restart', failing_seconds: 90, at: '2026-11-06T10:53:23+00:00' } } as JobRun;
   assert.equal(apiRestartLine(restart, 'Europe/Istanbul'), 'The API was restarted at 13:53 after 2 min of no answer');
@@ -118,7 +118,7 @@ test('apiRestartLine: an API restart record says its times in the reader zone, n
   const old = { ...restart, message: 'The API was restarted at 10:53 after 2 min of no answer',
     payload: { kind: 'restart', failing_seconds: 128 } } as JobRun;
   assert.equal(apiRestartLine(old, 'Asia/Dubai'), 'The API was restarted at 14:53 after 2 min of no answer');
-  const gaveUp = { id: 'g', status: 'failed', job_type: 'api_restart', started_at: '2026-11-06T10:59:53Z',
+  const gaveUp = { id: 'g', status: 'failed', job_type: 'api_restart', trigger: 'watchdog', started_at: '2026-11-06T10:59:53Z',
     message: 'The API keeps failing: 3 restarts in the last hour, so no more for 40 min; it has not answered for 6 min',
     payload: { kind: 'gave_up', failing_seconds: 360, at: '2026-11-06T10:59:53+00:00', until: '2026-11-06T11:40:43+00:00', restarts: 3 } } as JobRun;
   assert.equal(apiRestartLine(gaveUp, 'Asia/Dubai'),
