@@ -383,6 +383,7 @@ class OperationsService:
         payload = {
             "interval_hours": merged["interval_hours"],
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
+            "collect_originals": merged["collect_originals"],
         }
 
         with db.connection(self.db_url) as conn:
@@ -1048,6 +1049,8 @@ class OperationsService:
         return {
             "interval_hours": interval_hours,
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
+            # Issue 0123: a News story's original collected when INSIGHT lacks it. Off unless you switch it on.
+            "collect_originals": bool(config.get("collect_originals", False)),
             "updated_at": config.get("updated_at"),
         }
 

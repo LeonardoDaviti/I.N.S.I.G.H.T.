@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, paper_id, publication_of, site_of, x_account
-from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, section_of
+from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, is_home, section_of
 from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS, StoryPost, anchors
 from insight_core.utils.url_normalization import TWEET_PATH
@@ -674,10 +674,13 @@ class Origin:
     voices: Dict[str, str] = field(default_factory=dict)   # the story's voices -> the source naming each
     own: bool = False                # an origin post on the site its source publishes on: held
     reddit_sources: Tuple[str, ...] = ()   # the Reddit sources of its voices that are a post's author (issue 0080)
+    at_post: bool = False            # a post is at its outside page's address: a page you saved (issue 0113)
 
     @property
     def stored(self) -> bool:
-        return self.source_id is not None
+        """Its origin is in INSIGHT: an origin post, or a post at the outside page's address (0113's measure:
+        a story whose origin you saved has origin_url and no origin post, and was counted as not stored)."""
+        return self.source_id is not None or self.at_post
 
 
 @dataclass
@@ -731,6 +734,43 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
         elif not root.stored and site in followers:
             out.missing[followers[site]].append(root)
     return out
+
+
+PAGES_WITHIN_DAYS = 30   # Discover's Pages (issue 0113): the stories of the last 30 days, as its measure counted
+
+
+def page_key_of(url: str) -> str:
+    """A Pages row's hide key (issue 0113): one page, never its site."""
+    return "page:" + (bare(url) or url).lower()
+
+
+def pages(started: Origins, *, since: datetime, hidden: Set[str]) -> List[Tuple[str, List[Origin], bool]]:
+    """Discover's Pages (issue 0113): each story's root you can save as one post, (its address, its
+    stories, whether it is a page naming no account: a video's watch page, only listed), the stories'
+    voices first, then how many stories, then the newest. A root is a page when its story (2+ voices,
+    started since `since`) starts at a site or account you don't follow (`suggest`) or at a platform's
+    page that names none (`unnamed`), and no post is at its address (Origin.stored). Not an archive, an
+    app's share link, a document host's or a reference page, or a site's front page."""
+    found: Dict[str, List[Origin]] = defaultdict(list)
+    unnamed: Set[str] = set()
+    for group, named in ((started.suggest, True), (started.unnamed, False)):
+        for stories in group.values():
+            for root in stories:
+                if root.stored or root.first_at < since or page_key_of(root.url) in hidden:
+                    continue
+                if (archive_address(root.url) or app_address(root.url) or document_address(root.url)
+                        or reference_address(root.url) or is_home(root.url)):
+                    continue
+                found[root.url].append(root)
+                if not named:
+                    unnamed.add(root.url)
+
+    def rank(item: Tuple[str, List[Origin]]) -> Tuple:
+        url, roots = item
+        voices = len({v for root in roots for v in root.voices})
+        return (-voices, -len(roots), -max(r.first_at for r in roots).timestamp(), url)
+
+    return [(url, roots, url in unnamed) for url, roots in sorted(found.items(), key=rank)]
 
 
 def address_rules() -> str:

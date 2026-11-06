@@ -467,6 +467,9 @@ export interface SchedulerConfig {
   interval_hours?: number;
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
+  /** Collect originals (issue 0123): a News story's original INSIGHT lacks is collected, one page, within the
+   *  shared budget (under 1% of the schedule's requests). Off unless you switch it on. */
+  collect_originals?: boolean;
   updated_at?: string | null;
   /** Only on GET /api/operations/scheduler. */
   state?: SchedulerState;
@@ -492,7 +495,7 @@ export interface JobRun {
 
 // ---- Mark IX ingestion types (spec §F.3) ----
 
-export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced'
+export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced' | 'fetch_linked'
   | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
 export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
 /** One status per health row (B6): the summary buckets plus `disabled`. */
@@ -895,6 +898,26 @@ export interface SuggestedSourcesResponse {
   archives?: MissingOrigins[];
   /** Pages that start stories but name no account to follow (`youtube.com/watch`). */
   unnamed?: { place: string; origins: number }[];
+  /** Discover's Pages (issue 0113): each story's root you don't follow and haven't stored, one page a row. */
+  pages?: DiscoverPage[];
+}
+
+/** One Pages row (issue 0113): a page your stories start at, savable as one post. */
+export interface DiscoverPage {
+  url: string;
+  title: string | null;
+  site: string;
+  /** Hide sends this key (one page, never its site). */
+  hide_key: string;
+  /** A tweet: the save path reads x.com's app shell, so it isn't saved here; Collect originals keeps it from the quote. */
+  tweet?: boolean;
+  /** A platform's page that names no account (a video's watch page): no article to save. */
+  video: boolean;
+  first_linked_at: string;
+  voices: number;
+  /** False when the server's reads of its site found it walled, or its address carried a token. */
+  readable: boolean;
+  stories: OriginStory[];
 }
 
 /** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it
@@ -1208,6 +1231,7 @@ export function createApi() {
       body: {
         intervalHours: config.interval_hours,
         ingestTickMinutes: config.ingest_tick_minutes,
+        collectOriginals: config.collect_originals,
       },
     })),
     getVersion: () => request<BuildVersion>('/api/version'),

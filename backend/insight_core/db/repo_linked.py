@@ -43,6 +43,7 @@ class LinkedPage:
     posts: int                                # stored posts linking it
     first_linked_at: Optional[datetime]       # the first of them, by its date
     last_linked_at: Optional[datetime]
+    by: Tuple[str, ...] = ()                  # the linking posts (issue 0114: is one of them in a story?)
 
 
 def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None,
@@ -88,7 +89,8 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
         if url in stored:
             continue
         dates = [at for at in by.values() if at is not None]
-        out[owner[url]].append(LinkedPage(url, owner[url], len(by), min(dates, default=None), max(dates, default=None)))
+        out[owner[url]].append(LinkedPage(url, owner[url], len(by), min(dates, default=None), max(dates, default=None),
+                                          tuple(sorted(by))))
     for pages in out.values():
         pages.sort(key=lambda page: (-page.posts, page.first_linked_at or LAST, page.url))
     return dict(out)
