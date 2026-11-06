@@ -543,6 +543,42 @@ class Job(unittest.TestCase):
         off = D.run(self.cur, now=self.now, config=replace(D.Config(), document_merges=False))
         self.assertNotIn("merge", off["questions"])
 
+    def edge_row(self, first_hours):
+        """Mark IX's story (a, b) inside News' window, and e, a post of no story joined to it by a surging name.
+        The window starts at T + 30 h (now - 30 days); e is at `first_hours`."""
+        self.now = T + 30 * H + timedelta(days=30)
+        e = self.post(first_hours, "Gizmo 9 announced")
+        a, b = self.post(40, "Gizmo 9 is out"), self.post(41, "Gizmo 9 hands-on")
+        self.ix_story(a, b)
+        self.cur.execute("INSERT INTO news_surges (name, at, posts, usual) VALUES ('gizmo 9', %s, %s::uuid[], 0)",
+                         (T + first_hours * H, [e, a, b]))
+        return e, a, b
+
+    def test_mark_x_news_reads_the_edge_before_the_window_as_mark_ix_does(self):
+        """0124 (the v10.0.2 review's W5): with no answers, Mark X tagged a row NEW that Mark IX had left whole at the
+        edge (0111 Decided 4): its first post, 10 h before the window, is of no story and joins it by a surging
+        name; Mark X read the posts of no story from the window's start only, so its row began inside."""
+        from insight_core.markx import incremental
+        from insight_core.services.news_service import NewsService
+        from insight_core.utils.story_rules import Story, story_times
+        e, a, b = self.edge_row(20)
+        out = self.go()
+        self.assertEqual(out["news"]["rows"], 0, out["news"])
+        # Mark IX's own code over the same posts makes no row either: the row begins before the window
+        sp = N._story_posts(self.cur, [e, a, b])
+        ps = sorted([sp[a], sp[b]], key=lambda p: p.t)
+        story = Story(id=a, first_at=story_times(ps)[ps[0].id], posts=ps, voices=0, roles={}, reasons={}, mentions=set())
+        made = NewsService.rows(posts=list(sp.values()), stories=[story], found=incremental.surges(self.cur, None),
+                                since=self.now - timedelta(days=30))
+        self.assertEqual(made, [])
+
+    def test_a_post_of_no_story_inside_the_window_still_joins_the_row(self):
+        e, a, b = self.edge_row(35)          # 5 h inside the window
+        out = self.go()
+        self.assertEqual(out["news"]["rows"], 1, out["news"])
+        rows = repo.news_rows(self.cur, N.last_written(self.cur))
+        self.assertEqual({p["post_id"] for p in rows[0]["posts"]}, {e, a, b})
+
     def test_a_pair_makes_a_new_story_and_news_tags_it(self):
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
         repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
