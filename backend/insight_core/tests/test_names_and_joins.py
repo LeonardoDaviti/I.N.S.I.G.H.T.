@@ -246,6 +246,24 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         story = trees.only(posts)
         self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"})
 
+    def test_a_saved_page_joins_its_first_linker_when_its_links_are_days_apart(self):
+        """Two posts one story by their title, linking the page four days apart (no link join): the saved
+        page joins the first, so it is in their story (0113's measure: a video page)."""
+        title = "A new open video model ships today"
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 10)
+        posts = [saved, trees.post("a", "channel-a", kind="telegram", title=title, links=[(self.PAGE, "saved")]),
+                 trees.post("b", "channel-b", kind="telegram", title=title, hours=96, links=[(self.PAGE, "saved")])]
+        self.assertEqual({p.id for p in trees.only(posts).posts}, {"saved", "a", "b"})
+
+    def test_a_save_pulls_in_no_post_its_page_would_not(self):
+        """A post linking the page a week after its first links, and in no story of theirs, stays apart,
+        however near the save is to it."""
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 8)
+        posts = [saved, trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")]),
+                 trees.post("tg", "toshoseti", kind="telegram", hours=1, links=[(self.PAGE, "saved")]),
+                 trees.post("pr", "a-repo", kind="site", hours=24 * 7, links=[(self.PAGE, "saved")])]
+        self.assertEqual({p.id for p in trees.only(posts).posts}, {"saved", "dh", "tg"})
+
     def test_one_linker_and_a_late_save_are_no_story(self):
         saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 10)
         self.assertEqual(group([saved, trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")])]), [])
