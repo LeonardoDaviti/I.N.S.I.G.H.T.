@@ -51,12 +51,12 @@ class TwoProcessesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         last = calls.splitlines()[-1]
         self.assertIn("-m insight_core.scripts.api_supervisor uvicorn main:app", last)
-        self.assertTrue(last.endswith("--workers 2"), calls)
+        self.assertTrue(last.endswith("--workers 2 --backlog 256 --limit-concurrency 512"), calls)   # 0124: a bounded queue
 
     def test_api_workers_sets_the_number(self):
         result, calls = run_start("start-backend.sh", env={"API_WORKERS": "1", "WEB_CONCURRENCY": "4"})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(calls.splitlines()[-1].endswith("--workers 1"), calls)
+        self.assertIn("--workers 1 ", calls.splitlines()[-1] + " ", calls)
 
     def test_a_number_that_isnt_one_is_refused_before_anything_runs(self):
         for bad in ("0", "two", "-1"):
