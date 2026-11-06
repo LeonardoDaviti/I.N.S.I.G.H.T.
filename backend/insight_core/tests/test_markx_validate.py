@@ -269,6 +269,14 @@ class TheHelpers(unittest.TestCase):
     def test_fold(self):
         self.assertEqual(fold("Ёлка  —  Widget‑4"), "елка - widget-4")
 
+    def test_typographic_apostrophes_and_quotes_fold_as_plain_ones(self):
+        """0121 Decided 6: a valid name was refused for an apostrophe ("Where's" against the post's "Where’s")."""
+        self.assertEqual(fold("Where’s ‘it’ “now”"), fold("Where's 'it' \"now\""))
+        post = POST.replace("Title: Acme выпустила Widget‑4.1 Pro", "Title: Acme’s “Widget‑4.1 Pro” is out")
+        for span in ("Acme's", "Acme’s", '"Widget-4.1 Pro"', "“Widget-4.1 Pro”"):
+            with self.subTest(span=span):
+                self.assertIsNone(check("entities", {"entities": [entity(span=span, version=None)]}, post)[1])
+
 
 class TheKindsAndGuides(unittest.TestCase):
     def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):

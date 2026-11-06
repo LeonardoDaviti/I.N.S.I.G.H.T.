@@ -14,7 +14,8 @@ Two layers:
      cites keys the day has; a card's odd members are members; a translation keeps the post's numbers and
      a length within 0.5-2x.
 
-Text is compared folded (NFKC, case, every dash as '-', ё as е, runs of space as one), as the prototype's
+Text is compared folded (NFKC, case, every dash as '-', ё as е, typographic apostrophes and quotes as plain ones,
+runs of space as one), as the prototype's
 checks did (0090: 415/415 spans and 50/51 versions passed them).
 """
 from __future__ import annotations
@@ -31,14 +32,15 @@ WRAPPERS = {"read": ("reading", "answer"), "card": ("card", "answer")}
 
 _DASHES = re.compile(r"[‐-―−⁃﹘﹣－]")
 _SOFT = "­"
+_QUOTES = str.maketrans({"’": "'", "‘": "'", "”": '"', "“": '"'})   # typographic as plain (0121 Decided 6)
 _SPACE = re.compile(r"\s+")
 _SEP = re.compile(r"[\s\-_]+")
 
 
 def fold(text: Optional[str]) -> str:
-    """Text as the checks compare it: NFKC, casefolded, ё as е, every dash as '-', no soft hyphen, runs of
-    space as one."""
-    s = unicodedata.normalize("NFKC", text or "").replace(_SOFT, "").casefold().replace("ё", "е")
+    """Text as the checks compare it: NFKC, casefolded, ё as е, every dash as '-', ’ ‘ as ' and ” “ as ", no soft
+    hyphen, runs of space as one."""
+    s = unicodedata.normalize("NFKC", text or "").replace(_SOFT, "").translate(_QUOTES).casefold().replace("ё", "е")
     return _SPACE.sub(" ", _DASHES.sub("-", s))
 
 
