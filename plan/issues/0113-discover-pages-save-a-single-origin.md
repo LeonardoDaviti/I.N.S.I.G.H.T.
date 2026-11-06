@@ -1,6 +1,6 @@
 # 0113 — Discover, a second tab: Pages. A story's origin you don't follow, saved as one post
 
-Status: **draft spec** (2026-11-05, the owner). Not built.
+Status: **built** (branch `issue-0113-0114-0123`, 2026-11-06), changed by its measure (below). Spec 2026-11-05, the owner.
 
 **The owner (2026-11-05):** "so this post should be shown in the discover to be fetched yes? we can have second tab for the discover where we can fetch single posts, not whole sources."
 
@@ -59,3 +59,21 @@ Status: **draft spec** (2026-11-05, the owner). Not built.
 1. **Automatic saving:** never (today's rule); or automatic for a page linked by 3+ voices in one story; or only for pages Mark X marks as a story's missing original. **Default: never.** Every save is your tap.
 2. **Should Mark X's story page offer "Save the original" too** (0120's sheet), the same action as this tab?
 3. **Hidden pages:** hide one page, or the whole site's pages?
+
+## Changed by the measure (2026-11-06; private: `plan/research/0113-measure.md`, `0123-measure.md`)
+1. **A row is a story's root, not every page its posts link:** Discover's origin lines (`suggest` and `unnamed`, stories of 2+ voices, the last 30 days), checked by address. Read literally, "a page linked by 2+ posts, or by its first post" listed 287–369 pages a month, mostly a stored article's references; the root is about 50, one a story.
+2. **The citation rule is fixed first.** A page saved and dated at the save time pulled its story apart: 31 of 50 stories dissolved. Now a saved page joins only what its outside page would: its linkers keep that page's link join (2+ places within 72 hours of its first link) and the saved page joins them, else its first linker, whatever its own date or the save's (`story_rules.grouping`). **Re-measured: 49 of 50 join, 0 dissolve**; the one that doesn't is a repository page linked for months (its link window is its first links'), its story intact. Every save gets the fix, not only this tab's.
+3. **The date** is `published_at` (0063), the save time `surfaced_at`; 0122 dates a page with none by its first link. With the fix the date no longer decides the join.
+4. **Tweets** (12 of 50) get no Save: the save path reads x.com's app shell. Their words are in the posts quoting them; Collect originals (0123) keeps them from the quote.
+5. **Videos and a hub's collections or spaces** are listed with no Save.
+6. **`Origin.stored`** counts a post at the origin's address: a story whose origin you saved was counted as not stored.
+7. **"Probably can't be read"** when the server's reads of its site were all untitled or its follow test blocked, or the address carries an access token (5 of 50).
+8. Open question 1 (automatic saving) became 0123's switch, "Collect originals", default off.
+
+## Built (branch `issue-0113-0114-0123`, 2026-11-06)
+- `utils/story_rules.grouping`: the saved-page rule above (3 tests in `test_names_and_joins.py`, plus the 2 cases the measure found: links days apart, no pull-in near the save).
+- `utils/discover_rules.pages` and `page_key_of`; `Origin.at_post` (from `_ORIGINS`) in `Origin.stored`.
+- `services/stories_service._discover_all`: `pages` rows `{url (no token), title, site, hide_key, video, tweet, first_linked_at, voices, readable, stories}` in Discover's answer; a page's hide key is `page:<address>` (`POST /api/sources/suggested/hide`, up to 2,048 characters).
+- Frontend: Discover's tabs **Sources** and **Pages** (`components/sources/DiscoverPages.tsx`): Save page (`api.savePage`, 0122's path: a followed source's page is fetched there first), Follow site… (Discover's follow), Hide.
+- On the server's copy the built list is 50 rows: 3 with no article, 12 tweets, 5 "probably can't be read".
+- Tests: `test_discover_pages.py` (4), `discoverPages.test.tsx` (5).

@@ -1,6 +1,6 @@
 # 0114 — A story links a page of a source you follow, and we don't have it yet: fetch that source now
 
-Status: **spec** (2026-11-05, the owner; open questions decided). Not built. Mark IX (ingestion and the story job); Mark X benefits without changes.
+Status: **built, narrowed** (branch `issue-0113-0114-0123`, 2026-11-06): its measure put it at +1.44% requests against the 1% bar, so the rule is narrowed (below) and shares 0123's budget. Spec 2026-11-05, the owner; open questions decided. Mark IX (ingestion and the story job); Mark X benefits without changes.
 
 **The owner (2026-11-05):** "if our system spots that some of the posts from the story is original or related, and we don't have that fetched yet, and that post's source is in our source list, it should be fetched automatically."
 
@@ -61,3 +61,23 @@ Status: **spec** (2026-11-05, the owner; open questions decided). Not built. Mar
 1. **When the feed doesn't hold the page:** shown in Discover (the source's row, "a story links a page its feed doesn't carry"), with the archive or **Save page** (0113). Never saved automatically.
 2. **The window and the cap:** links from the last 72 hours; at most one early fetch per source per hour; none within 15 minutes of the source's last fetch.
 3. **Quotes of a followed account's post count** as links (0065's rule).
+
+## Narrowed by the measure (2026-11-06; private: `plan/research/0114-measure.md`, `0123-measure.md`)
+As written it was +1.44% requests (26 days) and 4 in 5 early fetches found nothing. Built narrower:
+1. **Wanted only when a story's post links it** (a member, or the story's root), as the issue's title says; never any post's link.
+2. **A followed source's own page** is 0084 B's `OwnPages` (its post pages on its publication; on a platform its account's posts), never a platform host; the source followed when the linking post was stored; the linking post of another source.
+3. **Never a page dated 7+ days before the link, or a day before the source's last fetch** (by its address or a tweet's id): its feed can't hold it.
+4. **At most one early fetch per source per 24 hours** (every tier's interval is at least that), not one an hour: the measure saw 3 a day for one source. Never within 15 minutes of its last fetch, never in backoff.
+5. **One budget with 0123**: a credit of 1% of a request per scheduled fetch, at most 3; 0114 first.
+6. The delay starts when the linking post is stored, not when it was posted: the linking source is on its own schedule.
+
+**Measured** (the 8.7 days the per-source fetch history covers, 222 requests a day): 0114 alone **+0.52%** (10 early fetches, 7 found the page, 0.8–59.5 hours sooner); with 0123 and the credit, both together **+0.78%** (0114: 9, 6 found).
+
+## Built (branch `issue-0113-0114-0123`, 2026-11-06)
+- `ingestion/schedule.py`: `DecisionKind.FETCH_LINKED` ("A story links its page <url>"): due now while no fetch succeeded since the ask, after backoff, before the due check. `CadenceStats.linked_wanted_at`, `linked_url` from the fetch state.
+- `db/repo_fetch_state.py`: the three columns (migration 0071); a `fetch_linked` decision records `linked_fetched_at`.
+- `db/repo_linked.LinkedPage.by`: the linking posts (0084 B's set, unchanged otherwise).
+- `services/originals_service.plan_linked` asks (one page per source, the most linked first) and `settle` records `found` (the page arrived) or `missing` (the source was fetched and the feed didn't hold it: 0084 B's "Linked by your posts, not stored" row shows it, decided 1). Each ask is a `story_originals` row (kind `fetch_linked`), never asked again.
+- The runner runs it after a scheduler run's story job (`runner.originals`); never a Fetch now in the API.
+- Tests: `test_fetch_schedule.py` (+1), `test_originals_rules.py`, `test_story_originals.py` (FetchLinkedTests).
+- Not built: "the original arrived 12 min after a story linked it" in the story's post panel, and the source's health row's link (the decision's detail carries it).

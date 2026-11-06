@@ -15,7 +15,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
-from insight_core.utils.post_fields import MOVED_KEY, SAVED_KEY, build_post_fields
+from insight_core.utils.post_fields import COLLECTED_KEY, MOVED_KEY, SAVED_KEY, build_post_fields
 from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
@@ -487,8 +487,10 @@ class PostsRepository:
                     " AND external_id = %(external_id)s::text)))", dict(params, target=target))
         if cur.fetchone()[0]:
             return None
-        cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = metadata || jsonb_build_object("
-                    f"'{SAVED_KEY}', COALESCE(metadata -> '{SAVED_KEY}', to_jsonb(fetched_at))) WHERE id = %(target)s::uuid",
+        # A page INSIGHT collected by itself (issue 0123) moves too, but you never saved it.
+        cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = metadata || jsonb_strip_nulls(jsonb_build_object("
+                    f"'{SAVED_KEY}', COALESCE(metadata -> '{SAVED_KEY}', CASE WHEN metadata ? '{COLLECTED_KEY}' THEN NULL"
+                    f" ELSE to_jsonb(fetched_at) END))) WHERE id = %(target)s::uuid",
                     dict(params, target=target))
         cur.execute("UPDATE posts SET {assignments} WHERE id = %(target_id)s::uuid RETURNING id".format(
             assignments=self._post_update_assignments(set_url=True)), dict(params, target_id=target))
@@ -672,7 +674,9 @@ class PostsRepository:
                     f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}',"
                     # A page you saved stays one you saved (issue 0122), whatever the feed brings.
-                    f" '{SAVED_KEY}', {row}metadata -> '{SAVED_KEY}'))")
+                    f" '{SAVED_KEY}', {row}metadata -> '{SAVED_KEY}',"
+                    # And a page INSIGHT collected stays collected (issue 0123).
+                    f" '{COLLECTED_KEY}', {row}metadata -> '{COLLECTED_KEY}'))")
         assignments: List[str] = []
         if set_url:
             assignments.append("url = %(url)s")

@@ -6,7 +6,8 @@ import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 
 import { useApi } from '../../services/ApiContext';
 import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResponse } from '../../services/api';
-import { Button, ExternalLink } from '../ui';
+import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger } from '../ui';
+import DiscoverPages from './DiscoverPages';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatCount, plural } from '../../lib/format';
@@ -165,6 +166,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState('');
   const [asked, setAsked] = useState('');   // the search the server is asked, once typing pauses
+  const [view, setView] = useState('sources');   // Discover's two tabs (issue 0113): Sources, Pages
   useEffect(() => {
     const timer = setTimeout(() => setAsked(filter.trim()), 300);
     return () => clearTimeout(timer);
@@ -218,7 +220,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
   const unnamed = first.unnamed ?? [];
   const also = first.also ?? [];
   const references = first.references ?? [];
-  if (!all.length && !first.archives?.length && !asked) {
+  if (!all.length && !first.archives?.length && !first.pages?.length && !asked) {
     return (
       <EmptyState
         title="No suggestions yet"
@@ -226,76 +228,88 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
       />
     );
   }
+  const pages = first.pages ?? [];
   return (
-    <section aria-label="Discover">
-      <p className="mb-2 text-[0.8125rem] text-fg-3">
-        Sites and accounts your sources keep linking, that you don't follow. The first page is tested once a month, as following
-        it would: whether a feed or page watching reads it.
-      </p>
-      <label className="relative mb-2 flex min-w-0 items-center sm:max-w-[18rem]">
-        <span className="sr-only">Search Discover</span>
-        <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 h-4 w-4 text-fg-3" />
-        <input
-          type="search"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Escape') setFilter(''); }}
-          placeholder="Search sites, sources, articles"
-          className="h-8 w-full min-w-0 rounded-md border border-line bg-transparent pl-8 pr-2 text-[0.8125rem] text-fg placeholder:text-fg-3 hover:border-line-strong focus:border-line-strong focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fg coarse:h-11"
-        />
-      </label>
-      {archives.length ? (
-        <section aria-label="Sources you follow that miss where your stories start" className="mb-2">
-          <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Sources you follow that miss where your stories start</h2>
-          <ul>{archives.map((missing) => <Missing key={missing.source_id} missing={missing} />)}</ul>
+    <Tabs value={view} onValueChange={setView}>
+      <TabsList aria-label="Discover's lists" className="mb-1">
+        <TabsTrigger value="sources">Sources</TabsTrigger>
+        <TabsTrigger value="pages">Pages{pages.length ? ` (${formatCount(pages.length)})` : ''}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="pages" className="pt-3">
+        <DiscoverPages pages={pages} onFollow={onFollow} />
+      </TabsContent>
+      <TabsContent value="sources" className="pt-3">
+        <section aria-label="Discover">
+          <p className="mb-2 text-[0.8125rem] text-fg-3">
+            Sites and accounts your sources keep linking, that you don't follow. The first page is tested once a month, as following
+            it would: whether a feed or page watching reads it.
+          </p>
+          <label className="relative mb-2 flex min-w-0 items-center sm:max-w-[18rem]">
+            <span className="sr-only">Search Discover</span>
+            <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 h-4 w-4 text-fg-3" />
+            <input
+              type="search"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Escape') setFilter(''); }}
+              placeholder="Search sites, sources, articles"
+              className="h-8 w-full min-w-0 rounded-md border border-line bg-transparent pl-8 pr-2 text-[0.8125rem] text-fg placeholder:text-fg-3 hover:border-line-strong focus:border-line-strong focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fg coarse:h-11"
+            />
+          </label>
+          {archives.length ? (
+            <section aria-label="Sources you follow that miss where your stories start" className="mb-2">
+              <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Sources you follow that miss where your stories start</h2>
+              <ul>{archives.map((missing) => <Missing key={missing.source_id} missing={missing} />)}</ul>
+            </section>
+          ) : null}
+          {head.length ? (
+            <ul>
+              {head.map((suggestion) => (
+                <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
+              ))}
+            </ul>
+          ) : null}
+          {apart.length ? (
+            <section aria-label="Can't be followed as a feed" className="mt-2">
+              <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Can't be followed as a feed</h2>
+              <p className="text-[0.75rem] text-fg-3">Their follow test found no feed or page to read; your sources still carry their stories.</p>
+              <ul>
+                {apart.map((suggestion) => (
+                  <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {rest.length ? (
+            <ul>
+              {rest.map((suggestion) => (
+                <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
+              ))}
+            </ul>
+          ) : null}
+          {suggestions.length || archives.length ? null : (
+            <p className="py-6 text-[0.8125rem] text-fg-3">Nothing in Discover matches “{filter.trim()}”.</p>
+          )}
+          {query.hasNextPage ? (
+            <Button size="sm" variant="secondary" className="mt-3" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+              {query.isFetchingNextPage ? 'Loading…' : `More (${formatCount((first.total ?? all.length) - all.length)})`}
+            </Button>
+          ) : null}
+          {also.length && !words.length ? <OtherChannels also={also} /> : null}
+          {references.length && !words.length ? (
+            <p className="pt-3 text-[0.75rem] text-fg-3">
+              References your sources use:{' '}
+              {references.map((r) => `${r.key} (${formatCount(r.voices)})`).join(', ')}.
+            </p>
+          ) : null}
+          {unnamed.length && !words.length ? (
+            <p className="pt-3 text-[0.75rem] text-fg-3">
+              Stories also start at pages that name no account to follow:{' '}
+              {unnamed.map((u) => `${u.place} (${formatCount(u.origins)})`).join(', ')}.
+            </p>
+          ) : null}
         </section>
-      ) : null}
-      {head.length ? (
-        <ul>
-          {head.map((suggestion) => (
-            <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
-          ))}
-        </ul>
-      ) : null}
-      {apart.length ? (
-        <section aria-label="Can't be followed as a feed" className="mt-2">
-          <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Can't be followed as a feed</h2>
-          <p className="text-[0.75rem] text-fg-3">Their follow test found no feed or page to read; your sources still carry their stories.</p>
-          <ul>
-            {apart.map((suggestion) => (
-              <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {rest.length ? (
-        <ul>
-          {rest.map((suggestion) => (
-            <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
-          ))}
-        </ul>
-      ) : null}
-      {suggestions.length || archives.length ? null : (
-        <p className="py-6 text-[0.8125rem] text-fg-3">Nothing in Discover matches “{filter.trim()}”.</p>
-      )}
-      {query.hasNextPage ? (
-        <Button size="sm" variant="secondary" className="mt-3" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
-          {query.isFetchingNextPage ? 'Loading…' : `More (${formatCount((first.total ?? all.length) - all.length)})`}
-        </Button>
-      ) : null}
-      {also.length && !words.length ? <OtherChannels also={also} /> : null}
-      {references.length && !words.length ? (
-        <p className="pt-3 text-[0.75rem] text-fg-3">
-          References your sources use:{' '}
-          {references.map((r) => `${r.key} (${formatCount(r.voices)})`).join(', ')}.
-        </p>
-      ) : null}
-      {unnamed.length && !words.length ? (
-        <p className="pt-3 text-[0.75rem] text-fg-3">
-          Stories also start at pages that name no account to follow:{' '}
-          {unnamed.map((u) => `${u.place} (${formatCount(u.origins)})`).join(', ')}.
-        </p>
-      ) : null}
-    </section>
+      </TabsContent>
+    </Tabs>
   );
 }

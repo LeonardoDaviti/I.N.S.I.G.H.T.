@@ -327,6 +327,7 @@ class IngestionRunRequest(BaseModel):
 class SchedulerConfigRequest(BaseModel):
     intervalHours: float | None = None
     ingestTickMinutes: float | None = None
+    collectOriginals: bool | None = None   # issue 0123: Collect originals, default off
 
 
 class PostReaderSessionRequest(BaseModel):
@@ -1595,6 +1596,8 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
         if request.ingestTickMinutes < 15:
             raise HTTPException(status_code=400, detail="ingestTickMinutes must be at least 15")
         payload["ingest_tick_minutes"] = request.ingestTickMinutes
+    if request.collectOriginals is not None:
+        payload["collect_originals"] = request.collectOriginals
     return {"success": True, "scheduler": services().operations.update_scheduler_config(payload)}
 
 
