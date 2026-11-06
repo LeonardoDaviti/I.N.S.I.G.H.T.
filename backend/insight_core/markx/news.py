@@ -440,6 +440,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
     from insight_core.markx import labels
     flagged = labels.flags(cur, {(p["post_id"], p.get("story")) for r in shown for p in r["posts"] if p.get("story")})
+    from insight_core.markx import entity_views   # 0119 A2: the rows whose posts make an entity surge
+    surging = entity_views.surging_posts(cur, {p["post_id"] for r in shown for p in r["posts"]})
 
     def line(pid: str, story: Optional[str], row_ids: Set[str]) -> Dict[str, Any]:
         p = posts.get(pid) or {"id": pid}
@@ -467,6 +469,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                       "voices": r["voices"], "reports": r["reports"], "shares": r["shares"], "mentions": r["mentions"],
                       "score": float(r["score"]), "story": (r["posts"] or [{}])[0].get("story"), "posts": lines,
                       "removed": removed,
+                      "surging": list({s["id"]: s for p in mine for s in surging.get(p, [])}.values()),
                       "ix": [{"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {})} for nid in ix_hit]})
     items.sort(key=lambda i: (i["first_at"] < now - timedelta(hours=48), -i["score"], -i["first_at"].timestamp(), i["id"]))
     gone = []
@@ -491,7 +494,10 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     r = cur.fetchone()
     reading = None if r is None else {"guide": r[0], "kind": r[1], "events": r[2], "lang": r[3], "headline": r[4],
                                       "main": (r[5] or {}).get("main"), "mentions": (r[5] or {}).get("mentions") or []}
-    entities = [{k: m[k] for k in ("name", "type", "role", "maker", "family", "version", "variant", "span")}
+    from insight_core.markx import entity_views   # 0119 A3: each entity opens its page
+    linked = entity_views.post_entities(cur, post_id)
+    entities = [{**{k: m[k] for k in ("name", "type", "role", "maker", "family", "version", "variant", "span")},
+                 "entity_id": linked.get(m["n"])}
                 for m in repo.mentions(cur, post_id) if m["guide"] == "ent-v3"]
     stories = []
     for (sid, _pid), w in _why(cur, [post_id]).items():

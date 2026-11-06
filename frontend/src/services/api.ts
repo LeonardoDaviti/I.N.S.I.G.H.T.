@@ -6,6 +6,7 @@ import type {
   MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
   MarkxPrecision, MarkxSettings,
 } from './markx';
+import type { MarkxEntityAnswer, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
 
 export type { Envelope };
 
@@ -1313,6 +1314,14 @@ export function createApi() {
     flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
       request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
         { method: 'POST', body: { post, story, answer } }),
+    // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
+    getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
+    getMarkxEntity: (id: string) => request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}`),
+    getMarkxEntityQueue: () => request<MarkxEntityQueue>('/api/markx/entities/queue'),
+    answerMarkxEntity: (item: string, answer: MarkxEntityAnswer) =>
+      request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
+    undoMarkxMerge: (redirect: string) =>
+      request<Record<string, unknown>>(`/api/markx/entities/merges/${enc(redirect)}/undo`, { method: 'POST', body: {} }),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 

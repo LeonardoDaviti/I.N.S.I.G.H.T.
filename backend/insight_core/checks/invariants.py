@@ -430,6 +430,74 @@ def _shows_empty_story(text: str) -> bool:
     return "\nMembers (earliest first):\n" not in text.split("\n\nPOST\n", 1)[0] + "\n"
 
 
+# ---- Mark X entities (issue 0119 A1): identity's rules on every copy -----------------------------------------
+
+def _mx_redirects(run: Run) -> Dict[str, Tuple[str, bool, str]]:
+    run.cur.execute("SELECT from_id::text, to_id::text, automatic, id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
+    return {f: (t, auto, rid) for f, t, auto, rid in run.cur.fetchall()}
+
+
+def _markx_entity_dangling(run: Run):
+    """A mention whose entity_id names no entity (a redirect's end that names none counts too)."""
+    run.cur.execute("""SELECT m.post_id::text || ' ' || m.n FROM mx_mentions m LEFT JOIN mx_entities e ON e.id = m.entity_id
+                        WHERE m.entity_id IS NOT NULL AND e.id IS NULL""")
+    out = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("""SELECT r.id::text FROM mx_entity_redirects r LEFT JOIN mx_entities e ON e.id = r.to_id
+                        WHERE r.undone_at IS NULL AND e.id IS NULL""")
+    out += [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT count(*) FROM mx_mentions WHERE entity_id IS NOT NULL")
+    return out, run.cur.fetchone()[0]
+
+
+def _markx_entity_redirect_loop(run: Run):
+    """A current redirect chain that comes back to where it started."""
+    red = _mx_redirects(run)
+    out = []
+    for start in red:
+        seen, x = {start}, red[start][0]
+        while x in red:
+            if x in seen:
+                out.append(red[start][2])
+                break
+            seen.add(x)
+            x = red[x][0]
+    return out, len(red)
+
+
+def _markx_entity_cross_version(run: Run):
+    """An automatic merge joining two different parsed versions or variants (both state one, and they differ)."""
+    from insight_core.markx import names as N
+    run.cur.execute("""SELECT r.id::text, a.name, a.type, a.maker, b.name, b.type, b.maker FROM mx_entity_redirects r
+                         JOIN mx_entities a ON a.id = r.from_id JOIN mx_entities b ON b.id = r.to_id
+                        WHERE r.automatic AND r.undone_at IS NULL""")
+    rows = run.cur.fetchall()
+    out = []
+    for rid, an, at, am, bn, bt, bm in rows:
+        va = N.version_part(N.fields_key(N.parse(an, at, am), am))
+        vb = N.version_part(N.fields_key(N.parse(bn, bt, bm), bm))
+        if any(x is not None and y is not None and not (N.ver_eq(x, y) if i == 0 else x == y)
+               for i, (x, y) in enumerate(zip(va, vb))):
+            out.append(rid)
+    return out, len(rows)
+
+
+def _markx_entity_big_cluster(run: Run):
+    """An entity holding more than 10 names through automatic merges."""
+    red = _mx_redirects(run)
+
+    def root(x):
+        seen = set()
+        while x in red and x not in seen and red[x][1]:
+            seen.add(x)
+            x = red[x][0]
+        return x
+    size: Dict[str, int] = defaultdict(int)
+    for f, (_t, auto, _rid) in red.items():
+        if auto:
+            size[root(f)] += 1
+    return sorted(e for e, n in size.items() if n > 10), len(size)
+
+
 @dataclass
 class Invariant:
     name: str
@@ -469,6 +537,13 @@ INVARIANTS: List[Invariant] = [
     Invariant("markx.lease_past", "mark x", "a task still leased past its lease (Safety 5)", _markx_lease_past),
     Invariant("markx.check_empty_story", "mark x", "a check still to be asked that shows its story with no member (0112)",
               _markx_check_empty_story),
+    Invariant("markx.entity_dangling", "mark x", "a mention's entity, or a redirect's end, that is no entity (0119)",
+              _markx_entity_dangling),
+    Invariant("markx.entity_redirect_loop", "mark x", "a redirect chain that loops (0119)", _markx_entity_redirect_loop),
+    Invariant("markx.entity_cross_version", "mark x",
+              "an automatic merge of two different parsed versions or variants (0119)", _markx_entity_cross_version),
+    Invariant("markx.entity_big_cluster", "mark x", "an entity holding more than 10 names from automatic merges (0119)",
+              _markx_entity_big_cluster),
 ]
 
 

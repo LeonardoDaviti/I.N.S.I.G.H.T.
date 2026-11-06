@@ -1,7 +1,8 @@
 import { Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import MarkXNews from '../components/markx/MarkXNews';
 import MarkXLabels from '../components/markx/MarkXLabels';
-import { MarkXBriefing, MarkXEntities, MarkXWorker } from '../components/markx/MarkXOverview';
+import { MarkXBriefing, MarkXWorker } from '../components/markx/MarkXOverview';
+import MarkXEntities from '../components/markx/MarkXEntities';   // 0119 A3: the list, the review queue
 import { useSearchParams } from 'react-router-dom';
 
 const TABS = ['news', 'briefing', 'entities', 'worker', 'labels'] as const;

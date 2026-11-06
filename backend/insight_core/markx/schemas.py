@@ -123,6 +123,32 @@ EMBED_SCHEMA = {
     "properties": {"vector": {"type": "string", "minLength": 2732, "maxLength": 2732}},
 }
 
+# 0119 A1: the entity identity judge (alias-v1, the lab's eid_judge.md) and the collision judge (collide-v1, eid_collide.md v4).
+ALIAS_RELATIONS = ["same", "other_version", "part", "different", "cant_tell"]
+ALIAS_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence"],
+    "properties": {"evidence": _STR, "relation": {"enum": ALIAS_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
+COLLIDE_MENTIONS = 8          # mentions a collision question shows (the lab's MAXM)
+COLLIDE_RUNS = 3              # asked three times; a split two runs make goes to the queue (never applied by itself)
+COLLIDE_SCHEMA = {
+    "type": "object",
+    "required": ["senses"],
+    "properties": {
+        "evidence": _STR,
+        "senses": {"type": "array", "minItems": 1, "items": {
+            "type": "object", "required": ["m"],
+            "properties": {"m": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+                           "what": _STR}}},
+        "related": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 3}},
+        "unclear": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "required": ["title_en", "text_en"],
@@ -154,6 +180,9 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("briefing", "briefing-v1", "day", BRIEFING_SCHEMA),
     Kind("translate", "translate-v1", "post", TRANSLATE_SCHEMA),
     Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings
+    Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
+    Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
+    Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
 )}
 
 

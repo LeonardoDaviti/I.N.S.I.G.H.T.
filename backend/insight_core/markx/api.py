@@ -580,3 +580,73 @@ def mx_labels_news(body: FlagIn):
             raise HTTPException(status_code=400, detail=str(e))
         except KeyError:
             raise HTTPException(status_code=404, detail="No such member")
+
+
+# ---- the entities tab (0119 A3; added 2026-11-06; the routes above are unchanged; no bearer: the app's own) ---------
+# GET  /api/markx/entities                    the list (markx/entity_views.py): {window_days, total, items, accuracy, queue}
+# GET  /api/markx/entities/queue              the review queue: {open, answered, merges, counts, accuracy}
+# POST /api/markx/entities/queue/{id}         {answer: same | other_version | different | not_entity, note?}: applied at
+#                                             once (a merge, a split, a merge undone) and stored as a label
+# POST /api/markx/entities/merges/{id}/undo   {note?}: one merge undone from the history (a label 'different')
+# GET  /api/markx/entities/{id}               the entity's page (a merged entity's id opens its cluster's page)
+
+class EntityAnswerIn(BaseModel):
+    answer: str
+    note: Optional[str] = None
+
+
+class UndoIn(BaseModel):
+    note: Optional[str] = None
+
+
+@router.get("/entities")
+def mx_entities():
+    from insight_core.markx import entity_views
+    with transaction() as cur:
+        return entity_views.entity_list(cur)
+
+
+@router.get("/entities/queue")
+def mx_entity_queue():
+    from insight_core.markx import entity_views
+    with transaction() as cur:
+        return entity_views.queue(cur)
+
+
+@router.post("/entities/queue/{item_id}")
+def mx_entity_answer(item_id: str, body: EntityAnswerIn):
+    from insight_core.markx import entity_answers
+    found = _uuid(item_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such item in the queue")
+    with transaction() as cur:
+        try:
+            return entity_answers.answer(cur, str(found), body.answer, note=body.note)
+        except entity_answers.NotFound:
+            raise HTTPException(status_code=404, detail="No such item in the queue")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/entities/merges/{redirect_id}/undo")
+def mx_entity_undo(redirect_id: str, body: UndoIn):
+    from insight_core.markx import entity_answers
+    found = _uuid(redirect_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such merge")
+    with transaction() as cur:
+        try:
+            return entity_answers.undo(cur, str(found), note=body.note)
+        except entity_answers.NotFound:
+            raise HTTPException(status_code=404, detail="No such merge, or it is undone already")
+
+
+@router.get("/entities/{entity_id}")
+def mx_entity_page(entity_id: str):
+    from insight_core.markx import entity_views
+    found = _uuid(entity_id)
+    with transaction() as cur:
+        got = entity_views.entity_page(cur, str(found)) if found else None
+    if got is None:
+        raise HTTPException(status_code=404, detail="No such entity")
+    return got
