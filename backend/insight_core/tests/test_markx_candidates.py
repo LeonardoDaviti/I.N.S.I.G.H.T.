@@ -10,6 +10,7 @@ import json
 import math
 import unittest
 import uuid
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 import psycopg
@@ -209,6 +210,30 @@ class Entities(_Cands):
         self.subjects(b, ("FlashProve", "software", "subject", None))
         C.run(self.cur, since=datetime.now(timezone.utc) - H)
         self.assertEqual(self.pairs("entity"), {(a, b)})
+
+    def test_the_flush_finds_only_the_entity_pairs_of_posts_whose_mentions_are_new(self):
+        """0121 Decided 7 (the v10.0.1 review: 75 s, 35 s of CPU, for 0 new candidates on a day's data): a post whose
+        entities were written since the last run has its entity pairs found; its embedding neighbours, links and
+        bursts were found when its vector came (the posts embedded since the last run), and are not looked at again."""
+        s1, s2 = self.source(), self.source()
+        a = self.post(s1, T0, vector=unit((0, 1)))
+        b = self.post(s2, T0 + H, vector=at_cos(0.99))
+        new = self.post(s2, T0 + 2 * H, vector=at_cos(0.98, axis=2))
+        self.subjects(a, ("FlashProve", "software", "subject", None))
+        self.subjects(b, ("FlashProve", "software", "subject", None))
+        seen = {}
+        real = C.find
+
+        def find(cur, ids, **kw):
+            seen.setdefault(kw.get("sources", ("embedding", "link", "entity", "burst")), set()).update(ids)
+            return real(cur, ids, **kw)
+        with mock.patch.object(C, "find", find):
+            got = C.run(self.cur, [new], since=datetime.now(timezone.utc) - H)
+        self.assertEqual(seen[("embedding", "link", "entity", "burst")], {new})       # the new vector: every source
+        self.assertEqual(seen[("entity",)], {a, b})                                    # new mentions: their entities
+        self.assertEqual(self.pairs("entity"), {(a, b)})
+        self.assertIn((a, new), self.pairs("embedding"))
+        self.assertEqual(got["entity"], 1)
 
 
 class Bursts(_Cands):
