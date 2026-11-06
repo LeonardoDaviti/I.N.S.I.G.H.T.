@@ -453,6 +453,49 @@ class Job(unittest.TestCase):
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
         self.assertEqual(out["news"]["rows"], 1)
 
+    def test_a_rows_headline_comes_from_its_main_story_not_its_first_posts(self):
+        """0121 Decided 2, the v10.0.1 review's W3: a row whose first post joined by a name (no Mark X story) showed
+        its lead's title although the story holding most of its voices had Haiku's headline."""
+        a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
+        sid = repo.add_story(self.cur, first_at=T, run_id=repo.start_run(self.cur, code_version="t", config={}))
+        repo.set_story_headline(self.cur, sid, headline="Acme releases Widget 4")
+        row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
+                                  {"post_id": b, "voice": "v1", "story": str(sid)},
+                                  {"post_id": c, "voice": "v2", "story": str(sid)}]}
+        self.assertEqual(N.main_story(row), str(sid))
+        self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
+
+    def test_every_news_row_gets_a_headline_task(self):
+        """0121 Decided 2: a row of posts in no story of 2+ voices (joined by a surging name) was never asked a
+        headline (14 of 19 rows titled by their lead). Now each such row is asked one over its posts, found again by
+        its input when the page reads it."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
+                                  {"post_id": b, "voice": "v1", "story": None}]}
+        self.assertEqual(N.headlines(self.cur, [row])[a]["from"], "lead title")
+        ask = D.Ask(self.cur, self.now)
+        self.assertEqual(N.ask_row_headlines(self.cur, [row], ask, headed=set()), {"asked": 1, "answered": 0})
+        self.assertEqual(ask.added["headline"], 1)
+        self.answer("headline", lambda t: {"id": "x", "headline_en": "Acme releases Widget 4"})
+        self.assertEqual(N.ask_row_headlines(self.cur, [row], D.Ask(self.cur, self.now), headed=set()),
+                         {"asked": 1, "answered": 1})
+        self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
+        # a row whose main story is asked a headline of its own is not asked again
+        sid = repo.add_story(self.cur, first_at=T, run_id=repo.start_run(self.cur, code_version="t", config={}))
+        row2 = {"id": b, "posts": [{"post_id": b, "voice": "v1", "story": str(sid)},
+                                   {"post_id": a, "voice": "v0", "story": str(sid)}]}
+        self.assertEqual(N.ask_row_headlines(self.cur, [row2], D.Ask(self.cur, self.now), headed={str(sid)}),
+                         {"asked": 0, "answered": 0})
+
+    def test_a_run_asks_no_second_headline_for_a_row_whose_main_story_has_its_own(self):
+        """The job: every News row it writes is asked a headline, or its main story is (here: a story of 2 voices)."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
+        self.ix_story(a, b)
+        out = self.go()
+        self.assertEqual(out["news"]["rows"], 1)
+        self.assertEqual(out["tasks_added"].get("headline"), 1)        # the story's own (2 voices): not twice
+        self.assertEqual(out["news"]["row_headlines"], {"asked": 0, "answered": 0})
+
     def test_a_pair_makes_a_new_story_and_news_tags_it(self):
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
         repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)

@@ -184,7 +184,14 @@ class StoryAnswers(unittest.TestCase):
                          "headline_en: the figure 25 occurs in no member")
         self.assertEqual(check("headline", {"headline_en": "Acme ships Widget 4.2 Pro"}, MEMBERS)[1],
                          "headline_en: the version 'Widget 4.2' occurs in no member")
-        self.assertIn("15 words", check("headline", {"headline_en": " ".join(["w"] * 15)}, MEMBERS)[1])
+        self.assertIn("17 words", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
+
+    def test_a_headline_has_two_words_of_slack_over_the_guides_14(self):
+        """0121 Decided 2: 9 of 165 recorded headline answers were refused for one word over 14, where readings
+        have slack (guide 20, check 25). A card keeps its 14: its headline is the judge's, not the page's."""
+        self.assertIsNone(check("headline", {"headline_en": " ".join(["w"] * 16)}, MEMBERS)[1])
+        self.assertIn("more than 16", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
+        self.assertIn("15 words", check("card", self.card(headline_en=" ".join(["w"] * 15)), MEMBERS)[1])
 
     def test_a_card_that_numbers_its_odd_members_is_kept_as_given(self):
         """6 of the 43 recorded cards named odd members by position; nothing reads `odd`, so it is not refused."""

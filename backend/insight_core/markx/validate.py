@@ -195,9 +195,9 @@ def version_number_occurs(version: str, text: str) -> bool:
     return re.search(r"(?<![\d.])" + re.escape(m.group(0)) + r"(?!\d|\.\d)", text) is not None
 
 
-def _story_headline(text: str, input: str, field: str) -> Optional[str]:
-    if words(text) > schemas.STORY_HEADLINE_WORDS:
-        return f"{field} has {words(text)} words, more than {schemas.STORY_HEADLINE_WORDS}"
+def _story_headline(text: str, input: str, field: str, limit: int = schemas.STORY_HEADLINE_WORDS) -> Optional[str]:
+    if words(text) > limit:
+        return f"{field} has {words(text)} words, more than {limit}"
     for v in versions(text):
         if not version_number_occurs(v, input):
             return f"{field}: the version {v!r} occurs in no member"
@@ -224,7 +224,7 @@ def _card(a: Dict[str, Any], input: str) -> Optional[str]:
 
 
 def _headline(a: Dict[str, Any], input: str) -> Optional[str]:
-    return _story_headline(a["headline_en"], input, "headline_en")
+    return _story_headline(a["headline_en"], input, "headline_en", schemas.HEADLINE_WORDS)
 
 
 _KEY_LINE = re.compile(r"^\[(s\d+)\]", re.M)

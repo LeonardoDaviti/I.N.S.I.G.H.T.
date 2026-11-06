@@ -1181,7 +1181,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")
-    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
+    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now, ask=ask,
+                                   headed={ids[k] for k in news_keys})
     if check is not None:
         diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
