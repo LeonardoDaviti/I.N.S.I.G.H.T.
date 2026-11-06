@@ -85,7 +85,10 @@ class Config:
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
     link_keeps: bool = True         # a check demotes a member Mark IX joined by a link at most, never removes it (0121 D1)
     confirm_check: bool = True      # a check taking out a 2-voice story's second voice counts once asked again (0121 D1)
-    document_merges: bool = True    # two stories whose members link one document page are a merge question (0121 D5)
+    # Two stories whose members link one document page are a merge question (0121 D5). Off (the owner, 2026-11-06):
+    # over the server copy's whole history it asked 7 questions, all wrong (stories citing one background paper),
+    # and 0 in the 30-day window; it missed the filing it was for.
+    document_merges: bool = False
     document_days: int = 30         # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides (corrections 8)
 
