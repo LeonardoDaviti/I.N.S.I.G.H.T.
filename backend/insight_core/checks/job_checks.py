@@ -303,7 +303,7 @@ def _measured(db_url: str, name: str, what: str, log_name: str, work: Callable[[
                 r["phase"] = "loaded"
             api.asked.pop("before", None)
             if time.monotonic() > waited:
-                return Found(name, "mark x", what, -1, 0, round(time.monotonic() - started, 1),
+                return Found(name, "mark x", what, -1, 0, [], round(time.monotonic() - started, 1),
                              note=f"{LOADED_NOTE} (slow in each 10 s window over {QUIET_WAIT_S} s: {', '.join(loaded)})")
             api.stop.wait(20)
             api.phase[0] = "before"

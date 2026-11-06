@@ -176,6 +176,40 @@ class AQuietMachineFirst(unittest.TestCase):
         self.assertFalse(job_checks.quiet(rows(40, failed=37)))
         self.assertFalse(job_checks.quiet([]))   # no answer at all is no quiet machine
 
+    def test_a_loaded_machine_is_not_measured_with_no_examples_and_the_report_reads_it(self):
+        """The 6 Nov check of 0121: the gate's not-measured result carried its seconds as its examples, and the report
+        (which lists a count of -1's examples) stopped with "'float' object is not iterable"."""
+        class Api:
+            workers, env, log_name = 2, {}, "x.log"
+            proc = type("P", (), {"poll": lambda self: None})()
+            rows, phase, asked = [], ["before"], {}
+            stop = type("E", (), {"wait": lambda self, s: None, "set": lambda self: None, "is_set": lambda self: True})()
+
+            def get(self, path, timeout=10.0):
+                return {"path": path, "ms": 5000, "status": 200}
+
+            def probe(self):
+                pass
+
+            def answered(self, window):
+                return [{"path": "/api/feed", "ms": 5000, "status": 200, "phase": window}] * 10
+
+            def close(self):
+                pass
+        clock = iter(range(0, 10_000_000, 100))
+        with mock.patch.object(job_checks, "_Api", lambda db, log: Api()), \
+                mock.patch.object(job_checks.time, "monotonic", lambda: next(clock)):
+            found = job_checks._measured("db", "markx.api_during_rebuild", "slow", "x.log", lambda api: {})
+        self.assertEqual((found.count, found.examples), (-1, []))
+        self.assertIn(job_checks.LOADED_NOTE, found.note)
+        with tempfile.TemporaryDirectory() as work:
+            for side in ("base", "head"):
+                os.makedirs(os.path.join(work, side))
+                with open(os.path.join(work, side, "jobs.json"), "w") as fh:
+                    json.dump({"found": [{**found.__dict__}]}, fh)
+            _, problems = report.build(work)
+        self.assertTrue(any("not measured" in p for p in problems), problems)
+
     def test_not_measured_for_load_fails_the_report(self):
         with tempfile.TemporaryDirectory() as work:
             for side, count, note in (("base", 0, ""), ("head", -1, job_checks.LOADED_NOTE + " (37 of 40 slow)")):
