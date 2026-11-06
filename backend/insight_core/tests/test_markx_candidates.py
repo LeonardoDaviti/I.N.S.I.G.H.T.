@@ -83,6 +83,23 @@ class _Cands(unittest.TestCase):
         return C.find(self.cur, ids)
 
 
+class Documents(unittest.TestCase):
+    def test_a_document_page_by_the_address_shapes_of_0106_and_0109(self):
+        """0121 Decided 5: a paper is one page whatever its path; a record or a filing by its first segment; an
+        article, a home page, a post are no document."""
+        abs_, pdf = C.document_key("https://preprints.test.invalid/abs/2501.01234"), \
+            C.document_key("https://preprints.test.invalid/pdf/2501.01234v2")
+        self.assertIsNotNone(abs_)
+        self.assertEqual(abs_, pdf)
+        self.assertNotEqual(abs_, C.document_key("https://preprints.test.invalid/abs/2501.04321"))
+        self.assertEqual(C.document_key("https://records.test.invalid/documents/acme-prospectus?utm=x"),
+                         C.document_key("https://records.test.invalid/documents/acme-prospectus"))
+        self.assertIsNotNone(C.document_key("https://court.test.invalid/docket/24-1234"))
+        for no in ("https://news.test.invalid/2100/03/gizmo-2", "https://news.test.invalid/",
+                   "https://x.com/someone/status/123", None, ""):
+            self.assertIsNone(C.document_key(no), no)
+
+
 class Embedding(_Cands):
     def test_other_sources_within_72_hours_at_065_not_one_story(self):
         s1, s2, s3 = self.source(), self.source(), self.source()

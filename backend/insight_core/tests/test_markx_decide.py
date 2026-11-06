@@ -180,6 +180,25 @@ class Rules(unittest.TestCase):
         self.assertEqual(len(new), 1)
         self.assertEqual(set(new[0]["posts"]), {"g", "h", "d"})
 
+    def test_a_story_pair_with_no_cosine_is_asked_a_merge(self):
+        """0121 Decided 5: a pair of stories found by a shared document, not by meaning (cosine None), is a merge
+        question; one found by meaning still needs the centroid bar."""
+        self.stories["F"] = story("g", "h")
+        tids = {q.tid for q in self.plan(pairs=[("A", "F", None)]) if q.type == "merge"}
+        self.assertIn("merge:A:F", tids)
+        tids = {q.tid for q in self.plan(pairs=[("A", "F", 0.5)]) if q.type == "merge"}
+        self.assertNotIn("merge:A:F", tids)
+
+    def test_the_second_pass_asks_a_new_story_and_one_sharing_a_document(self):
+        first = D.decide(self.posts, self.stories, [(D.Question("pair:g:h", "pair", post="h", anchor="g"),
+                                                    v("same_event", 0.9))])
+        far = lambda a, b: False   # noqa: E731 - the days rule says no; a shared document has its own 30 days
+        never = lambda a, b: None   # noqa: E731
+        self.assertEqual(D.plan_pass2(self.posts, first, never, within=far), [])
+        qs = D.plan_pass2(self.posts, first, never, within=far,
+                          documents=lambda a, b: "h" in a and "a" in b or "h" in b and "a" in a)
+        self.assertEqual({(q.story, q.other) for q in qs}, {("A", "g")})
+
     def test_merges_at_085_and_a_development_is_a_connection(self):
         m = D.Question("merge:A:E", "merge", story="A", other="E")
         out = D.decide(self.posts, self.stories, [(m, v("same_event", 0.85))])
@@ -495,6 +514,34 @@ class Job(unittest.TestCase):
         self.assertEqual(out["news"]["rows"], 1)
         self.assertEqual(out["tasks_added"].get("headline"), 1)        # the story's own (2 voices): not twice
         self.assertEqual(out["news"]["row_headlines"], {"asked": 0, "answered": 0})
+
+    def link(self, pid, url):
+        self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
+                         "VALUES (%s, %s, 'test.invalid', 0, NULL)", (pid, url))
+
+    def test_two_stories_linking_one_document_within_30_days_are_asked_a_merge(self):
+        """0121 Decided 5 (the owner's call, default yes; the v10.0.1 review's W4): a document's later analyses are
+        a merge question with its story, when their members link the same document page (a paper, a filing: the
+        address shapes of 0106 and 0109) within 30 days. A question, never a rule."""
+        a, b = self.post(0, "Acme files its prospectus"), self.post(1, "Acme's prospectus is out")
+        c, d = self.post(24 * 20, "Reading the prospectus, part 1"), self.post(24 * 20 + 1, "Prospectus notes")
+        e, f = self.post(24 * 20 + 2, "Gizmo 2 launches"), self.post(24 * 20 + 3, "Gizmo 2 hands-on")
+        for pid in (a, c):
+            self.link(pid, "https://records.test.invalid/documents/acme-prospectus-2100")
+        self.link(e, "https://news.test.invalid/2100/03/gizmo-2")          # an article: no document
+        self.link(b, "https://news.test.invalid/2100/03/gizmo-2")
+        self.ix_story(a, b), self.ix_story(c, d), self.ix_story(e, f)
+        self.read_all([a, b, c, d, e, f])
+        self.now = T + 24 * 21 * H
+        self.go()
+        self.answer("card", lambda t: {"headline_en": "Acme files a prospectus", "actors": ["Acme"],
+                                       "object": "prospectus", "action": "filed", "odd": []})
+        out = self.go()
+        self.assertEqual(out["questions"].get("merge"), 1)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'merge'")
+        self.assertEqual(self.cur.fetchall(), [(a, c)])
+        off = D.run(self.cur, now=self.now, config=replace(D.Config(), document_merges=False))
+        self.assertNotIn("merge", off["questions"])
 
     def test_a_pair_makes_a_new_story_and_news_tags_it(self):
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")

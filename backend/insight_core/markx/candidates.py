@@ -272,6 +272,28 @@ def burst_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
     return added
 
 
+# ---- document ---------------------------------------------------------------------------------------
+# 0121 Decided 5: two stories whose members link one document page within 30 days are a merge question (the decision
+# run reads the posts' links: decide.Documents). A document is one of 0106's and 0109's address shapes: a paper (its
+# id is one page on its host, whatever the path: the abstract, the PDF, a version) or a record, a filing or a data page
+# (a first segment that names a kind of record). An article, a home page, a social post are not.
+
+def document_key(url: Optional[str]) -> Optional[str]:
+    """The document page an address is, as a key (a paper's id on its host; else the address without its query), or
+    None when it is no document."""
+    from insight_core.utils.addresses import bare, paper_id
+    from insight_core.utils.discover_rules import document_address, paper_address
+    if not url or is_home(url):
+        return None
+    host = bare(url).partition("/")[0]
+    pid = paper_id(url)
+    if pid:
+        return f"paper:{host}:{pid}"
+    if document_address(url) or paper_address(url):
+        return "page:" + bare(url).split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return None
+
+
 # ---- the job ---------------------------------------------------------------------------------------
 
 def find(cur: Cursor, post_ids: Iterable[str], *, model: str = MODEL,

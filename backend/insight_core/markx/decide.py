@@ -85,12 +85,14 @@ class Config:
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
     link_keeps: bool = True         # a check demotes a member Mark IX joined by a link at most, never removes it (0121 D1)
     confirm_check: bool = True      # a check taking out a 2-voice story's second voice counts once asked again (0121 D1)
+    document_merges: bool = True    # two stories whose members link one document page are a merge question (0121 D5)
+    document_days: int = 30         # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
         return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
-                      link_keeps=False, confirm_check=False)
+                      link_keeps=False, confirm_check=False, document_merges=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -278,26 +280,28 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             seen.add(tid)
             out.append(Question(tid, "pair", post=b, anchor=a, cos=cos, side=(a,)))
     first = {key: posts[ms[0].post].at for key, ms in members.items() if ms}
-    for x, y, cos in story_pairs:
-        if x not in members or y not in members or nv[x] < 2 or nv[y] < 2 or cos < config.story_lo:
+    for x, y, cos in story_pairs:   # cos None: found by a shared document, not by meaning (0121 Decided 5)
+        if x not in members or y not in members or nv[x] < 2 or nv[y] < 2 or (cos is not None and cos < config.story_lo):
             continue
         k = tuple(sorted([x, y]))
         if k in seen:
             continue
         seen.add(k)
         x0, y0 = sorted([x, y], key=lambda s: first[s])
-        out.append(Question(f"merge:{x0}:{y0}", "merge", story=x0, other=y0, cos=round(cos, 3),
+        out.append(Question(f"merge:{x0}:{y0}", "merge", story=x0, other=y0, cos=None if cos is None else round(cos, 3),
                             side=tuple(side(x0)[:3]), side_b=tuple(side(y0)[:3])))
     return out
 
 
 def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
                centroid_cos: Callable[[Sequence[str], Sequence[str]], Optional[float]],
-               config: Config = Config(), within: Optional[Callable[[Any, Any], bool]] = None) -> List[Question]:
+               config: Config = Config(), within: Optional[Callable[[Any, Any], bool]] = None,
+               documents: Optional[Callable[[Sequence[str], Sequence[str]], bool]] = None) -> List[Question]:
     """The second pass (pipeline.plan2): every story the first pass made from lone posts against every other 2+ voice
     story, centroid >= story_lo, first posts at most story_days apart. `centroid_cos(posts_a, posts_b)`: the cosine
     of two post sets' mean vectors (None when either has none). `within(at_a, at_b)`: the days rule (default: a
-    timedelta of story_days)."""
+    timedelta of story_days). `documents(posts_a, posts_b)`: whether two of their posts link one document page within
+    `document_days` (0121 Decided 5): such a pair is asked whatever its centroid and days."""
     span = timedelta(days=config.story_days)
     within = within or (lambda ta, tb: abs(ta - tb) <= span)
     st: Dict[str, Tuple[List[str], Any, bool]] = {}
@@ -311,14 +315,14 @@ def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
         for y, vy in st.items():
             if y == x or tuple(sorted([x, y])) in seen:
                 continue
-            if not within(st[x][1], vy[1]):
-                continue
-            c = centroid_cos(st[x][0], vy[0])
-            if c is None or c < config.story_lo:
+            c = centroid_cos(st[x][0], vy[0]) if within(st[x][1], vy[1]) else None
+            if c is not None and c < config.story_lo:
+                c = None
+            if c is None and not (documents is not None and documents(st[x][0], vy[0])):
                 continue
             seen.add(tuple(sorted([x, y])))
             x0, y0 = sorted([x, y], key=lambda s: st[s][1])
-            out.append(Question(f"merge2:{x0}:{y0}", "merge", story=x0, other=y0, cos=round(c, 3),
+            out.append(Question(f"merge2:{x0}:{y0}", "merge", story=x0, other=y0, cos=None if c is None else round(c, 3),
                                 side=tuple(st[x0][0][:3]), side_b=tuple(st[y0][0][:3]), second=True))
     return out
 
@@ -865,6 +869,52 @@ class Questions:
         return None
 
 
+class Documents:
+    """0121 Decided 5 (the owner's call, default yes): the document pages each post links (candidates.document_key:
+    a paper, a record or a filing, 0106's and 0109's address shapes), a roundup's never (it lists them), and which
+    stories two of whose posts link one within `document_days`. A merge question, never a rule."""
+
+    def __init__(self, world: World, config: Config) -> None:
+        from insight_core.markx import candidates
+        self.w, self.span = world, timedelta(days=config.document_days)
+        kinds = world.kinds()
+        self.of: Dict[str, Set[str]] = {}
+        for pid, p in world.text.items():
+            if kinds.get(pid) != "roundup" and pid in world.posts:
+                keys = {k for k in (candidates.document_key(url) for url, _ in p.links) if k}
+                if keys:
+                    self.of[pid] = keys
+
+    def _linkers(self, ps: Sequence[str]) -> Dict[str, List[Any]]:
+        out: Dict[str, List[Any]] = defaultdict(list)
+        for p in ps:
+            for k in self.of.get(p, ()):
+                out[k].append(self.w.posts[p].at)
+        return out
+
+    def _near(self, xs: Sequence[Any], ys: Sequence[Any]) -> bool:
+        return any(abs(a - b) <= self.span for a in xs for b in ys)
+
+    def shared(self, pa: Sequence[str], pb: Sequence[str]) -> bool:
+        la, lb = self._linkers(pa), self._linkers(pb)
+        return any(self._near(la[k], lb[k]) for k in la.keys() & lb.keys())
+
+    def pairs(self, groups: Dict[str, Sequence[str]]) -> List[Tuple[str, str]]:
+        """The (x, y) of `groups` (x < y) sharing a document within the days."""
+        by_key: Dict[str, Dict[str, List[Any]]] = defaultdict(dict)
+        for g, ps in groups.items():
+            for k, ats in self._linkers(ps).items():
+                by_key[k][g] = ats
+        out = set()
+        for k, held in by_key.items():
+            gs = sorted(held)
+            for i, x in enumerate(gs):
+                for y in gs[i + 1:]:
+                    if self._near(held[x], held[y]):
+                        out.add((x, y))
+        return sorted(out)
+
+
 def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
           answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
@@ -876,6 +926,10 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     span = timedelta(days=config.story_days)
     story_pairs = [(x, y, c) for (x, y), c in sorted(centroid_cosines(cur, multi, config.story_lo).items())
                    if abs(first[x] - first[y]) <= span]
+    docs = Documents(world, config) if config.document_merges else None
+    if docs is not None:
+        found = {tuple(sorted(xy)) for xy in ((x, y) for x, y, _ in story_pairs)}
+        story_pairs += [(x, y, None) for x, y in docs.pairs(multi) if (x, y) not in found]
     q1 = plan_pass1(world.posts, world.stories, world.kinds(), world.candidates, story_pairs, config,
                     in_window=lambda a: world.posts[a].at >= world.since, copies=world.copies())
     ans1 = [(x, v) for x in q1 if (v := q.verdict(x)) is not None]
@@ -889,7 +943,7 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     def centroid_cos(pa: Sequence[str], pb: Sequence[str]) -> Optional[float]:
         x, y = by_posts.get(tuple(pa)), by_posts.get(tuple(pb))
         return cos2.get((min(x, y), max(x, y))) if x and y else None
-    q2 = plan_pass2(world.posts, p1, centroid_cos, config)
+    q2 = plan_pass2(world.posts, p1, centroid_cos, config, documents=docs.shared if docs is not None else None)
     ans2 = [(x, v) for x in q2 if (v := q.verdict(x, p1)) is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
     if answered is not None:
