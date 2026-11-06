@@ -111,7 +111,9 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
     lines += ["", f"Examples ({labels[1]}, up to 5 each):"]
     for name, h in fh.items():
         if h.get("count"):
-            lines.append(f"- `{name}`: " + "; ".join(str(e) for e in h.get("examples", [])) + (f" ({h['note']})" if h.get("note") else ""))
+            # A version's finding may hold no list here (main's markx.api_during_run under load put its seconds there).
+            examples = h.get("examples") if isinstance(h.get("examples"), list) else []
+            lines.append(f"- `{name}`: " + "; ".join(str(e) for e in examples) + (f" ({h['note']})" if h.get("note") else ""))
 
     # C. the diff
     before, after = _load(os.path.join(base, "snapshot.json")), _load(os.path.join(head, "snapshot.json"))
