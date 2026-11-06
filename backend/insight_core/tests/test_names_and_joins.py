@@ -162,6 +162,19 @@ class PostAboutOneStoryTests(unittest.TestCase):
         self.assertEqual(story.mentions, set())
         self.assertEqual(story.parents["c"], (None, self.ORIGIN, "citation"))
 
+    def test_a_release_post_listing_links_joins_a_saved_origin_too(self):
+        """0113: its story's origin is a page you saved, saved days later: the post still joins (0123's measure:
+        the post left its story when the saved page was its origin as a post, not as the page)."""
+        saved = trees.post("s", "saved-source", kind="saved", url=self.ORIGIN, hours=24 * 6, title="Mistral Large 4")
+        links = [("https://huggingface.co/ggml-org/Mistral-Large-4-GGUF", None), ("https://huggingface.co/unsloth/m-GGUF", None),
+                 (self.ORIGIN, "s"), (self.MODEL, None)]
+        posts = [saved, trees.post("a", "reddit-sub", kind="reddit", links=[(self.ORIGIN, "s")]),
+                 trees.post("b", "account-b", kind="x", hours=0.2, links=[(self.ORIGIN, "s"), (self.MODEL, None)]),
+                 trees.post("c", "reddit-sub2", kind="reddit", hours=0.3, links=links)]
+        [story] = group(posts)
+        self.assertEqual(sorted(p.id for p in story.posts), ["a", "b", "c", "s"])
+        self.assertEqual(story.mentions, set())
+
     def test_an_article_or_a_post_linking_another_story_stays_a_mention(self):
         [story] = self.story(kind="site")
         self.assertEqual((sorted(p.id for p in story.posts), story.mentions), (["a", "b"], {"c"}), "an article: a roundup")
@@ -246,14 +259,14 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         story = trees.only(posts)
         self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"})
 
-    def test_a_saved_page_joins_its_first_linker_when_its_links_are_days_apart(self):
-        """Two posts one story by their title, linking the page four days apart (no link join): the saved
-        page joins the first, so it is in their story (0113's measure: a video page)."""
+    def test_a_saved_page_with_no_link_join_joins_nothing(self):
+        """Two posts one story by their title, linking the page four days apart (no link join): the saved page
+        joins neither (as its outside page wouldn't), and their story stays (0113's measure: a video page)."""
         title = "A new open video model ships today"
         saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 10)
         posts = [saved, trees.post("a", "channel-a", kind="telegram", title=title, links=[(self.PAGE, "saved")]),
                  trees.post("b", "channel-b", kind="telegram", title=title, hours=96, links=[(self.PAGE, "saved")])]
-        self.assertEqual({p.id for p in trees.only(posts).posts}, {"saved", "a", "b"})
+        self.assertEqual({p.id for p in trees.only(posts).posts}, {"a", "b"})
 
     def test_a_save_pulls_in_no_post_its_page_would_not(self):
         """A post linking the page a week after its first links, and in no story of theirs, stays apart,

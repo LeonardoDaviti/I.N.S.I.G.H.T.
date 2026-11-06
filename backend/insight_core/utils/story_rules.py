@@ -505,13 +505,14 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             if cited.kind == "saved":
                 # A page you saved is still the outside page its linkers link (issue 0113): they keep that
                 # page's link join among themselves (2+ places within 72 hours of its first link), and the
-                # saved page joins them, else the first post linking it, whatever its own date or the save's;
-                # it joins nothing else. Dated by its time, a page saved days after its links pulled their
-                # story apart (0113's measure: 31 of 50), and one saved now pulled in the posts linking it in
-                # the 72 hours before the save (0123's: 3 of 44).
+                # saved page joins them, whatever its own date or the save's; it joins nothing else. Dated by
+                # its time, a page saved days after its links pulled their story apart (0113's measure: 31 of
+                # 50), and one saved now pulled in the posts linking it in the 72 hours before the save (0123's:
+                # 3 of 44). Joining its first linker when there is no link join was measured too: it hung a
+                # page linked for months on a months-old thread (the lab's saved-is-not-a-voice case).
                 near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
-                for p in (near if len({p.place for p in near}) >= 2 else ps[:1]):
-                    if p.place != cited.place:
+                if len({p.place for p in near}) >= 2:
+                    for p in near:
                         join(p.id, cited.id, "citation")
                         why[p.id].add("citation")
                         why[cited.id].add("citation")
@@ -577,7 +578,10 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             origins[root] = _origin_node(tree(members[root], every=every, focused=focused, origin_of=origin_of,
                                               replies=replies, quotes=quotes))
         node = first[1] if first[0] == "post" else _PAGE + first[1]
-        if origins[root] == node and len(pages[root].intersection(mentions)) >= 2:
+        # A page you saved is its story's origin as the page (0070 A8: "U:" + its address), not as its post (0113).
+        saved_page = by_id.get(node) if first[0] == "post" else None
+        as_origin = {node} | ({_PAGE + saved_page.url} if saved_page and saved_page.kind == "saved" and saved_page.url else set())
+        if origins[root] in as_origin and len(pages[root].intersection(mentions)) >= 2:
             join(pid, node, "citation" if first[0] == "post" else "link")
             why[pid].add("citation" if first[0] == "post" else "link")
             focused[pid] = [first] + focused[pid][1:]
