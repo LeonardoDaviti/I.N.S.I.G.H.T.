@@ -119,21 +119,34 @@ def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict
 
 
 def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
-                minutes: int = LEASE_MINUTES) -> List[Dict[str, Any]]:
+                minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None
+                ) -> List[Dict[str, Any]]:
     """Lease up to `limit` open tasks of `kinds` (and leased ones whose lease ran out) to `worker` for
     `minutes`, by priority then age: [{id, kind, guide, input, lease_until}] in that order. Rows another
-    transaction is leasing are skipped, never waited on."""
+    transaction is leasing are skipped, never waited on. A task of a `windowed` kind (a post's: read, entities,
+    embed) is ranked by its post's age today, not the age it had when planned (a priority below 0 is a
+    caller's urgency and stays), and those of posts older than `days`
+    (None: no post is) come after every other (0121 Decided 4: a narrowed reading window leases inside it first)."""
     cur.execute("""WITH picked AS (
-                     SELECT id FROM mx_tasks
-                      WHERE kind = ANY(%s) AND (status = 'open' OR (status = 'leased' AND lease_until < now()))
-                      ORDER BY priority, created_at, id
-                      LIMIT %s FOR UPDATE SKIP LOCKED)
-                   UPDATE mx_tasks t SET status = 'leased', leased_by = %s,
-                          lease_until = now() + make_interval(mins => %s)
+                     SELECT t.id,
+                            (p.id IS NOT NULL AND %(days)s::int IS NOT NULL
+                             AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                 < now() - make_interval(days => %(days)s)) AS outside,
+                            CASE WHEN p.id IS NULL OR t.priority < 0 THEN t.priority
+                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - COALESCE(p.surfaced_at,
+                                                  p.published_at, p.fetched_at))) / 86400))::int END AS rank
+                       FROM mx_tasks t
+                       LEFT JOIN posts p ON t.kind = ANY(%(windowed)s) AND p.id = t.a
+                      WHERE t.kind = ANY(%(kinds)s) AND (t.status = 'open' OR (t.status = 'leased' AND t.lease_until < now()))
+                      ORDER BY 2, 3, t.created_at, t.id
+                      LIMIT %(limit)s FOR UPDATE OF t SKIP LOCKED)
+                   UPDATE mx_tasks t SET status = 'leased', leased_by = %(worker)s,
+                          lease_until = now() + make_interval(mins => %(minutes)s)
                      FROM picked WHERE t.id = picked.id
-                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, t.priority, t.created_at""",
-                (list(kinds), limit, worker, minutes))
-    rows = sorted(_rows(cur), key=lambda r: (r["priority"], r["created_at"], str(r["id"])))
+                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, picked.outside, picked.rank, t.created_at""",
+                {"kinds": list(kinds), "limit": limit, "worker": worker, "minutes": minutes,
+                 "windowed": list(windowed), "days": days})
+    rows = sorted(_rows(cur), key=lambda r: (r["outside"], r["rank"], r["created_at"], str(r["id"])))
     return [{k: r[k] for k in ("id", "kind", "guide", "input", "lease_until")} for r in rows]
 
 

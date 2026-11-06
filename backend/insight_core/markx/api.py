@@ -248,7 +248,9 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
          days: Optional[str] = Query(None)):
     """A lease. With `days` (a number, or "all"; `markx-worker cycle --days`), the read, entities and embed kinds
     asked are planned for that window first, newest first and PLAN_LIMIT a call, whatever the page's reading window
-    (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait."""
+    (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait, or at
+    once when the window it was last planned for is not the page's (0121 Decided 4). Those kinds are leased inside
+    the window first, newest first, then the older tasks still queued (a narrowed window drops none)."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
@@ -259,14 +261,19 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     with transaction() as cur:
         ensure_guides(cur)
         queue = repo.queue_counts(cur)
+        setting = tasks.reading_window(cur)
         for kind in wanted:
             if kind not in tasks.PLANNERS:
                 continue
             if window is not tasks.SETTING and kind in tasks.WINDOWED:
                 tasks.PLANNERS[kind](cur, days=window)
+            elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
+                tasks.PLANNERS[kind](cur, days=setting)          # the page's window changed: at once
+                tasks.note_planned(cur, kind, setting)
             elif queue.get(kind, {}).get("open", 0) < limit:
                 tasks.PLANNERS[kind](cur)
-        leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker)
+        leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker, windowed=tasks.WINDOWED,
+                                  days=setting if window is tasks.SETTING else window)
         guides = repo.guides(cur, sorted({t["guide"] for t in leased})) if leased else {}
     until = max((t["lease_until"] for t in leased), default=datetime.now(timezone.utc)
                 + timedelta(minutes=repo.LEASE_MINUTES))

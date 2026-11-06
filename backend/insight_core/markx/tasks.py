@@ -75,6 +75,22 @@ def set_reading_window(cur: Cursor, days: Optional[int]) -> Optional[int]:
     return days
 
 
+READING_PLANNED = "reading_window_planned"   # mx_settings: {kind: the window its planner last ran for} (0121 D4)
+NEVER = "never"                              # a kind whose planner never ran for a window
+
+
+def planned_window(cur: Cursor, kind: str) -> Any:
+    """The window `kind`'s planner last ran for (days, None for every post), or NEVER."""
+    return (repo.get_setting(cur, READING_PLANNED, default=None) or {}).get(kind, NEVER)
+
+
+def note_planned(cur: Cursor, kind: str, days: Optional[int]) -> None:
+    value = dict(repo.get_setting(cur, READING_PLANNED, default=None) or {})
+    if value.get(kind, NEVER) != days:
+        value[kind] = days
+        repo.set_setting(cur, READING_PLANNED, value)
+
+
 # ---- the posts, as Mark X reads them (markx text v1) ----------------------------------------------
 
 @dataclass
