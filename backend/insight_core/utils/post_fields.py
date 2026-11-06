@@ -134,6 +134,18 @@ def without_quote_marks(content: str | None, html: str | None) -> Tuple[str | No
     return content, _EMPTY_P_RE.sub("", html).strip()
 
 
+def quote_byline_linked(html: str | None, quoted: str | None) -> str | None:
+    """A tweet's HTML whose quote card's byline opens the quoted tweet (issue 0126, the owner 2026-11-07):
+    "Name (@handle) · open post ↗", linking `quoted` (post_parts.quoted: its x.com address, never the Nitter host
+    serving it). Only when the byline names the quoted tweet's account; anything else as it is."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card or not quoted or (tweet_author(quoted) or "").lower() != card.group(2).lower():
+        return html
+    start, end = card.start(1) - len("<b>"), card.end(1) + len("</b>")
+    link = f'<a href="{html_lib.escape(quoted, quote=True)}"><b>{card.group(1)}</b> · open post ↗</a>'
+    return html[:start] + link + html[end:]
+
+
 def quote_only(html: str | None) -> str | None:
     """The tweet a post only quotes, normalized (issue 0072): before the quote card it has nothing of its
     own (no words, emoji or pictures), only the quoted tweet's bare address. Else None."""

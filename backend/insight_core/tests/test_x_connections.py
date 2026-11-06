@@ -391,6 +391,30 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(post["title"], "Benchmarks")
         self.assertEqual(post["content"], "Benchmarks", "its text without the quoted words: the page reads its title once")
 
+    def test_a_quote_s_byline_opens_the_quoted_post_on_its_page(self):
+        # Issue 0126 (3): the card says who it quotes and links the quoted tweet's x.com address, inside INSIGHT when stored.
+        user, other = f"ann{self.mark}", f"bob{self.mark}"
+        source = self._x(user)
+        card = (f'<p>Worth reading</p>\n<p><a href="https://nitter.net/{other}/status/{ID}?s=20">nitter.net/{other}/status…</a></p>\n'
+                f'<hr/>\n<blockquote>\n<b>Bob Example (@{other})</b>\n<p>The release is out today.</p>\n<footer>\n— <cite>'
+                f'<a href="https://nitter.local/{other}/status/{ID}#m">https://nitter.local/{other}/status/{ID}#m</a>\n</footer>\n</blockquote>')
+        post_id = self._save(source, user, ID + 7, "Worth reading", html=card)
+        self._regroup()
+
+        @contextmanager
+        def here(_url):
+            yield self.conn
+        address = f"https://x.com/{other.lower()}/status/{ID}"
+        with mock.patch("insight_core.services.post_detail_service.db.connection", here):
+            post = PostDetailService(db_url()).get_post_by_id(post_id)
+        self.assertIn(f'<a href="{address}"><b>Bob Example (@{other})</b> · open post ↗</a>', post["content_html"])
+        self.assertNotIn(f"nitter.local/{other}", post["content_html"])
+        self.assertNotIn(address, post["internal_links"], "not stored: it opens on x.com")
+        stored = self._save(self._x(other), other, ID, "The release is out today.")
+        with mock.patch("insight_core.services.post_detail_service.db.connection", here):
+            post = PostDetailService(db_url()).get_post_by_id(post_id)
+        self.assertEqual(post["internal_links"].get(address), str(stored), "stored: it opens inside INSIGHT")
+
     def test_a_reply_quoting_an_earlier_tweet_of_its_own_joins_that_tweets_story_only(self):
         # Issue 0103: a reply quoting the account's tweet of an hour ago hangs under it, not under the
         # account's thread on another subject posted in between.
