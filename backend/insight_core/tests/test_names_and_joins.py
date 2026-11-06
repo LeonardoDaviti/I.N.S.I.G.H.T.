@@ -222,6 +222,34 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         self.assertEqual({story.parents["dh"][:2], story.parents["tg"][:2]}, {(None, self.PAGE)})
         self.assertEqual(tally(story.posts, story.roles, []), (2, 0, 0), "News counts the two voices")
 
+    def test_a_page_saved_long_after_its_links_keeps_its_story(self):
+        """0113's measure: a page saved, and dated, days after the posts linking it pulled its story apart
+        (31 of 50). Its linkers keep the page's link join; the saved page joins them whatever its date."""
+        for hours in (24 * 10, -24 * 365):   # saved ten days later; a page dated a year before
+            saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=hours, title="GitHub - unslothai/unsloth")
+            posts = [saved, trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")]),
+                     trees.post("tg", "toshoseti", kind="telegram", hours=1, links=[(self.PAGE, "saved")])]
+            story = trees.only(posts)
+            self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"}, hours)
+            self.assertEqual(story.voices, 2, hours)
+            self.assertEqual(story.origin_url, self.PAGE, hours)
+            self.assertEqual(story.parents["saved"], (None, self.PAGE, "address"), hours)
+            self.assertIn("citation", story.reasons["dh"], hours)
+
+    def test_a_late_save_never_joins_links_apart_in_time(self):
+        """The page's own link window still holds among its linkers: a save adds the page, never a join
+        the links alone wouldn't make."""
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 30, title="GitHub - unslothai/unsloth")
+        posts = [saved, trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")]),
+                 trees.post("tg", "toshoseti", kind="telegram", hours=1, links=[(self.PAGE, "saved")]),
+                 trees.post("late", "laterchannel", kind="telegram", hours=24 * 20, links=[(self.PAGE, "saved")])]
+        story = trees.only(posts)
+        self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"})
+
+    def test_one_linker_and_a_late_save_are_no_story(self):
+        saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=24 * 10)
+        self.assertEqual(group([saved, trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")])]), [])
+
 
 @requires_db
 class JobCase(unittest.TestCase):

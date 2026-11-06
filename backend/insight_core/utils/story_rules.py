@@ -502,6 +502,18 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             cited = by_id.get(target)
             if cited is None:
                 continue   # a stored post outside the posts recomputed
+            if cited.kind == "saved":
+                # A page you saved is still the outside page its linkers link (issue 0113): they keep that
+                # page's link join among themselves (2+ places within 72 hours), and the saved page joins
+                # them whatever its own date or the save's. Dated by its time, a page saved days after
+                # its links pulled their story apart (0113's measure: 31 of 50).
+                near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
+                if len({p.place for p in near}) >= 2:
+                    for p in near:
+                        join(p.id, cited.id, "citation")
+                        why[p.id].add("citation")
+                        why[cited.id].add("citation")
+                    ps = [p for p in ps if p not in near]
             for p in ps:
                 if p.place != cited.place and abs(p.t - cited.t) <= LINK_WITHIN:
                     join(p.id, cited.id, "citation")
