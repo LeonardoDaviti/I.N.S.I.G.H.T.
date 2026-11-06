@@ -71,7 +71,7 @@ Status: **built** (branch `issue-0113-0114-0123`, 2026-11-06), changed by its me
 8. Open question 1 (automatic saving) became 0123's switch, "Collect originals", default off.
 
 ## Built (branch `issue-0113-0114-0123`, 2026-11-06)
-- `utils/story_rules.grouping`: the saved-page rule above (5 tests in `test_names_and_joins.py`: a late save and a page dated a year before keep their story, the link window holds, no join without one, no pull-in near the save, one linker is no story).
+- `utils/story_rules.grouping`: the saved-page rule above (6 tests in `test_names_and_joins.py`: a late save and a page dated a year before keep their story, the link window holds, no join without one, no pull-in near the save, one linker is no story, and a platform post listing links joins a story whose origin is a saved page: 0070 A6 compared the origin as the saved post, not the page, and on 0123's measure 2 posts left their stories).
 - `utils/discover_rules.pages` and `page_key_of`; `Origin.at_post` (from `_ORIGINS`) in `Origin.stored`.
 - `services/stories_service._discover_all`: `pages` rows `{url (no token), title, site, hide_key, video, tweet, first_linked_at, voices, readable, stories}` in Discover's answer; a page's hide key is `page:<address>` (`POST /api/sources/suggested/hide`, up to 2,048 characters).
 - Frontend: Discover's tabs **Sources** and **Pages** (`components/sources/DiscoverPages.tsx`): Save page (`api.savePage`, 0122's path: a followed source's page is fetched there first), Follow site… (Discover's follow), Hide.
