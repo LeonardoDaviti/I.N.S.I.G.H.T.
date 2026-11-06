@@ -21,6 +21,10 @@ Two layers:
       8. Asked again (0112 Decided 8, `settle`): a join, pair or merge that would change a story counts only once a
          second answer agrees; the run reopens its task (`Ask.reopen`), its first call kept. An "about" answer whose
          own reason says the post is not about the story (`contradicts`) never counts, and is asked again.
+      9. Checks and links (0121 Decided 1): a check never removes a member Mark IX joined by a link to the story's
+         page (a citation of its parent or the origin page, a quote, the same address: `LINKED`); it demotes it to a
+         mention at most. A check that would take out a 2-voice story's second voice counts only once a second answer
+         agrees (`settle_check`), as joins do.
     A question is a `Question` with the prototype's id (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
     `merge2:`); a story is keyed, inside one run only, by its Mark IX story's key or a pair's anchor post. Nothing
     keyed so is stored: the job matches its stories to Mark X's by their member posts.
@@ -50,6 +54,7 @@ log = logging.getLogger(__name__)
 
 CODE_VERSION = "markx-decide-v1"
 CERTAIN = frozenset({"thread", "quote", "address"})    # a tree reason that is not a guess: no check (unless a roundup)
+LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to the story's page (0121 Decided 1)
 NOT_VOICE = frozenset({"saved"})
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
@@ -78,11 +83,16 @@ class Config:
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
+    link_keeps: bool = True         # a check demotes a member Mark IX joined by a link at most, never removes it (0121 D1)
+    confirm_check: bool = True      # a check taking out a 2-voice story's second voice counts once asked again (0121 D1)
+    document_merges: bool = True    # two stories whose members link one document page are a merge question (0121 D5)
+    document_days: int = 30         # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides (corrections 8)
 
     @staticmethod
     def prototype() -> "Config":
-        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False)
+        return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
+                      link_keeps=False, confirm_check=False, document_merges=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -121,6 +131,7 @@ class Question:
     side: Tuple[str, ...] = ()                # the story's posts the question shows
     side_b: Tuple[str, ...] = ()              # merge: the other story's posts shown
     second: bool = False                      # merge: asked by the second pass
+    last_voice: bool = False                  # check: taking it out leaves its story one voice (0121 Decided 1)
 
 
 @dataclass(frozen=True)
@@ -224,8 +235,9 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             shown = tuple(q for q in side(key) if q != m.post)[:3] or tuple(x.post for x in ms if x.post != m.post)[:3]
             if not shown:
                 continue                                       # a story's only post: nothing to check it against
+            last = voices(posts, [x.post for x in ms if x.post != m.post]) < 2
             out.append(Question(f"check:{key}:{m.post}", "check", story=key, post=m.post, voices=nv[key], why=m.why,
-                                roundup=roundup, side=shown))
+                                roundup=roundup, side=shown, last_voice=last))
     seen: Set[Any] = set()
     for a, b, cos in candidates:
         if cos is not None and cos < config.cand_lo:
@@ -268,26 +280,28 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             seen.add(tid)
             out.append(Question(tid, "pair", post=b, anchor=a, cos=cos, side=(a,)))
     first = {key: posts[ms[0].post].at for key, ms in members.items() if ms}
-    for x, y, cos in story_pairs:
-        if x not in members or y not in members or nv[x] < 2 or nv[y] < 2 or cos < config.story_lo:
+    for x, y, cos in story_pairs:   # cos None: found by a shared document, not by meaning (0121 Decided 5)
+        if x not in members or y not in members or nv[x] < 2 or nv[y] < 2 or (cos is not None and cos < config.story_lo):
             continue
         k = tuple(sorted([x, y]))
         if k in seen:
             continue
         seen.add(k)
         x0, y0 = sorted([x, y], key=lambda s: first[s])
-        out.append(Question(f"merge:{x0}:{y0}", "merge", story=x0, other=y0, cos=round(cos, 3),
+        out.append(Question(f"merge:{x0}:{y0}", "merge", story=x0, other=y0, cos=None if cos is None else round(cos, 3),
                             side=tuple(side(x0)[:3]), side_b=tuple(side(y0)[:3])))
     return out
 
 
 def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
                centroid_cos: Callable[[Sequence[str], Sequence[str]], Optional[float]],
-               config: Config = Config(), within: Optional[Callable[[Any, Any], bool]] = None) -> List[Question]:
+               config: Config = Config(), within: Optional[Callable[[Any, Any], bool]] = None,
+               documents: Optional[Callable[[Sequence[str], Sequence[str]], bool]] = None) -> List[Question]:
     """The second pass (pipeline.plan2): every story the first pass made from lone posts against every other 2+ voice
     story, centroid >= story_lo, first posts at most story_days apart. `centroid_cos(posts_a, posts_b)`: the cosine
     of two post sets' mean vectors (None when either has none). `within(at_a, at_b)`: the days rule (default: a
-    timedelta of story_days)."""
+    timedelta of story_days). `documents(posts_a, posts_b)`: whether two of their posts link one document page within
+    `document_days` (0121 Decided 5): such a pair is asked whatever its centroid and days."""
     span = timedelta(days=config.story_days)
     within = within or (lambda ta, tb: abs(ta - tb) <= span)
     st: Dict[str, Tuple[List[str], Any, bool]] = {}
@@ -301,14 +315,14 @@ def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
         for y, vy in st.items():
             if y == x or tuple(sorted([x, y])) in seen:
                 continue
-            if not within(st[x][1], vy[1]):
-                continue
-            c = centroid_cos(st[x][0], vy[0])
-            if c is None or c < config.story_lo:
+            c = centroid_cos(st[x][0], vy[0]) if within(st[x][1], vy[1]) else None
+            if c is not None and c < config.story_lo:
+                c = None
+            if c is None and not (documents is not None and documents(st[x][0], vy[0])):
                 continue
             seen.add(tuple(sorted([x, y])))
             x0, y0 = sorted([x, y], key=lambda s: st[s][1])
-            out.append(Question(f"merge2:{x0}:{y0}", "merge", story=x0, other=y0, cos=round(c, 3),
+            out.append(Question(f"merge2:{x0}:{y0}", "merge", story=x0, other=y0, cos=None if c is None else round(c, 3),
                                 side=tuple(st[x0][0][:3]), side_b=tuple(st[y0][0][:3]), second=True))
     return out
 
@@ -351,15 +365,19 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
             if pa < strict:
                 ev = about[q.story].pop(q.post, None)
                 kind = "demote" if rel in ("mention", "digest_item") else "remove"
-                guarded = kind == "remove" and config.two_event_guard and events.get(q.post) == "several"
+                guarded = None
+                if kind == "remove" and config.two_event_guard and events.get(q.post) == "several":
+                    guarded = "two-event"
+                elif kind == "remove" and config.link_keeps and q.why in LINKED:
+                    guarded = "link"           # it links the story's page: a mention at most (0121 Decided 1)
                 if guarded:
                     kind = "demote"
                 if kind == "demote":
                     mentions[q.story][q.post] = {"by": "judge", "relation": rel, "reason": v.reason, "p_about": pa,
-                                                 "call": v.call, **({"guard": "two-event"} if guarded else {})}
+                                                 "call": v.call, **({"guard": guarded} if guarded else {})}
                 log.append({"tid": q.tid, "change": kind, "story": q.story, "post": q.post, "relation": rel,
                             "p_about": pa, "reason": v.reason, "was": ev, "call": v.call,
-                            **({"guard": "two-event"} if guarded else {})})
+                            **({"guard": guarded} if guarded else {})})
         elif q.type in ("join", "pair"):
             if rel in ABOUT and pa >= config.tau_join:
                 key = q.story or q.anchor
@@ -529,6 +547,25 @@ def settle(kind: str, answers: Sequence[Verdict], config: Config = Config()) -> 
             relation = last.relation if last.relation != "same_event" else prev.relation
             return Verdict(relation, min(prev.p, last.p), prev.reason, prev.call), False
     return None, more
+
+
+def settle_check(answers: Sequence[Verdict], bar: float, config: Config = Config()) -> Tuple[Optional[Verdict], bool]:
+    """(the verdict that counts, or None; whether to ask again) from the valid answers, oldest first, of a check that
+    would take out a 2-voice story's second voice (0121 Decided 1, as `settle` for joins). The newest answer decides:
+    one that keeps the post (p "about" at `bar` or more) counts at once; one that takes it out counts only when the
+    answer before it takes it out too, as one verdict that says less: a mention over a removal, the higher p, named
+    by the earlier call. Until then the check is asked again, MAX_ASKS times at most; then the post stays."""
+    if not answers:
+        return None, False
+    last = answers[-1]
+    if last.p is None or last.p >= bar or not config.confirm_check:
+        return last, False
+    if len(answers) >= 2 and answers[-2].p is not None and answers[-2].p < bar:
+        prev = answers[-2]
+        demoting = [x for x in (prev, last) if x.relation in ("mention", "digest_item")]
+        relation = demoting[0].relation if demoting else prev.relation
+        return Verdict(relation, max(prev.p, last.p), prev.reason, prev.call), False
+    return None, len(answers) < MAX_ASKS
 
 
 def answered_pairs(questions: Sequence[Question], verdicts: Dict[str, Verdict]) -> List[Tuple[Question, Verdict]]:
@@ -798,8 +835,18 @@ class Questions:
         if q.type == "check":
             if q.post not in t:
                 return None
-            return self.ask.verdict("check", tasks.check_input(t[q.post], self._p(q.side)), a=q.post,
-                                    priority=self._priority(q.post))
+            got = self.ask.answer("check", tasks.check_input(t[q.post], self._p(q.side)), a=q.post,
+                                  priority=self._priority(q.post))
+            if got is None:
+                return None
+            first = Verdict.of(got[0], got[1])
+            if not (q.last_voice and self.config.confirm_check):
+                return first
+            bar = self.config.tau_keep2 if q.voices <= 2 else self.config.tau_keep
+            v, again = settle_check([first] + self.ask.later(got[1]), bar, self.config)
+            if again:
+                self.ask.ask_again("check", got[1])
+            return v
         if q.type == "join":
             ms = [p for p in self.story_posts(q.story) if p != q.post]
             if q.post not in t or not self._read([q.post]):
@@ -822,6 +869,52 @@ class Questions:
         return None
 
 
+class Documents:
+    """0121 Decided 5 (the owner's call, default yes): the document pages each post links (candidates.document_key:
+    a paper, a record or a filing, 0106's and 0109's address shapes), a roundup's never (it lists them), and which
+    stories two of whose posts link one within `document_days`. A merge question, never a rule."""
+
+    def __init__(self, world: World, config: Config) -> None:
+        from insight_core.markx import candidates
+        self.w, self.span = world, timedelta(days=config.document_days)
+        kinds = world.kinds()
+        self.of: Dict[str, Set[str]] = {}
+        for pid, p in world.text.items():
+            if kinds.get(pid) != "roundup" and pid in world.posts:
+                keys = {k for k in (candidates.document_key(url) for url, _ in p.links) if k}
+                if keys:
+                    self.of[pid] = keys
+
+    def _linkers(self, ps: Sequence[str]) -> Dict[str, List[Any]]:
+        out: Dict[str, List[Any]] = defaultdict(list)
+        for p in ps:
+            for k in self.of.get(p, ()):
+                out[k].append(self.w.posts[p].at)
+        return out
+
+    def _near(self, xs: Sequence[Any], ys: Sequence[Any]) -> bool:
+        return any(abs(a - b) <= self.span for a in xs for b in ys)
+
+    def shared(self, pa: Sequence[str], pb: Sequence[str]) -> bool:
+        la, lb = self._linkers(pa), self._linkers(pb)
+        return any(self._near(la[k], lb[k]) for k in la.keys() & lb.keys())
+
+    def pairs(self, groups: Dict[str, Sequence[str]]) -> List[Tuple[str, str]]:
+        """The (x, y) of `groups` (x < y) sharing a document within the days."""
+        by_key: Dict[str, Dict[str, List[Any]]] = defaultdict(dict)
+        for g, ps in groups.items():
+            for k, ats in self._linkers(ps).items():
+                by_key[k][g] = ats
+        out = set()
+        for k, held in by_key.items():
+            gs = sorted(held)
+            for i, x in enumerate(gs):
+                for y in gs[i + 1:]:
+                    if self._near(held[x], held[y]):
+                        out.add((x, y))
+        return sorted(out)
+
+
 def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
           answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
@@ -833,6 +926,10 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     span = timedelta(days=config.story_days)
     story_pairs = [(x, y, c) for (x, y), c in sorted(centroid_cosines(cur, multi, config.story_lo).items())
                    if abs(first[x] - first[y]) <= span]
+    docs = Documents(world, config) if config.document_merges else None
+    if docs is not None:
+        found = {tuple(sorted(xy)) for xy in ((x, y) for x, y, _ in story_pairs)}
+        story_pairs += [(x, y, None) for x, y in docs.pairs(multi) if (x, y) not in found]
     q1 = plan_pass1(world.posts, world.stories, world.kinds(), world.candidates, story_pairs, config,
                     in_window=lambda a: world.posts[a].at >= world.since, copies=world.copies())
     ans1 = [(x, v) for x in q1 if (v := q.verdict(x)) is not None]
@@ -846,7 +943,7 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     def centroid_cos(pa: Sequence[str], pb: Sequence[str]) -> Optional[float]:
         x, y = by_posts.get(tuple(pa)), by_posts.get(tuple(pb))
         return cos2.get((min(x, y), max(x, y))) if x and y else None
-    q2 = plan_pass2(world.posts, p1, centroid_cos, config)
+    q2 = plan_pass2(world.posts, p1, centroid_cos, config, documents=docs.shared if docs is not None else None)
     ans2 = [(x, v) for x in q2 if (v := q.verdict(x, p1)) is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
     if answered is not None:
@@ -1138,7 +1235,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")
-    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now)
+    counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now, ask=ask,
+                                   headed={ids[k] for k in news_keys})
     if check is not None:
         diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}

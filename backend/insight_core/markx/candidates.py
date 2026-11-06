@@ -62,12 +62,15 @@ POST_POST, STORY_STORY = "post_post", "story_story"
 # ---- what every source reads -----------------------------------------------------------------------
 
 class Posts:
-    """Mark X's time, source and kind of the embedded posts (and of any post loaded), and their Mark IX stories."""
+    """Mark X's time, source and kind of the embedded posts (and of any post loaded), and their Mark IX stories.
+    `embedded` False: none of the embedded posts is read (the entity source alone reads only the posts it names)."""
 
-    def __init__(self, cur: Cursor, model: str = MODEL, extra: Iterable[str] = ()) -> None:
+    def __init__(self, cur: Cursor, model: str = MODEL, extra: Iterable[str] = (), embedded: bool = True) -> None:
         self.cur = cur
-        cur.execute("SELECT post_id::text FROM mx_embeddings WHERE model = %s", (model,))
-        self.embedded: Set[str] = {r[0] for r in cur.fetchall()}
+        self.embedded: Set[str] = set()
+        if embedded:
+            cur.execute("SELECT post_id::text FROM mx_embeddings WHERE model = %s", (model,))
+            self.embedded = {r[0] for r in cur.fetchall()}
         self.source: Dict[str, str] = {}
         self.at: Dict[str, datetime] = {}
         self.kind: Dict[str, str] = {}
@@ -272,6 +275,28 @@ def burst_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
     return added
 
 
+# ---- document ---------------------------------------------------------------------------------------
+# 0121 Decided 5: two stories whose members link one document page within 30 days are a merge question (the decision
+# run reads the posts' links: decide.Documents). A document is one of 0106's and 0109's address shapes: a paper (its
+# id is one page on its host, whatever the path: the abstract, the PDF, a version) or a record, a filing or a data page
+# (a first segment that names a kind of record). An article, a home page, a social post are not.
+
+def document_key(url: Optional[str]) -> Optional[str]:
+    """The document page an address is, as a key (a paper's id on its host; else the address without its query), or
+    None when it is no document."""
+    from insight_core.utils.addresses import bare, paper_id
+    from insight_core.utils.discover_rules import document_address, paper_address
+    if not url or is_home(url):
+        return None
+    host = bare(url).partition("/")[0]
+    pid = paper_id(url)
+    if pid:
+        return f"paper:{host}:{pid}"
+    if document_address(url) or paper_address(url):
+        return "page:" + bare(url).split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return None
+
+
 # ---- the job ---------------------------------------------------------------------------------------
 
 def find(cur: Cursor, post_ids: Iterable[str], *, model: str = MODEL,
@@ -281,7 +306,7 @@ def find(cur: Cursor, post_ids: Iterable[str], *, model: str = MODEL,
     out: Counter = Counter()
     if not new:
         return out
-    posts = Posts(cur, model, extra=new)
+    posts = Posts(cur, model, extra=new, embedded="embedding" in sources)
     if "embedding" in sources:
         out["embedding"] += embedding_pairs(cur, posts, new, model)
         out["embedding:story"] += story_pairs(cur, posts, new, model)
@@ -302,9 +327,14 @@ def mentioned_since(cur: Cursor, since: datetime) -> List[str]:
 
 
 def run(cur: Cursor, post_ids: Iterable[str] = (), *, since: Optional[datetime] = None, model: str = MODEL) -> Counter:
-    """One run: the candidates of `post_ids` (new vectors) and of the posts with mentions written since `since`."""
+    """One run: every source's candidates of `post_ids` (the posts embedded since the last run), and the entity
+    candidates of the posts whose mentions were written since `since`. A post's embedding neighbours, links and bursts
+    were found when its vector came, so its new mentions only ask the entity source (0121 Decided 7, 0116's pattern:
+    the review measured 75 s, 35 s of CPU, finding every mentioned post's neighbours again for 0 new candidates)."""
     ids = set(map(str, post_ids))
+    out = find(cur, ids, model=model)
     if since is not None:
-        ids |= set(mentioned_since(cur, since))
-    return find(cur, ids, model=model)
+        mentioned = set(mentioned_since(cur, since)) - ids
+        out.update(find(cur, mentioned, model=model, sources=("entity",)))
+    return out
 

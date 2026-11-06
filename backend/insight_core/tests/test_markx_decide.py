@@ -33,8 +33,8 @@ def post(pid, source, hours=0.0, kind="telegram", words=LONG):
     return D.Post(pid, source, kind, T + hours * H, words)
 
 
-def story(*members, why="citation"):
-    """Mark IX's members: the first the root, the others joined by `why`."""
+def story(*members, why="time"):
+    """Mark IX's members: the first the root, the others joined by `why` (a time: a guess no link backs)."""
     return [D.Member(m, "report", None if n == 0 else why) for n, m in enumerate(members)]
 
 
@@ -112,6 +112,45 @@ class Rules(unittest.TestCase):
         out = D.decide(self.posts, self.stories, [(q2, v("different", 0.1))])
         self.assertNotIn("f", out.about["E"])
 
+    def test_a_check_never_removes_a_member_joined_by_a_link_to_the_storys_page(self):
+        """0121 Decided 1: Mark IX joined it by a citation (it links its parent or the origin page), a quote or the
+        same address. A check can demote it to a mention at most, never remove it. A time join can go."""
+        q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
+        for why in ("citation", "quote", "address"):
+            self.stories["A"] = story("a", "b", "c", why=why)
+            out = D.decide(self.posts, self.stories, [(replace(q, why=why), v("different", 0.05))])
+            self.assertEqual(out.log[0]["change"], "demote", why)
+            self.assertEqual(out.mentions["A"]["b"]["guard"], "link")
+            self.assertNotIn("b", out.about["A"])
+        out = D.decide(self.posts, self.stories, [(replace(q, why="time"), v("different", 0.05))])
+        self.assertEqual(out.log[0]["change"], "remove")
+        out = D.decide(self.posts, self.stories, [(replace(q, why="citation"), v("different", 0.05))], D.Config.prototype())
+        self.assertEqual(out.log[0]["change"], "remove")                 # the prototype had no such guard
+
+    def test_a_check_knows_when_it_would_take_out_a_storys_last_second_voice(self):
+        """0121 Decided 1: a check of a 2-voice story's member whose source is its only one there."""
+        self.posts["b2"] = post("b2", "s2", 1.5)
+        self.stories = {"A": story("a", "b", "c"), "E": story("e", "f"), "B": story("a", "b", "b2")}
+        qs = {q.tid: q for q in self.plan() if q.type == "check"}
+        self.assertTrue(qs["check:E:f"].last_voice)
+        self.assertFalse(qs["check:A:b"].last_voice)                     # 3 voices: two are left
+        self.assertFalse(qs["check:B:b"].last_voice)                     # b2 is the same voice
+        self.assertFalse(qs["check:B:b2"].last_voice)
+
+    def test_taking_out_a_second_voice_counts_only_once_asked_again_and_agreeing(self):
+        """0121 Decided 1: as 0112 Decided 8 for joins. (verdict, ask again) from a check's answers, oldest first."""
+        c = D.Config()
+        out1, out2 = v("different", 0.05, call="c1"), v("mention", 0.10, call="c2")
+        keep = v("same_event", 0.9, call="c2")
+        self.assertEqual(D.settle_check([out1], 0.15, c), (None, True))              # once: not yet
+        got, again = D.settle_check([out1, out2], 0.15, c)                           # both out: the one that says less
+        self.assertEqual((got.relation, got.p, got.call, again), ("mention", 0.10, "c1", False))
+        self.assertEqual(D.settle_check([out1, keep], 0.15, c), (keep, False))       # a keep counts at once
+        self.assertEqual(D.settle_check([keep], 0.15, c), (keep, False))
+        self.assertEqual(D.settle_check([out1, keep, out2], 0.15, c), (None, False)) # three asks at most: it stays
+        self.assertEqual(D.settle_check([keep, out1], 0.15, c), (None, True))
+        self.assertEqual(D.settle_check([out1], 0.15, D.Config(confirm_check=False)), (out1, False))
+
     def test_mention_and_digest_item_demote(self):
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
         out = D.decide(self.posts, self.stories, [(q, v("digest_item", 0.1))])
@@ -140,6 +179,25 @@ class Rules(unittest.TestCase):
         new = [s for s in out.stories(self.posts) if s["story"] not in out.ix]
         self.assertEqual(len(new), 1)
         self.assertEqual(set(new[0]["posts"]), {"g", "h", "d"})
+
+    def test_a_story_pair_with_no_cosine_is_asked_a_merge(self):
+        """0121 Decided 5: a pair of stories found by a shared document, not by meaning (cosine None), is a merge
+        question; one found by meaning still needs the centroid bar."""
+        self.stories["F"] = story("g", "h")
+        tids = {q.tid for q in self.plan(pairs=[("A", "F", None)]) if q.type == "merge"}
+        self.assertIn("merge:A:F", tids)
+        tids = {q.tid for q in self.plan(pairs=[("A", "F", 0.5)]) if q.type == "merge"}
+        self.assertNotIn("merge:A:F", tids)
+
+    def test_the_second_pass_asks_a_new_story_and_one_sharing_a_document(self):
+        first = D.decide(self.posts, self.stories, [(D.Question("pair:g:h", "pair", post="h", anchor="g"),
+                                                    v("same_event", 0.9))])
+        far = lambda a, b: False   # noqa: E731 - the days rule says no; a shared document has its own 30 days
+        never = lambda a, b: None   # noqa: E731
+        self.assertEqual(D.plan_pass2(self.posts, first, never, within=far), [])
+        qs = D.plan_pass2(self.posts, first, never, within=far,
+                          documents=lambda a, b: "h" in a and "a" in b or "h" in b and "a" in a)
+        self.assertEqual({(q.story, q.other) for q in qs}, {("A", "g")})
 
     def test_merges_at_085_and_a_development_is_a_connection(self):
         m = D.Question("merge:A:E", "merge", story="A", other="E")
@@ -363,10 +421,10 @@ class Job(unittest.TestCase):
 
     def test_a_run_mirrors_mark_ix_then_checks_remove_with_the_row_kept(self):
         a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
-        self.ix_story(a, b, c)
+        self.ix_story(a, b, c, reason="time")   # a guess no link backs: a check can remove it (0121 Decided 1)
         first = self.go()
         self.assertEqual(first["stories"], 1)
-        self.assertEqual({(p, r) for _, p, _, r in self.current()}, {(a, "rule:none"), (b, "rule:citation"), (c, "rule:citation")})
+        self.assertEqual({(p, r) for _, p, _, r in self.current()}, {(a, "rule:none"), (b, "rule:time"), (c, "rule:time")})
         self.assertEqual(first["tasks_added"].get("check"), 2)          # b and c are uncertain members
         # the same run again changes nothing
         again = self.go()
@@ -378,6 +436,112 @@ class Job(unittest.TestCase):
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
         self.cur.execute("SELECT valid_to IS NOT NULL FROM mx_story_posts WHERE post_id = %s", (c,))
         self.assertEqual(self.cur.fetchall(), [(True,)])
+
+    def test_a_two_voice_storys_second_voice_goes_only_when_asked_twice_and_a_linked_one_stays_a_mention(self):
+        """0121 Decided 1, the v10.0.1 review's W1: a post linking the page its story's other post links (Mark IX's
+        citation) was removed on one "different" 95, and a 2-voice News row went with it. Now the removal of a
+        2-voice story's second voice is asked again before it counts, and a linked member is demoted at most."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        c, d = self.post(2, "Beta shipped Gizmo 2"), self.post(3, "Gizmo 2 hands-on")
+        self.ix_story(a, b)                                  # b cites a's page
+        self.ix_story(c, d, reason="time")                  # d joined by its time only
+        self.go()
+        different = lambda t: {"relation": "different", "confidence": 95, "reason": "another event"}   # noqa: E731
+        self.assertEqual(self.answer("check", different), 2)
+        first = self.go()
+        self.assertEqual(first["changes"], {})                         # once is not enough
+        self.assertEqual(first["tasks_reasked"], {"check": 2})
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b, c, d})
+        self.assertEqual(self.answer("check", different), 2)
+        out = self.go()
+        # linked, b is a mention at most; d, joined by its time only, is removed. Each story is one post now: no row
+        self.assertEqual(out["changes"], {"demote": 1, "remove": 1})
+        self.assertEqual(self.current(), [])
+        self.cur.execute("SELECT count(*) FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id WHERE t.kind = 'check'")
+        self.assertEqual(self.cur.fetchone()[0], 4)                    # every call kept
+
+    def test_a_second_answer_that_keeps_the_second_voice_keeps_the_story(self):
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        self.ix_story(a, b, reason="time")
+        self.go()
+        self.answer("check", lambda t: {"relation": "different", "confidence": 95, "reason": "another event"})
+        self.go()
+        self.answer("check", lambda t: {"relation": "same_event", "confidence": 80, "reason": "the same release"})
+        out = self.go()
+        self.assertEqual(out["changes"], {})
+        self.assertEqual({p for _, p, _, _ in self.current()}, {a, b})
+        self.assertEqual(out["news"]["rows"], 1)
+
+    def test_a_rows_headline_comes_from_its_main_story_not_its_first_posts(self):
+        """0121 Decided 2, the v10.0.1 review's W3: a row whose first post joined by a name (no Mark X story) showed
+        its lead's title although the story holding most of its voices had Haiku's headline."""
+        a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
+        sid = repo.add_story(self.cur, first_at=T, run_id=repo.start_run(self.cur, code_version="t", config={}))
+        repo.set_story_headline(self.cur, sid, headline="Acme releases Widget 4")
+        row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
+                                  {"post_id": b, "voice": "v1", "story": str(sid)},
+                                  {"post_id": c, "voice": "v2", "story": str(sid)}]}
+        self.assertEqual(N.main_story(row), str(sid))
+        self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
+
+    def test_every_news_row_gets_a_headline_task(self):
+        """0121 Decided 2: a row of posts in no story of 2+ voices (joined by a surging name) was never asked a
+        headline (14 of 19 rows titled by their lead). Now each such row is asked one over its posts, found again by
+        its input when the page reads it."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
+        row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
+                                  {"post_id": b, "voice": "v1", "story": None}]}
+        self.assertEqual(N.headlines(self.cur, [row])[a]["from"], "lead title")
+        ask = D.Ask(self.cur, self.now)
+        self.assertEqual(N.ask_row_headlines(self.cur, [row], ask, headed=set()), {"asked": 1, "answered": 0})
+        self.assertEqual(ask.added["headline"], 1)
+        self.answer("headline", lambda t: {"id": "x", "headline_en": "Acme releases Widget 4"})
+        self.assertEqual(N.ask_row_headlines(self.cur, [row], D.Ask(self.cur, self.now), headed=set()),
+                         {"asked": 1, "answered": 1})
+        self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
+        # a row whose main story is asked a headline of its own is not asked again
+        sid = repo.add_story(self.cur, first_at=T, run_id=repo.start_run(self.cur, code_version="t", config={}))
+        row2 = {"id": b, "posts": [{"post_id": b, "voice": "v1", "story": str(sid)},
+                                   {"post_id": a, "voice": "v0", "story": str(sid)}]}
+        self.assertEqual(N.ask_row_headlines(self.cur, [row2], D.Ask(self.cur, self.now), headed={str(sid)}),
+                         {"asked": 0, "answered": 0})
+
+    def test_a_run_asks_no_second_headline_for_a_row_whose_main_story_has_its_own(self):
+        """The job: every News row it writes is asked a headline, or its main story is (here: a story of 2 voices)."""
+        a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
+        self.ix_story(a, b)
+        out = self.go()
+        self.assertEqual(out["news"]["rows"], 1)
+        self.assertEqual(out["tasks_added"].get("headline"), 1)        # the story's own (2 voices): not twice
+        self.assertEqual(out["news"]["row_headlines"], {"asked": 0, "answered": 0})
+
+    def link(self, pid, url):
+        self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
+                         "VALUES (%s, %s, 'test.invalid', 0, NULL)", (pid, url))
+
+    def test_two_stories_linking_one_document_within_30_days_are_asked_a_merge(self):
+        """0121 Decided 5 (the owner's call, default yes; the v10.0.1 review's W4): a document's later analyses are
+        a merge question with its story, when their members link the same document page (a paper, a filing: the
+        address shapes of 0106 and 0109) within 30 days. A question, never a rule."""
+        a, b = self.post(0, "Acme files its prospectus"), self.post(1, "Acme's prospectus is out")
+        c, d = self.post(24 * 20, "Reading the prospectus, part 1"), self.post(24 * 20 + 1, "Prospectus notes")
+        e, f = self.post(24 * 20 + 2, "Gizmo 2 launches"), self.post(24 * 20 + 3, "Gizmo 2 hands-on")
+        for pid in (a, c):
+            self.link(pid, "https://records.test.invalid/documents/acme-prospectus-2100")
+        self.link(e, "https://news.test.invalid/2100/03/gizmo-2")          # an article: no document
+        self.link(b, "https://news.test.invalid/2100/03/gizmo-2")
+        self.ix_story(a, b), self.ix_story(c, d), self.ix_story(e, f)
+        self.read_all([a, b, c, d, e, f])
+        self.now = T + 24 * 21 * H
+        self.go()
+        self.answer("card", lambda t: {"headline_en": "Acme files a prospectus", "actors": ["Acme"],
+                                       "object": "prospectus", "action": "filed", "odd": []})
+        out = self.go()
+        self.assertEqual(out["questions"].get("merge"), 1)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'merge'")
+        self.assertEqual(self.cur.fetchall(), [(a, c)])
+        off = D.run(self.cur, now=self.now, config=replace(D.Config(), document_merges=False))
+        self.assertNotIn("merge", off["questions"])
 
     def test_a_pair_makes_a_new_story_and_news_tags_it(self):
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
@@ -403,7 +567,7 @@ class Job(unittest.TestCase):
         from insight_core.db.repo_post_parts import PostPartsRepository
         self.cur.execute("DELETE FROM post_parts WHERE post_id = %s", (d,))
         PostPartsRepository.write(self.cur, [d])
-        story = self.ix_story(a, b, c, d)
+        story = self.ix_story(a, b, c, d, reason="time")
         self.cur.execute("UPDATE story_posts SET role = 'share' WHERE story_id = %s AND post_id <> %s", (story, b))
         first = self.go()
         sid = {s for s, _, _, _ in self.current()}.pop()

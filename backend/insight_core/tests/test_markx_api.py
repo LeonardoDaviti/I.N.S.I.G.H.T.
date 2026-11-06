@@ -635,8 +635,8 @@ class ReadingWindow(_Api):
         self.assertEqual(self.lease(days="0")[0], 400)
 
     def lease(self, days, kind="read", limit=100):
-        return call("GET", "/api/markx/work", query={"kinds": kind, "limit": limit, "worker": "device-1", "days": days},
-                    token=self.token)
+        query = {"kinds": kind, "limit": limit, "worker": "device-1", **({"days": days} if days is not None else {})}
+        return call("GET", "/api/markx/work", query=query, token=self.token)
 
     def test_a_lease_with_days_120_plans_older_posts_first(self):
         status, body = self.lease("120")
@@ -651,6 +651,45 @@ class ReadingWindow(_Api):
         status, body = self.lease("all")
         self.assertEqual(status, 200, body)
         self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+
+    def mine(self, body):
+        names = {self.fresh: "Fresh", self.old: "Old", self.ancient: "Ancient"}
+        titles = [t["input"].split("Title: ")[1].split("\n")[0] for t in body["tasks"]]
+        return [t for t in titles if t in names.values()]
+
+    def test_a_changed_window_is_planned_on_the_next_lease_even_with_tasks_waiting(self):
+        """0121 Decided 4 (the v10.0.1 review's W5): a change counted only once fewer than a lease's tasks waited, so
+        it could wait 24 leases. Now a lease plans again whenever the window it last planned differs from the page's."""
+        call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        status, body = self.lease(None, limit=1)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old})
+        call("POST", "/api/markx/release", body={"worker": "device-1"}, token=self.token)
+        call("POST", "/api/markx/settings/reading-window", body={"days": None})
+        self.lease(None, limit=1)                                      # 2 wait, more than the lease's 1
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'read'")
+        planned = self.cur.fetchone()[0]
+        call("POST", "/api/markx/release", body={"worker": "device-1"}, token=self.token)
+        self.lease(None, limit=1)                                      # the same window: no planner run
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'read'")
+        self.assertEqual(self.cur.fetchone()[0], planned)
+
+    def test_a_narrowed_window_keeps_the_queued_tasks_but_leases_the_window_newest_first(self):
+        call("POST", "/api/markx/settings/reading-window", body={"days": None})
+        with self.conn.transaction():
+            tasks.plan_posts(self.cur, "read")
+            # priorities as planned long ago (the post's age then): the oldest post's task first by priority
+            self.cur.execute("UPDATE mx_tasks SET priority = CASE a WHEN %s THEN 0 WHEN %s THEN 5 ELSE 9 END "
+                             "WHERE kind = 'read'", (self.ancient, self.old))
+        call("POST", "/api/markx/settings/reading-window", body={"days": 120})
+        status, body = self.lease(None, limit=100)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})     # nothing dropped
+        self.assertEqual(self.mine(body), ["Fresh", "Old", "Ancient"])              # the window's first, newest first
+        call("POST", "/api/markx/release", body={"worker": "device-1"}, token=self.token)
+        call("POST", "/api/markx/settings/reading-window", body={"days": 30})
+        self.assertEqual(self.mine(self.lease(None, limit=100)[1]), ["Fresh", "Old", "Ancient"])
 
     def test_neither_touches_the_decision_window(self):
         from insight_core.markx import decide as D

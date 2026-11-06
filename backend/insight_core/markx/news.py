@@ -186,11 +186,65 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
     return sorted(kept + made, key=lambda r: (r["first_at"], str(r["id"]))), group, first
 
 
+def main_story(row: Dict[str, Any]) -> Optional[str]:
+    """The row's Mark X story holding most of its voices, then most of its posts, then the first (0121 Decided 2);
+    None when none of its posts is in a Mark X story (posts joined by a surging name)."""
+    seen: Dict[str, List[Any]] = {}
+    for n, p in enumerate(row.get("posts") or []):
+        sid = p.get("story")
+        if sid:
+            got = seen.setdefault(str(sid), [set(), 0, n])
+            got[0].add(p.get("voice") or p.get("post_id"))
+            got[1] += 1
+    if not seen:
+        return None
+    return min(seen, key=lambda s: (-len(seen[s][0]), -seen[s][1], seen[s][2]))
+
+
+def row_headline_input(row: Dict[str, Any], posts: Dict[str, Any]) -> Optional[str]:
+    """A row's own headline question (0121 Decided 2), from its posts as the headline guide reads a story's members
+    (tasks.headline_input: the first 6, earliest first). The page finds the answer again by this input."""
+    from insight_core.markx import tasks
+    ps = [posts[p["post_id"]] for p in row.get("posts") or [] if p["post_id"] in posts]
+    return tasks.headline_input(ps) if ps else None
+
+
+def _row_posts(cur: Any, rows: Sequence[Dict[str, Any]], known: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from insight_core.markx import tasks
+    ids = {p["post_id"] for r in rows for p in r.get("posts") or []}
+    known = known or {}
+    have = {i: known[i] for i in ids if i in known}
+    have.update(tasks.load_posts(cur, sorted(ids - set(have))))
+    return have
+
+
+def ask_row_headlines(cur: Any, rows: Sequence[Dict[str, Any]], ask: Any, *, headed: Set[str],
+                      known: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    """0121 Decided 2: a headline task for every News row whose main story is asked none of its own (`headed`: the
+    Mark X stories of 2+ voices the run asks a headline for), so every row gets one: a row of stories of one voice,
+    or of posts joined by a surging name (14 of the 19 rows the v10.0.1 review saw titled by their lead).
+    {"asked": rows asked, "answered": of them, answered}."""
+    need = [r for r in rows if main_story(r) not in headed]
+    if not need:
+        return {"asked": 0, "answered": 0}
+    posts = _row_posts(cur, need, known)
+    asked = answered = 0
+    for r in need:
+        text = row_headline_input(r, posts)
+        if text is None:
+            continue
+        asked += 1
+        if ask.answer("headline", text, a=r["posts"][0]["post_id"]) is not None:
+            answered += 1
+    return {"asked": asked, "answered": answered}
+
+
 def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, now: datetime,
-          store: bool = True) -> Dict[str, Any]:
+          store: bool = True, ask: Any = None, headed: Optional[Set[str]] = None) -> Dict[str, Any]:
     """A run's Mark X News: the rows, tagged, written when they differ from the last rows written. With the run's
     memo (0116: `world.memo`, Mark IX's News inputs unchanged since the last run), only the rows its changed stories
-    reach are made again. `store` False: nothing is written, the rows are returned (the incremental check)."""
+    reach are made again. `store` False: nothing is written, the rows are returned (the incremental check). With
+    `ask`, every row whose main story is not in `headed` is asked a headline of its own (0121 Decided 2)."""
     import copy
     from insight_core.markx import incremental, repo
     from insight_core.utils.news_rules import NEWS_KEEP
@@ -226,6 +280,9 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
                      "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}}
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
+    if ask is not None:
+        made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
+                                                  known=getattr(world, "text", None))
     if not store:
         return {"rows": len(rows), "tags": tags, "written": False, "made_rows": rows, **made}
     last = last_written(cur)
@@ -289,20 +346,38 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Each row's headline: its Mark X story's Haiku headline (F4), else its lead's title."""
-    sids = sorted({p.get("story") for r in rows for p in (r["posts"] or [])[:1] if p.get("story")})
+    """Each row's headline (0121 Decided 2): its main story's Haiku headline (F4; `main_story`, the story holding most
+    of its voices, not its first post's), else the row's own headline answer (`ask_row_headlines`, found by its
+    input), else its lead's title."""
+    from insight_core.markx import repo, schemas
+    mains = {str(r["id"]): main_story(r) for r in rows}
+    sids = sorted({s for s in mains.values() if s})
     heads: Dict[str, str] = {}
     if sids:
         cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND headline IS NOT NULL", (sids,))
         heads = dict(cur.fetchall())
+    rest = [r for r in rows if not heads.get(mains[str(r["id"])] or "")]
+    own: Dict[str, str] = {}
+    if rest:
+        posts = _row_posts(cur, rest)
+        guide = schemas.KINDS["headline"].guide
+        for r in rest:
+            text = row_headline_input(r, posts)
+            task = repo.task_for(cur, kind="headline", guide=guide, input=text) if text else None
+            call = repo.valid_call(cur, task["id"]) if task and task["status"] == "answered" else None
+            words = ((call or {}).get("answer") or {}).get("headline_en") or ""
+            if words.strip():
+                own[str(r["id"])] = words.strip()
     leads = _posts(cur, [str(r["id"]) for r in rows])
     out = {}
     for r in rows:
-        sid = (r["posts"] or [{}])[0].get("story")
-        if sid and heads.get(sid):
-            out[str(r["id"])] = {"text": heads[sid], "from": "haiku"}
+        rid = str(r["id"])
+        if heads.get(mains[rid] or ""):
+            out[rid] = {"text": heads[mains[rid]], "from": "haiku"}
+        elif own.get(rid):
+            out[rid] = {"text": own[rid], "from": "haiku"}
         else:
-            out[str(r["id"])] = {"text": (leads.get(str(r["id"])) or {}).get("title") or "", "from": "lead title"}
+            out[rid] = {"text": (leads.get(rid) or {}).get("title") or "", "from": "lead title"}
     return out
 
 

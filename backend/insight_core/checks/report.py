@@ -22,10 +22,11 @@ from insight_core.checks import diff
 # What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
 MUST_BE_ZERO = {"story.deploy_start", "story.dangling",
                 "markx.ix_unchanged", "markx.after_run",   # 0086 Safety: Mark X never changes Mark IX, nor breaks its own rules
-                "markx.api_during_run"}                    # 0112 Decided 13: the API answers under 1 s while Mark X decides
+                "markx.api_during_run",                    # 0112 Decided 13: the API answers under 1 s while Mark X decides
+                "markx.api_during_rebuild"}                # 0121 Decided 8: ... and during a first start's rebuild
 # Of those, the ones that fail above zero even when the branch does better than main (0112 Decided 13: "failing it
 # means don't merge"; main's in-API decision run may be slower still).
-ZERO_EVEN_IF_FELL = {"markx.api_during_run"}
+ZERO_EVEN_IF_FELL = {"markx.api_during_run", "markx.api_during_rebuild"}
 
 
 def _load(path: str) -> Optional[Any]:
