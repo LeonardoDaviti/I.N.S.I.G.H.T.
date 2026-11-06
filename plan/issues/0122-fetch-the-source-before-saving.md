@@ -128,6 +128,14 @@ From main e162228 (v10.0.3). No migration. Nothing was fetched from this machine
 
 Frontend 240 node + 749 vitest, `npm run build` within the gate.
 
+**The real-data check** (`insight_lab`, main against this branch): **PASS**.
+- No case changes state.
+- Every invariant is equal to main's.
+- The diff is 0 for every derived thing (titles, stories, origins, News, Classics, Discover). That's expected: nothing changes until a save or a fetch.
+- Two runs before it were loaded: three checks ran at once, at load 18–54.
+  - The first crashed in its report: main's `markx.api_during_run`, when "not measured", put its seconds where its examples go. Fixed here, as on 0121's branch (`checks/job_checks.py`, `checks/report.py`).
+  - The second was "not measured" for load alone.
+
 **Measured** (read only, `insight_server_1105`):
 - **1 Saved post on the server's copy.** No followed source owns it, so it is unchanged.
 - **`page_source` costs 0.41 s a call** there: it learns every followed source's shapes. A save pays it once; a feed's post pays it only when a Saved row is at its address.

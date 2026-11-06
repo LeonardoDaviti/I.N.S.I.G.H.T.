@@ -36,7 +36,7 @@ from insight_core.ingestion.archive_metadata import (
     derive_archive_status,
     resumable,
 )
-from insight_core.ingestion.gates import FetchGates
+from insight_core.ingestion.gates import HOST_FLOORS, FetchGates
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind, resume_counts
@@ -608,7 +608,9 @@ class SourceFetchService:
     def _linked_estimate(self, kind: SourceKind, source: Dict[str, Any], pages: int) -> int:
         """One second a page and every wait between pages, as an archive's estimate (no learned budget)."""
         rate = kind.profile.rate_limit(((source.get("settings") or {}).get("archive") or {}).get("rate_limit"))
-        floors = (self.gates or FetchGates.shared()).host_limiter.host_floors
+        # The fixed floors, not the shared gates: linked_summary runs in a worker thread, with no event loop
+        # for FetchGates.shared() (the 0084 B line answered 500 for every source, v10.0.2 review).
+        floors = self.gates.host_limiter.host_floors if self.gates else HOST_FLOORS
         return kind.profile.estimate_seconds(pages, rate, float(floors.get(kind.host_key(source), 0.0)))
 
     async def plan_linked(self, source_id: str) -> Dict[str, Any]:

@@ -211,6 +211,23 @@ class FetchLinkedTests(unittest.IsolatedAsyncioTestCase):
             await self.service(kind, linked(f"{SITE}/p/a")).fetch_linked("s1")
 
 
+class LinkedSummaryInAThreadTests(unittest.TestCase):
+    def test_the_estimate_needs_no_event_loop(self):
+        """The route runs linked_summary in a worker thread; with the process's shared gates (no gates passed) the
+        estimate read FetchGates.shared(), which needs a running loop, and the line answered 500 for every source
+        (v10.0.2 review)."""
+        import threading
+        kind = _ReadingKind({})
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]), clock=lambda: WALL)
+        found: list = []
+        thread = threading.Thread(target=lambda: found.append(
+            service._linked_estimate(kind, {"handle_or_url": f"{SITE}/feed", "settings": {}}, 3)))
+        thread.start()
+        thread.join()
+        self.assertEqual(len(found), 1, "the estimate raised in a thread with no event loop")
+        self.assertGreaterEqual(found[0], 3)
+
+
 class _Ops:
     def __init__(self):
         self.started, self.finished = [], []
