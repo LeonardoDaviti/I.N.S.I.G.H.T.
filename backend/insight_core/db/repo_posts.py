@@ -15,7 +15,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
-from insight_core.utils.post_fields import COLLECTED_KEY, MOVED_KEY, SAVED_KEY, build_post_fields
+from insight_core.utils.post_fields import COLLECTED_KEY, MOVED_KEY, SAVED_KEY, STORY_ONLY_KEY, build_post_fields
 from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
@@ -487,8 +487,9 @@ class PostsRepository:
                     " AND external_id = %(external_id)s::text)))", dict(params, target=target))
         if cur.fetchone()[0]:
             return None
-        # A page INSIGHT collected by itself (issue 0123) moves too, but you never saved it.
-        cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = metadata || jsonb_strip_nulls(jsonb_build_object("
+        # A page INSIGHT collected by itself (issue 0123) moves too, but you never saved it; shown only inside its
+        # story until now (0126), it is a row of its source's feed.
+        cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = (metadata - '{STORY_ONLY_KEY}') || jsonb_strip_nulls(jsonb_build_object("
                     f"'{SAVED_KEY}', COALESCE(metadata -> '{SAVED_KEY}', CASE WHEN metadata ? '{COLLECTED_KEY}' THEN NULL"
                     f" ELSE to_jsonb(fetched_at) END))) WHERE id = %(target)s::uuid",
                     dict(params, target=target))
@@ -920,6 +921,12 @@ class PostsRepository:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("SELECT url FROM posts WHERE url = ANY(%s)", (list(urls),))
             return {row[0] for row in cur.fetchall()}
+
+    def drop_story_only(self, post_id: str) -> None:
+        """A post shown only inside its story (issue 0126) becomes a row of its feed: you saved it."""
+        with db.transaction(self.db_url) as cur:
+            cur.execute(f"UPDATE posts SET metadata = metadata - '{STORY_ONLY_KEY}' WHERE id = %s::uuid AND metadata ? '{STORY_ONLY_KEY}'",
+                        (post_id,))
 
     def teasers_to_read_again(self, source_id: str, *, now: datetime, max_tries: int, apart: timedelta,
                               limit: int) -> List[Dict[str, Any]]:

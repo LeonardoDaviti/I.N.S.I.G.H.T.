@@ -258,6 +258,22 @@ class FetchFirstTests(unittest.TestCase):
         self.assertEqual(self._state(old), [(False, True, True)])
         self.assertEqual(self._rows("SELECT count(*) FROM posts WHERE url LIKE %s", PAGE + "%"), [(1,)])
 
+    def test_a_collected_page_moving_to_the_source_that_owns_it_is_that_source_s_post(self):
+        """Issue 0126 (2): a page shown only inside its story is a row of the feed once it is a followed source's post."""
+        saved_source = registry.services().saved.saved_source_id()
+        old = self._post(saved_source, PAGE, "The new post", self.now - timedelta(hours=1),
+                         metadata={"adapter": "saved", "collected_original": self.now.isoformat(), "story_only": True})
+        for brought in ({}, {"adapter": "rss"}):   # a feed with no metadata of its own, or some
+            post = {"url": PAGE, "title": "The new post", "content": "The feed's summary. " * 5,
+                    "date": self.now - timedelta(hours=3), "external_id": "guid-collected", "metadata": brought}
+            with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+                self.assertEqual(str(PostsRepository(db_url()).upsert_post(cur, post, self.blog)[0]), old)
+            ((source_id, metadata),) = self._rows("SELECT source_id::text, metadata FROM posts WHERE id = %s::uuid", old)
+            self.assertEqual(source_id, self.blog)
+            self.assertNotIn("story_only", metadata, brought)
+            self.assertNotIn("saved_by_owner", metadata)
+            self.assertIn("collected_original", metadata)
+
     def test_another_form_and_title_of_a_page_saved_under_saved_is_still_one_post(self):
         saved_source = registry.services().saved.saved_source_id()
         old = self._post(saved_source, PAGE, "The new post | Blog", self.now - timedelta(hours=1), metadata={"adapter": "saved"})

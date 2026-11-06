@@ -46,7 +46,7 @@ from insight_core.utils.addresses import x_account
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.story_rules import named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
-from insight_core.utils.post_fields import SAVED_KEY, TITLE_TEXT_CHARS
+from insight_core.utils.post_fields import SAVED_KEY, STORY_ONLY_KEY, TITLE_TEXT_CHARS
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -72,6 +72,10 @@ UNREAD_SQL = (
 # its own that quotes its own account's tweet, stored, folds into it) is no row of its own on any page.
 NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts f JOIN posts q ON q.normalized_url = f.folds_into "
                    "WHERE f.post_id = p.id)")
+# A page Collect originals stored (issue 0126) is shown only inside its story: no row of a feed (the Main feed,
+# a track, a source's list) and no unread count. Later, Kept and History list it when you put it there.
+NOT_STORY_ONLY = f"NOT (p.metadata ? '{STORY_ONLY_KEY}')"
+_YOURS_FILTERS = ("later", "starred", "history")
 # A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
     "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
@@ -401,13 +405,15 @@ class ReaderRepository:
 
     @staticmethod
     def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
-        """The posts a scope lists; never a Telegram album's picture, which its post shows (issue 0069)."""
+        """The posts a scope lists; never a Telegram album's picture, which its post shows (issue 0069), nor a
+        page shown only inside its story (issue 0126) unless you put it in Later, Kept or History."""
+        shown = NOT_ALBUM_PIECE if filter in _YOURS_FILTERS else f"{NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY}"
         if scope.kind == "all":
-            return f"{NOT_ALBUM_PIECE} AND {'TRUE' if filter in _EVERY_SOURCE_FILTERS else 's.in_main_digest'}", []
+            return f"{shown} AND {'TRUE' if filter in _EVERY_SOURCE_FILTERS else 's.in_main_digest'}", []
         if scope.kind == "folder":
-            return (f"{NOT_ALBUM_PIECE} AND p.source_id IN (SELECT sf.source_id FROM source_folders sf"
+            return (f"{shown} AND p.source_id IN (SELECT sf.source_id FROM source_folders sf"
                     " WHERE sf.folder_id = %s)"), [scope.id]
-        return f"{NOT_ALBUM_PIECE} AND p.source_id = %s", [scope.id]
+        return f"{shown} AND p.source_id = %s", [scope.id]
 
     def _filter_sql(self, filter: str) -> Tuple[str, List[Any]]:
         if filter == "unread":
@@ -992,7 +998,7 @@ class ReaderRepository:
             f"""
             SELECT p.source_id, COUNT(*), MAX({SORT_KEY})
             FROM posts p
-            WHERE {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
+            WHERE {NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY} AND {UNREAD_SQL} AND {window_sql}
             GROUP BY p.source_id
             """,
             window_params,
@@ -1006,14 +1012,14 @@ class ReaderRepository:
             FROM posts p
             JOIN source_folders sf ON sf.source_id = p.source_id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
-            WHERE {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
+            WHERE {NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY} AND {UNREAD_SQL} AND {window_sql}
             GROUP BY sf.folder_id
             UNION ALL
             SELECT NULL, COUNT(DISTINCT COALESCE(sp.story_id, p.id))
             FROM posts p
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
-            WHERE s.in_main_digest AND {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
+            WHERE s.in_main_digest AND {NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY} AND {UNREAD_SQL} AND {window_sql}
             """,
             [*window_params, *window_params],
         )

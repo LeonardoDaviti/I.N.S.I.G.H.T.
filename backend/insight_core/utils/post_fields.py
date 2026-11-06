@@ -34,6 +34,10 @@ MOVED_KEY = "moved_to"
 SAVED_KEY = "saved_by_owner"
 # metadata key of a story's original INSIGHT collected by itself (issue 0123, "Collect originals"): when.
 COLLECTED_KEY = "collected_original"
+# metadata key of a post shown only inside its story (issue 0126, the owner 2026-11-07): a page Collect originals
+# stored is its story's root and has its post page, but no row of a feed and no unread count. Saved by hand, or
+# brought by a followed source's feed, it loses the mark.
+STORY_ONLY_KEY = "story_only"
 REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more

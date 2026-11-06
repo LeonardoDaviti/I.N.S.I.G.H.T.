@@ -24,6 +24,9 @@ import psycopg
 
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_posts import PostsRepository
+from insight_core.db.repo_reader import FeedQuery, ReaderRepository
+from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.reader_service import ReaderService
 from insight_core.ingestion.kinds.base import PolitenessProfile
 from insight_core.ingestion.schedule import Availability, DecisionKind, cadence_stats, decide_fetch
 from insight_core.services.news_service import NewsService
@@ -262,6 +265,46 @@ class CollectTests(OriginalsCase):
         self.assertEqual(self._rows("SELECT parent_id, parent_reason FROM story_posts WHERE post_id = %s::uuid", post_id),
                          [(None, "address")], "the story's root")
         self.assertEqual(run(self.service().run(FakeHttp({})))["collect"], [], "never asked again")
+
+    def _listed(self, post_id, **query):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            items, _ = ReaderRepository().list_posts(cur, FeedQuery.parse(limit=100, **query), now=self.now)
+        return post_id in {i["id"] for i in items}
+
+    def _unread(self, source_id):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            return ReaderRepository().unread_counts(cur)["by_source"].get(source_id, 0)
+
+    def test_a_collected_page_shows_only_inside_its_story(self):
+        """Issue 0126 (2): no row of the Main feed or Saved, no unread count; its story's root, its post page, and
+        Later when you put it there. Saved by hand, it is in Saved as any page you save."""
+        story, posts = self.news_story(ESSAY, self.a, self.b)
+        self.switch(True)
+        run(self.service().run(FakeHttp({ESSAY: essay()})))
+        ((post_id, metadata),) = self._rows("SELECT id::text, metadata FROM posts WHERE normalized_url = %s", ESSAY)
+        self.assertTrue(metadata["story_only"])
+        saved = self._saved_source()
+        for query in ({"date": "2026-11-05"}, {"date": "2026-11-05", "filter": "unread"}, {"scope": f"source:{saved}"},
+                      {"scope": f"source:{saved}", "view": "by_source"}):
+            self.assertFalse(self._listed(post_id, **query), query)
+        self.assertEqual(self._unread(saved), 0)
+        self.stories()
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            item = {"id": posts[0]}
+            ReaderRepository.attach_stories(cur, [item])
+        self.assertIn(post_id, {p["id"] for p in item["story"]["posts"]}, "in its story's tree")
+        self.assertEqual(self._rows("SELECT parent_id, parent_reason FROM story_posts WHERE post_id = %s::uuid", post_id),
+                         [(None, "address")], "its story's root")
+        self.assertIsNotNone(PostDetailService(db_url()).get_post_by_id(post_id), "its post page")
+        ReaderService(db_url()).set_later([post_id], True)
+        self.assertTrue(self._listed(post_id, filter="later"), "Later: you put it there")
+        ReaderService(db_url()).set_later([post_id], False)
+        self.assertEqual(run(self.saved.save(FakeHttp({}), ESSAY))["status"], "already")
+        ((metadata,),) = self._rows("SELECT metadata FROM posts WHERE id = %s::uuid", post_id)
+        self.assertNotIn("story_only", metadata, "saved by hand: a page you saved")
+        self.assertIn("collected_original", metadata)
+        self.assertTrue(self._listed(post_id, scope=f"source:{saved}"))
+        self.assertEqual(self._unread(saved), 1)
 
     def test_a_walled_original_is_never_read_and_keeps_no_token(self):
         self.news_story(f"{WALLED}?accessToken={JWT}", self.a, self.b)

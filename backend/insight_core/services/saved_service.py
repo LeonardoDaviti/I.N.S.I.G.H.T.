@@ -48,7 +48,7 @@ from insight_core.ingestion.kinds import parsing, saved
 from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
 from insight_core.services.reader_service import ReaderService
 from insight_core.utils.originals_rules import strip_access_tokens
-from insight_core.utils.post_fields import COLLECTED_KEY, SAVED_KEY
+from insight_core.utils.post_fields import COLLECTED_KEY, SAVED_KEY, STORY_ONLY_KEY
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.saved")
@@ -155,7 +155,8 @@ class SavedService:
 
     async def collect(self, http: KindHttp, url: str, title: Optional[str] = None) -> Dict[str, Any]:
         """A News story's original no followed source owns, read once and stored as a Saved post by itself:
-        never in Later (no tap of yours), sorted by its own date, `metadata.collected_original` the time.
+        never in Later (no tap of yours), sorted by its own date, `metadata.collected_original` the time, and
+        `story_only` (issue 0126): shown inside its story and on its post page, no row of a feed, no unread count.
         Its address keeps no access or gift token. A page that can't be read as an article is not stored
         ("unreadable"). Stored or owned already: "already" or "followed", nothing read. One request."""
         address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
@@ -175,7 +176,7 @@ class SavedService:
         if stored:
             return {"status": "already", "requests": 1, **stored}
         post = {**post, "url": landed, "external_id": landed, "guid": landed,
-                "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat()}}
+                "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat(), STORY_ONLY_KEY: True}}
         if not isinstance(post.get("date"), datetime) or post["date"] >= now:
             post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
         source_id = await asyncio.to_thread(self.saved_source_id)
@@ -193,7 +194,8 @@ class SavedService:
         post = {"platform": saved.PLATFORM, "source": saved.HANDLE, "url": address, "external_id": address,
                 "guid": address, "title": (title or "").strip() or text[:120], "content": text,
                 "content_html": None, "date": at, "media_urls": [], "categories": [],
-                "metadata": {"adapter": ADAPTER, COLLECTED_KEY: self.clock().isoformat(), "from_quote": True}}
+                "metadata": {"adapter": ADAPTER, COLLECTED_KEY: self.clock().isoformat(), "from_quote": True,
+                             STORY_ONLY_KEY: True}}
         post_id = self._insert(self.saved_source_id(), post)
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 0}
 
@@ -211,7 +213,8 @@ class SavedService:
 
     async def _already(self, stored: Dict[str, Any], saved_at: datetime) -> Dict[str, Any]:
         """A page already in INSIGHT: that post goes to Later (a post already there keeps its
-        time), its date untouched."""
+        time), its date untouched. A page shown only inside its story (issue 0126) is one you saved now."""
+        await asyncio.to_thread(self.posts.drop_story_only, stored["post_id"])
         await asyncio.to_thread(self.reader.set_later, [stored["post_id"]], True, saved_at)
         return {"success": True, "status": "already", **stored}
 
