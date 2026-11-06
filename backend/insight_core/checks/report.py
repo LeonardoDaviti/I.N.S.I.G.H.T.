@@ -92,6 +92,10 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         verdict = "ok"
         if hc is None or hc < 0:
             verdict = "not measured"
+            if name in MUST_BE_ZERO and "the machine's load" in (h.get("note") or ""):
+                # 0112 Decided 13: a gate not measured because the machine was loaded is no pass
+                verdict = "**NOT MEASURED**"
+                problems.append(f"{name}: not measured ({labels[1]}): {h['note']}")
         elif bc is not None and bc >= 0 and hc > bc:
             verdict = f"allowed: {allowed[name]}" if name in allowed else "**ROSE**"
             if name not in allowed:
