@@ -650,3 +650,8 @@ def mx_entity_page(entity_id: str):
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got
+
+
+# ---- 0127 (v10.3): the fold's routes (markx/fold_api.py), under this router's prefix and switch ----
+from insight_core.markx import fold_api as _fold_api  # noqa: E402
+router.include_router(_fold_api.router)

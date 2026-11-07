@@ -70,6 +70,18 @@ READ_SCHEMA = {
     },
 }
 
+# 0127 (v10.3): read-v3, a reading plus the post's event type and origin (the duplicates fold's input, markx/folds.py).
+EVENT_TYPES = ["model_release", "product_release", "research_result", "business_event", "policy_legal", "incident",
+               "public_statement", "promotion_event", "leak_rumour", "opinion_analysis", "tutorial_explainer", "digest",
+               "community_post", "other"]
+ORIGINS = ["maker", "relay", "other"]
+READ3_SCHEMA = {
+    "type": "object",
+    "required": READ_SCHEMA["required"] + ["type_why", "event_type", "origin"],
+    "properties": {**READ_SCHEMA["properties"], "type_why": _STR, "event_type": {"enum": EVENT_TYPES},
+                   "origin": {"enum": ORIGINS}},
+}
+
 ENTITIES_SCHEMA = {
     "type": "object",
     "required": ["entities"],
@@ -183,6 +195,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
+    Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
 )}
 
 

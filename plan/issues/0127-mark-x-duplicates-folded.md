@@ -48,10 +48,10 @@ The leak role still runs inside the fold rule: a leak is never folded. It isn't 
 `read` stays `read-v2`, so Mark X's decisions don't change. **Kind `read3`:**
 - **Guide `read-v3`:** the lab's frozen `read_v3d_frozen.md` (md5 `eaea4ae05b4c5b4974d4e9ff02da7bde`) with:
   - `confirms_earlier` dropped;
-  - its real names replaced by invented ones (6 lines);
+  - its real names replaced by invented ones (6 lines), and its `@x` as `@<author>` (2 lines; the guides' name check);
   - its title line changed.
 
-  Everything else is word for word, including the main/events consistency rule and `type_why` before `event_type`. Its md5 is `b974f88d4c460cbc8101d2ce5950f137`.
+  Everything else is word for word, including the main/events consistency rule and `type_why` before `event_type`. Its md5 is `56c6326c656428ed4b839e3b9bbf6c39`.
 - **The answer:** read-v2's fields, plus `type_why` (≤ 15 words), `event_type` (14 types) and `origin` (maker / relay / other).
   - The server checks read-v2's checks (main/events, headline length).
   - The answer is stored as a reading under guide `read-v3` in `mx_readings`, beside the post's `read-v2` reading.

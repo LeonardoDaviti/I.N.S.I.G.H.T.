@@ -137,10 +137,10 @@ from pathlib import Path
 
 EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
-DEFAULT_KINDS = "read,entities,alias,collide,check,join,pair,merge,connect,card,headline,briefing,translate"
+DEFAULT_KINDS = "read,read3,entities,alias,collide,check,join,pair,merge,connect,card,headline,briefing,translate"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
 # the lease still takes --batch of them. --per-call overrides it.
-PER_CALL = "merge=1,collide=6"   # 0119: the collision judge 6 a call, as the lab asked it
+PER_CALL = "merge=1,collide=6,read3=5"   # 0119: the collision judge 6 a call, as the lab asked it; 0127: read-v3 5 (rv3d)
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
