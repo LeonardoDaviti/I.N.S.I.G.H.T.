@@ -135,7 +135,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0121](0121-mark-x-v10.0.3-from-the-v10.0.1-review.md) | Mark X v10.0.3: checks never remove a post that links the story's page, a headline per row, runs in the right order, the reading window at once | merged (v10.0.3, not pushed) |
 | [0122](0122-fetch-the-source-before-saving.md) | Saving a page of a source you follow fetches that source first (one fetch, on your click); found, it's the source's post; not in its feed, it's saved as the source's post ("<source> · saved by you"), and the feed bringing it later keeps one post | merged (v10.0.3, not pushed) |
 | [0123](0123-collect-originals.md) | Collect originals (a switch, default off): a News story's original INSIGHT lacks is collected once, one page without following its source (a followed source's is 0114's), never walled, no token stored, one budget with 0114 (+0.78% together) | built, not merged (`issue-0113-0114-0123`) |
-| [0127](0127-mark-x-duplicates-folded.md) | Mark X v10.3 (Stealth in Shadow): duplicates folded: inside a Mark X story, the posts retelling the same happening fold under one (read-v3's event type and origin, asked only of story members, kind `read3`); the main/events guide rule; label buttons | spec (lab F1 0.70) |
+| [0127](0127-mark-x-duplicates-folded.md) | Mark X v10.3 (Stealth in Shadow): duplicates folded: inside a Mark X story, the posts retelling the same happening fold under one (read-v3's event type and origin, asked only of story members, kind `read3`); the main/events guide rule; label buttons | built, not merged (lab F1 0.70; 200 real answers valid, $0.00064 each) |
 
 ## Analysis archive
 

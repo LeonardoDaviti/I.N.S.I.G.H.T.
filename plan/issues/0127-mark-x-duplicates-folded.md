@@ -1,6 +1,6 @@
 # 0127 — Mark X v10.3: duplicates folded (the same happening, retold, shows once)
 
-Status: **spec** (2026-11-07). Mark X Stealth in Shadow. Not merged, not pushed. v10.2 is perspectives (0119 Part B), built at the same time by another session; this is **v10.3**.
+Status: **built on branch `worktree-agent-a30d5eaecac1f23c6`, not merged** (2026-11-07). Mark X Stealth in Shadow. Not merged, not pushed. v10.2 is perspectives (0119 Part B), built at the same time by another session; this is **v10.3**.
 
 ## Why
 - 0119 "Not in this issue": `read-v3` and its story rules are the next version.
@@ -67,12 +67,13 @@ The leak role still runs inside the fold rule: a leak is never folded. It isn't 
   It's planned when the worker asks for `read3`, as `read` is.
 - **The worker:** `read3` comes after `read` in the default `--kinds`, **5 a call** (the lab's rv3d batch size; 20 a call is unmeasured).
 
-**The cost** (Haiku 5.5 at the API's prices, as `mx_calls` records them; the server copy's 5,344 read-v2 answers average $0.00033):
+**The cost** (Haiku 5.5 at the API's prices, as `mx_calls` records them):
+- **Measured:** 200 real `read3` answers cost **$0.00064 each** (40 calls of 5; about 1,000 tokens out an answer). Today's read-v2 answers average $0.00033 (5,344 on the server copy).
 - **Asked only of story members (built):**
   - the server copy has 1,094 posts in Mark X stories with 2+ members (355 current stories);
-  - the first pass is about **1,100 calls' worth, ≈ $0.40**. After that, only new members: a few cents a day.
-- **Rejected: `read` switched to `read-v3` for every post.** It would re-read about 10,600 posts (≈ $3.9). Every later read would cost about 10% more, and the stories would change with the new readings. That would be a second change measured as one.
-- **Rejected: a slimmer guide asking only `event_type` and `origin`.** It would save about $0.25 a pass, and its F1 is unmeasured.
+  - the first pass is about **1,100 answers, ≈ $0.70**. After that, only new members: a few cents a day.
+- **Rejected: `read` switched to `read-v3` for every post.** It would re-read about 10,600 posts (≈ $6.8). Every later read would cost about twice as much, and the stories would change with the new readings. That would be a second change measured as one.
+- **Rejected: a slimmer guide asking only `event_type` and `origin`.** It would cost less a pass, and its F1 is unmeasured.
 
 ### 2. The fold rule (code; `markx/folds.py`, ported from `rv3_rules.rv3_roles`)
 Per Mark X story, over its current members (role `member`) that have a `read-v3` reading, in published order (Mark X's `at`, then id):
@@ -166,15 +167,73 @@ The newest answer counts, and a changed answer is a new row. The rule never over
   3. Run `read3` once through the worker (about 200 posts, ≈ $0.10).
   4. Score the fold's F1 against today's `persp-v3.2f` `same` on the same stories.
   - **Bar:** F1 ≥ 0.60 and above today's.
-- **The port:** on the lab's round 1 test, `folds.groups` over the lab's run-1 answers gives the same retelling set as `rv3_roles` (a unit test does this on invented members; the lab's rows stay private).
-- **Cost:** the first pass's calls, tokens and cost from `mx_calls`.
+- **Cost:** the first pass's calls, tokens and cost from `mx_calls` on the server.
 - **The real-data check** (`scripts/realdata-check.sh`) at merge: `markx.ix_unchanged`, `markx.api_during_run`, the speed of `/api/markx/news` with the fold.
 - **The reader review** on the real `/markx`: 5 stories with a group, read as the owner would.
 
 ## Open questions for the owner
 1. **Start the fold now, at F1 0.70?** It's experimental, behind the header, with label buttons. Or wait for the Mark X stories measure above?
-2. **The first pass reads about 1,100 posts (≈ $0.40).** Should the read window for `read3` be the reading window (30 days), or only News's?
+2. **The first pass reads about 1,100 posts (≈ $0.70).** Should the read window for `read3` be the reading window (30 days), or only News's?
 3. **Should a folded group also fold in News's count of sources?** Not built: the row still counts every voice.
+4. **Several "originals" in one story** (each maker's post, e.g. a paper's page saved and its authors' posts) are each shown, not folded. That is the lab's rule. Should the maker's later posts fold under the first?
+
+## Built (2026-11-07)
+**Commits:**
+- `4a56909`: the spec;
+- `84a7465`: the backend;
+- `ec78283`: the Mark X News tab;
+- the next one: this section.
+
+**What's in:**
+- **Kind `read3`:** its guide, schema, checks, planner (`folds.plan`) and storage (a `read-v3` reading).
+- **The worker:** `read3` in the default kinds, 5 a call.
+- **The rule and the group** (`folds.roles`, `folds.group`); the fold of a story from the database (`folds.story_folds`).
+- **The News page's lines:** `fold`, the row's `folded`, the header's `folds`.
+- **The routes:**
+  - `GET /api/markx/stories/{id}/folds`;
+  - `POST /api/markx/folds/answer`;
+  - `GET /api/markx/folds/score`.
+- **Migration 0075.**
+- **The Mark X News tab:** the group, its count, the header and the buttons.
+
+**Checked:**
+- **The port is the lab's rule.** On the lab's dev and test clusters, `folds.roles` gives the same role as `rv3_rules.rv3_roles` for 338 of 338 members, for each of the three runs and the vote. The fold F1 is the same: test 0.68 / 0.72 / 0.71 one run, 0.70 vote. This was a local replay, with no call.
+- **Real Haiku, end to end.** On a scratch copy of the server data with Mark X's stories (`insight_server_1105_mxreal`, migrated to 0075, dropped after), through this worktree's worker, against its own API and token:
+  - 200 `read3` answers, newest story members first, 40 calls of 5;
+  - **200 of 200 valid**, and **0 main/events violations**;
+  - $0.128 in all, $0.00064 an answer.
+- **The fold on Mark X's own stories:** 54 stories had every member read (184 members).
+  - 37 have a head; 14 have a group; 21 members are folded (11%).
+  - Read by eye (not labelled, so not an F1):
+    - a paper's channel retellings fold under its first link post;
+    - two retellings of a security incident fold together;
+    - the opinions stay shown.
+  - Two of the lab's known errors show:
+    - an independent test is taken for a maker's post, so it is shown as an original;
+    - a later reproduction on another model is folded as a retelling.
+- **Tests:**
+  - `test_markx_folds` (20, new);
+  - the backend suite once: **1,986 tests OK** (1 skipped);
+  - `folds.test.tsx` (2, new);
+  - `npm test`: 240 node tests and 760 vitest, all pass;
+  - `npm run build` passes, with the bundle check: feed route +0.34%, post route +0.21%.
+
+**Not done:**
+- `scripts/realdata-check.sh` (at merge);
+- the measure on Mark X's own stories with blind labels (above);
+- the reader review.
 
 ## Handoff
-See the end of this file once built.
+- **Done:** the spec, the build and the checks above. Nothing pushed or merged.
+- **Shared files touched:** each is a small hook; the table in §6, plus one line in `tests/test_markx_validate.py` (the kinds' set gains `read3`).
+  - `schemas.py`, `tasks.py`, `validate.py`, `api.py` and the worker's `DEFAULT_KINDS` are also touched by 0119 Part B (perspectives). Merge them by hand: both add kinds and planners.
+  - **The worker:** at merge, the main checkout's `scripts/markx-worker` gets the new default kinds and `read3=5` only when no live worker runs from it.
+- **Left:**
+  - the measure on Mark X's own stories (40 stories, blind labels, about $0.10 of Haiku);
+  - the real-data check;
+  - the reader review;
+  - the owner's four questions above;
+  - 0119 B6's story view, when it lands, uses `GET /api/markx/stories/{id}/folds`.
+- **To resume:**
+  - `./run-tests.sh insight_core.tests.test_markx_folds` (with `TEST_IMAGE` set, so `insight-backend:latest` isn't rebuilt);
+  - `cd frontend && npx vitest run src/components/markx/`.
