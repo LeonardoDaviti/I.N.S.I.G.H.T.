@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
@@ -10,6 +11,7 @@ import { plural } from '../../lib/format';
 import { newsPart } from '../../lib/news';
 import { errorMessage } from '../../lib/apiError';
 import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
+import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
 
@@ -53,7 +55,7 @@ function OneTap({ line }: { line: MarkxLine & { story: string } }) {
   );
 }
 
-function PostLine({ line, now }: { line: MarkxLine; now: Date }) {
+function PostLine({ line, now, extra }: { line: MarkxLine; now: Date; extra?: ReactNode }) {
   const words = line.why?.words;
   return (
     <li className="grid gap-x-3 gap-y-0.5 border-t border-line py-2.5 first:border-t-0 sm:grid-cols-[7.5rem_1fr]">
@@ -73,6 +75,7 @@ function PostLine({ line, now }: { line: MarkxLine; now: Date }) {
         </span>
         <span className="block text-[0.75rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">{ixWords(line.ix)}</span>
         {line.story && line.why ? <OneTap line={{ ...line, story: line.story }} /> : null}
+        {extra}
       </span>
     </li>
   );
@@ -126,6 +129,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               {` · ${postBylineTime(row.first_at, now)}`}
               {added && row.tag !== 'NEW' ? ` · +${added}` : ''}
               {row.removed.length ? ` · −${row.removed.length}` : ''}
+              {row.folded ? ` · ${row.folded} retold` : ''}
               {row.headline.from === 'haiku' ? ' · headline by Haiku' : ''}
               {row.surging?.length ? (
                 <span data-surging> · surging: {row.surging.map((s) => s.name).join(', ')}</span>
@@ -139,7 +143,9 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
           </span>
         </summary>
         <div className="pb-4 pl-6">
-          <ul aria-label="Posts in this Mark X row">{row.posts.map((line) => <PostLine key={line.id} line={line} now={now} />)}</ul>
+          <ul aria-label="Posts in this Mark X row">
+            <FoldedPosts lines={row.posts} render={(line, extra) => <PostLine key={line.id} line={line} now={now} extra={extra} />} />
+          </ul>
           {row.removed.length ? (
             <>
               <p className="mt-3 text-[0.75rem] font-medium text-fg-3">In Mark IX’s row, not in this one</p>
@@ -192,6 +198,7 @@ export default function MarkXNews() {
           only differences
         </label>
       </div>
+      {news.folds ? <FoldHeader score={news.folds} /> : null}
       {!news.run ? (
         <EmptyState className="mt-6" title="No Mark X News yet"
           description="The decision job writes it after the worker's answers arrive, and every hour." />
