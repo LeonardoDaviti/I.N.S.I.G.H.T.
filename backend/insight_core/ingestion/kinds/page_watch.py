@@ -52,7 +52,7 @@ from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
 from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
-from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
+from insight_core.ingestion.kinds.base import UNREADABLE, Inspection, RateLimit, Source
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
@@ -60,6 +60,9 @@ from insight_core.utils.json_safe import iso
 logger = logging.getLogger("insight.ingestion.page_watch")
 
 MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an index's children)
+# An archive reads the site's whole sitemap for the rest of its pages (issue 0130 B4): a site whose index has more
+# children than a live fetch reads (one a year, one a section) keeps its older pages there.
+ARCHIVE_SITEMAPS = 60
 SITEMAP_MAX_BYTES = 5_000_000   # a sitemap is read up to this; a longer one keeps its first entries
 SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
 FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
@@ -147,7 +150,8 @@ Reader = Callable[[str, int], Awaitable[Tuple[bytes, str]]]
 async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None,
                    reads: Optional[SiteReads] = None, *,
                    memory: Optional[AddressMemory] = None,
-                   read: Optional[Dict[str, Conditional]] = None) -> Discovery:
+                   read: Optional[Dict[str, Conditional]] = None,
+                   max_sitemaps: int = MAX_SITEMAPS) -> Discovery:
     """The articles of a listing page. Raises when the listing page cannot be read; a missing
     or broken sitemap is just no sitemap. `reads`: the run's shared robots and sitemap reads
     (an offer's previews, issue 0047).
@@ -164,7 +168,7 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
         addresses.append(url)
         return answer.body or b"", answer.url
 
-    found = await _discover(get, http, listing_url, prefix, reads)
+    found = await _discover(get, http, listing_url, prefix, reads, max_sitemaps=max_sitemaps)
     if memory is not None:
         kept = {url: memory.learned[url] for url in addresses if url in memory.learned}
         memory.learned = kept if len(kept) == len(set(addresses)) else {}
@@ -196,7 +200,7 @@ async def discover_changed(http: KindHttp, listing_url: str, prefix: Optional[st
 
 
 async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optional[str],
-                    reads: Optional[SiteReads] = None) -> Discovery:
+                    reads: Optional[SiteReads] = None, *, max_sitemaps: int = MAX_SITEMAPS) -> Discovery:
     # Where the listing landed, not the address given: deepmind.google/discover/blog/ is /blog/.
     body, landed = await get(listing_url, LISTING_MAX_BYTES)
     page = body.decode("utf-8", "replace")
@@ -211,7 +215,7 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
 
     listed = tuple(dict.fromkeys(url for url in links if under(url)))
     sitemap: Dict[str, Optional[datetime]] = {}
-    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads):
+    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads, max_files=max_sitemaps):
         url = _clean(loc)
         if url and under(url):
             sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
@@ -229,16 +233,18 @@ async def _shared(reads: Optional[SiteReads], url: str,
     return await asyncio.shield(reads[url])
 
 
-async def sitemap_entries(http: KindHttp, listing: str, prefix: str, *, posts_only: bool = False
-                          ) -> List[Tuple[str, Optional[str]]]:
+async def sitemap_entries(http: KindHttp, listing: str, prefix: str, *, posts_only: bool = False,
+                          max_files: int = MAX_SITEMAPS) -> List[Tuple[str, Optional[str]]]:
     """(loc, lastmod) of the site's sitemap, as discovery reads it (robots.txt's Sitemap lines, else
-    /sitemap.xml; an index followed). posts_only: of an index, only the children naming posts, when
-    it has any (issue 0108: a feed's archive reads a blog's post sitemap, not its tags or authors)."""
-    return await _sitemap_entries(http.get_start, http, listing, prefix, posts_only=posts_only)
+    /sitemap.xml; an index followed, at most `max_files` files). posts_only: of an index, only the children
+    naming posts, when it has any (issue 0108: a feed's archive reads a blog's post sitemap, not its tags or
+    authors)."""
+    return await _sitemap_entries(http.get_start, http, listing, prefix, posts_only=posts_only, max_files=max_files)
 
 
 async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: str,
-                           reads: Optional[SiteReads] = None, *, posts_only: bool = False) -> List[Tuple[str, Optional[str]]]:
+                           reads: Optional[SiteReads] = None, *, posts_only: bool = False,
+                           max_files: int = MAX_SITEMAPS) -> List[Tuple[str, Optional[str]]]:
     origin = parsing.origin_from_source(listing, "")
     try:
         robots, _ = await _shared(reads, f"{origin}/robots.txt", lambda: http.get_text(f"{origin}/robots.txt"))
@@ -249,7 +255,7 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
     section = prefix.strip("/").split("/")[0]
     entries: List[Tuple[str, Optional[str]]] = []
     read = 0
-    while queue and read < MAX_SITEMAPS:
+    while queue and read < max_files:
         url = _clean(queue.pop(0))
         if url is None or urllib.parse.urlparse(url).path.endswith(".gz"):
             continue
@@ -485,6 +491,7 @@ class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
     conditional = True                  # fetch_latest takes memory= (issue 0044)
     watches = True                      # its stored pages can be re-read for changes (issue 0039)
+    skips_stored = True                 # its archive leaves stored pages unread (issue 0130 B4)
     available_basis = "estimate"        # discovered candidate pages; some may be no post
     PAGE_SIZE = 1                       # one article page per archive page: the host gate spaces them
     PAGE_DELAY_SECONDS = 2
@@ -499,6 +506,11 @@ class PageWatchKind(BaseSourceAdapter):
     async def _discover(self, source: Source) -> Discovery:
         settings = (source.get("settings") or {}).get("page_watch") or {}
         return await discover(self.http, str(source["handle_or_url"]), settings.get("prefix"))
+
+    async def _archive_discovery(self, source: Source) -> Discovery:
+        settings = (source.get("settings") or {}).get("page_watch") or {}
+        return await discover(self.http, str(source["handle_or_url"]), settings.get("prefix"),
+                              max_sitemaps=ARCHIVE_SITEMAPS)
 
     async def _discover_changed(self, source: Source, memory: AddressMemory) -> Optional[Discovery]:
         settings = (source.get("settings") or {}).get("page_watch") or {}
@@ -552,18 +564,27 @@ class PageWatchKind(BaseSourceAdapter):
         return post_from(page, str(source["handle_or_url"]), url, None)
 
     async def inspect(self, source: Source) -> Inspection:
-        found = await self._discover(source)
+        """An archive's measurement: the candidates its run reads (the whole sitemap, ARCHIVE_SITEMAPS files)."""
+        found = await self._archive_discovery(source)
         return Inspection(len(found.candidates()), self.PAGE_SIZE, None, raw={
             "prefix": found.prefix, "listing_links": len(found.listed), "sitemap_urls": len(found.sitemap)})
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
-        found = await self._discover(source)
+        """Every candidate of the listing page and the site's whole sitemap (ARCHIVE_SITEMAPS files), one article
+        page per archive page; the ones already stored are not read again, and the checkpoint counts why a
+        candidate added nothing (issue 0130 B4: stored, no post, unreadable)."""
+        found = await self._archive_discovery(source)
+        candidates = found.candidates()
+        stored = (await asyncio.to_thread(self.stored_urls, candidates)
+                  if self.stored_urls and candidates else set())
 
-        async def fetch_one(src: Source, url: str) -> Optional[Dict[str, Any]]:
+        async def fetch_one(src: Source, url: str) -> Any:
             page = await self._page(url)
-            return post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url)) if page else None
+            if page is None:
+                return UNREADABLE
+            return post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url))
 
-        async for page in self.index_pages(source, found.candidates(), target, checkpoint, fetch_one):
+        async for page in self.index_pages(source, candidates, target, checkpoint, fetch_one, stored=stored):
             yield page
 
 

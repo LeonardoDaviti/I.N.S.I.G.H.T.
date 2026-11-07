@@ -159,7 +159,7 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
                 "body_html": "<p>" + " ".join(["w"] * words) + "</p>"}
 
     def _http(self, words=1000, extra=None):
-        archive = f"{BASE}/api/v1/archive?sort=new&offset=0&limit=12"
+        archive = f"{BASE}/api/v1/archive?sort=new&limit=12"
         return FakeHttp({SUBSCRIPTIONS: json.dumps(PAYS_HERE),
                          archive: json.dumps([{"slug": "free", "audience": "everyone"}, self._post("paid", 0)]),
                          f"{BASE}/api/v1/posts/paid": json.dumps(self._post("paid", words)), **(extra or {})})

@@ -70,6 +70,7 @@ def _username(source_url: str) -> str:
 
 class NitterRssKind(BaseKind):
     name = "nitter_rss"
+    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
     available_basis = "estimate"   # the profile counter (replies and reposts included)
     profile = NITTER_PROFILE
 

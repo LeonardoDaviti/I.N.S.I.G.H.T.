@@ -10,17 +10,154 @@ call it interrupted.
 
 `archives` is the SourceFetchService (archive_source / continue_archive); `ops` the
 OperationsService.
+
+The queue (issue 0130 B5, C): an archive job can be `queued`, its request (resume, until, pacing) in its payload
+with `queued_at` and its `lane`. A lane is "telegram" (every Telegram kind), "nitter" (X through Nitter), else the
+source's host: one archive per lane runs at a time (never two Telegram or two Nitter archives at once), at most
+QUEUE_PARALLEL from the queue together. The scheduler process starts the queued ones whose lane is free
+(start_queued, with continue_due); the API queues an archive whose Telegram or Nitter lane is busy instead of
+starting it, and "Resume interrupted archives" queues every source whose last archive a restart interrupted. A
+queued archive the scheduler was running when it stopped is queued again at its start, and resumes from its
+checkpoint.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+import json
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("insight.archive_jobs")
 
 JOB_TYPE = "archive_source"
+QUEUED = "queued"
+QUEUE_PARALLEL = 3          # archives from the queue running at once (the owner's runs of 2026-11-07: 3)
+TELEGRAM_KINDS = frozenset({"telegram_mtproto", "telegram_rss"})
+NITTER_KINDS = frozenset({"nitter_rss"})
+# The jobs of a lane that hold it: running, or waiting out a limit (it goes on by itself).
+_HOLDING = ("running", "waiting")
+
+
+def lane_of(kind_name: str, host: str) -> str:
+    """The lane an archive runs in: "telegram", "nitter", else its host ("host:<key>")."""
+    if kind_name in TELEGRAM_KINDS:
+        return "telegram"
+    if kind_name in NITTER_KINDS:
+        return "nitter"
+    return f"host:{host}"
+
+
+def exclusive(lane: str) -> bool:
+    """A lane the API never starts a second archive in by hand (Telegram's session, Nitter's bridges)."""
+    return lane in ("telegram", "nitter")
+
+
+class ArchiveQueue:
+    """The queued archive jobs in job_runs (blocking; call it in a thread). Every check and its write run under
+    advisory locks: the source's (the one start_job_unless_running takes), the lane's, and the queue's."""
+
+    def __init__(self, db_url: str) -> None:
+        self.db_url = db_url
+
+    @staticmethod
+    def _lock(cur: Any, key: str) -> None:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
+
+    @staticmethod
+    def _lane_busy(cur: Any, lane: str) -> bool:
+        cur.execute("SELECT 1 FROM job_runs WHERE job_type = %s AND status = ANY(%s) AND payload->>'lane' = %s LIMIT 1",
+                    (JOB_TYPE, list(_HOLDING), lane))
+        return cur.fetchone() is not None
+
+    def add(self, source_id: str, *, lane: str, payload: Dict[str, Any], trigger: str = "manual",
+            queue: bool = True, message: str = "Archive") -> Tuple[Optional[str], str]:
+        """A job for the source: queued (`queue`, or its exclusive lane is busy), else running now. (None, status)
+        when the source already has one running, waiting or queued."""
+        from insight_core.db import database as db
+        from insight_core.utils.json_safe import iso
+
+        with db.transaction(self.db_url) as cur:
+            self._lock(cur, f"job_runs:{JOB_TYPE}:{source_id}")
+            self._lock(cur, f"archive_lane:{lane}")
+            cur.execute("SELECT status FROM job_runs WHERE job_type = %s AND source_id = %s AND status = ANY(%s) LIMIT 1",
+                        (JOB_TYPE, source_id, [*_HOLDING, QUEUED]))
+            held = cur.fetchone()
+            if held is not None:
+                return None, held[0]
+            status = QUEUED if queue or (exclusive(lane) and self._lane_busy(cur, lane)) else "running"
+            cur.execute("SELECT now()")
+            now = cur.fetchone()[0]
+            body = {**payload, "lane": lane, **({"queued_at": iso(now)} if status == QUEUED else {})}
+            cur.execute(
+                "INSERT INTO job_runs (job_type, status, trigger, source_id, message, payload) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb) RETURNING id::text",
+                (JOB_TYPE, status, trigger, source_id, "Queued" if status == QUEUED else message, json.dumps(body)))
+            return cur.fetchone()[0], status
+
+    def claim(self, *, trigger: str, parallel: int = QUEUE_PARALLEL) -> List[Dict[str, Any]]:
+        """queued -> running, oldest first, for each job whose lane is free, while fewer than `parallel` queued jobs
+        run: [{id, source_id, payload}]."""
+        from insight_core.db import database as db
+
+        claimed: List[Dict[str, Any]] = []
+        with db.transaction(self.db_url) as cur:
+            self._lock(cur, "archive_queue")
+            cur.execute("SELECT count(*) FROM job_runs WHERE job_type = %s AND status = ANY(%s) AND payload ? 'queued_at'",
+                        (JOB_TYPE, list(_HOLDING)))
+            running = int(cur.fetchone()[0])
+            cur.execute("SELECT id::text, source_id::text, payload FROM job_runs WHERE job_type = %s AND status = %s "
+                        "ORDER BY payload->>'queued_at', created_at", (JOB_TYPE, QUEUED))
+            taken: set = set()
+            for job_id, source_id, payload in cur.fetchall():
+                if running >= parallel:
+                    break
+                lane = str((payload or {}).get("lane") or f"source:{source_id}")
+                if lane in taken:
+                    continue
+                self._lock(cur, f"archive_lane:{lane}")
+                if self._lane_busy(cur, lane):
+                    continue
+                cur.execute("UPDATE job_runs SET status = 'running', trigger = %s, started_at = now(), message = 'Archive' "
+                            "WHERE id = %s AND status = %s RETURNING id", (trigger, job_id, QUEUED))
+                if cur.fetchone() is None:
+                    continue
+                taken.add(lane)
+                running += 1
+                claimed.append({"id": job_id, "source_id": source_id, "payload": payload or {}})
+        return claimed
+
+    def requeue(self, trigger: str) -> int:
+        """At the scheduler's start: the queued archives it was running when it stopped are queued again (they
+        resume from their checkpoints). Returns how many."""
+        from insight_core.db import database as db
+
+        with db.transaction(self.db_url) as cur:
+            cur.execute("UPDATE job_runs SET status = %s, payload = payload || '{\"resume\": true}'::jsonb "
+                        "WHERE job_type = %s AND status = 'running' AND trigger = %s AND payload ? 'queued_at' "
+                        "AND NOT payload ? 'waits'", (QUEUED, JOB_TYPE, trigger))
+            return cur.rowcount or 0
+
+    def interrupted(self) -> List[Dict[str, Any]]:
+        """The sources whose newest archive job a restart interrupted (not a linked fetch): [{source_id, payload}]."""
+        from insight_core.db import database as db
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("""SELECT source_id::text, status, payload FROM (
+                               SELECT DISTINCT ON (source_id) source_id, status, payload FROM job_runs
+                               WHERE job_type = %s AND source_id IS NOT NULL ORDER BY source_id, started_at DESC) last
+                           WHERE status = 'interrupted' AND NOT coalesce((payload->>'linked')::boolean, false)""",
+                        (JOB_TYPE,))
+            return [{"source_id": row[0], "payload": row[2] or {}} for row in cur.fetchall()]
+
+    def queued(self) -> List[Dict[str, Any]]:
+        """The queued jobs, oldest first: [{id, source_id, lane, queued_at}]."""
+        from insight_core.db import database as db
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT id::text, source_id::text, payload->>'lane', payload->>'queued_at' FROM job_runs "
+                        "WHERE job_type = %s AND status = %s ORDER BY payload->>'queued_at', created_at", (JOB_TYPE, QUEUED))
+            return [{"id": r[0], "source_id": r[1], "lane": r[2], "queued_at": r[3]} for r in cur.fetchall()]
 
 
 class ArchiveJobs:
@@ -31,6 +168,13 @@ class ArchiveJobs:
         self.trigger = trigger            # "manual" (the API) or "scheduler"
         self.clock = clock
         self._running: Dict[str, asyncio.Task] = {}   # source id -> its continuation in this process
+        self._queue: Optional[ArchiveQueue] = None
+
+    @property
+    def queue(self) -> ArchiveQueue:
+        if self._queue is None:
+            self._queue = ArchiveQueue(self.ops.db_url)
+        return self._queue
 
     def _progress(self, job_id: Optional[str]) -> Callable[[Dict[str, Any]], None]:
         def record(event: Dict[str, Any]) -> None:
@@ -45,7 +189,7 @@ class ArchiveJobs:
 
     async def run(self, source_id: str, *, resume: bool = True,
                   rate_limit_overrides: Optional[Dict[str, Any]] = None, job_id: Optional[str] = None,
-                  linked: bool = False) -> Dict[str, Any]:
+                  linked: bool = False, until: Optional[str] = None) -> Dict[str, Any]:
         """One archive from its plan. With job_id (the route already started the job) progress lands
         on that job; otherwise the run starts its own. An unavailable kind answers
         {success: false, unavailable: true}; any other failure fails the job and raises.
@@ -68,7 +212,7 @@ class ArchiveJobs:
             else:
                 result = await self.archives.archive_source(
                     source_id, progress_callback=self._progress(job_id), resume=resume,
-                    rate_limit_overrides=rate_limit_overrides,
+                    rate_limit_overrides=rate_limit_overrides, **({"until": until} if until else {}),
                 )
         except KindUnavailable as e:
             self.ops.try_finish_job(job_id, status="failed", message=f"Unavailable: {e.reason}",
@@ -117,6 +261,64 @@ class ArchiveJobs:
         if started:
             await asyncio.sleep(0)   # let them claim their jobs
         return started
+
+    # ------------------------------------------------------------------ the queue (issue 0130)
+
+    def lane(self, source_id: str) -> str:
+        """The source's archive lane (lane_of its kind and host); "source:<id>" when the archives can't say."""
+        sources, kinds = getattr(self.archives, "sources_service", None), getattr(self.archives, "kinds", None)
+        if sources is None or kinds is None:
+            return f"source:{source_id}"
+        source = sources.get_source_by_id(source_id)
+        if not source:
+            raise LookupError(f"Source {source_id} not found")
+        kind = kinds.resolve(source)
+        return lane_of(kind.name, kind.host_key(source))
+
+    def request_payload(self, *, resume: bool, rate_limit: Optional[Dict[str, Any]] = None,
+                        until: Optional[str] = None) -> Dict[str, Any]:
+        return {"resume": resume, "rate_limit": rate_limit or {}, **({"until": until} if until else {})}
+
+    def enqueue(self, source_id: str, *, resume: bool = True, until: Optional[str] = None,
+                rate_limit: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], str]:
+        """Queue an archive of the source (blocking): (job id, "queued"), or (None, the status it already has)."""
+        return self.queue.add(source_id, lane=self.lane(source_id), trigger=self.trigger,
+                              payload=self.request_payload(resume=resume, rate_limit=rate_limit, until=until))
+
+    def resume_interrupted(self) -> List[Dict[str, Any]]:
+        """Queue every source whose last archive a restart interrupted, to resume from its checkpoint with the same
+        horizon (blocking): [{source_id, job_id, status}]."""
+        queued = []
+        for row in self.queue.interrupted():
+            payload = row["payload"]
+            try:
+                job_id, status = self.enqueue(row["source_id"], resume=True, until=payload.get("until") or None,
+                                              rate_limit=payload.get("rate_limit") or None)
+            except LookupError:
+                continue
+            queued.append({"source_id": row["source_id"], "job_id": job_id, "status": status})
+        return queued
+
+    async def start_queued(self) -> List[str]:
+        """Start the queued archives whose lane is free (the scheduler calls this with continue_due); each runs as
+        its own task, as a continuation does. Returns the job ids started."""
+        claimed = await asyncio.to_thread(self.queue.claim, trigger=self.trigger)
+        started = []
+        for job in claimed:
+            payload = job["payload"]
+            task = asyncio.create_task(self._run_queued(job["source_id"], job["id"], payload))
+            self._running[job["source_id"]] = task
+            task.add_done_callback(lambda _t, sid=job["source_id"]: self._running.pop(sid, None))
+            started.append(job["id"])
+        return started
+
+    async def _run_queued(self, source_id: str, job_id: str, payload: Dict[str, Any]) -> None:
+        try:
+            await self.run(source_id, resume=bool(payload.get("resume", True)),
+                           rate_limit_overrides=payload.get("rate_limit") or None, job_id=job_id,
+                           until=payload.get("until") or None)
+        except Exception:  # noqa: BLE001 - the job is failed already; the scheduler goes on
+            logger.exception("Queued archive job %s failed", job_id)
 
     async def idle(self) -> None:
         """Wait for every continuation this process started (tests, and a clean stop)."""

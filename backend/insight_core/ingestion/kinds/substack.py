@@ -25,9 +25,19 @@ never logged or put in an error message.
 
 All Substack publications share one host key (one backend), floored in gates.HOST_FLOORS;
 post requests within a source are spaced by the profile's page delay.
+
+The archive API changed (issue 0130 B1, seen from the owner's server on 2026-11-07): it answered every
+`/api/v1/archive?sort=new&offset=0&limit=12` with HTTP 400 {"param":"offset","value":"0","msg":"Invalid value"}.
+Nothing was probed from the lab, so the request is made robust rather than fitted to a guess: the first page is
+asked with no offset at all (later pages keep offset=N, N >= 1), and when the API refuses a page anyway (any
+answer but a list, other than a host limiting us or the session expiring) the archive goes on from the
+publication's sitemap (page watch's reader of it: its /p/<slug> addresses, newest lastmod first), each post read
+from /api/v1/posts/<slug> as before, the stored ones left unread (checkpoint mode "substack_sitemap"). Unverified
+until the owner's server runs it.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import json
@@ -38,7 +48,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Optional, Union
 
 from insight_core.ingestion.credentials import CredentialProvider, MappingCredentials
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
@@ -47,8 +57,11 @@ from insight_core.ingestion.kinds.base import (
     KindUnavailable,
     PolitenessProfile,
     RateLimit,
+    SKIP_NO_POST,
+    SKIP_STORED,
     Source,
     resume_counts,
+    skipped_counts,
     start_at,
 )
 from insight_core.utils.addresses import host_of
@@ -78,6 +91,20 @@ UNKNOWN = "unknown"    # can't tell whom you pay: cookie sent, a teaser is store
 TRUNCATED_RATIO = 0.6
 
 _AUTH_ERROR_RE = re.compile(r"^HTTP (401|403)\b")
+OFFSET_MODE = "substack_offset"
+SITEMAP_MODE = "substack_sitemap"   # the archive API refused: the publication's sitemap (issue 0130 B1)
+# Which of these urls are already stored (blocking; run in a thread): PostsRepository.stored_urls.
+StoredUrls = Any
+
+
+class ArchiveRefused(ValueError):
+    """The archive API answered something other than a page of posts (issue 0130 B1: HTTP 400 on offset=0)."""
+
+
+def _refused(exc: BaseException) -> bool:
+    """A refusal the sitemap stands in for: not a host limiting us (the archive waits), not the session."""
+    return (isinstance(exc, ValueError) and not isinstance(exc, KindUnavailable)
+            and not (isinstance(exc, HttpError) and exc.limiting))
 
 
 def is_substack_host(host: str) -> bool:
@@ -162,13 +189,15 @@ def paid_publication_hosts(data: Any) -> Optional[Subscriptions]:
 
 class SubstackKind(BaseKind):
     name = "substack"
+    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
     reads_posts = True            # read_post: one post from the API (the repair, and issue 0084 B's linked pages)
     available_basis = "unknown"   # /api/v1/archive pages carry no total
     profile = SUBSTACK_PROFILE
 
     def __init__(self, http: KindHttp, *, sid: Optional[str] = None,
-                 credentials: Optional[CredentialProvider] = None) -> None:
+                 credentials: Optional[CredentialProvider] = None, stored_urls: Optional[StoredUrls] = None) -> None:
         self.http = http
+        self.stored_urls = stored_urls
         if sid is not None:
             credentials = MappingCredentials({("substack", "sid"): sid})
         self.credentials = credentials
@@ -235,13 +264,15 @@ class SubstackKind(BaseKind):
         return SUBSTACK_HOST_KEY
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict) and checkpoint.get("mode") == "substack_offset" and isinstance(
-            checkpoint.get("offset"), int
-        )
+        if not isinstance(checkpoint, dict):
+            return False
+        if checkpoint.get("mode") == SITEMAP_MODE:
+            return isinstance(checkpoint.get("next_index"), int)
+        return checkpoint.get("mode") == OFFSET_MODE and isinstance(checkpoint.get("offset"), int)
 
     async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
         # The archive lists newest first, so the stored posts are the first `stored` positions.
-        return start_at(mode="substack_offset", offset=max(0, int(stored["post_count"]) - ARCHIVE_PAGE_SIZE))
+        return start_at(mode=OFFSET_MODE, offset=max(0, int(stored["post_count"]) - ARCHIVE_PAGE_SIZE))
 
     # ------------------------------------------------------------------ SourceKind
 
@@ -257,19 +288,45 @@ class SubstackKind(BaseKind):
         return await self._full_posts(source, base, items, self.profile.page_delay_s, access)
 
     async def inspect(self, source: Source) -> Inspection:
+        """The archive API's first page; when the API refuses it, the publication's sitemap (issue 0130 B1)."""
         access = await self._access(source)
-        items = await self._archive_items(publication_base(source), 0, ARCHIVE_PAGE_SIZE, access)
-        return Inspection(available_posts=None, page_size=ARCHIVE_PAGE_SIZE, first_post_date=None,
-                          raw={"paid_cookie": access in (FULL, UNKNOWN), "sampled_posts": len(items)})
+        raw: Dict[str, Any] = {"paid_cookie": access in (FULL, UNKNOWN)}
+        base = publication_base(source)
+        try:
+            items = await self._archive_items(base, 0, ARCHIVE_PAGE_SIZE, access)
+            raw["sampled_posts"] = len(items)
+        except Exception as exc:  # noqa: BLE001 - a refusal is read from the sitemap; anything else is raised
+            if not _refused(exc):
+                raise
+            listed = len(await self._sitemap_slugs(base))
+            if not listed:
+                raise
+            raw.update(archive_api=f"refused: {str(exc)[:160]}", sitemap_posts=listed)
+        return Inspection(available_posts=None, page_size=ARCHIVE_PAGE_SIZE, first_post_date=None, raw=raw)
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
+        """By the archive API's offsets; from the publication's sitemap once the API refuses a page (or a
+        checkpoint says it did), issue 0130 B1."""
         base = publication_base(source)
         access = await self._access(source)
         collected, pages_fetched = resume_counts(checkpoint)
+        if (checkpoint or {}).get("mode") == SITEMAP_MODE:
+            async for page in self._sitemap_pages(source, base, access, target, checkpoint, rate):
+                yield page
+            return
         offset = int((checkpoint or {}).get("offset") or 0)
         while collected < target:
             batch = min(ARCHIVE_PAGE_SIZE, target - collected)
-            items = await self._archive_page(base, offset, batch, access)
+            try:
+                items = await self._archive_page(base, offset, batch, access)
+            except Exception as exc:  # noqa: BLE001 - a refusal goes on from the sitemap
+                if not _refused(exc):
+                    raise
+                start = {"mode": SITEMAP_MODE, "next_index": 0, "pages_fetched": pages_fetched,
+                         "collected_posts": collected, "refused": str(exc)[:160]}
+                async for page in self._sitemap_pages(source, base, access, target, start, rate):
+                    yield page
+                return
             if not items:
                 break
             posts = await self._full_posts(source, base, items, rate.page_delay_s, access)
@@ -277,13 +334,65 @@ class SubstackKind(BaseKind):
             collected += len(posts)
             offset += len(items)
             yield ArchivePage(posts, {
-                "mode": "substack_offset",
+                "mode": OFFSET_MODE,
                 "offset": offset,
                 "pages_fetched": pages_fetched,
                 "collected_posts": collected,
             })
             if len(items) < batch:
                 break
+
+    async def _sitemap_slugs(self, base: str) -> List[tuple]:
+        """The publication's posts in its sitemap: (slug, url), newest lastmod first, once each."""
+        from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries   # imports this module
+
+        entries = await sitemap_entries(self.http, base + "/", "/p/", max_files=ARCHIVE_SITEMAPS)
+        host = _bare_host(base)
+        dated: Dict[str, tuple] = {}
+        for loc, lastmod in entries:
+            slug = _slug_from_url(loc)
+            if slug and _bare_host(loc) == host:
+                dated.setdefault(slug, (slug, f"{base}/p/{slug}", parsing.parse_datetime_value(lastmod)))
+        epoch = parsing.parse_datetime_value("1970-01-01T00:00:00+00:00")
+        ordered = sorted(dated.values(), key=lambda entry: entry[2] or epoch, reverse=True)
+        return [(slug, url) for slug, url, _ in ordered]
+
+    async def _sitemap_pages(self, source: Source, base: str, access: str, target: int, checkpoint: dict,
+                             rate: RateLimit):
+        """ARCHIVE_PAGE_SIZE sitemap posts a page from the checkpoint's next_index, each read from the posts API;
+        a stored one is not read again, one the API can't answer is no post (the checkpoint's "skipped")."""
+        collected, pages_fetched = resume_counts(checkpoint)
+        skipped = skipped_counts(checkpoint)
+        index = int(checkpoint.get("next_index") or 0)
+        slugs = await self._sitemap_slugs(base)
+        if not slugs and checkpoint.get("refused"):
+            # No sitemap to stand in: the API's refusal is the archive's error, never a silent 0.
+            raise ArchiveRefused(f"The archive API refused ({checkpoint['refused']}) and the publication's sitemap "
+                                 "lists no post")
+        while collected < target and index < len(slugs):
+            batch = slugs[index:index + ARCHIVE_PAGE_SIZE]
+            stored = (await asyncio.to_thread(self.stored_urls, [url for _, url in batch])
+                      if self.stored_urls else set())
+            items = []
+            for slug, url in batch:
+                if url in stored:
+                    skipped[SKIP_STORED] += 1
+                else:
+                    items.append({"slug": slug, "_sitemap": True})
+            posts = await self._full_posts(source, base, items, rate.page_delay_s, access) if items else []
+            skipped[SKIP_NO_POST] += len(items) - len(posts)
+            index += len(batch)
+            pages_fetched += 1
+            collected += len(posts)
+            yield ArchivePage(posts, {
+                **{key: checkpoint[key] for key in ("refused",) if key in checkpoint},
+                "mode": SITEMAP_MODE,
+                "next_index": index,
+                "pages_fetched": pages_fetched,
+                "collected_posts": collected,
+                "total_candidates": len(slugs),
+                "skipped": dict(skipped),
+            })
 
     async def check_session(self, source: Optional[Source] = None) -> tuple[bool, str]:
         """The connection test: is the cookie set and signed in, and what does it read in full?
@@ -346,10 +455,11 @@ class SubstackKind(BaseKind):
         return json.loads(body)
 
     async def _archive_page(self, base: str, offset: int, limit: int, access: str) -> List[Dict[str, Any]]:
-        query = urllib.parse.urlencode({"sort": "new", "offset": offset, "limit": limit})
+        # No offset on the first page: the API answered offset=0 with HTTP 400 (issue 0130 B1).
+        query = urllib.parse.urlencode({"sort": "new", **({"offset": offset} if offset else {}), "limit": limit})
         data = await self._get_json(f"{base}/api/v1/archive?{query}", cookie=access in (FULL, UNKNOWN))
         if not isinstance(data, list):
-            raise ValueError(f"Unexpected Substack archive response from {base}")
+            raise ArchiveRefused(f"Unexpected Substack archive response from {base}")
         return [item for item in data if isinstance(item, dict) and item.get("slug")]
 
     async def _archive_items(self, base: str, offset: int, limit: int, access: str) -> List[Dict[str, Any]]:
@@ -387,6 +497,8 @@ class SubstackKind(BaseKind):
                     detail = None
             if isinstance(detail, dict):
                 posts.append(self._to_post(source, base, {**item, **detail}, access))
+            elif item.get("_sitemap"):
+                continue   # a sitemap address the posts API can't answer: no post (issue 0130 B1)
             elif "_rss" in item:
                 posts.append(self._from_rss(source, item["_rss"]))
             else:

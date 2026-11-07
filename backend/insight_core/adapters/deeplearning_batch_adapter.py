@@ -1,4 +1,13 @@
-"""DeepLearning.AI The Batch newsletter adapter."""
+"""DeepLearning.AI The Batch newsletter adapter.
+
+Issue 0130 B2: the archive read 38 pages and found 0 posts (2026-11-07); the newest stored issue is of July 2026,
+so the issue pages stopped carrying the Next.js post payload this reader parsed. No page of the new layout is stored
+anywhere, so the reader does not guess it: an issue page without the payload is read as any article page (page
+watch's reader: its body, title and the date the page states); the issue list falls back to the site's own sitemap
+when the CMS sitemap can't be read or lists no issue. Issue pages that still read as no post are counted (the
+checkpoint's "skipped"); every listed entry is an issue (LISTS_ONLY_POSTS), so the archive reports "the layout
+changed" instead of a silent 0, and a live fetch that reads no post from several issue pages fails, saying so.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
-from insight_core.ingestion.kinds.base import Inspection, RateLimit
+from insight_core.ingestion.kinds.base import Inspection, RateLimit, layout_changed_line
 from insight_core.utils.json_safe import iso
 
 
@@ -23,10 +32,15 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
     PAGE_SIZE = 10
     PAGE_DELAY_SECONDS = 1
     CHARON_SITEMAP_URL = "https://charonhub.deeplearning.ai/sitemap-posts.xml"
+    SITE_LISTING_URL = "https://www.deeplearning.ai/the-batch/"
+    LISTS_ONLY_POSTS = True
+    # A live fetch that reads this many issue pages and finds no post on any: the layout changed.
+    LAYOUT_PROBE = 3
     NEXT_DATA_RE = re.compile(
         r'(?is)<script id="__NEXT_DATA__" type="application/json">\s*(?P<payload>\{.*?\})\s*</script>'
     )
     ISSUE_PATH_RE = re.compile(r"^/issue-(?P<issue>\d+)/?$")
+    SITE_ISSUE_PATH_RE = re.compile(r"^/the-batch/issue-(?P<issue>\d+)/?$")
 
     def matches(self, source: Dict[str, Any]) -> bool:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
@@ -40,10 +54,14 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
     async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         entries = await self._discover_entries()
         posts: List[Dict[str, Any]] = []
+        read = 0
         for entry in entries[: max(1, limit)]:
             post = await self._fetch_issue_post(source, entry)
+            read += 1
             if post:
                 posts.append(post)
+            elif not posts and read >= self.LAYOUT_PROBE:
+                raise ValueError(layout_changed_line(read))
         return posts[:limit]
 
     async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
@@ -53,28 +71,37 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
             yield page
 
     async def _discover_entries(self) -> List[Dict[str, Any]]:
-        body, _ = await self.http.get_text(self.CHARON_SITEMAP_URL)
-        root = ET.fromstring(body)
-        entries: List[Dict[str, Any]] = []
+        """The issues, newest first: the CMS sitemap's, else (it can't be read, or lists none) the site's own."""
+        try:
+            body, _ = await self.http.get_text(self.CHARON_SITEMAP_URL)
+            locs = [(parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod"))
+                    for node in ET.fromstring(body).iter() if parsing.local_name(node.tag) == "url"]
+            entries = self._entries(locs, self.ISSUE_PATH_RE)
+        except Exception as exc:  # noqa: BLE001 - the site's own sitemap is the fallback
+            if getattr(exc, "limiting", False):
+                raise
+            entries = []
+        if not entries:
+            from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries
 
-        for node in root.iter():
-            if parsing.local_name(node.tag) != "url":
-                continue
-            loc = parsing.child_text(node, "loc") or ""
-            lastmod = parsing.child_text(node, "lastmod")
-            parsed = urllib.parse.urlparse(loc)
-            match = self.ISSUE_PATH_RE.match(parsed.path or "")
+            locs = await sitemap_entries(self.http, self.SITE_LISTING_URL, "/the-batch/", max_files=ARCHIVE_SITEMAPS)
+            entries = self._entries(locs, self.SITE_ISSUE_PATH_RE)
+        return entries
+
+    def _entries(self, locs: List[Any], pattern: "re.Pattern[str]") -> List[Dict[str, Any]]:
+        entries: Dict[int, Dict[str, Any]] = {}
+        for loc, lastmod in locs:
+            match = pattern.match(urllib.parse.urlparse(loc or "").path or "")
             if not match:
                 continue
             issue_number = int(match.group("issue"))
             public_url = urllib.parse.urljoin("https://www.deeplearning.ai", f"/the-batch/issue-{issue_number}/")
-            entries.append(
-                {
-                    "issue_number": issue_number,
-                    "public_url": public_url,
-                    "published_at": parsing.parse_datetime_value(lastmod),
-                }
-            )
+            entries.setdefault(issue_number, {
+                "issue_number": issue_number,
+                "public_url": public_url,
+                "published_at": parsing.parse_datetime_value(lastmod),
+            })
+        entries = list(entries.values())
 
         entries.sort(key=lambda item: item.get("published_at") or parsing.parse_datetime_value("1970-01-01T00:00:00+00:00"), reverse=True)
         return entries
@@ -88,7 +115,7 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
         next_payload = self._extract_next_data(html)
         post = self._find_post_payload(next_payload)
         if not post:
-            return None
+            return self._page_post(source, entry, url, html)
 
         title = str(post.get("title") or "").strip()
         content_html = str(post.get("html") or "").strip()
@@ -132,6 +159,20 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
             },
         }
 
+    def _page_post(self, source: Dict[str, Any], entry: Dict[str, Any], url: str, html: str) -> Optional[Dict[str, Any]]:
+        """An issue page without the Next.js payload, read as any article page (page watch's reader), with the
+        date the page states, else the sitemap's; the issue number stays its id. None when no article is there."""
+        from insight_core.ingestion.kinds.page_watch import article_post, page_date
+
+        post = article_post(html, str(source.get("handle_or_url") or self.SITE_LISTING_URL), url,
+                            page_date(html) or entry.get("published_at"), adapter=self.adapter_type)
+        if post is None:
+            return None
+        issue_number = entry.get("issue_number")
+        post["external_id"] = str(issue_number or post["external_id"])
+        post["metadata"] = {**post["metadata"], "issue_number": issue_number, "read_as": "page"}
+        return post
+
     def _extract_next_data(self, html: str) -> Dict[str, Any]:
         match = self.NEXT_DATA_RE.search(html or "")
         if not match:
@@ -162,3 +203,4 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
         )
         match = pattern.search(html or "")
         return match.group(1) if match else ""
+

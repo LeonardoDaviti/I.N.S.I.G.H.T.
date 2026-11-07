@@ -43,6 +43,7 @@ CANONICAL_RE = re.compile(r"^https://t\.me/(?P<username>[^/]+)/(?P<post_id>\d+)$
 
 class TelegramRssKind(BaseKind):
     name = "telegram_rss"
+    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
     available_basis = "upper_bound"   # the newest post number; deleted posts still count
     profile = TELEGRAM_RSS_PROFILE
 

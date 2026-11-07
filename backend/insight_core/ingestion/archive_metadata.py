@@ -106,6 +106,10 @@ class ArchiveMetadataWriter:
             "waiting": (data.get("waiting") if mode in {"archive", "archive_progress"}
                         else current.get("waiting")),
             "history": history[-HISTORY_LIMIT:],
+            # Why the last archive added no more (issue 0130 B4): its pages' skipped counts and the posts stored
+            # already; and the date it stopped at (issue 0130 C).
+            "unreached": data.get("unreached", current.get("unreached")) if mode == "archive" else current.get("unreached"),
+            "until": (data.get("until_reached") if mode == "archive" else current.get("until")),
         }
         self.sources.merge_source_settings(source_id, {"archive": archive})
 
@@ -118,6 +122,9 @@ class ArchiveMetadataWriter:
             checkpoint = data.get("checkpoint")
             if not isinstance(checkpoint, dict):
                 return None
+            if data.get("until_reached") and data.get("pages_fetched"):
+                # Stopped at its date (issue 0130 C), not at the source's end: a later archive goes on from here.
+                return dict(checkpoint)
             finished = dict(checkpoint)
             finished["completed_at"] = now
             if data.get("archive_status") == "archived":
