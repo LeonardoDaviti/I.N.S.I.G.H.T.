@@ -763,3 +763,6 @@ def mx_label_edge(body: EdgeLabelIn):
             raise HTTPException(status_code=400, detail=str(e))
         except KeyError:
             raise HTTPException(status_code=404, detail="No such edge")
+
+
+from insight_core.markx import sources_api as _sources_api; router.include_router(_sources_api.router)  # noqa: E402,E702  0132 B: the source analysis page

@@ -23,6 +23,8 @@ const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 const MarkXPage = lazy(() => import('./pages/MarkXPage'));
 const MarkXEntityPage = lazy(() => import('./pages/MarkXEntityPage'));   // 0119 A3
 const MarkXStoryPage = lazy(() => import('./pages/MarkXStoryPage'));     // 0119 B6
+const MarkXSourcesPage = lazy(() => import('./components/markx/sources/MarkXSourcesPage'));   // 0132 B
+const MarkXSourcePage = lazy(() => import('./components/markx/sources/MarkXSourcePage'));     // 0132 B
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 export function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -40,11 +42,13 @@ function RouteFallback() {
 }
 
 /** `/markx` only while Mark X is on (INSIGHT_MARKX): while asking, the page skeleton; off, the feed. */
-function MarkXRoute({ page }: { page?: 'entity' | 'story' }) {
+function MarkXRoute({ page }: { page?: 'entity' | 'story' | 'sources' | 'source' }) {
   const on = useMarkxState();
   if (on === undefined) return <RouteFallback />;
   if (!on) return <Navigate to="/" replace />;
   if (page === 'story') return <MarkXStoryPage />;
+  if (page === 'sources') return <MarkXSourcesPage />;   // 0132 B
+  if (page === 'source') return <MarkXSourcePage />;
   return page === 'entity' ? <MarkXEntityPage /> : <MarkXPage />;
 }
 
@@ -106,6 +110,8 @@ export function AppRoutes() {
       <Route path="/markx" element={<MarkXRoute />} />
       <Route path="/markx/entities/:entityId" element={<MarkXRoute page="entity" />} />
       <Route path="/markx/stories/:storyId" element={<MarkXRoute page="story" />} />
+      <Route path="/markx/sources" element={<MarkXRoute page="sources" />} />
+      <Route path="/markx/sources/:sourceId" element={<MarkXRoute page="source" />} />
       <Route path="/briefing" element={<Navigate to="/" replace />} />
       <Route path="/briefing/topics" element={<Navigate to="/" replace />} />
       <Route path="/briefing/vertical/*" element={<Navigate to="/" replace />} />

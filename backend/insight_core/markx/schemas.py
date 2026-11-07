@@ -207,6 +207,29 @@ TRANSLATE_SCHEMA = {
     "properties": {"title_en": _STR, "text_en": _STR},
 }
 
+# 0132 B: a source's stance and framing (stance-v1, the lab's sources_bias_v1.md). Loose on the quotes: a quote not
+# found in its post is the grounding's to drop (validate.stance_grounded: a pattern keeps 2+ exact quotes from 2
+# posts, or isn't shown), never a reason to ask again.
+STANCE_KINDS = ["stance", "framing", "selection", "tone", "interest"]
+STANCE_VOICES = ["official", "staff_or_insider", "analyst", "commentator", "aggregator", "news_outlet", "unclear"]
+STANCE_PATTERNS = 4
+STANCE_SCHEMA = {
+    "type": "object",
+    "required": ["patterns"],
+    "properties": {
+        "patterns": {"type": "array", "maxItems": STANCE_PATTERNS, "items": {
+            "type": "object", "required": ["pattern", "evidence"],
+            "properties": {"pattern": {"type": "string", "minLength": 1}, "kind": {"enum": STANCE_KINDS},
+                           "strength": {"enum": ["clear", "some", "weak"]},
+                           "evidence": {"type": "array", "items": {
+                               "type": "object", "required": ["post", "quote"],
+                               "properties": {"post": {"type": "integer"}, "quote": _STR}}}}}},
+        "voice": {"enum": STANCE_VOICES},
+        "interest": _STR_OR_NULL,
+        "too_few": {"type": "boolean"},
+    },
+}
+
 
 # ---- the kinds -------------------------------------------------------------------------------------
 
@@ -240,6 +263,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
+    Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
 )}
 
 

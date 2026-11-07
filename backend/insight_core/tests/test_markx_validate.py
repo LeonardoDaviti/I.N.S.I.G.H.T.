@@ -285,13 +285,13 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "alias", "collide", "embed_name",                # 0119 A1
                                               "alias2",                                         # 0130 A2
                                               "perspective", "sheet", "read3",                         # 0119 B
-                                              "relate"})                                        # 0131
+                                              "relate", "stance"})                              # 0131, 0132 B
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
                 self.assertIsInstance(kind.schema, dict)
                 self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
-                                             "entity", "entity_entity"))
+                                             "entity", "entity_entity", "source"))   # 0132 B: source
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
         """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide (persp-v1's "@x"

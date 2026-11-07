@@ -1561,3 +1561,89 @@ export const markxGraphApi = {
     request<{ id: string; answer: MarkxEdgeAnswer; label: 'right' | 'wrong' | null; relation: string }>(
       '/api/markx/labels/edge', { method: 'POST', body: { newer, older, answer } }),
 };
+
+// 0132 B (Stealth v10.6): the source analysis page (/markx/sources). One block here (not inside createApi); components
+// read it through `markxSourcesApi(useApi())`, so a test's fake api can provide these methods.
+/** A signal as the list shows it: its number, what it counted, and whether that is too few to tell. */
+export interface MarkxSourceCell {
+  value: unknown;
+  n: number;
+  too_few: boolean;
+}
+export interface MarkxSourceRow {
+  kind: 'source' | 'voice';
+  id: string;
+  name: string;
+  /** The source's kind (site, x, telegram, youtube, reddit, hn) or "voice". */
+  platform: string;
+  enabled: boolean;
+  channels: number;
+  stats: Partial<Record<string, MarkxSourceCell>>;
+}
+export interface MarkxSourcesList {
+  rows: MarkxSourceRow[];
+  columns: string[];
+  formulas: Record<string, string>;
+  computed_at: string | null;
+  job: { ok?: boolean; seconds?: number; peak_mb?: number; rows?: number; at?: string; error?: string } | null;
+}
+/** A post a card cites as evidence. */
+export interface MarkxEvidencePost {
+  id: string;
+  title: string;
+  at: string | null;
+  source: string | null;
+  [extra: string]: unknown;
+}
+export interface MarkxSourceSignal {
+  signal: string;
+  value: unknown;
+  n: number;
+  /** "too few to tell" below this n (0: always shown). */
+  min: number;
+  /** What n counts ("posts", "stories", "read posts", ...). */
+  counts: string;
+  too_few: boolean;
+  formula: string;
+  evidence: Record<string, unknown>;
+}
+export interface MarkxSourceCard {
+  card: string;
+  title: string;
+  experimental: boolean;
+  signals: MarkxSourceSignal[];
+}
+export interface MarkxSourceTab {
+  kind: 'source' | 'voice';
+  id: string;
+  name: string;
+  platform: string;
+  /** False until the stats job has run for it. */
+  computed: boolean;
+  cards: MarkxSourceCard[];
+}
+export interface MarkxSourcePage {
+  subject: { kind: 'source' | 'voice'; id: string; name: string; voice: { id: string; name: string | null } | null };
+  tabs: MarkxSourceTab[];
+  computed_at: string | null;
+}
+export type MarkxStanceAnswer = 'right' | 'wrong' | 'undo';
+const markxSourcesMethods = {
+  getMarkxSources: () => request<MarkxSourcesList>('/api/markx/sources'),
+  getMarkxSource: (id: string) => request<MarkxSourcePage>(`/api/markx/sources/${enc(id)}`),
+  /** The owner's right / wrong on a stance pattern (its 0-based number); undo takes it back. */
+  labelMarkxStance: (task: string, pattern: number, answer: MarkxStanceAnswer) =>
+    request<{ labels: Record<string, 'right' | 'wrong'> }>('/api/markx/sources/stance/label',
+      { method: 'POST', body: { task, pattern, answer } }),
+};
+export type MarkxSourcesApi = typeof markxSourcesMethods;
+/** These methods from `api` when it answers them (a test's fake), else the real client's. */
+export function markxSourcesApi(api: object): MarkxSourcesApi {
+  const own = api as Partial<MarkxSourcesApi>;
+  const pick = <K extends keyof MarkxSourcesApi>(k: K): MarkxSourcesApi[K] => {
+    const got = own[k];
+    return typeof got === 'function' ? (got as MarkxSourcesApi[K]) : markxSourcesMethods[k];
+  };
+  return { getMarkxSources: pick('getMarkxSources'), getMarkxSource: pick('getMarkxSource'),
+    labelMarkxStance: pick('labelMarkxStance') };
+}
