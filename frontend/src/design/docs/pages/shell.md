@@ -1,6 +1,6 @@
 ```meta
 kind: page
-routes: /design/*, /save, /markx, /markx/entities/:entityId, /markx/stories/:storyId
+routes: /design/*, /save, /markx, /markx/entities/:entityId, /markx/stories/:storyId, /markx/sources, /markx/sources/:sourceId
 states: switcher-many-tracks, narrow-topbar
 ```
 
