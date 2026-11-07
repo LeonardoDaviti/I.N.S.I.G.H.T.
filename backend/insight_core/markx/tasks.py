@@ -58,6 +58,7 @@ MIN_WORDS = 20                             # rule A: a shorter post is never jud
 PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
                                            # 0112 Decided 9 the read, entities and embed planners' default only
 PLAN_LIMIT = 500
+SCAN_PAGES = 40                                # plan_posts: at most 40 pages of PLAN_LIMIT a call (v10.4.1)
 READING_WINDOW = "reading_window_days"     # mx_settings: the owner's window for those three (an int, or null: every post)
 SETTING = object()                         # a planner's `days` when the caller names none: the owner's setting
 
@@ -453,23 +454,37 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     spec = schemas.KINDS[kind]
     if days is SETTING:
         days = reading_window(cur)
-    cur.execute(
-        """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
-             FROM posts p
-            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
-                                             >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
-              AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
-            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
-            LIMIT %(limit)s""", {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit})
-    rows = cur.fetchall()
-    posts = load_posts(cur, [r[0] for r in rows])
     render = read_input if kind == "read" else entities_input
-    added = 0
-    for pid, age in rows:
-        p = posts.get(str(pid))
-        if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
-            added += 1
+    added, after = 0, None
+    # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
+    # same input is one task), so it stays "unplanned"; newest first, such posts filled every LIMIT and the older
+    # posts were never reached. Page on past them (keyset), at most SCAN_PAGES pages a call.
+    for _page in range(SCAN_PAGES):
+        cur.execute(
+            """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
+                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                 FROM posts p
+                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                                 >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
+                  AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+                  AND (%(at)s::timestamptz IS NULL
+                       OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
+                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                LIMIT %(limit)s""",
+            {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit,
+             "at": after[0] if after else None, "id": after[1] if after else None})
+        rows = cur.fetchall()
+        posts = load_posts(cur, [r[0] for r in rows])
+        for pid, age, _at in rows:
+            if added >= limit:
+                break
+            p = posts.get(str(pid))
+            if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+                added += 1
+        if added >= limit or len(rows) < limit:
+            break
+        after = (rows[-1][2], rows[-1][0])
     return added
 
 

@@ -586,6 +586,22 @@ class GuidesAndInputs(_Api):
         self.cur.execute("SELECT a, priority FROM mx_tasks WHERE kind = 'read' ORDER BY priority")
         self.assertEqual([(str(a), p) for a, p in self.cur.fetchall()], [(fresh, 0), (older, 3)])
 
+    def test_plan_posts_reaches_past_posts_that_repeat_an_asked_text(self):
+        # v10.4.1: posts whose input repeats a task's (media-only posts, reposts) never get a task of their own
+        # (the same input is one task); newest first they filled every LIMIT and the older posts were never planned.
+        now = datetime.now(timezone.utc) + timedelta(days=3650)
+        same = "Acme shared a picture."
+        first = self.post(title="", text=same, at=now - timedelta(days=5))
+        with self.conn.transaction():
+            self.assertEqual(tasks.plan_posts(self.cur, "read", now=now, limit=10), 1)
+        for h in range(3):                                           # newer repeats: no task of their own
+            self.post(title="", text=same, at=now - timedelta(hours=h + 1))
+        below = self.post(at=now - timedelta(days=2))
+        with self.conn.transaction():
+            self.assertEqual(tasks.plan_posts(self.cur, "read", now=now, limit=2), 1)
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'read' AND a = ANY(%s::uuid[])", ([first, below],))
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, {first, below})
+
 
 class ReadingWindow(_Api):
     """0112 Decided 9: the read, entities and embed planners' window is the owner's (the page's mx_settings row,
