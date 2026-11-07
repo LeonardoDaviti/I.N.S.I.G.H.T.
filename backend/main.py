@@ -620,6 +620,20 @@ async def get_post_detail(post_id: str):
     return {"success": True, "post": post, "reader_state": detail.get_post_reader_state(post_id)}
 
 
+@app.get("/api/posts/item/{post_id}/connected")
+@error_detail("load the connected posts")
+async def get_post_connected(post_id: str, all: bool = False):
+    """Connected (issue 0125): {earlier, later, outside, more}, the author's own links read by rules, no model.
+    earlier: the stored posts it links, in the text's order (10); later: the stored posts that link it, oldest
+    first (the newest 10); outside: the pages it links that INSIGHT doesn't store (5). Each row: {post_id, url,
+    source, source_id, date, title, same_source, reason, reason_kind}; an outside row also {address, host}, its
+    link words as title. more: the rows each group leaves out; ?all=true answers every row. 404 for no such post."""
+    found = await asyncio.to_thread(services().post_detail.connected, post_id, full=all)
+    if found is None:
+        raise LookupError(f"Post {post_id} not found")
+    return {"success": True, **found}
+
+
 @app.post("/api/posts/item/{post_id}/opened")
 @error_detail("record the post open")
 async def record_post_open(post_id: str, request: PostOpenRequest | None = None):

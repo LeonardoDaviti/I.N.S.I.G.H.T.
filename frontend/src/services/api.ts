@@ -1117,6 +1117,9 @@ export function createApi() {
     // ---- The post page ----
 
     getPostDetail: (postId: string) => request<PostDetailResponse>(`/api/posts/item/${postId}`),
+    /** Connected (issue 0125): Earlier, Later and Outside INSIGHT, capped; `all` answers every row. */   // 0125
+    getPostConnected: (postId: string, all = false) =>
+      request<PostConnected>(`/api/posts/item/${enc(postId)}/connected${all ? '?all=true' : ''}`),
     recordPostOpen: (postId: string, metadata?: Record<string, unknown>) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, { method: 'POST', body: { metadata } })),
     recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, unknown>) =>
@@ -1424,3 +1427,28 @@ export interface MarkxBuilt {
 export type MarkxBuiltLine =
   | { role: 'original'; how: MarkxOriginalHow }
   | { role: 'leak'; hours: number; joins: boolean; own_coverage: boolean };
+
+// 0125
+/** One row of a post's Connected block (issue 0125): a stored post (Earlier, Later) or a page INSIGHT doesn't
+ *  store (Outside: no post_id; its host, its link words as `title`). `reason`: the line the author gave for it. */
+export interface ConnectedRow {
+  post_id: string | null;
+  url: string;
+  address?: string;
+  host?: string;
+  source: string | null;
+  source_id?: string;
+  date: string | null;
+  title: string | null;
+  same_source: boolean;
+  reason: string | null;
+  reason_kind: 'quote' | 'sentence' | 'title' | 'link_words' | null;
+}
+
+/** GET /api/posts/item/{id}/connected: the three groups and how many rows each leaves out. */
+export interface PostConnected extends Envelope {
+  earlier: ConnectedRow[];
+  later: ConnectedRow[];
+  outside: ConnectedRow[];
+  more: { earlier: number; later: number; outside: number };
+}

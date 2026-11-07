@@ -14,6 +14,7 @@ from insight_core.db import database as db
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
+from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.db.repo_reader import ReaderRepository, repost_of, voice_sources
 from insight_core.services.news_service import NewsService
 from insight_core.db.repo_post_parts import body, shown_title
@@ -232,6 +233,13 @@ class PostDetailService:
             (hrefs, urls, normalized, str(post_id)),
         )
         return {href: str(target) for href, target in cur.fetchall()}
+
+    def connected(self, post_id: str, *, full: bool = False) -> Optional[Dict[str, Any]]:
+        """The post's Connected block (issue 0125): {earlier, later, outside, more}, None for no such post. Read
+        apart from the post (the page asks for it after the post), so the post never waits on it."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return PostRefsRepository.connected(cur, post_id, full=full)
 
     def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn:

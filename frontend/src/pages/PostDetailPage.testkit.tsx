@@ -51,6 +51,8 @@ export function baseApi(post: Post, methods: Partial<Record<keyof Api, unknown>>
     recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
     recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
     getYouTubeWatchProgress: vi.fn().mockResolvedValue({ success: true, progress: null }),
+    getPostConnected: vi.fn().mockResolvedValue({ success: true, earlier: [], later: [], outside: [],
+      more: { earlier: 0, later: 0, outside: 0 } }),
     ...methods,
   });
 }

@@ -16,8 +16,10 @@ from psycopg import Cursor
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
 from insight_core.db.repo_post_parts import PostPartsRepository
+from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
+from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
                                             source_site)
@@ -251,7 +253,7 @@ class StoriesRepository:
         """Read a stored post's links from its stored HTML (what the saver kept, not the draft)."""
         cur.execute(
             """
-            SELECT p.url, p.content_html, s.platform, s.handle_or_url
+            SELECT p.url, p.content_html, s.platform, s.handle_or_url, p.content
             FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.id = %s
             """,
             (post_id,),
@@ -259,8 +261,9 @@ class StoriesRepository:
         row = cur.fetchone()
         if row is None:
             return
-        url, content_html, platform, handle = row
+        url, content_html, platform, handle, content = row
         self.write_links(cur, post_id, extract_links(content_html, url, source_kind(platform, handle)))
+        PostRefsRepository.read_post(cur, post_id, url, content_html, content)   # issue 0125: every link, Connected's
         cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s AND links_scanned_at IS NULL", (post_id,))
 
     def fill_missing_links(self, cur: Cursor, limit: int = LINKS_BATCH) -> int:
@@ -268,7 +271,7 @@ class StoriesRepository:
         repair rewrote). Returns how many posts were read."""
         cur.execute(
             """
-            SELECT p.id, p.url, p.content_html, s.platform, s.handle_or_url
+            SELECT p.id, p.url, p.content_html, s.platform, s.handle_or_url, p.content
             FROM posts p JOIN sources s ON s.id = p.source_id
             WHERE p.links_scanned_at IS NULL
             ORDER BY p.id
@@ -278,10 +281,12 @@ class StoriesRepository:
             (limit,),
         )
         rows = cur.fetchall()
-        for post_id, url, content_html, platform, handle in rows:
+        for post_id, url, content_html, platform, handle, content in rows:
             self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle)))
+            PostRefsRepository.write(cur, str(post_id), refs_of(content_html, content, url))   # issue 0125
         if rows:
-            cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = ANY(%s::uuid[])", ([r[0] for r in rows],))
+            cur.execute("UPDATE posts SET links_scanned_at = now(), refs_scanned_at = now() WHERE id = ANY(%s::uuid[])",
+                        ([r[0] for r in rows],))
         return len(rows)
 
     @staticmethod
@@ -297,7 +302,8 @@ class StoriesRepository:
         site of publications (SourceFacts.shared_sites, issue 0070) its own is its publication: a
         Substack writer linking another cites them. Returns the posts whose links changed. A platform is no source's own site: what is kept
         of its links there (another tweet, issue 0066) is told by `extract_links`. With `source_ids`, only
-        those sources' links (a source's signature counts its own posts only)."""
+        those sources' links (a source's signature counts its own posts only). The post_refs of those sources are
+        marked by the same rule (issue 0125, PostRefsRepository.mark_boilerplate)."""
         own = [(source_id, *((sources.host[source_id], True) if site in sources.shared_sites else (site, False)))
                for source_id, site in sources.site.items()
                if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
@@ -329,7 +335,10 @@ class StoriesRepository:
             {"ids": [o[0] for o in own], "own": [o[1] for o in own], "by_host": [o[2] for o in own],
              "min_posts": SIGNATURE_MIN_POSTS, "share": SIGNATURE_SHARE, "only": None if source_ids is None else list(source_ids)},
         )
-        return sorted({str(r[0]) for r in cur.fetchall()})
+        changed = sorted({str(r[0]) for r in cur.fetchall()})
+        # Connected's refs by the same rule (issue 0125); no story reads them, so they are not in `changed`.
+        PostRefsRepository.mark_boilerplate(cur, source_ids)
+        return changed
 
     # ---- the story job ----------------------------------------------------------------
 
