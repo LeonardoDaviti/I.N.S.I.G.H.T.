@@ -2,7 +2,8 @@ import { useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxJob, MarkxOverview } from '../../services/markx';
+import type { MarkxEntitiesGuide, MarkxJob, MarkxOverview } from '../../services/markx';
+import { request } from '../../lib/request';   // 0133
 import { Button, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { feedFullTime, postBylineTime } from '../../lib/dates';
@@ -184,6 +185,47 @@ function ReadingWindow({ days }: { days: number | null }) {
   );
 }
 
+/** 0133: which guide new entities tasks are asked under. ent-v3 (1,500 characters) is the default; ent-v4 reads 6,000
+ *  with the citation rule, and stays disabled while it is the lab's placeholder. A new guide plans new tasks for the
+ *  reading window, newest first; the old answers stay, and each post shows the newest. */
+type SetGuide = (guide: string) => Promise<{ entities_guide: MarkxEntitiesGuide }>;
+/** The switch's call, here (in this tab's chunk) and not in api.ts (the feed route's bundle): a test's fake api may
+ *  provide it. A placeholder guide is refused (409) until the lab's frozen guide replaces it. */
+function markxEntitiesGuideApi(api: object): { setMarkxEntitiesGuide: SetGuide } {
+  const got = (api as { setMarkxEntitiesGuide?: unknown }).setMarkxEntitiesGuide;
+  return { setMarkxEntitiesGuide: typeof got === 'function' ? (got as SetGuide)
+    : (guide) => request('/api/markx/settings/entities-guide', { method: 'POST', body: { guide } }) };
+}
+
+function EntitiesGuide({ state }: { state: MarkxEntitiesGuide }) {
+  const api = markxEntitiesGuideApi(useApi());
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (g: string) => api.setMarkxEntitiesGuide(g),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] }); },
+  });
+  const chosen = save.isPending ? save.variables : state.guide;
+  return (
+    <section aria-label="Entities guide">
+      <h2 className={H2}>Entities guide</h2>
+      <p className="mt-3 text-[0.8125rem] text-fg-2">
+        New entities tasks are asked under {chosen}. A change plans new tasks for the reading window; old answers stay.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.8125rem]" role="radiogroup" aria-label="Entities guide">
+        {state.arms.map((a) => (
+          <label key={a.guide} className="flex items-center gap-1.5 text-fg">
+            <input type="radio" name="markx-entities-guide" checked={chosen === a.guide} disabled={save.isPending || !a.ready}
+                   onChange={() => save.mutate(a.guide)} />
+            {a.guide} · {a.chars.toLocaleString('en-US')} characters{a.rule ? ' · citation rule' : ''}
+            {a.ready ? '' : ' · waiting for the lab’s guide'}
+          </label>
+        ))}
+        {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
+      </div>
+    </section>
+  );
+}
+
 /** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
 export function MarkXWorker() {
   const api = useApi();
@@ -197,12 +239,13 @@ export function MarkXWorker() {
   });
   return (
     <Loaded>
-      {({ worker, reading_window: readingWindow }) => {
+      {({ worker, reading_window: readingWindow, entities_guide: entitiesGuide }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
           <div className="space-y-10">
             <ReadingWindow days={readingWindow ? readingWindow.days : 30} />
+            {entitiesGuide ? <EntitiesGuide state={entitiesGuide} /> : null}
             <section aria-label="Queue">
               <h2 className={H2}>Queue</h2>
               {kinds.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">No task yet.</p> : (

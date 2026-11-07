@@ -12,7 +12,8 @@ const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 /**
  * An entity's page, `/markx/entities/<id>` (0119 A3, 0115 Decided 3): every post naming it in every role, grouped by
  * its Mark X stories (most voices first), the posts in no story last; every source with its counts; its family and
- * versions as links. Read posts stay, dimmed. A merged entity's id opens its group's page.
+ * versions as links. Read posts stay, dimmed. A merged entity's id opens its group's page. 0133: a document shows who
+ * published it and the posts citing it as evidence or recommending it; an org or person, what it published.
  */
 export default function MarkXEntityPage() {
   const { entityId = '' } = useParams();
@@ -30,6 +31,8 @@ export default function MarkXEntityPage() {
             <TextLink to="/markx?tab=entities" muted>Mark X entities</TextLink>
             {d.maker ? <> · by <TextLink to={entityHref(d.maker.id)}>{d.maker.name}</TextLink></> : null}
             {d.family ? <> · family <TextLink to={entityHref(d.family.id)}>{d.family.name}</TextLink></> : null}
+            {d.published_by?.length ? <> · published by {d.published_by.map((p, n) => (
+              <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</> : null}
             {d.aliases.length > 1 ? ` · also written ${d.aliases.filter((a) => a !== e.name).join(', ')}` : ''}
             {' '}<SurgeMark surges={d.surges} />
           </p>
@@ -43,6 +46,26 @@ export default function MarkXEntityPage() {
                     : <TextLink to={entityHref(v.id)}>{v.name}</TextLink>}</li>
                 ))}
               </ul>
+            </section>
+          ) : null}
+          {d.published?.length ? (
+            <section aria-label="Published">
+              <h2 className={H2}>Published</h2>
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem]">
+                {d.published.map((w) => <li key={w.id}><TextLink to={entityHref(w.id)}>{w.name}</TextLink></li>)}
+              </ul>
+            </section>
+          ) : null}
+          {d.citing?.length ? (
+            <section aria-label="Cited as evidence">
+              <h2 className={H2}>Cited as evidence · {plural(d.citing.length, 'post')}</h2>
+              <ul className="mt-2 space-y-1">{d.citing.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+            </section>
+          ) : null}
+          {d.recommending?.length ? (
+            <section aria-label="Recommended">
+              <h2 className={H2}>Recommended · {plural(d.recommending.length, 'post')}</h2>
+              <ul className="mt-2 space-y-1">{d.recommending.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
             </section>
           ) : null}
           {d.queue.length ? (
