@@ -1185,7 +1185,8 @@ def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dic
 
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
-        stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None) -> Dict[str, Any]:
+        stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None,
+        entity_budget: Optional[float] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
@@ -1195,7 +1196,10 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     0116: a run is incremental (it reads again only what changed since the last run: markx/incremental.py) unless
     `full`, or there is no memo of the last run in this process, the code, config or a guide changed, or no full run
     started since the night's NIGHTLY_HOUR. A nightly full run with a memo first reads the snapshot as an incremental
-    run would, writing nothing, and logs any difference from the full reading (`counts.check`)."""
+    run would, writing nothing, and logs any difference from the full reading (`counts.check`).
+
+    0128: `entity_budget` is the entities stage's own seconds (entity_stage.entities); its full pass stops after a
+    chunk past it and the next run resumes it. None: no limit."""
     import json as _json
     import time as _time
     from insight_core.markx import incremental, news as mx_news, repo, schemas
@@ -1250,7 +1254,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage
     counts["entities"], days = entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
-                                                     full=full)
+                                                     full=full, budget=entity_budget)
     mark("surges")                      # 0119 A2
     counts["surges"] = entity_stage.surges(cur, now=now, run_id=run_id, days=days, since=previous,
                                            window_days=config.days)

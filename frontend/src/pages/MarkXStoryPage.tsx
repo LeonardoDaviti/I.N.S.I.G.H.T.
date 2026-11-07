@@ -5,6 +5,8 @@ import { useParams } from 'react-router-dom';
 import { Page, PageHeader, TextLink } from '../components/ui';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { MemberLine, StorySheet } from '../components/markx/MarkXPerspectives';
+import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how the story is built
+import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 
@@ -24,7 +26,10 @@ export default function MarkXStoryPage() {
   if (query.isPending) return <Page><LoadingState label="Loading" rows={6} /></Page>;
   if (query.isError) return <Page><ErrorState error={query.error} onRetry={() => query.refetch()} /></Page>;
   const d = query.data;
-  const worth = d.members.filter((m) => m.worth);
+  const built = (d as BuiltStoryView).built;
+  const head = built?.original?.post;
+  // the original found by code comes first (0128), the rest in published order as the server sends them
+  const worth = d.members.filter((m) => m.worth).sort((a, b) => Number(b.post === head) - Number(a.post === head));
   const rest = d.members.filter((m) => !m.worth);
   const same = rest.filter((m) => m.label === 'same').length;
   const other = rest.length - same;
@@ -39,6 +44,7 @@ export default function MarkXStoryPage() {
             <EmptyState title="Not judged yet"
               description="Perspectives are asked for stories of 3 or more sources in the News window, after the worker answers." />
           ) : null}
+          <BuiltSection built={built} posts={d.posts} />
           {d.sheet ? <StorySheet sheet={d.sheet} posts={d.posts} /> : null}
           {worth.length ? (
             <section aria-label="Worth opening">

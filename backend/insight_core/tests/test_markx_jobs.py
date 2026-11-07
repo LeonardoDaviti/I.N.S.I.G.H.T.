@@ -344,6 +344,38 @@ class TheLimitAndTheStages(_Api):
         self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "headlines", "news"))
         self.assertIn("it runs again within 5 minutes", "\n".join(logs.output))
 
+    def test_the_entities_stages_own_budget_is_not_counted_in_the_limit(self):
+        """0128: a 100 s entities stage inside a run of 150 s stays under the 120 s limit; the budget reaches the run."""
+        clock = [0.0]
+        seen = {}
+
+        def run(cur, *, stage, entity_budget=None, **kw):
+            seen["budget"] = entity_budget
+            for name, secs in (("load", 10), ("questions and decisions", 10), ("write", 5), ("connections", 5),
+                               ("headlines", 5), ("news", 5), ("entities", 100), ("surges", 5), ("perspectives_plan", 5)):
+                stage(name)
+                clock[0] += secs
+            return {"run": "x", "stories": 0}
+        with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run):
+            out = jobs.Jobs(db_url(), limit=120).decide()
+        self.assertEqual(out, {"run": "x", "stories": 0})
+        self.assertEqual(seen["budget"], jobs.ENTITY_BUDGET)
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertTrue(last["ok"])
+        self.assertIn(["entities", 100.0], last["stages"])
+        # the same 100 s in any other stage stops the run
+        clock[0] = 0.0
+
+        def slow(cur, *, stage, **kw):
+            for name, secs in (("load", 10), ("questions and decisions", 100), ("write", 5), ("connections", 5),
+                               ("headlines", 5), ("news", 5), ("entities", 1)):
+                stage(name)
+                clock[0] += secs
+            return {"run": "y"}
+        with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", slow), \
+                self.assertLogs(jobs.log, "WARNING"):
+            self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
+
     def test_the_status_shows_a_running_run_with_its_start_and_stage(self):
         seen = {}
 

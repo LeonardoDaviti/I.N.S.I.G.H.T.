@@ -21,6 +21,9 @@ at 101% CPU and every /api/* request timed out.
     with its duration (candidates, load, questions and decisions, write, connections, headlines, news), the finish.
     Past LIMIT seconds it stops before the next stage and logs which; its one transaction rolls back (nothing half
     done) and the run is wanted again. A stage that never ends is killed with its process at HARD_LIMIT.
+  - **The entities stage has a budget of its own** (0128): ENTITY_BUDGET seconds that LIMIT doesn't count, so its
+    nightly full pass (63 s on the server) can't push the other stages over the limit. Past its budget the stage
+    stops after a chunk of entities, the run goes on, and the next run resumes the pass (entity_stage).
   - One run at a time: this process runs one job at a time, and `decide.run` holds a Postgres advisory lock across
     processes (a second run is skipped).
   - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
@@ -45,6 +48,8 @@ SETTLE = 60.0                    # a decision run waits this long after work arr
 GAP = 300.0                      # and at most one starts every 5 minutes while uploads stream in (0112 Decided 12)
 EVERY = 3600.0                   # and runs at least hourly
 LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries (Decided 12)
+ENTITY_BUDGET = 45.0             # 0128: the entities stage's own seconds, outside LIMIT; its full pass resumes next run
+OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
@@ -143,8 +148,9 @@ class Jobs:
     """The two jobs on one database, each run in the calling process (the runner calls them in a child process).
     Every state write is a short transaction of its own."""
 
-    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT) -> None:
-        self.db_url, self.clock, self.limit = db_url, clock, limit
+    def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT,
+                 entity_budget: Optional[float] = ENTITY_BUDGET) -> None:
+        self.db_url, self.clock, self.limit, self.entity_budget = db_url, clock, limit, entity_budget
 
     def _tx(self):
         from insight_core.db import database
@@ -207,13 +213,17 @@ class Jobs:
         self._begin("decide", "candidates")
         stages: List[List[Any]] = []          # [[stage, seconds]] in order (jsonb keeps no key order)
         current = ["candidates", t0]
+        own = [0.0]                           # 0128: the seconds of the stages with a budget of their own
 
         def stage(name: str) -> None:
             at = time.monotonic()
             stages.append([current[0], round(at - current[1], 1)])
             log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
-            if at - t0 > self.limit:
-                raise TooLong(f"over {self.limit:.0f} s ({at - t0:.0f} s): stopped before {name}")
+            if current[0] in OWN_BUDGET:
+                own[0] += at - current[1]
+            if at - t0 - own[0] > self.limit:
+                apart = f", the entities stage's {own[0]:.0f} s apart" if own[0] else ""
+                raise TooLong(f"over {self.limit:.0f} s ({at - t0 - own[0]:.0f} s{apart}): stopped before {name}")
             current[:] = [name, at]
             self._stage("decide", name)
 
@@ -225,7 +235,7 @@ class Jobs:
             return None
         try:
             with decide.snapshot(self.db_url) as cur:
-                out = decide.run(cur, stage=stage)
+                out = decide.run(cur, stage=stage, entity_budget=self.entity_budget)
         except TooLong as exc:
             # the retry waits for the 5-minute gap between two starts (GAP), not the next 30 s look (0124)
             log.warning("Mark X decision run %s; nothing written, it runs again within %.0f minutes", exc, GAP / 60)

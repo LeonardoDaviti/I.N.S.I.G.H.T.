@@ -246,6 +246,67 @@ class Linking(_Db):
         self.assertEqual(full["check"], {"same": True, "relinked": 0})
 
 
+class TheStagesOwnBudget(_Db):
+    """0128: the full pass decides its entities in chunks; past its budget it stops after a chunk, and the next run
+    resumes it where it stopped, until its last chunk (only then is the night's pass done)."""
+
+    def names(self):
+        pairs = [("Deep Kestrel", "DeepKestrel"), ("Orbit Labs", "OrbitLabs"), ("Nimbus Coder", "NimbusCoder")]
+        for n, (x, y) in enumerate(pairs):
+            a, b = self.post(n % 5, T0 + n * H), self.post((n + 1) % 5, T0 + n * H + H)
+            self.mentions(a, (x, "software", "subject"))
+            self.mentions(b, (y, "software", "subject"))
+        return len(pairs)
+
+    def run_stage(self, *, full=None, budget=None, chunk=1):
+        run = repo.start_run(self.cur, code_version="test", config={})
+        ask = decide.Ask(self.cur, T0)
+        out, _ = entity_stage.entities(self.cur, ask=ask, now=T0 + 2 * D, run_id=run, since=self.since, full=full,
+                                       budget=budget, chunk=chunk)
+        repo.finish_run(self.cur, run, counts={"entities": out, "run": {"now": (T0 + 2 * D).isoformat()}})
+        return out
+
+    def test_a_full_pass_past_its_budget_stops_after_a_chunk_and_the_next_run_resumes_it(self):
+        n = self.names()
+        self.stage()                                        # linked and merged incrementally first
+        self.cur.execute("DELETE FROM mx_entity_redirects")     # as if never merged: the full pass must find them
+        first = self.run_stage(full=True, budget=0)
+        self.assertEqual(first["kind"], "full")
+        self.assertFalse(first["full"]["done"])
+        self.assertEqual(first["full"]["chunks"], 1)        # one chunk, then the budget is spent
+        self.assertIsNotNone(first["full"]["after"])
+        seen = [first]
+        while not seen[-1]["full"]["done"]:
+            seen.append(self.run_stage(budget=0))           # not forced: the half-done pass is resumed
+            self.assertEqual(seen[-1]["kind"], "full")
+            self.assertTrue(seen[-1]["full"]["resumed"])
+            self.assertLess(len(seen), 50)
+        self.assertEqual(sum(o["merged"] for o in seen), n)    # every pair found once over the chunks
+        self.assertEqual(seen[-1]["full"]["after"], None)
+        self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))   # the night's pass is done now
+        self.assertEqual(self.run_stage(budget=0)["kind"], "incremental")
+        book = self.book()
+        self.assertEqual(len({book.root(e) for e in book.ents if e in book.mentioned}), n)
+
+    def test_a_half_done_pass_is_not_the_nights_pass(self):
+        self.names()
+        self.stage()
+        self.cur.execute("UPDATE mx_runs SET counts = counts - 'entities'")   # no night's pass yet
+        self.assertTrue(entity_stage.full_due(self.cur, T0 + 2 * D))
+        out = self.run_stage(full=True, budget=0)
+        self.assertFalse(out["full"]["done"])
+        self.assertTrue(entity_stage.full_due(self.cur, T0 + 2 * D))
+        self.assertIsNotNone(entity_stage.unfinished(self.cur))
+
+    def test_without_a_budget_the_full_pass_runs_every_chunk(self):
+        self.names()
+        self.stage()
+        out = self.run_stage(full=True, budget=None)
+        self.assertTrue(out["full"]["done"])
+        self.assertEqual(out["full"]["chunks"], out["full"]["of"])
+        self.assertEqual(out["check"], {"same": True, "relinked": 0})
+
+
 class Merging(_Db):
     def test_squashed_equal_names_merge_with_a_redirect_and_can_be_undone(self):
         a, b = self.post(0, T0), self.post(1, T0 + H)

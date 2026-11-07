@@ -12,6 +12,8 @@ import { newsPart } from '../../lib/news';
 import { errorMessage } from '../../lib/apiError';
 import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
 import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
+import { CameTrue, eventWords, LineRole } from './MarkXBuilt';   // 0128: how the story is built
+import type { BuiltLine, BuiltRow } from './MarkXBuilt';
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
 
@@ -63,6 +65,7 @@ function PostLine({ line, now, extra }: { line: MarkxLine; now: Date; extra?: Re
         {postBylineTime(line.at, now)}
       </span>
       <span className="min-w-0">
+        <LineRole role={(line as BuiltLine).built} />
         <span className="block min-w-0 text-[0.875rem] leading-5 text-fg [overflow-wrap:anywhere]">
           <TextLink to={`/posts/${encodeURIComponent(line.id)}`}>{line.title || '(no title)'}</TextLink>
           <span className="text-fg-3"> · {line.source}</span>
@@ -110,6 +113,8 @@ function LeftOutLine({ post, now, rows }: { post: MarkxLeftOut; now: Date; rows:
 function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, MarkxRow> }) {
   const ixTitle = row.ix.length === 1 ? row.ix[0].title : null;
   const added = row.posts.filter((line) => !line.ix?.same_row).length;
+  const built = (row as BuiltRow).built;
+  const kind = eventWords(built);
   return (
     <li id={`mx-${row.id}`} className="border-b border-line">
       <details className="group">
@@ -123,6 +128,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               </span>
             </span>
             <span className="mt-1 block text-[0.8125rem] tabular-nums leading-5 text-fg-2">
+              {kind ? <span data-event-type={built?.event_type}>{kind} · </span> : null}
               {plural(row.voices, 'source')}
               {row.shares ? ` (${plural(row.shares, 'share')})` : ''}
               {row.mentions ? ` · in ${plural(row.mentions, 'roundup')}` : ''}
@@ -148,9 +154,10 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               <TextLink to={`/markx/stories/${encodeURIComponent(row.story)}`}>Perspectives and the story sheet</TextLink>
             </p>
           ) : null}
-                    <ul aria-label="Posts in this Mark X row">
+          <ul aria-label="Posts in this Mark X row">
             <FoldedPosts lines={row.posts} render={(line, extra) => <PostLine key={line.id} line={line} now={now} extra={extra} />} />
           </ul>
+          <CameTrue built={built} />
           {row.removed.length ? (
             <>
               <p className="mt-3 text-[0.75rem] font-medium text-fg-3">In Mark IX’s row, not in this one</p>
