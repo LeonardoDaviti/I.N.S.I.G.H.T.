@@ -1452,3 +1452,39 @@ export interface PostConnected extends Envelope {
   outside: ConnectedRow[];
   more: { earlier: number; later: number; outside: number };
 }
+
+// 0130 D: a post's translation (Mark X, guide translate-v*): what the post page shows, the request, the owner's ✓ / ✗.
+// Kept in one block here (not inside createApi); components read it through `markxTranslationApi(useApi())`, so a
+// test's fake api can still provide these methods.
+export interface MarkxTranslationView {
+  post_id: string;
+  /** The post's language: its Mark X reading's `lang`, else the feed's language code; null when neither names one. */
+  lang: string | null;
+  /** Known and not English: the Translate button shows. */
+  foreign: boolean;
+  task: { id: string; status: 'open' | 'leased' | 'answered' | 'failed'; guide: string; error: string | null } | null;
+  translation: { title_en: string; text_en: string; guide: string; model: string; at: string } | null;
+  label: 'right' | 'wrong' | null;
+}
+export type MarkxTranslationAnswer = 'right' | 'wrong' | 'undo';
+const markxTranslationMethods = {
+  getMarkxTranslation: (postId: string) =>
+    request<MarkxTranslationView>(`/api/markx/posts/${enc(postId)}/translation`),
+  /** Adds the post's translate task (the same task when asked again); the next worker run answers it. */
+  askMarkxTranslation: (postId: string) =>
+    request<{ task_id: string; new: boolean; view: MarkxTranslationView }>(`/api/markx/posts/${enc(postId)}/translate`,
+      { method: 'POST' }),
+  labelMarkxTranslation: (postId: string, answer: MarkxTranslationAnswer) =>
+    request<MarkxTranslationView>(`/api/markx/posts/${enc(postId)}/translation/label`, { method: 'POST', body: { answer } }),
+};
+export type MarkxTranslationApi = typeof markxTranslationMethods;
+/** These methods from `api` when it answers them (a test's fake: its own, or its thrower), else the real client's. */
+export function markxTranslationApi(api: object): MarkxTranslationApi {
+  const own = api as Partial<MarkxTranslationApi>;
+  const pick = <K extends keyof MarkxTranslationApi>(k: K): MarkxTranslationApi[K] => {
+    const got = own[k];
+    return typeof got === 'function' ? (got as MarkxTranslationApi[K]) : markxTranslationMethods[k];
+  };
+  return { getMarkxTranslation: pick('getMarkxTranslation'), askMarkxTranslation: pick('askMarkxTranslation'),
+    labelMarkxTranslation: pick('labelMarkxTranslation') };
+}

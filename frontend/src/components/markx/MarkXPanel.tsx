@@ -5,6 +5,7 @@ import { useApi } from '../../services/ApiContext';
 import { TextLink } from '../ui';
 import { judged, relationWords, whyWords } from '../../lib/markx';
 import { plural } from '../../lib/format';
+import MarkXTranslation from './MarkXTranslation';   // 0130 D
 
 /**
  * The post page's "Mark X" panel (issue 0086 E), folded, loaded only when opened (its own chunk, and only while
@@ -44,6 +45,7 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 </p>
               ) : <p className="mt-1 text-fg-3">Not read yet: the worker reads the newest posts first.</p>}
             </section>
+            <MarkXTranslation postId={postId} where="panel" />{/* 0130 D */}
             <section aria-label="Entities">
               <h3 className="text-[0.75rem] font-medium text-fg-3">Entities</h3>
               {data.entities.length ? (

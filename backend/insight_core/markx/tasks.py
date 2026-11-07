@@ -585,7 +585,13 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "check": plan_checks,
             "embed": _plan_embeds,
             "embed_name": lambda cur, **kw: _plan_names(cur),
-            "read3": lambda cur, **kw: _plan_read3(cur, **kw)}
+            "read3": lambda cur, **kw: _plan_read3(cur, **kw),
+            "translate": lambda cur, **kw: _plan_translations(cur, **kw)}   # 0130 D
+
+
+def _plan_translations(cur: Cursor, **kw) -> int:   # 0130 D: Mark X News' non-English leads (translate.plan)
+    from insight_core.markx import translate   # translate imports this module
+    return translate.plan(cur, **kw)
 
 
 # ---- what a valid answer writes besides its call ----------------------------------------------------

@@ -729,3 +729,4 @@ def mx_label_perspectives():
 # ---- 0127 (v10.3): the fold's routes (markx/fold_api.py), under this router's prefix and switch ----
 from insight_core.markx import fold_api as _fold_api  # noqa: E402
 router.include_router(_fold_api.router)
+from insight_core.markx import translate as _translate; router.include_router(_translate.router)  # noqa: E402,E702  0130 D: translation
