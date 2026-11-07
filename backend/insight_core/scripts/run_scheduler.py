@@ -20,6 +20,8 @@ Two clocks:
   no answer, 3 times an hour at most.
 - Mark X's jobs (issue 0112 Decided 10), when INSIGHT_MARKX is on: markx/jobs.py's Runner, in a thread of its own,
   looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process.
+- The source stats job (issue 0132 B), when INSIGHT_MARKX is on: markx/source_stats.py's Runner, in a thread of its
+  own, looks every 5 minutes and runs the stats nightly and after a regroup, in a child process.
 
 tick() is the testable unit: it takes its collaborators as arguments.
 """
@@ -260,6 +262,14 @@ async def main() -> None:
         markx_jobs.start()
     except Exception:  # noqa: BLE001 - Mark X never stops ingestion
         logger.exception("Could not start Mark X's jobs")
+    # 0132 B: the source analysis page's stats job (markx/source_stats.py), nightly and after a regroup, in a process
+    # of its own; nothing when INSIGHT_MARKX is off.
+    from insight_core.markx.source_stats import Runner as SourceStats
+    source_stats = SourceStats(db_url)
+    try:
+        source_stats.start()
+    except Exception:  # noqa: BLE001 - the stats never stop ingestion
+        logger.exception("Could not start the source stats job")
 
     # The API watchdog (issue 0117): restarts an API that stopped answering, through its container's door.
     from insight_core.services import api_watchdog
@@ -299,6 +309,7 @@ async def main() -> None:
         await asyncio.sleep(1)
 
     markx_jobs.stop.set()
+    source_stats.stop.set()
     logger.info("Scheduler stopped")
 
 

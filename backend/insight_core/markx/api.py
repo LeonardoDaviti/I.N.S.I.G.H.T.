@@ -730,3 +730,4 @@ def mx_label_perspectives():
 from insight_core.markx import fold_api as _fold_api  # noqa: E402
 router.include_router(_fold_api.router)
 from insight_core.markx import translate as _translate; router.include_router(_translate.router)  # noqa: E402,E702  0130 D: translation
+from insight_core.markx import sources_api as _sources_api; router.include_router(_sources_api.router)  # noqa: E402,E702  0132 B: the source analysis page

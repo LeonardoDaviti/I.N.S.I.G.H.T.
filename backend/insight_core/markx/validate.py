@@ -300,9 +300,54 @@ def _collide(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+# 0132 B: a stance answer's quotes, checked against the question's numbered posts.
+_STANCE_BLOCK = re.compile(r"^\[(\d+)\] ", re.M)
+STANCE_MIN_QUOTES = 2
+
+
+def stance_posts(input: str) -> Dict[int, str]:
+    """{number: text} of a stance question's numbered posts ("[3] ...")."""
+    marks = list(_STANCE_BLOCK.finditer(input or ""))
+    return {int(m.group(1)): input[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(input)]
+            for i, m in enumerate(marks)}
+
+
+def stance_grounded(answer: Any, input: str) -> List[Dict[str, Any]]:
+    """The patterns a stance answer may show: each quote found exactly (folded) in the post it names, and 2+ such
+    quotes from 2 different posts; at most 4. Each {pattern, kind, strength, quotes [{post, quote}], dropped}."""
+    posts = {n: fold(t) for n, t in stance_posts(input).items()}
+    out: List[Dict[str, Any]] = []
+    for pat in (answer or {}).get("patterns") or []:
+        if not isinstance(pat, dict):
+            continue
+        quotes, dropped = [], 0
+        for ev in pat.get("evidence") or []:
+            q = ev.get("quote") if isinstance(ev, dict) else None
+            n = ev.get("post") if isinstance(ev, dict) else None
+            folded = fold(q).strip() if isinstance(q, str) else ""
+            if isinstance(n, int) and folded and folded in posts.get(n, ""):
+                quotes.append({"post": n, "quote": q.strip()})
+            else:
+                dropped += 1
+        if len(quotes) >= STANCE_MIN_QUOTES and len({q["post"] for q in quotes}) >= 2:
+            out.append({"pattern": pat.get("pattern"), "kind": pat.get("kind"), "strength": pat.get("strength"),
+                        "quotes": quotes, "dropped": dropped})
+    return out[:schemas.STANCE_PATTERNS]
+
+
+def _stance(a: Dict[str, Any], input: str) -> Optional[str]:
+    """Only a post number the question doesn't show is an error; an inexact quote is dropped at use."""
+    n = len(stance_posts(input))
+    for pat in a["patterns"]:
+        for ev in pat["evidence"]:
+            if not 1 <= ev["post"] <= n:
+                return f"a quote names post {ev['post']}, not one of 1-{n}"
+    return None
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
-          "translate": _translate, "collide": _collide, "read3": _read,
+          "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

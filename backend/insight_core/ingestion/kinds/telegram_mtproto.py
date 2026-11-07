@@ -75,13 +75,42 @@ def _handle(source: Source) -> str:
     return str(source.get("handle_or_url") or "").strip().lstrip("@")
 
 
-def synthesize_posts(messages: Iterable[Any], handle: str) -> List[Dict[str, Any]]:
+FORWARDS_SWITCH = "INSIGHT_TELEGRAM_FORWARDS"   # 0132 C3: off by default
+
+
+def forwards_on() -> bool:
+    """0132 C3: keep a forwarded message's "forwarded from" (INSIGHT_TELEGRAM_FORWARDS on; off by default)."""
+    import os
+    return os.getenv(FORWARDS_SWITCH, "off").strip().lower() in ("on", "1", "true", "yes")
+
+
+def forwarded_from(message: Any) -> Optional[Dict[str, Any]]:
+    """0132 C3: who a forwarded message came from, as Telegram's forward header says it (the RSS bridge drops it):
+    {channel_id, user_id, name, post, date}, the fields it has; None for a message of the channel's own. The source
+    stats count such a post as a repost (markx/source_stats.is_repost)."""
+    fwd = getattr(message, "fwd_from", None)
+    if fwd is None:
+        return None
+    peer = getattr(fwd, "from_id", None)
+    date = getattr(fwd, "date", None)
+    out = {"channel_id": getattr(peer, "channel_id", None), "user_id": getattr(peer, "user_id", None),
+           "name": getattr(fwd, "from_name", None), "post": getattr(fwd, "channel_post", None),
+           "date": date.isoformat() if isinstance(date, datetime) else None}
+    return {k: v for k, v in out.items() if v is not None} or {"name": None}
+
+
+def synthesize_posts(messages: Iterable[Any], handle: str, *, forwards: Optional[bool] = None) -> List[Dict[str, Any]]:
     """Group a chunk of messages into logical posts (moved from _synthesize_messages).
 
     Messages sharing a grouped_id are one album: the post's text and url come from the
     message that carries text (the last one seen), and every message with media adds a
     `?single` media url. Groups without text (media-only) are dropped.
+
+    `forwards` (default: INSIGHT_TELEGRAM_FORWARDS, off): a forwarded post keeps its forward header in
+    metadata.forwarded_from (0132 C3).
     """
+    if forwards is None:
+        forwards = forwards_on()
     handle = handle.lstrip("@")
     groups: Dict[Any, Dict[str, Any]] = {}
     for message in messages:
@@ -100,6 +129,11 @@ def synthesize_posts(messages: Iterable[Any], handle: str) -> List[Dict[str, Any
         if not text:
             continue
         main = group["main"]
+        metadata: Dict[str, Any] = {}
+        if forwards:
+            fwd = forwarded_from(main)
+            if fwd is not None:
+                metadata["forwarded_from"] = fwd
         posts.append({
             "platform": "telegram",
             "source": f"@{handle}",
@@ -108,7 +142,7 @@ def synthesize_posts(messages: Iterable[Any], handle: str) -> List[Dict[str, Any
             "date": main.date,
             "media_urls": [f"https://t.me/{handle}/{m.id}?single" for m in group["messages"] if m.media],
             "categories": [],
-            "metadata": {},
+            "metadata": metadata,
             # Mark IX addition: (source_id, external_id) dedupe, the same id telegram_rss uses.
             "external_id": str(main.id),
         })

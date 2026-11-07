@@ -631,3 +631,117 @@ def release(cur: Cursor, worker: str, task_ids: Optional[Sequence[Any]] = None) 
                 "WHERE status = 'leased' AND leased_by = %s AND id = ANY(%s::uuid[])",
                 (worker, [str(t) for t in task_ids]))
     return cur.rowcount
+
+
+# ---- 0132 B: a source's stance (monthly), and Part C1 (each source's last posts read, behind a switch) ----------
+
+STANCE_POSTS = 15           # 0132 B: random own posts of 250+ characters a stance question shows
+STANCE_MIN_CHARS = 250
+STANCE_CHARS = 1200          # each cut here, as the lab asked it
+STANCE_DAYS = 90             # the posts of the last 90 days (the stats window)
+LAST_POSTS = 20              # 0132 C1: a source's last 20 posts, whatever their date
+LAST_POSTS_BELOW = 10        # for the sources with fewer read posts than this
+LAST_POSTS_SWITCH = "INSIGHT_MARKX_READ_LAST20"   # off by default (the owner's open decision 3)
+
+
+def stance_input(name: str, kind: str, texts: Sequence[str]) -> str:   # 0132 B
+    """The stance question: the source's name and kind, then its posts numbered [1]..[N] (title and text, cut)."""
+    return f"Source: {name} ({kind})\n\n" + "\n\n".join(f"[{i + 1}] {t[:STANCE_CHARS]}" for i, t in enumerate(texts))
+
+
+def plan_stance(cur: Cursor, *, now: Optional[datetime] = None, limit: int = PLAN_LIMIT, **_kw: Any) -> int:   # 0132 B
+    """One `stance` task per source a month: STANCE_POSTS random own posts of STANCE_MIN_CHARS+ characters of the last
+    STANCE_DAYS (seeded by the source and the month, so a month asks one question), for every source that has that
+    many and no stance task this month (Reddit, a platform of many voices, is never asked). How many were added."""
+    import random
+    from datetime import timedelta
+    from insight_core.markx import source_stats   # source_stats reads this module's kinds
+    if now is None:
+        cur.execute("SELECT now()")
+        now = cur.fetchone()[0]
+    month = now.astimezone(timezone.utc).strftime("%Y-%m")
+    srcs = source_stats.sources(cur)
+    cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = 'stance' AND a IS NOT NULL
+                    AND created_at >= date_trunc('month', %s::timestamptz)""", (now,))
+    asked = {r[0] for r in cur.fetchall()}
+    cur.execute("""SELECT p.id::text, p.source_id::text, COALESCE(p.title, ''), COALESCE(p.content, ''), p.author,
+                          p.reposted_by, (p.metadata ? 'forwarded_from')
+                     FROM posts p
+                    WHERE p.source_id = ANY(%s::uuid[])
+                      AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
+                      AND length(COALESCE(p.title, '')) + length(COALESCE(p.content, '')) >= %s
+                    ORDER BY p.id""",
+                ([s for s in srcs if s not in asked and srcs[s].kind != "reddit"], now - timedelta(days=STANCE_DAYS),
+                 STANCE_MIN_CHARS))
+    by: Dict[str, List[str]] = {}
+    for _pid, sid, title, content, author, reposted_by, fwd in cur.fetchall():
+        if source_stats.is_repost(srcs[sid], title, author, reposted_by, fwd):
+            continue
+        text = f"{_squash(title)}\n{content.strip()}" if title.strip() else content.strip()
+        if len(text) >= STANCE_MIN_CHARS:
+            by.setdefault(sid, []).append(text)
+    added = 0
+    for sid in sorted(by):
+        texts = by[sid]
+        if len(texts) < STANCE_POSTS:
+            continue
+        random.Random(f"{sid}:{month}").shuffle(texts)
+        s = srcs[sid]
+        if add(cur, "stance", stance_input(s.name, s.kind, texts[:STANCE_POSTS]), a=sid, priority=1000)[1]:
+            added += 1
+            if added >= limit:
+                break
+    return added
+
+
+def last_posts_on() -> bool:   # 0132 C1
+    import os
+    return os.getenv(LAST_POSTS_SWITCH, "off").strip().lower() in ("on", "1", "true", "yes")
+
+
+def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:   # 0132 C1
+    """`read` or `entities` tasks for the last LAST_POSTS posts, whatever their date, of every source with fewer than
+    LAST_POSTS_BELOW posts read under the kind's guide (a reading, or an answered entities task), only while
+    INSIGHT_MARKX_READ_LAST20 is on; priority the post's age in days, as plan_posts. It fills the role card's "too few
+    to tell". How many were added."""
+    if not last_posts_on():
+        return 0
+    spec = schemas.KINDS[kind]
+    done = ("SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.guide = %(guide)s" if kind == "read" else
+            "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id "
+            "AND t.status = 'answered'")
+    cur.execute(
+        f"""WITH few AS (SELECT s.id FROM sources s
+                          WHERE s.platform <> 'saved'
+                            AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id AND EXISTS ({done})) < %(below)s),
+                 last AS (SELECT p.id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at) AS at,
+                                 row_number() OVER (PARTITION BY p.source_id ORDER BY
+                                                    COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC) AS k
+                            FROM posts p WHERE p.source_id IN (SELECT id FROM few))
+            SELECT l.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now()) - l.at)) / 86400))::int
+              FROM last l
+             WHERE l.k <= %(last)s
+               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = l.id)
+             ORDER BY 2, l.id
+             LIMIT %(limit)s""",
+        {"guide": spec.guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit})
+    rows = cur.fetchall()
+    posts = load_posts(cur, [r[0] for r in rows])
+    render = read_input if kind == "read" else entities_input
+    added = 0
+    for pid, age in rows:
+        p = posts.get(str(pid))
+        if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+            added += 1
+    return added
+
+
+def _with_last_posts(kind: str, planner: Any) -> Any:   # 0132 C1: the window's planner, then the last posts'
+    def plan(cur: Cursor, **kw: Any) -> int:
+        return planner(cur, **kw) + plan_last_posts(cur, kind)
+    return plan
+
+
+PLANNERS["stance"] = plan_stance                                           # 0132 B
+PLANNERS["read"] = _with_last_posts("read", PLANNERS["read"])              # 0132 C1
+PLANNERS["entities"] = _with_last_posts("entities", PLANNERS["entities"])  # 0132 C1
