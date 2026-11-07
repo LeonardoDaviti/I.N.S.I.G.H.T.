@@ -58,6 +58,7 @@ import { useMarkxOn } from '../hooks/useMarkxOn';
 const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
 // Connected (issue 0125): Earlier, Later and Outside INSIGHT, its own chunk, loaded after the post.
 const Connected = lazy(() => import('../components/post/Connected'));
+const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation'));   // 0130 D
 
 /**
  * The post reading view (/posts/:id): one centred column — source and date, the
@@ -1343,6 +1344,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ) : null}
         </div>
       </article>
+      {markxOn && !fixture ? <Suspense fallback={null}><MarkXTranslation postId={postId} /></Suspense> : null}{/* 0130 D */}
 
       <PostImageList images={moreImages} postId={postId} />
 
