@@ -1382,3 +1382,45 @@ export interface ExportProgress {
 
 /** The client's shape, shared by the real client and the test fake (test/fakeApi). */
 export type Api = ReturnType<typeof createApi>;
+
+// 0128 (Stealth v10.4): how a Mark X story is built. Sent as `built` on each Mark X News row and on the story view
+// (GET /api/markx/stories/{id}); each News line carries its `built` role. Nothing new is stored server-side.
+export type MarkxOriginalHow = 'links' | 'maker' | 'maker-page' | 'maker-link';
+export interface MarkxBuiltLeak {
+  post: string;
+  /** Hours before the story's release. */
+  hours: number;
+  /** Joins the release (hours before, or the only voice leaking it). */
+  joins: boolean;
+  /** Two or more voices leaked it more than a day before: by the rule its own story (not split yet). */
+  own_coverage: boolean;
+}
+export interface MarkxBuiltLink {
+  story: string;
+  headline: string;
+  /** Hours from the leak story's first post to the release. */
+  hours: number;
+  /** A one-voice leak hours before the release: shown as joining it. */
+  joins: boolean;
+  via: 'connection' | 'subject';
+}
+export interface MarkxBuilt {
+  code: string;
+  /** The story's event type from its members' read-v3 readings (null: none read yet). */
+  event_type: string | null;
+  read: { read: number; members: number };
+  /** The original found by code, shown first; null: no member is (then `source_page` may name the page). */
+  original: { post: string; how: MarkxOriginalHow } | null;
+  source_page: string | null;
+  /** The story view only: its members in published order, the original first. */
+  order?: string[];
+  release_at: string | null;
+  leaks: MarkxBuiltLeak[];
+  /** On a leak story: the releases it came true in. */
+  came_true: MarkxBuiltLink[];
+  /** On a release story: the leak stories before it. */
+  leaked_before: (MarkxBuiltLink & { posts: string[] })[];
+}
+export type MarkxBuiltLine =
+  | { role: 'original'; how: MarkxOriginalHow }
+  | { role: 'leak'; hours: number; joins: boolean; own_coverage: boolean };
