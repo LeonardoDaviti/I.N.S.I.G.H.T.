@@ -26,7 +26,8 @@ WINDOW_DAYS = 30
 LIST_LIMIT = 200
 ROLE_REPORT = ("subject", "actor")
 ACCURACY = {
-    "merges": "automatic merges 97.6% right on unseen posts (40/41, Wilson 87-100%; lab, 2026-11-06)",
+    "merges": "automatic merges 97.6% right on unseen posts (40/41, Wilson 87-100%; lab, 2026-11-06); merges by two "
+              "agreeing opinions 71/71 (lab and your answers, 0130)",
     "surges": f"surges {S.PRECISION}",
     "collisions": "collision splits 55% right (6/11, lab): each is a question, never applied by itself",
 }
@@ -259,7 +260,10 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
         ev = ev or {}
         return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
                 "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
+                "band": I.band_of(conf) if kind == "alias" else None,   # 0130 A1: the measured band it falls in
                 "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
+                             "reasons": ev.get("reasons"), "second": ev.get("second"),      # 0130 A2
+                             "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
                              "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
                                           for m in ev.get("mentions") or []],
                              "split_runs": ev.get("split_runs"), "runs": ev.get("runs")}}

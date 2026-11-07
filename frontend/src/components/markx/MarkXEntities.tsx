@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
@@ -84,10 +85,37 @@ const ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
 
 const REASONS: Record<string, string> = {
   below_bar: 'Haiku says the same, below its 0.9 bar', version: 'one name states a version the other lacks',
+  version_year: 'a year or edition on one side only', version_one_side: 'one name states a version the other lacks, its family has one',
   type: 'their types differ', chain: 'it would join two groups of names', handle_extra_word: 'a handle with an extra word',
   paren: '“X (Y)” written in one post', fields_parser: 'Haiku’s version fields agree, the parser’s don’t',
   maker_unstated: 'the maker in front is only guessed', collision: 'one name, maybe several things',
 };
+
+/** 0130 A1-A2: what the queue item carries beyond 0119's: its band, every reason, the second opinion. */
+type Opinion = { relation?: string; confidence?: number; evidence?: string } | null;
+type Item = MarkxQueueItem & {
+  band?: string | null;
+  evidence: MarkxQueueItem['evidence'] & { reasons?: string[] | null; second?: Opinion; disagree?: boolean | null; second_asked?: boolean | null };
+};
+
+/** The bands the queue is measured in (0130 A1); the owner's answers per band are the next labels. */
+export const BANDS = ['>=0.90', '0.85-0.90', '0.80-0.85', '<0.80'] as const;
+const bandLabel = (b: string) => b.replace('>=', '≥ ').replace('<', '< ').replace('-', '–');
+
+/** The second opinion (0130 A2): asked again with other posts; a disagreement is marked. */
+export function SecondOpinion({ item }: { item: Item }) {
+  const second = item.evidence.second;
+  if (second?.relation) {
+    const pct = second.confidence != null ? ` ${Math.round(second.confidence * 100)}%` : '';
+    return (
+      <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]" data-disagree={item.evidence.disagree || undefined}>
+        {item.evidence.disagree ? <Chip variant="solid">second opinion disagrees</Chip> : <Chip>second opinion</Chip>}
+        {' '}{second.relation.replace('_', ' ')}{pct}{second.evidence ? `: ${second.evidence}` : ''}
+      </p>
+    );
+  }
+  return item.evidence.second_asked ? <p className="mt-1 text-[0.75rem] text-fg-3">Second opinion asked; the next worker run answers it.</p> : null;
+}
 
 function Side({ side }: { side: MarkxQueueSide }) {
   return (
@@ -106,7 +134,8 @@ function Side({ side }: { side: MarkxQueueSide }) {
   );
 }
 
-export function QueueItem({ item }: { item: MarkxQueueItem }) {
+export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
+  const item = base as Item;
   const api = useApi();
   const queryClient = useQueryClient();
   const answer = useMutation({
@@ -126,7 +155,9 @@ export function QueueItem({ item }: { item: MarkxQueueItem }) {
           ? `Split proposed (${item.evidence.split_runs ?? 2} of ${item.evidence.runs ?? 3} runs)`
           : `Proposed: ${item.proposal.replace('_', ' ')}`}
         {' · '}{REASONS[item.reason] ?? item.reason}
+        {(item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
         {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
+        {item.band ? ` · band ${bandLabel(item.band)}` : ''}
       </p>
       {item.kind === 'collision' ? (
         <div className="mt-1">
@@ -149,6 +180,7 @@ export function QueueItem({ item }: { item: MarkxQueueItem }) {
         </div>
       )}
       {judge?.evidence ? <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Haiku: {judge.evidence}</p> : null}
+      <SecondOpinion item={item} />
       <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Your answer">
         {ANSWERS.map((a) => (
           <Button key={a.answer} size="sm" variant={chosen === a.answer ? 'primary' : 'secondary'}
@@ -197,18 +229,33 @@ function Merges({ queue }: { queue: MarkxEntityQueue }) {
 /** The review queue (0119 A3): every pair the rules leave to you, and the merges' history. */
 export function EntityQueue() {
   const api = useApi();
+  const [band, setBand] = useState<string | null>(null);
   const query = useQuery({ queryKey: [...QUEUE_KEY], queryFn: () => api.getMarkxEntityQueue(), staleTime: 30_000 });
   if (query.isPending) return <LoadingState label="Loading" rows={2} />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const q = query.data;
   const answered = Object.values(q.counts.answered).reduce((n, x) => n + (x ?? 0), 0);
+  const items = q.open as Item[];
+  const inBand = (b: string) => items.filter((i) => i.band === b).length;
+  const shown = band ? items.filter((i) => i.band === band) : items;
   return (
     <section aria-label="Review queue">
       <h2 className={H2}>To review: {q.counts.open}{answered ? ` · ${answered} answered` : ''}</h2>
-      {q.open.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">Nothing to review.</p> : (
-        <ul>{q.open.slice(0, 20).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
+      {items.some((i) => i.band) ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Band">
+          <span className="text-[0.75rem] text-fg-3">Haiku’s confidence:</span>
+          <Button size="sm" variant={band === null ? 'primary' : 'secondary'} aria-pressed={band === null} onClick={() => setBand(null)}>all</Button>
+          {BANDS.filter((b) => inBand(b)).map((b) => (
+            <Button key={b} size="sm" variant={band === b ? 'primary' : 'secondary'} aria-pressed={band === b} onClick={() => setBand(b)}>
+              {bandLabel(b)} ({inBand(b)})
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      {shown.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">Nothing to review.</p> : (
+        <ul>{shown.slice(0, 20).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
       )}
-      {q.open.length > 20 ? <p className="mt-2 text-[0.75rem] text-fg-3">{q.open.length - 20} more after these.</p> : null}
+      {shown.length > 20 ? <p className="mt-2 text-[0.75rem] text-fg-3">{shown.length - 20} more after these.</p> : null}
       <Merges queue={q} />
     </section>
   );
