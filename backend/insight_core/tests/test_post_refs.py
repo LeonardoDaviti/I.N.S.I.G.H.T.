@@ -14,13 +14,17 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+import main
 from insight_core.db.repo_post_refs import PostRefsRepository
+from insight_core.services import registry
+from insight_core.tests._asgi import call
 from insight_core.db.repo_posts import PostDraft, PostsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.tests._db import (db_url, delete_scratch_sources, insert_scratch_source, requires_db,
@@ -280,6 +284,153 @@ class BackfillTests(unittest.TestCase):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
         self.assertEqual([r[0] for r in open_refs(self.cur, post)], [f"https://elsewhere-{self.mark}.test/p/y"])
+
+
+@requires_db
+class ConnectedTests(unittest.TestCase):
+    """The Connected read (0125 "The rows"): resolved by address at read time, capped, with `more`."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.mark = uuid.uuid4().hex[:8]
+        self.now = datetime.now(timezone.utc)
+        self.mine = self._source("A writer")
+        self.other = self._source("Another writer")
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def _source(self, name):
+        source = insert_scratch_source(self.cur)
+        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text) WHERE id = %s",
+                         (name, source))
+        return source
+
+    def _post(self, source, html, *, url=None, normalized=None, title="A post", days_ago=1.0):
+        url = url or f"https://{self.mark}.test/{uuid.uuid4().hex}"
+        self.cur.execute(
+            """INSERT INTO posts (source_id, url, normalized_url, title, content, content_html, published_at)
+               VALUES (%s, %s, %s, %s, 'words', %s, %s) RETURNING id""",
+            (source, url, normalized or normalize_url(url), title, html, self.now - timedelta(days=days_ago)))
+        post = str(self.cur.fetchone()[0])
+        StoriesRepository().save_post_links(self.cur, post)   # as ingestion's writer: its links and its refs
+        return post
+
+    def _url(self, post):
+        self.cur.execute("SELECT url FROM posts WHERE id = %s", (post,))
+        return self.cur.fetchone()[0]
+
+    def connected(self, post, **kwargs):
+        return PostRefsRepository.connected(self.cur, post, **kwargs)
+
+    def test_earlier_in_the_texts_order_each_once_never_itself(self):
+        part1 = self._post(self.mine, "<p>one</p>", title="Part one: the scheduler", days_ago=9)
+        theirs = self._post(self.other, "<p>theirs</p>", title="Their take on schedulers", days_ago=5)
+        me = f"https://{self.mark}.test/part-two"
+        post = self._post(self.mine, (
+            f'<p><a href="{self._url(part1)}">Part one</a></p>'
+            f'<p>Their numbers disagree with mine, and they explain why in <a href="{self._url(theirs)}">a long thread</a>.</p>'
+            f'<p>Again: <a href="{self._url(theirs)}?utm_source=x">here</a> and <a href="{me}">this post</a></p>'), url=me)
+        rows = self.connected(post)["earlier"]
+        self.assertEqual([(r["post_id"], r["same_source"], r["source"]) for r in rows],
+                         [(part1, True, "A writer"), (theirs, False, "Another writer")])
+        self.assertEqual((rows[0]["reason"], rows[0]["reason_kind"]), ("Part one: the scheduler", "title"))
+        self.assertEqual((rows[1]["title"], rows[1]["reason_kind"]), ("Their take on schedulers", "sentence"))
+        self.assertEqual(rows[1]["reason"],
+                         "Their numbers disagree with mine, and they explain why in a long thread.")
+        self.assertTrue(rows[0]["date"] < rows[1]["date"])
+
+    def test_later_through_both_address_forms(self):
+        # A post whose normalized address is not its url normalized (a moved page's, say): linked by either, it is Later.
+        target = self._post(self.mine, "<p>t</p>", url=f"https://{self.mark}.test/a?id=1",
+                            normalized=f"https://{self.mark}.test/the-a")
+        by_address = self._post(self.other, f'<a href="https://{self.mark}.test/the-a">A</a>', days_ago=0.5)
+        by_url = self._post(self.other, f'<a href="https://{self.mark}.test/a?id=1">A</a>', days_ago=0.2)
+        self.assertEqual([r["post_id"] for r in self.connected(target)["later"]], [by_address, by_url])
+
+    def test_a_target_stored_after_its_linker_is_a_row_without_a_re_run(self):
+        page = f"https://page-{self.mark}.test/2026/11/stored-later"   # another site: post_links keeps it
+        linker = self._post(self.mine, f'<p>A long line of words about the page linked <a href="{page}">here</a></p>')
+        found = self.connected(linker)
+        self.assertEqual(([r["address"] for r in found["outside"]], found["earlier"]), ([page], []))
+        target = self._post(self.other, "<p>the page</p>", url=page, title="The page, stored later", days_ago=0)
+        found = self.connected(linker)
+        self.assertEqual(([r["post_id"] for r in found["earlier"]], found["outside"]), ([target], []))
+        self.assertEqual([r["post_id"] for r in self.connected(target)["later"]], [linker])
+
+    def test_boilerplate_is_never_a_row(self):
+        page = f"https://{self.mark}.test/2026/11/a-page"
+        target = self._post(self.other, "<p>x</p>", url=page)
+        post = self._post(self.mine, f'<a href="{page}">A Page Linked Here</a> <a href="https://out-{self.mark}.test/x">y</a>')
+        self.cur.execute("UPDATE post_refs SET boilerplate = true WHERE post_id = %s", (post,))
+        found = self.connected(post)
+        self.assertEqual((found["earlier"], found["outside"]), ([], []))
+        self.assertEqual(self.connected(target)["later"], [])
+
+    def test_outside_shows_host_link_words_and_only_a_quote_or_a_sentence(self):
+        a, b = f"https://out-{self.mark}.test/2026/a-report", f"https://www.out2-{self.mark}.test/b"
+        post = self._post(self.mine, f'<p><a href="{b}">Why Schedulers Drop Tasks</a></p><p>The report everyone cites '
+                                     f'came out this week and is worth reading: <a href="{a}">the report</a></p>')
+        rows = self.connected(post)["outside"]
+        self.assertEqual([(r["host"], r["title"], r["reason_kind"]) for r in rows],
+                         [(f"out2-{self.mark}.test", "Why Schedulers Drop Tasks", None),   # its address's host (no www)
+                          (f"out-{self.mark}.test", "the report", "sentence")])
+        self.assertIsNone(rows[0]["reason"], "link words are no reason on an Outside row")
+        self.assertEqual(rows[1]["url"], a)
+
+    def test_caps_and_more(self):
+        targets = [self._post(self.other, "<p>t</p>", days_ago=30 - n) for n in range(12)]
+        outside = "".join(f'<a href="https://out-{self.mark}.test/p/{n}">o</a>' for n in range(7))
+        post = self._post(self.mine, "".join(f'<a href="{self._url(t)}">t</a>' for t in targets) + outside, days_ago=0)
+        linkers = [self._post(self.other, f'<a href="{self._url(targets[0])}">t</a>', days_ago=20 - n) for n in range(11)]
+        found = self.connected(post)
+        self.assertEqual([r["post_id"] for r in found["earlier"]], targets[:10])
+        self.assertEqual(len(found["outside"]), 5)
+        self.assertEqual(found["more"], {"earlier": 2, "later": 0, "outside": 2})
+        later = self.connected(targets[0])
+        # Later: the newest 10 of its 12 linkers (11 and the post), oldest first.
+        self.assertEqual([r["post_id"] for r in later["later"]], linkers[2:] + [post])
+        self.assertEqual(later["more"]["later"], 2)
+        full = self.connected(post, full=True)
+        self.assertEqual((len(full["earlier"]), len(full["outside"]), full["more"]),
+                         (12, 7, {"earlier": 0, "later": 0, "outside": 0}))
+        self.assertEqual(len(self.connected(targets[0], full=True)["later"]), 12)
+
+    def test_no_such_post(self):
+        self.assertIsNone(self.connected(str(uuid.uuid4())))
+
+
+ANY, MISSING = str(uuid.uuid4()), str(uuid.uuid4())
+
+
+class ConnectedRouteTests(unittest.TestCase):
+    """GET /api/posts/item/{id}/connected: the groups, `more`, ?all for the full lists, 404 for no such post."""
+
+    def setUp(self):
+        self.asked = []
+
+        def connected(post_id, *, full=False):
+            self.asked.append((post_id, full))
+            if post_id == MISSING:
+                return None
+            return {"earlier": [], "later": [], "outside": [], "more": {"earlier": 0, "later": 0, "outside": 0}}
+        previous = registry.use(SimpleNamespace(post_detail=SimpleNamespace(connected=connected)))
+        self.addCleanup(registry.use, previous)
+
+    def test_the_groups(self):
+        status, _, body = call(main.app, "GET", f"/api/posts/item/{ANY}/connected")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body, {"success": True, "earlier": [], "later": [], "outside": [],
+                                "more": {"earlier": 0, "later": 0, "outside": 0}})
+        call(main.app, "GET", f"/api/posts/item/{ANY}/connected", query="all=true")
+        self.assertEqual(self.asked, [(ANY, False), (ANY, True)])
+
+    def test_no_such_post(self):
+        status, _, _ = call(main.app, "GET", f"/api/posts/item/{MISSING}/connected")
+        self.assertEqual(status, 404)
 
 
 if __name__ == "__main__":
