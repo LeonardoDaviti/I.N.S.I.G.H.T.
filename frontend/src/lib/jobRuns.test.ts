@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { JobRun } from '../services/api';
-import { formatJobDuration, jobDuration, jobEvents, jobGlyph, jobSummary, jobWaiting, runningFetchJob, runProgressLine } from './jobRuns.ts';
+import { apiRestartLine, formatJobDuration, jobDuration, jobEvents, jobGlyph, jobSummary, jobWaiting, runningFetchJob, runProgressLine } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -105,4 +105,28 @@ test('a waiting event reads in the reader\'s time, as of when it was written', (
                           data: { stage: 'waiting', host: 'bridge.example', waiting_until: '2026-11-05T10:05:00Z' } }] },
   } as JobRun;
   assert.match(jobEvents(job)[0].message ?? '', /^Waiting for bridge\.example's limit: continues at \d\d:\d\d$/);
+});
+
+test('apiRestartLine: an API restart record says its times in the reader zone, not the container UTC (issue 0124)', () => {
+  const restart = { id: 'r', status: 'failed', job_type: 'api_restart', trigger: 'watchdog', started_at: '2026-11-06T10:53:23Z',
+    message: 'The API was restarted after 2 min of no answer',
+    payload: { kind: 'restart', failing_seconds: 90, at: '2026-11-06T10:53:23+00:00' } } as JobRun;
+  assert.equal(apiRestartLine(restart, 'Europe/Istanbul'), 'The API was restarted at 13:53 after 2 min of no answer');
+  assert.equal(apiRestartLine(restart, 'UTC'), 'The API was restarted at 10:53 after 2 min of no answer');
+  assert.equal(jobSummary(restart, 'Asia/Dubai'), 'The API was restarted at 14:53 after 2 min of no answer');
+  // a record written before 0124: its clock was the container's (UTC) in the message; the page writes it from its start
+  const old = { ...restart, message: 'The API was restarted at 10:53 after 2 min of no answer',
+    payload: { kind: 'restart', failing_seconds: 128 } } as JobRun;
+  assert.equal(apiRestartLine(old, 'Asia/Dubai'), 'The API was restarted at 14:53 after 2 min of no answer');
+  const gaveUp = { id: 'g', status: 'failed', job_type: 'api_restart', trigger: 'watchdog', started_at: '2026-11-06T10:59:53Z',
+    message: 'The API keeps failing: 3 restarts in the last hour, so no more for 40 min; it has not answered for 6 min',
+    payload: { kind: 'gave_up', failing_seconds: 360, at: '2026-11-06T10:59:53+00:00', until: '2026-11-06T11:40:43+00:00', restarts: 3 } } as JobRun;
+  assert.equal(apiRestartLine(gaveUp, 'Asia/Dubai'),
+    'The API keeps failing: 3 restarts in the last hour, so no more until 15:40; it has not answered for 6 min');
+  const oldGaveUp = { ...gaveUp, message: 'The API keeps failing: 3 restarts in the last hour, so no more until 11:40; it has not answered for 6 min',
+    payload: { kind: 'gave_up', failing_seconds: 360 } } as JobRun;
+  assert.equal(apiRestartLine(oldGaveUp, 'Asia/Dubai'),
+    'The API keeps failing: 3 restarts in the last hour, so no more for up to an hour; it has not answered for 6 min');
+  // other jobs: none
+  assert.equal(apiRestartLine({ id: 'a', status: 'success', job_type: 'archive_source', message: 'x' } as JobRun), null);
 });

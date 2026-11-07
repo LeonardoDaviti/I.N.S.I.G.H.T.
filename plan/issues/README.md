@@ -135,6 +135,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0121](0121-mark-x-v10.0.3-from-the-v10.0.1-review.md) | Mark X v10.0.3: checks never remove a post that links the story's page, a headline per row, runs in the right order, the reading window at once | merged (v10.0.3, not pushed) |
 | [0122](0122-fetch-the-source-before-saving.md) | Saving a page of a source you follow fetches that source first (one fetch, on your click); found, it's the source's post; not in its feed, it's saved as the source's post ("<source> · saved by you"), and the feed bringing it later keeps one post | merged (v10.0.3, not pushed) |
 | [0123](0123-collect-originals.md) | Collect originals (a switch, default off): a News story's original INSIGHT lacks is collected once, one page without following its source (a followed source's is 0114's), never walled, no token stored, one budget with 0114 (+0.78% together) | built, not merged (`issue-0113-0114-0123`) |
+| [0124](0124-v10.0.4-from-the-v10.0.2-review.md) | v10.0.4, from the v10.0.2 review: the API after a long hang (open files 65,536, a 256 queue, a process left at its limit replaced), a stale restart request never honoured (a stopped API is no hang), restart times in the reader's zone, the decision run's stop line, Mark X News' edge as Mark IX's; 0124 B (linked counts) later | built, not merged (`issue-0124-v10.0.4`) |
 
 ## Analysis archive
 

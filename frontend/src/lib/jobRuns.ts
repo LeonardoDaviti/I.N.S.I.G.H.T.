@@ -87,14 +87,49 @@ export function runProgressLine(job: JobRun): string | null {
 
 /** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message, the
  *  source it names by its name, not its id ("Fetch <source name>", issue 0072). */
-export function jobSummary(job: JobRun): string | null {
+export function jobSummary(job: JobRun, timeZone?: string): string | null {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
   if (report) return summarizeRunReport(report).headline;
   const waiting = jobWaiting(job);
   if (waiting) return waitingLine(waiting);
+  const restart = apiRestartLine(job, timeZone);
+  if (restart) return restart;
   const message = job.message || null;
   return message && job.source_id && job.source_display_name
     ? message.replace(`source ${job.source_id}`, job.source_display_name).replace(job.source_id, job.source_display_name) : message;
+}
+
+const restartClocks = new Map<string, Intl.DateTimeFormat>();
+
+function clock(value: string, timeZone?: string): string | null {
+  const at = toDate(value);
+  if (!at) return null;
+  const key = timeZone ?? '';
+  let format = restartClocks.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    restartClocks.set(key, format);
+  }
+  return format.format(at);
+}
+
+/** An API restart record (issue 0117) in the reader's zone (issue 0124). The watchdog runs in a UTC container: it
+ *  stores its times as ISO in the payload (`at`, and `until` when it gave up), and this writes the line. A record
+ *  written before 0124 had the container's clock (UTC) in its message: it is written again from its start, and a
+ *  give-up of then, whose end it didn't store, says "for up to an hour". Null for any other job. */
+export function apiRestartLine(job: JobRun, timeZone?: string): string | null {
+  const payload = job.payload ?? {};
+  if (job.job_type !== 'api_restart' || (payload.kind !== 'restart' && payload.kind !== 'gave_up')) return null;
+  const failing = typeof payload.failing_seconds === 'number' ? `${Math.round(payload.failing_seconds / 60)} min` : null;
+  const at = typeof payload.at === 'string' ? payload.at : job.started_at;
+  if (payload.kind === 'restart') {
+    const when = at ? clock(at, timeZone) : null;
+    return `The API was restarted${when ? ` at ${when}` : ''}${failing ? ` after ${failing} of no answer` : ''}`;
+  }
+  const count = typeof payload.restarts === 'number' ? payload.restarts : Number(/(\d+) restarts/.exec(job.message ?? '')?.[1] ?? NaN);
+  const until = typeof payload.until === 'string' ? clock(payload.until, timeZone) : null;
+  return `The API keeps failing: ${Number.isFinite(count) ? `${count} restarts in the last hour` : 'restarted too often'}, `
+    + `so no more ${until ? `until ${until}` : 'for up to an hour'}${failing ? `; it has not answered for ${failing}` : ''}`;
 }
 
 export type JobEvent = { at?: string; level?: string; message?: string };

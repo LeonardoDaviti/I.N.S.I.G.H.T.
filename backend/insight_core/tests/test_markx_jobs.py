@@ -339,6 +339,10 @@ class TheLimitAndTheStages(_Api):
         self.assertTrue(s["last"]["error"].startswith("over 120 s"))
         self.assertIsNotNone(s["wanted_at"])                   # retried at the next look (after the 5-minute gap)
         self.assertIsNone(s["stage"])
+        # 0124 (the v10.0.2 review's W6): the stage's whole name, and the retry as it happens (the 5-minute gap)
+        self.assertEqual(s["last"]["stopped_before"], s["last"]["error"].split("stopped before ", 1)[1])
+        self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "headlines", "news"))
+        self.assertIn("it runs again within 5 minutes", "\n".join(logs.output))
 
     def test_the_status_shows_a_running_run_with_its_start_and_stage(self):
         seen = {}

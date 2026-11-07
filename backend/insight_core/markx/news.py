@@ -69,8 +69,12 @@ def _story_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Any]:
 
 
 def window_posts(cur: Any, since: datetime) -> Set[str]:
-    """The posts News reads as posted since `since` (as Mark IX's refresh does)."""
-    cur.execute("SELECT id::text FROM posts WHERE COALESCE(published_at, fetched_at) >= %s", (since,))
+    """The posts News reads for the window starting at `since`: from NEWS_EDGE before it, as Mark IX's code does
+    (issue 0111: a row is in the window by its first post, so a row an earlier post begins is no row of it).
+    Reading from `since` only, Mark X's row began inside where Mark IX's didn't, and was tagged NEW with no answer
+    (0124, the v10.0.2 review's W5)."""
+    from insight_core.utils.news_rules import NEWS_EDGE
+    cur.execute("SELECT id::text FROM posts WHERE COALESCE(published_at, fetched_at) >= %s", (since - NEWS_EDGE,))
     return {r[0] for r in cur.fetchall()}
 
 
