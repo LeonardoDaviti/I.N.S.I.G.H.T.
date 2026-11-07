@@ -287,6 +287,11 @@ export function siteRoutes(site: Site): FixtureRoute[] {
       respond: ({ params }) => ({ success: true, job: site.jobs.find((job) => job.id === params.jobId) ?? null }),
     },
     { path: '/api/posts/item/:postId', respond: (request) => postDetail(request, site) },
+    // Connected (issue 0125): no fixture post links another, so the block shows nothing.
+    {
+      path: '/api/posts/item/:postId/connected',
+      respond: () => ({ success: true, earlier: [], later: [], outside: [], more: { earlier: 0, later: 0, outside: 0 } }),
+    },
     { path: '/api/youtube/progress/:videoId', respond: () => ({ success: true, progress: null }) },
     // The archive: the ingestion tab's catalog, and each source's status (the sheet and the tab).
     { path: '/api/archive/catalog', respond: () => ({ success: true, sources: archiveCatalog(site), total: archiveCatalog(site).length }) },

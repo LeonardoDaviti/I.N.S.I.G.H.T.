@@ -56,6 +56,8 @@ import { useMarkxOn } from '../hooks/useMarkxOn';
 
 // Mark X's folded panel (issue 0086 E): its own chunk, fetched only while Mark X is on.
 const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
+// Connected (issue 0125): Earlier, Later and Outside INSIGHT, its own chunk, loaded after the post.
+const Connected = lazy(() => import('../components/post/Connected'));
 
 /**
  * The post reading view (/posts/:id): one centred column — source and date, the
@@ -1374,6 +1376,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} /></Suspense> : null}
 
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
+
+      {/* ---- Connected (issue 0125): what this post links and what links it, before its story ---- */}
+      {!fixture ? <Suspense fallback={null}><Connected postId={postId} /></Suspense> : null}
 
       {/* ---- Covered by (issue 0055): the post's story, its other posts, open ---- */}
       {post.story ? <CoveredBy story={post.story} post={post} postId={postId} /> : null}
