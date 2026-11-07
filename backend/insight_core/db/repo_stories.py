@@ -302,7 +302,8 @@ class StoriesRepository:
         site of publications (SourceFacts.shared_sites, issue 0070) its own is its publication: a
         Substack writer linking another cites them. Returns the posts whose links changed. A platform is no source's own site: what is kept
         of its links there (another tweet, issue 0066) is told by `extract_links`. With `source_ids`, only
-        those sources' links (a source's signature counts its own posts only)."""
+        those sources' links (a source's signature counts its own posts only). The post_refs of those sources are
+        marked by the same rule (issue 0125, PostRefsRepository.mark_boilerplate)."""
         own = [(source_id, *((sources.host[source_id], True) if site in sources.shared_sites else (site, False)))
                for source_id, site in sources.site.items()
                if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
@@ -334,7 +335,10 @@ class StoriesRepository:
             {"ids": [o[0] for o in own], "own": [o[1] for o in own], "by_host": [o[2] for o in own],
              "min_posts": SIGNATURE_MIN_POSTS, "share": SIGNATURE_SHARE, "only": None if source_ids is None else list(source_ids)},
         )
-        return sorted({str(r[0]) for r in cur.fetchall()})
+        changed = sorted({str(r[0]) for r in cur.fetchall()})
+        # Connected's refs by the same rule (issue 0125); no story reads them, so they are not in `changed`.
+        PostRefsRepository.mark_boilerplate(cur, source_ids)
+        return changed
 
     # ---- the story job ----------------------------------------------------------------
 

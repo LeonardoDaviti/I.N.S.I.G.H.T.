@@ -22,7 +22,7 @@ import psycopg
 
 from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.db.repo_posts import PostDraft, PostsRepository
-from insight_core.db.repo_stories import StoriesRepository
+from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.tests._db import (db_url, delete_scratch_sources, insert_scratch_source, requires_db,
                                     requires_test_db)
 from insight_core.utils.post_links import extract_links
@@ -246,6 +246,31 @@ class BackfillTests(unittest.TestCase):
         self.assertEqual(dict(self.cur.fetchall()), first, "a post read is never read again")
         for n, post in enumerate(posts):
             self.assertEqual([r[0] for r in open_refs(self.cur, post)], [f"https://elsewhere-{self.mark}.test/p/{n}"])
+
+    def test_the_signature_pass_marks_them(self):
+        # A source's signature (a link in 25% of its posts, 4 or more) is no row; its own other links are.
+        subscribe = f"https://letters-{self.mark}.test/subscribe"
+        posts = [self._post(f'<p>Text <a href="https://refs-{self.mark}.test/2026/part-{n}">earlier</a> '
+                            f'<a href="{subscribe}">Subscribe</a></p>', scanned=True) for n in range(5)]
+        for post in posts:
+            self.cur.execute("SELECT url, content_html, content FROM posts WHERE id = %s", (post,))
+            PostRefsRepository.read_post(self.cur, post, *self.cur.fetchone())
+        StoriesRepository.mark_boilerplate(self.cur, SourceFacts(self.cur), [self.source])
+        self.cur.execute("SELECT target_address, boilerplate FROM post_refs WHERE post_id = ANY(%s::uuid[])", (posts,))
+        marked = {}
+        for address, boilerplate in self.cur.fetchall():
+            marked.setdefault(boilerplate, set()).add(address)
+        self.assertEqual(marked[True], {subscribe})
+        self.assertEqual(len(marked[False]), 5)
+        # One post fewer linking it (4 of 5 is still 4): kept; with 3, unmarked.
+        for post in posts[:2]:
+            self.cur.execute("UPDATE posts SET content_html = '<p>no links</p>' WHERE id = %s RETURNING url, content_html, content",
+                             (post,))
+            PostRefsRepository.read_post(self.cur, post, *self.cur.fetchone())
+        self.assertEqual(PostRefsRepository.mark_boilerplate(self.cur, [self.source]), 3)
+        self.cur.execute("SELECT count(*) FROM post_refs WHERE post_id = ANY(%s::uuid[]) AND boilerplate AND valid_to IS NULL",
+                         (posts,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
 
     def test_the_story_jobs_link_reading_writes_them_too(self):
         # A repair that rewrote a post's text reads its links again (links_scanned_at NULL): its refs come with them.
