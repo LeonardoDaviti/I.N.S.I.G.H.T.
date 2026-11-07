@@ -4,7 +4,9 @@ Per day (UTC, the post's published time) and per entity at the version level (an
 exact version), the distinct voices (sources; a saved page is no voice) whose post credits it (the lab's `rollup`,
 surge2_count.py):
   - the post's subject credits its own entity, its maker's and its family's (the roll-up);
-  - the post's actor credits its own entity.
+  - the post's actor credits its own entity;
+  - no other role credits anything (0133: a cited `source` or a `recommended` work never makes a surge).
+0133: the mentions counted are each post's current set (mx_mentions_now: its newest valid entities answer).
 Every credit goes through the merges (an entity's root). A day of 3 or more voices is a surge (no 7-day warm-up;
 the 3x baseline waits for a month of data). Stored in mx_entity_surges with its posts and, for a surge credited
 through the roll-up, the children that credited it ("Acme, via Nimbus 5"). A recount that changes a row closes it
@@ -53,18 +55,18 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
     day_list = sorted({d for d in days if d >= since}) if days is not None else None
     if day_list is not None and not day_list:
         return {}
-    cur.execute(f"""SELECT m.post_id::text, m.role, m.entity_id::text, m.maker, m.family, m.n,
+    cur.execute(f"""SELECT m.post_id::text, m.role, m.entity_id::text, m.maker, m.family, m.n, m.guide,
                            (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date, p.source_id::text,
                            s.platform, s.handle_or_url
-                      FROM mx_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
-                     WHERE m.guide = %s AND m.role IN ('subject', 'actor') AND m.entity_id IS NOT NULL
+                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
+                     WHERE m.guide = ANY(%s) AND m.role IN ('subject', 'actor') AND m.entity_id IS NOT NULL
                        AND (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date >= %s
                        {"AND (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date = ANY(%s::date[])"
                         if day_list is not None else ""}""",
                 (guide, since, day_list) if day_list is not None else (guide, since))
     acc: Dict[Tuple[str, date], Dict[str, Any]] = {}
-    for pid, role, eid, maker, family, n, day, src, platform, handle in cur.fetchall():
-        eid = book.pins.get((pid, guide, n), eid)
+    for pid, role, eid, maker, family, n, g, day, src, platform, handle in cur.fetchall():
+        eid = book.pins.get((pid, g, n), eid)
         if book.ents.get(book.root(eid) or "") and book.ents[book.root(eid)].status == "not_entity":
             continue
         voice = None if source_kind(platform, handle) == "saved" else src
@@ -81,7 +83,7 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
 def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30) -> Dict[str, Any]:
     """Recount the days (None: every day of the window) and write what changed."""
     from insight_core.markx import schemas
-    guide = schemas.KINDS["entities"].guide
+    guide = schemas.mention_guides()   # 0133: the current set
     book = I.load_book(cur)
     since = (now.astimezone(timezone.utc) - timedelta(days=window_days)).date()
     acc = count(cur, book, days, since, guide)

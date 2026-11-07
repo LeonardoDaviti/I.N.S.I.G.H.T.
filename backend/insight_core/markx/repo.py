@@ -234,6 +234,8 @@ def readings(cur: Cursor, post_ids: Iterable[Id], guide: str) -> Dict[UUID, Dict
 
 
 MENTION_FIELDS = ("span", "name", "name_key", "type", "role", "maker", "family", "version", "variant", "size", "build")
+MENTION_FIELDS_0133 = ("rule", "by_name", "ref")   # 0133: 'citation' for the rule's; a document's publisher as
+                                                   # written; the identifier the rule read (arXiv, DOI, a document link)
 
 
 def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict]) -> int:
@@ -242,11 +244,23 @@ def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions:
     cur.execute("SELECT 1 FROM mx_mentions WHERE post_id = %s AND guide = %s LIMIT 1", (post_id, guide))
     if cur.fetchone():
         return 0
-    rows = [(post_id, guide, n, call_id, *(m.get(f) for f in MENTION_FIELDS)) for n, m in enumerate(mentions)]
+    fields = MENTION_FIELDS + MENTION_FIELDS_0133
+    rows = [(post_id, guide, n, call_id, *(m.get(f) for f in fields)) for n, m in enumerate(mentions)]
     if rows:
-        cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(MENTION_FIELDS)}) "
-                        f"VALUES ({', '.join(['%s'] * (4 + len(MENTION_FIELDS)))}) ON CONFLICT DO NOTHING", rows)
+        cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
+                        f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING", rows)
+    # 0133: the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too
+    cur.execute("""INSERT INTO mx_mention_sets (post_id, guide, call_id) VALUES (%s, %s, %s)
+                   ON CONFLICT (post_id) DO UPDATE SET guide = EXCLUDED.guide, call_id = EXCLUDED.call_id, at = now()
+                    WHERE mx_mention_sets.guide <> EXCLUDED.guide""", (post_id, guide, call_id))
     return len(rows)
+
+
+def current_guide(cur: Cursor, post_id: Id) -> Optional[str]:
+    """0133: the guide of the post's current mention set (its newest valid entities answer), or None."""
+    cur.execute("SELECT guide FROM mx_mention_sets WHERE post_id = %s", (post_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def mentions(cur: Cursor, post_id: Id, guide: Optional[str] = None) -> List[Dict[str, Any]]:

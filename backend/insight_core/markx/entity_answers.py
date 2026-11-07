@@ -95,6 +95,8 @@ def split(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
         made.append(new)
         for x in g:
             for pid, mn in posts_of.get(x, []):
+                from insight_core.markx import repo   # 0133: the pin names the post's current set's guide
+                guide = repo.current_guide(cur, pid) or schemas.KINDS["entities"].guide
                 cur.execute("""INSERT INTO mx_entity_pins (post_id, guide, n, entity_id, queue_id)
                                SELECT %s, %s, %s, %s, %s WHERE NOT EXISTS (
                                  SELECT 1 FROM mx_entity_pins WHERE post_id = %s AND guide = %s AND n = %s

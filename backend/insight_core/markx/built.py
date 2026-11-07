@@ -222,8 +222,8 @@ def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str]) -> List[st
 def _subjects(cur: Any, posts: Sequence[str], book: Any) -> Dict[str, Set[str]]:
     if not posts:
         return {}
-    cur.execute("""SELECT post_id::text, entity_id::text FROM mx_mentions
-                    WHERE guide = 'ent-v3' AND role = 'subject' AND entity_id IS NOT NULL AND post_id = ANY(%s::uuid[])""",
+    cur.execute("""SELECT post_id::text, entity_id::text FROM mx_mentions_now
+                    WHERE role = 'subject' AND entity_id IS NOT NULL AND post_id = ANY(%s::uuid[])""",
                 (list(posts),))
     out: Dict[str, Set[str]] = defaultdict(set)
     for pid, eid in cur.fetchall():

@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 
 from psycopg import Cursor
 
-from insight_core.markx import repo
+from insight_core.markx import repo, schemas
 from insight_core.utils.post_links import is_home, source_kind
 
 log = logging.getLogger(__name__)
@@ -53,8 +53,8 @@ STORY_MIN = 0.70
 STORY_DAYS = timedelta(days=14)
 BURST_GAP = timedelta(hours=72)   # Mark IX's link window (story_rules.LINK_WITHIN), measured from the first linker
 ROUNDUP_ANCHORS = 3               # story_rules.ROUNDUP_ANCHORS: a post with 3+ links is about its first only
-ENTITY_GUIDE = "ent-v3"
-SPECIFIC_TYPES = ("model", "product", "software", "paper", "dataset")
+ENTITY_GUIDE = "ent-v3"       # 0133: the default arm; the subjects are read from the current set (mx_mentions_now)
+SPECIFIC_TYPES = ("model", "product", "software", "document", "dataset")   # 0133: ent-v3's paper is read as document
 NOT_VOICE = ("saved",)
 POST_POST, STORY_STORY = "post_post", "story_story"
 
@@ -196,9 +196,9 @@ def link_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
 # ---- entity ----------------------------------------------------------------------------------------
 
 def _subjects(cur: Cursor, where: str, params: Dict[str, Any]) -> Dict[str, Set[Tuple[str, str]]]:
-    cur.execute(f"""SELECT post_id::text, name_key, lower(COALESCE(version, '')) FROM mx_mentions
-                     WHERE guide = %(guide)s AND role = 'subject' AND type = ANY(%(types)s) AND name_key <> ''
-                       AND {where}""", {"guide": ENTITY_GUIDE, "types": list(SPECIFIC_TYPES), **params})
+    cur.execute(f"""SELECT post_id::text, name_key, lower(COALESCE(version, '')) FROM mx_mentions_now
+                     WHERE guide = ANY(%(guide)s) AND role = 'subject' AND type = ANY(%(types)s) AND name_key <> ''
+                       AND {where}""", {"guide": schemas.mention_guides(), "types": schemas.stored_types(SPECIFIC_TYPES), **params})
     out: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)
     for pid, key, version in cur.fetchall():
         out[pid].add((key, version))
@@ -321,8 +321,8 @@ def find(cur: Cursor, post_ids: Iterable[str], *, model: str = MODEL,
 
 def mentioned_since(cur: Cursor, since: datetime) -> List[str]:
     """Posts whose ent-v3 mentions were written since (their call's time)."""
-    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions m JOIN mx_calls c ON c.id = m.call_id
-                    WHERE m.guide = %s AND c.created_at >= %s""", (ENTITY_GUIDE, since))
+    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+                    WHERE m.guide = ANY(%s) AND c.created_at >= %s""", (schemas.mention_guides(), since))
     return [r[0] for r in cur.fetchall()]
 
 

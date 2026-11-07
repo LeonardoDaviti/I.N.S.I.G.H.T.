@@ -177,6 +177,8 @@ def _read(a: Dict[str, Any], _input: str) -> Optional[str]:
 
 def _entities(a: Dict[str, Any], input: str) -> Optional[str]:
     for n, e in enumerate(a["entities"]):
+        if e.get("role") == "recommended" and e.get("type") != "document":   # 0133: a recommended work is a document
+            return f"entities[{n}].role recommended on a {e.get('type')}: only a document is recommended"
         if not occurs(e["span"], input):
             return f"entities[{n}].span {e['span']!r} does not occur in the post"
         version = e.get("version")
@@ -365,15 +367,16 @@ def unwrap(kind: str, answer: Any) -> Any:
     return answer
 
 
-def check(kind: str, answer: Any, input: str) -> Tuple[Any, Optional[str]]:
-    """(the answer as stored, None) when it is valid; (the answer, why not) otherwise."""
+def check(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Tuple[Any, Optional[str]]:
+    """(the answer as stored, None) when it is valid; (the answer, why not) otherwise. `guide`: the task's (0133: an
+    entities arm's own schema; None: the kind's)."""
     spec = schemas.KINDS.get(kind)
     if spec is None:
         return answer, f"unknown task kind {kind!r}"
     answer = unwrap(kind, answer)
     if not isinstance(answer, dict):
         return answer, "answer: not an object"
-    err = schema_error(spec.schema, answer)
+    err = schema_error(schemas.schema_for(kind, guide), answer)
     if err:
         return answer, err
     extra = CHECKS.get(kind)

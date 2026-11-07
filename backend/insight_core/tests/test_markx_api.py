@@ -30,7 +30,7 @@ from insight_core.markx import api, repo, schemas, tasks
 from insight_core.services import registry
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 
-MX_TABLES = ("mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
+MX_TABLES = ("mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
              "mx_settings", "mx_jobs", "mx_candidate_posts", "mx_workers",
              "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins", "mx_entity_queue", "mx_entity_redirects",

@@ -30,6 +30,26 @@ ACTIONS = ["released", "announced", "launched", "acquired", "raised", "published
 
 ENTITY_TYPES = ["org", "person", "model", "product", "software", "paper", "dataset", "event", "place", "law", "other"]
 ENTITY_ROLES = ["subject", "actor", "compared", "predecessor", "venue", "mention"]
+# 0133 (ent-v4): `paper` becomes `document` (a paper, filing, report, forecast, law text, book, video, course); two roles:
+# `source` (the post relays or cites its claim, data or forecast as evidence: an org, a person or a document) and
+# `recommended` (a work the post recommends or reads, not cited as evidence: a document only). ent-v3's sets above
+# stay its schema's.
+ENTITY_TYPES_V4 = ["org", "person", "model", "product", "software", "document", "dataset", "event", "place", "law", "other"]
+ENTITY_ROLES_V4 = ENTITY_ROLES + ["source", "recommended"]
+TYPE_READS = {"paper": "document"}       # a stored ent-v3 type as every reader reads it (no row rewritten)
+NOT_SURGING = ("source", "recommended")  # never a surge's credit (surges count subject and actor only)
+
+
+def entity_type(t: Optional[str]) -> Optional[str]:
+    """0133: a stored type as it is read (ent-v3's `paper` is a `document`)."""
+    return TYPE_READS.get(t, t) if t else t
+
+
+def stored_types(types: Any) -> list:
+    """0133: the stored values of these read types (`document` is also ent-v3's `paper`), for a filter."""
+    out = list(types)
+    out += [k for k, v in TYPE_READS.items() if v in out and k not in out]
+    return out
 ENTITY_RELATIONS = ["released", "announced", "acquired", "invested_in", "partnered_with", "sued", "hired", "joined",
                     "left", "leads", "based_on", "beats", "part_of"]
 MAX_ENTITIES = 20
@@ -95,6 +115,20 @@ ENTITIES_SCHEMA = {
         "relations": {"type": "array", "items": {
             "type": "object", "required": ["a", "rel", "b"],
             "properties": {"a": _STR, "rel": {"enum": ENTITY_RELATIONS}, "b": _STR}}},
+    },
+}
+
+# 0133: ent-v4's answer: ent-v3's shape with the new sets, and `by` (a document's publisher or author, as the post
+# names it: identity makes it a `published` edge).
+ENTITIES_V4_SCHEMA = {
+    "type": "object",
+    "required": ["entities"],
+    "properties": {
+        "entities": {"type": "array", "maxItems": MAX_ENTITIES, "items": {
+            "type": "object", "required": ["span", "name", "type", "role"],
+            "properties": {**ENTITIES_SCHEMA["properties"]["entities"]["items"]["properties"],
+                           "type": {"enum": ENTITY_TYPES_V4}, "role": {"enum": ENTITY_ROLES_V4}, "by": _STR_OR_NULL}}},
+        "relations": ENTITIES_SCHEMA["properties"]["relations"],
     },
 }
 
@@ -267,6 +301,74 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
 )}
 
 
+# ---- 0133: the entities guide switch ---------------------------------------------------------------------
+# The `entities` kind's guide is the owner's choice (mx_settings ENTITIES_GUIDE, set on the /markx Worker tab): each
+# arm is a guide, the characters of the post its input shows, whether the citation rule runs with its answers, and
+# its answer schema. No row (the default): ent-v3 at 1,500 characters, no rule, exactly as before 0133. A guide is a
+# new task (tasks are unique per kind, guide and input), so switching plans new tasks and rewrites no row.
+# KINDS["entities"].guide stays ent-v3: the readers that name it read ent-v3's rows, as before.
+
+@dataclass(frozen=True)
+class Arm:
+    guide: str
+    chars: int
+    rule: bool
+    schema: Dict[str, Any]
+
+
+ENTITIES_GUIDE = "entities_guide"
+ENTITY_ARMS: Dict[str, Arm] = {a.guide: a for a in (
+    Arm("ent-v3", 1500, False, ENTITIES_SCHEMA),          # the default (the deploy changes nothing)
+    Arm("ent-v4", 6000, True, ENTITIES_V4_SCHEMA),        # the lab's guide (a placeholder until out/entv41_v1 passes)
+    Arm("ent-v3-6k", 6000, True, ENTITIES_SCHEMA),        # the spec's fallback: ent-v3's text at 6,000, with the rule
+)}
+DEFAULT_ARM = "ent-v3"
+PLACEHOLDER = "<!-- 0133 placeholder:"                    # a guide file starting so is not the lab's: never switched to
+
+
+def entities_arm(cur) -> Arm:
+    """The entities guide the owner switched to (ent-v3 when none, or when the stored one is unknown)."""
+    from insight_core.markx import repo
+    got = repo.get_setting(cur, ENTITIES_GUIDE)
+    return ENTITY_ARMS.get(got if isinstance(got, str) else DEFAULT_ARM) or ENTITY_ARMS[DEFAULT_ARM]
+
+
+def is_placeholder(guide_id: str) -> bool:
+    return guide_body(guide_id).lstrip().startswith(PLACEHOLDER)
+
+
+def set_entities_arm(cur, guide: str, *, allow_placeholder: bool = False) -> Arm:
+    """Switch the entities guide (from the next planner run). A placeholder guide is refused (ValueError) unless
+    `allow_placeholder` (tests): its body would be stored under the lab's id, which the frozen guide then can't take."""
+    from insight_core.markx import repo
+    if guide not in ENTITY_ARMS:
+        raise ValueError(f"unknown entities guide {guide!r}: one of {', '.join(ENTITY_ARMS)}")
+    if guide != DEFAULT_ARM and is_placeholder(guide) and not allow_placeholder:
+        raise ValueError(f"{guide} is still the placeholder: the lab's frozen guide replaces it first")
+    arm = ENTITY_ARMS[guide]
+    repo.put_guide(cur, arm.guide, "entities", guide_body(arm.guide), arm.schema)
+    repo.set_setting(cur, ENTITIES_GUIDE, guide)
+    return arm
+
+
+def mention_guides() -> list:
+    """Every entities guide (identity reads the current set, mx_mentions_now, of any of them)."""
+    return list(ENTITY_ARMS)
+
+
+def guide_of(cur, kind: str) -> Optional[str]:
+    """The guide a new task of `kind` is asked under: the switch's for entities, else the kind's."""
+    return entities_arm(cur).guide if kind == "entities" else KINDS[kind].guide
+
+
+def schema_for(kind: str, guide: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """The answer schema of `kind` under `guide` (an entities arm's own; else the kind's)."""
+    if kind == "entities" and guide in ENTITY_ARMS:
+        return ENTITY_ARMS[guide].schema
+    spec = KINDS.get(kind)
+    return spec.schema if spec else None
+
+
 def guide_ids() -> Dict[str, str]:
     """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v1, takes the first)."""
     out: Dict[str, str] = {}
@@ -288,6 +390,9 @@ def load_guides(cur) -> Dict[str, str]:
     for guide_id, kind in guide_ids().items():
         schema = next(k.schema for k in KINDS.values() if k.guide == guide_id)
         out[guide_id] = repo.put_guide(cur, guide_id, kind, guide_body(guide_id), schema)
+    arm = entities_arm(cur)          # 0133: the switched-to entities guide (only that one: a placeholder never loads)
+    if arm.guide not in out:
+        out[arm.guide] = repo.put_guide(cur, arm.guide, "entities", guide_body(arm.guide), arm.schema)
     return out
 
 

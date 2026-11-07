@@ -47,6 +47,7 @@ from insight_core.utils.post_parts import Body, shown
 
 TEXT_VERSION = "markx-text-v1"
 TEXT_CHARS = 1500            # corrections 3
+ENTITY_TEXT_CHARS = 6000     # 0133: what entities_input shows under ent-v4 (and its fallback); read and embed keep 1,500
 TRANSLATE_CHARS = 2500       # the prototype's F5
 READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
 STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
@@ -199,11 +200,11 @@ def _cut(text: str, n: int) -> str:
 
 # ---- the renders (the prototype's) ----------------------------------------------------------------
 
-def post_block(p: Post, nlinks: int) -> str:
+def post_block(p: Post, nlinks: int, chars: int = TEXT_CHARS) -> str:
     """read.block: the post as every reader sees it: platform, source, title, text, links in order, the quote."""
     lines = [f"Platform: {p.kind} | Source: {p.source}", f"Title: {p.title}"]
     if p.text:
-        lines.append("Text: " + _cut(p.text, TEXT_CHARS))
+        lines.append("Text: " + _cut(p.text, chars))
     if p.links:
         lines.append("Links, in order:")
         for n, (url, anchor) in enumerate(p.links[:nlinks]):
@@ -282,8 +283,16 @@ def read_input(p: Post) -> str:
     return post_block(p, READ_LINKS)
 
 
-def entities_input(p: Post) -> str:
-    return post_block(p, ENTITY_LINKS)
+def entities_input(p: Post, chars: int = TEXT_CHARS) -> str:
+    """0133: `chars` is the switched-to entities arm's (ENTITY_TEXT_CHARS under ent-v4; 1,500 under ent-v3)."""
+    return post_block(p, ENTITY_LINKS, chars)
+
+
+def _render(cur: Cursor, kind: str) -> Any:   # 0133: the planners' input, the entities arm's cut
+    if kind == "read":
+        return read_input
+    chars = schemas.entities_arm(cur).chars
+    return lambda p: entities_input(p, chars)
 
 
 def check_input(post: Post, members: Sequence[Post]) -> str:
@@ -367,7 +376,8 @@ def add(cur: Cursor, kind: str, input: str, *, a: Any = None, b: Any = None, day
     """The task asking `input` under `kind`'s guide: (its id, whether it is new)."""
     spec = schemas.KINDS[kind]
     schemas.ensure_guides(cur)
-    return repo.add_task(cur, kind=kind, guide=spec.guide, subject_kind=spec.subject, input=input, a=a, b=b, day=day,
+    guide = schemas.guide_of(cur, kind)   # 0133: entities under the switched-to guide
+    return repo.add_task(cur, kind=kind, guide=guide, subject_kind=spec.subject, input=input, a=a, b=b, day=day,
                          priority=priority)
 
 
@@ -386,7 +396,7 @@ def read_task(cur: Cursor, post_id: Any, priority: int = 0):
 
 def entities_task(cur: Cursor, post_id: Any, priority: int = 0):
     p, = _posts(cur, [post_id])
-    return add(cur, "entities", entities_input(p), a=p.id, priority=priority)
+    return add(cur, "entities", _render(cur, "entities")(p), a=p.id, priority=priority)   # 0133
 
 
 def translate_task(cur: Cursor, post_id: Any, priority: int = 0):
@@ -451,10 +461,10 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     """`read` or `entities` tasks for the newest posts of the last `days` (by default the owner's reading window,
     `reading_window`; None: every post) that have none under the kind's guide, newest first (priority: the post's
     age in days, so a lease takes today's first): how many were added."""
-    spec = schemas.KINDS[kind]
+    guide = schemas.guide_of(cur, kind)   # 0133: a new entities guide plans new tasks (no row rewritten)
     if days is SETTING:
         days = reading_window(cur)
-    render = read_input if kind == "read" else entities_input
+    render = _render(cur, kind)
     added, after = 0, None
     # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
     # same input is one task), so it stays "unplanned"; newest first, such posts filled every LIMIT and the older
@@ -472,7 +482,7 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
                        OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
                 LIMIT %(limit)s""",
-            {"now": now, "days": days, "kind": kind, "guide": spec.guide, "limit": limit,
+            {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
         rows = cur.fetchall()
         posts = load_posts(cur, [r[0] for r in rows])
@@ -628,8 +638,13 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         from insight_core.markx import graph
         graph.after_answer(cur, task)
     elif task["kind"] == "entities":
-        mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")))
+        mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")),
+                         by_name=e.get("by") or None)                                       # 0133: ent-v4's `by`
                     for e in answer.get("entities") or []]
+        arm = schemas.ENTITY_ARMS.get(task["guide"])
+        if arm is not None and arm.rule:   # 0133: the citation rule, merged in (never under ent-v3)
+            from insight_core.markx import citations
+            mentions = citations.for_post(cur, task["a"], mentions, name_key)
         repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions)
 
 
@@ -716,7 +731,7 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
     to tell". How many were added."""
     if not last_posts_on():
         return 0
-    spec = schemas.KINDS[kind]
+    guide = schemas.guide_of(cur, kind)   # 0133
     done = ("SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.guide = %(guide)s" if kind == "read" else
             "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id "
             "AND t.status = 'answered'")
@@ -734,10 +749,10 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
                AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = l.id)
              ORDER BY 2, l.id
              LIMIT %(limit)s""",
-        {"guide": spec.guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit})
+        {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit})
     rows = cur.fetchall()
     posts = load_posts(cur, [r[0] for r in rows])
-    render = read_input if kind == "read" else entities_input
+    render = _render(cur, kind)   # 0133
     added = 0
     for pid, age in rows:
         p = posts.get(str(pid))

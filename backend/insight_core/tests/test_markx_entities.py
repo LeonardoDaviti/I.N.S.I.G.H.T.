@@ -582,7 +582,7 @@ class Anchors(_Db):
         self.mentions(b, ("Kestrel Coder", "software", "subject"))
         self.mentions(c, ("Nimbus 7", "model", "subject"))
         self.stage()
-        an = I.anchors(self.cur, self.book(), "ent-v3")
+        an = I.anchors(self.cur, self.book(), schemas.mention_guides())   # 0133: the current set, any guide
         self.assertIn(self.entity_of(b), an)
         self.assertNotIn(self.entity_of(a), an)
         self.assertIn(self.entity_of(c), an)
