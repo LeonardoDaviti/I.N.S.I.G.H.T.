@@ -58,6 +58,15 @@ test('scope paths and post links', () => {
   assert.equal(href, `/posts/${POST}?ctx=${encodeURIComponent('all:unread:')}`);
 });
 
+test('a voice is a reader scope (issue 0132 A): every channel of it, and its posts come back to it', () => {
+  const VOICE = `voice:${FOLDER.slice(7)}`;
+  assert.equal(scopeFromRoute('voice', FOLDER.slice(7)), VOICE);
+  assert.equal(scopeFromRoute('voice', 'not-a-uuid'), null);
+  assert.equal(scopePath(VOICE), `/read/voice/${FOLDER.slice(7)}`);
+  const encoded = encodeFeedContext({ scope: VOICE, filter: 'all', cursor: null });
+  assert.deepEqual(decodeFeedContext(encoded), { scope: VOICE, filter: 'all', cursor: null });
+});
+
 
 test('neighborsAt: prev/next by sort key, the current post found or not', () => {
   const entries = [

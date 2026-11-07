@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState, type MouseEvent } from 'react';
+import { Fragment, Suspense, lazy, memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
@@ -19,6 +19,9 @@ import {
   coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, type StoryLine,
 } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
+
+// "Also on <channel>" (issue 0132 A): its own chunk, loaded the first time a row has one (the reader's JS budget).
+const AlsoOn = lazy(() => import('./AlsoOn'));
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatClock(item.duration_seconds);
@@ -372,6 +375,7 @@ function FeedItem({
         {item.story && (storyLine ?? coveredBy(item.story, item.source_id)) ? (
           <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story, item.source_id) ?? ''} lead={item} now={now} />
         ) : null}
+        {item.also_on?.length ? <Suspense fallback={null}><AlsoOn lines={item.also_on} now={now} /></Suspense> : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">
