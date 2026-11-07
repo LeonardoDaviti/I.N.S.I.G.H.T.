@@ -218,11 +218,12 @@ def owner_answers(cur: Any, pairs: Iterable[Tuple[str, str]], labeller: str = "o
 
 
 def story_folds(cur: Any, story_ids: Iterable[str]) -> Dict[str, Group]:
-    """{story: its Group} over each story's current members (role member) and their read-v3 readings."""
+    """{story: its Group} over each story's current members (role member) and their read-v3 readings, in published
+    order (0128: built.PUBLISHED, a post's own date before the time it was received)."""
     story_ids = sorted({str(s) for s in story_ids if s})
     if not story_ids:
         return {}
-    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, COALESCE(p.surfaced_at, p.published_at, p.fetched_at),
+    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, COALESCE(p.published_at, p.surfaced_at, p.fetched_at),
                           r.reading->>'event_type', r.reading->>'origin'
                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                      LEFT JOIN mx_readings r ON r.post_id = sp.post_id AND r.guide = %s
@@ -285,7 +286,7 @@ def story_view(cur: Any, story: str) -> Dict[str, Any]:
         raise KeyError(story)
     cur.execute("""SELECT sp.post_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                     WHERE sp.story_id = %s AND sp.valid_to IS NULL AND sp.role = 'member'
-                    ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id""", (story,))
+                    ORDER BY COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.id""", (story,))
     posts = [r[0] for r in cur.fetchall()]
     return {"story": story, "head": g.head,
             "posts": [{"id": p, "role": g.rule.get(p), **(g.view(p) or {"state": None})} for p in posts]}

@@ -139,7 +139,8 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     copies = {c for r in rows.values() for c in r["copies"]}
     folded = {c: p for p, r in rows.items() for c in r["copies"]}
     ids = sorted(set(members) | set(rows) | copies)
-    posts = load_members(cur, ids)
+    from insight_core.markx import built
+    posts = built.in_published_order(cur, load_members(cur, ids))   # 0128: the page's order, never an input
     persp, facts = owner_labels(cur, sid)
     lines = []
     for pid in sorted((p for p in set(members) | set(rows) if p not in folded and p in posts),
@@ -156,8 +157,9 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     acc = accuracy(cur)
     cur.execute("SELECT id::text, url FROM posts WHERE id = ANY(%s::uuid[])", (ids,))
     urls = dict(cur.fetchall())
-    return {
+    return {   # 0128's `built`: event type, the original first, leaks and "came true"
         "story": {"id": sid, "headline": st.get("headline"), "first_at": st.get("first_at")},
+        "built": built.build(cur, [sid]).get(sid),
         "judged": bool(rows), "sheet": sheet,
         "header": {"text": acc["text"], "source": acc["source"], "labels": acc["labels"]},
         "members": lines,

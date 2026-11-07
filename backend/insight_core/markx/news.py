@@ -334,7 +334,8 @@ def briefing(cur: Any, *, ask: Any, now: datetime, hour: int, limit: int) -> Dic
 # ---- reading (the Mark X page) -----------------------------------------------------------------------
 
 def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """The page's post lines: title (the one every page shows), source, platform, time."""
+    """The page's post lines: title (the one every page shows), source, platform, time (published: built.PUBLISHED,
+    0128; a saved page by its own date)."""
     from insight_core.utils.post_links import source_kind
     ids = sorted(set(ids))
     if not ids:
@@ -342,7 +343,7 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     cur.execute("""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text,
                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                    s.handle_or_url),
-                          s.platform, s.handle_or_url, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.url
+                          s.platform, s.handle_or_url, COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.url
                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
     return {pid: {"id": pid, "title": title or "", "source_id": sid, "source": name or "", "kind": source_kind(platform, handle),
@@ -478,6 +479,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     items.sort(key=lambda i: (i["first_at"] < now - timedelta(hours=48), -i["score"], -i["first_at"].timestamp(), i["id"]))
     from insight_core.markx import folds   # 0127: each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
+    from insight_core.markx import built   # 0128: how each row's story is built, its original first, published order
+    built.annotate(cur, items)
     gone = []
     for nid in sorted(gone_rows, key=lambda n: -(ix_meta.get(n) or {}).get("voices", 0)):
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),

@@ -54,6 +54,7 @@ log = logging.getLogger(__name__)
 
 LINK_LIMIT = 6000           # mentions linked a run (the rest wait: the 120 s run limit)
 PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap: the 120-day full pass pools about 29,000)
+SEED_CHUNK = 1000           # 0128: the full pass's entities pooled and decided at once (its budget is checked between)
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
@@ -403,15 +404,29 @@ def _live(book: Book) -> List[Ent]:
     return [e for e in book.ents.values() if e.status != "not_entity" and e.id in book.mentioned]
 
 
-def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
-    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams."""
-    ents = _live(book)
+def _index(book: Book, name: str, build: Any) -> Any:
+    """An index over the live entities, built once a book (0128: the full pass's chunks share it). The live set is
+    fixed once a run has linked its mentions; a merge changes roots, which no index holds."""
+    cache = book.__dict__.setdefault("_indexes", {})
+    key = (name, len(book.mentioned), len(book.ents))
+    if key not in cache:
+        cache[key] = build()
+    return cache[key]
+
+
+def _string_index(book: Book):
     by_gram: Dict[str, List[str]] = defaultdict(list)
     by_sq: Dict[str, List[str]] = defaultdict(list)
-    for e in ents:
+    for e in _live(book):
         by_sq[e.sq].append(e.id)
         for g in N.grams(e.sq):
             by_gram[g].append(e.id)
+    return by_gram, by_sq
+
+
+def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
+    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams."""
+    by_gram, by_sq = _index(book, "strings", lambda: _string_index(book))
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None or not e.sq:
@@ -433,10 +448,13 @@ def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
 
 def pool_family(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
     """The same family key, another surface form."""
-    by_fam: Dict[str, List[str]] = defaultdict(list)
-    for e in _live(book):
-        for f in {e.hk[0], e.pk[0]} - {None}:
-            by_fam[f].append(e.id)
+    def build():
+        by_fam: Dict[str, List[str]] = defaultdict(list)
+        for e in _live(book):
+            for f in {e.hk[0], e.pk[0]} - {None}:
+                by_fam[f].append(e.id)
+        return by_fam
+    by_fam = _index(book, "family", build)
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None:
@@ -448,13 +466,16 @@ def pool_family(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
 
 def pool_makers(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
     """The maker-prefix forms ("Zeta Z200" / "Z200")."""
-    by_sq: Dict[str, List[str]] = defaultdict(list)
-    prefixed: Dict[str, List[str]] = defaultdict(list)
-    for e in _live(book):
-        by_sq[e.sq].append(e.id)
-        mk = N.key(e.maker or "")
-        if mk and e.key.startswith(mk + " "):
-            prefixed[N.squash(e.key[len(mk) + 1:])].append(e.id)
+    def build():
+        by_sq: Dict[str, List[str]] = defaultdict(list)
+        prefixed: Dict[str, List[str]] = defaultdict(list)
+        for e in _live(book):
+            by_sq[e.sq].append(e.id)
+            mk = N.key(e.maker or "")
+            if mk and e.key.startswith(mk + " "):
+                prefixed[N.squash(e.key[len(mk) + 1:])].append(e.id)
+        return by_sq, prefixed
+    by_sq, prefixed = _index(book, "makers", build)
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None:
@@ -930,10 +951,17 @@ def valid_answers(cur: Any, task_ids: Sequence[str]) -> Dict[str, List[Tuple[str
 
 
 def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: Optional[datetime] = None,
-          link_limit: int = LINK_LIMIT, embedded_since: Optional[datetime] = None) -> Dict[str, Any]:
+          link_limit: int = LINK_LIMIT, embedded_since: Optional[datetime] = None, after: Optional[str] = None,
+          deadline: Optional[float] = None, chunk: int = SEED_CHUNK) -> Dict[str, Any]:
     """The decision run's entities stage. `full`: the nightly pass (every mention relinked and checked, every entity
     pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts;
-    `days` the days whose mentions it linked (the surges recount them)."""
+    `days` the days whose mentions it linked (the surges recount them).
+
+    0128: the full pass pools and decides its entities in chunks of `chunk` seeds, in id order. Past `deadline` (a
+    time.monotonic() value: the stage's own budget) it stops after a chunk; `full` in the counts says where
+    ({done, after: the last seed decided, chunks, of}) and the next run resumes it with `after`: it links only the
+    mentions not linked yet (as an incremental pass does), adds the run's new entities and answered pairs to its
+    first chunk, then goes on from `after`. Collisions run with the last chunk. Without a deadline nothing stops."""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -941,12 +969,13 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     _STATED.clear()
     book = load_book(cur)
     w = Writer(cur, book, run_id)
+    resume = full and after is not None
     out: Dict[str, Any] = {"kind": "full" if full else "incremental"}
     if hasattr(ask, "caps"):   # identity's questions are cheap and each waits otherwise for the nightly pass
         ask.caps.setdefault("alias", ALIAS_CAP)
         ask.caps.setdefault("collide", COLLIDE_CAP)
-    ms = _mentions(cur, guide, unlinked=not full, limit=None if full else link_limit)
-    if not full and book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet
+    ms = _mentions(cur, guide, unlinked=not full or resume, limit=None if full and not resume else link_limit)
+    if (not full or resume) and book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet
         cur.execute("""SELECT m.post_id::text, m.n FROM mx_mentions m JOIN mx_entity_pins p ON p.post_id = m.post_id
                          AND p.guide = m.guide AND p.n = m.n AND p.undone_at IS NULL
                         WHERE m.guide = %s AND m.entity_id IS DISTINCT FROM p.entity_id""", (guide,))
@@ -957,42 +986,38 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     before = {(m.post_id, m.n): m.entity_id for m in ms}
     out["link"] = link(cur, book, w, ms)
     book.mentioned |= {m.entity_id for m in ms if m.entity_id}
-    if full:
+    if full and not resume:
         moved = sum(1 for m in ms if before.get((m.post_id, m.n)) and before[(m.post_id, m.n)] != m.entity_id)
         out["check"] = {"same": moved == 0, "relinked": moved}
     touched_days = {m.at.astimezone(timezone.utc).date() for m in ms
                     if m.at and before.get((m.post_id, m.n)) != m.entity_id}
     # the pool's seeds: the entities made or newly linked (every entity on a full pass), vectors that came
-    seeds: Set[str] = set(book.ents) if full else set(w.made) | {m.entity_id for m in ms if m.entity_id}
+    new: Set[str] = set(w.made) | {m.entity_id for m in ms if m.entity_id}
     if full:
+        rest = sorted(e for e in book.ents if after is None or e > after)
+        chunks = [rest[k:k + chunk] for k in range(0, len(rest), max(1, chunk))] or [[]]
+        if resume:
+            chunks[0] = sorted(set(chunks[0]) | (new - set(rest)))
+    else:
+        chunks = [sorted(new)]
+    if full and not resume:
         cur.execute("SELECT entity_id::text FROM mx_entity_vectors")
-    else:   # the names whose vector came since the last run
+    else:   # the names whose vector came since the last run (and, resuming, every vector of the seeds to come)
         cur.execute("""SELECT t.a::text FROM mx_tasks t WHERE t.kind = 'embed_name' AND t.status = 'answered'
                           AND t.answered_at >= %s""", (embedded_since or since or now,))
     vec_seeds = {r[0] for r in cur.fetchall()} & set(book.ents)
-    pool = Pool(book)
-    pool_strings(pool, book, seeds)
-    pool_family(pool, book, seeds)
-    pool_makers(pool, book, seeds)
+    if resume:
+        cur.execute("SELECT entity_id::text FROM mx_entity_vectors WHERE entity_id::text > %s", (after,))
+        vec_seeds |= {r[0] for r in cur.fetchall()} & set(book.ents)
     hf = handles(cur, guide)
-    hextra = pool_handles(pool, book, hf, seeds)
     an = anchors(cur, book, guide)
-    anchored = pool_anchors(pool, an, seeds)
-    for a, b, c in vector_neighbours(cur, book, sorted(vec_seeds)):
-        pool.add(a, b, "emb")
-    # the pairs whose Haiku answer came since the last run are decided again
+    # the pairs whose Haiku answer came since the last run are decided again (with the first chunk)
     got = asked(cur)
     answered_pairs: Set[Tuple[str, str]] = set()
-    if since is not None and not full:
+    if since is not None and (not full or resume):
         cur.execute("""SELECT DISTINCT t.a::text, t.b::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
                         WHERE t.kind = 'alias' AND c.created_at >= %s""", (since,))
-        for a, b in cur.fetchall():
-            pool.add(a, b, "answered")
-            answered_pairs.add(pair(a, b))
-    if answered_pairs:   # the rules' facts hold for every pair decided, not only the seeds'
-        ends = {x for p_ in answered_pairs for x in p_}
-        hextra.update(pool_handles(Pool(book), book, hf, ends))
-        anchored |= pool_anchors(Pool(book), an, ends)
+        answered_pairs = {pair(a, b) for a, b in cur.fetchall()}
     if full:
         cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions WHERE guide = %s AND entity_id IS NOT NULL", (guide,))
     else:   # the posts linked now, and those naming both ends of an answered pair
@@ -1003,58 +1028,101 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     (guide, sorted({m.post_id for m in ms if m.entity_id}), guide,
                      [p_[0] for p_ in answered_pairs], [p_[1] for p_ in answered_pairs]))
     parens = paren_pairs(cur, book, guide, [r[0] for r in cur.fetchall()])
-    for a, b in parens:
-        if full or {a, b} & seeds:
-            pool.add(a, b, "paren")
-    out["pool"] = {"pairs": len(pool.pairs), "by": dict(Counter(w_ for p in pool.pairs.values() for w_ in p.why))}
-    pairs = sorted(pool.pairs.values(), key=lambda p: (p.a, p.b))[:PAIR_LIMIT]
-    answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias])
-    decisions: List[Decision] = []
-    for p in pairs:
-        if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
-            continue
-        if book.root(p.a) == book.root(p.b):
-            continue
-        auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
-        judge = call = None
-        task = got.alias.get((p.a, p.b))
-        if task and answers.get(task[0]):
-            call, judge = answers[task[0]][0]
-        decisions.append(decide_pair(book, p, auto, queue, judge, call))
-    chain_guard(book, decisions)
-    out["decisions"] = dict(Counter(d.tier for d in decisions))
-    out["asks_by"] = dict(Counter(w_ for d in decisions if d.tier == "ask" for w_ in pool.pairs[d.pair].why))
-    out["reasons"] = dict(Counter(f"{d.tier}:{d.reason}" for d in decisions))
-    # Haiku's questions for the pairs no rule decides
-    need = [d for d in decisions if d.tier == "ask" and d.pair not in got.alias]
-    added = 0
-    if need:
-        ids = sorted({x for d in need for x in d.pair})
-        ex, written, nposts = examples(cur, guide, ids), spans(cur, guide, ids), counts_of(cur, guide, ids)
-        for d in need:
-            a, b = (book.ents[x] for x in d.pair)
-            text = alias_input(show(a, written.get(a.id, [a.name]), nposts.get(a.id, 0), ex.get(a.id, [])),
-                               show(b, written.get(b.id, [b.name]), nposts.get(b.id, 0), ex.get(b.id, [])))
-            if ask.added["alias"] >= ALIAS_CAP:
-                ask.waiting["alias"] += 1
+    by: Counter = Counter()
+    tiers: Counter = Counter()
+    asks_by: Counter = Counter()
+    reasons: Counter = Counter()
+    decided: Set[Tuple[str, str]] = set()
+    pooled: Set[Tuple[str, str]] = set()
+    added = merged = queued = n_pairs = 0
+    done_chunks, last = 0, after
+    for k, seeds_list in enumerate(chunks):
+        seeds = set(seeds_list)
+        pool = Pool(book)
+        pool_strings(pool, book, seeds)
+        pool_family(pool, book, seeds)
+        pool_makers(pool, book, seeds)
+        hextra = pool_handles(pool, book, hf, seeds)
+        anchored = pool_anchors(pool, an, seeds)
+        for a, b, c in vector_neighbours(cur, book, sorted(vec_seeds & seeds)):
+            pool.add(a, b, "emb")
+        if k == 0:
+            for a, b in sorted(answered_pairs):
+                pool.add(a, b, "answered")
+            if answered_pairs:   # the rules' facts hold for every pair decided, not only the seeds'
+                ends = {x for p_ in answered_pairs for x in p_}
+                hextra.update(pool_handles(Pool(book), book, hf, ends))
+                anchored |= pool_anchors(Pool(book), an, ends)
+        for a, b in parens:
+            if {a, b} & seeds:
+                pool.add(a, b, "paren")
+        for key_, p in pool.pairs.items():
+            if key_ not in pooled:
+                by.update(p.why)
+        pooled |= set(pool.pairs)
+        pairs = [p for p in sorted(pool.pairs.values(), key=lambda p: (p.a, p.b)) if (p.a, p.b) not in decided]
+        pairs = pairs[:max(0, PAIR_LIMIT - n_pairs)]
+        n_pairs += len(pairs)
+        decided |= {(p.a, p.b) for p in pairs}
+        answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias])
+        decisions: List[Decision] = []
+        for p in pairs:
+            if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
                 continue
-            ask.answer("alias", text, a=d.pair[0], b=d.pair[1])
-            added += 1
+            if book.root(p.a) == book.root(p.b):
+                continue
+            auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
+            judge = call = None
+            task = got.alias.get((p.a, p.b))
+            if task and answers.get(task[0]):
+                call, judge = answers[task[0]][0]
+            decisions.append(decide_pair(book, p, auto, queue, judge, call))
+        chain_guard(book, decisions)
+        tiers.update(d.tier for d in decisions)
+        asks_by.update(w_ for d in decisions if d.tier == "ask" for w_ in pool.pairs[d.pair].why)
+        reasons.update(f"{d.tier}:{d.reason}" for d in decisions)
+        # Haiku's questions for the pairs no rule decides
+        need = [d for d in decisions if d.tier == "ask" and d.pair not in got.alias]
+        if need:
+            ids = sorted({x for d in need for x in d.pair})
+            ex, written, nposts = examples(cur, guide, ids), spans(cur, guide, ids), counts_of(cur, guide, ids)
+            for d in need:
+                a, b = (book.ents[x] for x in d.pair)
+                text = alias_input(show(a, written.get(a.id, [a.name]), nposts.get(a.id, 0), ex.get(a.id, [])),
+                                   show(b, written.get(b.id, [b.name]), nposts.get(b.id, 0), ex.get(b.id, [])))
+                if ask.added["alias"] >= ALIAS_CAP:
+                    ask.waiting["alias"] += 1
+                    continue
+                ask.answer("alias", text, a=d.pair[0], b=d.pair[1])
+                added += 1
+        for d in decisions:
+            if d.tier == "auto":
+                if merge(cur, book, d.pair[0], d.pair[1], by=d.reason, automatic=True, call_id=d.call_id, run_id=run_id,
+                         evidence={"rules": list(d.rules), "confidence": d.conf, "judge": d.judge}):
+                    merged += 1
+            elif d.tier == "queue":
+                ev = {"rules": list(d.rules), "judge": d.judge}
+                if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
+                              evidence=ev, call_id=d.call_id, run_id=run_id):
+                    queued += 1
+        done_chunks = k + 1
+        if full and rest:
+            tail = [s for s in seeds_list if s in set(rest)]
+            last = max(tail) if tail else last
+        if deadline is not None and k + 1 < len(chunks) and _time.monotonic() > deadline:
+            break
+    out["pool"] = {"pairs": len(pooled), "by": dict(by)}
+    out["decisions"] = dict(tiers)
+    out["asks_by"] = dict(asks_by)
+    out["reasons"] = dict(reasons)
     out["alias_asked"] = added
-    merged = queued = 0
-    for d in decisions:
-        if d.tier == "auto":
-            if merge(cur, book, d.pair[0], d.pair[1], by=d.reason, automatic=True, call_id=d.call_id, run_id=run_id,
-                     evidence={"rules": list(d.rules), "confidence": d.conf, "judge": d.judge}):
-                merged += 1
-        elif d.tier == "queue":
-            ev = {"rules": list(d.rules), "judge": d.judge}
-            if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
-                          evidence=ev, call_id=d.call_id, run_id=run_id):
-                queued += 1
     out["merged"], out["queued"] = merged, queued
+    done = done_chunks == len(chunks)
+    if full:
+        out["full"] = {"done": done, "after": None if done else last, "chunks": done_chunks, "of": len(chunks),
+                       "resumed": resume}
     collide_seeds: Optional[Set[str]] = None
-    if not full:
+    if not (full and done):
         collide_seeds = {m.entity_id for m in ms if m.entity_id}
         if since is not None:   # the keys whose collision answers came since the last run
             cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
