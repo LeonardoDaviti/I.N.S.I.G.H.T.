@@ -276,6 +276,18 @@ class BackfillTests(unittest.TestCase):
                          (posts,))
         self.assertEqual(self.cur.fetchone()[0], 0)
 
+    def test_the_invariant_a_row_for_every_link(self):
+        from insight_core.checks import invariants
+        check, = [i for i in invariants.INVARIANTS if i.name == "refs.every_link"]
+        read = self._post(f'<a href="https://elsewhere-{self.mark}.test/p/1">p</a> <a href="/rel">r</a>', scanned=True)
+        self.cur.execute("SELECT url, content_html, content FROM posts WHERE id = %s", (read,))
+        PostRefsRepository.read_post(self.cur, read, *self.cur.fetchone())
+        unread = self._post(f'<a href="https://elsewhere-{self.mark}.test/p/2">p</a>')
+        ids, of = check.count(invariants.Run(db_url(), self.cur, datetime.now(timezone.utc)))
+        self.assertIn(unread, ids)
+        self.assertNotIn(read, ids)
+        self.assertGreaterEqual(of, 2)
+
     def test_the_story_jobs_link_reading_writes_them_too(self):
         # A repair that rewrote a post's text reads its links again (links_scanned_at NULL): its refs come with them.
         post = self._post(f'<a href="https://elsewhere-{self.mark}.test/p/x">p</a>', scanned=True)

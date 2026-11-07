@@ -261,6 +261,37 @@ def _story_empty(run: Run):
     return ids, run.cur.fetchone()[0]
 
 
+def _refs_every_link(run: Run, batch: int = 500):
+    """A post with an http(s) link of its text (the reader's body_hrefs, made absolute and normalized as internal_links
+    does) that has no open post_refs row (issue 0125). A version without post_refs is not measurable."""
+    from urllib.parse import urljoin
+    from insight_core.utils.post_links import body_hrefs
+    from insight_core.utils.url_normalization import normalize_url
+    out, of, last = [], 0, None
+    while True:
+        run.cur.execute("""SELECT p.id, p.url, p.content_html, p.content,
+                                  (SELECT array_agg(r.target_address) FROM post_refs r WHERE r.post_id = p.id AND r.valid_to IS NULL)
+                           FROM posts p WHERE %(last)s::uuid IS NULL OR p.id > %(last)s::uuid ORDER BY p.id LIMIT %(n)s""",
+                        {"last": last, "n": batch})
+        rows = run.cur.fetchall()
+        if not rows:
+            return out, of
+        for post_id, url, content_html, content, refs in rows:
+            have, missing = set(refs or ()), False
+            for href in body_hrefs(content_html, content):
+                try:
+                    absolute = urljoin(url or "", href)
+                    address = normalize_url(absolute) if absolute.lower().startswith(("http://", "https://")) else None
+                except ValueError:
+                    continue
+                if address:
+                    missing = missing or address not in have
+            of += 1
+            if missing:
+                out.append(str(post_id))
+        last = rows[-1][0]
+
+
 def _label_story_voices(run: Run):
     """A row's count ("covered by N", story.voices, 2+) isn't its names (story.sources, one a voice, issue
     0082): the label and the list beside it disagree. One voice shows no count ("also shared by")."""
@@ -523,6 +554,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("date.after_fetch", "dates", "published more than a day after it was fetched", _date_after_fetch),
     Invariant("date.date_only_first", "dates", "a date-only post marked first over a timed post of its day", _date_only_first),
     Invariant("story.empty", "stories", "a story with no posts", _story_empty),
+    Invariant("refs.every_link", "connected", "a post with a link of its text that has no post_refs row (0125)",
+              _refs_every_link),
     Invariant("label.story_voices", "labels", "a row's count isn't its names (one a voice)", _label_story_voices),
     Invariant("label.news_voices", "labels", "a News row's count isn't its names (one a voice)", _label_news_voices),
     Invariant("discover.title_address", "discover", "an article line's title is an address", _discover_title_address),
