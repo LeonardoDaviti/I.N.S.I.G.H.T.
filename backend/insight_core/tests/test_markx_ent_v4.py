@@ -180,6 +180,20 @@ class StoredAndRead(_Db):
         self.cur.execute("SELECT name, rule, by_name, ref FROM mx_mentions_now WHERE post_id = %s", (p,))
         self.assertEqual(self.cur.fetchall(), [("Acme", None, None, None)])
 
+    def test_the_owners_split_carries_to_the_new_guides_mention_of_the_same_name(self):
+        p = self.post(0, T0, text="Acme Labs shipped it.")
+        self.mentions(p, ("Acme Labs", "org", "subject"))
+        self.stage()
+        self.cur.execute("INSERT INTO mx_entities (type, name, key) VALUES ('org', 'Acme Labs (the other)', 'acme labs the other') "
+                         "RETURNING id::text")
+        other = self.cur.fetchone()[0]
+        self.cur.execute("INSERT INTO mx_entity_pins (post_id, guide, n, entity_id) VALUES (%s, 'ent-v3', 0, %s)", (p, other))
+        self.switch("ent-v4")
+        self.answer(p, [ent("Acme Labs", "Acme Labs", "org", "subject")])
+        self.stage()
+        self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s AND guide = 'ent-v4'", (p,))
+        self.assertEqual(self.cur.fetchone()[0], other)
+
     def test_ent_v3_runs_no_rule(self):
         p = self.post(0, T0, text="As Varga et al. (2021) showed, Acme grew. https://arxiv.org/abs/2401.01234")
         self.answer(p, [ent("Acme", "Acme", "org", "subject")])

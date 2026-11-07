@@ -175,7 +175,7 @@ class Book:
         self.alias: Dict[str, str] = {}
         self.redirect: Dict[str, Tuple[str, bool]] = {}      # from -> (to, automatic)
         self.pins: Dict[Tuple[str, str, int], str] = {}
-        self.pin_keys: Dict[Tuple[str, str], str] = {}       # 0133: (post, name key): an earlier guide's mention's pin
+        self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # 0133: (post, name key): (guide, its pin)
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
         self.mentioned: Set[str] = set()                     # the entities a mention names (a maker or family made
                                                              # for the hierarchy alone is never a candidate)
@@ -212,9 +212,9 @@ def load_book(cur: Any) -> Book:
     b.redirect = {f: (t, auto) for f, t, auto in cur.fetchall()}
     cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
     b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
-    cur.execute("""SELECT p.post_id::text, m.name, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
+    cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
                      ON m.post_id = p.post_id AND m.guide = p.guide AND m.n = p.n WHERE p.undone_at IS NULL""")
-    b.pin_keys = {(pid, N.key(name)): e for pid, name, e in cur.fetchall()}   # 0133: a split carries to a new guide
+    b.pin_keys = {(pid, N.key(name)): (g, e) for pid, name, g, e in cur.fetchall()}   # 0133: a split carries to a new guide
     cur.execute("""SELECT least(a, b)::text, greatest(a, b)::text FROM mx_entity_queue
                     WHERE kind = 'alias' AND answer IN ('other_version', 'different', 'not_entity')
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
@@ -359,7 +359,10 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
 
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:
     """The entity a mention links to now: its pin, else its key's alias (before redirects; reads go through them)."""
-    pin = book.pins.get((m.post_id, m.guide, m.n)) or book.pin_keys.get((m.post_id, m.key))   # 0133
+    pin = book.pins.get((m.post_id, m.guide, m.n))
+    if not pin:   # 0133: the owner's pin of the same name in the post's earlier guide's set (never within one guide)
+        g, e = book.pin_keys.get((m.post_id, m.key), (None, None))
+        pin = e if g is not None and g != m.guide else None
     if pin:
         return pin
     return book.by_key(m.key)
