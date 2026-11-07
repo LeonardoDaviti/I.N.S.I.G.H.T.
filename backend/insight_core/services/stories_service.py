@@ -3,7 +3,8 @@
 The story job runs after each fetch run that saved posts (IngestionRunner's `stories` port) and
 once when the backend starts (main.py, in the background), each time in a process of its own
 (in_own_process, issue 0072). It is incremental (issue 0072 A):
-1. it reads the links of every post never read (the posts stored before 0050), 500 a transaction;
+1. it reads the links of every post never read (the posts stored before 0050), 500 a transaction, and the refs
+   (issue 0125, post_refs: Connected's) of every post stored before them, the same way;
 2. it takes the posts saved, changed or removed since the last run (`story_queue`, written by
    migration 0059's triggers), a batch a transaction, and regroups only what they touch: the
    posts holding a key they hold (story_rules.keys: a text, a title, an address, a page they link)
@@ -35,6 +36,7 @@ from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import catch_up_safely
+from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services import page_titles
 from insight_core.services.news_service import NewsService
@@ -88,12 +90,23 @@ class StoriesService:
         (issue 0069: the search refill may hold some for a moment). Returns how many."""
         return db.fill_until_done(self.db_url, self.repo.fill_missing_links, self.repo.missing_links)
 
+    def fill_refs(self) -> int:
+        """Issue 0125's backfill: the refs of every post never read (stored before post_refs), a batch a transaction,
+        resumable (posts.refs_scanned_at); then the signature pass over every source's refs once, when any was read.
+        Returns how many posts."""
+        filled = db.fill_until_done(self.db_url, PostRefsRepository.fill_missing, PostRefsRepository.missing)
+        if filled:
+            with db.transaction(self.db_url) as cur:
+                PostRefsRepository.mark_boilerplate(cur)
+        return filled
+
     def recompute(self, *, full: bool = False) -> Dict[str, Any]:
         """The story job: what the queue holds, a batch a transaction (a rule change's rebuild first),
         or with `full` every post at once (the oracle). Returns a summary."""
         started = time.monotonic()
         catch_up_safely(self.db_url)   # every post read once first (issue 0076): what the job and the pages read
         filled = self.fill_links()
+        self.fill_refs()
         if full:
             with db.transaction(self.db_url) as cur:
                 if not self._lock(cur):

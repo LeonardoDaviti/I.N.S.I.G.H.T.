@@ -11,12 +11,22 @@ from __future__ import annotations
 
 import sys
 import unittest
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+import psycopg
+
+from insight_core.db.repo_post_refs import PostRefsRepository
+from insight_core.db.repo_posts import PostDraft, PostsRepository
+from insight_core.db.repo_stories import StoriesRepository
+from insight_core.tests._db import (db_url, delete_scratch_sources, insert_scratch_source, requires_db,
+                                    requires_test_db)
 from insight_core.utils.post_links import extract_links
+from insight_core.utils.url_normalization import normalize_url
 from insight_core.utils.post_refs import PostRef, refs_of, shown_reason
 
 
@@ -144,6 +154,107 @@ class ReasonRuleTests(unittest.TestCase):
         self.assertEqual(shown_reason("A sentence", "sentence", outside=True), ("A sentence", "sentence"))
         self.assertEqual(shown_reason("Why Schedulers Drop Tasks", "link_words", outside=True), (None, None))
         self.assertEqual(shown_reason(None, None, "A title", outside=True), (None, None))
+
+
+def open_refs(cur, post_id):
+    cur.execute("SELECT target_address, position, reason_kind FROM post_refs WHERE post_id = %s AND valid_to IS NULL "
+                "ORDER BY position", (post_id,))
+    return cur.fetchall()
+
+
+@requires_test_db
+class WrittenOnSaveTests(unittest.TestCase):
+    """Ingestion's post writer writes a post's refs where it writes its links: on insert and on update (it commits)."""
+
+    def setUp(self):
+        self.url = db_url()
+        self.tag = uuid.uuid4().hex[:10]
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.source = insert_scratch_source(cur)
+        self.addCleanup(self._clean)
+
+    def _clean(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+
+    def _save(self, html):
+        draft = PostDraft(self.source, {"url": f"https://test.invalid/mark-ix-post/{self.tag}", "title": "A post",
+                                        "content": "Some words", "content_html": html, "date": None})
+        with psycopg.connect(self.url) as conn:
+            result = PostsRepository(self.url).save_batch(conn, [draft])
+        return (result.inserted_ids or result.updated_ids)[0]
+
+    def test_insert_then_update(self):
+        one, two, three = (f"https://refs-{self.tag}.test/2026/{n}" for n in ("one", "two", "three"))
+        post = self._save(f'<p><a href="{one}">one</a> <a href="{two}">two</a></p>')
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            self.assertEqual([r[:2] for r in open_refs(cur, post)], [(one, 0), (two, 1)])
+            cur.execute("SELECT refs_scanned_at IS NOT NULL FROM posts WHERE id = %s", (post,))
+            self.assertTrue(cur.fetchone()[0])
+        self.assertEqual(self._save(f'<p><a href="{three}">three</a> <a href="{two}">two</a></p>'), post)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            self.assertEqual([r[:2] for r in open_refs(cur, post)], [(three, 0), (two, 1)])
+            cur.execute("SELECT target_address FROM post_refs WHERE post_id = %s AND valid_to IS NOT NULL", (post,))
+            self.assertEqual(cur.fetchall(), [(one,)], "a link gone from the text is closed, never deleted")
+        self._save(f'<p><a href="{one}">one</a></p>')
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            self.assertEqual([r[:2] for r in open_refs(cur, post)], [(one, 0)], "a link back is open again")
+            cur.execute("SELECT count(*) FROM post_refs WHERE post_id = %s", (post,))
+            self.assertEqual(cur.fetchone()[0], 3)
+
+
+@requires_db
+class BackfillTests(unittest.TestCase):
+    """The posts stored before post_refs are read by the backfill, a batch at a time; a stopped run goes on."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.mark = uuid.uuid4().hex[:8]
+        self.source = insert_scratch_source(self.cur)
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def _post(self, html, *, scanned=False):
+        url = f"https://refs-{self.mark}.test/{uuid.uuid4().hex}"
+        self.cur.execute(
+            """INSERT INTO posts (source_id, url, normalized_url, title, content, content_html, links_scanned_at,
+                                  refs_scanned_at)
+               VALUES (%s, %s, %s, 'A post', 'words', %s, now(), CASE WHEN %s THEN now() END) RETURNING id""",
+            (self.source, url, normalize_url(url), html, scanned))
+        return str(self.cur.fetchone()[0])
+
+    def test_resumable_a_batch_at_a_time(self):
+        posts = [self._post(f'<a href="https://elsewhere-{self.mark}.test/p/{n}">p</a>') for n in range(3)]
+        # Only these posts wait (the rest of the database is as it is, rolled back with the test).
+        self.cur.execute("UPDATE posts SET refs_scanned_at = now() WHERE refs_scanned_at IS NULL AND NOT (id = ANY(%s::uuid[]))",
+                         (posts,))
+        self.assertTrue(PostRefsRepository.missing(self.cur))
+        self.assertEqual(PostRefsRepository.fill_missing(self.cur, limit=2), 2)   # the run stops here
+        self.cur.execute("SELECT id::text, refs_scanned_at FROM posts WHERE id = ANY(%s::uuid[]) AND refs_scanned_at IS NOT NULL",
+                         (posts,))
+        first = dict(self.cur.fetchall())
+        self.assertEqual(len(first), 2)
+        self.assertEqual(PostRefsRepository.fill_missing(self.cur, limit=2), 1, "the next run reads only what is left")
+        self.assertEqual(PostRefsRepository.fill_missing(self.cur, limit=2), 0)
+        self.assertFalse(PostRefsRepository.missing(self.cur))
+        self.cur.execute("SELECT id::text, refs_scanned_at FROM posts WHERE id = ANY(%s::uuid[])", (list(first),))
+        self.assertEqual(dict(self.cur.fetchall()), first, "a post read is never read again")
+        for n, post in enumerate(posts):
+            self.assertEqual([r[0] for r in open_refs(self.cur, post)], [f"https://elsewhere-{self.mark}.test/p/{n}"])
+
+    def test_the_story_jobs_link_reading_writes_them_too(self):
+        # A repair that rewrote a post's text reads its links again (links_scanned_at NULL): its refs come with them.
+        post = self._post(f'<a href="https://elsewhere-{self.mark}.test/p/x">p</a>', scanned=True)
+        self.cur.execute("UPDATE posts SET links_scanned_at = NULL, content_html = %s WHERE id = %s",
+                         (f'<a href="https://elsewhere-{self.mark}.test/p/y">p</a>', post))
+        while StoriesRepository().fill_missing_links(self.cur):
+            pass
+        self.assertEqual([r[0] for r in open_refs(self.cur, post)], [f"https://elsewhere-{self.mark}.test/p/y"])
 
 
 if __name__ == "__main__":
