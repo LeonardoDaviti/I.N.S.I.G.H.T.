@@ -100,3 +100,31 @@ describe('Mark X entities (issue 0119 A3)', () => {
     expect(screen.getByText(/also written Nimbus V5/)).toBeInTheDocument();
   });
 });
+
+describe('the entity queue, measured (issue 0130 A)', () => {
+  const band = (id: string, b: string, conf: number, extra: Record<string, unknown> = {}) => ({
+    ...ITEM, id, confidence: conf, band: b, evidence: { ...ITEM.evidence, ...extra } }) as MarkxQueueItem;
+  const Q2: MarkxEntityQueue = {
+    ...QUEUE, counts: { ...QUEUE.counts, open: 3 },
+    open: [
+      band('q1', '>=0.90', 0.92, { reasons: ['maker_unstated'] }),
+      band('q2', '0.85-0.90', 0.87, { second: { relation: 'part', confidence: 0.8, evidence: 'A plugin of it.' }, disagree: true }),
+      band('q3', '<0.80', 0.7, { second_asked: true }),
+    ],
+  };
+
+  it('shows each item’s band, filters by band, and marks a second opinion that disagrees', async () => {
+    renderWithProviders(<MarkXEntities />, { api: makeFakeApi({
+      getMarkxEntities: vi.fn().mockResolvedValue(LIST), getMarkxEntityQueue: vi.fn().mockResolvedValue(Q2) }) });
+    const bands = await screen.findByRole('group', { name: 'Band' });
+    expect(within(bands).getAllByRole('button').map((b) => b.textContent)).toEqual(['all', '≥ 0.90 (1)', '0.85–0.90 (1)', '< 0.80 (1)']);
+    expect(screen.getAllByRole('group', { name: 'Your answer' })).toHaveLength(3);
+    expect(screen.getByText(/band 0.85–0.90/)).toBeInTheDocument();
+    expect(screen.getByText('second opinion disagrees').closest('p')).toHaveAttribute('data-disagree', 'true');
+    expect(screen.getByText(/A plugin of it/)).toBeInTheDocument();
+    expect(screen.getByText(/Second opinion asked/)).toBeInTheDocument();
+    await userEvent.click(within(bands).getByRole('button', { name: '0.85–0.90 (1)' }));
+    expect(screen.getAllByRole('group', { name: 'Your answer' })).toHaveLength(1);
+    expect(screen.queryByText(/Second opinion asked/)).not.toBeInTheDocument();
+  });
+});

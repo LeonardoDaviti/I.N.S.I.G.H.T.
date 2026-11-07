@@ -5,6 +5,7 @@ it), so only on a database whose name ends in _test."""
 from __future__ import annotations
 
 import json
+import re
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -114,13 +115,71 @@ class Rules(unittest.TestCase):
 
     def test_a_one_sided_version_and_a_type_mismatch_are_queued(self):
         a, b = self.ent("a", "Acme Box Pro", "product"), self.ent("b", "Acme Box 2 Pro", "product")
-        self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version")
+        self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version_one_side")   # 0130 A3: one Box version
         a, b = self.ent("a", "Acme", "org"), self.ent("b", "Acme", "product")
         self.assertEqual(self.decide(a, b, None, auto={"squash"}).reason, "type")
 
     def test_an_edition_year_on_one_side(self):
         a, b = self.ent("a", "Acme Awards 2031", "event"), self.ent("b", "Acme Awards", "event")
-        self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version")
+        d = self.decide(a, b, self.same(0.95))
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "version_year", True))   # 0130 A3: the second opinion
+
+    def test_the_version_guard_holds_a_family_with_several_versions(self):
+        """0130 A3: one name states a version the other lacks and the family has several: held, never asked again."""
+        a, b = self.ent("a", "Nimbus Phone Max", "product"), self.ent("b", "Nimbus Phone 17 Max", "product")
+        c = self.ent("c", "Nimbus Phone 16 Max", "product")
+        book = self.book(a, b, c)
+        d = I.decide_pair(book, I.Pooled(*I.pair("a", "b")), set(), set(), self.same(0.95), "call")
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "version", False))
+        self.assertEqual(I.soft_reason(self.book(a, b), a, b), "version_one_side")
+
+    def test_the_bands_are_config(self):
+        """0130 A1: the measured table decides, not a constant in code."""
+        self.assertEqual(I.band_of(0.93), ">=0.90")
+        self.assertEqual(I.band_of(0.87), "0.85-0.90")
+        self.assertEqual(I.band_of(0.5), "<0.80")
+        self.assertTrue(I.first_auto(0.9))
+        self.assertFalse(I.first_auto(0.89))
+        for r in I.bands()["rows"]:     # a row is on only when it meets the bar (a second row: no wrong merge)
+            if r["auto"] and r["opinion"] == "first":
+                self.assertGreaterEqual(r["right"] / r["n"], I.bands()["bar"]["point"])
+            if r["auto"] and r["opinion"] == "second":
+                self.assertEqual(r["right"], r["n"])
+        with_rows = dict(I.bands(), rows=[dict(r, auto=True) if r["guard"] == "none" and r["band"] == "0.85-0.90" else r
+                                          for r in I.bands()["rows"]])
+        saved = dict(I._BANDS)
+        try:
+            I._BANDS.clear()
+            I._BANDS.update(with_rows)
+            a, b = self.ent("a", "Kestrel Coder", "software"), self.ent("b", "KestrelCoder CLI", "software")
+            self.assertEqual(self.decide(a, b, self.same(0.86)).tier, "auto")   # a band turned on in config merges
+        finally:
+            I._BANDS.clear()
+            I._BANDS.update(saved)
+
+    def test_the_second_opinion(self):
+        """0130 A2: a held-back `same` >= 0.85 is asked again; two agreeing `same` >= 0.85 merge, a disagreement stays
+        queued with the second answer; below 0.85, a type mismatch or a held version is never asked again."""
+        a, b = self.ent("a", "Kestrel Coder", "software"), self.ent("b", "KestrelCoder CLI", "software")
+        book = self.book(a, b)
+        p = I.Pooled(*I.pair("a", "b"))
+        d = I.decide_pair(book, p, set(), set(), self.same(0.87), "c1")
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "below_bar", True))
+        d = I.decide_pair(book, p, set(), set(), self.same(0.87), "c1", self.same(0.9), "c2")
+        self.assertEqual((d.tier, d.reason, d.second_call), ("auto", "second", "c2"))
+        self.assertAlmostEqual(d.conf, 0.87)
+        d = I.decide_pair(book, p, set(), set(), self.same(0.87), "c1", {"relation": "part", "confidence": 0.8}, "c2")
+        self.assertEqual((d.tier, d.reason, d.second["relation"]), ("queue", "below_bar", "part"))
+        d = I.decide_pair(book, p, set(), set(), self.same(0.87), "c1", self.same(0.8), "c2")
+        self.assertEqual(d.tier, "queue")                                   # the second below its bar
+        self.assertFalse(I.decide_pair(book, p, set(), set(), self.same(0.84), "c1").ask2)
+        d = I.decide_pair(book, p, set(), {"maker_unstated"}, self.same(0.95), "c1", self.same(0.95), "c2")
+        self.assertEqual((d.tier, d.reason), ("auto", "second"))
+        d = I.decide_pair(book, p, set(), {"paren"}, self.same(0.95), "c1")
+        self.assertFalse(d.ask2)                                            # "X (Y)" is not measured: off
+        a2 = self.ent("a", "Kestrel", "org")
+        d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1", self.same(0.95), "c2")
+        self.assertEqual((d.tier, d.reason), ("queue", "type"))
 
     def test_queue_only_rules_never_merge_by_themselves(self):
         a, b = self.ent("a", "Boxwrap", "software"), self.ent("b", "Kernel", "software")
@@ -379,6 +438,57 @@ class Merging(_Db):
         self.stage(since=self.since)
         q = entity_views.queue(self.cur)["open"]
         self.assertEqual([i["reason"] for i in q], ["handle_extra_word"])
+
+    def _queued_below_the_bar(self):
+        ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(8)]
+        for p in ps[:4]:
+            self.mentions(p, ("Kestrel Coder", "software", "subject"))
+        for p in ps[4:]:
+            self.mentions(p, ("Kestrel Coder CLI", "software", "subject"))
+        self.stage()
+        self.answer_task("alias", {"evidence": "one tool", "relation": "same", "confidence": 0.87})
+        out = self.stage(since=self.since)
+        self.assertEqual((out["queued"], out["second"]["asked"]), (1, 1))
+        item, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((item["reason"], item["band"], item["evidence"]["second_asked"]), ("below_bar", "0.85-0.90", True))
+        self.cur.execute("SELECT t.input, f.input FROM mx_tasks t, mx_tasks f WHERE t.kind = 'alias2' AND f.kind = 'alias'")
+        second, first = self.cur.fetchone()
+        titles = lambda t: set(re.findall(r'"(Kestrel news \d)"', t))
+        self.assertEqual(len(titles(first)), 4)
+        self.assertEqual(len(titles(second)), 4)
+        self.assertFalse(titles(first) & titles(second))   # two other example posts per name
+        return ps, item
+
+    def test_two_agreeing_opinions_merge_and_close_the_queued_item(self):
+        """0130 A2: the second opinion agrees: a redirect by 'second' (undoable), the queue item closed, kept."""
+        ps, item = self._queued_below_the_bar()
+        self.since = datetime.now(timezone.utc) - H
+        self.answer_task("alias2", {"evidence": "same tool", "relation": "same", "confidence": 0.9})
+        out = self.stage(since=self.since)
+        self.assertEqual(out["second"]["cleared"], 1)
+        book = self.book()
+        self.assertEqual(book.root(self.entity_of(ps[0])), book.root(self.entity_of(ps[4])))
+        q = entity_views.queue(self.cur)
+        self.assertEqual(q["open"], [])
+        self.assertEqual([(m["by"], m["automatic"]) for m in q["merges"]], [("second", True)])
+        self.cur.execute("SELECT closed_at IS NOT NULL, evidence->>'closed_by' FROM mx_entity_queue WHERE id = %s",
+                         (item["id"],))
+        self.assertEqual(self.cur.fetchone(), (True, "second"))
+        entity_answers.undo(self.cur, q["merges"][0]["id"])
+        book = self.book()
+        self.assertNotEqual(book.root(self.entity_of(ps[0])), book.root(self.entity_of(ps[4])))
+        self.stage(full=True)                               # an owner's undo is never merged again
+        self.assertNotEqual(self.book().root(self.entity_of(ps[0])), self.book().root(self.entity_of(ps[4])))
+
+    def test_a_disagreeing_second_opinion_stays_queued_and_marked(self):
+        ps, item = self._queued_below_the_bar()
+        self.since = datetime.now(timezone.utc) - H
+        self.answer_task("alias2", {"evidence": "a plugin of it", "relation": "part", "confidence": 0.8})
+        out = self.stage(since=self.since)
+        self.assertEqual((out["merged"], out["second"]["marked"]), (0, 1))
+        got, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((got["id"], got["evidence"]["disagree"], got["evidence"]["second"]["relation"]),
+                         (item["id"], True, "part"))
 
     def test_x_y_in_one_post_is_asked(self):
         a = self.post(0, T0, title="Boxwrap (Kernel) gets a sandbox")

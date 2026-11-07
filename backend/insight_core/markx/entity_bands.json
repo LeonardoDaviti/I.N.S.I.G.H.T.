@@ -1,0 +1,35 @@
+{
+  "about": "0130 A1-A2: when a Haiku `same` on two entity names merges by itself. Measured 2026-11-07 on 277 labelled pairs Haiku called the same: the lab's experiment 2 (dev 70, test 92, test2 65; two blind Opus labellers and a referee) and the owner's queue answers (50). A row is automatic only when its right/n meets the bar; every other `same` stays in the review queue. Change a row here, not the code (markx/identity.py reads it).",
+  "bar": {"point": 0.97, "wilson_low": 0.90, "automatic_merges_at_least": 0.97},
+  "bands": [[">=0.90", 0.90], ["0.85-0.90", 0.85], ["0.80-0.85", 0.80], ["<0.80", 0.0]],
+  "second": {
+    "on": true,
+    "kind": "alias2",
+    "min_conf": 0.85,
+    "about": "A held-back `same` whose every reason has a second row that is on, at >= min_conf, is asked again: the same guide (alias-v1) with two other example posts per name. Both `same` at >= min_conf: automatic, with its redirect (undoable). A disagreement stays in the queue, marked. Measured: these merges 71/71 right (held out of the guide's writing: 64/64), against alias-v2 (a stricter second-opinion guide) 78/79."
+  },
+  "rows": [
+    {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},
+    {"opinion": "first", "guard": "none", "band": "0.85-0.90", "auto": false, "right": 46, "n": 49},
+    {"opinion": "first", "guard": "none", "band": "0.80-0.85", "auto": false, "right": 24, "n": 25},
+    {"opinion": "first", "guard": "none", "band": "<0.80", "auto": false, "right": 25, "n": 31},
+    {"opinion": "first", "guard": "maker_unstated", "band": ">=0.90", "auto": false, "right": 18, "n": 18},
+    {"opinion": "first", "guard": "fields_parser", "band": ">=0.90", "auto": false, "right": 7, "n": 7},
+    {"opinion": "first", "guard": "handle_extra_word", "band": ">=0.90", "auto": false, "right": 4, "n": 4},
+    {"opinion": "first", "guard": "chain", "band": "any", "auto": false, "right": 11, "n": 11},
+    {"opinion": "first", "guard": "type", "band": ">=0.90", "auto": false, "right": 4, "n": 6},
+    {"opinion": "first", "guard": "version", "band": "any", "auto": false, "right": 16, "n": 23},
+    {"opinion": "first", "guard": "version_year", "band": "any", "auto": false, "right": 9, "n": 10},
+    {"opinion": "first", "guard": "version_one_side", "band": "any", "auto": false, "right": 3, "n": 6},
+    {"opinion": "second", "guard": "below_bar", "band": "any", "auto": true, "right": 35, "n": 35},
+    {"opinion": "second", "guard": "maker_unstated", "band": "any", "auto": true, "right": 18, "n": 18},
+    {"opinion": "second", "guard": "fields_parser", "band": "any", "auto": true, "right": 7, "n": 7},
+    {"opinion": "second", "guard": "handle_extra_word", "band": "any", "auto": true, "right": 4, "n": 4},
+    {"opinion": "second", "guard": "version_year", "band": "any", "auto": true, "right": 4, "n": 4},
+    {"opinion": "second", "guard": "version_one_side", "band": "any", "auto": true, "right": 3, "n": 3},
+    {"opinion": "second", "guard": "type", "band": "any", "auto": false, "right": 2, "n": 2, "why": "the first opinion is 4/6 on a type mismatch; too few to trust"},
+    {"opinion": "second", "guard": "version", "band": "any", "auto": false, "right": 5, "n": 5, "why": "held by 0130 A3: the family has several versions"},
+    {"opinion": "second", "guard": "paren", "band": "any", "auto": false, "right": 0, "n": 0, "why": "not measured"},
+    {"opinion": "second", "guard": "chain", "band": "any", "auto": false, "right": 11, "n": 11, "why": "the chain guard runs after; a chain is never automatic"}
+  ]
+}
