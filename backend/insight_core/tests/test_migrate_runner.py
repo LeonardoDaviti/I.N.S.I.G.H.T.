@@ -541,7 +541,8 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                         "WHERE contype = 'f' AND confrelid = 'posts'::regclass")
             # posts.album_of (0051, issue 0069) is derived too: the saver folds a channel's albums again.
             derived = {"post_links", "stories", "story_posts", "story_mentions", "news_stories", "news_posts", "classics",
-                       "posts", "post_edges", "story_keys", "post_parts"}
+                       "posts", "post_edges", "story_keys", "post_parts",
+                       "post_refs"}   # 0076 (issue 0125): read again from the post's text by the saver and the backfill
             self.assertEqual({r[0] for r in cur.fetchall()} - derived,
                              {"post_reader_state", "post_notes", "post_interactions", "post_watch"})
             for table in ("post_reader_state", "post_interactions", "post_notes", "post_watch"):
