@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, ArchiveWaiting, JobRun, LinkedPagesSummary } from '../../services/api';
+import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveResultExtra, ArchiveStatusResponse, ArchiveSupport, ArchiveWaiting, JobRun, LinkedPagesSummary } from '../../services/api';
+import { archiveQueueApi } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
 import { useOperationJob } from '../../hooks/useOperations';
 import { SOURCES_HEALTH_KEY } from '../../hooks/useSourcesHealth';
@@ -19,6 +20,9 @@ const archiveStatusKey = (sourceId: string) => ['archive-status', sourceId] as c
 const linkedKey = (sourceId: string) => ['archive-linked', sourceId] as const;
 /** Every source's archive state (the ingestion tab's catalog); refreshed when an archive here moves. */
 export const ARCHIVE_CATALOG_KEY = ['archive-catalog'] as const;
+
+/** The default horizon of an archive back to a date (issue 0130 C, the owner's default). */
+export const DEFAULT_UNTIL = '2025-11-01';
 
 /** The pacing fields, in the order shown: the saved key, the request's name, the smallest value. */
 const PACING: Array<{ key: keyof ArchiveRateLimit; field: keyof ArchivePacing; label: string; min: number }> = [
@@ -77,6 +81,8 @@ interface RunView {
   waiting?: ArchiveWaiting | null;
   /** It read the source's linked, not stored pages (issue 0084 B), not its archive. */
   linked?: boolean;
+  /** Issue 0130: why it added no more, the date it stopped at, a changed layout. */
+  extra?: ArchiveResultExtra;
 }
 
 const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
@@ -99,6 +105,7 @@ function fromJob(job: JobRun): RunView {
     pausedReason: pausedReason(payload),
     waiting: jobWaiting(job),
     linked: Boolean(payload.linked),
+    extra: payload as ArchiveResultExtra,
   };
 }
 
@@ -116,7 +123,19 @@ function fromSummary(job: ArchiveJobSummary): RunView {
     pausedReason: pausedReason(job.result),
     waiting: jobWaiting({ status: job.status, payload: job.result }),
     linked: Boolean(job.result?.linked),
+    extra: (job.result ?? {}) as ArchiveResultExtra,
   };
+}
+
+/** The archive's own words when they say more than its counts (issue 0130): why it added no more, or the date it
+ *  stopped at. Null otherwise. */
+function resultNote(run: RunView): string | null {
+  const unreached = run.extra?.unreached;
+  const explains = Boolean(run.extra?.until_reached)
+    || Boolean(unreached && ((unreached.stored ?? 0) + (unreached.no_post ?? 0) + (unreached.unreadable ?? 0) > 0
+      || (run.inserted === 0 && run.status === 'success')));
+  if (!explains || !run.message) return null;
+  return run.message.replace(/^Archive completed with \d+ posts; /, '');
 }
 
 function resultLine(run: RunView): string {
@@ -261,14 +280,18 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
 
   const latest = status.latest_job ?? null;
   // A waiting archive is followed too: the scheduler continues it on the same job (issue 0107).
-  const [jobId, setJobId] = useState<string | null>(latest?.status === 'running' || latest?.status === 'waiting' ? latest.id : null);
+  const [jobId, setJobId] = useState<string | null>(
+    latest?.status === 'running' || latest?.status === 'waiting' || latest?.status === 'queued' ? latest.id : null);
   const job = useOperationJob(jobId);
   const run: RunView | null = job.data ? fromJob(job.data) : latest ? fromSummary(latest) : null;
   const running = run?.status === 'running';
+  // Back to a date (issue 0130 C): a kind whose pages go newest first; blank: the whole history.
+  const [until, setUntil] = useState(DEFAULT_UNTIL);
+  const horizon = support.until ? until.trim() || null : null;
   const now = new Date();
 
   // When the followed job finishes, the stored count and the checkpoint have moved.
-  const finished = Boolean(jobId && job.data && job.data.status !== 'running');
+  const finished = Boolean(jobId && job.data && job.data.status !== 'running' && job.data.status !== 'queued');
   useEffect(() => {
     if (finished) onChanged();
   }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once per finish
@@ -295,7 +318,11 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
     setStarting(true);
     setError(null);
     try {
-      const { job_id: started } = await api.startSourceArchive(sourceId, fromCheckpoint, ...rateArgs);
+      // Back to a date (issue 0130 C) goes through the queue's call; without one, the archive as before. Either way a
+      // Telegram or X archive while another of its kind runs is queued (the job says so).
+      const { job_id: started } = horizon
+        ? await archiveQueueApi.startArchive(sourceId, fromCheckpoint, horizon, ...rateArgs)
+        : await api.startSourceArchive(sourceId, fromCheckpoint, ...rateArgs);
       setJobId(started);
       setPlan(null);
       setPlannedFor(null);
@@ -326,8 +353,12 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
   const estimate = plan ? formatEstimate(plan.estimated_seconds) : null;
   const rate = plan ? describeRate(plan.rate_limit) : null;
 
+  const note = run ? resultNote(run) : null;
   const lastRun = run && !running ? (
-    run.status === 'failed' ? (
+    run.status === 'queued' ? (
+      <Notice tone="status" title="Queued"
+        message="It starts when the archive of its kind ahead of it ends: one Telegram and one X archive run at a time." />
+    ) : run.status === 'failed' ? (
       <Notice tone="error" title={run.linked ? 'The last fetch of linked pages failed' : 'The last archive failed'}
         message={run.message || 'No reason was recorded.'} />
     ) : run.waiting ? (
@@ -350,6 +381,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
         <span className="tabular-nums">
           {' '}{run.finishedAt ? `${formatRelativeTime(run.finishedAt, now)}: ` : ''}{resultLine(run)}
         </span>
+        {note ? <span className="block text-fg-3 [overflow-wrap:anywhere]">{note}</span> : null}
       </p>
     )
   ) : null;
@@ -404,6 +436,17 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
             </label>
           ) : null}
 
+          {support.until ? (
+            <div className="flex flex-wrap items-center gap-2 text-[0.8125rem] text-fg-2">
+              <label htmlFor={`${ids}-until`}>Back to</label>
+              <Input id={`${ids}-until`} type="date" value={until} onChange={(e) => setUntil(e.target.value)}
+                className="w-40 tabular-nums" />
+              <span className="text-[0.75rem] text-fg-3">
+                {horizon ? 'It stops once its pages pass this date.' : 'Blank: the whole history.'}
+              </span>
+            </div>
+          ) : null}
+
           {pacing ? (
             <fieldset>
               <legend className="mb-1.5 text-[0.8125rem] font-medium text-fg">Pacing</legend>
@@ -440,7 +483,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
             </Button>
             {planCurrent && plan && plan.older_posts !== 0 ? (
               <Button variant="primary" size="sm" onClick={() => void start()} disabled={starting} aria-busy={starting}>
-                {starting ? 'Starting…' : plan.resume ? 'Resume archive' : 'Run archive'}
+                {starting ? 'Starting…' : `${plan.resume ? 'Resume archive' : 'Run archive'}${horizon ? ` back to ${horizon}` : ''}`}
               </Button>
             ) : null}
             {planning ? <span className="text-[0.75rem] text-fg-3">Asking the source; a large channel can take minutes.</span> : null}

@@ -1452,3 +1452,67 @@ export interface PostConnected extends Envelope {
   outside: ConnectedRow[];
   more: { earlier: number; later: number; outside: number };
 }
+
+// 0130 B (Stealth v10.5): archives that work again, archives back to a date, and the archive queue.
+/** Why the last archive added no more: its pages' skipped counts, and the posts stored already. */
+export interface ArchiveUnreached {
+  stored?: number;
+  no_post?: number;
+  unreadable?: number;
+  updated?: number;
+}
+/** What an archive job's result says besides its counts (read from `ArchiveJobSummary.result` or a job's payload). */
+export interface ArchiveResultExtra {
+  unreached?: ArchiveUnreached;
+  /** The horizon asked ("2025-11-01"), and the one it stopped at (an ISO time) when it did. */
+  until?: string;
+  until_reached?: string;
+  /** Every listed post read as no post: the site's layout changed. */
+  layout_changed?: boolean;
+  /** Set while the job waits in the queue for its lane (one Telegram, one Nitter archive at a time). */
+  queued_at?: string;
+}
+export interface ArchiveSupport {
+  /** Its archive can stop at a date: its pages go newest first (Telegram, X, a newsletter's list). */
+  until?: boolean;
+}
+export interface ArchiveCatalogResponse {
+  /** The sources whose last archive a restart interrupted. */
+  interrupted?: string[];
+  /** The queued archives, oldest first. */
+  queued?: Array<{ id: string; source_id: string; lane: string | null; queued_at: string | null }>;
+}
+/** A started or queued archive (POST /run, /queue: 202). */
+export interface ArchiveStarted {
+  job_id: string;
+  status: 'running' | 'queued';
+  message?: string;
+}
+
+const archivePath = (sourceId: string, what: string) => `/api/archive/${encodeURIComponent(sourceId)}/${what}`;
+
+/** The archive queue's calls (issue 0130), beside createApi's: start an archive back to a date (a Telegram or
+ *  Nitter archive while another of its kind runs is queued), queue one, and resume every interrupted archive. */
+export const archiveQueueApi = {
+  /** Start (or queue) an archive; `until` ("2025-11-01") stops it once its pages pass that date. */
+  startArchive: async (sourceId: string, resume: boolean, until?: string | null, pacing?: ArchivePacing): Promise<ArchiveStarted> => {
+    const response = await request<{ job_id?: string; status?: string; message?: string }>(archivePath(sourceId, 'run'), {
+      method: 'POST', body: { resume, background: true, ...(until ? { until } : {}), ...pacing },
+    });
+    if (!response.job_id) throw new Error('Could not start the archive');
+    return { job_id: response.job_id, status: response.status === 'queued' ? 'queued' : 'running', message: response.message };
+  },
+  /** Queue an archive: it runs in its turn, one per kind and host at a time. */
+  queueArchive: async (sourceId: string, resume: boolean, until?: string | null): Promise<ArchiveStarted> => {
+    const response = await request<{ job_id?: string; message?: string }>(archivePath(sourceId, 'queue'), {
+      method: 'POST', body: { resume, ...(until ? { until } : {}) },
+    });
+    if (!response.job_id) throw new Error('Could not queue the archive');
+    return { job_id: response.job_id, status: 'queued', message: response.message };
+  },
+  /** Queue every source whose last archive a restart interrupted, to resume from its checkpoint. */
+  resumeInterrupted: async (): Promise<{ count: number }> => {
+    const response = await request<{ count?: number }>('/api/archive/resume-interrupted', { method: 'POST', body: {} });
+    return { count: response.count ?? 0 };
+  },
+};

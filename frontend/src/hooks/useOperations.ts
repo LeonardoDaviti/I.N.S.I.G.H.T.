@@ -52,7 +52,8 @@ export function useOperationJob(id: string | null) {
     enabled: Boolean(id),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'running' ? 5_000 : status === 'waiting' ? 30_000 : false;
+      // A queued archive (issue 0130) starts when its lane frees: asked again as a waiting one is.
+      return status === 'running' ? 5_000 : status === 'waiting' || status === 'queued' ? 30_000 : false;
     },
   });
 }
