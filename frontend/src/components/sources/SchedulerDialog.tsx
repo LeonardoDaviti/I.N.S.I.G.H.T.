@@ -21,7 +21,8 @@ export default function SchedulerDialog({
   onSave: (next: SchedulerConfig) => Promise<boolean>;
 }) {
   const [tick, setTick] = useState(String(config.ingest_tick_minutes ?? 60));
-  const [collect, setCollect] = useState(Boolean(config.collect_originals));
+  // On unless you switched it off (issue 0126): the API sends the stored choice.
+  const [collect, setCollect] = useState(config.collect_originals ?? true);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -55,7 +56,7 @@ export default function SchedulerDialog({
               <label htmlFor="collect-originals" className="text-[0.8125rem] font-medium text-fg">Collect originals</label>
               <p className="mt-0.5 text-[0.75rem] text-fg-3">
                 When a News story starts at a page you don&rsquo;t have, fetch that one page, without following its site.
-                Never a paywalled page; at most 1% more requests than the schedule makes. Off until you switch it on.
+                Never a paywalled page; at most 1% more requests than the schedule makes. On unless you switch it off.
               </p>
             </div>
           </div>

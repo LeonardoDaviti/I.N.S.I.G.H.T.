@@ -3,6 +3,7 @@ One post for the reader: detail, reader state (opens, reading time, favourite) (
 """
 from __future__ import annotations
 
+import html as html_lib
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urljoin
@@ -19,7 +20,12 @@ from insight_core.db.repo_post_parts import body, shown_title
 from insight_core.utils.media import post_media
 from insight_core.utils.post_links import body_hrefs
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import link_kind
+from insight_core.utils.post_fields import link_kind, quote_byline_linked
+
+
+def _with_quoted(content_html: Optional[str], quoted: Optional[str]) -> Optional[str]:
+    """The HTML whose links internal_links looks up, with the quoted tweet's x.com address the byline links (0126)."""
+    return f'{content_html or ""}<a href="{html_lib.escape(quoted, quote=True)}"></a>' if quoted else content_html
 
 
 class PostDetailService:
@@ -80,7 +86,7 @@ class PostDetailService:
                 # The classics this post builds on (issue 0051): at most 2, none without one.
                 background = self.news.background(cur, post_id) if row else []
                 story = self.story(cur, post_id, str(row[1])) if row else None
-                internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
+                internal = self.internal_links(cur, post_id, row[2], _with_quoted(row[8], row[36]), row[7]) if row else {}
                 link = self.link(cur, row[40], story, row[2]) if row else None
                 news = self.news.row_of(cur, post_id, str(row[1])) if row else None
 
@@ -99,7 +105,9 @@ class PostDetailService:
             title, content, html = row[27], row[38]["text"], row[38]["body"]   # its quote card folded
         else:
             title, content, html = row[27], body(row[7], row[28:32]), body(row[8], row[32:36])
-        counts = {"points": row[39]["points"], "comments": row[39]["comments"]} if row[39] else None
+        # The quote card's byline opens the quoted tweet on x.com (issue 0126), inside INSIGHT when it is stored.
+        html = quote_byline_linked(html, row[36])
+        counts ={"points": row[39]["points"], "comments": row[39]["comments"]} if row[39] else None
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -166,8 +174,9 @@ class PostDetailService:
                 if reply is None:
                     continue
                 reply["quotes_above"] = quoted is not None and quoted in in_story
-                reply["html"] = folded["html"] if reply["quotes_above"] else content_html
-                reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url, content_html, content)
+                reply["html"] = folded["html"] if reply["quotes_above"] else quote_byline_linked(content_html, quoted)
+                reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url,
+                                                                           _with_quoted(content_html, quoted), content)
         return story
 
     @staticmethod

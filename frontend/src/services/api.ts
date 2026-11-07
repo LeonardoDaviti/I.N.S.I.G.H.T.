@@ -201,7 +201,11 @@ export interface StoryRoundup { id: string; title: string; source_display_name: 
 /** Why a post hangs from its parent, the most certain first (issues 0064, 0066). */
 export type StoryParentReason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 /** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
-export interface StoryOrigin { url: string; title: string | null; linked_by: number; }
+export interface StoryOrigin {
+  url: string; title: string | null; linked_by: number;
+  /** The address to open (issue 0126): its first post's link as written, a gift link kept; else `url`. */
+  href?: string;
+}
 export interface StoryPost {
   id: string; title: string; url: string; source_id: string; source_display_name: string; platform: string;
   sort_at: string; published_at: string | null; read_at: string | null;
@@ -469,7 +473,7 @@ export interface SchedulerConfig {
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
   /** Collect originals (issue 0123): a News story's original INSIGHT lacks is collected, one page, within the
-   *  shared budget (under 1% of the schedule's requests). Off unless you switch it on. */
+   *  shared budget (under 1% of the schedule's requests). On unless you switched it off (issue 0126). */
   collect_originals?: boolean;
   updated_at?: string | null;
   /** Only on GET /api/operations/scheduler. */

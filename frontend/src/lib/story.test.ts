@@ -90,6 +90,10 @@ test('storyTree: an outside page origin heads the list, its citers under it', ()
   assert.deepEqual(originLabel(story.origin), { site: 'anthropic.com', title: 'Claude Fable 5', linkedBy: 'linked by 3' });
   assert.equal(originHref(story.origin), '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5&title=Claude+Fable+5');
   assert.equal(originLabel({ url: 'https://openai.com/index/gpt-6-astra', title: null, linked_by: 10 }).title, 'openai.com/index/gpt-6-astra');
+  // Issue 0126: a gift link opens the article; the label reads the address without its token.
+  const gifted = { url: 'https://paper.example.com/a', title: null, linked_by: 2, href: 'https://paper.example.com/a?gift=abc' };
+  assert.equal(originHref(gifted), '/save?url=https%3A%2F%2Fpaper.example.com%2Fa%3Fgift%3Dabc');
+  assert.equal(originLabel(gifted).title, 'paper.example.com/a');
 });
 
 // ---- X: reposts, quotes and threads (issue 0066) ------------------------------------------------

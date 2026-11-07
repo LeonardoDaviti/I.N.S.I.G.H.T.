@@ -6,7 +6,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_kind, link_post_target, post_title, quote_only,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_kind, link_post_target, post_title, quote_byline_linked, quote_only,
     reading_text,
 )
 from insight_core.utils.language_detection import detect_language
@@ -379,6 +379,22 @@ class QuoteCardTests(unittest.TestCase):
         title, text, _ = reading_text("Indeed...", "Indeed... " + self.TEXT.split(" ", 1)[1], "<p>Indeed...</p>\n" + self.CARD)
         self.assertEqual(title, "Indeed...", "not run on into the quote's byline")
         self.assertNotIn("(@ann)", text)
+
+    def test_the_card_s_byline_opens_the_quoted_post_on_x(self):
+        """Issue 0126 (3): "Name (@handle) · open post ↗", the quoted tweet's x.com address, never the Nitter host."""
+        quoted = "https://x.com/ann/status/2115097309847630047"
+        _, _, html = reading_text("R to @ann: x.com/ann/status…", self.TEXT, self.ADDRESS + self.CARD)
+        linked = quote_byline_linked(html, quoted)
+        self.assertIn(f'<a href="{quoted}"><b>Ann Lee (@ann)</b> · open post ↗</a>', linked)
+        self.assertEqual(linked.count("<a "), html.count("<a ") + 1)
+        self.assertNotIn("nitter.local/ann", linked)
+        raw = self.ADDRESS + self.CARD   # a thread's reply is served as stored: the card's footer stays
+        self.assertIn(f'<a href="{quoted}"><b>Ann Lee (@ann)</b> · open post ↗</a>', quote_byline_linked(raw, quoted))
+        self.assertEqual(quote_byline_linked(html, "https://x.com/someone_else/status/2115097309847630047"), html,
+                         "a byline of another account than the quoted tweet's: as it is")
+        self.assertEqual(quote_byline_linked(html, None), html)
+        self.assertEqual(quote_byline_linked("<p>No quote here.</p>", quoted), "<p>No quote here.</p>")
+        self.assertIsNone(quote_byline_linked(None, quoted))
 
     def test_a_post_with_nothing_of_its_own_only_quotes(self):
         self.assertEqual(quote_only(self.ADDRESS + self.CARD), "https://x.com/ann/status/2115097309847630047")

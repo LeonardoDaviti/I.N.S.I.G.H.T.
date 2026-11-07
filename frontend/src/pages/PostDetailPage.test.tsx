@@ -132,6 +132,17 @@ describe('PostDetailPage header', () => {
     expect(within(article).getByText('On Friday I gave the closing keynote.').tagName).toBe('P');
   });
 
+  it("a quote card's byline opens the quoted post on x.com, inside INSIGHT when it is stored (issue 0126)", async () => {
+    const quoted = 'https://x.com/someone/status/2115097309847630047';
+    const card = `<p>Worth reading</p><hr/><blockquote><a href="${quoted}"><b>Some One (@someone)</b> · open post ↗</a><p>The release is out today.</p></blockquote>`;
+    render(baseApi(rssPost({ content_html: card })));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    expect(within(article).getByRole('link', { name: 'Some One (@someone) · open post ↗' })).toHaveAttribute('href', quoted);
+    renderWithProviders(<MarkdownRenderer content={card} internalLinks={{ [quoted]: 'stored-id' }} />, { api: makeFakeApi({}) });
+    const inside = screen.getAllByRole('link', { name: 'Some One (@someone) · open post ↗' }).find((a) => a.hasAttribute('data-internal-link'));
+    expect(inside).toHaveAttribute('href', '/posts/stored-id');
+  });
+
   it('copies the post text and says so', async () => {
     const user = userEvent.setup();
     render(baseApi(rssPost()));

@@ -34,6 +34,10 @@ MOVED_KEY = "moved_to"
 SAVED_KEY = "saved_by_owner"
 # metadata key of a story's original INSIGHT collected by itself (issue 0123, "Collect originals"): when.
 COLLECTED_KEY = "collected_original"
+# metadata key of a post shown only inside its story (issue 0126, the owner 2026-11-07): a page Collect originals
+# stored is its story's root and has its post page, but no row of a feed and no unread count. Saved by hand, or
+# brought by a followed source's feed, it loses the mark.
+STORY_ONLY_KEY = "story_only"
 REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
@@ -128,6 +132,18 @@ def without_quote_marks(content: str | None, html: str | None) -> Tuple[str | No
     if link:
         html = html[:link.start()] + html[link.end():]
     return content, _EMPTY_P_RE.sub("", html).strip()
+
+
+def quote_byline_linked(html: str | None, quoted: str | None) -> str | None:
+    """A tweet's HTML whose quote card's byline opens the quoted tweet (issue 0126, the owner 2026-11-07):
+    "Name (@handle) · open post ↗", linking `quoted` (post_parts.quoted: its x.com address, never the Nitter host
+    serving it). Only when the byline names the quoted tweet's account; anything else as it is."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card or not quoted or (tweet_author(quoted) or "").lower() != card.group(2).lower():
+        return html
+    start, end = card.start(1) - len("<b>"), card.end(1) + len("</b>")
+    link = f'<a href="{html_lib.escape(quoted, quote=True)}"><b>{card.group(1)}</b> · open post ↗</a>'
+    return html[:start] + link + html[end:]
 
 
 def quote_only(html: str | None) -> str | None:

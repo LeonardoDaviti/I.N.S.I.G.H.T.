@@ -24,6 +24,9 @@ import psycopg
 
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_posts import PostsRepository
+from insight_core.db.repo_reader import FeedQuery, ReaderRepository
+from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.reader_service import ReaderService
 from insight_core.ingestion.kinds.base import PolitenessProfile
 from insight_core.ingestion.schedule import Availability, DecisionKind, cadence_stats, decide_fetch
 from insight_core.services.news_service import NewsService
@@ -33,6 +36,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.utils.addresses import host_of, site_of
+from insight_core.utils.url_normalization import has_query_mark, normalize_url
 
 LAB = "https://news.oolab.example"
 RELEASE = f"{LAB}/news/the-new-release"
@@ -79,7 +83,7 @@ class OriginalsCase(unittest.TestCase):
             cur.execute("DELETE FROM story_originals WHERE url LIKE %s OR url LIKE %s", LIKE)
             cur.execute("DELETE FROM posts WHERE url LIKE %s OR url LIKE %s", LIKE)
             cur.execute("DELETE FROM sources WHERE handle_or_url LIKE %s OR handle_or_url LIKE %s", LIKE)
-            cur.execute("DELETE FROM system_settings WHERE key IN ('scheduler', 'originals_budget')")
+            cur.execute("DELETE FROM system_settings WHERE key IN ('scheduler_config', 'originals_budget')")
 
     def _rows(self, sql, *args):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
@@ -102,9 +106,10 @@ class OriginalsCase(unittest.TestCase):
                 "external_id": url}
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             post_id, _ = PostsRepository(db_url()).upsert_post(cur, post, source_id)
-            for n, target in enumerate(links):
-                cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, %s, %s)",
-                            (post_id, target, site_of(host_of(target)), n))
+            for n, target in enumerate(links):   # as the saver keeps a link (0126: a gift link's token as written)
+                cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, shared_url) VALUES (%s, %s, %s, %s, %s)",
+                            (post_id, normalize_url(target), site_of(host_of(target)), n,
+                             target if has_query_mark(target) else None))
             if links:   # read as given: the story job never reads them again from the HTML
                 cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s", (post_id,))
         return str(post_id)
@@ -221,12 +226,21 @@ class CollectTests(OriginalsCase):
                        "ON CONFLICT (post_id) DO NOTHING", post_id, story, f"v{n}", n)
         return story, posts
 
-    def switch(self, on):
-        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler', %s::jsonb) "
-                   "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", json.dumps({"collect_originals": on}))
+    def switch(self, on, **more):
+        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler_config', %s::jsonb) "
+                   "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                   json.dumps({"collect_originals": on, "collect_originals_default": "on", **more}))
 
-    def test_off_by_default_collects_nothing(self):
+    def test_on_by_default_and_an_explicit_off_collects_nothing(self):
+        """Issue 0126 (4): on unless you switched it off; a false the dialog wrote while off was the default is no choice."""
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertTrue(collect_on(cur), "no scheduler row: on")
+        self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler_config', %s::jsonb)",
+                   json.dumps({"interval_hours": 20, "collect_originals": False}))
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertTrue(collect_on(cur), "written by the old default's dialog: on")
         self.news_story(ESSAY, self.a, self.b)
+        self.switch(False)
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             self.assertFalse(collect_on(cur))
         http = FakeHttp({ESSAY: essay()})
@@ -253,6 +267,46 @@ class CollectTests(OriginalsCase):
         self.assertEqual(self._rows("SELECT parent_id, parent_reason FROM story_posts WHERE post_id = %s::uuid", post_id),
                          [(None, "address")], "the story's root")
         self.assertEqual(run(self.service().run(FakeHttp({})))["collect"], [], "never asked again")
+
+    def _listed(self, post_id, **query):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            items, _ = ReaderRepository().list_posts(cur, FeedQuery.parse(limit=100, **query), now=self.now)
+        return post_id in {i["id"] for i in items}
+
+    def _unread(self, source_id):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            return ReaderRepository().unread_counts(cur)["by_source"].get(source_id, 0)
+
+    def test_a_collected_page_shows_only_inside_its_story(self):
+        """Issue 0126 (2): no row of the Main feed or Saved, no unread count; its story's root, its post page, and
+        Later when you put it there. Saved by hand, it is in Saved as any page you save."""
+        story, posts = self.news_story(ESSAY, self.a, self.b)
+        self.switch(True)
+        run(self.service().run(FakeHttp({ESSAY: essay()})))
+        ((post_id, metadata),) = self._rows("SELECT id::text, metadata FROM posts WHERE normalized_url = %s", ESSAY)
+        self.assertTrue(metadata["story_only"])
+        saved = self._saved_source()
+        for query in ({"date": "2026-11-05"}, {"date": "2026-11-05", "filter": "unread"}, {"scope": f"source:{saved}"},
+                      {"scope": f"source:{saved}", "view": "by_source"}):
+            self.assertFalse(self._listed(post_id, **query), query)
+        self.assertEqual(self._unread(saved), 0)
+        self.stories()
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            item = {"id": posts[0]}
+            ReaderRepository.attach_stories(cur, [item])
+        self.assertIn(post_id, {p["id"] for p in item["story"]["posts"]}, "in its story's tree")
+        self.assertEqual(self._rows("SELECT parent_id, parent_reason FROM story_posts WHERE post_id = %s::uuid", post_id),
+                         [(None, "address")], "its story's root")
+        self.assertIsNotNone(PostDetailService(db_url()).get_post_by_id(post_id), "its post page")
+        ReaderService(db_url()).set_later([post_id], True)
+        self.assertTrue(self._listed(post_id, filter="later"), "Later: you put it there")
+        ReaderService(db_url()).set_later([post_id], False)
+        self.assertEqual(run(self.saved.save(FakeHttp({}), ESSAY))["status"], "already")
+        ((metadata,),) = self._rows("SELECT metadata FROM posts WHERE id = %s::uuid", post_id)
+        self.assertNotIn("story_only", metadata, "saved by hand: a page you saved")
+        self.assertIn("collected_original", metadata)
+        self.assertTrue(self._listed(post_id, scope=f"source:{saved}"))
+        self.assertEqual(self._unread(saved), 1)
 
     def test_a_walled_original_is_never_read_and_keeps_no_token(self):
         self.news_story(f"{WALLED}?accessToken={JWT}", self.a, self.b)

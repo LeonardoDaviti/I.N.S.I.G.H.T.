@@ -79,6 +79,12 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual({p.id for p in story.posts}, {"w1", "w2"})
         self.assertEqual(story.origin_url, stamps.JOURNAL)
 
+    def test_a_gift_link_and_a_share_link_are_the_page_they_open(self):
+        # Issue 0126: two voices linking one article by a gift link and a share link are one story at the article.
+        [story] = [s for s in sample_stories() if "tok1" in {p.id for p in s.posts}]
+        self.assertEqual({p.id for p in story.posts}, {"tok1", "tok2"})
+        self.assertEqual(story.origin_url, "https://paper.example/2026/03/10/the-budget-story")
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")

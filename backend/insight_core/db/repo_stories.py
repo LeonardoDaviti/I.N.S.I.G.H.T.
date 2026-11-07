@@ -236,14 +236,15 @@ class StoriesRepository:
         if links:
             cur.executemany(
                 """
-                INSERT INTO post_links (post_id, target_url, target_site, position, link_text)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO post_links (post_id, target_url, target_site, position, link_text, shared_url)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (post_id, target_url) DO UPDATE
-                    SET target_site = EXCLUDED.target_site, position = EXCLUDED.position, link_text = EXCLUDED.link_text
-                    WHERE (post_links.target_site, post_links.position, post_links.link_text)
-                          IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text)
+                    SET target_site = EXCLUDED.target_site, position = EXCLUDED.position, link_text = EXCLUDED.link_text,
+                        shared_url = EXCLUDED.shared_url
+                    WHERE (post_links.target_site, post_links.position, post_links.link_text, post_links.shared_url)
+                          IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text, EXCLUDED.shared_url)
                 """,
-                [(post_id, link.url, link.site, link.position, link.text) for link in links],
+                [(post_id, link.url, link.site, link.position, link.text, link.shared) for link in links],
             )
 
     def save_post_links(self, cur: Cursor, post_id: str) -> None:

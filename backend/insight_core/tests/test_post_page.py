@@ -108,7 +108,7 @@ class PostPageTests(unittest.TestCase):
         story = self._story(self.lab)
         # All three link one page outside INSIGHT: it is the origin (issue 0064), no post was first.
         self.assertEqual((story["id"], story["voices"], story["first"]), (self.lab, 2, None))
-        self.assertEqual(story["origin"], {"url": self.page, "title": None, "linked_by": 3})
+        self.assertEqual(story["origin"], {"url": self.page, "title": None, "linked_by": 3, "href": self.page})
         self.assertEqual([(s["name"], [w["name"] for w in s["with"]]) for s in story["sources"]],
                          [("Anthropic", ["Канал"]), ("Simon Willison", [])], "one name a voice (issue 0082)")
         self.assertEqual([(p["id"], p["role"]) for p in story["posts"]], [(self.copy, "share"), (self.take, "report")])

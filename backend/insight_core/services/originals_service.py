@@ -35,17 +35,17 @@ from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.originals")
 
-SCHEDULER_KEY = "scheduler"        # OperationsService's settings row: collect_originals lives there
+SCHEDULER_KEY = "scheduler_config"   # OperationsService.SETTINGS_KEY_SCHEDULER: the row the dialog writes (0126: 0123 read "scheduler")
 READS_KEY = "discover_reads"
-COLLECT_SETTING = "collect_originals"
+COLLECT_SETTING = "collect_originals"   # read by originals_rules.collect_setting
 BUDGET_KEY = "originals_budget"   # the shared credit (originals_rules.credit_after): {credit, counted_at}
 EARLY_INTERVAL = timedelta(hours=24)   # schedule.TIER_INTERVAL_MIN: every tier's interval is at least this
 
 
 def collect_on(cur: Any) -> bool:
-    """Collect originals (issue 0123): the scheduler's setting, off unless you switched it on."""
+    """Collect originals (issue 0123): the scheduler's setting, on unless you switched it off (0126)."""
     row = SystemSettingsRepository.get(cur, SCHEDULER_KEY)
-    return bool(((row[0] if row else None) or {}).get(COLLECT_SETTING, False))
+    return rules.collect_setting(row[0] if row else None)
 
 
 def accrue(cur: Any, now: datetime) -> float:
@@ -212,7 +212,8 @@ class OriginalsService:
         if not rows:
             return []
         stories = [r[0] for r in rows]
-        cur.execute("""SELECT sp.story_id::text, pl.target_url FROM story_posts sp JOIN post_links pl ON pl.post_id = sp.post_id
+        # The members' links as written (0126: a gift link's token is out of target_url, kept in shared_url).
+        cur.execute("""SELECT sp.story_id::text, COALESCE(pl.shared_url, pl.target_url) FROM story_posts sp JOIN post_links pl ON pl.post_id = sp.post_id
                        WHERE sp.story_id = ANY(%s::uuid[])""", (stories,))
         linked_as: Dict[str, List[str]] = {}
         for story_id, target in cur.fetchall():
