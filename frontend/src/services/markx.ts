@@ -117,7 +117,14 @@ export interface MarkxPostPanel {
     mentions: { name: string; role: string }[];
   } | null;
   entities: { name: string; type: string | null; role: string | null; maker: string | null; family: string | null;
-    version: string | null; variant: string | null; span: string; entity_id?: string | null }[];
+    version: string | null; variant: string | null; span: string; entity_id?: string | null;
+    /** 0133: 'citation' when the citation rule found it; a document's publisher; the guide of the answer. */
+    rule?: string | null; by?: string | null; guide?: string }[];
+  /** 0133: the guide of the post's current entities (its newest valid answer); its documents and cited sources. */
+  entities_guide?: string | null;
+  documents?: MarkxPostPanel['entities'];
+  sources?: MarkxPostPanel['entities'];
+  recommended?: MarkxPostPanel['entities'];
   stories: (MarkxWhy & { id: string; headline: string | null; first_at: string | null; posts: number })[];
   connections: { relation: string; p: number | null; rule: string | null; from: 'post' | 'story'; other_kind: 'post' | 'story';
     other: string; title?: string | null; reason: string | null }[];
@@ -171,6 +178,17 @@ export interface MarkxOverview {
     voices: number; examples: { id: string | null; title: string | null; source: string | null }[] }[]>;
   /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
   reading_window: { days: number | null; default: number };
+  /** 0133: the entities guide switch (absent from an older API). */
+  entities_guide?: MarkxEntitiesGuide;
+}
+
+/** 0133: which guide new entities tasks are asked under; `ready` false while a guide is the lab's placeholder. */
+export interface MarkxEntitiesGuide {
+  guide: string;
+  chars: number;
+  rule: boolean;
+  default: string;
+  arms: { guide: string; chars: number; rule: boolean; ready: boolean }[];
 }
 
 /** POST /api/markx/settings/reading-window's answer. */
@@ -332,6 +350,11 @@ export interface MarkxEntityPage {
   surges: MarkxSurge[];
   accuracy: MarkxEntityAccuracy;
   queue: MarkxQueueItem[];
+  /** 0133: who published it, what it published, the posts citing it as evidence and those recommending it. */
+  published_by?: { id: string; name: string; type: string | null }[];
+  published?: { id: string; name: string; type: string | null }[];
+  citing?: MarkxEntityPost[];
+  recommending?: MarkxEntityPost[];
 }
 
 export type MarkxEntityAnswer = 'same' | 'other_version' | 'different' | 'not_entity';

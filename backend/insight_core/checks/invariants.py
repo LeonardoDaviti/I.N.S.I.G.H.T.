@@ -421,10 +421,11 @@ def _discover_untested(run: Run):
 def _markx_calls_valid(run: Run):
     """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse."""
     from insight_core.markx import validate
-    run.cur.execute("""SELECT c.id::text, t.kind, t.input, c.answer FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+    run.cur.execute("""SELECT c.id::text, t.kind, t.input, c.answer, t.guide FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
                         WHERE c.valid AND t.kind <> 'embed'""")
     rows = run.cur.fetchall()
-    return [cid for cid, kind, text, answer in rows if validate.check(kind, answer, text)[1] is not None], len(rows)
+    return [cid for cid, kind, text, answer, guide in rows                 # 0133: an entities arm's own schema
+            if validate.check(kind, answer, text, guide)[1] is not None], len(rows)
 
 
 def _markx_unnamed(run: Run):

@@ -311,7 +311,7 @@ def store_answers(cur, *, executor: str, model: str, answers: List[Answer]) -> D
         if task is None:
             invalid.append({"task_id": a.task_id, "error": "no such task"})
             continue
-        answer, error = validate.check(task["kind"], a.answer, task["input"])
+        answer, error = validate.check(task["kind"], a.answer, task["input"], task.get("guide"))
         call_id = repo.add_call(cur, task_id=task_id, executor=executor, model=model, valid=error is None,
                                 answer=answer, error=error, tokens_in=a.tokens_in, tokens_out=a.tokens_out, ms=a.ms,
                                 cost_usd=a.cost_usd)
@@ -450,7 +450,32 @@ class WindowIn(BaseModel):
 
 
 def _window(cur) -> Dict[str, Any]:
-    return {"reading_window_days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}
+    return {"reading_window_days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS,
+            "entities_guide": _entities_guide(cur)}   # 0133
+
+
+def _entities_guide(cur) -> Dict[str, Any]:   # 0133: the entities guide switch (Worker tab)
+    arm = schemas.entities_arm(cur)
+    return {"guide": arm.guide, "chars": arm.chars, "rule": arm.rule, "default": schemas.DEFAULT_ARM,
+            "arms": [{"guide": a.guide, "chars": a.chars, "rule": a.rule, "ready": not schemas.is_placeholder(a.guide)}
+                     for a in schemas.ENTITY_ARMS.values()]}
+
+
+class EntitiesGuideIn(BaseModel):   # 0133
+    guide: str
+
+
+@router.post("/settings/entities-guide")
+def mx_set_entities_guide(body: EntitiesGuideIn):
+    """0133: the entities guide the planner asks new entities tasks under (ent-v3 at 1,500 characters by default;
+    ent-v4 at 6,000 with the citation rule; ent-v3-6k, the fallback). Counts from the next planner run; a placeholder
+    guide is refused (409) until the lab's frozen guide replaces it."""
+    with transaction() as cur:
+        try:
+            schemas.set_entities_arm(cur, body.guide)
+        except ValueError as e:
+            raise HTTPException(status_code=409 if "placeholder" in str(e) else 400, detail=str(e))
+        return _window(cur)
 
 
 @router.get("/settings")
@@ -513,7 +538,8 @@ def mx_overview():
     with transaction() as cur:
         return {"worker": {**news.worker(cur, contacts(cur)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
-                "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS}}
+                "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS},
+                "entities_guide": _entities_guide(cur)}   # 0133
 
 
 @router.post("/decide")

@@ -674,8 +674,8 @@ def entities_waiting(cur: Any, posts: Sequence[str]) -> Set[str]:
 
 
 def mentions_of(cur: Any, posts: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
-    cur.execute("""SELECT post_id::text, type, role, maker, entity_id::text, name FROM mx_mentions
-                    WHERE guide = 'ent-v3' AND post_id = ANY(%s::uuid[]) ORDER BY post_id, n""", (list(posts),))
+    cur.execute("""SELECT post_id::text, type, role, maker, entity_id::text, name FROM mx_mentions_now
+                    WHERE post_id = ANY(%s::uuid[]) ORDER BY post_id, n""", (list(posts),))
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for pid, type_, role, maker, eid, name in cur.fetchall():
         out[pid].append({"type": type_, "role": role, "maker": maker, "entity_id": eid, "name": name})

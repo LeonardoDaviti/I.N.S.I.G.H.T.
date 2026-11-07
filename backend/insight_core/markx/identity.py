@@ -175,6 +175,7 @@ class Book:
         self.alias: Dict[str, str] = {}
         self.redirect: Dict[str, Tuple[str, bool]] = {}      # from -> (to, automatic)
         self.pins: Dict[Tuple[str, str, int], str] = {}
+        self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # 0133: (post, name key): (guide, its pin)
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
         self.mentioned: Set[str] = set()                     # the entities a mention names (a maker or family made
                                                              # for the hierarchy alone is never a candidate)
@@ -211,12 +212,15 @@ def load_book(cur: Any) -> Book:
     b.redirect = {f: (t, auto) for f, t, auto in cur.fetchall()}
     cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
     b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
+    cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
+                     ON m.post_id = p.post_id AND m.guide = p.guide AND m.n = p.n WHERE p.undone_at IS NULL""")
+    b.pin_keys = {(pid, N.key(name)): (g, e) for pid, name, g, e in cur.fetchall()}   # 0133: a split carries to a new guide
     cur.execute("""SELECT least(a, b)::text, greatest(a, b)::text FROM mx_entity_queue
                     WHERE kind = 'alias' AND answer IN ('other_version', 'different', 'not_entity')
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
-    cur.execute("SELECT DISTINCT entity_id::text FROM mx_mentions WHERE entity_id IS NOT NULL")
+    cur.execute("SELECT DISTINCT entity_id::text FROM mx_mentions_now WHERE entity_id IS NOT NULL")
     b.mentioned = {r[0] for r in cur.fetchall()} | set(b.pins.values())
     return b
 
@@ -240,23 +244,27 @@ class Mention:
     fields: Dict[str, Any]
     entity_id: Optional[str]
     at: Optional[datetime]
+    ref: Optional[str] = None        # 0133: the citation rule's identifier (arXiv, DOI, a document link)
+    by_name: Optional[str] = None    # 0133: a document's publisher or author, as written
+    call_id: Optional[str] = None
 
     @property
     def key(self) -> str:
         return N.key(self.name)
 
 
-def _mentions(cur: Any, guide: str, *, unlinked: bool, limit: Optional[int] = None) -> List[Mention]:
+def _mentions(cur: Any, guide: Any, *, unlinked: bool, limit: Optional[int] = None) -> List[Mention]:
+    """The current mentions (0133: mx_mentions_now, each post's newest valid entities answer, of `guide`'s guides)."""
     cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.span, m.name, m.type, m.role, m.maker, m.family, m.version,
                            m.variant, m.size, m.build, m.entity_id::text,
-                           COALESCE(p.published_at, p.fetched_at)
-                      FROM mx_mentions m LEFT JOIN posts p ON p.id = m.post_id
-                     WHERE m.guide = %s {"AND m.entity_id IS NULL AND m.name_key <> ''" if unlinked else ""}
+                           COALESCE(p.published_at, p.fetched_at), m.ref, m.by_name, m.call_id::text
+                      FROM mx_mentions_now m LEFT JOIN posts p ON p.id = m.post_id
+                     WHERE m.guide = ANY(%s) {"AND m.entity_id IS NULL AND m.name_key <> ''" if unlinked else ""}
                      ORDER BY COALESCE(p.published_at, p.fetched_at) DESC NULLS LAST, m.post_id, m.n
                      {"LIMIT %s" if limit else ""}""", (guide, limit) if limit else (guide,))
     return [Mention(p, g, n, span or "", name or "", t, r, mk,
-                    {"family": fam, "version": v, "variant": var, "size": sz, "build": bd}, e, at)
-            for p, g, n, span, name, t, r, mk, fam, v, var, sz, bd, e, at in cur.fetchall()]
+                    {"family": fam, "version": v, "variant": var, "size": sz, "build": bd}, e, at, ref, by, call)
+            for p, g, n, span, name, t, r, mk, fam, v, var, sz, bd, e, at, ref, by, call in cur.fetchall()]
 
 
 def _majority(ms: Sequence[Mention]) -> Mention:
@@ -352,9 +360,58 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:
     """The entity a mention links to now: its pin, else its key's alias (before redirects; reads go through them)."""
     pin = book.pins.get((m.post_id, m.guide, m.n))
+    if not pin:   # 0133: the owner's pin of the same name in the post's earlier guide's set (never within one guide)
+        g, e = book.pin_keys.get((m.post_id, m.key), (None, None))
+        pin = e if g is not None and g != m.guide else None
     if pin:
         return pin
     return book.by_key(m.key)
+
+
+def _join_refs(w: Writer, refs: Sequence[Mention]) -> None:
+    """0133: a document the citation rule read an identifier for (arXiv, DOI, a document link) is one entity whatever
+    name each post gives it: its name's key and its identifier's key alias one entity (whichever came first)."""
+    for m in refs:
+        rk = N.key(m.ref)
+        if not rk or rk == m.key:
+            continue
+        by_ref, by_name = w.book.by_key(rk), w.book.by_key(m.key)
+        if by_ref and not by_name:
+            w.alias(m.key, by_ref, m.name)
+        elif by_name and not by_ref:
+            w.alias(rk, by_name, m.ref)
+
+
+def published(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> int:
+    """0133: each linked document mention naming its publisher or author (`by`) as a `published` edge (0131's
+    mx_connections, a_kind = b_kind = 'entity', rule 'mention_by'): publisher -> document. The publisher is the
+    entity its name's key aliases, made a provisional org (or the type a mention in the same post gives that name)
+    when there is none. One current edge a pair (keep everything: never deleted). How many were added."""
+    added = 0
+    for m in ms:
+        if not (m.by_name and m.entity_id and schemas_type(m.type) == "document"):
+            continue
+        k = N.key(m.by_name)
+        if not k or k == m.key:
+            continue
+        pub = book.by_key(k)
+        if pub is None:
+            typ = next((x.type for x in ms if x.post_id == m.post_id and x.key == k and x.type in ("org", "person")),
+                       "org")
+            pub = w.entity(type_=typ, name=m.by_name.strip(), key=k, level="thing", parent=None, maker=None,
+                           fields=dict(N.NONE), first_seen=m.at)
+        cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, call_id, rule, evidence)
+                       VALUES ('entity', %s, 'entity', %s, 'published', %s, 'mention_by', %s::jsonb)
+                       ON CONFLICT DO NOTHING""",
+                    (pub, m.entity_id, m.call_id,
+                     json.dumps({"post": m.post_id, "guide": m.guide, "n": m.n, "by": m.by_name})))
+        added += cur.rowcount
+    return added
+
+
+def schemas_type(t: Optional[str]) -> Optional[str]:
+    from insight_core.markx import schemas
+    return schemas.entity_type(t)
 
 
 def link(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> Dict[str, int]:
@@ -364,8 +421,14 @@ def link(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> Dict[str, in
         if m.key:
             by_key[m.key].append(m)
     for k in sorted(by_key):
+        refs = [m for m in by_key[k] if m.ref]   # 0133: a key whose document's identifier names an entity joins it
         if book.by_key(k) is None:
-            entity_for(w, k, by_key[k])
+            known = next((book.by_key(N.key(m.ref)) for m in refs if book.by_key(N.key(m.ref))), None)
+            if known:
+                w.alias(k, known, by_key[k][0].name)
+            else:
+                entity_for(w, k, by_key[k])
+        _join_refs(w, refs)
     changes = []
     for m in ms:
         eid = resolve_mention(book, m) if m.key else None
@@ -446,6 +509,7 @@ def strong_only_one(a: Ent, b: Ent) -> bool:
 
 
 def types_ok(a: Optional[str], b: Optional[str]) -> bool:
+    a, b = schemas_type(a), schemas_type(b)   # 0133: ent-v3's paper is a document
     return a == b or "other" in (a, b) or {a, b} == {"product", "software"}
 
 
@@ -591,8 +655,8 @@ def pool_makers(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
 
 def handles(cur: Any, guide: str) -> Dict[str, Dict[str, bool]]:
     """{entity: {squashed handle form: drops a word}} from the handles its mentions were written as."""
-    cur.execute("""SELECT DISTINCT entity_id::text, span FROM mx_mentions
-                    WHERE guide = %s AND entity_id IS NOT NULL AND (span LIKE '@%%' OR span LIKE '%%\\_%%')""", (guide,))
+    cur.execute("""SELECT DISTINCT entity_id::text, span FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND entity_id IS NOT NULL AND (span LIKE '@%%' OR span LIKE '%%\\_%%')""", (guide,))
     out: Dict[str, Dict[str, bool]] = defaultdict(dict)
     for eid, span in cur.fetchall():
         if N.is_handle(span):
@@ -620,9 +684,9 @@ def pool_handles(pool: Pool, book: Book, hf: Dict[str, Dict[str, bool]], seeds: 
 
 def anchors(cur: Any, book: Book, guide: str) -> Dict[str, Set[str]]:
     """{entity: repository / model addresses} its subject posts link, when the address names it."""
-    cur.execute("""SELECT DISTINCT m.entity_id::text, l.target_url FROM mx_mentions m
+    cur.execute("""SELECT DISTINCT m.entity_id::text, l.target_url FROM mx_mentions_now m
                      JOIN post_links l ON l.post_id = m.post_id
-                    WHERE m.guide = %s AND m.role = 'subject' AND m.entity_id IS NOT NULL
+                    WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL
                       AND (l.target_url ILIKE '%%github.com/%%' OR l.target_url ILIKE '%%huggingface.co/%%')""", (guide,))
     out: Dict[str, Set[str]] = defaultdict(set)
     for eid, url in cur.fetchall():
@@ -665,8 +729,8 @@ def paren_pairs(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> Se
         return set()
     from insight_core.markx import tasks
     posts = tasks.load_posts(cur, post_ids)
-    cur.execute("""SELECT post_id::text, span, type, entity_id::text FROM mx_mentions
-                    WHERE guide = %s AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (guide, list(post_ids)))
+    cur.execute("""SELECT post_id::text, span, type, entity_id::text FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (guide, list(post_ids)))
     by: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for pid, span, type_, eid in cur.fetchall():
         by[pid].append((fold(span), type_, eid))
@@ -729,7 +793,7 @@ def stated_maker(cur: Any, bare: Ent, maker: str, guide: str) -> bool:
     if k not in _STATED:
         if len(_STATED) > 50000:
             _STATED.clear()
-        cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions WHERE guide = %s AND entity_id = %s LIMIT 20",
+        cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = %s LIMIT 20",
                     (guide, bare.id))
         posts = tasks.load_posts(cur, [r[0] for r in cur.fetchall()])
         _STATED[k] = any(validate.occurs(maker, p.title + "\n" + p.text) for p in posts.values())
@@ -880,9 +944,9 @@ def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool 
     from insight_core.markx import tasks
     if not eids:
         return {}
-    cur.execute("""SELECT m.entity_id::text, m.post_id::text, m.span, m.role, p.source_id::text FROM mx_mentions m
+    cur.execute("""SELECT m.entity_id::text, m.post_id::text, m.span, m.role, p.source_id::text FROM mx_mentions_now m
                      JOIN posts p ON p.id = m.post_id
-                    WHERE m.guide = %s AND m.entity_id = ANY(%s::uuid[])""", (guide, list(eids)))
+                    WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[])""", (guide, list(eids)))
     by: Dict[str, List[Tuple[str, str, str, str]]] = defaultdict(list)
     for eid, pid, span, role, src in cur.fetchall():
         by[eid].append((pid, span or "", role or "", src))
@@ -898,7 +962,7 @@ def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool 
 
 
 def spans(cur: Any, guide: str, eids: Sequence[str]) -> Dict[str, List[str]]:
-    cur.execute("""SELECT entity_id::text, span, count(*) FROM mx_mentions WHERE guide = %s AND entity_id = ANY(%s::uuid[])
+    cur.execute("""SELECT entity_id::text, span, count(*) FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])
                     GROUP BY 1, 2 ORDER BY 1, 3 DESC, 2""", (guide, list(eids)))
     out: Dict[str, List[str]] = defaultdict(list)
     for eid, span, _ in cur.fetchall():
@@ -907,7 +971,7 @@ def spans(cur: Any, guide: str, eids: Sequence[str]) -> Dict[str, List[str]]:
 
 
 def counts_of(cur: Any, guide: str, eids: Sequence[str]) -> Dict[str, int]:
-    cur.execute("SELECT entity_id::text, count(DISTINCT post_id) FROM mx_mentions WHERE guide = %s AND entity_id = ANY(%s::uuid[]) "
+    cur.execute("SELECT entity_id::text, count(DISTINCT post_id) FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[]) "
                 "GROUP BY 1", (guide, list(eids)))
     return dict(cur.fetchall())
 
@@ -1120,7 +1184,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
-    guide = schemas.KINDS["entities"].guide
+    guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     book = load_book(cur)
     w = Writer(cur, book, run_id)
@@ -1132,15 +1196,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         ask.caps.setdefault("collide", COLLIDE_CAP)
     ms = _mentions(cur, guide, unlinked=not full or resume, limit=None if full and not resume else link_limit)
     if (not full or resume) and book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet
-        cur.execute("""SELECT m.post_id::text, m.n FROM mx_mentions m JOIN mx_entity_pins p ON p.post_id = m.post_id
+        cur.execute("""SELECT m.post_id::text, m.n FROM mx_mentions_now m JOIN mx_entity_pins p ON p.post_id = m.post_id
                          AND p.guide = m.guide AND p.n = m.n AND p.undone_at IS NULL
-                        WHERE m.guide = %s AND m.entity_id IS DISTINCT FROM p.entity_id""", (guide,))
+                        WHERE m.guide = ANY(%s) AND m.entity_id IS DISTINCT FROM p.entity_id""", (guide,))
         moved = {(p, n) for p, n in cur.fetchall()}
         if moved:
             have = {(m.post_id, m.n) for m in ms}
             ms += [m for m in _mentions(cur, guide, unlinked=False) if (m.post_id, m.n) in moved - have]
     before = {(m.post_id, m.n): m.entity_id for m in ms}
     out["link"] = link(cur, book, w, ms)
+    out["link"]["published"] = published(cur, book, w, ms)   # 0133: a document's `by`
     book.mentioned |= {m.entity_id for m in ms if m.entity_id}
     if full and not resume:
         moved = sum(1 for m in ms if before.get((m.post_id, m.n)) and before[(m.post_id, m.n)] != m.entity_id)
@@ -1175,12 +1240,12 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                         WHERE t.kind IN ('alias', 'alias2') AND c.created_at >= %s""", (since,))
         answered_pairs = {pair(a, b) for a, b in cur.fetchall()}
     if full:
-        cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions WHERE guide = %s AND entity_id IS NOT NULL", (guide,))
+        cur.execute("SELECT DISTINCT post_id::text FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id IS NOT NULL", (guide,))
     else:   # the posts linked now, and those naming both ends of an answered pair
-        cur.execute("""SELECT post_id::text FROM mx_mentions WHERE guide = %s AND post_id = ANY(%s::uuid[])
-                       UNION SELECT a.post_id::text FROM mx_mentions a JOIN mx_mentions b ON b.post_id = a.post_id
+        cur.execute("""SELECT post_id::text FROM mx_mentions_now WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
+                       UNION SELECT a.post_id::text FROM mx_mentions_now a JOIN mx_mentions_now b ON b.post_id = a.post_id
                               AND b.guide = a.guide
-                        WHERE a.guide = %s AND (a.entity_id, b.entity_id) IN (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
+                        WHERE a.guide = ANY(%s) AND (a.entity_id, b.entity_id) IN (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
                     (guide, sorted({m.post_id for m in ms if m.entity_id}), guide,
                      [p_[0] for p_ in answered_pairs], [p_[1] for p_ in answered_pairs]))
     parens = paren_pairs(cur, book, guide, [r[0] for r in cur.fetchall()])
@@ -1330,8 +1395,8 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     """The collision judge: keys (entities) whose mentions differ in type or stated maker, asked COLLIDE_RUNS times;
     a split two runs make goes to the queue. `seeds` None: every entity."""
     from insight_core.markx import tasks
-    cur.execute(f"""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions
-                     WHERE guide = %s AND entity_id IS NOT NULL
+    cur.execute(f"""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
+                     WHERE guide = ANY(%s) AND entity_id IS NOT NULL
                      {"AND entity_id = ANY(%s::uuid[])" if seeds is not None else ""}
                      ORDER BY entity_id, post_id, n""", (guide, sorted(seeds)) if seeds is not None else (guide,))
     by: Dict[str, Dict[str, Tuple]] = defaultdict(dict)
@@ -1389,7 +1454,7 @@ def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tupl
     """A collision question's numbered mentions found again among the entity's mentions: {number: [(post, n)]} (the
     input names no ids; each line's span, type, maker and its post's title and date say which post it is)."""
     from insight_core.markx import tasks
-    cur.execute("SELECT post_id::text, n, span, type, maker FROM mx_mentions WHERE guide = %s AND entity_id = %s",
+    cur.execute("SELECT post_id::text, n, span, type, maker FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = %s",
                 (guide, eid))
     rows = cur.fetchall()
     posts = tasks.load_posts(cur, {r[0] for r in rows})

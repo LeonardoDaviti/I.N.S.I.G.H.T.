@@ -305,9 +305,9 @@ class Subjects:
         cur.execute("SELECT from_id::text, to_id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
         self.redirect = dict(cur.fetchall())
         cur.execute(f"""SELECT m.post_id::text, m.entity_id::text, {_date()}
-                          FROM mx_mentions m JOIN posts p ON p.id = m.post_id
-                         WHERE m.guide = %s AND m.role = 'subject' AND m.entity_id IS NOT NULL""",
-                    (schemas.KINDS["entities"].guide,))
+                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL""",   # 0133: the current set
+                    (schemas.mention_guides(),))
         self.of: Dict[str, Set[str]] = defaultdict(set)
         self.at: Dict[str, datetime] = {}
         for pid, eid, at in cur.fetchall():
@@ -656,12 +656,12 @@ def _since(cur: Any, now: datetime) -> datetime:
 def _subject_scope(cur: Any, since: datetime) -> Set[str]:
     """The posts whose ent-v3 subjects are new since (their call), or whose subject entity was merged or unmerged."""
     from insight_core.markx import schemas
-    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions m JOIN mx_calls c ON c.id = m.call_id
-                    WHERE m.guide = %s AND m.role = 'subject' AND c.created_at >= %s""",
-                (schemas.KINDS["entities"].guide, since))
+    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+                    WHERE m.guide = ANY(%s) AND m.role = 'subject' AND c.created_at >= %s""",
+                (schemas.mention_guides(), since))
     out = {r[0] for r in cur.fetchall()}
     cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_entity_redirects r
-                     JOIN mx_mentions m ON m.entity_id IN (r.from_id, r.to_id)
+                     JOIN mx_mentions_now m ON m.entity_id IN (r.from_id, r.to_id)
                     WHERE m.role = 'subject' AND (r.at >= %s OR r.undone_at >= %s)""", (since, since))
     return out | {r[0] for r in cur.fetchall()}
 

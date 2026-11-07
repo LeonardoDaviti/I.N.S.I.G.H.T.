@@ -33,14 +33,16 @@ ACCURACY = {
 }
 
 
-def _guide() -> str:
+def _guide() -> List[str]:
+    """0133: every entities guide; the views read each post's current set (mx_mentions_now) whichever it is."""
     from insight_core.markx import schemas
-    return schemas.KINDS["entities"].guide
+    return schemas.mention_guides()
 
 
-def _rows(cur: Any, guide: str, since: Optional[datetime], entity_ids: Optional[Iterable[str]] = None):
-    """Mentions with their post's time, source and read state: (post, n, role, entity, at, source id, read)."""
-    where, params = ["m.guide = %s", "m.entity_id IS NOT NULL"], [guide]
+def _rows(cur: Any, guide: List[str], since: Optional[datetime], entity_ids: Optional[Iterable[str]] = None):
+    """Current mentions with their post's time, source and read state: (post, n, role, entity, at, source id, read,
+    guide)."""
+    where, params = ["m.guide = ANY(%s)", "m.entity_id IS NOT NULL"], [guide]
     if since is not None:
         where.append("COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s")
         params.append(since)
@@ -51,8 +53,8 @@ def _rows(cur: Any, guide: str, since: Optional[datetime], entity_ids: Optional[
         params += [ids, ids]
     cur.execute(f"""SELECT m.post_id::text, m.n, m.role, m.entity_id::text,
                            COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.source_id::text,
-                           rs.read_at IS NOT NULL
-                      FROM mx_mentions m JOIN posts p ON p.id = m.post_id
+                           rs.read_at IS NOT NULL, m.guide
+                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                       LEFT JOIN post_reader_state rs ON rs.post_id = m.post_id
                      WHERE {' AND '.join(where)}""", params)
     return cur.fetchall()
@@ -80,8 +82,9 @@ def _story_heads(cur: Any, sids: Iterable[str]) -> Dict[str, Optional[str]]:
 
 
 def _ent_view(book: I.Book, eid: str) -> Dict[str, Any]:
+    from insight_core.markx import schemas
     e = book.ents[eid]
-    return {"id": e.id, "name": e.name, "type": e.type, "maker": e.maker, "level": e.level,
+    return {"id": e.id, "name": e.name, "type": schemas.entity_type(e.type), "maker": e.maker, "level": e.level,
             "version": e.version, "variant": e.variant, "size": e.size, "build": e.build, "status": e.status,
             "family": _family_of(book, eid)}
 
@@ -109,8 +112,8 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     book = I.load_book(cur)
     since = now - timedelta(days=WINDOW_DAYS)
     agg: Dict[str, Dict[str, Any]] = {}
-    for pid, n, role, eid, at, src, read in _rows(cur, guide, since):
-        eid = book.root(book.pins.get((pid, guide, n), eid))
+    for pid, n, role, eid, at, src, read, g in _rows(cur, guide, since):
+        eid = book.root(book.pins.get((pid, g, n), eid))
         if eid not in book.ents or book.ents[eid].status == "not_entity":
             continue
         a = agg.setdefault(eid, {"voices": set(), "posts": {}, "reports": set()})
@@ -155,8 +158,8 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
     root = book.root(entity_id)
     members = _members(book, root)
     lines: Dict[str, Dict[str, Any]] = {}
-    for pid, n, role, eid, at, src, read in _rows(cur, guide, None, members):
-        if book.root(book.pins.get((pid, guide, n), eid)) != root:
+    for pid, n, role, eid, at, src, read, g in _rows(cur, guide, None, members):
+        if book.root(book.pins.get((pid, g, n), eid)) != root:
             continue
         ln = lines.setdefault(pid, {"roles": set(), "at": at, "source_id": src, "read": read, "as": set()})
         ln["roles"].add(role or "mention")
@@ -211,8 +214,43 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
             "versions": versions, "posts": len(lines), "voices": len(sources),
             "stories": blocks, "loose": [line(p) for p in loose],
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
+            **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": [q for q in queue(cur, book=book)["open"] if root in (q["a"]["id"], (q.get("b") or {}).get("id"))]}
+
+
+def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str], List[str]]:
+    """0133: (who published these entities, what they published): the current `published` edges' other ends, as
+    roots, most posts first."""
+    ids = sorted(members)
+    if not ids:
+        return [], []
+    cur.execute("""SELECT a::text, b::text FROM mx_connections WHERE valid_to IS NULL AND relation = 'published'
+                      AND a_kind = 'entity' AND b_kind = 'entity' AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
+                (ids, ids))
+    by, works = Counter(), Counter()
+    for a, b in cur.fetchall():
+        ra, rb = book.root(a), book.root(b)
+        if b in members and ra not in members:
+            by[ra] += 1
+        if a in members and rb not in members:
+            works[rb] += 1
+    order = lambda c: [e for e, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0])) if e in book.ents]
+    return order(by), order(works)
+
+
+def _documents(cur: Any, book: I.Book, members: Set[str], lines: Dict[str, Dict[str, Any]], line: Any) -> Dict[str, Any]:
+    by, works = published_edges(cur, book, members)
+    ref = lambda e: {"id": e, "name": book.ents[e].name, "type": schemas_type(book.ents[e].type)}
+    newest = lambda role: [line(p) for p in sorted((p for p, ln in lines.items() if role in ln["roles"]),
+                                                   key=lambda p: (-lines[p]["at"].timestamp(), p))]
+    return {"published_by": [ref(e) for e in by], "published": [ref(e) for e in works],
+            "citing": newest("source"), "recommending": newest("recommended")}
+
+
+def schemas_type(t: Optional[str]) -> Optional[str]:
+    from insight_core.markx import schemas
+    return schemas.entity_type(t)
 
 
 def open_count(cur: Any) -> int:
@@ -233,8 +271,8 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
         return {}
     cur.execute("""SELECT DISTINCT ON (m.entity_id, m.post_id) m.entity_id::text, m.post_id::text, m.span, m.role,
                           COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
-                     FROM mx_mentions m JOIN posts p ON p.id = m.post_id
-                    WHERE m.guide = %s AND m.entity_id = ANY(%s::uuid[])""", (guide, ids))
+                     FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                    WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[])""", (guide, ids))
     by: Dict[str, List[Tuple]] = defaultdict(list)
     for eid, pid, span, role, at in cur.fetchall():
         by[eid].append((role != "subject", -at.timestamp(), pid, span, role))
@@ -285,10 +323,9 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
     """{mention n: the entity it shows under (root, through pins)} for the post page's panel."""
-    guide = _guide()
     book = I.load_book(cur)
-    cur.execute("SELECT n, entity_id::text FROM mx_mentions WHERE post_id = %s AND guide = %s", (post_id, guide))
-    return {n: book.root(book.pins.get((post_id, guide, n), eid)) if eid else None for n, eid in cur.fetchall()}
+    cur.execute("SELECT n, entity_id::text, guide FROM mx_mentions_now WHERE post_id = %s", (post_id,))   # 0133
+    return {n: book.root(book.pins.get((post_id, g, n), eid)) if eid else None for n, eid, g in cur.fetchall()}
 
 
 def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str, Any]]]:

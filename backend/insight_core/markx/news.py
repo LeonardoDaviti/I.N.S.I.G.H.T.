@@ -506,9 +506,14 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
                                       "main": (r[5] or {}).get("main"), "mentions": (r[5] or {}).get("mentions") or []}
     from insight_core.markx import entity_views   # 0119 A3: each entity opens its page
     linked = entity_views.post_entities(cur, post_id)
-    entities = [{**{k: m[k] for k in ("name", "type", "role", "maker", "family", "version", "variant", "span")},
-                 "entity_id": linked.get(m["n"])}
-                for m in repo.mentions(cur, post_id) if m["guide"] == "ent-v3"]
+    from insight_core.markx import schemas
+    current = repo.current_guide(cur, post_id)   # 0133: the newest valid entities answer's set, and its guide
+    entities = [{**{k: m[k] for k in ("name", "maker", "family", "version", "variant", "span")},
+                 "type": schemas.entity_type(m["type"]), "role": m["role"] or "mention", "rule": m.get("rule"),
+                 "by": m.get("by_name"), "guide": m["guide"], "entity_id": linked.get(m["n"])}
+                for m in repo.mentions(cur, post_id) if m["guide"] == current]
+    documents = [e for e in entities if e["type"] == "document" and e["role"] not in ("source", "recommended")]
+    cited = {r: [e for e in entities if e["role"] == r] for r in ("source", "recommended")}
     stories = []
     for (sid, _pid), w in _why(cur, [post_id]).items():
         st = repo.get_story(cur, sid) or {}
@@ -534,7 +539,10 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
         if c["other_kind"] == "post":
             c["title"] = (other_posts.get(c["other"]) or {}).get("title")
     return {"post_id": post_id, "reading": reading, "entities": entities, "stories": stories, "connections": conns,
-            "read": reading is not None}
+            "read": reading is not None,
+            # 0133: the guide the entities came from; the documents it names and its cited sources, under their roles
+            "entities_guide": current, "documents": documents, "sources": cited["source"],
+            "recommended": cited["recommended"]}
 
 
 def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Dict[str, Any]:
@@ -545,8 +553,8 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
         cur.execute("""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
                               (array_agg(m.type))[1], count(DISTINCT m.post_id), count(DISTINCT p.source_id),
                               (array_agg(DISTINCT m.post_id::text))[1:5], (array_agg(m.version ORDER BY m.version))[1]
-                         FROM mx_mentions m JOIN posts p ON p.id = m.post_id
-                        WHERE m.guide = 'ent-v3' AND m.role = 'subject'
+                         FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                        WHERE m.role = 'subject'
                           AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
                         GROUP BY 1, 2 ORDER BY count(DISTINCT p.source_id) DESC, count(DISTINCT m.post_id) DESC, 1 LIMIT %s""",
                     (now - timedelta(days=days), limit))
