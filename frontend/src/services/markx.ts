@@ -36,6 +36,29 @@ export interface MarkxLine {
   /** Its Mark X story (the one tap's key, 0086 F), and the owner's standing one-tap answer, if any. */
   story?: string | null;
   flag?: Exclude<MarkxFlag, 'ok'> | null;
+  /** 0127: its fold in its Mark X story (null: not read under read-v3 yet, or its story has no group). */
+  fold?: MarkxFold | null;
+}
+
+/** 0127: duplicates folded. `head` shows; `folded` sits under it; `shown` is a read member outside the group. */
+export type MarkxFoldAnswer = 'same' | 'not_same' | 'undo';
+export interface MarkxFold {
+  state: 'head' | 'folded' | 'shown';
+  head: string | null;
+  /** Who folded it: the rule or the owner's answer. */
+  by: 'rule' | 'owner' | null;
+  /** The owner's standing answer, if any. */
+  answer: Exclude<MarkxFoldAnswer, 'undo'> | null;
+  /** What the rule says: folded, head or shown. */
+  rule: 'folded' | 'head' | 'shown';
+  count: number | null;
+}
+export interface MarkxFoldScore {
+  answered: number;
+  folded: { n: number; right: number; precision: number | null; interval: [number, number] | null };
+  missed: number;
+  shown_right?: number;
+  lab: { f1: number; single_runs: number[]; set: string; date: string };
 }
 
 export interface MarkxLeftOut {
@@ -64,6 +87,8 @@ export interface MarkxRow {
   score: number;
   story: string | null;
   posts: MarkxLine[];
+  /** 0127: how many of its posts are folded under a head. */
+  folded?: number;
   removed: MarkxLeftOut[];
   /** 0119 A2: the entities its posts make surge (3+ voices that day). */
   surging?: { id: string; name: string; day: string; voices: number }[];
@@ -75,6 +100,8 @@ export interface MarkxNews {
   counts: Partial<Record<MarkxTag, number>> & { rows?: number; ix_rows?: number; gone?: number };
   items: MarkxRow[];
   gone: { id: string; title: string | null; voices?: number; first_at?: string; posts: MarkxLeftOut[] }[];
+  /** 0127: the fold's count (the lab's F1 and the owner's labels). */
+  folds?: MarkxFoldScore;
 }
 
 export interface MarkxPostPanel {

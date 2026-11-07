@@ -476,6 +476,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                       "surging": list({s["id"]: s for p in mine for s in surging.get(p, [])}.values()),
                       "ix": [{"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {})} for nid in ix_hit]})
     items.sort(key=lambda i: (i["first_at"] < now - timedelta(hours=48), -i["score"], -i["first_at"].timestamp(), i["id"]))
+    from insight_core.markx import folds   # 0127: each line's fold, the header's count
+    fold_count = folds.annotate(cur, items)
     gone = []
     for nid in sorted(gone_rows, key=lambda n: -(ix_meta.get(n) or {}).get("voices", 0)):
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),
@@ -486,7 +488,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
     return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
-            "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone)}, "items": items, "gone": gone}
+            "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone)}, "items": items, "gone": gone,
+            "folds": fold_count}
 
 
 def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:

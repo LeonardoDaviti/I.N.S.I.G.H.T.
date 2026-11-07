@@ -283,7 +283,7 @@ class TheKindsAndGuides(unittest.TestCase):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
                                               "headline", "briefing", "translate", "embed",   # embed: S2
                                               "alias", "collide", "embed_name",                # 0119 A1
-                                              "perspective", "sheet"})                         # 0119 B
+                                              "perspective", "sheet", "read3"})                         # 0119 B
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())

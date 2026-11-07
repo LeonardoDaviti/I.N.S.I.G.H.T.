@@ -8,6 +8,7 @@ import type {
 } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
+import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
 
 export type { Envelope };
 
@@ -1319,6 +1320,10 @@ export function createApi() {
     flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
       request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
         { method: 'POST', body: { post, story, answer } }),
+    /** 0127: an answer on a member's fold, applied at once and stored as a label. */
+    answerMarkxFold: (story: string, post: string, answer: MarkxFoldAnswer) =>
+      request<{ story: string; post: string } & Partial<MarkxFold>>('/api/markx/folds/answer',
+        { method: 'POST', body: { story, post, answer } }),
     // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
     getMarkxEntity: (id: string) => request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}`),

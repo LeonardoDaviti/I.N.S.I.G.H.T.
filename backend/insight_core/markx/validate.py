@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from insight_core.markx import schemas
 
-WRAPPERS = {"read": ("reading", "answer"), "card": ("card", "answer")}
+WRAPPERS = {"read": ("reading", "answer"), "read3": ("reading", "answer"), "card": ("card", "answer")}
 
 # ---- folding ---------------------------------------------------------------------------------------
 
@@ -302,7 +302,7 @@ def _collide(a: Dict[str, Any], input: str) -> Optional[str]:
 
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
-          "translate": _translate, "collide": _collide,
+          "translate": _translate, "collide": _collide, "read3": _read,
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

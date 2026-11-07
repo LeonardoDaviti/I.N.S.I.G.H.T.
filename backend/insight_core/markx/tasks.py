@@ -558,12 +558,19 @@ def _plan_names(cur: Cursor) -> int:
     return embed.plan_names(cur)
 
 
-WINDOWED = ("read", "entities", "embed")   # the planners the reading window (and a lease's `days`) applies to
+def _plan_read3(cur: Cursor, **kw) -> int:
+    """0127: the read-v3 readings of Mark X stories' members (folds.plan)."""
+    from insight_core.markx import folds   # folds imports this module
+    return folds.plan(cur, **kw)
+
+
+WINDOWED = ("read", "entities", "embed", "read3")   # the planners the reading window (and a lease's `days`) applies to
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
             "check": plan_checks,
             "embed": _plan_embeds,
-            "embed_name": lambda cur, **kw: _plan_names(cur)}
+            "embed_name": lambda cur, **kw: _plan_names(cur),
+            "read3": lambda cur, **kw: _plan_read3(cur, **kw)}
 
 
 # ---- what a valid answer writes besides its call ----------------------------------------------------
@@ -584,7 +591,7 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     """The rows a task's first valid answer adds: a post's reading (mx_readings) or its entities (mx_mentions)."""
     if task["a"] is None:
         return
-    if task["kind"] == "read":
+    if task["kind"] in ("read", "read3"):          # 0127: a read3 answer is a reading under read-v3
         main = answer.get("main") or {}
         repo.add_reading(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, kind=answer.get("kind"),
                          events=answer.get("events"), lang=answer.get("lang"), headline=main.get("headline_en"),

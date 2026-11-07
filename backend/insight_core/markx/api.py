@@ -724,3 +724,8 @@ def mx_label_perspectives():
     from insight_core.markx import perspective_views
     with transaction() as cur:
         return perspective_views.accuracy(cur)
+
+
+# ---- 0127 (v10.3): the fold's routes (markx/fold_api.py), under this router's prefix and switch ----
+from insight_core.markx import fold_api as _fold_api  # noqa: E402
+router.include_router(_fold_api.router)
