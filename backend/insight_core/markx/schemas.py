@@ -192,6 +192,15 @@ SHEET_SCHEMA = {
                        "correction": _BOOL_OR_NULL}}}},
 }
 
+# 0131 (Stalker's first edges): how a newer post relates to an older one (relate-v1, the lab's frozen G2 judge v3).
+RELATE_RELATIONS = ["same_event", "follows_up", "next_version", "builds_on", "refers_back", "background", "unrelated"]
+RELATE_SCHEMA = {
+    "type": "object",
+    "required": ["reason", "relation"],
+    "properties": {"reason": {"type": "string", "minLength": 1}, "relation": {"enum": RELATE_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
+}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "required": ["title_en", "text_en"],
@@ -230,6 +239,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
+    Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
 )}
 
 

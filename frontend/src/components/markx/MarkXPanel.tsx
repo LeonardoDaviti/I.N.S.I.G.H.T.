@@ -1,16 +1,19 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import { TextLink } from '../ui';
+import { markxGraphApi, type MarkxEdgeAnswer } from '../../services/api';   // 0131
+import type { MarkxBefore } from '../../services/markx';
+import { Button, TextLink } from '../ui';
 import { judged, relationWords, whyWords } from '../../lib/markx';
 import { plural } from '../../lib/format';
+import { postBylineTime } from '../../lib/dates';
 import MarkXTranslation from './MarkXTranslation';   // 0130 D
 
 /**
  * The post page's "Mark X" panel (issue 0086 E), folded, loaded only when opened (its own chunk, and only while
  * Mark X is on): the post's reading, its entities and their roles, its Mark X stories with why it is in each, and
- * its connections, each with its reason.
+ * its connections, each with its reason; and (0131) the older posts it connects to, "Before".
  */
 export default function MarkXPanel({ postId }: { postId: string }) {
   const api = useApi();
@@ -80,6 +83,7 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 </ul>
               ) : <p className="mt-1 text-fg-3">In no Mark X story.</p>}
             </section>
+            {data.before?.length ? <BeforeList postId={postId} rows={data.before} more={data.before_more ?? 0} /> : null}
             {data.connections.length ? (
               <section aria-label="Connections">
                 <h3 className="text-[0.75rem] font-medium text-fg-3">Connections</h3>
@@ -100,5 +104,70 @@ export default function MarkXPanel({ postId }: { postId: string }) {
         ) : null}
       </div>
     </details>
+  );
+}
+
+/** What made an edge (0131): an author's link, entity identity, or the judge alone. */
+const RULE_WORDS: Record<string, string> = {
+  author_link_other: 'the author links it',
+  author_link_own: 'the source links its own post',
+  entity_next_version: 'entities: the next version',
+};
+
+/**
+ * The older posts this post connects to (issue 0131, Stalker's first edges), oldest first, with their relation and
+ * the reason line. An edge the judge alone made is marked uncertain, with ✓ / ✗ (the owner's labels).
+ */
+function BeforeList({ postId, rows, more }: { postId: string; rows: MarkxBefore[]; more: number }) {
+  return (
+    <section aria-label="Before">
+      <h3 className="text-[0.75rem] font-medium text-fg-3">Before</h3>
+      <ul className="mt-1 space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.post_id} className="[overflow-wrap:anywhere]" data-uncertain={r.uncertain || undefined}>
+            <span className="text-fg">{relationWords(r.relation)}</span>{' '}
+            <TextLink to={`/posts/${encodeURIComponent(r.post_id)}`} muted>{r.title || 'a post'}</TextLink>
+            <span className="text-fg-3">
+              {r.source ? ` · ${r.source}` : ''}{r.at ? ` · ${postBylineTime(r.at)}` : ''}
+              {' · '}{r.rule ? RULE_WORDS[r.rule] ?? `rule ${r.rule}` : judged(r.relation, r.p)}
+            </span>
+            {r.uncertain ? <> <span className="rounded-sm border border-line px-1 text-[0.6875rem] text-fg-3">uncertain</span>{' '}
+              <EdgeButtons newer={postId} row={r} /></> : null}
+            {r.reason ? <span className="block text-fg-3">{r.reason}</span> : null}
+          </li>
+        ))}
+      </ul>
+      {more > 0 ? <p className="mt-1 text-fg-3">+{more} more</p> : null}
+    </section>
+  );
+}
+
+function EdgeButtons({ newer, row }: { newer: string; row: MarkxBefore }) {
+  const client = useQueryClient();
+  const [mine, setMine] = useState<'right' | 'wrong' | null>(row.label);
+  const tap = useMutation({
+    mutationFn: (answer: MarkxEdgeAnswer) => markxGraphApi.labelEdge(newer, row.post_id, answer),
+    onSuccess: (got) => {
+      setMine(got.label);
+      void client.invalidateQueries({ queryKey: ['markx-post', newer] });
+    },
+  });
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Is this edge right?">
+      {mine ? (
+        <>
+          <span className="text-fg-2">you said {mine}</span>
+          <Button size="sm" variant="ghost" className="text-[0.75rem]" disabled={tap.isPending} onClick={() => tap.mutate('undo')}>undo</Button>
+        </>
+      ) : (
+        <>
+          <Button size="sm" variant="ghost" className="text-[0.75rem]" aria-label="edge right" disabled={tap.isPending}
+            onClick={() => tap.mutate('right')}>✓</Button>
+          <Button size="sm" variant="ghost" className="text-[0.75rem]" aria-label="edge wrong" disabled={tap.isPending}
+            onClick={() => tap.mutate('wrong')}>✗</Button>
+        </>
+      )}
+      {tap.isError ? <span className="text-fg">× not saved</span> : null}
+    </span>
   );
 }
