@@ -21,8 +21,8 @@ from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
-from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
-                                            source_site)
+from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, VOICE_PREFIX,
+                                            Edge, Story, source_site)
 from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
 
@@ -65,17 +65,20 @@ class SourceFacts:
         rows = cur.fetchall()
         cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         self._read(rows, cur.fetchall())
+        from insight_core.db.repo_voices import counted
+        self.voice_of: Dict[str, str] = counted(cur)   # the owner's confirmed voices (issue 0132 A)
         self._own(self._linked(cur))
 
     @classmethod
     def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]],
-           links: Iterable[Tuple[str, str]] = ()) -> "SourceFacts":
+           links: Iterable[Tuple[str, str]] = (), voices: Optional[Dict[str, str]] = None) -> "SourceFacts":
         """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
         posts)), as read from the database, and which source links which (`links`: (linking, linked), as
         _linked reads them for the pairs that may be one owner): the rules' stamp reads its sample so
-        (utils/stamps.py)."""
+        (utils/stamps.py). `voices`: source -> its confirmed voice (issue 0132 A; the sample has none)."""
         facts = cls.__new__(cls)
         facts._read(list(rows), list(hosts))
+        facts.voice_of = dict(voices or {})
         facts._own(links)
         return facts
 
@@ -125,11 +128,16 @@ class SourceFacts:
         def voice(i: str) -> str:
             return "site:" + self.publication(i) if self.kind.get(i) == "site" else "source:" + i
         self.owners: Dict[str, str] = {voice(i): voice(o) for i, o in self.owner.items() if voice(i) != voice(o)}
+        # A confirmed voice of 2+ channels (issue 0132 A) is one voice everywhere: stories and News count it once.
+        voice_of = getattr(self, "voice_of", {})
+        for i, v in sorted(voice_of.items()):
+            if self.kind.get(i) not in (*NOT_PUBLISHERS, "reddit"):
+                self.owners[voice(i)] = VOICE_PREFIX + v
         for i, kind in sorted(self.kind.items()):
             account = self.account.get(i) or ""
             if kind in ("x", "telegram", "youtube") and "/" in account:
                 self.owners.setdefault("reddit:" + account.rsplit("/", 1)[1].lstrip("@").lower(),
-                                       voice(self.owner.get(i, i)))
+                                       VOICE_PREFIX + voice_of[i] if i in voice_of else voice(self.owner.get(i, i)))
 
     def owner_voice(self, voice: str) -> Optional[str]:
         """A voice's owner's voice, when another (a Reddit poster by its name in any case)."""

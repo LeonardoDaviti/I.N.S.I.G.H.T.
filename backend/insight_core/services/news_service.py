@@ -235,7 +235,7 @@ class NewsService:
     def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None) -> Dict[str, Any]:
         """`news` on the caller's cursor; `news_id`: that row only."""
         feed_scope = FeedScope.parse(scope)
-        one_source = feed_scope.kind == "source"
+        one_source = feed_scope.kind in ("source", "voice")   # a voice's page reads as a source's (issue 0132 A)
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
@@ -329,7 +329,7 @@ class NewsService:
                 "citers": self._citers(row["citers"], feed_scope.id if named is not None else None, named),
                 "read_at": row["read_at"], "later_at": row["later_at"],
             })
-            if feed_scope.kind == "source":   # issue 0077: the source's own page, else a page it cites
+            if feed_scope.kind in ("source", "voice"):   # issue 0077: the source's own page, else a page it cites
                 out[-1]["scope_role"] = "origin" if row["own"] else "report"
         return {"success": True, "classics": out}
 

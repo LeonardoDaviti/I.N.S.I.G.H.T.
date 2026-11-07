@@ -559,6 +559,18 @@ def _markx_entity_big_cluster(run: Run):
     return sorted(e for e, n in size.items() if n > 10), len(size)
 
 
+# ---- voices (issue 0132 A) -------------------------------------------------------------------------
+
+def _voice_one_per_source(run: Run):
+    """A source in more than one voice, or in one that is no live voice (removed, never confirmed or gone): every
+    source has at most one voice (sources.voice_id holds one; its voice must be one the owner keeps)."""
+    run.cur.execute("""SELECT s.id::text FROM sources s LEFT JOIN voices v ON v.id = s.voice_id
+                        WHERE s.voice_id IS NOT NULL AND (v.id IS NULL OR v.removed_at IS NOT NULL OR v.confirmed_at IS NULL)""")
+    out = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT count(*) FROM sources")
+    return out, run.cur.fetchone()[0]
+
+
 @dataclass
 class Invariant:
     name: str
@@ -610,6 +622,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("markx.entity_redirect_loop", "mark x", "a redirect chain that loops (0119)", _markx_entity_redirect_loop),
     Invariant("markx.entity_cross_version", "mark x",
               "an automatic merge of two different parsed versions or variants (0119)", _markx_entity_cross_version),
+    Invariant("voice.one_per_source", "voices", "a source in more than one voice, or in a voice not kept (0132 A)",
+              _voice_one_per_source),
     Invariant("markx.entity_big_cluster", "mark x", "an entity holding more than 10 names from automatic merges (0119)",
               _markx_entity_big_cluster),
 ]

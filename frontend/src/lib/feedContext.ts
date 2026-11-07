@@ -29,7 +29,8 @@ export function isFeedFilter(value: unknown): value is FeedFilter {
 export function isValidScope(scope: string): boolean {
   if (scope === 'all') return true;
   const [kind, id, ...rest] = scope.split(':');
-  return rest.length === 0 && (kind === 'folder' || kind === 'source') && UUID_RE.test(id ?? '');
+  // A voice (issue 0132 A): every channel of one voice, read as a source's page.
+  return rest.length === 0 && (kind === 'folder' || kind === 'source' || kind === 'voice') && UUID_RE.test(id ?? '');
 }
 
 function toBase64Url(text: string): string {
@@ -148,6 +149,9 @@ export function folderReadPath(folderId: string): string {
   return `/read/folder/${encodeURIComponent(folderId)}`;
 }
 
+/** The reader scoped to one voice: every channel of it (issue 0132 A). */
+export function voiceReadPath(voiceId: string): string { return `/read/voice/${encodeURIComponent(voiceId)}`; }
+
 /** The reader scoped to one source: where every "read this source" link goes (issues 0010, 0011). */
 export function sourceReadPath(sourceId: string): string { return `/read/source/${encodeURIComponent(sourceId)}`; }
 
@@ -173,7 +177,7 @@ export function scopeSettingsHref(scope: string): string | null {
 export function scopeFromRoute(kind: string | undefined, id: string | undefined): string | null {
   if (!kind) return 'all';
   if (kind === 'all' && !id) return 'all';
-  if ((kind === 'folder' || kind === 'source') && id) {
+  if ((kind === 'folder' || kind === 'source' || kind === 'voice') && id) {
     const scope = `${kind}:${id}`;
     return isValidScope(scope) ? scope : null;
   }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -52,6 +52,9 @@ import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
 import { sourceLabel } from '../lib/sourceLabel';
 
+// Voices (issue 0132 A): its own chunk, loaded the first time its tab opens.
+const VoicesPanel = lazy(() => import('../components/voices/VoicesPanel'));
+
 export const SOURCES_WITH_SETTINGS_KEY = ['sources-with-settings'] as const;
 
 type PendingDelete =
@@ -80,7 +83,7 @@ const SHEET_PUSHED = 'sourceSheetPushed';
 const TRACK_HIGHLIGHT_MS = 1600;
 
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
-const EXTRA_TABS = ['discover', 'connections', 'ingestion', 'data'] as const;
+const EXTRA_TABS = ['discover', 'voices', 'connections', 'ingestion', 'data'] as const;   // voices: issue 0132 A
 type ExtraTab = (typeof EXTRA_TABS)[number];
 const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
 
@@ -538,6 +541,7 @@ export default function SourcesConfig() {
         <TabsList aria-label="Sources page" className="mb-4">
           <TabsTrigger value="sources">sources</TabsTrigger>
           <TabsTrigger value="discover">discover</TabsTrigger>
+          <TabsTrigger value="voices">voices</TabsTrigger>
           <TabsTrigger value="connections">connections</TabsTrigger>
           <TabsTrigger value="ingestion">ingestion</TabsTrigger>
           <TabsTrigger value="data">data</TabsTrigger>
@@ -562,6 +566,11 @@ export default function SourcesConfig() {
         <TabsContent value="discover" className="pt-0">
           <div className="pb-24">
             <SuggestedSources onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} />
+          </div>
+        </TabsContent>
+        <TabsContent value="voices" className="pt-2">
+          <div className="pb-24">
+            <Suspense fallback={<LoadingState label="Loading voices" rows={3} />}><VoicesPanel /></Suspense>
           </div>
         </TabsContent>
         <TabsContent value="connections" className="pt-2">

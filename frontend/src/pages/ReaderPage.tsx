@@ -53,6 +53,8 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
 // News and Classics (issue 0051): their own chunks, loaded the first time they are shown (the reader's JS budget).
 const NewsList = lazy(() => import('../components/reader/NewsList'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
+// A voice's channels as tabs (issue 0132 A): its own chunk, loaded on a voice's or a channel's page only.
+const ScopeVoiceHeader = lazy(() => import('../components/voices/ScopeVoiceHeader'));
 
 // What a reader opens next, loaded ahead once per page load (issue 0061): the post page
 // with its text renderer first, then News and Classics.
@@ -129,7 +131,8 @@ function Reader({ scope }: { scope: string }) {
   // The live feed only: fixtures have no health rows to read it from.
   const activity = fixture ? null : ingestionActivity(health.data?.rows);
   const stopped = activity?.stopped ?? false;
-  const title = scopeLabel(scope, folders.data, sourceNames);
+  const [voiceName, setVoiceName] = useState<string | null>(null);
+  const title = scope.startsWith('voice:') ? (voiceName ?? 'Voice') : scopeLabel(scope, folders.data, sourceNames);
   const scopeCount = scopeUnreadCount(counts.data, scope);
   // One source that watches its pages for changes offers its Updates (issue 0039).
   const updates = oneSource && Boolean(health.data?.rows.find((row) => `source:${row.source_id}` === scope)?.watch_changes);
@@ -273,6 +276,9 @@ function Reader({ scope }: { scope: string }) {
                 <p className="mb-3 px-1 text-[0.8125rem] tabular-nums">
                   <TextLink to="/?filter=later" data-testid="reader-later-line" className="text-fg-2 decoration-transparent hover:decoration-fg-3">{laterLine}</TextLink>
                 </p>
+              ) : null}
+              {oneSource || scope.startsWith('voice:') ? (
+                <Suspense fallback={null}><ScopeVoiceHeader scope={scope} onName={setVoiceName} /></Suspense>
               ) : null}
               {readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>

@@ -66,6 +66,8 @@ REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   
 # page is anyone's. Their posts never claim an address.
 NOT_PUBLISHERS = ("hn", "saved")
 HOME_SITE_SHARE = 0.5   # a source whose address is elsewhere publishes on a site holding half its posts; not measured
+# A confirmed voice's owner key (issue 0132 A): the channels the owner joined are one voice in stories and News.
+VOICE_PREFIX = "voice:"
 
 
 @dataclass
@@ -125,11 +127,18 @@ class StoryPost:
         """Its voice as its owner's (issue 0111): News counts one owner's channels once."""
         return self.owner or self.voice
 
+    @property
+    def counted_voice(self) -> str:
+        """Its voice as a story counts it: its confirmed voice's (issue 0132 A: the owner joined its channels, an
+        owner that is `VOICE_PREFIX`<id>), else its own. A Reddit post's voice stays its poster."""
+        return self.owner if confirmed(self.owner) and self.kind != "reddit" else self.voice
+
     def other_voices(self, by_owner: bool = False) -> List[str]:
-        """The voices of its other_sources (reposter_voice), with `by_owner` each as its owner's."""
-        owners = self.other_owners if by_owner else ()
-        return [(owners[k] if k < len(owners) and owners[k] else None) or reposter_voice(s)
-                for k, s in enumerate(self.other_sources)]
+        """The voices of its other_sources (reposter_voice), with `by_owner` each as its owner's; without, a
+        confirmed voice's still (issue 0132 A)."""
+        owners = self.other_owners
+        return [(owners[k] if k < len(owners) and owners[k] and (by_owner or confirmed(owners[k])) else None)
+                or reposter_voice(s) for k, s in enumerate(self.other_sources)]
 
     @property
     def place(self) -> str:
@@ -708,9 +717,10 @@ def count_voices(posts: Sequence[StoryPost], *, by_owner: bool = False) -> int:
     """How many voices a story has: posts of one voice, and copies of one text, are one. A source
     that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
     with its posts in the story, if it has some. A page you saved is no voice (issue 0070). With
-    `by_owner` (News, issue 0111) one owner's channels are one voice."""
+    `by_owner` (News, issue 0111) one owner's channels are one voice; always, one confirmed voice's (issue 0132 A:
+    the channels the owner joined)."""
     posts = [p for p in posts if p.kind != "saved"]
-    return len(voice_groups([*((p.id, p.text_key, p.owner_voice if by_owner else p.voice) for p in posts),
+    return len(voice_groups([*((p.id, p.text_key, p.owner_voice if by_owner else p.counted_voice) for p in posts),
                              *((f"{p.id}>{s}", None, v) for p in posts
                                for s, v in zip(p.other_sources, p.other_voices(by_owner)))]))
 
@@ -746,6 +756,11 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return followed + reddit
 
 
+def confirmed(owner: Optional[str]) -> bool:
+    """An owner that is a voice the owner confirmed (issue 0132 A: SourceFacts.voice_of), not one told by the data."""
+    return bool(owner) and owner.startswith(VOICE_PREFIX)
+
+
 def reposter_voice(source_id: str) -> str:
     """A reposting source's voice, as StoryPost.voice says an X account's (issue 0068)."""
     return "source:" + source_id
@@ -761,5 +776,5 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
 
 
 __all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
-           "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "source_site", "title_key",
+           "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "confirmed", "VOICE_PREFIX", "source_site", "title_key",
            "anchors"]

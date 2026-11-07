@@ -1647,3 +1647,40 @@ export function markxSourcesApi(api: object): MarkxSourcesApi {
   return { getMarkxSources: pick('getMarkxSources'), getMarkxSource: pick('getMarkxSource'),
     labelMarkxStance: pick('labelMarkxStance') };
 }
+
+// 0132 A ---------------------------------------------------------------------------------------------------
+// Voices: one company, person or publication made of its channels (today's sources), joined only by you.
+
+/** One line of a suggestion's evidence: which rule, what it saw, up to 3 example posts. */
+export interface VoiceEvidence { rule: string; line: string; posts: string[]; }
+export interface VoiceChannel {
+  id: string; name: string; platform: string; kind: string; enabled: boolean; in_main_digest: boolean;
+  priority: number; posts: number; last_post_at: string | null;
+}
+export interface Voice {
+  id: string; name: string; kind: 'company' | 'person' | 'publication' | null; entity_id: string | null;
+  created_at: string; confirmed_at: string | null; channels: VoiceChannel[];
+  related: { id: string; name: string; evidence: VoiceEvidence[] }[];
+  /** Any channel's: the voice shows the highest (priority: the lowest number). */
+  in_main_digest: boolean; priority: number;
+}
+export interface VoiceSource { id: string; name: string; kind: string; posts: number; enabled: boolean; voice_id: string | null; }
+export interface VoiceSuggestion {
+  key: string; sources: VoiceSource[]; voice_ids: string[]; same_channel: boolean;
+  edges: { a: string; b: string; verdict: 'same_channel' | 'join'; evidence: VoiceEvidence[] }[];
+}
+export interface VoicePair { a: VoiceSource; b: VoiceSource; evidence: VoiceEvidence[]; names?: string[]; }
+export interface VoiceSuggestions {
+  success: true; computed_at: string | null; computing: boolean;
+  voices: VoiceSuggestion[]; possible: VoicePair[]; related: VoicePair[];
+}
+/** "Also on <channel>": the same voice's other channel's post, a line under the earliest (within 72 hours). */
+export interface AlsoOnLine {
+  id: string; source_id: string; source_display_name: string; platform: string; title: string | null; url: string | null;
+  sort_at: string; why: 'links' | 'copy';
+}
+export interface FeedItem {
+  /** Issue 0132 A: one post on two channels of a voice shows once; the others are lines under it. */
+  also_on?: AlsoOnLine[];
+}
+// The voices' calls are services/voices.ts (voicesApi): loaded only by the voice pages' own chunks.
