@@ -64,7 +64,10 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
                                    only the differences unless all=1, each {id, tag, headline {text, from}, first_at,
                                    voices, score, posts [{id, title, source, kind, at, role, why, ix}], removed, ix};
                                    and `gone`: the Mark IX rows no Mark X row holds.
-GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}
+GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}; 0131 adds
+                                   before [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}]
+                                   (the older posts it connects to, oldest first, 10 at most) and before_more
+POST /api/markx/labels/edge        0131: {newer, older, answer: right | wrong | undo, note?}: the owner's mark on an edge
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
 POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a
                                    minute, as it runs the hourly and after-upload ones (markx/jobs.py, 0112 Decided 10)
@@ -496,7 +499,13 @@ def mx_post(post_id: str):
     if found is None:
         raise HTTPException(status_code=404, detail="No such post")
     with transaction() as cur:
-        return news.post_panel(cur, str(found))
+        panel = news.post_panel(cur, str(found))
+        # 0131: the edges between two posts are the Before list's (the older posts it connects to), not connections
+        panel["connections"] = [c for c in panel["connections"] if not (c["from"] == "post" and c["other_kind"] == "post")]
+        from insight_core.markx import graph
+        got = graph.before(cur, str(found))
+        panel["before"], panel["before_more"] = got["items"], got["more"]
+        return panel
 
 
 @router.get("/overview")
@@ -730,3 +739,27 @@ def mx_label_perspectives():
 from insight_core.markx import fold_api as _fold_api  # noqa: E402
 router.include_router(_fold_api.router)
 from insight_core.markx import translate as _translate; router.include_router(_translate.router)  # noqa: E402,E702  0130 D: translation
+
+
+# ---- 0131: the owner's right / wrong on an edge of the Before list (markx/graph.py) ----------------------------
+
+class EdgeLabelIn(BaseModel):
+    newer: Any = None
+    older: Any = None
+    answer: str
+    note: Optional[str] = None
+
+
+@router.post("/labels/edge")
+def mx_label_edge(body: EdgeLabelIn):
+    from insight_core.markx import graph
+    newer, older = _uuid(body.newer), _uuid(body.older)
+    if newer is None or older is None:
+        raise HTTPException(status_code=404, detail="No such edge")
+    with transaction() as cur:
+        try:
+            return graph.label(cur, newer=str(newer), older=str(older), answer=body.answer, note=body.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such edge")

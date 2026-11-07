@@ -121,6 +121,24 @@ export interface MarkxPostPanel {
   stories: (MarkxWhy & { id: string; headline: string | null; first_at: string | null; posts: number })[];
   connections: { relation: string; p: number | null; rule: string | null; from: 'post' | 'story'; other_kind: 'post' | 'story';
     other: string; title?: string | null; reason: string | null }[];
+  /** 0131: the older posts this post connects to (authors' links, entity identity, the judge), oldest first, 10 at most. */
+  before?: MarkxBefore[];
+  /** 0131: how many more the list leaves out. */
+  before_more?: number;
+}
+
+/** 0131: one older post a post connects to (Stalker's first edges). `uncertain`: the judge's alone (label it). */
+export interface MarkxBefore {
+  post_id: string;
+  relation: string;
+  rule: 'author_link_other' | 'author_link_own' | 'entity_next_version' | null;
+  p: number | null;
+  reason: string | null;
+  uncertain: boolean;
+  at: string | null;
+  title: string | null;
+  source: string | null;
+  label: 'right' | 'wrong' | null;
 }
 
 /** One Mark X job's state: a running run's start and stage, work waiting for a run, how the last run ended. */

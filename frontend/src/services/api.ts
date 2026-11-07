@@ -1552,3 +1552,12 @@ export const archiveQueueApi = {
     return { count: response.count ?? 0 };
   },
 };
+
+// 0131: the owner's right / wrong on an edge of the Mark X post panel's Before list (Stalker's first edges).
+export type MarkxEdgeAnswer = 'right' | 'wrong' | 'undo';
+export const markxGraphApi = {
+  /** Mark the edge from the newer post to the older one right or wrong (undo takes the mark back). */
+  labelEdge: (newer: string, older: string, answer: MarkxEdgeAnswer) =>
+    request<{ id: string; answer: MarkxEdgeAnswer; label: 'right' | 'wrong' | null; relation: string }>(
+      '/api/markx/labels/edge', { method: 'POST', body: { newer, older, answer } }),
+};

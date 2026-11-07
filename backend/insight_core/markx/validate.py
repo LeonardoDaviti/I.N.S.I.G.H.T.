@@ -300,9 +300,15 @@ def _collide(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _relate(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0131: the judge's reason is its evidence (three of them on an edge): a reason of spaces is none."""
+    return None if str(a.get("reason") or "").strip() else "reason: empty"
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read,
+          "relate": _relate,   # 0131
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

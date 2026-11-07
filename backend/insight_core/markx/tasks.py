@@ -586,7 +586,14 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "embed": _plan_embeds,
             "embed_name": lambda cur, **kw: _plan_names(cur),
             "read3": lambda cur, **kw: _plan_read3(cur, **kw),
-            "translate": lambda cur, **kw: _plan_translations(cur, **kw)}   # 0130 D
+            "translate": lambda cur, **kw: _plan_translations(cur, **kw),   # 0130 D
+            "relate": lambda cur, **kw: _plan_relate(cur)}                  # 0131
+
+
+def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's
+    from insight_core.markx import graph   # graph imports this module
+    from insight_core.markx.decide import Config
+    return graph.plan(cur, open_cap=Config().relate_open)
 
 
 def _plan_translations(cur: Cursor, **kw) -> int:   # 0130 D: Mark X News' non-English leads (translate.plan)
@@ -617,6 +624,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         repo.add_reading(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, kind=answer.get("kind"),
                          events=answer.get("events"), lang=answer.get("lang"), headline=main.get("headline_en"),
                          reading=answer)
+    elif task["kind"] == "relate":                 # 0131: asked until it has graph.RELATE_RUNS valid answers
+        from insight_core.markx import graph
+        graph.after_answer(cur, task)
     elif task["kind"] == "entities":
         mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")))
                     for e in answer.get("entities") or []]

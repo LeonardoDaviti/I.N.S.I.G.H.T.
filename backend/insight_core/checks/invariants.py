@@ -479,6 +479,25 @@ def _mx_redirects(run: Run) -> Dict[str, Tuple[str, bool, str]]:
     return {f: (t, auto, rid) for f, t, auto, rid in run.cur.fetchall()}
 
 
+def _markx_author_links(run: Run):
+    """0131: a current author-link edge (author_link_other, author_link_own) whose post_refs row is gone, closed or
+    boilerplate, or no longer resolves to its older post (Connected's resolution: the post at that exact url, else the
+    first seen at its normalized address)."""
+    from insight_core.markx import graph
+    run.cur.execute("""SELECT x.a::text, x.b::text, x.relation, p.url, r.href, r.target_address,
+                              r.valid_to IS NULL AND NOT r.boilerplate
+                         FROM mx_connections x JOIN posts p ON p.id = x.a
+                         LEFT JOIN post_refs r ON r.post_id = x.a AND md5(r.target_address) = md5(x.evidence->>'address')
+                                              AND r.target_address = x.evidence->>'address'
+                        WHERE x.valid_to IS NULL AND x.a_kind = 'post' AND x.b_kind = 'post' AND x.rule = ANY(%s)""",
+                    (list(graph.LINK_RULES),))
+    rows = run.cur.fetchall()
+    kept = [r for r in rows if r[4] is not None and r[6]]
+    got = graph.resolve(run.cur, [(a, graph._absolute(url, href), address) for a, _b, _rel, url, href, address, _ok in kept])
+    good = {(r[0], r[1]) for r, t in zip(kept, got) if t is not None and t[0] == r[1]}
+    return [f"{a} {rel} {b}" for a, b, rel, *_ in rows if (a, b) not in good], len(rows)
+
+
 def _markx_entity_dangling(run: Run):
     """A mention whose entity_id names no entity (a redirect's end that names none counts too)."""
     run.cur.execute("""SELECT m.post_id::text || ' ' || m.n FROM mx_mentions m LEFT JOIN mx_entities e ON e.id = m.entity_id
@@ -583,6 +602,9 @@ INVARIANTS: List[Invariant] = [
     Invariant("markx.lease_past", "mark x", "a task still leased past its lease (Safety 5)", _markx_lease_past),
     Invariant("markx.check_empty_story", "mark x", "a check still to be asked that shows its story with no member (0112)",
               _markx_check_empty_story),
+    Invariant("markx.author_link_resolves", "mark x",
+              "a current author-link edge whose post_refs row is gone or no longer resolves to its older post (0131)",
+              _markx_author_links),
     Invariant("markx.entity_dangling", "mark x", "a mention's entity, or a redirect's end, that is no entity (0119)",
               _markx_entity_dangling),
     Invariant("markx.entity_redirect_loop", "mark x", "a redirect chain that loops (0119)", _markx_entity_redirect_loop),
