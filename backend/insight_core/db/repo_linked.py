@@ -11,8 +11,11 @@ One function, `linked_not_stored`, for the Archive section's count, the job that
 - **The links**: every stored post's kept links (post_links, not a source's signature), and each post's
   links to its own publication, which post_links never keeps (linked_rules.own_links, read from the
   stored HTML), its signature left out.
-- **Not stored**: no post is at that address (normalized_url), was moved there (metadata.moved_to,
-  issue 0108), or names it as its canonical address.
+- **Not stored**: no post is at that address (normalized_url, or its url normalized when it has none:
+  issue 0129), was moved there (metadata.moved_to, issue 0108), or names it as its canonical address.
+- **One page at two hosts** (issue 0129): a source's page at two of its publications (its platform's
+  address and its own domain) is one page (OwnPages.same_page), counted by its distinct linking posts,
+  at the address OwnPages.preferred puts first; a post of the source stored at either is it stored.
 
 Read only; takes the caller's cursor.
 """
@@ -34,6 +37,7 @@ from insight_core.utils.url_normalization import normalize_url
 POST_DATE = "COALESCE(p.published_at, p.fetched_at)"
 HTML_BATCH = 500
 LAST = datetime.max.replace(tzinfo=timezone.utc)
+PageKey = Tuple[str, str, str]   # OwnPages.same_page: (source, path, query)
 
 
 @dataclass(frozen=True)
@@ -57,15 +61,16 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
         return {}
     own, addresses, homes = _own_pages(cur, followed)
 
-    links: Dict[str, Dict[str, Optional[datetime]]] = defaultdict(dict)   # page -> {linking post: its date}
-
-    owner: Dict[str, str] = {}   # a page -> its source
+    # A page is its OwnPages.same_page key: one page at two of a source's publications is one (0129).
+    links: Dict[PageKey, Dict[str, Optional[datetime]]] = defaultdict(dict)   # page -> {linking post: its date}
+    forms: Dict[PageKey, Set[str]] = defaultdict(set)                          # page -> its addresses seen
 
     def keep(url: str, post_id: str, at: Optional[datetime]) -> None:
         found = own.page(url)
         if found and found[0] in wanted:
-            owner[found[1]] = found[0]
-            links[found[1]][post_id] = at
+            key = own.same_page(found[1])
+            forms[key].add(found[1])
+            links[key][post_id] = at
 
     # Kept links, on the sites the wanted sources' pages are on (a tweet's is x.com).
     sites = sorted({site_of(host_of(url)) for sid in wanted for url in addresses.get(sid, ())
@@ -83,14 +88,19 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
             for url in urls:
                 if url not in noise:
                     keep(url, post_id, dates[post_id])
-    stored = _stored(cur, sorted(links))
+    # Stored: at an address seen, or a post of the source at another of its forms (a page at its own
+    # domain stored, linked at its platform's address).
+    stored = {own.same_page(url) for url in _stored(cur, sorted({url for urls in forms.values() for url in urls}))}
+    stored |= {own.same_page(url) for sid in wanted for url in addresses.get(sid, ())}
     out: Dict[str, List[LinkedPage]] = defaultdict(list)
-    for url, by in links.items():
-        if url in stored:
+    for key, by in links.items():
+        if key in stored:
             continue
+        source_id = key[0]
+        url = min(forms[key], key=lambda form: own.preferred(source_id, form))
         dates = [at for at in by.values() if at is not None]
-        out[owner[url]].append(LinkedPage(url, owner[url], len(by), min(dates, default=None), max(dates, default=None),
-                                          tuple(sorted(by))))
+        out[source_id].append(LinkedPage(url, source_id, len(by), min(dates, default=None), max(dates, default=None),
+                                         tuple(sorted(by))))
     for pages in out.values():
         pages.sort(key=lambda page: (-page.posts, page.first_linked_at or LAST, page.url))
     return dict(out)
@@ -128,7 +138,8 @@ def _own_pages(cur: Cursor, followed: Dict[str, Tuple[str, Optional[str], Option
     facts = SourceFacts(cur)
     homes = {sid: {facts.handle_site.get(sid), facts.home_site(sid)} - {None, ""} for sid in followed}
     own = OwnPages({sid: (kind, source_account(platform, handle), homes[sid], addresses.get(sid, ()))
-                    for sid, (kind, platform, handle) in followed.items()})
+                    for sid, (kind, platform, handle) in followed.items()},
+                   address_publications={sid: facts.handle_host.get(sid, "") for sid in followed})
     return own, addresses, homes
 
 
@@ -166,11 +177,15 @@ def _stored(cur: Cursor, urls: List[str]) -> Set[str]:
         return set()
     cur.execute("SELECT normalized_url FROM posts WHERE normalized_url = ANY(%s)", (urls,))
     stored = {url for (url,) in cur.fetchall()}
+    # A post stored with no normalized address (1,146 of 49k on the server's copy, 2026-11-05): its
+    # address, normalized as the links are.
+    wanted = set(urls)
+    cur.execute("SELECT url FROM posts WHERE normalized_url IS NULL")
+    stored |= {url for (raw,) in cur.fetchall() if (url := normalize_url(raw)) in wanted}
     cur.execute("SELECT metadata->>'moved_to' FROM posts WHERE metadata->>'moved_to' = ANY(%s)", (urls,))
     stored |= {url for (url,) in cur.fetchall()}
     # A canonical address other than the post's own (128 of 49k posts on the server's copy).
     cur.execute("SELECT canonical_url FROM posts WHERE canonical_url IS DISTINCT FROM normalized_url AND canonical_url <> url")
-    wanted = set(urls)
     stored |= {url for (canonical,) in cur.fetchall() if (url := normalize_url(canonical)) in wanted}
     return stored
 

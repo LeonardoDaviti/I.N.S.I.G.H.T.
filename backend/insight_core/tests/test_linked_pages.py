@@ -122,8 +122,9 @@ class OwnerTests(unittest.TestCase):
         self.assertIsNone(own.owner("https://x.com/other/status/1111111111111111111"))
 
     def test_a_link_blogs_posts_at_the_pages_it_links_are_not_its_pages(self):
-        own = pages(links=("site", None, ["https://links.example/2024/05/a", "https://wiki.example/wiki/A",
-                                          "https://wiki.example/wiki/B"], {"links.example"}))
+        own = OwnPages({"links": ("site", None, {"links.example"}, ["https://links.example/2024/05/a",
+                                  "https://wiki.example/wiki/A", "https://wiki.example/wiki/B"])},
+                       address_publications={"links": "links.example"})   # its one own post, at its address
         self.assertIsNone(own.owner("https://wiki.example/wiki/C"))
         self.assertEqual(own.owner("https://links.example/2023/01/b"), "links")
 
@@ -135,6 +136,33 @@ class OwnerTests(unittest.TestCase):
         root = pages(blog=("site", None, [f"{site}/post-{n}" for n in range(5)] + [f"{site}/docs/a", f"{site}/docs/b"]))
         self.assertEqual(root.owner(f"{site}/an-older-post"), "blog")
         self.assertIsNone(root.owner(f"{site}/pricing"), "a page you look things up in")
+
+    def test_one_cross_post_at_another_writers_publication_teaches_nothing(self):
+        """Issue 0129: a shape on a publication its address isn't on is learned from 2+ of its posts there."""
+        mine = [f"{SUB}/p/a", f"{SUB}/p/b", f"{SUB}/p/c"]
+        cross = OwnPages({"sub": ("site", None, {"substack.com"}, mine + ["https://guest.substack.com/p/a-cross-post"])},
+                         address_publications={"sub": "writer.substack.com"})
+        self.assertIsNone(cross.owner("https://guest.substack.com/p/their-own-post"), "another writer's page")
+        self.assertEqual(cross.owner(f"{SUB}/p/an-older-one"), "sub")
+        two = OwnPages({"sub": ("site", None, {"substack.com", "custom.example"},
+                                mine + ["https://custom.example/p/d", "https://custom.example/p/e"])},
+                       address_publications={"sub": "writer.substack.com"})
+        self.assertEqual(two.owner("https://custom.example/p/older"), "sub", "2 posts: a publication of its own")
+
+    def test_one_post_on_the_publication_its_address_is_on_teaches_its_shape(self):
+        own = OwnPages({"blog": ("site", None, {"blog.example"}, ["https://blog.example/w/2024/01/02/one"])},
+                       address_publications={"blog": "blog.example"})
+        self.assertEqual(own.owner("https://blog.example/w/2012/02/29/an-old-one"), "blog")
+        self.assertIsNone(OwnPages({"blog": ("site", None, {"blog.example"}, ["https://blog.example/w/2024/01/02/one"])})
+                          .owner("https://blog.example/w/2012/02/29/an-old-one"), "with no address, 2 posts")
+
+    def test_one_page_at_two_publications_of_a_source_is_one_page(self):
+        own = pages(sub=("site", None, [f"{SUB}/p/a", f"{SUB}/p/b", f"{SUB}/p/c",
+                                        "https://custom.example/p/d", "https://custom.example/p/e"],
+                         {"substack.com", "custom.example"}))
+        self.assertEqual(own.same_page("https://custom.example/p/older"), own.same_page(f"{SUB}/p/older"))
+        self.assertNotEqual(own.same_page(f"{SUB}/p/older"), own.same_page(f"{SUB}/p/another"))
+        self.assertEqual(own.same_page(f"{SUB}/p/older/"), own.same_page(f"{SUB}/p/older"))
 
     def test_an_aggregator_and_saved_own_nothing(self):
         own = pages(hn=("hn", None, ["https://news.example/item?id=1", "https://news.example/item?id=2"]),
@@ -201,6 +229,20 @@ class LinkedNotStoredTests(unittest.TestCase):
         found = linked_not_stored(self.cur, source_ids=[blog])
         self.assertEqual([page.url for page in found[blog]], [f"{site}/posts/missing"])
 
+    def test_a_stored_post_with_no_normalized_address_is_stored(self):
+        """Issue 0129: 1,146 of the server copy's 49k posts have no normalized_url; their address is read."""
+        site = f"https://n{self.mark}.example"
+        blog = self.source(f"{site}/feed")
+        watch = self.source(f"{site}/blog")
+        self.post(blog, f"{site}/posts/a", html=f'<a href="{site}/posts/old">x</a><a href="{site}/posts/kept">y</a>'
+                                                 f'<a href="{site}/posts/missing">z</a>')
+        self.post(blog, f"{site}/posts/b", days=1)
+        old = self.post(blog, f"{site}/posts/old#comments", days=2)
+        kept = self.post(watch, f"{site}/posts/kept", days=3)
+        self.cur.execute("UPDATE posts SET normalized_url = NULL WHERE id = ANY(%s)", ([old, kept],))
+        found = linked_not_stored(self.cur, source_ids=[blog])
+        self.assertEqual([page.url for page in found[blog]], [f"{site}/posts/missing"])
+
     def test_a_signature_link_is_none_and_a_disabled_source_follows_nothing(self):
         site = f"https://s{self.mark}.example"
         blog = self.source(f"{site}/feed")
@@ -221,6 +263,33 @@ class LinkedNotStoredTests(unittest.TestCase):
         found = linked_not_stored(self.cur, source_ids=[sub], since=self.now - timedelta(days=3))
         self.assertEqual([p.url for p in found[sub]], [f"{pub}/p/recent-link"])
         self.assertEqual(len(linked_not_stored(self.cur, source_ids=[sub])[sub]), 2)
+
+    def test_a_cross_post_at_another_writers_publication_is_not_its_page(self):
+        """Issue 0129 (the review's W2): one cross-post stored at another writer's publication."""
+        pub, guest = f"https://w{self.mark}.substack.com", f"https://g{self.mark}.substack.com"
+        sub = self.source(f"{pub}/feed")
+        self.post(sub, f"{pub}/p/a", html=f'<a href="{pub}/p/old-one">x</a>')
+        self.post(sub, f"{pub}/p/b", days=1)
+        self.post(sub, f"{guest}/p/a-cross-post", days=2, html=f'<a href="{guest}/p/their-older-post">x</a>')
+        found = linked_not_stored(self.cur, source_ids=[sub])
+        self.assertEqual([p.url for p in found[sub]], [f"{pub}/p/old-one"])
+
+    def test_one_page_at_two_publications_of_a_source_counts_once(self):
+        """Issue 0129: a source read at its platform's address and at its own domain."""
+        pub, custom = f"https://w{self.mark}.substack.com", f"https://c{self.mark}.example"
+        sub = self.source(f"{pub}/feed")
+        other = self.source(f"https://o{self.mark}.example/feed")
+        # Most of its posts at its own domain (its home site), the rest at its address.
+        self.post(sub, f"{custom}/p/post-0", html=f'<a href="{custom}/p/old-one">x</a>')
+        for n in (1, 2):
+            self.post(sub, f"{custom}/p/post-{n}", days=n)
+        for n in (3, 4):
+            self.post(sub, f"{pub}/p/post-{n}", days=n)
+        self.post(other, f"https://o{self.mark}.example/a", days=1,
+                  links=[f"{pub}/p/old-one", f"{pub}/p/post-0", f"{custom}/p/post-4/"])
+        found = linked_not_stored(self.cur, source_ids=[sub])
+        self.assertEqual([(p.url, p.posts) for p in found[sub]], [(f"{custom}/p/old-one", 2)],
+                         "once, at the publication with more of its posts; stored at either is stored")
 
     def test_a_followed_accounts_tweet_quoted_by_another_source(self):
         user = f"u{self.mark}"

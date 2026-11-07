@@ -22,8 +22,13 @@ SIGNATURE_SHARE, SIGNATURE_MIN_POSTS: a subscribe page, a series index), not a p
   when half the source's posts there have it (GENERIC_SHARE), and a page named for a kind of page
   (NOT_POST: about, tag, author, page, subscribe…; by such a shape also post_links.REFERENCE: docs,
   pricing, product…) is none.
+- On a publication other than the one its address is on, a source's shapes are learned from 2+ of its
+  posts there (CROSS_POST_MIN, issue 0129): one cross-post stored at another writer's newsletter makes
+  none of that writer's pages the source's.
 - One shape on one publication held by two sources (a site's feed and a page watch of it) is the one
   with more posts there. Hacker News and Saved own nothing (story_rules.NOT_PUBLISHERS).
+- One page at two of a source's publications (its platform's address and its own domain) is one page
+  (`same_page`: its source, path and query), at the address `preferred` puts first.
 
 Pure: the database side is db/repo_linked.py.
 """
@@ -52,6 +57,12 @@ NOT_POST = frozenset({
 # publication have it. On the server's copy (2026-11-05) the blogs at their root have 85-100% of their
 # posts so, and a few stray root pages of a sectioned site 0-2% (a news site's /<product>).
 GENERIC_SHARE = 0.5
+# A source's posts on a publication other than the one its address is on that teach its shapes there
+# (issue 0129): one cross-post at another writer's newsletter is no publication of its own. On the
+# server's copy (2026-11-05) it drops 3 pages (one source's, at the writer it cross-posted); without
+# the address's exception it would also drop 2 right ones (a blog with 1 stored post). Counting 2+
+# posts of the shape instead of the publication gave the same pages.
+CROSS_POST_MIN = 2
 
 Shape = Tuple[str, ...]
 # (kind as post_links.source_kind says it, the platform account it follows or None, the sites it
@@ -129,8 +140,11 @@ def _shapes(url: str) -> Optional[Tuple[Optional[Shape], Shape]]:
 class OwnPages:
     """Whose post page an address is, learned from every source's stored posts (see the module)."""
 
-    def __init__(self, sources: Mapping[str, SourcePosts]) -> None:
+    def __init__(self, sources: Mapping[str, SourcePosts], *, address_publications: Mapping[str, str] = {}) -> None:
         self.of_account: Dict[str, str] = {}
+        # (source, publication) -> its stored posts there, of the shapes it holds (same_page's choice)
+        self.posts_on: Counter = Counter()
+        self.address_publication = dict(address_publications)
         # (publication, shape) -> {source: its posts of that shape there}
         held: Dict[Tuple[str, Shape], Counter] = defaultdict(Counter)
         for source_id, (kind, account, homes, urls) in sorted(sources.items()):
@@ -151,7 +165,10 @@ class OwnPages:
             for (pub, shape), n in mine.items():
                 if _loose(shape) and n < GENERIC_SHARE * on_pub[pub]:
                     continue   # a few pages at the site's root (/sora) don't make every root page a post
+                if on_pub[pub] < CROSS_POST_MIN and pub != address_publications.get(source_id):
+                    continue   # one cross-post at another writer's publication teaches nothing (0129)
                 held[(pub, shape)][source_id] += n
+                self.posts_on[(source_id, pub)] += n
         self.held = {key: min(counter.items(), key=lambda item: (-item[1], item[0]))[0] for key, counter in held.items()}
 
     def owner(self, url: str) -> Optional[str]:
@@ -176,6 +193,25 @@ class OwnPages:
             url = urlsplit(url)._replace(query="").geturl()
             found = self._held(url, host)
         return (found, url) if found else None
+
+    def same_page(self, url: str) -> Optional[Tuple[str, str, str]]:
+        """(its source, its path without a trailing slash, its query) of a source's post page, or None:
+        one page at two of the source's publications (its platform's address and its own domain) is
+        one page (issue 0129). A platform post is keyed by its address."""
+        found = self.page(url)
+        if not found:
+            return None
+        source_id, page = found
+        if site_of(host_of(page)) in DISCOVER_PLATFORMS:
+            return source_id, page, ""
+        parts = urlsplit(page)
+        return source_id, parts.path.rstrip("/"), parts.query
+
+    def preferred(self, source_id: str, url: str) -> Tuple[int, int, str]:
+        """The order of one page's addresses at a source's publications, the first preferred: the
+        publication holding more of its stored posts, then the one its address is on, then by address."""
+        pub = publication_of(host_of(url))
+        return (-self.posts_on[(source_id, pub)], pub != self.address_publication.get(source_id), url)
 
     def _held(self, url: str, host: str) -> Optional[str]:
         shapes = _shapes(url)
