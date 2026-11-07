@@ -16,6 +16,7 @@ rules.
 """
 from __future__ import annotations
 
+import dataclasses
 import html
 import re
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
 from insight_core.utils.addresses import PLATFORM_SITES, bare, host_of, is_tweet, publication_of, site_of
-from insight_core.utils.url_normalization import normalize_url
+from insight_core.utils.url_normalization import has_query_mark, normalize_url
 
 HREF = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\']', re.I)
 # The rest of the opening tag, then the link's own text up to its closing tag.
@@ -78,6 +79,9 @@ class PostLink:
     site: str             # site_of(its host)
     position: int         # 0: the post's first outside link
     text: Optional[str]   # the link's own words
+    # The address as the post wrote it, when its compared form dropped an access token or a share mark (issue
+    # 0126): a gift link opens the article with it. None otherwise.
+    shared: Optional[str] = None
 
 
 def source_kind(platform: Optional[str], handle_or_url: Optional[str]) -> str:
@@ -210,7 +214,7 @@ def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> Li
 
 
 def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str) -> List[PostLink]:
-    """The outside links of one post, first seen first, each address once."""
+    """The outside links of one post, first seen first, each address once (its gift link kept, 0126)."""
     if not content_html:
         return []
     own = normalize_url(post_url) or ""
@@ -221,6 +225,7 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
     platform = PLATFORM_SITES.get(kind, frozenset())
     seen = set()
     out: List[PostLink] = []
+    at: Dict[str, int] = {}   # a kept link's place in `out`
     for match in HREF.finditer(content_html):
         href = html.unescape(match.group(1)).strip()
         try:
@@ -231,11 +236,16 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
         except ValueError:
             continue
         url = normalize_url(absolute)
+        if url in at and out[at[url]].shared is None and has_query_mark(absolute):
+            # A later link to the page by a gift link: the one kept for clicking (issue 0126).
+            out[at[url]] = dataclasses.replace(out[at[url]], shared=absolute)
         if not url or url in seen or url == own:
             continue
         seen.add(url)
         site = site_of(host_of(url))
         if ((site in platform or publication_of(host_of(url)) in mine) and not is_tweet(url)) or MEDIA.search(urlparse(url).path):
             continue
-        out.append(PostLink(url, site, len(out), _link_text(content_html, match.end())))
+        at[url] = len(out)
+        out.append(PostLink(url, site, len(out), _link_text(content_html, match.end()),
+                            absolute if has_query_mark(absolute) else None))
     return out

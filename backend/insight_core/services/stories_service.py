@@ -777,13 +777,17 @@ class StoriesService:
         # Pages (issue 0113): each story's root you can save as one post, with what the server's reads say of
         # its site (Discover's reads: a site whose pages all came back untitled, or a blocked follow test).
         walls = site_reads_of(reads)
+        page_list = list(pages_of(started, since=now - timedelta(days=PAGES_WITHIN_DAYS), hidden=hidden))
+        # A page its posts link by a gift link is walled (0126: the token is out of its address, kept as written).
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            gifted = DiscoverRepository.gifted(cur, [url for url, _, _ in page_list])
         page_rows = [{
             "url": strip_access_tokens(url), "title": title_of(url), "site": site_of(host_of(url)), "hide_key": page_key_of(url),
             "video": video, "tweet": is_tweet(url), "first_linked_at": min(r.first_at for r in roots).isoformat(),
             "voices": len({v for root in roots for v in root.voices}),
-            "readable": not (tokened(url) or walls.get(site_of(host_of(url)), SiteReads()).walled),
+            "readable": not (tokened(url) or url in gifted or walls.get(site_of(host_of(url)), SiteReads()).walled),
             "stories": [_story(root, title_of) for root in _first(roots)[:ORIGIN_STORIES_SHOWN]],
-        } for url, roots, video in pages_of(started, since=now - timedelta(days=PAGES_WITHIN_DAYS), hidden=hidden)]
+        } for url, roots, video in page_list]
         result = {"success": True, "suggestions": out, "also": also, "archives": archives, "unnamed": unnamed,
                   "pages": page_rows,
                   "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],

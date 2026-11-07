@@ -36,6 +36,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.utils.addresses import host_of, site_of
+from insight_core.utils.url_normalization import has_query_mark, normalize_url
 
 LAB = "https://news.oolab.example"
 RELEASE = f"{LAB}/news/the-new-release"
@@ -105,9 +106,10 @@ class OriginalsCase(unittest.TestCase):
                 "external_id": url}
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             post_id, _ = PostsRepository(db_url()).upsert_post(cur, post, source_id)
-            for n, target in enumerate(links):
-                cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, %s, %s)",
-                            (post_id, target, site_of(host_of(target)), n))
+            for n, target in enumerate(links):   # as the saver keeps a link (0126: a gift link's token as written)
+                cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, shared_url) VALUES (%s, %s, %s, %s, %s)",
+                            (post_id, normalize_url(target), site_of(host_of(target)), n,
+                             target if has_query_mark(target) else None))
             if links:   # read as given: the story job never reads them again from the HTML
                 cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s", (post_id,))
         return str(post_id)

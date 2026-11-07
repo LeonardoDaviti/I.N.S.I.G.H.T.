@@ -383,6 +383,16 @@ class DiscoverRepository:
         return sorted(hosts | set(found)), scanned_to.isoformat() if scanned_to else None
 
     @staticmethod
+    def gifted(cur: Cursor, urls: Sequence[str]) -> set:
+        """Of these addresses, the ones a post links by an access or gift token (issue 0126: post_links.shared_url)."""
+        if not urls:
+            return set()
+        from insight_core.utils.originals_rules import tokened
+        cur.execute("SELECT DISTINCT target_url, shared_url FROM post_links WHERE target_url = ANY(%s) AND shared_url IS NOT NULL",
+                    (list(urls),))
+        return {url for url, shared in cur.fetchall() if tokened(shared)}
+
+    @staticmethod
     def kept(cur: Cursor) -> Optional[Dict[str, Any]]:
         """Discover's last counts (issue 0067): {stamp, found, mirrors, scanned_to}, or None."""
         row = SystemSettingsRepository.get(cur, KEPT_KEY)

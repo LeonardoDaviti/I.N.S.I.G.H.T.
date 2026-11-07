@@ -212,7 +212,8 @@ class OriginalsService:
         if not rows:
             return []
         stories = [r[0] for r in rows]
-        cur.execute("""SELECT sp.story_id::text, pl.target_url FROM story_posts sp JOIN post_links pl ON pl.post_id = sp.post_id
+        # The members' links as written (0126: a gift link's token is out of target_url, kept in shared_url).
+        cur.execute("""SELECT sp.story_id::text, COALESCE(pl.shared_url, pl.target_url) FROM story_posts sp JOIN post_links pl ON pl.post_id = sp.post_id
                        WHERE sp.story_id = ANY(%s::uuid[])""", (stories,))
         linked_as: Dict[str, List[str]] = {}
         for story_id, target in cur.fetchall():

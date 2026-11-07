@@ -94,9 +94,10 @@ export function originLabel(origin: StoryOrigin): { site: string; title: string;
   return { site, title: origin.title?.trim() || bareAddress(origin.url), linkedBy: `linked by ${origin.linked_by}` };
 }
 
-/** Opening an outside origin: Save any page (issue 0031) on its address, saving nothing until you press Save. */
+/** Opening an outside origin: Save any page (issue 0031) on its address as linked, saving nothing until you press Save. */
 export function originHref(origin: StoryOrigin): string {
-  const params = new URLSearchParams({ url: origin.url });
+  // The link as its post wrote it (issue 0126): a gift link opens the article.
+  const params = new URLSearchParams({ url: origin.href || origin.url });
   if (origin.title) params.set('title', origin.title);
   return `${SAVE_PATH}?${params.toString()}`;
 }

@@ -29,6 +29,40 @@ def is_tracking_key(key: str) -> bool:
     return key in TRACKING_QUERY_KEYS or key.startswith(TRACKING_QUERY_PREFIXES)
 
 
+# Issue 0126 (1), the owner 2026-11-07: a gift link's token and a share mark are kept for clicking (posts.url, the
+# post's HTML, post_links.shared_url) and ignored for matching: every compared address drops them.
+# - An access token: a key naming a token, a gift, an unlock or access, or any key whose value is a signed token (a
+#   JWT). A vocabulary, not a list of sites (0123's): on the server's copy (2026-11-05) unlocked_article_code,
+#   accessToken, view_token, gift, giftId, access_token, casa_token, pwapi_token, sharing_token ... 25 keys.
+#   A page known only by one is walled (originals_rules.tokened): it is never fetched with it.
+# - A share mark: who shared the page or from where, never which page (measured on the copy: 59 smid, 49 syn-<hex>,
+#   26 reflink, 25 taid, 16 leadSource, 13 srnd, 11 dib_tag, 9 mrfcid). Short names that are a page's own query
+#   elsewhere (r, rc, st, sh, share: a route, a view, a region) are not marks.
+ACCESS_KEY_RE = re.compile(r"token|gift|unlock|access", re.I)
+SIGNED_VALUE_RE = re.compile(r"^eyJ[\w-]+\.[\w-]+\.[\w-]+$")
+SHARE_MARK_KEYS = frozenset({"smid", "taid", "mrfcid", "srnd", "leadsource", "reflink", "dib_tag"})
+SHARE_MARK_RE = re.compile(r"^syn-[0-9a-f]{8}$", re.I)
+
+
+def is_access_key(key: str, value: str = "") -> bool:
+    """Whether a query pair carries an access or gift token: the page needs it to be read, and is the same page."""
+    return bool(ACCESS_KEY_RE.search(key) or SIGNED_VALUE_RE.match(value or ""))
+
+
+def is_query_mark(key: str, value: str = "") -> bool:
+    """Whether a query pair is an access token or a share mark (0126): kept for clicking, dropped for matching."""
+    return is_access_key(key, value) or key.lower() in SHARE_MARK_KEYS or bool(SHARE_MARK_RE.match(key))
+
+
+def has_query_mark(url: str | None) -> bool:
+    """Whether an address carries an access token or a share mark (its compared form drops them)."""
+    try:
+        query = urlparse(url or "").query
+    except ValueError:
+        return False
+    return any(is_query_mark(k, v) for k, v in parse_qsl(query, keep_blank_values=True))
+
+
 HOST_ALIASES = {
     "m.youtube.com": "youtube.com",
     "music.youtube.com": "youtube.com",
@@ -170,7 +204,7 @@ def _normalize_query(host: str, query: str, path: str) -> str:
     items = []
     for key, value in parse_qsl(query, keep_blank_values=True):
         lowered = key.lower()
-        if is_tracking_key(lowered):
+        if is_tracking_key(lowered) or is_query_mark(key, value):
             continue
         # A trailing slash in a value is the same value (issue 0070: ?p=112711/ and ?p=112711).
         items.append((key, value.rstrip("/") if value.strip("/") else value))

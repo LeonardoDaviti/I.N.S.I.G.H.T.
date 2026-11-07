@@ -140,6 +140,9 @@ MOVED = "https://writer-one.github.io/on-keeping-notes"
 TRACKED = ("https://journal.example/issue/417?_hsenc=p2ANqtz-aaa&_hsmi=11",
            "https://journal.example/issue/417?_ga=2.1.2-3&_hsenc=p2ANqtz-bbb")
 JOURNAL = "https://journal.example/issue/417"
+# One article as a gift link and a share link wrote it (issue 0126)
+GIFTED = ("https://paper.example/2026/03/10/the-budget-story?accessToken=eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IngifQ.c2ln",
+          "https://paper.example/2026/03/10/the-budget-story?smid=url-share&unlocked_article_code=1.abc")
 TOOL_PREVIEW = (f'<p>Worth a look</p><blockquote cite="{L4}"><cite><b>Tool Site</b></cite></br>'
                 '<b>Fast Tokenizer Ships</b></br>Tokenizing is now faster.</blockquote>')
 QUOTE = (f'<p>Great thread</p><blockquote><b>Writer X</b>Thread on evaluation methods<footer> — <cite>'
@@ -362,6 +365,12 @@ def posts() -> List[Dict[str, Any]]:
           links=[(_stored(TRACKED[0]), None)]),
         p("w2", "s-two", _at(341), "Links for the week", "https://writer-two.github.io/links-for-the-week",
           links=[(_stored(TRACKED[1]), None)]),
+        # A gift link's token and a share mark name no other page (issue 0126): two voices link one article, one by
+        # a gift link, one by a share link, stored as the saver keeps a link, so they are one story
+        p("tok1", "s-gamma", _at(450), "Budget notes", "https://gamma.example/research/budget-notes",
+          links=[(_stored(GIFTED[0]), None)]),
+        p("tok2", "s-two", _at(451), "On the budget", "https://writer-two.github.io/on-the-budget",
+          links=[(_stored(GIFTED[1]), None)]),
         # A date is no name (issue 0111): a column's two dated issues and a question "at <month> <year>" join nothing
         p("dt1", "s-gamma", _at(380), "Gamma Column: On Tools (18 Mar 2026)", "https://gamma.example/research/column-on-tools"),
         p("dt2", "s-one", _at(381), "Which small model is best at Mar 2026?", "https://writer-one.github.io/2026/03/which-model"),

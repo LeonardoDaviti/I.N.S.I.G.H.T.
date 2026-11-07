@@ -201,7 +201,11 @@ export interface StoryRoundup { id: string; title: string; source_display_name: 
 /** Why a post hangs from its parent, the most certain first (issues 0064, 0066). */
 export type StoryParentReason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 /** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
-export interface StoryOrigin { url: string; title: string | null; linked_by: number; }
+export interface StoryOrigin {
+  url: string; title: string | null; linked_by: number;
+  /** The address to open (issue 0126): its first post's link as written, a gift link kept; else `url`. */
+  href?: string;
+}
 export interface StoryPost {
   id: string; title: string; url: string; source_id: string; source_display_name: string; platform: string;
   sort_at: string; published_at: string | null; read_at: string | null;

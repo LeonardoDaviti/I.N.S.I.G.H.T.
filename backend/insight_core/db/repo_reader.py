@@ -574,6 +574,20 @@ class ReaderRepository:
             if story["_first_position"]:
                 story["first"] = None
             del story["_first_rank"], story["_first_position"]
+        # An outside origin opens as its first member's link wrote it (issue 0126: a gift link opens the article;
+        # its address, `url`, is the compared one, without the token).
+        with_origin = [story["id"] for story in stories.values() if story["origin"] is not None]
+        if with_origin:
+            cur.execute("""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
+                           FROM story_posts sp JOIN stories st ON st.id = sp.story_id
+                           JOIN post_links pl ON pl.post_id = sp.post_id AND pl.target_url = st.origin_url
+                           JOIN posts p ON p.id = sp.post_id
+                           WHERE sp.story_id = ANY(%s::uuid[]) AND pl.shared_url IS NOT NULL
+                           ORDER BY sp.story_id, COALESCE(p.published_at, p.fetched_at), p.id""", (with_origin,))
+            shared = {str(story_id): url for story_id, url in cur.fetchall()}
+            for story in stories.values():
+                if story["origin"] is not None:
+                    story["origin"]["href"] = shared.get(story["id"]) or story["origin"]["url"]
         # Named as counted (issue 0082): one name a voice, your sources that wrote or reposted a tweet
         # of the story among them (issue 0068).
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))

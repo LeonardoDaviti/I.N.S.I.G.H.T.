@@ -40,7 +40,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from insight_core.utils.addresses import host_of, is_tweet, site_of
-from insight_core.utils.url_normalization import normalize_url
+from insight_core.utils.url_normalization import is_access_key, normalize_url
 
 EXTRA_SHARE = 0.01                       # the owner's bar (0114): extra requests < 1% of the schedule's
 EXTRA_CREDIT_CAP = 3.0                   # the most extra requests the credit holds at once: the replay's value
@@ -50,12 +50,9 @@ PAGE_OLD = timedelta(days=7)             # 0114's measure: older pages are never
 COLLECT_WITHIN = timedelta(days=7)       # a News story's original is collected in its first week; not measured
 WALLED_MIN_READS = 2                     # a site read this often, never titled, is walled (0113's measure: 13-15 reads)
 
-# A query key naming an access or gift token, or a value shaped as a signed token (a JWT): a page
-# that needs one to be read is walled, and the token is never stored. A vocabulary, not a list of
-# sites. On the server's copy (2026-11-05): unlocked_article_code, accessToken, gift, view_token,
-# access_token, pwapi_token, giftId, sharing_token, shareToken, gift_token ... 21 keys, 136 links.
-TOKEN_KEY = re.compile(r"token|gift|unlock|access", re.I)
-JWT = re.compile(r"^eyJ[\w-]+\.[\w-]+\.[\w-]+$")
+# A query key naming an access or gift token, or a value shaped as a signed token (a JWT): a page that needs one
+# to be read is walled, and the token is never stored (0123). The vocabulary is url_normalization's (0126: every
+# compared address drops it, and share marks too; a share mark opens no wall).
 TWITTER_EPOCH_MS = 1288834974657
 ADDRESS_DATE = re.compile(r"/((?:19|20)\d\d)[/-](0[1-9]|1[0-2])(?:[/-]([0-3]\d))?(?=/|$|-|\.)")
 
@@ -82,7 +79,7 @@ def access_keys(url: str) -> Tuple[str, ...]:
         pairs = parse_qsl(urlsplit(url).query, keep_blank_values=True)
     except ValueError:
         return ()
-    return tuple(k for k, v in pairs if TOKEN_KEY.search(k) or JWT.match(v or ""))
+    return tuple(k for k, v in pairs if is_access_key(k, v))
 
 
 def tokened(url: str) -> bool:
