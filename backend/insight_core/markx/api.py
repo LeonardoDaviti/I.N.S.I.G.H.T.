@@ -650,3 +650,77 @@ def mx_entity_page(entity_id: str):
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got
+
+
+# ---- perspectives and the story sheet (0119 B6-B7; added 2026-11-07; the routes above are unchanged; no bearer) ------
+# GET  /api/markx/stories/{id}             the story view (markx/perspective_views.py): {story, judged, sheet, header,
+#                                          members [{post, label, sign, by, worth, facts [{index, fact, span, mine}],
+#                                          claims, point, before, copies, mine}], counts, posts}
+# POST /api/markx/labels/perspective       {story, post, answer: right | wrong | original | new_facts | opinion | same |
+#                                          not_this_story, note?}: a label on a member's line
+# POST /api/markx/labels/fact              {story, post, index, answer: right | not_new | not_true | not_about, note?}
+# GET  /api/markx/labels/perspectives      the owner's labels on them scored, against the lab's numbers
+
+class PerspectiveLabelIn(BaseModel):
+    story: Any = None
+    post: Any = None
+    answer: str
+    note: Optional[str] = None
+
+
+class FactLabelIn(BaseModel):
+    story: Any = None
+    post: Any = None
+    index: StrictInt
+    answer: str
+    note: Optional[str] = None
+
+
+@router.get("/stories/{story_id}")
+def mx_story_view(story_id: str):
+    from insight_core.markx import perspective_views
+    found = _uuid(story_id)
+    with transaction() as cur:
+        got = perspective_views.story_view(cur, str(found)) if found else None
+    if got is None:
+        raise HTTPException(status_code=404, detail="No such Mark X story")
+    return got
+
+
+@router.post("/labels/perspective")
+def mx_label_perspective(body: PerspectiveLabelIn):
+    from insight_core.markx import perspective_views
+    story, post = _uuid(body.story), _uuid(body.post)
+    if story is None or post is None:
+        raise HTTPException(status_code=404, detail="No such member")
+    with transaction() as cur:
+        try:
+            return perspective_views.label_perspective(cur, story=str(story), post=str(post), answer=body.answer,
+                                                       note=body.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such member, or it has no perspective")
+
+
+@router.post("/labels/fact")
+def mx_label_fact(body: FactLabelIn):
+    from insight_core.markx import perspective_views
+    story, post = _uuid(body.story), _uuid(body.post)
+    if story is None or post is None:
+        raise HTTPException(status_code=404, detail="No such fact")
+    with transaction() as cur:
+        try:
+            return perspective_views.label_fact(cur, story=str(story), post=str(post), index=body.index,
+                                                answer=body.answer, note=body.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such fact")
+
+
+@router.get("/labels/perspectives")
+def mx_label_perspectives():
+    from insight_core.markx import perspective_views
+    with transaction() as cur:
+        return perspective_views.accuracy(cur)
