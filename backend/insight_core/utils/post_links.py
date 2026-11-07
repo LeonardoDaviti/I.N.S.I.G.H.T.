@@ -194,12 +194,19 @@ BARE_URL = re.compile(r'https?://[^\s<>"\'`\]\[(){}]+', re.I)
 BODY_HREFS_MAX = 500
 
 
+def decoded_html(content_html: Optional[str]) -> Optional[str]:
+    """A post's HTML as the reader renders it: escaped HTML (Reddit's feed: no raw `<a href`, `&lt;a`
+    instead) decoded once, any other HTML as it is."""
+    if content_html and not HREF.search(content_html) and "&lt;a" in content_html:
+        return html.unescape(content_html)
+    return content_html
+
+
 def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> List[str]:
     """Every link target of a post's text as the reader gets it (issue 0057): the HTML's hrefs,
     entities decoded; with no HTML, the bare addresses of the plain text (without trailing
     punctuation). Each once, first seen first; any platform, the post's own site included."""
-    if content_html and not HREF.search(content_html) and "&lt;a" in content_html:
-        content_html = html.unescape(content_html)   # escaped HTML (Reddit's): the reader decodes it too
+    content_html = decoded_html(content_html)   # escaped HTML (Reddit's): the reader decodes it too
     if content_html:
         found = (html.unescape(m.group(1)).strip() for m in HREF.finditer(content_html))
     else:
@@ -214,7 +221,9 @@ def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> Li
 
 
 def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str) -> List[PostLink]:
-    """The outside links of one post, first seen first, each address once (its gift link kept, 0126)."""
+    """The outside links of one post, first seen first, each address once (its gift link kept, 0126).
+    Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
+    content_html = decoded_html(content_html)
     if not content_html:
         return []
     own = normalize_url(post_url) or ""
