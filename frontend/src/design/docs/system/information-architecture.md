@@ -33,6 +33,7 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 | `/save` (save any page: the bookmarklet and ⌘K, issue 0031) | `pages/shell.md` |
 | `/markx` (Mark X Shadow, issue 0086 E: only while `INSIGHT_MARKX` is on; the nav word `mark x` then) | `pages/shell.md` |
 | `/markx/entities/:entityId` (an entity's page, issue 0119 A3: only while `INSIGHT_MARKX` is on) | `pages/shell.md` |
+| `/markx/stories/:storyId` (a Mark X story's perspectives and sheet, issue 0119 B6: only while `INSIGHT_MARKX` is on) | `pages/shell.md` |
 
 **Redirects** (claimed in this doc's meta block):
 - `/hub` → `/` (the Mark VIII hub is deleted, P1).

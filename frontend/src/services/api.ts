@@ -7,6 +7,7 @@ import type {
   MarkxPrecision, MarkxSettings,
 } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
+import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 
 export type { Envelope };
 
@@ -1322,6 +1323,15 @@ export function createApi() {
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
     undoMarkxMerge: (redirect: string) =>
       request<Record<string, unknown>>(`/api/markx/entities/merges/${enc(redirect)}/undo`, { method: 'POST', body: {} }),
+    // 0119 B6-B7: a story's perspectives and sheet, the label buttons on them, their accuracy on your labels
+    getMarkxStory: (id: string) => request<MarkxStoryView>(`/api/markx/stories/${enc(id)}`),
+    labelMarkxPerspective: (story: string, post: string, answer: MarkxPerspectiveAnswer) =>
+      request<{ id: string; answer: MarkxPerspectiveAnswer; shown: string }>('/api/markx/labels/perspective',
+        { method: 'POST', body: { story, post, answer } }),
+    labelMarkxFact: (story: string, post: string, index: number, answer: MarkxFactAnswer) =>
+      request<{ id: string; answer: MarkxFactAnswer }>('/api/markx/labels/fact',
+        { method: 'POST', body: { story, post, index, answer } }),
+    getMarkxPerspectiveAccuracy: () => request<MarkxPerspectiveAccuracy>('/api/markx/labels/perspectives'),
 
     // ---- Data (issue 0079): the export downloads as a link; these read around it ----
 

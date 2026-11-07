@@ -325,3 +325,100 @@ export interface MarkxEntityQueue {
   counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
   accuracy: MarkxEntityAccuracy;
 }
+
+// ---- perspectives inside a story and the story sheet (issue 0119 B6-B7) ----------------------------------------
+
+export type MarkxPerspectiveLabel = 'original' | 'new_facts' | 'opinion' | 'same' | 'not_this_story';
+export type MarkxPerspectiveAnswer = 'right' | 'wrong' | MarkxPerspectiveLabel;
+export type MarkxFactAnswer = 'right' | 'not_new' | 'not_true' | 'not_about';
+
+export interface MarkxFact {
+  index: number;
+  fact: string;
+  span: string | null;
+  correction: boolean | null;
+  about_story?: boolean | null;
+  mine: MarkxFactAnswer | null;
+}
+
+export interface MarkxPerspectiveLine {
+  post: string;
+  member: boolean;
+  label: MarkxPerspectiveLabel | null;   // null: not judged (yet)
+  sign: string | null;
+  by: string | null;                     // 'haiku' or 'code:<rule>'
+  worth: boolean | null;
+  before: boolean;
+  point: string | null;
+  claims: { claim: string; span: string | null }[];
+  copies: string[];
+  facts: MarkxFact[];
+  mine: { answer: MarkxPerspectiveAnswer; shown: MarkxPerspectiveLabel | null } | null;
+}
+
+export interface MarkxSheetFact {
+  fact: string;
+  posts: string[];
+  sources: string[];
+  correction: boolean;
+  before: boolean;
+  lines: number[];
+}
+
+export interface MarkxSheet {
+  subject: string;
+  original: { post: string; is_original: boolean; title: string | null; source: string | null; at: string; text: string;
+    also: { post: string; source: string | null; title: string }[] };
+  source_page: string | null;
+  new_facts: MarkxSheetFact[];
+  before: { facts: MarkxSheetFact[]; claims: { claim: string; post: string; source: string | null }[] };
+  claims: { claim: string; post: string; source: string | null }[];
+  opinions: { point: string | null; post: string; source: string | null }[];
+  same: number;
+  copies: number;
+  related: { post: string; source: string | null; title: string }[];
+  lines: number;
+  merged: number;
+  at?: string;
+}
+
+export interface MarkxStoryPost {
+  id: string;
+  title: string | null;
+  source: string | null;
+  kind: string | null;
+  at: string;
+  url: string | null;
+}
+
+export interface MarkxStoryView {
+  story: { id: string; headline: string | null; first_at: string | null };
+  judged: boolean;
+  sheet: MarkxSheet | null;
+  header: { text: string; source: 'lab' | 'owner'; labels: number };
+  members: MarkxPerspectiveLine[];
+  counts: { members: number; worth: number; same: number; copies: number; unjudged: number };
+  posts: Record<string, MarkxStoryPost>;
+}
+
+export interface MarkxRate {
+  k: number;
+  n: number;
+  p: number | null;
+  lo: number;
+  hi: number;
+}
+
+export interface MarkxPerspectiveAccuracy {
+  labels: number;
+  fact_labels: number;
+  lab: { worth: number; four: number; new_facts: number; date: string };
+  four: MarkxRate;
+  worth: MarkxRate;
+  new_facts: MarkxRate;
+  per_label: Partial<Record<MarkxPerspectiveLabel, MarkxRate>>;
+  facts: MarkxRate & { answers: Partial<Record<MarkxFactAnswer, number>> };
+  errors: Record<string, number>;
+  source: 'lab' | 'owner';
+  text: string;
+}
