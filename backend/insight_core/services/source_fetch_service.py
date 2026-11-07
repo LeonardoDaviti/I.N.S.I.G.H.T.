@@ -17,6 +17,14 @@ fetch goes through the ingestion runner (insight_core/ingestion). This service k
   has a no-op session), so a session that cannot open is the same 409.
 
 settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWriter.
+
+Issue 0130: an archive "back to a date" (`until`) of a kind whose pages go newest first (kind.chronological:
+Telegram, X, Substack) stops after the first page that passes the date, its checkpoint kept so a later archive
+goes on from there; an archive whose pages added nothing says why (the kind's checkpoint "skipped": already
+stored, no post, unreadable; and the posts that were stored already under another address), and a reader whose
+every listed entry is a post (LISTS_ONLY_POSTS) that finds none fails, saying the site's layout changed; a feed
+that answers 404/410 (or no feed) wakes the source doctor (issue 0036: the feed finder and page watching), whose
+finding the source sheet offers.
 """
 from __future__ import annotations
 
@@ -39,7 +47,19 @@ from insight_core.ingestion.archive_metadata import (
 from insight_core.ingestion.gates import HOST_FLOORS, FetchGates
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind, resume_counts
+from insight_core.ingestion.kinds.base import (
+    SKIP_NO_POST,
+    SKIP_STORED,
+    SKIP_UNREADABLE,
+    ArchivePage,
+    KindUnavailable,
+    RateLimit,
+    SourceKind,
+    layout_changed_line,
+    resume_counts,
+    skipped_counts,
+)
+from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.ports import slowed_line
 from insight_core.ingestion.schedule import (
     DEFAULT_MAX_POSTS_PER_FETCH,
@@ -77,8 +97,50 @@ CANNOT_READ = "This source's pages can't be read one page at a time"
 _LEG_KEYS = frozenset({
     "success", "posts_fetched", "pages_fetched", "posts_inserted", "posts_updated", "stored_posts",
     "archive_status", "message", "paused", "paused_reason", "waiting", "waiting_until", "waiting_host",
-    "waiting_reason", "waits", "events", "progress", "missing",
+    "waiting_reason", "waits", "events", "progress", "missing", "unreached", "until_reached", "layout_changed",
+    "error",
 })
+# A reader whose every listed entry is a post (kind.LISTS_ONLY_POSTS) that reads this many and finds no post: its
+# site's layout changed (issue 0130 B2).
+LAYOUT_MIN_PAGES = 3
+
+
+def until_datetime(value: Any) -> Optional[datetime]:
+    """An archive's horizon (issue 0130 C): a date ("2025-11-01") or a time, as UTC; None when unset or unreadable."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        found = value
+    else:
+        found = parsing.parse_datetime_value(str(value) if "T" in str(value) else f"{value}T00:00:00+00:00")
+    if found is None:
+        return None
+    return found if found.tzinfo else found.replace(tzinfo=timezone.utc)
+
+
+def _post_time(post: Dict[str, Any]) -> Optional[datetime]:
+    value = post.get("date")
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return until_datetime(value) if value else None
+
+
+def why_line(skipped: Dict[str, int], updated: int, inserted: int, *, re_read: bool) -> Optional[str]:
+    """Why an archive's pages added fewer posts than the source lists (issue 0130 B4), or None when nothing
+    is to explain: "102 already stored (not read again) · 8 pages are no post (no article or no date) · ..."."""
+    parts = []
+    if skipped.get(SKIP_STORED):
+        parts.append(f"{plural(skipped[SKIP_STORED], 'page')} already stored (not read again)")
+    if updated:
+        parts.append(f"{plural(updated, 'post')} " + ("read again, already stored" if re_read
+                                                   else "already stored under another address"))
+    if skipped.get(SKIP_NO_POST):
+        parts.append(f"{plural(skipped[SKIP_NO_POST], 'page')} no post (no article, or no date)")
+    if skipped.get(SKIP_UNREADABLE):
+        parts.append(f"{plural(skipped[SKIP_UNREADABLE], 'page')} could not be read")
+    if not parts:
+        return None if inserted else "the source's listing ends here"
+    return " · ".join(parts)
 
 
 class SourceFetchService:
@@ -94,6 +156,7 @@ class SourceFetchService:
         gates: Optional[FetchGates] = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         live_fetch_due: Optional[Callable[[str], bool]] = None,
+        doctor: Optional[Any] = None,
     ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
@@ -110,6 +173,8 @@ class SourceFetchService:
         self.clock = clock
         # Is a live fetch of this host due now (ports.DbLiveFetchDue)? None: never yield.
         self.live_fetch_due = live_fetch_due
+        # The source doctor (ingestion/source_doctor.py), woken by a feed that answers 404 (issue 0130 B3); None: not.
+        self.doctor = doctor
 
     # ------------------------------------------------------------------ kinds
 
@@ -194,6 +259,8 @@ class SourceFetchService:
             "reason": None,
             "unavailable": False,
             "live_fetch_limit": live_fetch_limit,
+            # Its archive can stop at a date (issue 0130 C): its pages go newest first.
+            "until": bool(getattr(kind, "chronological", False)),
         }
         reason = unavailable_reason(kind.profile, availability)
         if reason is not None:
@@ -228,7 +295,7 @@ class SourceFetchService:
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)
-        async with self._kind_session(kind):
+        async with self._kind_session(kind), self._feed_doctor(source, kind):
             return await self._plan(source_id, source, kind, resume=resume,
                                     rate_limit_overrides=rate_limit_overrides)
 
@@ -306,18 +373,70 @@ class SourceFetchService:
         *,
         resume: bool = True,
         rate_limit_overrides: Optional[Dict[str, Any]] = None,
+        until: Any = None,
     ) -> Dict[str, Any]:
-        """Archive a source's posts older than the stored ones, until the source ends."""
+        """Archive a source's posts older than the stored ones, until the source ends, or (`until`, a date, for a
+        chronological kind) until its pages pass that date (issue 0130 C)."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
             raise LookupError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)
-        async with self._kind_session(kind):
+        async with self._kind_session(kind), self._feed_doctor(source, kind):
             plan = await self._plan(source_id, source, kind, resume=resume,
                                     rate_limit_overrides=rate_limit_overrides)
+            horizon = until_datetime(until) if getattr(kind, "chronological", False) else None
+            if horizon is not None:
+                plan["until"] = horizon.isoformat()
             return await self._archive(source_id, source, kind, plan, progress_callback)
+
+    @contextlib.asynccontextmanager
+    async def _feed_doctor(self, source: Dict[str, Any], kind: SourceKind) -> AsyncIterator[None]:
+        """A feed that answers 404/410, or no feed, while planning or archiving (issue 0130 B3): the source doctor
+        looks for where it moved (the feed finder, then page watching, as every source add), and the error says
+        what it found; the source sheet offers it (Switch). Anything else is raised as it was."""
+        try:
+            yield
+        except Exception as exc:
+            line = await self._doctor_line(source, kind, exc)
+            if line is None:
+                raise
+            raise FeedMoved(f"{str(exc)[:200]}. {line}") from exc
+
+    async def _doctor_line(self, source: Dict[str, Any], kind: SourceKind, exc: BaseException) -> Optional[str]:
+        from insight_core.ingestion.source_doctor import DOCTOR_KINDS, failure_signal, short_address
+
+        if self.doctor is None or kind.name not in DOCTOR_KINDS or failure_signal(exc) not in ("gone", "not_feed"):
+            return None
+        source_id = str(source["id"])
+        try:
+            state = await asyncio.to_thread(self._fetch_state, source_id)
+            await self.doctor.after_failure(self.sources_service.get_source_with_settings(source_id) or source,
+                                            kind, state, exc)
+            after = await asyncio.to_thread(self._fetch_state, source_id)
+            now = (self.sources_service.get_source_by_id(source_id) or {}).get("handle_or_url")
+        except Exception:  # noqa: BLE001 - the archive's own error stands
+            self.logger.exception("The source doctor could not look at %s", source.get("handle_or_url"))
+            return None
+        if now and now != source.get("handle_or_url"):
+            return f"The feed moved: INSIGHT now follows {short_address(str(now))}; run the archive again"
+        finding = after.doctor_finding or {}
+        replacement = finding.get("replacement") if not finding.get("dismissed") else None
+        if isinstance(replacement, dict) and replacement.get("url"):
+            what = "a page to follow" if replacement.get("kind") == "page_watch" else "a feed"
+            return (f"INSIGHT found {what} at {short_address(str(replacement['url']))}: switch to it on the source's "
+                    "sheet, then run the archive again")
+        if after.doctor_checked_at is not None and not finding.get("dismissed"):
+            return "INSIGHT looked for where it moved and found nothing; check the address on the source's sheet"
+        return None
+
+    def _fetch_state(self, source_id: str) -> Any:
+        """The source's fetch state (blocking), a blank one when it has none yet."""
+        from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return FetchStateRepository().load(cur, [source_id]).get(source_id) or FetchStateRow(source_id=source_id)
 
     async def continue_archive(
         self,
@@ -389,6 +508,19 @@ class SourceFetchService:
                 "progress": 0.0,
             })
 
+        horizon = until_datetime(plan.get("until"))
+        continues_from = until_datetime(plan.get("continues_from"))
+        if horizon is not None and not carried and continues_from is not None and continues_from <= horizon:
+            # The archive continues below the stored posts, and they already reach the date.
+            post_stats = self.posts_service.get_source_post_stats(source_id)
+            result = {**plan, "success": True, "posts_fetched": 0, "pages_fetched": total_pages_fetched,
+                      "posts_inserted": 0, "posts_updated": 0, "stored_posts": post_stats["post_count"],
+                      "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
+                      "until_reached": plan["until"],
+                      "message": f"The archive already reaches {horizon:%-d %b %Y}"}
+            await record(source_id, result, mode="archive", kind=kind)
+            return result
+
         if older_posts == 0 and not carried:
             post_stats = self.posts_service.get_source_post_stats(source_id)
             result = {
@@ -413,6 +545,7 @@ class SourceFetchService:
         retried = False
         pages_this_leg = 0
         stopped: Optional[HttpError] = None
+        reached: Optional[datetime] = None   # the oldest post of the page that passed `until` (issue 0130 C)
         pace = _Pace(self, gates, host, progress_callback)
         await gates.budgets.archive_started(host)
         try:
@@ -420,7 +553,8 @@ class SourceFetchService:
                 pages = (self._linked_pages(kind, source, checkpoint) if linked
                          else kind.archive_pages(source, target_posts, checkpoint, rate))
                 try:
-                    async for page in self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched, pace):
+                    gated = self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched, pace)
+                    async for page in gated:
                         retried = False
                         pages_this_leg += 1
                         if page.posts:
@@ -456,6 +590,15 @@ class SourceFetchService:
                             "message": (f"Read linked page {total_pages_fetched} of {len(checkpoint.get('urls') or ())}"
                                         if linked else f"Fetched {kind.name} page {total_pages_fetched}"),
                         })
+                        if horizon is not None and page.posts:
+                            dates = [d for d in (_post_time(post) for post in page.posts) if d is not None]
+                            if dates and min(dates) < horizon:
+                                reached = min(dates)
+                                break
+                    if reached is not None:
+                        await gated.aclose()
+                        with contextlib.suppress(Exception):
+                            await pages.aclose()   # type: ignore[attr-defined]
                     break
                 except HttpError as exc:
                     if not exc.limiting:
@@ -497,6 +640,24 @@ class SourceFetchService:
                                        refill_s=refill, progress_callback=progress_callback, record=record)
         result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
         message = f"Archive completed with {total_posts_fetched} posts"
+        skipped = skipped_counts(checkpoint)
+        if not linked:
+            # Why it added no more (issue 0130 B4): what its pages skipped, and what was stored already.
+            result["unreached"] = {**skipped, "updated": total_updated}
+            why = why_line(skipped, total_updated, total_inserted,
+                           re_read=not getattr(kind, "skips_stored", False))
+            if why and (total_inserted == 0 or any(skipped.values())):
+                message += f"; {'nothing new' if not total_inserted else f'{total_inserted} new'}: {why}"
+        if reached is not None:
+            result["until_reached"] = plan["until"]
+            message = (f"Archive reached {horizon:%-d %b %Y} with {total_posts_fetched} posts"
+                       f" (its oldest page goes to {reached:%-d %b %Y})")
+        elif (not linked and getattr(kind, "LISTS_ONLY_POSTS", False) and total_posts_fetched == 0
+              and skipped[SKIP_NO_POST] >= LAYOUT_MIN_PAGES):
+            # Every listed entry is a post, and none read as one: the site's layout changed (issue 0130 B2).
+            message = layout_changed_line(skipped[SKIP_NO_POST])
+            result.update(success=False, layout_changed=True, error=message)
+        result["message"] = message
         if linked:
             result["missing"] = list((checkpoint or {}).get("missing") or [])
             listed = len((checkpoint or {}).get("urls") or ())
@@ -711,9 +872,21 @@ def archive_service(db_url: str) -> SourceFetchService:
     live fetches (issue 0107). The API's registry and the scheduler each build one."""
     from insight_core.ingestion.ports import DbLiveFetchDue
 
+    from insight_core.ingestion.http import KindHttp as _Http
+    from insight_core.ingestion.source_doctor import DbDoctorStore, SourceDoctor
+    from insight_core.services.source_config_sync_service import SourceConfigSyncService
+
     service = SourceFetchService(db_url)
     service.live_fetch_due = DbLiveFetchDue(db_url, service.kinds)
+    # A feed that answers 404 while archiving wakes the doctor, as a live fetch's does (issue 0130 B3); its look
+    # uses the Add source dialog's short timeout, and a switch keeps sources.json in step (issue 0036).
+    service.doctor = SourceDoctor(http=_Http(timeout=5), registry=service.kinds, clock=service.clock,
+                                  store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source))
     return service
+
+
+class FeedMoved(ValueError):
+    """An archive's feed answered 404/410 (or no feed), and the source doctor looked (issue 0130 B3)."""
 
 
 class _Pace:

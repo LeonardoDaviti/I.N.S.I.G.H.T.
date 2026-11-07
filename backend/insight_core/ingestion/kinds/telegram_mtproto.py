@@ -163,6 +163,7 @@ class TelegramSession:
 
 class TelegramKind(BaseKind):
     name = "telegram_mtproto"
+    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
     available_basis = "exact"
     profile = TELEGRAM_MTPROTO_PROFILE
 

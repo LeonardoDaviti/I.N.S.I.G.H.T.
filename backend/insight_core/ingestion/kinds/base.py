@@ -216,6 +216,30 @@ def start_at(**position: Any) -> dict:
     return {**position, "collected_posts": 0, "pages_fetched": 0}
 
 
+# Why an archive's pages added nothing (issue 0130 B4): the counts a kind keeps in its checkpoint's "skipped",
+# carried across a resume. A listed page already stored (not read again), one that is no post (no article, or
+# no date nor og:type article), one that could not be read.
+SKIP_STORED = "stored"
+SKIP_NO_POST = "no_post"
+SKIP_UNREADABLE = "unreadable"
+SKIP_KEYS = (SKIP_STORED, SKIP_NO_POST, SKIP_UNREADABLE)
+# What a fetch_one of BaseSourceAdapter.index_pages answers for a page it could not read (None: no post).
+UNREADABLE = "unreadable"
+
+
+def layout_changed_line(pages: int) -> str:
+    """What an archive or a fetch says when a reader's listed posts read as no post (issue 0130 B2)."""
+    return (f"The site's layout changed: {pages} listed page{'' if pages == 1 else 's'} read and no post found on any; "
+            "its reader needs an update")
+
+
+def skipped_counts(checkpoint: Optional[Mapping[str, Any]]) -> dict[str, int]:
+    """The checkpoint's "skipped" counts (every key, 0 when absent)."""
+    found = (checkpoint or {}).get("skipped") if isinstance(checkpoint, Mapping) else None
+    found = found if isinstance(found, Mapping) else {}
+    return {key: int(found.get(key) or 0) for key in SKIP_KEYS}
+
+
 def resume_counts(checkpoint: Optional[Mapping[str, Any]]) -> tuple[int, int]:
     """(collected_posts, pages_fetched) carried by a resume checkpoint; (0, 0) for a fresh run."""
     if not isinstance(checkpoint, Mapping):
@@ -240,6 +264,9 @@ class BaseKind:
     watches: bool = False
     # read_post reads one of its pages as a post (issue 0084 B: a page its posts link, not stored).
     reads_posts: bool = False
+    # Its archive pages go from the newest post to the oldest (a channel, an account, a publication's list):
+    # an archive "back to a date" stops once a page passes the date (issue 0130 C).
+    chronological: bool = False
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError

@@ -66,7 +66,9 @@ def _post(slug: str, audience: str = "everyone", wordcount: int = 100, body_word
 
 
 def _archive_url(offset: int, limit: int) -> str:
-    return f"{BASE}/api/v1/archive?sort=new&offset={offset}&limit={limit}"
+    # The first page carries no offset: the API answered offset=0 with HTTP 400 (issue 0130 B1).
+    return f"{BASE}/api/v1/archive?sort=new&offset={offset}&limit={limit}" if offset else \
+        f"{BASE}/api/v1/archive?sort=new&limit={limit}"
 
 
 def _post_url(slug: str) -> str:
@@ -193,7 +195,7 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
                                      "publication": {"subdomain": "examplenews", "custom_domain": "example-news.com"}}]}
         http = self._http({
             SUBSCRIPTIONS: answer,
-            f"{base}/api/v1/archive?sort=new&offset=0&limit=1": [_item("paid", "only_paid", 1000)],
+            f"{base}/api/v1/archive?sort=new&limit=1": [_item("paid", "only_paid", 1000)],
             f"{base}/api/v1/posts/paid": _post("paid", "only_paid", 1000, body_words=100),
         })
         with self.assertRaises(KindUnavailable):

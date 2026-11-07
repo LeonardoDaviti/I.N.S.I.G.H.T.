@@ -14,9 +14,14 @@ from insight_core.ingestion.kinds.base import (
     BaseKind,
     Inspection,
     PolitenessProfile,
+    SKIP_NO_POST,
+    SKIP_STORED,
+    SKIP_UNREADABLE,
+    UNREADABLE,
     RateLimit,
     Source,
     resume_counts,
+    skipped_counts,
 )
 
 
@@ -34,6 +39,9 @@ class BaseSourceAdapter(BaseKind):
     CHECKPOINT_MODES: ClassVar[frozenset[str]] = frozenset({"site_index"})
     RESUME_KEY: ClassVar[str] = "next_index"
     PAGE_SIZE: ClassVar[int] = 20
+    # Every entry its index lists is a post (an issue of a newsletter): a run of them read as no post means the
+    # site's layout changed, not that they are category pages (issue 0130 B2).
+    LISTS_ONLY_POSTS: ClassVar[bool] = False
 
     def __init__(self, http: Any):
         self.http = http
@@ -62,14 +70,20 @@ class BaseSourceAdapter(BaseKind):
         entries: Sequence[Any],
         target: int,
         checkpoint: Optional[dict],
-        fetch_one: Callable[[Source, Any], Awaitable[Optional[Dict[str, Any]]]],
+        fetch_one: Callable[[Source, Any], Awaitable[Any]],
+        *,
+        stored: Optional[set] = None,
     ) -> AsyncIterator[ArchivePage]:
         """Archive a discovered entry list in PAGE_SIZE batches, one ArchivePage per batch.
 
         The checkpoint carries next_index into `entries`, so a resumed run continues where
         the last page ended. Entries whose fetch yields nothing still advance the index.
+        `stored`: the addresses already stored, left unread (issue 0130 B4). The checkpoint's
+        "skipped" counts why an entry added nothing: stored, no post (fetch_one answered None),
+        unreadable (it answered UNREADABLE).
         """
         collected, pages_fetched = resume_counts(checkpoint)
+        skipped = skipped_counts(checkpoint)
         next_index = int((checkpoint or {}).get("next_index") or 0)
         mode = next(iter(self.CHECKPOINT_MODES))
 
@@ -80,9 +94,14 @@ class BaseSourceAdapter(BaseKind):
 
             posts: List[Dict[str, Any]] = []
             for entry in batch:
+                if stored and _entry_url(entry) in stored:
+                    skipped[SKIP_STORED] += 1
+                    continue
                 post = await fetch_one(source, entry)
-                if post:
+                if isinstance(post, dict):
                     posts.append(post)
+                else:
+                    skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
             collected += len(posts)
             next_index += len(batch)
             pages_fetched += 1
@@ -95,6 +114,7 @@ class BaseSourceAdapter(BaseKind):
                 "pages_fetched": pages_fetched,
                 "collected_posts": collected,
                 "total_candidates": len(entries),
+                "skipped": dict(skipped),
             })
             yield ArchivePage(posts, page_checkpoint)
 
@@ -110,3 +130,12 @@ class BaseSourceAdapter(BaseKind):
 
     def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):  # pragma: no cover
         raise NotImplementedError
+
+
+def _entry_url(entry: Any) -> Optional[str]:
+    """An index entry's address: the entry itself (page watch's), or its public_url / url."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("public_url") or entry.get("url")
+    return None

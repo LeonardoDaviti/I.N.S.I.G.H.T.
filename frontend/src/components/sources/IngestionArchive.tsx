@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { ArchiveCatalogEntry } from '../../services/api';
+import { archiveQueueApi } from '../../services/api';
+import { errorMessage } from '../../lib/apiError';
 import { useApi } from '../../services/ApiContext';
 import { waitingLine } from '../../lib/archiveWaiting';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
-import { Input, StatusGlyph, type Status } from '../ui';
+import { Button, Input, StatusGlyph, type Status } from '../ui';
 import ArchiveSection, { ARCHIVE_CATALOG_KEY } from './ArchiveSection';
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
@@ -21,7 +23,7 @@ function archiveGlyph(status?: string | null): { status: Status; label: string }
 }
 
 /** "youtube · 120 of 1,722 stored · 1,602 older posts not archived · measured 3d ago · checkpoint saved". */
-function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
+function entryLine(entry: ArchiveCatalogEntry, now: Date, state?: 'queued' | 'interrupted'): string {
   const stored = formatCount(entry.stored_posts ?? 0);
   const parts = [
     entry.platform,
@@ -32,6 +34,7 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
   }
   parts.push(entry.last_inspected_at ? `measured ${formatRelativeTime(entry.last_inspected_at, now)}` : 'not measured yet');
   if (entry.resume_ready) parts.push('checkpoint saved');
+  if (state) parts.push(state === 'queued' ? 'queued' : 'interrupted by a restart');
   return parts.join(' · ');
 }
 
@@ -44,15 +47,32 @@ export default function IngestionArchive() {
   const api = useApi();
   const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState('');
+  const queryClient = useQueryClient();
   const catalog = useQuery({
     queryKey: [...ARCHIVE_CATALOG_KEY],
-    queryFn: async () => {
-      const response = await api.getArchiveCatalog();
-      return response.sources ?? [];
-    },
+    queryFn: () => api.getArchiveCatalog(),
     staleTime: 30_000,
   });
-  const entries = useMemo(() => catalog.data ?? [], [catalog.data]);
+  const entries = useMemo(() => catalog.data?.sources ?? [], [catalog.data]);
+  // Issue 0130 B5: the archives a restart interrupted, resumed in one tap; the queued ones run in turn.
+  const interrupted = catalog.data?.interrupted ?? [];
+  const queuedIds = new Set((catalog.data?.queued ?? []).map((row) => row.source_id));
+  const [resuming, setResuming] = useState(false);
+  const [resumed, setResumed] = useState<string | null>(null);
+  const resumeInterrupted = async () => {
+    setResuming(true);
+    setResumed(null);
+    try {
+      const { count } = await archiveQueueApi.resumeInterrupted();
+      setResumed(count ? `${plural(count, 'archive')} queued: they resume in turn, one Telegram and one X archive at a time.`
+        : 'Nothing to resume.');
+      void queryClient.invalidateQueries({ queryKey: [...ARCHIVE_CATALOG_KEY] });
+    } catch (err) {
+      setResumed(`Could not resume them: ${errorMessage(err)}`);
+    } finally {
+      setResuming(false);
+    }
+  };
 
   const term = query.trim().toLowerCase();
   const shown = useMemo(() => (term
@@ -81,6 +101,15 @@ export default function IngestionArchive() {
           <h2 id="archive-catalog" className={sectionTitle}>Catalog</h2>
           <span className="text-[0.75rem] tabular-nums text-fg-3">{meta}</span>
         </div>
+        {interrupted.length ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void resumeInterrupted()} disabled={resuming} aria-busy={resuming}>
+              {resuming ? 'Resuming…' : `Resume ${plural(interrupted.length, 'interrupted archive')}`}
+            </Button>
+            <span className="text-[0.75rem] text-fg-3">A restart stopped them; each goes on from its checkpoint.</span>
+          </div>
+        ) : null}
+        {resumed ? <p className="text-[0.75rem] text-fg-2" role="status">{resumed}</p> : null}
         {entries.length ? (
           <Input
             type="search"
@@ -111,7 +140,10 @@ export default function IngestionArchive() {
                       <span className="min-w-0 truncate font-medium text-fg" title={entry.display_name || undefined}>{name}</span>
                       <StatusGlyph status={glyph.status} label={glyph.label} className="shrink-0" />
                     </div>
-                    <p className="mt-0.5 truncate text-[0.75rem] tabular-nums text-fg-3">{entryLine(entry, now)}</p>
+                    <p className="mt-0.5 truncate text-[0.75rem] tabular-nums text-fg-3">
+                      {entryLine(entry, now, queuedIds.has(entry.source_id) ? 'queued'
+                        : interrupted.includes(entry.source_id) ? 'interrupted' : undefined)}
+                    </p>
                     {entry.waiting ? (
                       <p className="mt-0.5 text-[0.75rem] tabular-nums text-fg-2 [overflow-wrap:anywhere]">{waitingLine(entry.waiting, now)}</p>
                     ) : null}

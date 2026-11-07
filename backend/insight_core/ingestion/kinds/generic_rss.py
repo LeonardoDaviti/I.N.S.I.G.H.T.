@@ -24,8 +24,13 @@ from insight_core.ingestion.kinds.base import (
     BaseKind,
     Inspection,
     PolitenessProfile,
+    SKIP_NO_POST,
+    SKIP_STORED,
+    SKIP_UNREADABLE,
+    UNREADABLE,
     Source,
     resume_counts,
+    skipped_counts,
 )
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
@@ -109,6 +114,7 @@ class GenericRssKind(BaseKind):
         no checkpoint, as a single fetch."""
         url = str(source["handle_or_url"])
         collected, pages_fetched = resume_counts(checkpoint)
+        skipped = skipped_counts(checkpoint)
         if self.checkpoint_resumable(checkpoint):
             held: set = set()
             site, prefix, listed = await self._sitemap_posts([], site=checkpoint.get("site"), prefix=checkpoint.get("prefix"))
@@ -123,7 +129,7 @@ class GenericRssKind(BaseKind):
                 yield ArchivePage(posts, None)
                 return
             collected, pages_fetched, start = collected + len(posts), pages_fetched + 1, 0
-            yield ArchivePage(posts, self._checkpoint(site, prefix, 0, pages_fetched, collected, len(listed)))
+            yield ArchivePage(posts, self._checkpoint(site, prefix, 0, pages_fetched, collected, len(listed), skipped))
         stored = (await asyncio.to_thread(self.stored_urls, [loc for loc, _ in listed[start:]])
                   if self.stored_urls and listed[start:] else set())
         index = start
@@ -131,16 +137,23 @@ class GenericRssKind(BaseKind):
             loc, lastmod = listed[index]
             index += 1
             if loc in stored or normalize_url(loc) in held:
+                skipped[SKIP_STORED] += 1
                 continue
             post = await self._sitemap_post(source, loc, lastmod)
+            if not isinstance(post, dict):
+                skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
+                post = None
             collected += 1 if post else 0
             pages_fetched += 1
-            yield ArchivePage([post] if post else [], self._checkpoint(site, prefix, index, pages_fetched, collected, len(listed)))
+            yield ArchivePage([post] if post else [],
+                              self._checkpoint(site, prefix, index, pages_fetched, collected, len(listed), skipped))
 
     @staticmethod
-    def _checkpoint(site: str, prefix: str, next_index: int, pages_fetched: int, collected: int, total: int) -> dict:
+    def _checkpoint(site: str, prefix: str, next_index: int, pages_fetched: int, collected: int, total: int,
+                    skipped: Optional[Dict[str, int]] = None) -> dict:
         return {"mode": SITEMAP_MODE, "site": site, "prefix": prefix, "next_index": next_index,
-                "pages_fetched": pages_fetched, "collected_posts": collected, "total_candidates": total}
+                "pages_fetched": pages_fetched, "collected_posts": collected, "total_candidates": total,
+                "skipped": dict(skipped or {})}
 
     async def _sitemap_posts(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None,
                              prefix: Optional[str] = None) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]]]:
@@ -148,7 +161,7 @@ class GenericRssKind(BaseKind):
         path they share ("/posts/" for /posts/2021/03/a and /posts/2020/12/b; "/" for /a/ and /b/), and the
         sitemap's addresses there, newest lastmod first, once each. No posts when the sitemap lists no more
         of them than the feed holds, or cannot be read (issue 0108)."""
-        from insight_core.ingestion.kinds.page_watch import sitemap_entries   # page_watch imports this module
+        from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries   # page_watch imports this module
 
         links = [p["url"] for p in posts if isinstance(p.get("url"), str) and p["url"].startswith("http")]
         if site is None or prefix is None:
@@ -156,7 +169,7 @@ class GenericRssKind(BaseKind):
                 return "", "/", []
             site, prefix = parsing.origin_from_source(links[0], ""), feed_section(links)
         try:
-            entries = await sitemap_entries(self.http, site + "/", prefix, posts_only=True)
+            entries = await sitemap_entries(self.http, site + "/", prefix, posts_only=True, max_files=ARCHIVE_SITEMAPS)
         except Exception as exc:  # noqa: BLE001 - no sitemap: the feed is the archive
             logger.debug("Sitemap of %s not read: %s", site, exc)
             return site, prefix, []
@@ -174,9 +187,9 @@ class GenericRssKind(BaseKind):
         listed = sorted(found.values(), key=lambda entry: entry[1] or epoch, reverse=True)
         return site, prefix, listed
 
-    async def _sitemap_post(self, source: Source, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
+    async def _sitemap_post(self, source: Source, url: str, lastmod: Optional[datetime]) -> Any:
         """One older post from the sitemap, read from its page as page watch reads one; None when the
-        page is no post or cannot be read (a host limiting us stops the archive: it resumes)."""
+        page is no post, UNREADABLE when it cannot be read (a host limiting us stops the archive: it resumes)."""
         from insight_core.ingestion.kinds.page_watch import article_post, page_date
 
         try:
@@ -185,10 +198,10 @@ class GenericRssKind(BaseKind):
             if exc.limiting:
                 raise
             logger.info("Archive: %s could not be read (%s)", url, exc)
-            return None
+            return UNREADABLE
         except ValueError as exc:
             logger.info("Archive: %s could not be read (%s)", url, exc)
-            return None
+            return UNREADABLE
         date = page_date(page)
         if date is None and parsing.meta_content(page, "og:type").lower() != "article":
             return None

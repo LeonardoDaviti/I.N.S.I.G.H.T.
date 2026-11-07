@@ -65,7 +65,7 @@ class KindRegistry:
             SavedKind(),
             PageWatchKind(http, stored_urls=stored_urls),
             *(adapter_class(http) for adapter_class in ADAPTER_CLASSES),
-            SubstackKind(http),
+            SubstackKind(http, stored_urls=stored_urls),
             RedditKind(http),
             YouTubeKind(youtube),
             TelegramRssKind(http),

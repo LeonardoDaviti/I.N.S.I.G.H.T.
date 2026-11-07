@@ -36,6 +36,7 @@ from insight_core.ingestion.kinds.parsing import web_address
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.services.archive_jobs import ArchiveJobs
+from insight_core.services.archive_jobs import exclusive as exclusive_lane
 from insight_core.services.credentials_service import LoginFailed
 from insight_core.services.media_proxy_service import MediaFetchFailed, MediaNotAllowed
 from insight_core.services.operations_service import (
@@ -300,6 +301,8 @@ class ArchiveRequest(BaseModel):
     # True: start an archive_source job and answer 202 at once (the source sheet polls
     # the job). False runs the archive inside the request and answers its result.
     background: bool = False
+    # Issue 0130 C: back to this date ("2025-11-01"): a Telegram, X or Substack archive stops once its pages pass it.
+    until: str | None = None
 
 
 class YouTubeProgressRequest(BaseModel):
@@ -499,6 +502,7 @@ async def _run_archive(
     rate_limit_overrides: Dict[str, Any] | None = None,
     job_id: str | None = None,
     linked: bool = False,
+    until: str | None = None,
 ) -> Dict[str, Any]:
     """Archive posts for a single source into the shared posts table (services/archive_jobs.py).
 
@@ -508,7 +512,7 @@ async def _run_archive(
     limits it leaves the job waiting, and the scheduler continues it (issue 0107).
     """
     return await _archive_jobs().run(source_id, resume=resume, rate_limit_overrides=rate_limit_overrides,
-                                     job_id=job_id, linked=linked)
+                                     job_id=job_id, linked=linked, until=until)
 
 
 # Sources with an archive running in this process (a restart empties it, as it ends the runs it tracked). With two
@@ -532,7 +536,7 @@ async def _continue_archive_once(source_id: str, job_id: str):
         _archiving_sources.discard(source_id)
 
 
-def _accept_archive_run(
+async def _accept_archive_run(
     background_tasks: BackgroundTasks,
     source_id: str,
     request: "ArchiveRequest",
@@ -554,9 +558,13 @@ def _accept_archive_run(
                                                       "unavailable": bool(support.get("unavailable"))})
     latest = services().operations.latest_job_for_source("archive_source", source_id)
     # The scheduler may be the one running it (it continues waiting archives, issue 0107).
-    if source_id in _archiving_sources or (latest or {}).get("status") == "running":
-        reason = "An archive of this source is already running"
+    if source_id in _archiving_sources or (latest or {}).get("status") in ("running", "queued"):
+        reason = ("This source's archive is queued; it starts when its turn comes" if (latest or {}).get("status") == "queued"
+                  else "An archive of this source is already running")
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    until, bad = _archive_until(request, support)
+    if bad is not None:
+        return bad
     resume = bool(request.resume)
     linked_waiting = bool(((latest or {}).get("result") or {}).get("linked"))
     if resume and (latest or {}).get("status") == "waiting" and not linked_waiting:
@@ -569,24 +577,47 @@ def _accept_archive_run(
         # A new archive replaces the waiting one.
         services().operations.try_finish_job(latest["id"], status="success", message="Replaced by a new archive",
                                              payload={"waiting": False})
+    jobs = _archive_jobs()
+    lane = jobs.lane(source_id)
+    payload = {**jobs.request_payload(resume=resume, rate_limit=rate_limit_overrides, until=until), "lane": lane}
     try:
-        job_id = services().operations.start_job_unless_running(
-            "archive_source",
-            trigger="manual",
-            source_id=source_id,
-            message="Archive",
-            payload={"resume": resume, "rate_limit": rate_limit_overrides},
-        )
+        if exclusive_lane(lane):
+            # Its lane's turn (issue 0130): a Telegram or Nitter archive while another runs is queued, not started.
+            job_id, status = await asyncio.to_thread(jobs.queue.add, source_id, lane=lane, trigger="manual",
+                                                     queue=False, payload=payload)
+        else:
+            job_id, status = services().operations.start_job_unless_running(
+                "archive_source", trigger="manual", source_id=source_id, message="Archive", payload=payload), "running"
     except Exception:   # logged by the operations service
+        logger.exception("Could not start an archive_source job")
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
     if not job_id:   # the other API process started one between the check above and here
         reason = "An archive of this source is already running"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    if status == "queued":
+        content = _accepted_job_response(job_id, "archive_source",
+                                         message="Queued: another archive of its kind is running; it starts after")
+        return JSONResponse(status_code=202, content={**content, "status": "queued"})
     _archiving_sources.add(source_id)
     background_tasks.add_task(
         _run_archive_once, source_id, resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
+        until=until,
     )
     return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source", message="Archive started"))
+
+
+def _archive_until(request: "ArchiveRequest", support: Dict[str, Any]) -> tuple:
+    """(the archive's horizon as an ISO date, or None; a 400 response when it can't be read, else None)."""
+    from insight_core.services.source_fetch_service import until_datetime
+
+    if not request.until:
+        return None, None
+    horizon = until_datetime(request.until)
+    if horizon is None:
+        reason = f"Not a date: {request.until}"
+        return None, JSONResponse(status_code=400, content={"success": False, "detail": reason, "error": reason})
+    # A kind whose pages are not newest first can't stop at a date: it runs to the source's end, as before.
+    return (horizon.date().isoformat() if support.get("until") else None), None
 
 
 def _unavailable(reason: str) -> JSONResponse:
@@ -1252,9 +1283,54 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
 @app.get("/api/archive/catalog")
 @error_detail("load the archive catalog")
 async def get_archive_catalog():
-    """List enabled sources with their persisted archive status."""
+    """List enabled sources with their persisted archive status; the sources whose last archive a restart
+    interrupted and the queued ones (issue 0130: Resume interrupted archives)."""
     catalog = services().source_fetch.archive_catalog()
-    return {"success": True, "sources": catalog, "total": len(catalog)}
+    queue = _archive_jobs().queue
+    try:
+        interrupted = [row["source_id"] for row in await asyncio.to_thread(queue.interrupted)]
+        queued = await asyncio.to_thread(queue.queued)
+    except Exception:
+        logger.exception("Could not read the archive queue")
+        interrupted, queued = [], []
+    return {"success": True, "sources": catalog, "total": len(catalog), "interrupted": interrupted, "queued": queued}
+
+
+@app.post("/api/archive/resume-interrupted")
+@error_detail("resume the interrupted archives")
+async def resume_interrupted_archives():
+    """Queue every source whose last archive a restart interrupted (issue 0130 B5): each resumes from its
+    checkpoint, with its horizon, one per lane at a time (never two Telegram or two Nitter archives at once); the
+    ingestion process starts them in turn."""
+    queued = await asyncio.to_thread(_archive_jobs().resume_interrupted)
+    count = sum(1 for row in queued if row["job_id"])
+    return {"success": True, "queued": queued, "count": count}
+
+
+@app.post("/api/archive/{source_id}/queue")
+@error_detail("queue the archive")
+async def queue_archive(source_id: str, request: ArchiveRequest):
+    """Queue an archive of the source (issue 0130 C): it runs in its turn, one per lane at a time. 409 when the
+    source cannot archive or already has one running, waiting or queued."""
+    try:
+        support = services().source_fetch.archive_support(source_id)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
+    if not support.get("archivable"):
+        reason = support.get("reason") or "This source cannot archive"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    until, bad = _archive_until(request, support)
+    if bad is not None:
+        return bad
+    rate = {"page_delay_seconds": request.pageDelaySeconds, "batch_size": request.batchSize,
+            "batch_cooldown_seconds": request.batchCooldownSeconds}
+    job_id, status = await asyncio.to_thread(_archive_jobs().enqueue, source_id, resume=bool(request.resume),
+                                             until=until, rate_limit=rate)
+    if not job_id:
+        reason = f"This source's archive is {status} already"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
+    content = _accepted_job_response(job_id, "archive_source", message="Queued")
+    return JSONResponse(status_code=202, content={**content, "status": "queued"})
 
 
 @app.post("/api/archive/{source_id}/plan")
@@ -1287,12 +1363,13 @@ async def run_archive(source_id: str, request: ArchiveRequest, background_tasks:
         "batch_cooldown_seconds": request.batchCooldownSeconds,
     }
     if request.background:
-        return _accept_archive_run(background_tasks, source_id, request, rate_limit_overrides)
+        return await _accept_archive_run(background_tasks, source_id, request, rate_limit_overrides)
     logger.info(f"📦 Running archive for source: {source_id}")
     result = await _run_archive(
         source_id,
         resume=bool(request.resume),
         rate_limit_overrides=rate_limit_overrides,
+        until=request.until,
     )
     if result.get("unavailable"):
         return _unavailable(result.get("error"))

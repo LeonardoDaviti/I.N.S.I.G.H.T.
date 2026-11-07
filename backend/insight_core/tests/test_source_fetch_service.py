@@ -233,7 +233,7 @@ class ArchiveSupportTests(unittest.TestCase):
     def test_a_kind_with_history_can_archive_and_says_what_its_count_means(self):
         support = self.support(self.history_kind(), _SupportSources())
         self.assertEqual(support, {"kind": "fake_history", "available_basis": "exact", "archivable": True,
-                                   "reason": None, "unavailable": False, "live_fetch_limit": 50})
+                                   "reason": None, "unavailable": False, "live_fetch_limit": 50, "until": False})
 
     def test_an_unavailable_kind_cannot_archive_and_says_why(self):
         support = self.support(self.history_kind(YOUTUBE_PROFILE), _SupportSources(),

@@ -226,6 +226,17 @@ def _date_after_fetch(run: Run):
     return ids, run.cur.fetchone()[0]
 
 
+# ---- addresses ------------------------------------------------------------------------------------
+
+def _address_unnormalized(run: Run):
+    """A post with an http(s) address and no normalized_url (issue 0130 E1: every read matching posts by it misses
+    the post). Its own pattern, not the save path's rule."""
+    run.cur.execute("SELECT id::text FROM posts WHERE normalized_url IS NULL AND url ~* '^https?://[^/\\s]+'")
+    ids = [r[0] for r in run.cur.fetchall()]
+    run.cur.execute("SELECT count(*) FROM posts WHERE url ~* '^https?://'")
+    return ids, run.cur.fetchone()[0]
+
+
 def _midnight(t) -> bool:
     t = t.astimezone(timezone.utc)
     return (t.hour, t.minute, t.second, t.microsecond) == (0, 0, 0, 0)
@@ -551,6 +562,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("text.feed_footer", "shown text", "keeps a feed's footer lines (Reddit, hnrss, Nitter)", _text_footer),
     Invariant("text.quote_byline", "shown text", "keeps a quote card's byline", _text_byline),
     Invariant("post.unreadable", "shown text", "a post the title or text rules raise on", _unreadable),
+    Invariant("post.address_unnormalized", "addresses", "an http(s) address with no normalized_url (0130 E1)",
+              _address_unnormalized),
     Invariant("date.after_fetch", "dates", "published more than a day after it was fetched", _date_after_fetch),
     Invariant("date.date_only_first", "dates", "a date-only post marked first over a timed post of its day", _date_only_first),
     Invariant("story.empty", "stories", "a story with no posts", _story_empty),

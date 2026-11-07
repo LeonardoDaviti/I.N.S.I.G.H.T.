@@ -228,6 +228,18 @@ async def main() -> None:
             logger.info("%s archives a restart stopped continue shortly", requeued)
     except Exception:  # noqa: BLE001
         logger.exception("Could not requeue the archives a restart stopped")
+    try:   # the queued archives it was running go back in the queue, to resume from their checkpoints (issue 0130)
+        from insight_core.services.archive_jobs import ArchiveQueue
+
+        queued_again = ArchiveQueue(db_url).requeue("scheduler")
+        if queued_again:
+            logger.info("%s queued archives a restart stopped are queued again", queued_again)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not queue again the archives a restart stopped")
+    # The posts stored without a normalized address get one (issue 0130 E1): once, at the deploy's first start;
+    # resumable, and nothing at a later start. In a thread: the scheduler's first tick does not wait for it.
+    from insight_core.scripts.repair_normalized_urls import repair_safely
+    asyncio.get_running_loop().run_in_executor(None, repair_safely, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:
@@ -270,6 +282,11 @@ async def main() -> None:
                     logger.info("Continuing archive job %s after its wait", job_id)
             except Exception:  # noqa: BLE001
                 logger.exception("Could not continue the waiting archives")
+            try:   # the queued archives whose lane is free (issue 0130: one Telegram, one Nitter at a time)
+                for job_id in await archives.start_queued():
+                    logger.info("Starting queued archive job %s", job_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not start the queued archives")
         if state.next_tick_at is None or now >= state.next_tick_at:
             config = operations_service.get_scheduler_config()
 
