@@ -280,12 +280,15 @@ class StoriesService:
     @staticmethod
     def _facts(sources: SourceFacts) -> Dict[str, Any]:
         """What the rules read of each source, as a fingerprint, and the accounts followed. Its owner when it
-        is one of an owner's channels (issue 0111: News counts its voice so), only then, so no other print moves."""
+        is one of an owner's channels (issue 0111: News counts its voice so), only then, so no other print moves; the
+        same for its confirmed voice (issue 0132 A): joining or leaving one queues only that source's posts."""
         owner = getattr(sources, "owner", {})
+        voice_of = getattr(sources, "voice_of", {})
         return {"sources": {s: stamps.fingerprint([sources.kind[s], sources.publication(s), sources.own_site(s),
                                                    sources.home_site(s), sources.account.get(s), sources.name.get(s),
                                                    sources.own_site(s) in sources.shared_sites,
-                                                   *([owner[s]] if s in owner else [])])
+                                                   *([owner[s]] if s in owner else []),
+                                                   *([{"voice": voice_of[s]}] if s in voice_of else [])])
                             for s in sorted(sources.kind)},
                 "accounts": sorted(a for a in sources.of_account)}
 

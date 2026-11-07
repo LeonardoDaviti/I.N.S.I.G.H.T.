@@ -44,7 +44,7 @@ from insight_core.utils.json_safe import iso
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_links import source_kind
-from insight_core.utils.story_rules import named_voices, text_key
+from insight_core.utils.story_rules import confirmed, named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.post_fields import SAVED_KEY, STORY_ONLY_KEY, TITLE_TEXT_CHARS
 
@@ -52,7 +52,7 @@ FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"] 
 FeedView = Literal["stream", "by_source"]
 FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred", "updated", "history")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
-SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
+SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source", "voice")   # voice: issue 0132 A, every channel of it
 
 MAX_FEED_LIMIT = 100
 MAX_FEED_GROUPS = 50
@@ -148,7 +148,7 @@ class FeedScope:
     """Which posts a feed shows. 'all' honours sources.in_main_digest (but not under the
     later filter: a post put in Later is there whatever its source); starred is a filter."""
 
-    kind: Literal["all", "folder", "source"]
+    kind: Literal["all", "folder", "source", "voice"]
     id: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -162,12 +162,12 @@ class FeedScope:
 
     @staticmethod
     def parse(value: str | None) -> "FeedScope":
-        """`all`, `folder:<uuid>` or `source:<uuid>` (the API's `scope=` form)."""
+        """`all`, `folder:<uuid>`, `source:<uuid>` or `voice:<uuid>` (the API's `scope=` form)."""
         text = (value or "all").strip()
         if text == "all":
             return FeedScope("all")
         kind, sep, ident = text.partition(":")
-        if not sep or kind not in ("folder", "source"):
+        if not sep or kind not in ("folder", "source", "voice"):
             raise ValueError(f"invalid feed scope: {value!r}")
         return FeedScope(kind, ident)  # type: ignore[arg-type]
 
@@ -315,6 +315,13 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
     return voice_sources(voices) if len(voices) == 1 else voices
 
 
+def confirmed_owners(cur: Cursor) -> Dict[str, str]:
+    """The owners the last story run counted stories by (issue 0132 A): a voice -> its confirmed voice, only the
+    channels the owner joined (the rest of News's owners count News alone), a Reddit poster never."""
+    from insight_core.db.repo_news import NewsRepository
+    return {v: o for v, o in NewsRepository.owners(cur).items() if confirmed(o) and not v.startswith("reddit:")}
+
+
 def voiced(row: Sequence[Any], voice: Optional[str], content_hash: Optional[str]) -> Dict[str, Any]:
     """An item row's post (_ITEM_COLUMNS) as story_voices reads it, with its voice and content hash."""
     return {"source_id": str(row[4]), "name": row[5], "platform": row[6], "handle": row[20], "voice": voice,
@@ -413,6 +420,8 @@ class ReaderRepository:
         if scope.kind == "folder":
             return (f"{shown} AND p.source_id IN (SELECT sf.source_id FROM source_folders sf"
                     " WHERE sf.folder_id = %s)"), [scope.id]
+        if scope.kind == "voice":   # every channel of the voice (issue 0132 A)
+            return f"{shown} AND p.source_id IN (SELECT vs.id FROM sources vs WHERE vs.voice_id = %s)", [scope.id]
         return f"{shown} AND p.source_id = %s", [scope.id]
 
     def _filter_sql(self, filter: str) -> Tuple[str, List[Any]]:
@@ -591,8 +600,9 @@ class ReaderRepository:
         # Named as counted (issue 0082): one name a voice, your sources that wrote or reposted a tweet
         # of the story among them (issue 0068).
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
+        joined = confirmed_owners(cur) if stories else {}   # one confirmed voice one name, as counted (issue 0132 A)
         for lead, story in stories.items():
-            story["sources"] = story_voices(voiced[lead], followed)
+            story["sources"] = story_voices(voiced[lead], followed, joined)
         # Each source's roundup that is most about the story (issue 0069): the one that links the story's
         # pages earliest in it (post_links.position), then the first; none of a source in the story.
         cur.execute(

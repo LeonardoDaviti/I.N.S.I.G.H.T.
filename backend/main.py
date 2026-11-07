@@ -1720,3 +1720,5 @@ async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressReq
 from insight_core.markx import api as markx_router_module  # noqa: E402
 from insight_core.markx.api import router as markx_router  # noqa: E402
 app.include_router(markx_router)
+from insight_core.routers.voices import router as voices_router  # noqa: E402  (issue 0132 A)
+app.include_router(voices_router)

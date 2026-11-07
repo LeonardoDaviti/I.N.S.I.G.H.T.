@@ -31,6 +31,10 @@ class ReaderService:
         """FeedPage {items, next_cursor}, or FeedGroupsPage {groups, next_cursor} for view=by_source."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             rows, next_cursor = self.repo.list_posts(cur, query, now=self.clock())
+            if query.view != "by_source":   # one post on two channels of a voice shows once (issue 0132 A)
+                from insight_core.db.repo_voices import VoicesRepository
+                rows = VoicesRepository.also_on(cur, rows, scope_kind=query.scope.kind, scope_id=query.scope.id,
+                                                filter=query.filter)
         key = "groups" if query.view == "by_source" else "items"
         return {"success": True, key: rows, "next_cursor": next_cursor.encode() if next_cursor else None}
 

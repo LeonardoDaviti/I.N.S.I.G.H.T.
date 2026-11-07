@@ -35,6 +35,8 @@ def _scope_sql(scope: FeedScope) -> Tuple[str, List[Any]]:
         return "s.in_main_digest", []
     if scope.kind == "folder":
         return "s.id IN (SELECT sf.source_id FROM source_folders sf WHERE sf.folder_id = %s)", [scope.id]
+    if scope.kind == "voice":   # every channel of one voice (issue 0132 A)
+        return "s.voice_id = %s", [scope.id]
     return "s.id = %s", [scope.id]
 
 
@@ -327,7 +329,7 @@ class NewsRepository:
         scope_sql, params = _scope_sql(scope)
         one = "AND ns.id = %s" if news_id else ""
         mentioned, mention_params = "", []
-        if scope.kind == "source":
+        if scope.kind in ("source", "voice"):
             mentioned = f"""
               OR EXISTS (SELECT 1 FROM news_posts o JOIN story_posts osp ON osp.post_id = o.post_id
                          JOIN story_mentions m ON m.story_id = osp.story_id
@@ -400,6 +402,10 @@ class NewsRepository:
         own_sql, own_params = "FALSE", []
         if scope.kind == "source":
             own_sql = "EXISTS (SELECT 1 FROM posts op WHERE op.normalized_url = c.target_url AND op.source_id = %s)"
+            own_params = [scope.id]
+        elif scope.kind == "voice":   # a voice's own posts that are classics, any channel's (issue 0132 A)
+            own_sql = ("EXISTS (SELECT 1 FROM posts op JOIN sources os ON os.id = op.source_id "
+                       "WHERE op.normalized_url = c.target_url AND os.voice_id = %s)")
             own_params = [scope.id]
         cur.execute(
             f"""
