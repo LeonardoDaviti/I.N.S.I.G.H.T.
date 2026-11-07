@@ -12,6 +12,7 @@ import random
 import string
 import sys
 import unittest
+from unittest import mock
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,7 +26,7 @@ import main
 from insight_core.db.repo_search import SearchQuery, snippet_parts
 from insight_core.services import registry
 from insight_core.tests._asgi import call
-from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import SCRATCH_PREFIX, db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 
 FOLDER_PREFIX = "mark-ix-test-folder-"
 CLASSIC_PREFIX = "https://test.invalid/mark-ix/classic/"
@@ -90,8 +91,10 @@ class SearchRouteTests(unittest.TestCase):
             cur.execute("DELETE FROM classics WHERE target_url LIKE %s", (CLASSIC_PREFIX + "%",))
             delete_scratch_sources(cur)
 
-    def _source(self, *, name: str | None = None, in_main_digest: bool = False) -> str:
-        settings = '{"display_name": "%s"}' % name if name else "{}"
+    def _source(self, *, name: str = "Scratch Source", in_main_digest: bool = False) -> str:
+        # A name of its own, never its random scratch address: the name is in each post's vector, and
+        # an address's hex can read as more words than another's, so ties would break by it (0129).
+        settings = '{"display_name": "%s"}' % name
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             return insert_scratch_source(cur, settings_json=settings, in_main_digest=in_main_digest)
 
@@ -423,6 +426,14 @@ class SearchRouteTests(unittest.TestCase):
         self.assertEqual(self.ids("robots", days=7), [best_outside])
         self.assertEqual(self.ids("robots", scope="all"), [old_best])
         self.assertEqual(self.ids("robots", scope="all", days=7), [inside_post])
+
+    def test_dates_compete_whatever_the_scratch_addresses(self):
+        """Issue 0129: the test above failed about 1 run in 15. A scratch address's random hex read
+        like `3e4f…` is two lexemes (a number in scientific notation and a word), so that source's
+        posts were one lexeme longer and ranked lower: the tie broke by the address, not the date."""
+        addresses = iter([f"{SCRATCH_PREFIX}3e4f{uuid.uuid4().hex}", f"{SCRATCH_PREFIX}{uuid.uuid4().hex}"])
+        with mock.patch("insight_core.tests._db.scratch_handle", lambda: next(addresses)):
+            self.test_only_matching_posts_in_the_scope_and_dates_compete()
 
     def test_one_source_later_and_kept_show_every_post(self):
         source = self._source()
