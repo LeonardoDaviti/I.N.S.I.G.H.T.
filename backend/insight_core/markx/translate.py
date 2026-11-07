@@ -2,7 +2,9 @@
 
 **The kind** is 0086's `translate` (schemas.KINDS: its guide, the answer {title_en, text_en}; validate._translate: the
 post's numbers survive, the length stays within 0.5-2x; tasks.translate_input: the title and the first 2,500 characters).
-Its answer is the task's valid call (mx_calls.answer); nothing else is stored.
+Its answer is the task's valid call (mx_calls.answer); nothing else is stored. The guide stays translate-v1: translate-v2
+(v1 with a tech-slang glossary) was measured against it on F5's 150 posts on 2026-11-07 and kept less of the meaning
+(77% against 81%), so it is not adopted (plan/issues/0130d-built.md).
 
 **Asked two ways:**
   - on request: POST /api/markx/posts/{id}/translate (the "Translate" button on a non-English post) adds the task at
