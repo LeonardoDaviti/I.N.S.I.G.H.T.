@@ -1254,6 +1254,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("surges")                      # 0119 A2
     counts["surges"] = entity_stage.surges(cur, now=now, run_id=run_id, days=days, since=previous,
                                            window_days=config.days)
+    mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
+    from insight_core.markx import perspectives
+    counts["perspectives"] = perspectives.stage(cur, ask=ask, now=now, run_id=run_id)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),

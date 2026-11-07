@@ -139,6 +139,11 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
           </span>
         </summary>
         <div className="pb-4 pl-6">
+          {row.story ? (   // 0119 B6: what each member adds, and the story sheet
+            <p className="mb-1 text-[0.8125rem]">
+              <TextLink to={`/markx/stories/${encodeURIComponent(row.story)}`}>Perspectives and the story sheet</TextLink>
+            </p>
+          ) : null}
           <ul aria-label="Posts in this Mark X row">{row.posts.map((line) => <PostLine key={line.id} line={line} now={now} />)}</ul>
           {row.removed.length ? (
             <>

@@ -64,7 +64,8 @@ describe('the labels tab (issue 0086 F)', () => {
     };
     const getMarkxPrecision = vi.fn().mockResolvedValue(prec);
     renderWithProviders(<MarkXLabels />, { api: makeFakeApi({ getMarkxLabels: vi.fn().mockResolvedValue(QUEUE),
-      getMarkxLabelItem: vi.fn().mockResolvedValue(ITEM), getMarkxPrecision }) });
+      getMarkxLabelItem: vi.fn().mockResolvedValue(ITEM), getMarkxPrecision,
+      getMarkxPerspectiveAccuracy: vi.fn().mockReturnValue(new Promise(() => {})) }) });   // 0119 B7's section: pending here
     await userEvent.click(screen.getByRole('button', { name: 'precision' }));
     const card = await screen.findByRole('region', { name: 'F2 joins' });
     expect(within(card).getByText(/bar 0.60 · 175 questions · 30 labelled/)).toBeInTheDocument();

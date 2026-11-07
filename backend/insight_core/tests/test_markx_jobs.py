@@ -318,12 +318,12 @@ class TheLimitAndTheStages(_Api):
         self.assertIn("run", out)
         text = "\n".join(logs.output)
         self.assertIn("Mark X decision run started", text)
-        for name in ("candidates", "load", "questions and decisions", "write", "connections", "headlines", "news", "entities", "surges"):
+        for name in ("candidates", "load", "questions and decisions", "write", "connections", "headlines", "news", "entities", "surges", "perspectives_plan"):
             self.assertIn(f"Mark X decision run: {name} took", text, name)
         self.assertIn("Mark X decision run finished in", text)
         last = jobs.state(self.cur)["decide"]["last"]
         self.assertEqual([s for s, _ in last["stages"]], ["candidates", "load", "questions and decisions", "write", "connections",
-                                                "headlines", "news", "entities", "surges"])   # 0119
+                                                "headlines", "news", "entities", "surges", "perspectives_plan"])   # 0119
 
     def test_a_run_over_the_limit_stops_between_stages_and_writes_nothing(self):
         self.cur.execute("SELECT count(*) FROM mx_runs")

@@ -149,6 +149,37 @@ COLLIDE_SCHEMA = {
     },
 }
 
+# 0119 B (0120 v3.2f): what each member of a story adds (persp-v1, the lab's persp_v32f_frozen.md) and the sheet's
+# merged facts (persp-merge-v1, persp_merge_v1.md). Loose, as the lab's answer check was (members with a known label;
+# groups as a list): a fact without its span, a line number out of range, a member not asked are the final checks'
+# to drop (markx/perspectives.py), never a reason to ask again.
+PERSPECTIVE_LABELS = ["original", "new_facts", "opinion", "same", "not_this_story"]
+_BOOL_OR_NULL = {"type": ["boolean", "null"]}
+PERSPECTIVE_SCHEMA = {
+    "type": "object",
+    "required": ["members"],
+    "properties": {"members": {"type": "array", "items": {
+        "type": "object", "required": ["id", "label"],
+        "properties": {"id": _STR, "label": {"enum": PERSPECTIVE_LABELS},
+                       "facts": {"type": "array", "items": {
+                           "type": "object", "required": ["fact"],
+                           "properties": {"fact": _STR, "span": _STR_OR_NULL, "correction": _BOOL_OR_NULL,
+                                          "about_story": _BOOL_OR_NULL}}},
+                       "claims": {"type": "array", "items": {
+                           "type": "object", "required": ["claim"],
+                           "properties": {"claim": _STR, "span": _STR_OR_NULL}}},
+                       "point": _STR_OR_NULL}}}},
+}
+
+SHEET_SCHEMA = {
+    "type": "object",
+    "required": ["groups"],
+    "properties": {"groups": {"type": "array", "items": {
+        "type": "object", "required": ["lines"],
+        "properties": {"lines": {"type": "array", "items": {"type": "integer"}}, "fact": _STR_OR_NULL,
+                       "correction": _BOOL_OR_NULL}}}},
+}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "required": ["title_en", "text_en"],
@@ -183,6 +214,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
+    Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
+    Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
 )}
 
 

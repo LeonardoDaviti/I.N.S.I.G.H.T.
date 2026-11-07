@@ -282,7 +282,8 @@ class TheKindsAndGuides(unittest.TestCase):
     def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
                                               "headline", "briefing", "translate", "embed",   # embed: S2
-                                              "alias", "collide", "embed_name"})               # 0119 A1
+                                              "alias", "collide", "embed_name",                # 0119 A1
+                                              "perspective", "sheet"})                         # 0119 B
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
@@ -291,11 +292,12 @@ class TheKindsAndGuides(unittest.TestCase):
                                              "entity", "entity_entity"))
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
-        """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide."""
+        """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide (persp-v1's "@x"
+        is its placeholder for a repost's author)."""
         for path in sorted(schemas.GUIDES_DIR.glob("*.md")):
             with self.subTest(guide=path.name):
                 text = path.read_text(encoding="utf-8")
-                self.assertIsNone(re.search(r"t\.me/|(?<![\w.])r/\w|(?<![\w.])@(?!handles\b)\w|x\.com/|twitter\.com/|youtube\.com/", text))
+                self.assertIsNone(re.search(r"t\.me/|(?<![\w.])r/\w|(?<![\w.])@(?!handles\b|x\b)\w|x\.com/|twitter\.com/|youtube\.com/", text))
 
 
 if __name__ == "__main__":

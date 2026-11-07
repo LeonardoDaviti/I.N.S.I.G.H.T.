@@ -11,6 +11,7 @@ import { plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
 import { ANSWER_WORDS, percent, pWords, relationWords, withInterval } from '../../lib/markx';
 import { cn } from '../../lib/utils';
+import { PerspectiveAccuracy } from './MarkXPerspectives';
 
 const QUEUE_KEY = ['markx-labels'] as const;
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
@@ -338,6 +339,7 @@ export default function MarkXLabels() {
       </div>
       <h2 className={H2}>{view === 'label' ? 'Your labels' : 'Precision per feature'}</h2>
       <div className="mt-3">{view === 'label' ? <Queue /> : <Precision />}</div>
+      {view === 'precision' ? <PerspectiveAccuracy /> : null}   {/* 0119 B7 */}
     </div>
   );
 }

@@ -22,6 +22,7 @@ const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 // Mark X Shadow's page (issue 0086 E): its own chunk, so the feed and the post route don't grow for it.
 const MarkXPage = lazy(() => import('./pages/MarkXPage'));
 const MarkXEntityPage = lazy(() => import('./pages/MarkXEntityPage'));   // 0119 A3
+const MarkXStoryPage = lazy(() => import('./pages/MarkXStoryPage'));     // 0119 B6
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 export function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -39,10 +40,11 @@ function RouteFallback() {
 }
 
 /** `/markx` only while Mark X is on (INSIGHT_MARKX): while asking, the page skeleton; off, the feed. */
-function MarkXRoute({ page }: { page?: 'entity' }) {
+function MarkXRoute({ page }: { page?: 'entity' | 'story' }) {
   const on = useMarkxState();
   if (on === undefined) return <RouteFallback />;
   if (!on) return <Navigate to="/" replace />;
+  if (page === 'story') return <MarkXStoryPage />;
   return page === 'entity' ? <MarkXEntityPage /> : <MarkXPage />;
 }
 
@@ -103,6 +105,7 @@ export function AppRoutes() {
       <Route path="/design/*" element={<DesignStudio />} />
       <Route path="/markx" element={<MarkXRoute />} />
       <Route path="/markx/entities/:entityId" element={<MarkXRoute page="entity" />} />
+      <Route path="/markx/stories/:storyId" element={<MarkXRoute page="story" />} />
       <Route path="/briefing" element={<Navigate to="/" replace />} />
       <Route path="/briefing/topics" element={<Navigate to="/" replace />} />
       <Route path="/briefing/vertical/*" element={<Navigate to="/" replace />} />
