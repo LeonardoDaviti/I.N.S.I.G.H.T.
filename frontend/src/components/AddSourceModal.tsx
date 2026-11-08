@@ -5,7 +5,7 @@ import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from '
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
 import { localDateISO, toDate } from '../lib/dates';
-import type { FeedFinding, FoundFeed, PageOffer, PageWatchPreview } from '../services/api';
+import { telegramBridge, type FeedFinding, type FoundFeed, type PageOffer, type PageWatchPreview } from '../services/api';
 import BookmarkletHint from './BookmarkletHint';
 import AddSeveralSources, { type AddedSource } from './AddSeveralSources';
 import { HOMEPAGE_WARNING, sameAddress, shortAddress, siteName, withScheme } from '../lib/addresses';
@@ -174,6 +174,22 @@ function calendarDate(value: string | null): string {
   return date ? localDateISO(date) : '';
 }
 
+const TELEGRAM_BRIDGE = 'https://telegram.local';
+const NO_BRIDGE = 'No Telegram bridge is set up on this server (TELEGRAM_RSS_HOSTS in .env). Set one, or '
+  + 'connect your Telegram account in Connections and add the channel as @channel.';
+
+/** The Telegram template on the server's bridge (issue 0135): unknown yet (undefined) as written;
+ *  none (null) builds no address and says why. */
+function onBridge(template: Template, bridge: string | null | undefined): Template {
+  if (template.id !== 'telegram-rss' || bridge === undefined || bridge === TELEGRAM_BRIDGE) return template;
+  if (bridge === null) return { ...template, helperText: NO_BRIDGE, buildHandle: () => '' };
+  return {
+    ...template,
+    helperText: template.helperText.replace(TELEGRAM_BRIDGE, bridge),
+    buildHandle: (value) => template.buildHandle(value).replace(TELEGRAM_BRIDGE, bridge),
+  };
+}
+
 /** What a finding holds of the site's articles your sources linked (issue 0060). */
 // The template a platform account is followed by (issue 0109 B2: Follow… on a Discover suggestion).
 const ACCOUNT_TEMPLATES: Record<AccountPlatform, string> = { x: 'nitter', telegram: 'telegram-rss', youtube: 'youtube', reddit: 'reddit' };
@@ -234,19 +250,31 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
     return !(fixed && added.has(sameAddress(fixed)));
   });
 
+  // The Telegram bridge the server is set up with (issue 0135), asked when its template is chosen.
+  const [bridge, setBridge] = useState<string | null | undefined>(undefined);
+  const wantsBridge = selectedTemplate?.id === 'telegram-rss';
+  useEffect(() => {
+    if (!wantsBridge || bridge !== undefined) return;
+    let cancelled = false;
+    telegramBridge().then((found) => { if (!cancelled) setBridge(found); }, () => undefined);
+    return () => { cancelled = true; };
+  }, [wantsBridge, bridge]);
+  const shownTemplate = selectedTemplate ? onBridge(selectedTemplate, bridge) : null;
+
   // Update URL when template variable changes
   useEffect(() => {
     if (selectedTemplate && (templateVariable || selectedTemplate.optionalVariable)) {
+      const template = onBridge(selectedTemplate, bridge);
       const normalized = templateVariable.trim();
-      const sourceValue = selectedTemplate.buildHandle(normalized);
+      const sourceValue = template.buildHandle(normalized);
       setHandleOrUrl(sourceValue);
-      
+
       // Auto-fill display name if user hasn't manually edited it
       if (!displayNameManuallyEdited) {
-        setDisplayName(selectedTemplate.buildDisplayName(normalized));
+        setDisplayName(template.buildDisplayName(normalized));
       }
     }
-  }, [selectedTemplate, templateVariable, displayNameManuallyEdited]);
+  }, [selectedTemplate, bridge, templateVariable, displayNameManuallyEdited]);
 
   // A typed address that is not a feed: after a pause (or on leaving the field) the finder
   // looks for the page's feed, and the field becomes it (issue 0026). Add waits meanwhile.
@@ -300,8 +328,11 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
       : alreadyAdded ? null
         : finding?.success === false ? 'Could not look for a feed; the address is added as typed.'
           : finding?.status === 'direct' ? 'INSIGHT reads this site directly'
-            : finding?.status === 'none' ? 'No feed found on this page'
-              : finding?.status === 'found' && foundFeeds.length === 1 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}`
+            : finding?.status === 'none' && finding.refused ? `Not added: ${finding.refused}`
+              : finding?.status === 'none' ? 'No feed found on this page'
+              : finding?.status === 'found' && foundFeeds.length === 1
+                ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}${foundFeeds[0].saved_search ? ' (a saved search)' : ''}`
+                : finding?.status === 'feed' && foundFeeds[0]?.saved_search ? 'This feed is a saved search'
                 : null;
   // No feed: the page itself can be followed, its articles read from its links and the
   // sitemap (issue 0028). The preview is asked again when the path changes. For a site's home
@@ -442,12 +473,12 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                     placeholder={selectedTemplate.placeholder}
                   />
                   <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
-                    → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
+                    → {(shownTemplate ?? selectedTemplate).buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
                   </p>
                   {templateAdded.length ? <p className={hint}>Added: {templateAdded.join(', ')}</p> : null}
                 </>
               ) : null}
-              <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>
+              <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{(shownTemplate ?? selectedTemplate).helperText}</p>
             </div>
           )}
 
@@ -576,6 +607,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                         <span className="block font-mono text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">{shortAddress(feed.url)}</span>
                         {linked > 0 ? <span className="block text-[0.75rem] text-fg-3">{holdsLabel(feed.holds ?? 0, linked)}</span> : null}
                         {feed.moved_to ? <span className="block text-[0.75rem] text-fg-3">The posts of this feed now live at {feed.moved_to}</span> : null}
+                        {feed.saved_search ? <span className="block text-[0.75rem] text-fg-3">A saved search, not the site&apos;s own feed</span> : null}
                       </span>
                     </label>
                   ))}

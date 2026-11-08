@@ -1702,3 +1702,10 @@ export type PostConnectedSeries = PostConnected & {
   series?: PostSeries | null;
   navigation?: (ConnectedRow & { group: 'earlier' | 'later' })[];
 };
+
+// 0135: the finder's saved searches and refusals, and the Telegram bridge the Add-source dialog builds on.
+export interface FoundFeed { /** It reads as a saved search ("Keyword search for query", ?q=): ranked last. */ saved_search?: boolean }
+export interface FeedFinding { /** A feed was found whose items INSIGHT cannot read: never offered. */ refused?: string }
+/** The bridge's origin ("https://telegram.local"), or null when none is set (TELEGRAM_RSS_HOSTS empty). */
+export const telegramBridge = async (): Promise<string | null> =>
+  (await request<{ bridge?: string | null }>('/api/sources/telegram-bridge')).bridge ?? null;

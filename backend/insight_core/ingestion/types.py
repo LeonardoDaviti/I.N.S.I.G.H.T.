@@ -47,6 +47,8 @@ class FetchOutcome:
     fetched: int
     error: str | None
     duration_s: float
+    # A fetch that worked but skipped over half its items says so (issue 0135); never on an error.
+    warning: str | None = None
 
     @staticmethod
     def from_fetch(source_id: str, *, fetched: int, error: str | None, duration_s: float) -> "FetchOutcome":

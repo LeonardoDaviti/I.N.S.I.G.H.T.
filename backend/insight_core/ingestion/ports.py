@@ -169,9 +169,11 @@ def _source_line(data: dict) -> str:
     checked = data.get("checked") or 0
     changes = (f" · {checked} page{'' if checked == 1 else 's'} checked for changes, {data.get('updated') or 0} updated"
                if checked else "")
+    # Over half its items skipped (issue 0135): "· warning: 12 of 15 videos skipped: 12 the bot check".
+    warned = f" · warning: {data['warning'][:160]}" if data.get("warning") else ""
     if data.get("unchanged"):
-        return f"{name}: unchanged{changes} · {of_run}"
-    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)}{images}{changes} · {of_run}"
+        return f"{name}: unchanged{changes}{warned} · {of_run}"
+    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)}{images}{changes}{warned} · {of_run}"
 
 
 # --------------------------------------------------------------------------- catalog

@@ -7,6 +7,10 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { FeedFinding, PageOffer } from '../services/api';
 
+// The server's Telegram bridge (issue 0135): asked only when the Telegram template is chosen.
+const bridge = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
+vi.mock('../services/api', async (actual) => ({ ...(await actual<typeof import('../services/api')>()), telegramBridge: bridge }));
+
 // stripe.com's home page would follow /customers/ (557 links, 0 articles); its /blog had 269
 // dated articles (2026-10-28).
 const offer = (url: string, prefix: string, found: number): PageOffer => ({
@@ -156,5 +160,39 @@ describe('a feed whose posts moved (issue 0108)', () => {
     expect(await within(dialog()).findByRole('radio', { name: /The Blog/ })).toBeChecked();
     expect(within(dialog()).getByRole('radio', { name: /Home/ })).not.toBeChecked();
     expect(within(dialog()).getByText('The posts of this feed now live at blog.example')).toBeInTheDocument();
+  });
+});
+
+describe('new spheres (issue 0135)', () => {
+  it('a saved search is said to be one, after the site\'s own feed', async () => {
+    setup({ success: true, status: 'found', homepage: false, linked: 0, start: null, pages: [],
+      feeds: [{ url: 'https://journal.example/toc.rss', title: 'Current issue' },
+        { url: 'https://journal.example/feed', title: 'Keyword search for query', saved_search: true }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'journal.example');
+    expect(await within(dialog()).findByRole('radio', { name: /Current issue/ })).toBeChecked();
+    expect(within(dialog()).getByText('A saved search, not the site\'s own feed')).toBeInTheDocument();
+  });
+
+  it('refuses a feed whose items cannot be read', async () => {
+    setup({ success: true, status: 'none', feeds: [], homepage: false, pages: [], refused: 'this feed has items INSIGHT can\'t read' });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'stray.example/feed');
+    expect(await within(dialog()).findByText('Not added: this feed has items INSIGHT can\'t read')).toBeInTheDocument();
+    expect(within(dialog()).getByRole('button', { name: 'Add source' })).toBeDisabled();
+  });
+
+  it('the Telegram template builds on the server\'s bridge, and says so when there is none', async () => {
+    bridge.mockResolvedValueOnce('https://tg.example');
+    const first = renderWithProviders(<AddSourceModal onClose={vi.fn()} onAdd={vi.fn()} />, { api: makeFakeApi({}) });
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Telegram RSS' }));
+    await userEvent.type(within(dialog()).getByLabelText(/^Channel Username/), 'achannel');
+    expect(await within(dialog()).findByText('→ https://tg.example/rss/achannel?limit=50')).toBeInTheDocument();
+    first.unmount();
+
+    bridge.mockResolvedValueOnce(null);
+    renderWithProviders(<AddSourceModal onClose={vi.fn()} onAdd={vi.fn()} />, { api: makeFakeApi({}) });
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Telegram RSS' }));
+    expect(await within(dialog()).findByText(/No Telegram bridge is set up on this server/)).toBeInTheDocument();
+    await userEvent.type(within(dialog()).getByLabelText(/^Channel Username/), 'achannel');
+    expect(within(dialog()).getByRole('button', { name: 'Add source' })).toBeDisabled();
   });
 });

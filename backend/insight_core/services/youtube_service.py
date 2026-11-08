@@ -3,6 +3,7 @@ YouTube channel/video utilities built on top of yt-dlp.
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import os
@@ -13,12 +14,157 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.db import database as db
+from insight_core.ingestion.kinds.base import checked_fetch
 
 from insight_core.logs.core.logger_config import get_component_logger
+
+# Why a video was skipped (issue 0135): the first of these found in yt-dlp's error, else "yt-dlp failed".
+SKIP_REASONS = (
+    ("confirm you", "the bot check"),         # "Sign in to confirm you're not a bot"
+    ("timed out", "timed out"),
+    ("private video", "private"),
+    ("members", "members only"),
+    ("live event", "not live yet"),
+    ("premiere", "not live yet"),
+    ("unavailable", "unavailable"),
+)
+ORIGINAL_SUFFIX = "-orig"   # yt-dlp's name for the untranslated automatic captions ("ru-orig")
+TAG_RE = re.compile(r"<[^>]+>")
+# WebVTT's marks, whatever the track's header says: a cue timing, an inline time or class tag, its header lines.
+VTT_RE = re.compile(r"-->|<\d{2}:\d{2}:\d{2}\.\d{3}>|</c>|^(?:WEBVTT|Kind:\s|Language:\s)", re.MULTILINE)
+
+
+def skip_reason(error: BaseException) -> str:
+    """A skipped video's reason, short and countable: "the bot check", "timed out", ..."""
+    text = str(error).lower()
+    return next((reason for needle, reason in SKIP_REASONS if needle in text), "yt-dlp failed")
+
+
+def base_language(code: Optional[str]) -> str:
+    """"en-US" -> "en", "ru-orig" -> "ru", "zh-Hans" -> "zh"; "" for none."""
+    return re.split(r"[-_]", str(code or "").strip().lower(), maxsplit=1)[0]
+
+
+def original_language(details: Dict[str, Any]) -> str:
+    """The video's own language (issue 0135): its `language`, else its default audio track's
+    (kept by _get_video_details before the formats go), else the automatic captions' untranslated
+    track ("ru-orig"); "" when none says."""
+    for value in (details.get("language"), details.get("_audio_language")):
+        if base_language(value):
+            return base_language(value)
+    for key in (details.get("automatic_captions") or {}):
+        if str(key).endswith(ORIGINAL_SUFFIX):
+            return base_language(key)
+    return ""
+
+
+def audio_language(formats: Sequence[Dict[str, Any]]) -> str:
+    """The default audio track's language: the format yt-dlp ranks first by language_preference
+    (the original track is highest), among those naming a language; "" when none does."""
+    named = [f for f in formats or [] if isinstance(f, dict) and base_language(f.get("language"))
+             and f.get("acodec") not in (None, "none")]
+    if not named:
+        return ""
+    return base_language(max(named, key=lambda f: f.get("language_preference") or -1).get("language"))
+
+
+def transcript_tracks(details: Dict[str, Any], preferred: Sequence[str]) -> List[Tuple[str, str]]:
+    """The caption tracks to try, in order, as (bucket, language key) (issue 0135):
+      1. the video's own language: its subtitles, its untranslated automatic captions ("ru-orig"), then
+         its automatic captions in that language;
+      2. the owner's preferred languages: subtitles, and automatic captions only in the video's own
+         language or when it is unknown (any other automatic track is YouTube's machine translation);
+      3. any other subtitles; any other automatic track only when the video's language is unknown.
+    A translated automatic track is never tried while the video has its own language."""
+    subtitles = details.get("subtitles") or {}
+    automatic = details.get("automatic_captions") or {}
+    original = original_language(details)
+    order: List[Tuple[str, str]] = []
+
+    def add(bucket: str, key: str) -> None:
+        if (bucket, key) not in order:
+            order.append((bucket, key))
+
+    def keys(bucket: Dict[str, Any], language: str) -> List[str]:
+        return [key for key in bucket if base_language(key) == language]
+
+    if original:
+        for key in keys(subtitles, original):
+            add("subtitles", key)
+        for key in sorted(keys(automatic, original), key=lambda k: (not str(k).endswith(ORIGINAL_SUFFIX), k)):
+            add("automatic_captions", key)
+    for language in preferred:
+        if language in subtitles:
+            add("subtitles", language)
+        if language in automatic and (not original or base_language(language) == original):
+            add("automatic_captions", language)
+    for key in subtitles:
+        add("subtitles", key)
+    if not original:
+        for key in automatic:
+            add("automatic_captions", key)
+    return order
+
+
+def plain_transcript(text: Optional[str]) -> str:
+    """Any caption payload as plain text (issue 0135): a caption XML document (srv1-3, ttml) by its
+    text elements, json3 by its segments, WebVTT by its cue lines, their inline tags gone; plain text
+    as it is. Never markup: a transcript stored as "<?xml…><transcript>" is read back to its words."""
+    payload = (text or "").strip()
+    if not payload:
+        return ""
+    if payload.startswith("{"):
+        try:
+            return _json3_text(json.loads(payload))
+        except (ValueError, AttributeError):
+            pass
+    if payload.startswith("<"):
+        try:
+            return _xml_text(payload)
+        except ET.ParseError:
+            pass
+    if VTT_RE.search(payload):
+        return _vtt_text(payload)
+    return payload
+
+
+def _json3_text(data: Dict[str, Any]) -> str:
+    chunks = []
+    for event in data.get("events", []) or []:
+        segments = event.get("segs") or []
+        text = "".join(segment.get("utf8", "") for segment in segments).strip()
+        if text:
+            chunks.append(text)
+    return "\n".join(chunks).strip()
+
+
+def _vtt_text(payload: str) -> str:
+    lines: List[str] = []
+    for line in payload.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
+            continue
+        if "-->" in stripped or stripped.isdigit():
+            continue
+        cleaned = " ".join(html.unescape(TAG_RE.sub("", stripped)).split())
+        if cleaned and (not lines or lines[-1] != cleaned):
+            lines.append(cleaned)
+    return "\n".join(lines).strip()
+
+
+def _xml_text(payload: str) -> str:
+    """The words of a caption XML document: each <text> (srv1), <p> (srv3, ttml) as one line, its
+    inner tags' text included; the text's own escaped markup ("&amp;#39;") decoded."""
+    root = ET.fromstring(payload)
+    cues = [node for node in root.iter() if str(node.tag).split("}")[-1] in ("text", "p")]
+    texts = ["".join(node.itertext()) for node in cues] if cues else [node.text or "" for node in root.iter()]
+    lines = [" ".join(html.unescape(TAG_RE.sub("", html.unescape(text))).split()) for text in texts]
+    return "\n".join(line for line in lines if line).strip()
 
 
 class YouTubeService:
@@ -105,9 +251,13 @@ class YouTubeService:
         }
 
     def fetch_live_posts(self, source_handle: str, limit: int) -> List[Dict[str, Any]]:
+        """The channel's latest videos. Every one skipped (the bot check) is an EmptyFetch with the
+        reasons counted, over half skipped a warning (issue 0135, kinds.base.checked_fetch)."""
         channel_ref = self._normalize_channel_ref(source_handle)
         entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
-        return self._hydrate_entries_to_posts(entries, source_handle)
+        skipped: Counter = Counter()
+        posts = self._hydrate_entries_to_posts(entries, source_handle, skipped=skipped)
+        return checked_fetch(posts, len(entries), skipped, noun="videos")
 
     def archive_channel_posts(self, source_handle: str, start: int = 1) -> Dict[str, Any]:
         """Every video from video number `start` to the channel's oldest, newest first."""
@@ -314,6 +464,8 @@ class YouTubeService:
             return None
 
         transcript, transcript_source = self._extract_transcript(details)
+        # The stored text's language (issue 0135): the caption track's, else none said (detected).
+        transcript_language = base_language(transcript_source.split(":", 1)[1]) if transcript_source else ""
         description = details.get("description") or ""
         published_at = self._parse_upload_date(details.get("upload_date")) or datetime.now(timezone.utc)
         chapters = [
@@ -341,8 +493,11 @@ class YouTubeService:
             "transcript_source": transcript_source,
             "tags": details.get("tags") or [],
         }
+        if original_language(details):
+            metadata["video_language"] = original_language(details)
 
         return {
+            **({"language_code": transcript_language} if transcript_language else {}),
             "platform": "youtube",
             "source": source_handle,
             "url": video_url,
@@ -356,16 +511,22 @@ class YouTubeService:
             "metadata": metadata,
         }
 
-    def _hydrate_entries_to_posts(self, entries: List[Dict[str, Any]], source_handle: str) -> List[Dict[str, Any]]:
+    def _hydrate_entries_to_posts(self, entries: List[Dict[str, Any]], source_handle: str, *,
+                                  skipped: Optional[Counter] = None) -> List[Dict[str, Any]]:
+        """The entries as posts; each one skipped counted in `skipped` by its reason (skip_reason)."""
         posts = []
         for entry in entries:
             try:
                 post = self._build_video_post(entry["id"], source_handle)
             except Exception as exc:
                 self.logger.warning("Skipping YouTube video %s: %s", entry.get("id"), exc)
+                if skipped is not None:
+                    skipped[skip_reason(exc)] += 1
                 continue
             if post:
                 posts.append(post)
+            elif skipped is not None:
+                skipped["no details"] += 1
         posts.sort(key=lambda item: item.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         return posts
 
@@ -388,6 +549,8 @@ class YouTubeService:
                 f"https://www.youtube.com/watch?v={video_id}",
             ]
         )
+        # The default audio track's language, read before its formats go (issue 0135).
+        details["_audio_language"] = audio_language(details.get("formats") or [])
         for key in self._YTDLP_DISCARD_KEYS:
             details.pop(key, None)
         return details
@@ -465,20 +628,12 @@ class YouTubeService:
         # second unbounded path next to yt-dlp itself.
         deadline = time.monotonic() + self.transcript_budget_seconds
 
-        for bucket_name in ("subtitles", "automatic_captions"):
-            bucket = details.get(bucket_name) or {}
-            for language in self.preferred_languages:
-                formats = bucket.get(language) or []
-                transcript = self._fetch_transcript_from_formats(formats, deadline)
-                if transcript:
-                    return transcript, f"{bucket_name}:{language}"
-
-        for bucket_name in ("subtitles", "automatic_captions"):
-            bucket = details.get(bucket_name) or {}
-            for language, formats in bucket.items():
-                transcript = self._fetch_transcript_from_formats(formats, deadline)
-                if transcript:
-                    return transcript, f"{bucket_name}:{language}"
+        # The video's own language first, never YouTube's machine translation of it (issue 0135).
+        for bucket_name, language in transcript_tracks(details, self.preferred_languages):
+            formats = (details.get(bucket_name) or {}).get(language) or []
+            transcript = self._fetch_transcript_from_formats(formats, deadline)
+            if transcript:
+                return transcript, f"{bucket_name}:{language}"
 
         return None, None
 
@@ -514,46 +669,9 @@ class YouTubeService:
             return response.read().decode("utf-8", errors="replace")
 
     def _parse_subtitle_payload(self, payload: str, ext: Optional[str]) -> str:
-        ext = (ext or "").lower()
-        if ext == "json3":
-            return self._parse_json3_transcript(payload)
-        if ext == "vtt":
-            return self._parse_vtt_transcript(payload)
-        if ext in {"ttml", "srv3"}:
-            return self._parse_xml_transcript(payload)
-        return self._parse_vtt_transcript(payload)
-
-    def _parse_json3_transcript(self, payload: str) -> str:
-        data = json.loads(payload)
-        chunks = []
-        for event in data.get("events", []):
-            segments = event.get("segs") or []
-            text = "".join(segment.get("utf8", "") for segment in segments).strip()
-            if text:
-                chunks.append(text)
-        return "\n".join(chunks).strip()
-
-    def _parse_vtt_transcript(self, payload: str) -> str:
-        lines = []
-        for line in payload.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("WEBVTT"):
-                continue
-            if "-->" in stripped:
-                continue
-            if stripped.isdigit():
-                continue
-            lines.append(stripped)
-        return "\n".join(lines).strip()
-
-    def _parse_xml_transcript(self, payload: str) -> str:
-        root = ET.fromstring(payload)
-        texts = []
-        for element in root.iter():
-            text = (element.text or "").strip()
-            if text:
-                texts.append(text)
-        return "\n".join(texts).strip()
+        """Plain text from any caption format, told by its content, not its declared ext: an srv1
+        track is XML whatever it is called (issue 0135: one was stored as raw XML)."""
+        return plain_transcript(payload)
 
     def _escape_html(self, value: str) -> str:
         return (

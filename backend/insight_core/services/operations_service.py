@@ -306,7 +306,9 @@ def _doctor_fields(state: Optional[FetchStateRow], address: Optional[str] = None
     # A server error is no move (issue 0072 D3): the sheet says the server is failing, {status} (None: timed out).
     failing = {"status": finding.get("status"), "site": publication_of(host_of(address))} if state and state.doctor_checked_at and finding.get("server_error") else None
     if (state is None or state.doctor_checked_at is None or finding.get("dismissed")
-            or finding.get("working_again") or finding.get("server_error")):
+            or finding.get("working_again") or finding.get("server_error")
+            # A fetch that stored nothing (issue 0135): nothing was looked for; last_error says why.
+            or finding.get("empty_fetch")):
         return {"doctor_looked_at": None, "replacement": None, "server_error": failing}
     replacement = finding.get("replacement")
     # An offer stored before 0072 was never checked against the source's items: not offered.

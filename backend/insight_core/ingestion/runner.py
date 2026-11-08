@@ -309,7 +309,7 @@ class IngestionRunner:
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
-                    "status": outcome.status.value, "error": outcome.error,
+                    "status": outcome.status.value, "error": outcome.error, "warning": outcome.warning,
                     "unchanged": bool(f.memory and outcome.status.is_success and f.memory.unchanged),
                     "fetched": fetched_count, "new": saved.inserted - inserted_before,
                     "pages_read": pages_read, "pages_lost_images": pages_lost_images,
@@ -387,12 +387,18 @@ class IngestionRunner:
         checks: List[page_changes.PageCheck] = []
         watching = self.watch is not None and page_changes.watching(source, kind)
 
+        warning: Optional[str] = None
+
         async def fetch_latest() -> List[dict]:
-            nonlocal memory
+            nonlocal memory, warning
             if not getattr(kind, "conditional", False):
-                return list(await kind.fetch_latest(source, decision.post_limit) or [])
-            memory = AddressMemory(stored, now=self.clock(), full=full)
-            return list(await kind.fetch_latest(source, decision.post_limit, memory=memory) or [])  # type: ignore[call-arg]
+                got = await kind.fetch_latest(source, decision.post_limit)
+            else:
+                memory = AddressMemory(stored, now=self.clock(), full=full)
+                got = await kind.fetch_latest(source, decision.post_limit, memory=memory)  # type: ignore[call-arg]
+            # Over half its items skipped (issue 0135, kinds.base.FetchedPosts): said as a warning.
+            warning = getattr(got, "warning", None)
+            return list(got or [])
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
             host = kind.host_key(source)
@@ -419,6 +425,9 @@ class IngestionRunner:
                     checks = await self._check_pages(source, kind, full)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,
                                               duration_s=time.monotonic() - started)
+            if warning:
+                logger.warning("%s: %s", _display_name(source), warning)
+                outcome = dataclasses.replace(outcome, warning=warning)
         except KindUnavailable as exc:
             logger.warning("%s: unavailable (%s)", _display_name(source), exc.reason)
             outcome = FetchOutcome(source["id"], OutcomeStatus.UNAVAILABLE, 0, exc.reason, time.monotonic() - started)

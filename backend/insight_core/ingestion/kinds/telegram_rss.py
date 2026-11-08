@@ -4,14 +4,26 @@ The bridge answers "Too many requests" (FLOOD_WAIT) when paged quickly, so live 
 rate limited too (live_pages_rate_limited) and a live fetch reads only the pages it needs
 for `limit`. That JSON answer is raised as HttpError(status=429), so the caller slows down. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
 every page URL.
+
+The bridge dates an edited post by its edit (issue 0135: posted 2 Sep, shown 20 Sep). A channel's
+message numbers grow with the time each was posted, so a post dated after a newer-numbered post
+carries an edit time: it takes the newest date it can have, the earliest date of the posts numbered
+after it (message_order_dates), and keeps the bridge's in metadata.bridge_date. The MTProto path
+(telegram_mtproto) reads Telegram's own message date, never the edit date.
+
+The bridge the Add-source dialog builds a channel's address on (issue 0135): TELEGRAM_RSS_HOSTS, a
+comma list of hosts or origins, the first one used ("telegram.local" when unset; set and empty: none,
+and the dialog says so). Every host listed is read as a bridge, beside the known ones.
 """
 from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Mapping, Optional
 
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
@@ -27,8 +39,54 @@ from insight_core.ingestion.kinds.base import (
 )
 from insight_core.utils.json_safe import iso
 
+KNOWN_BRIDGE_HOSTS = ("telegram.local", "tg.i-c-a.su", "127.0.0.1")
+DEFAULT_BRIDGE = "https://telegram.local"
+BRIDGE_ENV = "TELEGRAM_RSS_HOSTS"
+
+
+def configured_bridges(env: Mapping[str, str] = os.environ) -> Optional[List[str]]:
+    """The bridges TELEGRAM_RSS_HOSTS lists, as origins ("https://tg.example"); None when unset."""
+    raw = env.get(BRIDGE_ENV)
+    if raw is None:
+        return None
+    origins = []
+    for item in raw.split(","):
+        item = item.strip().rstrip("/")
+        if item:
+            origins.append(item if "://" in item else f"https://{item}")
+    return origins
+
+
+def bridge_origin(env: Mapping[str, str] = os.environ) -> Optional[str]:
+    """The bridge a channel's address is built on: the first configured, DEFAULT_BRIDGE when
+    TELEGRAM_RSS_HOSTS is unset, None when it is set and empty (no bridge)."""
+    bridges = configured_bridges(env)
+    if bridges is None:
+        return DEFAULT_BRIDGE
+    return bridges[0] if bridges else None
+
+
 # Hosts that serve the bridge's /rss/<channel> feeds. gates.HOST_FLOORS gives each a 5s floor.
-TELEGRAM_RSS_HOSTS = frozenset({"telegram.local", "tg.i-c-a.su", "127.0.0.1"})
+TELEGRAM_RSS_HOSTS = frozenset({*KNOWN_BRIDGE_HOSTS,
+                                *((urllib.parse.urlparse(o).hostname or "").lower() for o in configured_bridges() or ())} - {""})
+
+
+def message_order_dates(posts: List[Dict[str, Any]], newer: Optional[datetime] = None) -> Optional[datetime]:
+    """Dates the bridge gave as an edit time put back in message order (issue 0135), in place: a post
+    dated after a post numbered after it takes the earliest date of those (`newer`: the earliest date
+    of the posts numbered after this page's), its bridge date kept in metadata.bridge_date. Returns
+    the earliest date of the page and the posts after it, for the next (older) page."""
+    floor = newer
+    for post in sorted(posts, key=lambda p: int(p.get("external_id") or 0), reverse=True):
+        date = post.get("date")
+        if not isinstance(date, datetime):
+            continue
+        if floor is not None and date > floor:
+            post["metadata"] = {**(post.get("metadata") or {}), "bridge_date": iso(date), "date_from": "message_order"}
+            post["date"] = floor
+            continue
+        floor = date
+    return floor
 
 TELEGRAM_RSS_PROFILE = PolitenessProfile(
     concurrency_pool="host-lock",
@@ -98,11 +156,13 @@ class TelegramRssKind(BaseKind):
         collected = initial_collected
         pages_fetched = initial_pages
         page = max(1, start_page)
+        newer: Optional[datetime] = None   # the earliest date of the pages read so far (issue 0135)
 
         while collected < target:
             page_posts = await self.fetch_page(source_url, page)
             if not page_posts:
                 break
+            newer = message_order_dates(page_posts, newer)
 
             pages_fetched += 1
             unique: List[Dict[str, Any]] = []

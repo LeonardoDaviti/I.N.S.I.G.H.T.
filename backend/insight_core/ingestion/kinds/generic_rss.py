@@ -29,6 +29,7 @@ from insight_core.ingestion.kinds.base import (
     SKIP_UNREADABLE,
     UNREADABLE,
     Source,
+    checked_fetch,
     resume_counts,
     skipped_counts,
 )
@@ -79,7 +80,10 @@ class GenericRssKind(BaseKind):
             answer = await memory.get(self.http, url)
             feed_text = None if answer.not_modified else answer.text
         if feed_text is not None:
-            posts = await self._maybe_expand(source, parsing.parse_feed_posts(feed_text, url)[:limit])
+            # A feed with items none of which were read is an error, not "empty" (issue 0135).
+            parsed = parsing.parse_feed_posts(feed_text, url)
+            checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {})
+            posts = await self._maybe_expand(source, parsed[:limit])
         return await self._read_again(source, posts)
 
     async def inspect(self, source: Source) -> Inspection:
