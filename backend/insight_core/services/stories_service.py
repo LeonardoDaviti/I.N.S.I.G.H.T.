@@ -37,6 +37,7 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import catch_up_safely
 from insight_core.db.repo_post_refs import PostRefsRepository
+from insight_core.db.repo_series import SeriesRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services import page_titles
 from insight_core.services.news_service import NewsService
@@ -100,6 +101,15 @@ class StoriesService:
                 PostRefsRepository.mark_boilerplate(cur)
         return filled
 
+    def fill_series(self) -> Optional[Dict[str, Any]]:
+        """Issue 0134's pass (db/repo_series.py), after the refs are read: the series and columns of the sources with
+        new or changed posts (every source the first time), and their navigation links marked. None when another run
+        holds it."""
+        with db.transaction(self.db_url) as cur:
+            if not SeriesRepository.lock(cur):
+                return None
+            return SeriesRepository.run(cur, self.clock())
+
     def recompute(self, *, full: bool = False) -> Dict[str, Any]:
         """The story job: what the queue holds, a batch a transaction (a rule change's rebuild first),
         or with `full` every post at once (the oracle). Returns a summary."""
@@ -107,6 +117,10 @@ class StoriesService:
         catch_up_safely(self.db_url)   # every post read once first (issue 0076): what the job and the pages read
         filled = self.fill_links()
         self.fill_refs()
+        try:   # 0134: the series pass never holds the stories back
+            self.fill_series()
+        except Exception:
+            logger.exception("Series pass failed; the story job goes on")
         if full:
             with db.transaction(self.db_url) as cur:
                 if not self._lock(cur):

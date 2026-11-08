@@ -21,6 +21,7 @@ from urllib.parse import urljoin
 from psycopg import Cursor
 
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.db.repo_series import SeriesRepository
 from insight_core.utils.addresses import host_of
 from insight_core.utils.post_refs import PostRef, refs_of, shown_reason
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE
@@ -134,22 +135,36 @@ class PostRefsRepository:
         groups = {"earlier": cls._earlier(cur, post_id, url, source_id),
                   "later": cls._later(cur, post_id, url, normalized, source_id),
                   "outside": cls._outside(cur, post_id)}
+        # 0134: series navigation (post_refs.navigation, same source) shows under the Series line, not as Earlier/Later
+        navigation: List[Dict[str, Any]] = []
+        for g in ("earlier", "later"):
+            kept = []
+            for r in groups[g]:
+                if r.pop("navigation"):
+                    navigation.append(dict(r, group=g))
+                else:
+                    kept.append(r)
+            groups[g] = kept
         caps = {"earlier": EARLIER_SHOWN, "later": LATER_SHOWN, "outside": OUTSIDE_SHOWN}
         out: Dict[str, Any] = {"more": {}}
         for group, rows in groups.items():
             shown = rows if full else (rows[-caps[group]:] if group == "later" else rows[:caps[group]])
             out[group] = shown
             out["more"][group] = len(rows) - len(shown)
+        out["navigation"] = sorted(navigation, key=lambda r: (r["date"] or "", r["post_id"]))   # 0134
+        out["series"] = SeriesRepository.line(cur, post_id)   # 0134
         return out
 
     @staticmethod
     def _stored_row(target_id: Any, target_url: str, target_source: str, name: str, at: Any, title: Optional[str],
-                    first_line: Optional[str], source_id: str, reason: Optional[str], kind: Optional[str]) -> Dict[str, Any]:
+                    first_line: Optional[str], source_id: str, reason: Optional[str], kind: Optional[str],
+                    navigation: bool = False) -> Dict[str, Any]:
         shown = " ".join((title or "").split()) or None
         line, how = shown_reason(reason, kind, shown)
         return {"post_id": str(target_id), "url": target_url, "source": name, "source_id": target_source,
                 "date": at.isoformat() if at else None, "title": shown or (first_line or "").strip()[:200] or None,
-                "same_source": target_source == source_id, "reason": line, "reason_kind": how}
+                "same_source": target_source == source_id, "reason": line, "reason_kind": how,
+                "navigation": bool(navigation) and target_source == source_id}
 
     _SOURCE_NAME = "COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)"
     _FIRST_LINE = "substring(btrim(COALESCE(p.content, '')) FROM '^[^\\n]{0,200}')"
@@ -157,13 +172,13 @@ class PostRefsRepository:
     @classmethod
     def _earlier(cls, cur: Cursor, post_id: str, url: Optional[str], source_id: str) -> List[Dict[str, Any]]:
         """The stored posts this post links, in the text's order, each once."""
-        cur.execute("SELECT target_address, href, reason, reason_kind FROM post_refs "
+        cur.execute("SELECT target_address, href, reason, reason_kind, navigation FROM post_refs "
                     "WHERE post_id = %s AND valid_to IS NULL AND NOT boilerplate ORDER BY position", (post_id,))
         refs = cur.fetchall()
         if not refs:
             return []
         absolute = []
-        for _, href, _, _ in refs:
+        for _, href, _, _, _ in refs:
             try:
                 absolute.append(urljoin(url or "", href))
             except ValueError:
@@ -185,8 +200,9 @@ class PostRefsRepository:
             if target in seen:   # two addresses of one post: one row
                 continue
             seen.add(target)
-            _, _, reason, kind = refs[n - 1]
-            out.append(cls._stored_row(target, target_url, target_source, name, at, title, first, source_id, reason, kind))
+            _, _, reason, kind, nav = refs[n - 1]
+            out.append(cls._stored_row(target, target_url, target_source, name, at, title, first, source_id, reason, kind,
+                                       nav))
         return out
 
     @classmethod
@@ -199,15 +215,15 @@ class PostRefsRepository:
         cur.execute(
             f"""
             SELECT DISTINCT ON ({POST_DATE}, p.id) p.id, p.url, p.source_id::text, {cls._SOURCE_NAME}, {POST_DATE},
-                   {shown_title()}, {cls._FIRST_LINE}, r.reason, r.reason_kind
+                   {shown_title()}, {cls._FIRST_LINE}, r.reason, r.reason_kind, r.navigation
             FROM post_refs r JOIN posts p ON p.id = r.post_id JOIN sources s ON s.id = p.source_id
             WHERE r.target_address = ANY(%s) AND r.valid_to IS NULL AND NOT r.boilerplate AND r.post_id <> %s::uuid
             ORDER BY {POST_DATE}, p.id, r.position
             """,
             (addresses, post_id),
         )
-        return [cls._stored_row(target, target_url, target_source, name, at, title, first, source_id, reason, kind)
-                for target, target_url, target_source, name, at, title, first, reason, kind in cur.fetchall()]
+        return [cls._stored_row(target, target_url, target_source, name, at, title, first, source_id, reason, kind, nav)
+                for target, target_url, target_source, name, at, title, first, reason, kind, nav in cur.fetchall()]
 
     @staticmethod
     def _outside(cur: Cursor, post_id: str) -> List[Dict[str, Any]]:

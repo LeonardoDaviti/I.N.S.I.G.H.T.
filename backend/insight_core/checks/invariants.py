@@ -480,6 +480,14 @@ def _mx_redirects(run: Run) -> Dict[str, Tuple[str, bool, str]]:
     return {f: (t, auto, rid) for f, t, auto, rid in run.cur.fetchall()}
 
 
+def _series_source(run: Run):
+    """0134: a series part that is not a post of the series' source. A version without series is not measurable."""
+    run.cur.execute("""SELECT s.id::text, sp.post_id::text, p.source_id = s.source_id
+                         FROM series_posts sp JOIN series s ON s.id = sp.series_id JOIN posts p ON p.id = sp.post_id""")
+    rows = run.cur.fetchall()
+    return [f"{sid} {pid}" for sid, pid, ok in rows if not ok], len(rows)
+
+
 def _markx_author_links(run: Run):
     """0131: a current author-link edge (author_link_other, author_link_own) whose post_refs row is gone, closed or
     boilerplate, or no longer resolves to its older post (Connected's resolution: the post at that exact url, else the
@@ -601,6 +609,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("story.empty", "stories", "a story with no posts", _story_empty),
     Invariant("refs.every_link", "connected", "a post with a link of its text that has no post_refs row (0125)",
               _refs_every_link),
+    Invariant("series.source_posts", "series", "a series part that is not a post of the series' source (0134)",
+              _series_source),
     Invariant("label.story_voices", "labels", "a row's count isn't its names (one a voice)", _label_story_voices),
     Invariant("label.news_voices", "labels", "a News row's count isn't its names (one a voice)", _label_news_voices),
     Invariant("discover.title_address", "discover", "an article line's title is an address", _discover_title_address),
