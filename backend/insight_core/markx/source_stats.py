@@ -263,8 +263,6 @@ def sources(cur: Any) -> Dict[str, Src]:
 
 
 def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_DAYS) -> Data:
-    from insight_core.markx import schemas
-
     if now is None:
         cur.execute("SELECT now()")
         now = cur.fetchone()[0]
