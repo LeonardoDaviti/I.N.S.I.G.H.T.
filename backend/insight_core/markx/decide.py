@@ -79,6 +79,7 @@ class Config:
     connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first ...
     connect_open: int = 100         # ... and none while this many connect tasks wait (open or leased)
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
+    back_open: int = 50             # 0136: no new back question while this many wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
@@ -1246,6 +1247,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
     from insight_core.markx import graph   # 0131: Stalker's first edges (authors' links, identity, the judge)
     counts["graph"] = graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open)
+    from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
+    counts["back"] = back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open)
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")

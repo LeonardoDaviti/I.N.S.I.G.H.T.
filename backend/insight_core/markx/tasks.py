@@ -597,7 +597,14 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "embed_name": lambda cur, **kw: _plan_names(cur),
             "read3": lambda cur, **kw: _plan_read3(cur, **kw),
             "translate": lambda cur, **kw: _plan_translations(cur, **kw),   # 0130 D
-            "relate": lambda cur, **kw: _plan_relate(cur)}                  # 0131
+            "relate": lambda cur, **kw: _plan_relate(cur),                  # 0131
+            "back": lambda cur, **kw: _plan_back(cur)}                      # 0136
+
+
+def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capped like the decision run's
+    from insight_core.markx import back
+    from insight_core.markx.decide import Config
+    return back.plan(cur, open_cap=Config().back_open)
 
 
 def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's
@@ -637,6 +644,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "relate":                 # 0131: asked until it has graph.RELATE_RUNS valid answers
         from insight_core.markx import graph
         graph.after_answer(cur, task)
+    elif task["kind"] == "back":                   # 0136: asked until it has back.RUNS valid answers
+        from insight_core.markx import back
+        back.after_answer(cur, task)
     elif task["kind"] == "entities":
         mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")),
                          by_name=e.get("by") or None)                                       # 0133: ent-v4's `by`

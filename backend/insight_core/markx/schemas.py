@@ -235,6 +235,18 @@ RELATE_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
 }
 
+# 0136 (back in the news): a verdict per new post (back-v1, the lab's frozen back_v3c.md); code makes the candidate's.
+BACK_VERDICTS = ["development", "retold", "related", "unrelated"]
+BACK_SCHEMA = {
+    "type": "object",
+    "required": ["posts"],
+    "properties": {"old_thing": _STR_OR_NULL, "what_new": _STR_OR_NULL,
+                   "posts": {"type": "array", "minItems": 1, "items": {
+                       "type": "object", "required": ["n", "verdict"],
+                       "properties": {"n": {"type": "integer"}, "about": _STR_OR_NULL,
+                                      "verdict": {"enum": BACK_VERDICTS}}}}},
+}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "required": ["title_en", "text_en"],
@@ -298,6 +310,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
+    Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
 )}
 
 

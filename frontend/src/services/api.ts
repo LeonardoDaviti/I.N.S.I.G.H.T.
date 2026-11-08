@@ -1684,3 +1684,27 @@ export interface FeedItem {
   also_on?: AlsoOnLine[];
 }
 // The voices' calls are services/voices.ts (voicesApi): loaded only by the voice pages' own chunks.
+
+// 0136 (Stealth v10.8): back in the news on /markx (Shadow): the old stories judged back with a development, and the
+// owner's label on each. Read by components/markx/MarkXBack.tsx (the Mark X chunk).
+export type MarkxBackLabel = 'development' | 'retold' | 'related' | 'unrelated';
+export interface MarkxBackPost {
+  id: string; n: number; title: string | null; source: string | null; at: string | null; url: string | null;
+  trig: string[]; verdict: MarkxBackLabel | null; about: string | null;
+}
+export interface MarkxBackRow {
+  id: string; story: string; headline: string | null; first_at: string; window_at: string; days_later: number;
+  trig: string[]; posts: MarkxBackPost[]; old_thing: string | null; what_new: string[]; runs: (string | null)[];
+  label: MarkxBackLabel | null;
+}
+export interface MarkxBackPrecision { labelled: number; development: number; precision: number | null; }
+export interface MarkxBack {
+  items: MarkxBackRow[]; counts: Record<string, number>; precision: MarkxBackPrecision;
+  measured: { precision: number; lo: number; hi: number; n: number; words: string };
+}
+export const markxBackApi = {
+  list: () => request<MarkxBack>('/api/markx/back'),
+  label: (row: string, answer: MarkxBackLabel | 'undo') =>
+    request<{ id: string; answer: string; label: MarkxBackLabel | null; precision: MarkxBackPrecision }>(
+      '/api/markx/labels/back', { method: 'POST', body: { row, answer } }),
+};
