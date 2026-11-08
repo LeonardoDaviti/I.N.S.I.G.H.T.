@@ -508,9 +508,13 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     linked = entity_views.post_entities(cur, post_id)
     from insight_core.markx import schemas
     current = repo.current_guide(cur, post_id)   # 0133: the newest valid entities answer's set, and its guide
+    from insight_core.markx import ent42   # 0133 v4.2: q2 marks, which are new entities, the owner's labels
+    mine = ent42.labels_of(cur, post_id)
     entities = [{**{k: m[k] for k in ("name", "maker", "family", "version", "variant", "span")},
                  "type": schemas.entity_type(m["type"]), "role": m["role"] or "mention", "rule": m.get("rule"),
-                 "by": m.get("by_name"), "guide": m["guide"], "entity_id": linked.get(m["n"])}
+                 "by": m.get("by_name"), "guide": m["guide"], "entity_id": linked.get(m["n"]),
+                 "n": m["n"], "q2": m.get("rule") == ent42.Q2, "new": ent42.is_new(m),            # 0133 v4.2
+                 "label": mine.get(f"{m['guide']}:{m['n']}")}
                 for m in repo.mentions(cur, post_id) if m["guide"] == current]
     documents = [e for e in entities if e["type"] == "document" and e["role"] not in ("source", "recommended")]
     cited = {r: [e for e in entities if e["role"] == r] for r in ("source", "recommended")}
