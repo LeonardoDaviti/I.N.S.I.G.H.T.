@@ -325,20 +325,25 @@ def _health_sort_key(row: Dict[str, Any]) -> tuple:
 
 
 def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Each enabled source in its status's bucket. `errors` counts every failing source (issue 0137 A1):
+    retrying now, and waiting to retry after failures (also counted in `backoff`), so "errors": 0 means
+    no source is failing."""
     summary = empty_health_summary()
     for row in rows:
         try:
-            key = HEALTH_SUMMARY_KEYS.get(HealthStatus(row["status"]))
+            status = HealthStatus(row["status"])
         except ValueError:
-            key = None
-        if key:
+            continue
+        if key := HEALTH_SUMMARY_KEYS.get(status):
             summary[key] += 1
+        if status == HealthStatus.BACKOFF:
+            summary[HEALTH_SUMMARY_KEYS[HealthStatus.ERROR]] += 1
     return summary
 
 
 def sources_failing(summary: Dict[str, int]) -> int:
-    """Sources whose last fetches failed: retrying now (errors) or waiting (backoff)."""
-    return sum(int(summary.get(HEALTH_SUMMARY_KEYS[status], 0)) for status in FAILING_STATUSES)
+    """Sources whose last fetches failed: retrying now or waiting (backoff), every one in `errors`."""
+    return int(summary.get(HEALTH_SUMMARY_KEYS[HealthStatus.ERROR], 0))
 
 
 class OperationsService:

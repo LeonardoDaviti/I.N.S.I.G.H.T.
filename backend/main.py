@@ -920,7 +920,26 @@ async def find_feed(request: FindFeedRequest):
     except Exception:  # noqa: BLE001 - no links read: Follow as before
         logger.exception("Find feed: the linked articles of %s could not be read", address)
         linked = []
-    return {"success": True, **await where_linked.follow(FEED_FINDER_HTTP, services().source_fetch.kinds, address, linked)}
+    try:
+        known = await asyncio.to_thread(_known_feeds, address)
+    except Exception:  # noqa: BLE001 - no shapes learned: the finder as before
+        logger.exception("Find feed: your sources at %s could not be read", address)
+        known = []
+    return {"success": True, **await where_linked.follow(FEED_FINDER_HTTP, services().source_fetch.kinds, address,
+                                                         linked, known)}
+
+
+def _known_feeds(address: str) -> List[str]:
+    """Your sources' addresses at the address's publisher (issue 0137 A2: a blocked page tries their shapes)."""
+    from insight_core.utils.addresses import host_of, publication_of
+
+    publication = publication_of(host_of(address))
+    if not publication:
+        return []
+    with database.connection(services().db_url) as conn:
+        rows = conn.execute("SELECT handle_or_url FROM sources WHERE handle_or_url ILIKE %s LIMIT 200",
+                            (f"%{publication}%",)).fetchall()
+    return [row[0] for row in rows if publication_of(host_of(row[0])) == publication]
 
 
 @app.get("/api/sources/telegram-bridge")

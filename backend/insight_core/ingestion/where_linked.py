@@ -200,7 +200,9 @@ def feed_row(feed: feed_finder.Feed, **more: Any) -> Dict[str, Any]:
     """A feed as the answer lists it: {url, title}, and `moved_to` when its posts now live on another
     site (issue 0108: the site, "blog.example"), `saved_search` when it reads as one (issue 0135)."""
     return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}),
-            **({"saved_search": True} if feed.search else {}), **more}
+            **({"saved_search": True} if feed.search else {}),
+            # The site's feed, not this page's (issue 0137 B2): "other_scope" or "stale".
+            **({"not_this_page": feed.flag} if feed.flag else {}), **more}
 
 
 def rank(articles: Sequence[str], feeds: Sequence[feed_finder.Feed], pages: Sequence[Dict[str, Any]],
@@ -249,14 +251,17 @@ def _others(found: Sequence[feed_finder.Feed], more: Sequence[feed_finder.Feed])
     return [feed for feed in more if normalize_url(feed.url) not in urls and not (feed.items and feed.items[0] in firsts)]
 
 
-async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Sequence[str]) -> Dict[str, Any]:
-    """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}.
-    ValueError for an empty address."""
+async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Sequence[str],
+                 known: Sequence[str] = ()) -> Dict[str, Any]:
+    """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}, with
+    `reason` when none, `note` when only a saved search was found, and `watch` when every feed found is
+    the site's, not this page's (issue 0137: the page itself to follow, its preview). `known`: your
+    sources' addresses (a blocked page tries their shapes). ValueError for an empty address."""
     address = web_address(url, "An address is needed to look for its feed")
     home = page_watch.is_home(address)
     articles = on_site(address, linked)
     start = start_section(address, articles)
-    finding: FeedFinding = await find_feeds(http, registry, start or address)
+    finding: FeedFinding = await find_feeds(http, registry, start or address, known)
     pages: List[Dict[str, Any]] = []
     # A section that cannot be read (or lands on the home page, or another site) is no section:
     # the finder took the home page's links and feeds, as for the home page.
@@ -287,10 +292,18 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
     if articles:
         move = await where_moved(http, articles, found, pages)
         feeds, pages = rank(articles, found, pages, move)
+    # Every feed found is the site's, not this page's (issue 0137 B2): the page itself, to follow.
+    watch = None
+    if found and all(feed.flag for feed in found) and finding.landed and not page_watch.is_home(finding.landed):
+        offered = await page_watch.offers(http, [finding.landed])
+        watch = offered[0] if offered else None
     return {"status": finding.status, "feeds": feeds, "homepage": finding.status == "none" and home,
             "pages": pages, "linked": len(articles), "start": start,
             # A feed was found whose items INSIGHT cannot read (issue 0135): never offered.
-            **({"refused": finding.refused} if finding.refused else {})}
+            **({"refused": finding.refused} if finding.refused else {}),
+            **({"reason": finding.reason} if finding.reason else {}),
+            **({"note": finding.note} if finding.note else {}),
+            **({"watch": watch} if watch else {})}
 
 
 __all__ = ["follow", "start_section", "holds", "feed_place", "moved", "rank", "on_site", "main_section"]

@@ -201,6 +201,26 @@ function startingTemplate(address: string | undefined): { template: Template; va
   return account && template ? { template, value: account.value } : null;
 }
 
+// Issue 0137: why the finder found no feed, and why a feed found is the site's rather than this page's.
+const NO_FEED_BECAUSE: Record<string, string> = {
+  blocked: 'the site refused INSIGHT (blocked)',
+  'rate-limited': 'the site is limiting requests (rate-limited); try again later',
+  'needs login': 'the page needs a login',
+  gone: 'the page is gone',
+  'server error': 'the site answered with a server error',
+  'empty feed': 'the feed has no items yet',
+  'no bridge': 'no bridge is set up on this server for this platform',
+};
+const NOT_THIS_PAGE: Record<string, string> = {
+  other_scope: 'none of this page\'s articles are in it',
+  stale: 'its newest item is much older than this page\'s',
+};
+
+function noFeedNote(reason: string | undefined): string {
+  const because = reason ? NO_FEED_BECAUSE[reason] : undefined;
+  return because ? `No feed found: ${because}` : 'No feed found on this page';
+}
+
 function holdsLabel(holds: number, linked: number): string {
   if (linked === 1) return holds ? 'Holds the article your sources linked' : 'Does not hold the article your sources linked';
   return `Holds ${holds} of the ${linked} articles your sources linked`;
@@ -329,7 +349,10 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
         : finding?.success === false ? 'Could not look for a feed; the address is added as typed.'
           : finding?.status === 'direct' ? 'INSIGHT reads this site directly'
             : finding?.status === 'none' && finding.refused ? `Not added: ${finding.refused}`
-              : finding?.status === 'none' ? 'No feed found on this page'
+              : finding?.status === 'none' ? noFeedNote(finding.reason)
+              : finding?.status === 'found' && finding.note ? `Only a saved search was found: ${shortAddress(foundFeeds[0]?.url ?? '')}`
+              : finding?.status === 'found' && foundFeeds.length === 1 && foundFeeds[0].not_this_page
+                ? `Found the site's feed, not this page's: ${shortAddress(foundFeeds[0].url)} (${NOT_THIS_PAGE[foundFeeds[0].not_this_page]})`
               : finding?.status === 'found' && foundFeeds.length === 1
                 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}${foundFeeds[0].saved_search ? ' (a saved search)' : ''}`
                 : finding?.status === 'feed' && foundFeeds[0]?.saved_search ? 'This feed is a saved search'
@@ -342,7 +365,9 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   const [pagePreview, setPagePreview] = useState<(PageWatchPreview & { for: string; asked: string }) | null>(null);
   const noFeed = findsFeed && settled && finding?.status === 'none';
   const offers = noFeed ? finding?.pages ?? [] : [];
-  const following = noFeed && follow?.for === address;
+  // Every feed found is the site's, not this page's (issue 0137): the page itself can be followed instead.
+  const watchOffer = findsFeed && settled && finding?.status === 'found' ? finding.watch : undefined;
+  const following = (noFeed || !!watchOffer) && follow?.for === address;
   const followed = following && follow ? follow.page : address;
   const followsHome = !!finding?.homepage && followed === address;
   const askedPath = normalisePath(path);
@@ -559,6 +584,9 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                 </ul>
               </details>
             ) : null}
+            {watchOffer && !alreadyAdded && !following ? (
+              <Button size="sm" className="mt-2" onClick={() => followOffer(watchOffer)}>Follow this page instead</Button>
+            ) : null}
             {following ? (
               <div className="mt-2 space-y-3 rounded-md border border-line p-3" data-testid="page-watch">
                 {followed !== address ? <p className="text-[0.8125rem] text-fg">Following {siteName(followed)}</p> : null}
@@ -608,6 +636,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                         {linked > 0 ? <span className="block text-[0.75rem] text-fg-3">{holdsLabel(feed.holds ?? 0, linked)}</span> : null}
                         {feed.moved_to ? <span className="block text-[0.75rem] text-fg-3">The posts of this feed now live at {feed.moved_to}</span> : null}
                         {feed.saved_search ? <span className="block text-[0.75rem] text-fg-3">A saved search, not the site&apos;s own feed</span> : null}
+                        {feed.not_this_page ? <span className="block text-[0.75rem] text-fg-3">The site&apos;s feed, not this page&apos;s ({NOT_THIS_PAGE[feed.not_this_page]})</span> : null}
                       </span>
                     </label>
                   ))}

@@ -7,10 +7,11 @@ search_until, so a resume stays on the search (checked on the owner's bridge, 20
 """
 from __future__ import annotations
 
+import os
 import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
@@ -26,9 +27,34 @@ from insight_core.ingestion.kinds.base import (
 )
 from insight_core.utils.addresses import host_of
 
-# gates.HOST_FLOORS gives each a 10s floor.
-NITTER_HOSTS = frozenset({"nitter.local", "nitter.net"})
+# Your Nitter (issue 0137 B3), configured like the Telegram bridge: NITTER_HOSTS, a comma list of hosts or
+# origins, the first used for an x.com address pasted in the Add-source dialog ("nitter.local" when unset,
+# as before; set and empty: none). Every host listed is read as Nitter, beside the known ones.
+KNOWN_NITTER_HOSTS = ("nitter.local", "nitter.net")
 NITTER_BASE_URL = "https://nitter.local"
+NITTER_ENV = "NITTER_HOSTS"
+
+
+def configured_nitters(env: Mapping[str, str] = os.environ) -> Optional[List[str]]:
+    """The Nitter origins NITTER_HOSTS lists ("https://nitter.example"); None when unset."""
+    raw = env.get(NITTER_ENV)
+    if raw is None:
+        return None
+    return [item if "://" in item else f"https://{item}" for item in (part.strip().rstrip("/") for part in raw.split(",")) if item]
+
+
+def nitter_origin(env: Mapping[str, str] = os.environ) -> Optional[str]:
+    """The Nitter an x.com address is read through: the first configured, NITTER_BASE_URL when unset,
+    None when NITTER_HOSTS is set and empty."""
+    nitters = configured_nitters(env)
+    if nitters is None:
+        return NITTER_BASE_URL
+    return nitters[0] if nitters else None
+
+
+# gates.HOST_FLOORS gives each a 10s floor.
+NITTER_HOSTS = frozenset({*KNOWN_NITTER_HOSTS,
+                          *((urllib.parse.urlparse(o).hostname or "").lower() for o in configured_nitters() or ())} - {""})
 
 NITTER_PROFILE = PolitenessProfile(
     concurrency_pool="host-lock",

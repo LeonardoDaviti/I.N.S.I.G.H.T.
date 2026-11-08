@@ -47,7 +47,7 @@ from insight_core.ingestion import full_text, page_changes
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
 from insight_core.ingestion.http import AddressMemory, HttpError, Validators
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import KindSession, KindUnavailable, SourceKind
+from insight_core.ingestion.kinds.base import EmptyFetch, KindSession, KindUnavailable, SourceKind
 from insight_core.ingestion.ports import (
     NULL_PROGRESS,
     FetchStateStore,
@@ -94,6 +94,7 @@ class _Fetched:
     memory: Optional[AddressMemory] = None   # a conditional kind's validators (issue 0044)
     checks: List[page_changes.PageCheck] = dataclasses.field(default_factory=list)   # watched pages (0039)
     watching: bool = False
+    failure: Optional[EmptyFetch] = None     # its posts saved, the fetch failing: why (issue 0137 A1)
 
 
 class _RunSessions:
@@ -280,6 +281,12 @@ class IngestionRunner:
                     failures.append(SourceFailure(source["id"], _display_name(source), "fetch", outcome.error or "error"))
                 elif f.posts:
                     error = await self._save(f, saved, surface=surface)
+                    if not error and f.failure is not None:
+                        # Its posts are saved; the fetch is failing, with why (issue 0137 A1).
+                        failures.append(SourceFailure(source["id"], _display_name(source), "fetch", str(f.failure)))
+                        f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
+                                                                  error=str(f.failure), warning=None)
+                        f.error = f.failure
                     if error:
                         failures.append(SourceFailure(source["id"], _display_name(source), "save", error))
                         # Outcomes are recorded after the save: a source none of whose posts
@@ -388,9 +395,10 @@ class IngestionRunner:
         watching = self.watch is not None and page_changes.watching(source, kind)
 
         warning: Optional[str] = None
+        failure: Optional[str] = None
 
         async def fetch_latest() -> List[dict]:
-            nonlocal memory, warning
+            nonlocal memory, warning, failure
             if not getattr(kind, "conditional", False):
                 got = await kind.fetch_latest(source, decision.post_limit)
             else:
@@ -398,6 +406,8 @@ class IngestionRunner:
                 got = await kind.fetch_latest(source, decision.post_limit, memory=memory)  # type: ignore[call-arg]
             # Over half its items skipped (issue 0135, kinds.base.FetchedPosts): said as a warning.
             warning = getattr(got, "warning", None)
+            # Items stored as fewer posts than they are (issue 0137 A1): saved, and the fetch fails.
+            failure = getattr(got, "failure", None)
             return list(got or [])
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
@@ -440,7 +450,10 @@ class IngestionRunner:
                                               duration_s=time.monotonic() - started)
             return _Fetched(source, kind, outcome, [], exc)
         posts += [check.post for check in checks if check.post is not None]
-        return _Fetched(source, kind, outcome, posts, memory=memory, checks=checks, watching=watching)
+        fetched = _Fetched(source, kind, outcome, posts, memory=memory, checks=checks, watching=watching)
+        if failure:
+            fetched.failure = EmptyFetch(failure)
+        return fetched
 
     async def _check_pages(self, source: Dict[str, Any], kind: SourceKind, full: bool) -> List[page_changes.PageCheck]:
         """A slice of the source's stored pages through the cheap checks (issue 0039). Never
