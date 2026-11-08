@@ -126,6 +126,39 @@ describe('a voice page', () => {
   });
 });
 
+describe('0132 C2: other channels not followed, and channel profiles', () => {
+  const tg = {
+    key: 'tg:quillonnews', url: 'https://t.me/quillonnews', label: 'quillonnews', platform: 'Telegram', of: ['Quillon Desk'],
+    why: [{ rule: 'profile' as const, line: 'its profile links it (linked account)', posts: [] }],
+  };
+
+  it('lists them under Suggested voices; Add opens the Add-source flow on the address, never adds alone', async () => {
+    vi.spyOn(voicesApi, 'suggestions').mockResolvedValue(suggestions({
+      not_followed: [{ subject: { kind: 'source', id: A, name: 'Quillon Desk' }, channels: [tg] }], profiles: 3,
+    }));
+    vi.spyOn(voicesApi, 'profilesSetting').mockResolvedValue({ success: true, on: true });
+    const off = vi.spyOn(voicesApi, 'setProfilesSetting').mockResolvedValue({ success: true, on: false });
+    const onFollow = vi.fn();
+    renderWithProviders(<SuggestedVoices onFollow={onFollow} />, { api: makeFakeApi({}) });
+    const row = await screen.findByTestId('not-followed');
+    expect(row).toHaveTextContent('Not followed: quillonnews · Telegram — Add');
+    expect(row).toHaveTextContent('its profile links it (linked account)');
+    expect(onFollow).not.toHaveBeenCalled();
+    fireEvent.click(within(row).getByRole('button', { name: 'Add' }));
+    expect(onFollow).toHaveBeenCalledWith('https://t.me/quillonnews');
+    expect(await screen.findByTestId('profiles-switch')).toHaveTextContent('read monthly · 3 profiles read');
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
+    await waitFor(() => expect(off).toHaveBeenCalledWith(false));
+  });
+
+  it('the voice page lists them with Add to the feed finder', async () => {
+    vi.spyOn(voicesApi, 'get').mockResolvedValue({ success: true, voice: voice(), not_followed: [tg] });
+    renderWithProviders(<VoiceHeader scope="voice:v-1" voice={voice()} />, { api: makeFakeApi({}), route: '/read/voice/v-1' });
+    const row = await screen.findByTestId('not-followed');
+    expect(within(row).getByRole('link', { name: 'Add' })).toHaveAttribute('href', `/sources?follow=${encodeURIComponent('https://t.me/quillonnews')}`);
+  });
+});
+
 describe('Also on', () => {
   it('one line per other channel, a link to that post', () => {
     renderWithProviders(<AlsoOn lines={[{ id: 'p-9', source_id: B, source_display_name: '@quillon', platform: 'youtube', title: 'A talk',

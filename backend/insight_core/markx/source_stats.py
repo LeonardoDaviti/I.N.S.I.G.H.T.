@@ -99,6 +99,8 @@ SIGNALS: Dict[str, Signal] = {
     "per_week": Signal("rhythm", "posts in the last 90 days / weeks (since it was added, when later)", 0),
     "age": Signal("rhythm", "its first stored post and the date it was added", 0),
     "audience": Signal("audience", "median YouTube views per video, as fetched", 5, "videos"),
+    "followers": Signal("audience", "subscribers or followers its profile shows, as last fetched (a voice: its "
+                                    "channels' together)", 0, "profiles"),
     "reputation": Signal("reputation", "inside your sources only: cited by, Classics, first to report", 0),
     "stance": Signal("stance", "Haiku over 15 random own posts of 250+ characters; a pattern needs 2+ exact quotes "
                                "from 2 posts, checked by code (Experimental)", 15, "posts of 250+ characters"),
@@ -197,6 +199,7 @@ class Data:
     authors: Dict[str, int]                                 # source -> distinct authors (sites)
     long_posts: Dict[str, int] = field(default_factory=dict)   # source -> own posts of 250+ characters (the window)
     post_titles: Dict[str, Tuple[str, Optional[datetime], str]] = field(default_factory=dict)   # any post -> (title, at, source)
+    profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)   # 0132 C2: source -> its current profile
 
     def voice_of(self, source_id: str) -> str:
         s = self.sources.get(source_id)
@@ -412,6 +415,8 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
                 mentions=mentions, classics=classics, perspectives=perspectives, videos=videos,
                 stance=stances(cur), authors=authors)
     data.long_posts = long_post_counts(cur, ids, now)
+    from insight_core.services.profiles_service import current as current_profiles
+    data.profiles = current_profiles(cur, ids)   # {} before migration 0086
     want = {r["post"] for r in story_posts} | set(read_kinds) | {c["post"] for c in classics if c["post"]}
     want -= set(posts)
     titles = {pid: (p.title or p.text[:90], p.at, p.source) for pid, p in posts.items()}
@@ -769,6 +774,13 @@ def _subject(d: Data, kind: str, sid: str, sids: List[str], by_source, stories, 
     views = [v for x in sids for v in d.videos.get(x, [])]
     out["audience"] = (int(statistics.median(views)) if views else None, len(views),
                        {"what": "views when fetched" if views else "no audience data"})
+    profs = [(x, d.profiles[x]) for x in sids if x in d.profiles]
+    counted = [(x, p) for x, p in profs if p.get("followers") is not None]
+    out["followers"] = (sum(int(p["followers"]) for _, p in counted) if counted else None, len(counted), {
+        "what": "from its profile" if counted else ("its profile shows no count" if profs else "no audience data"),
+        "channels": [{"source": x, "name": d.sources[x].name if x in d.sources else "", "followers": p.get("followers"),
+                      "label": p.get("followers_label"), "url": p.get("url"), "fetched_at": p.get("fetched_at")}
+                     for x, p in profs]})
 
     # reputation (inside your sources only)
     fv, fn, fe = out["first_to_report"]

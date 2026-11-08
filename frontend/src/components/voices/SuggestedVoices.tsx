@@ -13,6 +13,7 @@ import { formatCount, plural } from '../../lib/format';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { sourceReadPath } from '../../lib/feedContext';
 import { VOICES_KEY } from '../../hooks/useVoice';
+import NotFollowed from './NotFollowed';
 
 export const SUGGESTED_VOICES_KEY = [...VOICES_KEY, 'suggestions'] as const;
 
@@ -59,7 +60,7 @@ function allEvidence(suggestion: VoiceSuggestion): VoiceEvidence[] {
  * without you. Join makes them one voice (stories then count it once; only their posts regroup); Not the same keeps
  * them apart for good. Related voices (a company's staff) and name-only pairs ("possible") are listed apart.
  */
-export default function SuggestedVoices() {
+export default function SuggestedVoices({ onFollow }: { onFollow?: (url: string) => void } = {}) {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: SUGGESTED_VOICES_KEY,
@@ -122,14 +123,58 @@ export default function SuggestedVoices() {
         </ul>
       )}
       <PairList title="Related voices" pairs={data.related} busy={busy}
-        note="A company's staff or a close reposter: linked, never one voice. Each needs a bio until profiles are read."
+        note="A company's staff or a close reposter: linked, never one voice. A profile's bio tells staff from a beat writer."
         first={{ label: 'Related', run: (p) => voicesApi.related(p.a.id, p.b.id, p.evidence), done: 'Linked as related voices' }}
         onAct={act} />
+      {data.not_followed?.length ? (
+        <section aria-label="Other channels you don't follow">
+          <h3 className="text-[0.9375rem] font-semibold text-fg">Other channels you don't follow</h3>
+          <p className="text-[0.8125rem] leading-5 text-fg-3">
+            A source's own channels its profile, its posts or Discover name. Add opens the feed finder; nothing is added without you.
+          </p>
+          <ul className="flex flex-col">
+            {data.not_followed.map((g) => (
+              <li key={`${g.subject.kind}:${g.subject.id}`} className="border-b border-line py-2 last:border-b-0">
+                <p className="text-[0.875rem] font-semibold text-fg">{sourceLabel(g.subject.name)}</p>
+                <NotFollowed channels={g.channels} onFollow={onFollow} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <ProfilesSwitch count={data.profiles ?? 0} />
       <PairList title="Possible" pairs={data.possible} busy={busy}
         note="A shared name and nothing else: never suggested. Join them only if you know they are one."
         first={{ label: 'Join', run: (p) => voicesApi.join([p.a.id, p.b.id], { evidence: p.evidence, byHand: true }), done: 'Joined into one voice' }}
         onAct={act} />
     </section>
+  );
+}
+
+const PROFILES_KEY = [...VOICES_KEY, 'profiles-setting'] as const;
+
+/** Channel profiles (0132 C2): each source's profile page read monthly, on unless you switch it off. */
+function ProfilesSwitch({ count }: { count: number }) {
+  const queryClient = useQueryClient();
+  const setting = useQuery({ queryKey: PROFILES_KEY, queryFn: () => voicesApi.profilesSetting(), retry: false });
+  if (!setting.data) return null;
+  const on = setting.data.on;
+  const flip = async () => {
+    try {
+      await voicesApi.setProfilesSetting(!on);
+      await queryClient.invalidateQueries({ queryKey: PROFILES_KEY });
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+  return (
+    <p className="text-[0.8125rem] leading-5 text-fg-3" data-testid="profiles-switch">
+      Channel profiles (bio, website, followers): {on ? 'read monthly' : 'off'}
+      {count ? ` · ${plural(count, 'profile')} read` : ''}{' '}
+      <button type="button" className="underline decoration-fg-3 hover:text-fg" onClick={() => void flip()}>
+        {on ? 'Turn off' : 'Turn on'}
+      </button>
+    </p>
   );
 }
 

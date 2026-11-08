@@ -6,7 +6,11 @@ GET    /api/voices/suggestions             {computed_at, computing, voices: [{ke
 POST   /api/voices/suggestions/refresh     {started}: judge every pair again, in the background
 POST   /api/voices                         {source_ids, voice_id?, name?, kind?, evidence?, by_hand?} -> {voice,
                                            queued_sources}: Join (a suggestion) or Make a voice (by_hand)
-GET    /api/voices/{voice_id}              {voice}
+GET    /api/voices/{voice_id}              {voice, not_followed [{key, url, label, platform, of, why}]}
+GET    /api/voices/profiles/setting        {on}: channel profiles fetched monthly (0132 C2; on by default)
+PUT    /api/voices/profiles/setting        {on} -> {on}
+                                           (suggestions also carry not_followed [{subject {kind, id, name}, channels}]
+                                           and profiles: how many current profiles they read)
 PUT    /api/voices/{voice_id}              {name?, kind?} -> {voice}
 DELETE /api/voices/{voice_id}              the voice removed; its channels stay sources -> {source_ids, queued_sources}
 POST   /api/voices/not-same                {a, b, evidence?}: never suggested together again
@@ -133,6 +137,22 @@ def related(request: PairRequest):
 @answered
 def leave(request: LeaveRequest):
     return service().leave(_id(request.source_id, "source id"))
+
+
+class ProfilesSettingRequest(BaseModel):
+    on: bool
+
+
+@router.get("/api/voices/profiles/setting")
+@answered
+def profiles_setting():
+    return service().profiles_setting()
+
+
+@router.put("/api/voices/profiles/setting")
+@answered
+def set_profiles_setting(request: ProfilesSettingRequest):
+    return service().set_profiles_setting(request.on)
 
 
 @router.get("/api/voices/{voice_id}")

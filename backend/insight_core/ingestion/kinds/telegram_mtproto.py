@@ -305,6 +305,14 @@ class TelegramKind(BaseKind):
                 "collected_posts": collected,
             })
 
+    async def channel_full(self, source: Source) -> Any:
+        """The channel's full info (issue 0132 C2's profile): one entity and one full-channel request, on the open
+        session, under the flood-wait rule. ingestion/profiles.parse_telegram_full reads it."""
+        session = self._open_session()
+        handle = _handle(source)
+        entity = await self._call(session, lambda c: c.get_entity(handle))
+        return await self._call(session, lambda c: c.get_full(entity))
+
     # ------------------------------------------------------------------ helpers
 
     def _open_session(self) -> TelegramSession:

@@ -117,14 +117,14 @@ function VoiceRow({ voice, onChange }: { voice: Voice; onChange: () => void }) {
 }
 
 /** The Sources page's Voices tab (issue 0132 A): what is suggested, and the voices you made. */
-export default function VoicesPanel() {
+export default function VoicesPanel({ onFollow }: { onFollow?: (url: string) => void } = {}) {
   const queryClient = useQueryClient();
   const voices = useQuery({ queryKey: [...VOICES_KEY, 'list'], queryFn: () => voicesApi.list() });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: VOICES_KEY });
   const many = (voices.data?.voices ?? []).filter((v) => v.channels.length > 1);
   return (
     <div className="flex flex-col gap-8">
-      <SuggestedVoices />
+      <SuggestedVoices onFollow={onFollow} />
       <section aria-labelledby="your-voices">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="your-voices" className="text-[1rem] font-semibold text-fg">Your voices</h2>

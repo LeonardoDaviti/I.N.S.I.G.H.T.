@@ -17,6 +17,7 @@ const SIGNAL_TITLES: Record<string, string> = {
   perspectives: 'Perspectives', first_to_report: 'First to report', solo_share: 'Covered by nobody else',
   news_yield: 'News yield', cited_by: 'Cited by', kinds: 'Reading kinds', languages: 'Languages',
   media_only: 'Media only', per_week: 'Posts a week', age: 'First stored post', audience: 'Audience',
+  followers: 'Subscribers or followers',
   reputation: 'Reputation', stance: 'Patterns',
 };
 
@@ -143,6 +144,21 @@ function Evidence({ s, tab }: { s: MarkxSourceSignal; tab: MarkxSourceTab }) {
       );
     case 'audience':
       return <p className="text-fg-3">{String(ev.what ?? 'no audience data')}</p>;
+    case 'followers': {
+      // 0132 C2: each channel's profile count, as last fetched
+      const chans = list<{ source: string; name: string; followers: number | null; label: string | null; fetched_at: string | null }>(ev.channels);
+      if (!chans.length) return <p className="text-fg-3">{String(ev.what ?? 'no audience data')}</p>;
+      return (
+        <ul>{chans.map((c) => (
+          <li key={c.source}>{c.name}{' '}
+            <span className="text-fg-3">
+              {c.followers === null ? 'its profile shows no count' : `${num(c.followers)} ${c.label ?? 'followers'}`}
+              {c.fetched_at ? ` · read ${c.fetched_at.slice(0, 10)}` : ''}
+            </span>
+          </li>
+        ))}</ul>
+      );
+    }
     case 'reputation':
       return <p className="text-fg-3">Inside your sources only.</p>;
     case 'stance':

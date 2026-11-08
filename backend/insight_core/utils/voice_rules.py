@@ -378,5 +378,306 @@ def groups(verdicts: Iterable[Verdict], *, joined: Mapping[str, Optional[str]] =
     return sorted(out)
 
 
+# ---- channel profiles (issue 0132 C2) ---------------------------------------------------------------------
+# A profile (ingestion/profiles.py, kept by migration 0086) says who a channel is: its website field and the
+# accounts it links. Not measured yet (the server has fetched none): the thresholds are the spec's words.
+PROFILE_MAX_LINKED = 5          # a profile linking more followed sources is a directory: its links say no "who"
+VERDICT_ORDER = {"possible": 0, "related": 1, "join": 2, "same_channel": 3}
+_FORMER = re.compile(r"(?:\bex[-\s]?|\bformer(?:ly)?\s+(?:at\s+)?|\bprev(?:iously)?\.?\s+(?:at\s+)?"
+                     r"|\balum(?:nus|ni)?\s+(?:of\s+)?)$", re.I)
+_BIO_AT = re.compile(r"(?:\bworks?\s+(?:at|for)|\bworking\s+(?:at|for)|\bemployed\s+(?:at|by)"
+                     r"|\b(?:engineer|researcher|scientist|editor|reporter|writer|developer|designer|manager|director"
+                     r"|founder|co-?founder|ceo|cto|head|lead|staff|member|intern|fellow|advocate|evangelist|pm)\b"
+                     r"[^.|\n@]{0,40}?(?:\bat\b|@))\s*@?([\w.-]{2,40})", re.I)
+_BIO_HANDLE = re.compile(r"(?<![\w@./])@([A-Za-z0-9_]{2,32})\b")
+
+
+def profile_links(profile: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """(address, where) a profile links: its website field first ("website field"), then the accounts and
+    addresses its bio and page link ("linked account" on a platform, else "link")."""
+    out: List[Tuple[str, str]] = []
+    seen: Set[str] = set()
+    site = profile.get("website")
+    for url in ([site] if site else []) + list(profile.get("links") or []):
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        key = address_key(url)[0] or ""
+        where = "website field" if url == site else (
+            "linked account" if ":" in key and not key.startswith("site:") else "link")
+        out.append((url, where))
+    return out
+
+
+def _evidence_profile(source_id: str, profile: Mapping[str, Any]) -> Dict[str, Any]:
+    return {"source": source_id, "url": profile.get("url"), "fetched_at": profile.get("fetched_at"),
+            "kind": profile.get("kind")}
+
+
+def bio_names(bio: Optional[str], other: Channel, held_by: Mapping[str, int]) -> Optional[str]:
+    """The words of a bio that name `other` as where its writer works ("works at X", "engineer at @x", "@x" for an
+    account of it), None when it doesn't; "ex-", "former" and "previously" are not working there."""
+    if not bio:
+        return None
+    own_handles = {k.split(":", 1)[1] for k in other.keys if k.startswith(("x:", "tg:", "yt:"))}
+    tokens = {t for t in other.tokens if held_by.get(t, 0) <= SHARED_NAME_MAX_SOURCES}
+
+    def names(word: str) -> bool:
+        w = word.lower().strip(".-_")
+        return bool(w) and (w in own_handles or w in tokens or re.sub(r"[^0-9a-z]+", "", w) in tokens)
+
+    def former(start: int) -> bool:
+        return bool(_FORMER.search(bio[max(0, start - 20):start]))
+    for m in _BIO_AT.finditer(bio):
+        if names(m.group(1)) and not former(m.start()):
+            return bio[max(0, m.start() - 10):m.end() + 10].strip()
+    for m in _BIO_HANDLE.finditer(bio):
+        if m.group(1).lower() in own_handles and not former(m.start()):
+            return bio[max(0, m.start() - 20):m.end() + 10].strip()
+    return None
+
+
+def profile_verdicts(channels: Mapping[str, Channel], profiles: Mapping[str, Mapping[str, Any]],
+                     counts: Mapping[Tuple[str, str], PairCounts], held_by: Mapping[str, int]) -> List[Verdict]:
+    """What profiles say of pairs of followed sources:
+    - **profile_link**: A's profile (its website field, a linked account, a link) is B's address: one voice with a
+      link back (B's profile or B's posts link A) or a shared name, else related; a profile linking more than
+      PROFILE_MAX_LINKED followed sources is a directory and says nothing. Platforms are never joined.
+    - **profile_bio**: A's bio names B as where A works ("works at", "@company"): related (staff, not a beat writer).
+    Each with the profile as its evidence."""
+    key_to: Dict[str, Set[str]] = defaultdict(set)
+    for sid, c in channels.items():
+        for k in c.keys:
+            key_to[k].add(sid)
+    links: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    for a, prof in profiles.items():
+        if a not in channels or platform_of(channels[a]):
+            continue
+        hits: Dict[str, Tuple[str, str]] = {}
+        for url, where in profile_links(prof):
+            for b in key_to.get(address_key(url)[0] or "", ()):
+                if b != a and b not in hits:
+                    hits[b] = (url, where)
+        if len(hits) <= PROFILE_MAX_LINKED:
+            for b, hit in hits.items():
+                links[(a, b)] = hit
+    out: Dict[Tuple[str, str], Verdict] = {}
+    for (a, b), (url, where) in sorted(links.items()):
+        ca, cb = channels[a], channels[b]
+        if platform_of(cb):
+            continue
+        pair = tuple(sorted((a, b)))
+        back_profile = (b, a) in links
+        back_posts = bool(counts.get((b, a)) and counts[(b, a)].link_posts)
+        names = sorted(shared_names(ca, cb, held_by))
+        line = f"{ca.name}'s profile links {cb.name} ({where}: {url})"
+        if back_profile:
+            line += f"; {cb.name}'s profile links back"
+        elif back_posts:
+            line += f"; {cb.name}'s posts link back"
+        if names:
+            line += "; shared name " + "/".join(names)
+        same = back_profile or back_posts or bool(names)
+        if not same:
+            line += " (no link back nor shared name: related)"
+        ev = {"rule": "profile_link", "line": line, "posts": [], "profile": _evidence_profile(a, profiles[a])}
+        verdict = "join" if same else "related"
+        v = out.get(pair)
+        if v is None:
+            out[pair] = Verdict(pair[0], pair[1], verdict, [ev], names)
+        else:
+            v.evidence.append(ev)
+            if VERDICT_ORDER[verdict] > VERDICT_ORDER[v.verdict]:
+                v.verdict = verdict
+    for a, prof in profiles.items():   # the bio naming where its writer works
+        if a not in channels or platform_of(channels[a]) or not prof.get("bio"):
+            continue
+        for b, cb in channels.items():
+            if b == a or platform_of(cb):
+                continue
+            said = bio_names(prof.get("bio"), cb, held_by)
+            if not said:
+                continue
+            pair = tuple(sorted((a, b)))
+            ev = {"rule": "profile_bio", "line": f"{channels[a].name}'s bio names {cb.name}: “{said}” "
+                                                 "(staff, not a beat writer)", "posts": [],
+                  "profile": _evidence_profile(a, prof)}
+            v = out.get(pair)
+            if v is None:
+                out[pair] = Verdict(pair[0], pair[1], "related", [ev], [])
+            else:
+                v.evidence.append(ev)
+    return [out[k] for k in sorted(out)]
+
+
+def with_profiles(verdicts: Sequence[Verdict], extra: Sequence[Verdict], channels: Mapping[str, Channel],
+                  profiles: Mapping[str, Mapping[str, Any]], held_by: Mapping[str, int]) -> List[Verdict]:
+    """The rules' verdicts with the profiles' added: a pair's evidence joined, its verdict the stronger (same channel,
+    join, related, possible). A related pair whose side has a bio not naming the other says so: a beat writer,
+    not staff."""
+    by: Dict[Tuple[str, str], Verdict] = {(v.a, v.b): Verdict(v.a, v.b, v.verdict, list(v.evidence), list(v.names))
+                                          for v in verdicts}
+    for e in extra:
+        v = by.get((e.a, e.b))
+        if v is None:
+            by[(e.a, e.b)] = e
+            continue
+        v.evidence.extend(e.evidence)
+        if VERDICT_ORDER[e.verdict] > VERDICT_ORDER[v.verdict]:
+            v.verdict = e.verdict
+    for v in by.values():
+        if v.verdict != "related" or any(e["rule"] in ("profile_bio", "profile_link") for e in v.evidence):
+            continue
+        for x, y in ((v.a, v.b), (v.b, v.a)):
+            prof = profiles.get(x)
+            if prof and prof.get("bio") and x in channels and y in channels \
+                    and not bio_names(prof["bio"], channels[y], held_by):
+                v.evidence.append({"rule": "profile_bio", "line": f"{channels[x].name}'s bio does not name "
+                                   f"{channels[y].name}: a beat writer, not staff", "posts": [],
+                                   "profile": _evidence_profile(x, prof)})
+    return [by[k] for k in sorted(by)]
+
+
+def address_of_key(key: str) -> Optional[str]:
+    """An address_key as the address the Add-source flow (the feed finder) starts from."""
+    if key.startswith("site:"):
+        return "https://" + key[5:]
+    if ":" in key:
+        kind, _, rest = key.partition(":")
+        return {"x": f"https://x.com/{rest}", "tg": f"https://t.me/{rest}", "yt": f"https://www.youtube.com/@{rest}",
+                "ytc": f"https://www.youtube.com/channel/{rest}"}.get(kind) if rest else None
+    return f"https://{key}" if "/" in key else None
+
+
+def _key_channel(key: str) -> Optional[Channel]:
+    """A channel nobody follows, as the name rules read it: its account's name, or its site's label."""
+    if key.startswith(("r:", "ru:")):
+        return None   # Reddit's are everyone's
+    if key.startswith("site:"):
+        host = key[5:]
+        return Channel(id="key:" + key, kind="site", name=site_label(host), handle=host)
+    if ":" in key:
+        kind, _, rest = key.partition(":")
+        if kind not in ("x", "tg", "yt", "ytc"):
+            return None
+        return Channel(id="key:" + key, kind={"x": "x", "tg": "telegram"}.get(kind, "youtube"), name=rest, handle=rest)
+    if "/" in key:
+        return Channel(id="key:" + key, kind="site", name=key.split("/", 1)[1], handle=key.split("/", 1)[1])
+    return None
+
+
+def _is_account(key: str) -> bool:
+    """A platform account (x:, tg:, yt:, ytc:, github.com/<owner>), not a site's home."""
+    return not key.startswith("site:")
+
+
+def platform_label(key: str) -> str:
+    if key.startswith("site:"):
+        return "site"
+    if ":" in key:
+        return {"x": "X", "tg": "Telegram", "yt": "YouTube", "ytc": "YouTube"}.get(key.split(":", 1)[0], "")
+    return key.split("/", 1)[0]
+
+
+def not_followed(channels: Mapping[str, Channel], profiles: Mapping[str, Mapping[str, Any]],
+                 own_links: Mapping[Tuple[str, str], Tuple[int, List[str]]], discover: Sequence[Mapping[str, Any]],
+                 held_by: Mapping[str, int]) -> Dict[str, List[Dict[str, Any]]]:
+    """A source's other channels you don't follow (issue 0132 C2, the owner 2026-11-08), each with why; never added
+    without the owner (the page's Add opens the feed finder):
+    - **profile**: its profile's website field or linked accounts (a profile linking over PROFILE_MAX_LINKED
+      addresses nobody follows is a directory: none);
+    - **own_links**: its own posts link the channel's bare profile address with a shared name, or, an account, in a
+      links section (STANDING_SHARE of 2+ own posts); never its own site's other hosts;
+    - **discover**: a Discover candidate that shares its name, or that Discover itself calls this source's other
+      channel ("also <source>'s"); one its own posts' links listed says Discover agrees.
+    Platforms (Reddit, Hacker News, Saved, many authors, aggregators) list none; Reddit's addresses are never one.
+    Returns source id -> [{key, url, label, platform, why [{rule, line, posts}]}], sorted by key."""
+    followed = {k for c in channels.values() for k in c.keys}
+    found: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+    pseudo: Dict[str, Optional[Channel]] = {}
+
+    def channel_of(key: str) -> Optional[Channel]:
+        if key not in pseudo:
+            pseudo[key] = _key_channel(key)
+        return pseudo[key]
+
+    def add(sid: str, key: str, rule: str, line: str, posts: Sequence[str] = ()) -> None:
+        url = address_of_key(key)
+        if channel_of(key) is None or url is None or key in followed or sid not in channels \
+                or platform_of(channels[sid]):
+            return
+        if key.startswith("site:") and site_of(key[5:]) in {site_of(k[5:]) for k in channels[sid].keys
+                                                             if k.startswith("site:")}:
+            return   # its own site's other host (trust.<its site>): no other channel
+        entry = found[sid].setdefault(key, {"key": key, "url": url, "label": key.split(":", 1)[-1],
+                                            "platform": platform_label(key), "why": []})
+        if not any(w["rule"] == rule for w in entry["why"]):
+            entry["why"].append({"rule": rule, "line": line, "posts": list(posts)[:3]})
+
+    for sid, prof in profiles.items():
+        outside = [(url, where, address_key(url)[0]) for url, where in profile_links(prof)]
+        outside = [(u, w, k) for u, w, k in outside if k and k not in followed]
+        if len({k for _, _, k in outside}) > PROFILE_MAX_LINKED:
+            continue
+        for url, where, key in outside:
+            add(sid, key, "profile", f"its profile links it ({where})")
+    for (sid, key), (n, posts) in own_links.items():
+        c, other = channels.get(sid), channel_of(key)
+        if c is None or other is None or key in followed:
+            continue
+        own = max(1, c.own)
+        # An account in a links section (STANDING_SHARE of 2+ own posts); a site's home only with a shared name: a
+        # post linking a site's home cites it, and a video description's repeated sites are its sponsors (measured
+        # on the server copy, 2026-11-08: a tool's site, a newspaper's, a channel's 18 sponsors in 18 of 18 videos).
+        section = _is_account(key) and n >= STANDING_MIN_POSTS and n / own >= STANDING_SHARE
+        if section or shared_names(c, other, held_by):
+            add(sid, key, "own_links", f"its own posts link it ({n}/{own})", posts)
+    by_token: Dict[str, List[str]] = defaultdict(list)
+    for sid, c in channels.items():
+        for t in c.tokens:
+            by_token[t].append(sid)
+    linked_by: Dict[str, List[Tuple[str, int, List[str]]]] = defaultdict(list)
+    for (sid, k), (n, posts) in own_links.items():
+        linked_by[k].append((sid, n, posts))
+    for cand in discover:
+        key = address_key(cand.get("url") or ("https://" + str(cand.get("key") or "")))[0]
+        other = channel_of(key) if key else None
+        if other is None:
+            continue
+        if cand.get("source_id"):
+            add(str(cand["source_id"]), key, "discover", f"Discover: also {cand.get('of') or 'this source'}'s")
+        for sid in sorted({s for t in other.tokens for s in by_token.get(t, ())}):
+            names = shared_names(channels[sid], other, held_by)
+            if names:
+                add(sid, key, "discover", "Discover suggests it; it shares the name " + "/".join(sorted(names)))
+        for sid, n, posts in linked_by.get(key, ()):   # its own posts' links listed it: Discover agrees
+            if key in found.get(sid, {}):
+                add(sid, key, "discover", f"Discover suggests it too; its own posts link it ({n})", posts)
+    return {sid: one_per_site(entries) for sid, entries in sorted(found.items())}
+
+
+def one_per_site(entries: Mapping[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One row per site (measured on the server copy, 2026-11-08: one voice's 12 tool subdomains were 12 rows): its
+    root host's when listed, else its first host's, with the other hosts' reasons and how many there are."""
+    by_site: Dict[str, List[str]] = defaultdict(list)
+    out: List[Dict[str, Any]] = []
+    for k in sorted(entries):
+        if k.startswith("site:"):
+            by_site[site_of(k[5:])].append(k)
+        else:
+            out.append(entries[k])
+    for site, keys in by_site.items():
+        main = "site:" + site if "site:" + site in keys else keys[0]
+        row = {**entries[main], "why": list(entries[main]["why"])}
+        for k in keys:
+            if k != main:
+                row["why"].extend(w for w in entries[k]["why"] if w["rule"] not in {x["rule"] for x in row["why"]})
+        if len(keys) > 1:
+            row["hosts"] = len(keys)
+        out.append(row)
+    return sorted(out, key=lambda e: e["key"])
+
+
 __all__ = ["address_key", "account_address_key", "site_label", "shingles", "jaccard", "Channel", "PairCounts", "Verdict",
-           "platform_of", "shared_names", "link_strength", "judge", "groups", "ALSO_WITHIN_HOURS", "HOME_HOST_SHARE"]
+           "platform_of", "shared_names", "link_strength", "judge", "groups", "ALSO_WITHIN_HOURS", "HOME_HOST_SHARE",
+           "profile_links", "profile_verdicts", "with_profiles", "bio_names", "not_followed", "address_of_key"]
