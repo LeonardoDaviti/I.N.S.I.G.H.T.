@@ -560,6 +560,11 @@ def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
         if part
     )
     detected = detect_language(language_input)
+    # A kind that knows the stored text's language says so (issue 0135: a video's caption track),
+    # rather than its title's script deciding for a transcript in another language.
+    declared = post.get("language_code") if isinstance(post, dict) else None
+    if isinstance(declared, str) and declared.strip():
+        detected = {"language_code": declared.strip().lower(), "confidence": 1.0}
 
     return {
         "lang": raw_lang,

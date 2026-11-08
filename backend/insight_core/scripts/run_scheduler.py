@@ -242,6 +242,10 @@ async def main() -> None:
     # resumable, and nothing at a later start. In a thread: the scheduler's first tick does not wait for it.
     from insight_core.scripts.repair_normalized_urls import repair_safely
     asyncio.get_running_loop().run_in_executor(None, repair_safely, db_url)
+    # Issue 0135: Telegram bridge posts dated by their edit, and transcripts stored as a translation or as
+    # caption markup, put right: the dates once, the transcripts a small budget per start; resumable, logged.
+    from insight_core.scripts import repair_0135
+    asyncio.get_running_loop().run_in_executor(None, repair_0135.repair_safely, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:

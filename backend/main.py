@@ -923,6 +923,17 @@ async def find_feed(request: FindFeedRequest):
     return {"success": True, **await where_linked.follow(FEED_FINDER_HTTP, services().source_fetch.kinds, address, linked)}
 
 
+@app.get("/api/sources/telegram-bridge")
+@error_detail("read the Telegram bridge")
+async def get_telegram_bridge():
+    """The Telegram RSS bridge a channel's address is built on (issue 0135): {bridge: "https://host"},
+    the first of TELEGRAM_RSS_HOSTS ("https://telegram.local" when unset), or null when it is set empty:
+    the Add-source dialog then says so instead of building a dead address."""
+    from insight_core.ingestion.kinds.telegram_rss import bridge_origin
+
+    return {"success": True, "bridge": bridge_origin()}
+
+
 @app.post("/api/sources/page-watch/preview")
 @error_detail("preview the page")
 async def preview_page_watch(request: PageWatchPreviewRequest):

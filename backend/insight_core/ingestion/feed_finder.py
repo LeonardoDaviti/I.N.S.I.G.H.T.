@@ -45,7 +45,14 @@ from typing import Iterable, List, Literal, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.parsing import local_name, moved_to, origin_from_source, path_segments, web_address
+from insight_core.ingestion.kinds.parsing import (
+    item_path,
+    local_name,
+    moved_to,
+    origin_from_source,
+    path_segments,
+    web_address,
+)
 from insight_core.utils.addresses import BLOG_HOSTS, blog_site, host_of, publication_of, same_site
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
@@ -72,6 +79,15 @@ MAX_MENU_LINKS = 12
 COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom", "/feed.rss",
                 "/?feed=rss2", "/feeds/posts/default")
 
+# A page that refuses us (issue 0135: a journal's bot protection) while its feed addresses answer:
+# these paths are tried under the page itself, then at the site's root, before anything else.
+BLOCKED_STATUSES = (401, 403, 429)
+BLOCKED_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml")
+REFUSED = "this feed has items INSIGHT can't read"
+# A feed that reads as a saved search (issue 0135): its title's words, its address's query or path.
+SEARCH_WORDS = frozenset({"search", "query"})
+SEARCH_PARAMS = frozenset({"q", "query", "term", "terms", "search", "s", "keyword", "keywords"})
+
 FEED_ROOTS = {"rss", "feed", "rdf"}
 FEED_SEGMENTS = {"rss", "atom", "feed"}
 FEED_ENDINGS = (".rss", ".atom", "feed.xml", "rss.xml", "atom.xml", "index.xml")
@@ -94,6 +110,11 @@ class Feed:
     bodiless: bool = field(default=False, compare=False)
     # The site its posts now live at ("blog.example"), when its first entry's page moved there (0108).
     moved_to: str = field(default="", compare=False)
+    # Its items are where INSIGHT's parser reads them (issue 0135, parsing.ITEM_PATHS); an unreadable
+    # feed is never offered: the finding says it was refused.
+    readable: bool = field(default=True, compare=False)
+    # It reads as a saved search ("Keyword search for query", ?q=): ranked below the site's own feeds.
+    search: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,8 @@ class FeedFinding:
     # them when the section gives nothing, without looking at the home page again.
     home_pages: Tuple[str, ...] = field(default=(), compare=False)
     home_menu: Tuple[str, ...] = field(default=(), compare=False)
+    # A feed was found whose items INSIGHT cannot read (issue 0135): REFUSED, else "".
+    refused: str = field(default="", compare=False)
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFinding:
@@ -123,6 +146,8 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFi
             finding = await search.run(address)
     except TimeoutError:
         finding = FeedFinding("none", pages=search.pages, menu=search.menu)
+    if search.refused and not finding.feeds:
+        finding = replace(finding, refused=REFUSED)
     if search.landed:
         finding = replace(finding, landed=search.landed, home_pages=search.home_pages, home_menu=search.home_menu)
     logger.info("Feed finder: %s -> %s, %d feed(s), %d request(s), %.1fs", address, finding.status,
@@ -144,7 +169,8 @@ async def page_feeds(http: KindHttp, url: str) -> Tuple[Feed, ...]:
             body, here = page
             title = _feed_title(body)
             if title is not None:
-                return (Feed(here, title, *_feed_entries(body, here)),)
+                feed = _feed(here, title, body, here)
+                return (feed,) if feed.readable else ()
             return await search._prove(_feed_links(body, here))
     except TimeoutError:
         return ()
@@ -167,6 +193,8 @@ class _Search:
         self.home_pages: Tuple[str, ...] = ()
         self.home_menu: Tuple[str, ...] = ()
         self.elsewhere: Tuple[str, ...] = ()   # the home page's menu blog links on another domain (0108)
+        self.refused = False                   # a feed was found that INSIGHT cannot read (0135)
+        self.blocked: set[str] = set()         # the addresses that refused us (BLOCKED_STATUSES, 0135)
 
     async def run(self, url: str) -> FeedFinding:
         finding = await self._run(url)
@@ -230,11 +258,24 @@ class _Search:
             self.tried.update({url, here})
             title = _feed_title(body)
             if title is not None:
-                return FeedFinding("feed", (Feed(here, title, *_feed_entries(body, here)),))
+                feed = _feed(here, title, body, here)
+                if not feed.readable:
+                    # A feed whose items the parser would not read stores nothing (issue 0135).
+                    self.refused = True
+                    return FeedFinding("none")
+                return FeedFinding("feed", (feed,))
             if not path_segments(here):
                 self.elsewhere = tuple(_elsewhere_blogs(_links(body), here))
             if feeds := await self._prove(_feed_links(body, here)):
                 return FeedFinding("found", feeds)
+        elif url in self.blocked:
+            # The page refuses us; its feed addresses may not (issue 0135): the known feed paths
+            # under the page, then at the site's root, before the pages around it (refused too).
+            page_base = url.split("?", 1)[0].rstrip("/")
+            bases = dict.fromkeys([page_base, origin_from_source(url, "")])
+            if feeds := await self._prove([base + path for base in bases for path in BLOCKED_PATHS],
+                                          limit=None, first=True):
+                return FeedFinding("found", feeds[:1])
 
         around = _around(here, url)
         pages = await asyncio.gather(*(self._get(other, PAGE_BYTES) for other in around))
@@ -276,6 +317,8 @@ class _Search:
             try:
                 return await asyncio.wait_for(self.http.get_start(url, max_bytes), REQUEST_TIMEOUT_S)
             except Exception as exc:  # noqa: BLE001 - a failed candidate is just not a feed
+                if getattr(exc, "status", None) in BLOCKED_STATUSES:
+                    self.blocked.add(url)
                 logger.debug("Feed finder: %s failed (%s %s)", url, type(exc).__name__,
                              getattr(exc, "status", None) or "")
                 return None
@@ -286,7 +329,13 @@ class _Search:
         if got is None:
             return None
         title = _feed_title(got[0])
-        return None if title is None else (got[1], Feed(url, title, *_feed_entries(got[0], got[1])))
+        if title is None:
+            return None
+        feed = _feed(url, title, got[0], got[1])
+        if not feed.readable:
+            self.refused = True
+            return None
+        return got[1], feed
 
     async def _prove(self, candidates: Iterable[str], limit: Optional[int] = MAX_CANDIDATES,
                      first: bool = False) -> Tuple[Feed, ...]:
@@ -315,7 +364,8 @@ class _Search:
             if task.done() and not task.cancelled() and task.result():
                 final, feed = task.result()
                 feeds.setdefault(final, feed)
-        return tuple(feeds.values())
+        # A saved search after the site's own feeds (issue 0135); the order otherwise kept.
+        return tuple(sorted(feeds.values(), key=lambda feed: feed.search))
 
 
 def _first_known(tasks: Sequence["asyncio.Task[Optional[Tuple[str, Feed]]]"]) -> bool:
@@ -378,6 +428,49 @@ def _feed_title(start: bytes) -> Optional[str]:
     except ET.ParseError:
         return None
     return None
+
+
+def _feed(url: str, title: str, start: bytes, final: str) -> Feed:
+    """The feed at url (read from start, landed at final), with what it holds, whether INSIGHT
+    reads its items and whether it is a saved search (issue 0135)."""
+    return Feed(url, title, *_feed_entries(start, final), readable=_readable(start),
+                search=is_search_feed(title, final))
+
+
+def _readable(start: bytes) -> bool:
+    """Whether start holds an item where parse_feed_posts reads one (parsing.ITEM_PATHS), as far as
+    it reads: a feed with items elsewhere (an RSS item outside its channel) would store nothing."""
+    parser = ET.XMLPullParser(events=("start", "end"))
+    path: List[str] = []
+    seen_item = False
+    try:
+        for offset in range(0, len(start), PARSE_CHUNK):
+            parser.feed(start[offset:offset + PARSE_CHUNK])
+            for event, element in parser.read_events():
+                name = local_name(element.tag).lower()
+                if event == "start":
+                    path.append(name)
+                    if name in ("item", "entry"):
+                        if item_path(path):
+                            return True
+                        seen_item = True
+                elif path:
+                    path.pop()
+    except ET.ParseError:
+        pass
+    return not seen_item
+
+
+def is_search_feed(title: str, url: str) -> bool:
+    """A feed that reads as a saved search (issue 0135): its title says search or query ("Keyword
+    search for query"), or its address searches (?q=, ?term=, /search/)."""
+    words = set("".join(ch if ch.isalnum() else " " for ch in (title or "").lower()).split())
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return bool(words & SEARCH_WORDS)
+    params = {key.lower() for key, value in urllib.parse.parse_qsl(parsed.query) if value}
+    return bool(words & SEARCH_WORDS or params & SEARCH_PARAMS or "search" in path_segments(url.lower()))
 
 
 def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:

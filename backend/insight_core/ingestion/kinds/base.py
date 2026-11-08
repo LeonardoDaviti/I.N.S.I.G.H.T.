@@ -233,6 +233,44 @@ def layout_changed_line(pages: int) -> str:
             "its reader needs an update")
 
 
+class EmptyFetch(ValueError):
+    """A fetch that worked and stored nothing it should have (issue 0135): a feed whose items none
+    were read, a channel whose every video was skipped. Raised by the kind, so the fetch is an error
+    with this reason: source health shows it, the summary counts it and backoff applies."""
+
+
+# Over this share of a fetch's items skipped, the fetch says so as a warning (issue 0135).
+SKIPPED_WARNING_SHARE = 0.5
+
+
+class FetchedPosts(list):
+    """A fetch's posts, with a warning when it skipped over SKIPPED_WARNING_SHARE of its items
+    (issue 0135). A plain list to every caller; the runner reads `warning`."""
+
+    warning: Optional[str] = None
+
+
+def skip_reasons(skipped: Mapping[str, int]) -> str:
+    """"14 the bot check, 1 timed out": the skip reasons, the most first."""
+    return ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: str = "items") -> "FetchedPosts":
+    """The fetch's posts, or EmptyFetch when it had items and none became a post (issue 0135):
+    "every item was skipped: <reasons>" when each was skipped for a reason, else "the feed has N
+    items but 0 were stored". Over half skipped is the posts with a warning."""
+    total_skipped = sum(skipped.values())
+    if items and not posts:
+        if total_skipped >= items:
+            raise EmptyFetch(f"every item was skipped ({items} {noun}): {skip_reasons(skipped)}")
+        raise EmptyFetch(f"the feed has {items} {noun} but 0 were stored"
+                         + (f" ({skip_reasons(skipped)} skipped)" if total_skipped else ""))
+    result = FetchedPosts(posts)
+    if items and total_skipped > items * SKIPPED_WARNING_SHARE:
+        result.warning = f"{total_skipped} of {items} {noun} skipped: {skip_reasons(skipped)}"
+    return result
+
+
 def skipped_counts(checkpoint: Optional[Mapping[str, Any]]) -> dict[str, int]:
     """The checkpoint's "skipped" counts (every key, 0 when absent)."""
     found = (checkpoint or {}).get("skipped") if isinstance(checkpoint, Mapping) else None

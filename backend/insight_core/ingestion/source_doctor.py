@@ -54,6 +54,7 @@ from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.ingestion.feed_finder import FEED_BYTES, feed_title, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
+from insight_core.ingestion.kinds.base import EmptyFetch
 from insight_core.ingestion.kinds.parsing import path_segments
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.titles import title_key
@@ -77,6 +78,9 @@ WORKING_AGAIN: Dict[str, Any] = {"replacement": None, "dismissed": False, "worki
 # Recorded with the error's `status` (None for a timeout).
 SERVER_ERROR: Dict[str, Any] = {"replacement": None, "dismissed": False, "server_error": True,
                                 "note": "server error, not moved"}
+# The finding on a fetch that worked and stored nothing (issue 0135, kinds.base.EmptyFetch): the address
+# answers, so it is never "working again" and nothing replaces it; recorded with the fetch's reason (note).
+EMPTY_FETCH: Dict[str, Any] = {"replacement": None, "dismissed": False, "empty_fetch": True}
 
 
 class DoctorStore(Protocol):
@@ -89,7 +93,9 @@ class DoctorStore(Protocol):
 
 def failure_signal(error: Optional[BaseException]) -> Optional[str]:
     """"gone" (HTTP 404/410), "server_error" (HTTP 5xx or a timeout), "not_feed" (the answer
-    does not parse as a feed), else None."""
+    does not parse as a feed), "empty" (it answered and nothing was stored, issue 0135), else None."""
+    if isinstance(error, EmptyFetch):
+        return "empty"
     if isinstance(error, HttpError) and error.status in GONE_STATUSES:
         return "gone"
     if isinstance(error, HttpError) and error.their_trouble:
@@ -234,6 +240,12 @@ class SourceDoctor:
     async def _after_failure(self, source: Mapping[str, Any], kind: Any, state: Optional[FetchStateRow],
                              error: Optional[BaseException], progress: Any) -> None:
         signal, now = failure_signal(error), self.clock()
+        if signal == "empty" and state is not None:
+            # Any kind (a channel whose every video was skipped too): its reason, nothing looked for.
+            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now,
+                                    finding={**EMPTY_FETCH, "note": str(error)})
+            logger.info("Source doctor: %s: %s", source.get("handle_or_url"), error)
+            return
         if state is None or source.get("platform") != "rss" or not should_look(kind.name, state, signal, now):
             return
         if signal == "server_error":
@@ -300,5 +312,5 @@ class DbDoctorStore:
             return [(str(url or ""), str(title)) for url, title in cur.fetchall()]
 
 
-__all__ = ["DbDoctorStore", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
+__all__ = ["DbDoctorStore", "EMPTY_FETCH", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
            "shared", "should_look", "within_section"]

@@ -198,8 +198,9 @@ def page_place(offer: Dict[str, Any]) -> Optional[Place]:
 
 def feed_row(feed: feed_finder.Feed, **more: Any) -> Dict[str, Any]:
     """A feed as the answer lists it: {url, title}, and `moved_to` when its posts now live on another
-    site (issue 0108: the site, "blog.example")."""
-    return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}), **more}
+    site (issue 0108: the site, "blog.example"), `saved_search` when it reads as one (issue 0135)."""
+    return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}),
+            **({"saved_search": True} if feed.search else {}), **more}
 
 
 def rank(articles: Sequence[str], feeds: Sequence[feed_finder.Feed], pages: Sequence[Dict[str, Any]],
@@ -287,7 +288,9 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         move = await where_moved(http, articles, found, pages)
         feeds, pages = rank(articles, found, pages, move)
     return {"status": finding.status, "feeds": feeds, "homepage": finding.status == "none" and home,
-            "pages": pages, "linked": len(articles), "start": start}
+            "pages": pages, "linked": len(articles), "start": start,
+            # A feed was found whose items INSIGHT cannot read (issue 0135): never offered.
+            **({"refused": finding.refused} if finding.refused else {})}
 
 
 __all__ = ["follow", "start_section", "holds", "feed_place", "moved", "rank", "on_site", "main_section"]

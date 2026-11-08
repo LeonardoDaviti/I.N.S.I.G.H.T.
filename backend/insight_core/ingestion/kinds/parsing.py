@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
@@ -1299,8 +1299,29 @@ def strip_telegram_media_tag(title: str) -> str:
     return TELEGRAM_MEDIA_TAG_RE.sub("", title or "", count=1)
 
 
+# Where each feed shape keeps its items (issue 0135): RSS 2.0 under its channel, Atom's entries,
+# RSS 1.0 (RDF) items beside its channel. The feed finder reads a candidate by the same paths, so a
+# feed it accepts is one this parser reads.
+ITEM_PATHS = {"rss": ("rss", "channel", "item"), "feed": ("feed", "entry"), "rdf": ("rdf", "item")}
+
+
+def item_path(names: Sequence[str]) -> bool:
+    """Whether the element at this path (local names from the root, lower case) is an item
+    parse_feed_posts reads."""
+    return bool(names) and ITEM_PATHS.get(names[0]) == tuple(names)
+
+
+def feed_items(feed_text: str) -> int:
+    """How many items or entries the document holds, wherever they are (0 when it does not parse)."""
+    try:
+        root = ET.fromstring(feed_text)
+    except ET.ParseError:
+        return 0
+    return sum(1 for node in root.iter() if local_name(node.tag).lower() in ("item", "entry"))
+
+
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
-    """Parse an RSS 2.0 or Atom document into post drafts, newest first."""
+    """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first."""
     root = ET.fromstring(feed_text)
     posts: List[Dict[str, Any]] = []
 
@@ -1348,6 +1369,33 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "media_urls": _extract_xml_media_urls(entry, content_html),
                 "categories": _extract_xml_categories(entry),
                 "metadata": {},
+            })
+    elif local_name(root.tag).lower() == "rdf":
+        # RSS 1.0 (issue 0135): <rdf:RDF> holds its <item>s beside its <channel>, each dated by
+        # Dublin Core (dc:date) or PRISM (prism:publicationDate), its authors dc:creator.
+        for item in (child for child in root if local_name(child.tag) == "item"):
+            content_html = normalize_feed_urls(
+                child_inner_xml(item, "encoded") or child_inner_xml(item, "description")
+            )
+            about = next((value for key, value in item.attrib.items() if local_name(key) == "about"), None)
+            url = normalize_feed_urls(child_text(item, "link") or about or source_url)
+            when = (child_text(item, "date") or child_text(item, "publicationDate")
+                    or child_text(item, "coverDate") or child_text(item, "pubDate"))
+            creators = [name for child in item if local_name(child.tag) == "creator"
+                        if (name := " ".join((child.text or "").split()))]
+            posts.append({
+                "platform": "rss",
+                "source": source_url,
+                "url": url,
+                "guid": about or child_text(item, "identifier"),
+                "title": readable_title(normalize_feed_urls(" ".join((child_text(item, "title") or "").split())), url),
+                "content": strip_html(content_html),
+                "content_html": content_html,
+                "date": parse_datetime_value(when),
+                "date_precision": date_precision(when),
+                "media_urls": _extract_xml_media_urls(item, content_html),
+                "categories": _extract_xml_categories(item),
+                "metadata": {"authors": creators} if creators else {},
             })
 
     posts.sort(key=lambda post: post.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
