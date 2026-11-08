@@ -53,6 +53,7 @@ export function valueText(signal: string, value: unknown): string {
   if (signal === 'kinds' || signal === 'languages') return mix(value);
   if (signal === 'age') return typeof value === 'string' ? value.slice(0, 10) : '—';
   if (signal === 'audience') return `${num(value)} views`;
+  if (signal === 'followers') return num(value);
   if (signal === 'reputation' && typeof value === 'object') {
     const v = value as Record<string, unknown>;
     return `cited by ${num(v.cited_by)} · ${num(v.classics)} Classics · first ${pct(v.first_to_report)}`;

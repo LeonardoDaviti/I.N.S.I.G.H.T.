@@ -27,7 +27,9 @@ from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import StoriesRepository
 from insight_core.db.repo_voices import VoicesRepository, counted
 from insight_core.utils import source_roles
-from insight_core.utils.voice_rules import Channel, Verdict, groups, judge, platform_of, shared_names, site_label
+from insight_core.services import profiles_service
+from insight_core.utils.voice_rules import (Channel, Verdict, groups, judge, not_followed, platform_of, profile_verdicts,
+                                            shared_names, site_label, with_profiles)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,8 @@ class VoicesService:
         """Every pair of sources judged (voice_rules.judge), with what the page names them by. Read only."""
         started = time.monotonic()
         channels, reposts, source_of = VoicesRepository.channels(cur)
-        counts = VoicesRepository.pair_counts(cur, channels, reposts, source_of)
+        outside: Dict[Tuple[str, str], List[Any]] = {}
+        counts = VoicesRepository.pair_counts(cur, channels, reposts, source_of, outside)
         held_by: Dict[str, int] = {}
         for c in channels.values():
             for t in c.tokens:
@@ -116,8 +119,18 @@ class VoicesService:
             logger.exception("Voices: the official rule could not run")
             officials, focus = {}, {}
         verdicts = judge(channels, counts, officials, focus)
+        # 0132 C2: what the channels' profiles say (none before migration 0086 or a first fetch), and the channels
+        # nobody follows that a profile, a source's own posts or Discover name as a source's other channel.
+        profiles = profiles_service.current(cur)
+        if profiles:
+            verdicts = with_profiles(verdicts, profile_verdicts(channels, profiles, counts, held_by), channels,
+                                     profiles, held_by)
+        others = not_followed(channels, profiles, {k: (v[0], v[1]) for k, v in outside.items()},
+                              VoicesRepository.discover_candidates(cur), held_by)
         return {
             "computed_at": self.clock().isoformat(), "seconds": round(time.monotonic() - started, 2),
+            "not_followed": others, "followed": sorted({k for c in channels.values() for k in c.keys}),
+            "profiles": len(profiles),
             "channels": {i: {"name": c.name, "kind": c.kind, "posts": c.posts, "enabled": c.enabled,
                              "platform": platform_of(c)} for i, c in channels.items()},
             "verdicts": [{"a": v.a, "b": v.b, "verdict": v.verdict, "evidence": v.evidence, "names": v.names}
@@ -166,7 +179,8 @@ class VoicesService:
         with self._cursor() as cur:
             row = SystemSettingsRepository.get(cur, SUGGESTIONS_KEY)
             found = row[0] if row else None
-            shaped = self.shape(cur, found) if found else {"computed_at": None, "voices": [], "possible": [], "related": []}
+            shaped = self.shape(cur, found) if found else {"computed_at": None, "voices": [], "possible": [], "related": [],
+                                                                 "not_followed": [], "profiles": 0}
         return {"success": True, **shaped, "computing": self._computing.locked()}
 
     def shape(self, cur: Any, found: Mapping[str, Any]) -> Dict[str, Any]:
@@ -209,7 +223,56 @@ class VoicesService:
         related = one_question_per_voice([{"a": source(v.a), "b": source(v.b), "evidence": v.evidence}
                                           for v in verdicts if v.verdict == "related" and open_pair(v)])
         return {"computed_at": found.get("computed_at"), "seconds": found.get("seconds"), "voices": out_voices,
-                "possible": possible, "related": related}
+                "possible": possible, "related": related,
+                "not_followed": sorted(self._not_followed(cur, found, current).values(),
+                                       key=lambda g: (g["subject"]["name"].lower(), g["subject"]["id"])),
+                "profiles": found.get("profiles", 0)}
+
+    @staticmethod
+    def _not_followed(cur: Any, found: Mapping[str, Any], current: Mapping[str, Optional[str]]
+                      ) -> Dict[str, Dict[str, Any]]:
+        """0132 C2: the kept "not followed" channels as things stand now, one group per voice (its channels' merged)
+        or per source with no voice: {subject {kind, id, name}, channels [{key, url, label, platform, of, why}]}.
+        A channel followed since is gone."""
+        kept = found.get("not_followed") or {}
+        if not kept:
+            return {}
+        info = found.get("channels", {})
+        followed = VoicesRepository.followed_keys(cur) | set(found.get("followed") or ())
+        voice_ids = sorted({v for s, v in current.items() if v and s in kept})
+        names = {v["id"]: v["name"] for v in VoicesRepository.voices(cur, voice_ids)} if voice_ids else {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for sid, entries in kept.items():
+            if sid not in current:
+                continue   # a source removed since
+            vid = current.get(sid)
+            if vid and vid in names:
+                subject = {"kind": "voice", "id": vid, "name": names[vid]}
+            else:
+                subject = {"kind": "source", "id": sid, "name": (info.get(sid) or {}).get("name", "")}
+            group = out.setdefault(f"{subject['kind']}:{subject['id']}", {"subject": subject, "channels": []})
+            of = (info.get(sid) or {}).get("name", "")
+            for e in entries:
+                if e["key"] in followed:
+                    continue
+                have = next((c for c in group["channels"] if c["key"] == e["key"]), None)
+                if have is None:
+                    group["channels"].append({**e, "of": [of], "why": list(e["why"])})
+                else:
+                    have["of"].append(of)
+                    have["why"].extend(w for w in e["why"] if w not in have["why"])
+        return {k: g for k, g in out.items() if g["channels"]}
+
+    def not_followed_of(self, voice_id: str) -> List[Dict[str, Any]]:
+        """A voice's channels nobody follows (the voice page's "Not followed"), from the kept suggestions."""
+        with self._cursor() as cur:
+            row = SystemSettingsRepository.get(cur, SUGGESTIONS_KEY)
+            found = row[0] if row else None
+            if not found or not found.get("not_followed"):
+                return []
+            current = VoicesRepository.voice_of(cur, sorted(found["not_followed"]))
+            group = self._not_followed(cur, found, current).get(f"voice:{voice_id}")
+        return group["channels"] if group else []
 
     # ---- the owner's decisions ----------------------------------------------------------------
 
@@ -354,7 +417,17 @@ class VoicesService:
             found = VoicesRepository.voices(cur, [voice_id])
         if not found:
             raise LookupError(f"no such voice: {voice_id}")
-        return {"success": True, "voice": found[0]}
+        return {"success": True, "voice": found[0], "not_followed": self.not_followed_of(voice_id)}
+
+    # ---- 0132 C2: the channel profiles' switch --------------------------------------------------
+
+    def profiles_setting(self) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            return {"success": True, "on": profiles_service.setting_on(cur)}
+
+    def set_profiles_setting(self, on: bool) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            return {"success": True, "on": profiles_service.set_setting(cur, on)}
 
     def of_source(self, source_id: str) -> Dict[str, Any]:
         """The voice a source is in (null when none): the source page's "part of <voice>"."""

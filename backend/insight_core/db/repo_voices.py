@@ -109,9 +109,12 @@ class VoicesRepository:
 
     @staticmethod
     def pair_counts(cur: Cursor, channels: Mapping[str, Channel], reposts: Set[str],
-                    source_of: Mapping[str, str]) -> Dict[Tuple[str, str], PairCounts]:
+                    source_of: Mapping[str, str],
+                    outside: Optional[Dict[Tuple[str, str], List[Any]]] = None) -> Dict[Tuple[str, str], PairCounts]:
         """(A, B) -> what A's posts say of B: its links (post_links; a YouTube description's addresses too) to B's
-        addresses, header/footer and bare profile links among them, and A's reposts of B's tweets."""
+        addresses, header/footer and bare profile links among them, and A's reposts of B's tweets.
+        `outside` (0132 C2), when given, gets (A, key) -> [own posts, example posts] for A's own posts linking a bare
+        profile address nobody follows (voice_rules.not_followed)."""
         import re
         key_to: Dict[str, Set[str]] = defaultdict(set)
         for sid, c in channels.items():
@@ -135,10 +138,18 @@ class VoicesRepository:
         for pid, links in per_post.items():
             a = source_of[pid]
             seen, seen_bp, seen_profile = set(), set(), set()
+            seen_outside: Set[str] = set()
             for target, boilerplate in links:
                 k, profile = address_key(target)
                 if not k:
                     continue
+                if outside is not None and profile and k not in key_to and k not in seen_outside \
+                        and pid not in reposts:
+                    seen_outside.add(k)
+                    got = outside.setdefault((a, k), [0, []])
+                    got[0] += 1
+                    if len(got[1]) < 3:
+                        got[1].append(pid)
                 for b in key_to.get(k, ()):
                     if b == a:
                         continue
@@ -201,6 +212,37 @@ class VoicesRepository:
                             e = counts.setdefault((x, y), PairCounts())
                             e.copies_own += 1
                             e.example("copies", mine)
+
+    # ---- 0132 C2: profiles and the channels nobody follows ---------------------------------------
+
+    @staticmethod
+    def discover_candidates(cur: Cursor) -> List[Dict[str, Any]]:
+        """Discover's last kept list (system_settings discover_list, read only, never made here): its suggestions and
+        its "also <source>'s" rows, each {key, url, of?, source_id?}. [] when Discover has kept none."""
+        cur.execute("SELECT value->'list' FROM system_settings WHERE key = 'discover_list'")
+        row = cur.fetchone()
+        found = (row[0] if row else None) or {}
+        out = []
+        for s in list(found.get("suggestions") or []) + list(found.get("also") or []):
+            if isinstance(s, dict) and s.get("key"):
+                out.append({k: s.get(k) for k in ("key", "url", "of", "source_id") if s.get(k) is not None})
+        return out
+
+    @staticmethod
+    def followed_keys(cur: Cursor) -> Set[str]:
+        """Every source's own addresses (its account, else its address's), read from sources alone: a channel
+        added since the suggestions were kept is no longer "not followed"."""
+        from insight_core.db.repo_stories import source_account
+        cur.execute("SELECT platform, handle_or_url FROM sources")
+        out: Set[str] = set()
+        for platform, handle in cur.fetchall():
+            account = source_account(platform, handle)
+            key = account_address_key(account) if account else None
+            if not key and "://" in (handle or ""):
+                key = address_key(handle)[0]
+            if key:
+                out.add(key)
+        return out
 
     # ---- the owner's voices ---------------------------------------------------------------------
 

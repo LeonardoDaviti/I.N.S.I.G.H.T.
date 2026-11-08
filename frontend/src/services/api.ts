@@ -1733,3 +1733,11 @@ export const markxBackApi = {
     request<{ id: string; answer: string; label: MarkxBackLabel | null; precision: MarkxBackPrecision }>(
       '/api/markx/labels/back', { method: 'POST', body: { row, answer } }),
 };
+
+// 0132 C2: channel profiles and the channels you don't follow (declaration merging adds the suggestions' fields).
+export interface NotFollowedChannel {
+  key: string; url: string; label: string; platform: string; of: string[]; hosts?: number;
+  why: { rule: 'profile' | 'own_links' | 'discover'; line: string; posts: string[] }[];
+}
+export interface NotFollowedGroup { subject: { kind: 'voice' | 'source'; id: string; name: string }; channels: NotFollowedChannel[] }
+export interface VoiceSuggestions { not_followed?: NotFollowedGroup[]; profiles?: number }

@@ -270,6 +270,19 @@ class Signals(_World):
         # rows: one per signal and subject, every signal
         self.assertEqual({sig for (s, sig) in got if s == self.site}, set(S.SIGNALS))
 
+    def test_audience_from_profiles(self):
+        """0132 C2: the Audience card's followers, from the channel's current profile; none: no audience data."""
+        from insight_core.ingestion.profiles import Ask, Profile
+        from insight_core.services.profiles_service import record
+        self.world()
+        record(self.cur, self.x, Ask("nitter", "u", "h"), NOW - D,
+               profile=Profile("nitter", "https://nitter.local/acmelabs", followers=4200, followers_label="followers"))
+        got = self.stats()
+        self.assertEqual((got[(self.x, "followers")].value, got[(self.x, "followers")].n), (4200, 1))
+        self.assertEqual(got[(self.x, "followers")].evidence["channels"][0]["label"], "followers")
+        self.assertIsNone(got[(self.site, "followers")].value)
+        self.assertEqual(got[(self.site, "followers")].evidence["what"], "no audience data")
+
     def test_the_page(self):
         self.world()
         self.stats()

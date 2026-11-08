@@ -1,12 +1,12 @@
 // The voices' calls (issue 0132 A), beside createApi's: their own module, so only the voice pages' chunks load it.
 import { request } from '../lib/request';
-import type { Voice, VoiceEvidence, VoiceSuggestions } from './api';
+import type { NotFollowedChannel, Voice, VoiceEvidence, VoiceSuggestions } from './api';
 
 const voicePath = (id: string) => `/api/voices/${encodeURIComponent(id)}`;
 
 export const voicesApi = {
   list: () => request<{ success: true; voices: Voice[] }>('/api/voices'),
-  get: (id: string) => request<{ success: true; voice: Voice }>(voicePath(id)),
+  get: (id: string) => request<{ success: true; voice: Voice; not_followed?: NotFollowedChannel[] }>(voicePath(id)),
   ofSource: (sourceId: string) =>
     request<{ success: true; voice: Voice | null }>(`/api/sources/${encodeURIComponent(sourceId)}/voice`),
   suggestions: () => request<VoiceSuggestions>('/api/voices/suggestions'),
@@ -24,4 +24,8 @@ export const voicesApi = {
   leave: (sourceId: string) => request<{ success: true }>('/api/voices/leave', { method: 'POST', body: { source_id: sourceId } }),
   rename: (id: string, name: string) => request<{ success: true; voice: Voice }>(voicePath(id), { method: 'PUT', body: { name } }),
   remove: (id: string) => request<{ success: true; source_ids: string[] }>(voicePath(id), { method: 'DELETE' }),
+  /** 0132 C2: channel profiles, read monthly (on by default). */
+  profilesSetting: () => request<{ success: true; on: boolean }>('/api/voices/profiles/setting'),
+  setProfilesSetting: (on: boolean) =>
+    request<{ success: true; on: boolean }>('/api/voices/profiles/setting', { method: 'PUT', body: { on } }),
 };

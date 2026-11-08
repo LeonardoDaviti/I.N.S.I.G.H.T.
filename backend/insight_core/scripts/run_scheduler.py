@@ -20,6 +20,8 @@ Two clocks:
   no answer, 3 times an hour at most.
 - Mark X's jobs (issue 0112 Decided 10), when INSIGHT_MARKX is on: markx/jobs.py's Runner, in a thread of its own,
   looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process.
+- Channel profiles (issue 0132 C2), after each tick: a few sources' profile pages a tick, monthly, on the same
+  gates (services/profiles_service.py; its switch is on by default).
 - The source stats job (issue 0132 B), when INSIGHT_MARKX is on: markx/source_stats.py's Runner, in a thread of its
   own, looks every 5 minutes and runs the stats nightly and after a regroup, in a child process.
 
@@ -49,6 +51,18 @@ logger = get_component_logger("run_scheduler")
 RUNNING = True
 TICK_MINUTES_FLOOR = 15
 ARCHIVE_POLL_SECONDS = 30
+
+
+async def profiles_after_tick(db_url: str, run: Optional[Callable[[str], Awaitable[Any]]] = None) -> Optional[Any]:
+    """0132 C2: the channel profiles due, a few a tick (services/profiles_service.py: monthly, capped, behind its
+    switch, on by default), after the tick's fetches, on the same gates. Never raises: profiles never stop ingestion."""
+    try:
+        if run is None:
+            from insight_core.services.profiles_service import run_after_tick as run
+        return await run(db_url)
+    except Exception:  # noqa: BLE001
+        logger.exception("Channel profiles failed (the next tick tries again)")
+        return None
 
 
 def _handle_stop(signum, frame):
@@ -308,6 +322,7 @@ async def main() -> None:
                 await daily_work(db_url, operations_service, cfg)
 
             state = await tick(now, state, config, ingest=run_ingestion, daily_work=daily, ops=operations_service)
+            await profiles_after_tick(db_url)
             logger.info("Next ingestion tick at %s", state.next_tick_at.isoformat() if state.next_tick_at else "?")
         # Sleep in 1s steps so SIGTERM is honoured promptly.
         await asyncio.sleep(1)

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import type { Voice } from '../../services/api';
@@ -10,11 +10,19 @@ import { sourceReadPath, voiceReadPath } from '../../lib/feedContext';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { errorMessage } from '../../lib/apiError';
 import { VOICES_KEY } from '../../hooks/useVoice';
+import NotFollowed from './NotFollowed';
 
 /** The view a tab keeps (News, Classics): a channel's tab reads the same view of that channel. */
 function keptSearch(search: string): string {
   const view = new URLSearchParams(search).get('view');
   return view === 'news' || view === 'classics' ? `?view=${view}` : '';
+}
+
+/** 0132 C2: the voice's other channels you don't follow, each with Add (the feed finder, prefilled). */
+function VoiceNotFollowed({ id }: { id: string }) {
+  const query = useQuery({ queryKey: [...VOICES_KEY, 'not-followed', id], queryFn: () => voicesApi.get(id), staleTime: 60_000, retry: false });
+  const channels = query.data?.not_followed ?? [];
+  return channels.length ? <div className="w-full"><NotFollowed channels={channels} /></div> : null;
 }
 
 /**
@@ -70,6 +78,7 @@ export default function VoiceHeader({ scope, voice }: { scope: string; voice: Vo
             A channel of <Link to={`${voiceReadPath(voice.id)}${search}`} className="text-fg underline decoration-fg-3">{sourceLabel(voice.name)}</Link>
           </p>
         )}
+        {onVoice ? <VoiceNotFollowed id={voice.id} /> : null}
         {voice.related.length ? (
           <p className="text-[0.8125rem] leading-5 text-fg-3">
             Related: {voice.related.map((r, i) => (

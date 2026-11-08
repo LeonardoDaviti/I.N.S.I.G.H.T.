@@ -195,6 +195,16 @@ export default function SourcesConfig() {
   const [showAddSource, setShowAddSource] = useState(false);
   // Follow… on a suggestion (issue 0050): Add source opens on its address, through the feed finder.
   const [followAddress, setFollowAddress] = useState<string | undefined>(undefined);
+  // 0132 C2: a voice page's "Not followed: <channel> — Add" arrives as ?follow=<address>: Add source opens on it.
+  const followParam = searchParams.get('follow');
+  useEffect(() => {
+    if (!followParam) return;
+    setFollowAddress(followParam);
+    setShowAddSource(true);
+    const params = new URLSearchParams(searchParams);
+    params.delete('follow');
+    setSearchParams(params, { replace: true });
+  }, [followParam, searchParams, setSearchParams]);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -570,7 +580,7 @@ export default function SourcesConfig() {
         </TabsContent>
         <TabsContent value="voices" className="pt-2">
           <div className="pb-24">
-            <Suspense fallback={<LoadingState label="Loading voices" rows={3} />}><VoicesPanel /></Suspense>
+            <Suspense fallback={<LoadingState label="Loading voices" rows={3} />}><VoicesPanel onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} /></Suspense>
           </div>
         </TabsContent>
         <TabsContent value="connections" className="pt-2">

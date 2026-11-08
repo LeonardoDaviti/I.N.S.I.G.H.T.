@@ -96,6 +96,8 @@ class TelegramClientPort(Protocol):
     async def get_messages(self, entity: Any, *, limit: int, offset_id: int = 0,
                            reverse: bool = False) -> Sequence[Any]: ...   # newest first; `.total` when known
 
+    async def get_full(self, entity: Any) -> Any: ...   # the channel's full info (0132 C2): full_chat.about, participants_count
+
 
 class TelegramClientFactory(Protocol):
     def create(self) -> TelegramClientPort: ...
@@ -144,6 +146,17 @@ class TelethonClient:
             return await self.telethon.get_entity(handle)
         except Exception as exc:  # noqa: BLE001 - translated, or re-raised unchanged
             translated = translate_telethon_error(exc, handle)
+            if translated is exc:
+                raise
+            raise translated from exc
+
+    async def get_full(self, entity: Any) -> Any:
+        """GetFullChannelRequest (issue 0132 C2): the channel's about and subscriber count, one request."""
+        from telethon.tl.functions.channels import GetFullChannelRequest
+        try:
+            return await self.telethon(GetFullChannelRequest(entity))
+        except Exception as exc:  # noqa: BLE001
+            translated = translate_telethon_error(exc, getattr(entity, "username", None))
             if translated is exc:
                 raise
             raise translated from exc
