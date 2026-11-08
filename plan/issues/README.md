@@ -143,6 +143,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0130](0130-v10.5-stealth.md) | Stealth v10.5: the entity queue cleared by measurement (bands, a second opinion, a narrower version guard), archives that work again (the newsletter API, a site reader, a moved feed, "0 new"), archives back to a date (Telegram, X), translation on request and for News leads, the normalised-address repair | built, merged (v10.5): A, B, C, D, E1 |
 | [0131](0131-built.md) | Stealth v10.6 (Stalker's first edges): older posts a post connects to, from authors' links (no model), the relate judge's uncertain edges, next_version from identity, the Mark X panel's Before list | built, merged (v10.6); spec uncommitted |
 | [0132](0132a-built.md) | Stealth v10.6: voices made of their channels (A: suggestions with evidence, confirm, the voice page, Also on, stories count a confirmed voice once) and the source analysis page (B: a card per signal, no single score, the stats job, stance Experimental; C1, C3 off) | built, merged (v10.6); spec uncommitted |
+| [0133](0133-built.md) | Stealth v10.7: ent-v4 behind a switch (default ent-v3): documents and cited sources as entities, roles source and recommended, a document's publisher, the citation rule, entities reading 6,000 characters; the frozen guide replaces the placeholder when the lab passes | built, merged (v10.7); spec uncommitted |
 
 ## Analysis archive
 
