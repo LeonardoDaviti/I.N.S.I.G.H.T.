@@ -120,6 +120,19 @@ class SuggestionTests(unittest.TestCase):
         found = judge(chans, {("yt", "x"): counts(link_posts=2, link_posts_own=2, profile_posts=2)}, {}, {})
         self.assertIsNone(verdict(found, "yt", "x"), "2/10 profile links, no name: nothing")
 
+    def test_a_few_citations_of_a_profile_are_no_links_section(self):
+        # v10.6.1 (the owner, 2026-11-08): a small blog linking an organisation's site in 2 of its 6 posts cites it;
+        # it is not that organisation's channel. Alone, a profile link joins only as a links section would: in most
+        # posts, of enough posts. With a link back or a shared name, the 30% standing link still joins.
+        chans = {"blog": channel("blog", name="Ann Lee", posts=6), "org": channel("org", name="Gauge Lab", posts=140)}
+        cites = {("blog", "org"): counts(link_posts=2, link_posts_own=2, profile_posts=2)}
+        self.assertIsNone(verdict(judge(chans, cites, {}, {}), "blog", "org"), "2/6 profile links, nothing back")
+        back = {**cites, ("org", "blog"): counts(link_posts=10, link_posts_own=10)}
+        self.assertEqual(verdict(judge(chans, back, {}, {}), "blog", "org").verdict, "join", "with a link back")
+        chans["blog"] = channel("blog", name="Ann Lee", posts=12)
+        section = {("blog", "org"): counts(link_posts=8, link_posts_own=8, profile_posts=8)}
+        self.assertEqual(verdict(judge(chans, section, {}, {}), "blog", "org").verdict, "join", "8/12: a links section")
+
     def test_a_standing_link_needs_some_link_back_unless_a_section(self):
         chans = {"a": channel("a", posts=10), "b": channel("b", posts=40)}
         one_way = {("a", "b"): counts(link_posts=5, link_posts_own=5)}
@@ -198,6 +211,19 @@ class SuggestionTests(unittest.TestCase):
         self.assertEqual(groups(found, rejected=[("a", "b"), ("a", "c")]), [["b", "c"]], "a pair not the same never joins")
         self.assertEqual(groups(found, joined={"a": "v", "b": "v", "c": "v"}), [], "already one voice")
         self.assertEqual(groups(found, joined={"a": "v", "b": "v"}), [["a", "b", "c"]], "c is not in it yet")
+
+
+class PossibleShapeTests(unittest.TestCase):
+    def test_a_channel_possible_with_a_confirmed_voice_shows_once(self):
+        # v10.6.1 (the owner, 2026-11-08): after a voice is confirmed, a channel sharing its name was listed once per
+        # channel of the voice; it is one question, "this channel and that voice", asked once.
+        from insight_core.services.voices_service import one_question_per_voice
+        src = lambda i, v=None: {"id": i, "name": i, "voice_id": v}   # noqa: E731
+        pairs = [{"a": src("gh", "V"), "b": src("medium")}, {"a": src("x", "V"), "b": src("medium")},
+                 {"a": src("medium"), "b": src("blog", "V")}, {"a": src("x", "V"), "b": src("gh", "V")},
+                 {"a": src("ncase1"), "b": src("ncase2")}]
+        got = one_question_per_voice(pairs)
+        self.assertEqual([(p["a"]["id"], p["b"]["id"]) for p in got], [("gh", "medium"), ("ncase1", "ncase2")])
 
 
 class CountingTests(unittest.TestCase):

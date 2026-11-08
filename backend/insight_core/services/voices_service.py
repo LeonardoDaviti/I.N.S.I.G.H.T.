@@ -61,6 +61,21 @@ def default_officials(cur: Any, channels: Mapping[str, Channel], reposts: Set[st
     return officials, focus
 
 
+def one_question_per_voice(pairs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """v10.6.1: one question per (voice or source, voice or source): a channel possible with a confirmed voice is
+    asked once, not once per channel of the voice; two channels of one voice are never asked. First kept."""
+    seen: Set[Tuple[str, str]] = set()
+    out: List[Dict[str, Any]] = []
+    for p in pairs:
+        ka, kb = (p["a"].get("voice_id") or p["a"]["id"]), (p["b"].get("voice_id") or p["b"]["id"])
+        key = tuple(sorted((ka, kb)))
+        if ka == kb or key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
 def _run_story_job(db_url: str) -> None:
     from insight_core.services.stories_service import in_own_process, recompute_job
     threading.Thread(target=in_own_process, args=(recompute_job, db_url), name="stories-voices", daemon=True).start()
@@ -189,10 +204,10 @@ class VoicesService:
         def open_pair(v: Verdict) -> bool:
             return (v.a, v.b) not in decided and not same_voice(v.a, v.b) \
                 and not (v.a in in_group and in_group.get(v.b) is in_group[v.a])
-        possible = [{"a": source(v.a), "b": source(v.b), "names": v.names, "evidence": v.evidence}
-                    for v in verdicts if v.verdict == "possible" and open_pair(v)]
-        related = [{"a": source(v.a), "b": source(v.b), "evidence": v.evidence}
-                   for v in verdicts if v.verdict == "related" and open_pair(v)]
+        possible = one_question_per_voice([{"a": source(v.a), "b": source(v.b), "names": v.names, "evidence": v.evidence}
+                                           for v in verdicts if v.verdict == "possible" and open_pair(v)])
+        related = one_question_per_voice([{"a": source(v.a), "b": source(v.b), "evidence": v.evidence}
+                                          for v in verdicts if v.verdict == "related" and open_pair(v)])
         return {"computed_at": found.get("computed_at"), "seconds": found.get("seconds"), "voices": out_voices,
                 "possible": possible, "related": related}
 

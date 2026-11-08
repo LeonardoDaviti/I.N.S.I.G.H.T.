@@ -5,7 +5,8 @@ A suggestion is never applied without the owner. Two sources are suggested as on
 1. **the same address**: the same channel added twice (it also says "the same channel twice: disable one?");
 2. **a standing link**: a links section or footer that links the other's profile in STANDING_SHARE of its posts, or
    STANDING_SHARE of its own posts linking the other when that is no hub (linked by over HUB_SHARE of sources), with
-   some link back; a links section or footer link alone is enough, and so is any link (SOME_LINK) with a shared name;
+   some link back; a links section or footer link alone is enough in SECTION_SHARE of SECTION_MIN_POSTS+ posts (v10.6.1:
+   fewer are citations), and so is any link (SOME_LINK) with a shared name;
 3. **near-identical own posts** (5-word shingles, Jaccard COPY_JACCARD+, neither a repost) with a shared name;
 4. **both official for the same maker** (the role rule's step 3, utils/source_roles.py; a hook another role rule
    can fill).
@@ -34,6 +35,8 @@ from insight_core.utils.source_roles import FOCUSED_SHARE, Focus, Official, name
 STANDING_SHARE = 0.3      # measured (sources_v1)
 STANDING_MIN_POSTS = 2
 STANDING_OWN_MIN = 3
+SECTION_SHARE = 0.6        # v10.6.1: a profile or footer link alone joins only in most posts (a links section) ...
+SECTION_MIN_POSTS = 5      # ... of at least 5 posts; 2 of 6 posts linking a site cite it (the owner, 2026-11-08)
 SOME_LINK_SHARE = 0.05    # "some link": 2+ posts and 5%
 SOME_LINK_MIN = 2
 HUB_SHARE = 0.10          # a source linked by over 10% of sources (5 at least) is a hub
@@ -277,6 +280,13 @@ def judge(channels: Mapping[str, Channel], counts: Mapping[Tuple[str, str], Pair
         if i in channels and f.share >= FOCUSED_SHARE:
             pairs |= {tuple(sorted((i, j))) for j in by_maker.get(f.maker, ()) if j != i}
 
+    def section(e: Optional[PairCounts], c: Channel, strength: int, kind: str) -> bool:
+        """A profile or footer link alone joins as a links section: in SECTION_SHARE of SECTION_MIN_POSTS+ posts."""
+        if strength != 2 or kind not in ("profile", "footer") or not e:
+            return False
+        n, hits = max(1, c.own), (e.profile_posts if kind == "profile" else e.bp_posts)
+        return n >= SECTION_MIN_POSTS and hits / n >= SECTION_SHARE
+
     out = []
     for a, b in sorted(pairs):
         ca, cb = channels[a], channels[b]
@@ -322,7 +332,7 @@ def judge(channels: Mapping[str, Channel], counts: Mapping[Tuple[str, str], Pair
         elif platforms[a] or platforms[b]:
             continue   # platforms are never joined: their voice is the post's author
         elif (names and (pa or pb or copies)) or (pa == 2 and pb >= 1) or (pb == 2 and pa >= 1) \
-                or (pa == 2 and ka in ("profile", "footer")) or (pb == 2 and kb in ("profile", "footer")) or both_official \
+                or section(ab, ca, pa, ka) or section(ba, cb, pb, kb) or both_official \
                 or (fa and fb and fa.maker == fb.maker and fa.share >= CLOSE_MAKER_SHARE and fb.share >= CLOSE_MAKER_SHARE
                     and pa and pb):
             verdict = "join"
