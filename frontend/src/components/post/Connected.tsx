@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { ConnectedRow, PostConnected, PostConnectedSeries, PostSeries, SeriesPart } from '../../services/api';
+import type {
+  ConnectedReference, ConnectedRow, PostConnected, PostConnectedReferences, PostConnectedSeries, PostSeries, SeriesPart,
+} from '../../services/api';
 import { ExternalLink } from '../ui/TextLink';
 import { FOCUS_RING } from '../states';
 import { feedDateLabel, feedFullTime } from '../../lib/dates';
@@ -24,6 +26,8 @@ import { SAVE_PATH } from '../../lib/savePage';
  * Above it (issue 0134), the Series line: "Part 3 of 4 in <name>" with the stored parts in order and prev / next, or
  * "Issue #136 of <name>" with the previous and next issues. The same-source links that are series navigation ("the
  * previous part") show there, not as Earlier or Later rows.
+ *
+ * Last (issue 0137), its full text's reference list, folded: "References · N", each opening its page.
  */
 export default function Connected({ postId }: { postId: string }) {
   const api = useApi();
@@ -36,12 +40,13 @@ export default function Connected({ postId }: { postId: string }) {
     retry: false,
     placeholderData: keepPreviousData,
   });
-  const data = query.data as PostConnectedSeries | undefined;
+  const data = query.data as (PostConnectedSeries & PostConnectedReferences) | undefined;
   if (!data) return null;
   const series = data.series ?? null;
   const parts = new Set(series?.parts.map((p) => p.post_id) ?? []);
   const navigation = (data.navigation ?? []).filter((r) => !parts.has(r.post_id ?? ''));
-  const rows = data.earlier.length + data.later.length + data.outside.length;
+  const references = data.references ?? [];
+  const rows = data.earlier.length + data.later.length + data.outside.length + references.length;
   if (!rows && !series && !navigation.length) return null;
   const more = (group: keyof PostConnected['more']) => (all ? 0 : data.more?.[group] ?? 0);
   return (
@@ -51,6 +56,7 @@ export default function Connected({ postId }: { postId: string }) {
       <Group label="Earlier" rows={data.earlier} more={more('earlier')} open onMore={() => setAll(true)} />
       <Group label="Later" rows={data.later} more={more('later')} open={!phone} onMore={() => setAll(true)} />
       <Group label="Outside INSIGHT" rows={data.outside} more={more('outside')} open={!phone} onMore={() => setAll(true)} outside />
+      <References rows={references} />
     </section>
   );
 }
@@ -151,6 +157,31 @@ function Group({ label, rows, more, open, onMore, outside = false }: {
           +{more} more
         </button>
       ) : null}
+    </details>
+  );
+}
+
+/** The full text's reference list (issue 0137): folded, every one listed when opened. */
+function References({ rows }: { rows: ConnectedReference[] }) {
+  if (!rows.length) return null;
+  return (
+    <details aria-label="References" className="group mt-1">
+      <summary className="flex cursor-pointer list-none items-baseline gap-1.5 [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className="inline-block w-3 shrink-0 text-center group-open:rotate-90">›</span>
+        References
+        <span className="tabular-nums">· {rows.length}</span>
+      </summary>
+      <ol className="mt-1 flex flex-col gap-1.5 border-l border-line pl-3">
+        {rows.map((row) => (
+          <li key={row.address} className="flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap">
+            <span className={LINE_NAME} title={row.host}>{middleTruncate(row.host, 32)}</span>
+            <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
+            <ExternalLink href={row.url} dir="auto" title={row.address} className={`${LINE_TITLE} text-fg-2`}>
+              {row.title?.trim() || row.address}
+            </ExternalLink>
+          </li>
+        ))}
+      </ol>
     </details>
   );
 }

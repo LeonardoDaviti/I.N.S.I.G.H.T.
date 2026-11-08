@@ -153,7 +153,17 @@ class PostRefsRepository:
             out["more"][group] = len(rows) - len(shown)
         out["navigation"] = sorted(navigation, key=lambda r: (r["date"] or "", r["post_id"]))   # 0134
         out["series"] = SeriesRepository.line(cur, post_id)   # 0134
+        out["references"] = cls._references(cur, post_id)    # 0137 B8: the reference list, shown folded
         return out
+
+    @staticmethod
+    def _references(cur: Cursor, post_id: str) -> List[Dict[str, Any]]:
+        """The links of its references or bibliography section (post_links kind 'reference', issue 0137 B8), in the
+        text's order: {url (as written), address, host, title (the link's words)}. Every one: the list is folded."""
+        cur.execute("""SELECT target_url, COALESCE(shared_url, target_url), link_text FROM post_links
+                       WHERE post_id = %s AND kind = 'reference' ORDER BY position""", (post_id,))
+        return [{"url": href, "address": address, "host": host_of(address), "title": words}
+                for address, href, words in cur.fetchall()]
 
     @staticmethod
     def _stored_row(target_id: Any, target_url: str, target_source: str, name: str, at: Any, title: Optional[str],
