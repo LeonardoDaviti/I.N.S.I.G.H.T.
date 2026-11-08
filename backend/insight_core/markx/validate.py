@@ -352,10 +352,25 @@ def _stance(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _back(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0136: each verdict names one of the question's new posts, once."""
+    from insight_core.markx import back
+    n = back.numbered(input)
+    seen = set()
+    for p in a["posts"]:
+        if not 1 <= p["n"] <= n:
+            return f"a verdict names post {p['n']}, not one of 1-{n}"
+        if p["n"] in seen:
+            return f"post {p['n']} has two verdicts"
+        seen.add(p["n"])
+    return None
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
+          "back": _back,       # 0136
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 
