@@ -18,6 +18,7 @@ Environment:
                        auth           the not-logged-in result (is_error, exit 1)
                        authraw        no JSON: "Invalid API key · Please run /login" on stderr, exit 1
                        error          a non-fatal API error result (is_error, exit 1)
+                       refuse:WORD    the usage-policy refusal (is_error, exit 1) when any item's text has WORD
                        garbage        output that is not JSON, exit 0
   FAKE_CLAUDE_STATE  a directory for the call counter (calls run in parallel; the counter is locked)
   FAKE_CLAUDE_LOG    a JSON-lines file: one record per call {n, argv, system, stdin, plan}
@@ -90,6 +91,9 @@ def main():
         sys.exit(1)
     if "authraw" in feats:
         fail("Invalid API key · Please run /login", 1)
+    if "refuse" in feats and feats["refuse"] in stdin:
+        print(json.dumps(result("API Error: Haiku 5.5 can't help with this. Start a new session to continue.", 0, True)))
+        sys.exit(1)
     if "error" in feats:
         print(json.dumps(result("API Error: 500 Internal server error", 0, True)))
         sys.exit(1)

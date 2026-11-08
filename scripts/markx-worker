@@ -28,7 +28,8 @@ A cycle
 5. One retry: the tasks whose line was missing or failed the schema are asked again, in batches of their
    own (one kind each, at most --batch). After it, valid and still-invalid answers are posted (an invalid
    one is stored by the server as a call with its error and counts as a try); tasks still without an answer
-   are released at the end of the cycle.
+   are released at the end of the cycle. A retry refused by the usage policy is halved until the refused task
+   stands alone; that one is posted as an empty answer (a failed try), so it never holds back its batch again.
 6. Tokens and cost come from Claude Code's JSON (`usage`: input + cache read + cache creation tokens in,
    output tokens out; `total_cost_usd`; the model from `modelUsage`). Every call is logged with them; each
    posted answer carries its share of its batch (an even split; a retried task carries its share of both
@@ -137,16 +138,17 @@ from pathlib import Path
 
 EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
-DEFAULT_KINDS = "read,read3,entities,alias,alias2,collide,check,join,pair,merge,perspective,sheet,connect,relate,card,headline,briefing,translate,stance"
+DEFAULT_KINDS = "read,read3,entities,alias,alias2,collide,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,briefing,translate,stance"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
 # the lease still takes --batch of them. --per-call overrides it.
-PER_CALL = "merge=1,collide=6,perspective=1,sheet=1,read3=5,stance=1"   # 0119: the collision judge 6 a call, as the lab asked it; a story's
+PER_CALL = "merge=1,collide=6,perspective=1,sheet=1,read3=5,stance=1,back=8"   # 0119: the collision judge 6 a call, as the lab asked it; a story's
 # perspectives (one group of at most 5 members a task) and its sheet one a call (0119 B3-B4); 0127: read-v3 5 a call (rv3d)
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
 
 EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
+REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal (2026-11-08)
 EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
 EMBED_KINDS = (EMBED_KIND, "embed_name")   # 0119 A1: a name's vector is embedded as a post's is
 
@@ -711,14 +713,15 @@ class Worker:
                  invalid_errors=[e for _, _, e in invalid][:5] or None)
         if res.get("fatal"):
             self.set_fatal(res["fatal"], res["error"])
-        return ok, invalid, missing, late, res.get("model")
+        refused = "text" not in res and bool(REFUSAL.search(str(res.get("error") or "")))
+        return ok, invalid, missing, late, res.get("model"), refused
 
     # -- a round ----------------------------------------------------------------------------------------
     def first(self, batch):
         r = self.ask(batch, batch.tasks, 1)
         if r is None:
             return []
-        ok, invalid, missing, late, model = r
+        ok, invalid, missing, late, model, _refused = r
         rows = [self.answer_row(t, a) for t, a in ok]
         if late:   # the lease is gone: no retry; the invalid ones are stored with their errors
             rows += [self.answer_row(t, a) for t, a, _ in invalid]
@@ -731,7 +734,19 @@ class Worker:
         r = self.ask(batch, batch.tasks, 2)
         if r is None:
             return
-        ok, invalid, missing, late, model = r
+        ok, invalid, missing, late, model, refused = r
+        if refused and not late:
+            # A usage-policy refusal answers no task of the batch: halve it until the refused task stands alone,
+            # then post it as an empty answer (the server stores a failed try; three and the task fails), so one
+            # post no longer holds back its batch every round (2026-11-08).
+            if len(batch.tasks) > 1:
+                half = len(batch.tasks) // 2
+                for part in (batch.tasks[:half], batch.tasks[half:]):
+                    self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until))
+                return
+            self.log("refused", kind=batch.kind, task=batch.tasks[0]["id"])
+            self.post([self.answer_row(batch.tasks[0], {})], model)
+            return
         self.post([self.answer_row(t, a) for t, a in ok] + [self.answer_row(t, a) for t, a, _ in invalid], model)
 
     # -- embeddings -------------------------------------------------------------------------------------

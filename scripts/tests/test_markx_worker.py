@@ -464,6 +464,19 @@ class TestRetry(Base):
         self.assertEqual(len(self.stub.by_status("open")), 20)
         self.assertEqual(len(self.stub.releases), 1)
 
+    def test_a_refused_batch_is_halved_until_the_refused_post_stands_alone(self):
+        # 2026-11-08: Haiku refused whole batches of 20 for one post ("can't help with this"); the 20 were released
+        # and leased again every round. The retry halves a refused batch; a single refused task is posted as an
+        # empty answer, which the server stores as a failed try (three and it fails), so the other 19 are answered.
+        self.stub.add("read", 20)
+        self.stub.tasks["7"]["input"] += " FORBIDDEN"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 19)
+        self.assertGreaterEqual(self.stub.tasks["7"]["attempts"], 1, "the refused one: a failed try a lease")
+        self.assertIn(self.stub.tasks["7"]["status"], ("open", "failed"))
+        self.assertEqual(len(self.stub.by_status("open")) + len(self.stub.by_status("failed")), 1, "only it is left")
+
     def test_unparsable_output(self):
         self.stub.add("read", 5)
         p = self.run_worker("--kinds", "read", plan="garbage")
