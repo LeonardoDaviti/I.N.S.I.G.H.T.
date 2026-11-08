@@ -12,7 +12,9 @@ valid_to, never deleted):
      edge: the link stays a Connected row. Written incrementally by the decision run's `connections` stage (`stage`:
      the posts whose refs changed, the links whose target was stored since, the edges whose ref closed or became
      boilerplate) and by a resumable backfill over the archive (BACKFILL_SECONDS a run, mx_settings BACKFILL_KEY).
-     A link that stops resolving, or becomes boilerplate, closes its edge.
+     A link that stops resolving, or becomes boilerplate, closes its edge. A same-source link that is series
+     navigation (post_refs.navigation, 0134: both ends in one series, or "previous part" link words) is relation
+     `next_in_series`, rule `series`, never `refers_back`, and the judge never refines it.
   2. **The judge** (`relate`, relate-v1 = G2's frozen judge v3, asked RELATE_RUNS times; the majority, "unknown" when
      no two agree; p = the share of the runs that agree). Candidates: the same ent-v3 subject (one entity after 0119 A
      identity) on both sides, cosine >= RELATE_COS, the older post RELATE_DAYS back at most (mx_candidates kind
@@ -49,7 +51,9 @@ RELATE_COS = 0.75             # ... at this cosine or more (G2's source b)
 RELATE_RUNS = 3               # the judge asked three times a pair, the majority
 RELATE_OPEN = 100             # the planner's cap (decide.Config.relate_open)
 RULE_OTHER, RULE_OWN, RULE_NEXT = "author_link_other", "author_link_own", "entity_next_version"
-LINK_RULES = (RULE_OTHER, RULE_OWN)
+RULE_SERIES, NEXT_IN_SERIES = "series", "next_in_series"   # 0134: a same-source link that is series navigation
+LINK_RULES = (RULE_OTHER, RULE_OWN, RULE_SERIES)
+JUDGED_LINK_RULES = (RULE_OTHER, RULE_OWN)   # the judge refines these; a series edge is never asked
 RULES = LINK_RULES + (RULE_NEXT,)
 P_OTHER, P_OWN = 1.0, 0.9     # decision 1: the same source's links are edges at p 0.9
 MEANINGFUL = ("same_event", "follows_up", "next_version", "builds_on", "refers_back")
@@ -118,22 +122,24 @@ def link_edges(cur: Any, post_ids: Iterable[str]) -> Dict[Tuple[str, str], Dict[
     if not ids:
         return {}
     cur.execute(f"""SELECT r.post_id::text, p.url, p.source_id::text, {_date()}, r.target_address, r.href, r.reason,
-                           r.reason_kind
+                           r.reason_kind, r.navigation
                       FROM post_refs r JOIN posts p ON p.id = r.post_id
                      WHERE r.post_id = ANY(%s::uuid[]) AND r.valid_to IS NULL AND NOT r.boilerplate
                      ORDER BY r.post_id, r.position""", (ids,))
     rows = cur.fetchall()
-    targets = resolve(cur, [(pid, _absolute(url, href), address) for pid, url, _s, _at, address, href, _r, _k in rows])
+    targets = resolve(cur, [(pid, _absolute(url, href), address) for pid, url, _s, _at, address, href, _r, _k, _n in rows])
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
     gap = timedelta(days=GAP_DAYS)
-    for (pid, _url, src, at, address, href, reason, kind), got in zip(rows, targets):
+    for (pid, _url, src, at, address, href, reason, kind, nav), got in zip(rows, targets):
         if got is None or at is None or got[2] is None:
             continue
         tid, tsrc, tat = got
         if tat > at - gap or (pid, tid) in out:
             continue
         own = tsrc == src
-        out[(pid, tid)] = {"rule": RULE_OWN if own else RULE_OTHER, "p": P_OWN if own else P_OTHER,
+        series = own and nav   # 0134: series navigation is next_in_series, never refers_back
+        out[(pid, tid)] = {"rule": RULE_SERIES if series else RULE_OWN if own else RULE_OTHER,
+                           "relation": NEXT_IN_SERIES if series else "refers_back", "p": P_OWN if own else P_OTHER,
                            "evidence": {"href": href, "address": address, "reason": reason, "reason_kind": kind}}
     return out
 
@@ -206,7 +212,7 @@ def sync_links(cur: Any, post_ids: Iterable[str], *, now: datetime, run_id: Any)
     have = {(e["a"], e["b"]): e for e in _current(cur, rules=LINK_RULES, a=ids)}
     gone = [e for k, e in have.items() if k not in want or want[k]["rule"] != e["rule"]]
     counts["closed"] += _close(cur, gone, now=now)
-    new = [dict(w, a=k[0], b=k[1], relation="refers_back") for k, w in want.items()
+    new = [dict(w, a=k[0], b=k[1]) for k, w in want.items()
            if k not in have or have[k]["rule"] != w["rule"]]
     counts["opened"] += _open(cur, new, run_id=run_id, now=now)
     touched = [(e["a"], e["b"]) for e in gone] + [(e["a"], e["b"]) for e in new]
@@ -223,7 +229,8 @@ def dirty_posts(cur: Any, since: datetime) -> Set[str]:
     out: Set[str] = set()
     cur.execute("SELECT id::text FROM posts WHERE refs_scanned_at >= %s", (since,))
     out |= {r[0] for r in cur.fetchall()}
-    cur.execute("SELECT DISTINCT post_id::text FROM post_refs WHERE created_at >= %s OR valid_to >= %s", (since, since))
+    cur.execute("SELECT DISTINCT post_id::text FROM post_refs WHERE created_at >= %s OR valid_to >= %s "
+                "OR navigation_at >= %s", (since, since, since))   # 0134: a navigation flag changed
     out |= {r[0] for r in cur.fetchall()}
     cur.execute("SELECT normalized_url, url FROM posts WHERE created_at >= %s", (since,))
     addresses: Set[str] = set()
@@ -515,7 +522,7 @@ def plan(cur: Any, *, open_cap: int = RELATE_OPEN, now: Optional[datetime] = Non
                       FROM c JOIN posts p ON p.id = c.a
                      WHERE NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'relate' AND t.a = c.a AND t.b = c.b)
                      ORDER BY {_date()} DESC, c.a, c.b, c.evidence IS NULL
-                     LIMIT %(n)s""", {"rules": list(LINK_RULES), "n": room})
+                     LIMIT %(n)s""", {"rules": list(JUDGED_LINK_RULES), "n": room})
     picks = [(a, b, ev) for a, b, ev, _at in cur.fetchall()]
     if not picks:
         return 0
@@ -607,7 +614,7 @@ def apply_pairs(cur: Any, pairs: Iterable[Tuple[str, str]], *, now: datetime, ru
     if not pairs:
         return counts
     found = verdicts(cur, pairs) if found is None else found
-    links = {(e["a"], e["b"]): e for e in _current(cur, rules=LINK_RULES, pairs=pairs)}
+    links = {(e["a"], e["b"]): e for e in _current(cur, rules=JUDGED_LINK_RULES, pairs=pairs)}
     nexts = {(e["a"], e["b"]) for e in _current(cur, rules=[RULE_NEXT], pairs=pairs)}
     judged: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for e in _current(cur, judged=True, pairs=pairs):
@@ -737,7 +744,7 @@ def _shown(e: Dict[str, Any], title: Optional[str]) -> Optional[str]:
     return ev.get("reason") or next((r for r in ev.get("reasons") or [] if r), None)
 
 
-_RANK = {RULE_OTHER: 0, RULE_OWN: 1, RULE_NEXT: 2, None: 3}
+_RANK = {RULE_OTHER: 0, RULE_OWN: 1, RULE_SERIES: 1, RULE_NEXT: 2, None: 3}
 
 
 def before(cur: Any, post_id: str, *, shown: int = BEFORE_SHOWN) -> Dict[str, Any]:

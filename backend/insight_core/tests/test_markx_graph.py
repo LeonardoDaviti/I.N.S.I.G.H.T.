@@ -382,5 +382,42 @@ class TheBeforeList(_Graph):
         self.assertEqual(call("GET", f"/api/markx/posts/{olders[0]}")[1]["before"], [])   # the older post has none
 
 
+class SeriesNavigation(_Graph):
+    """0134: a same-source author link marked series navigation (post_refs.navigation) is next_in_series, rule series,
+    never refers_back, and the judge never asks about it; the flag changing re-reads the edge."""
+
+    def test_a_navigation_link_is_next_in_series_and_never_judged(self):
+        part1 = self.post("Part 1: the scheduler", at=self.at(60))
+        other = self.post(source=self.other, at=self.at(50))
+        part2 = self.post("Part 2: the scheduler", at=self.at(0))
+        self.ref(part2, self.url(part1), position=0)
+        self.ref(part2, self.url(other), position=1)
+        self.cur.execute("UPDATE post_refs SET navigation = true, navigation_at = now() WHERE post_id = %s "
+                         "AND target_address = %s", (part2, self.url(part1)))
+        self.stage()
+        got = {(b, rel, rule) for _a, b, rel, rule, *_ in self.edges()}
+        self.assertEqual(got, {(part1, "next_in_series", "series"), (other, "refers_back", "author_link_other")})
+        self.cur.execute("SELECT b::text FROM mx_tasks WHERE kind = 'relate'")
+        self.assertNotIn(part1, [r[0] for r in self.cur.fetchall()])   # the stage planned; never the series edge
+        found, of = invariants._markx_author_links(invariants.Run("", self.cur, NOW))
+        self.assertEqual((found, of), ([], 2))
+        self.assertEqual({r["post_id"]: r["rule"] for r in graph.before(self.cur, part2)["items"]},
+                         {part1: "series", other: "author_link_other"})
+
+    def test_the_flag_turning_off_reopens_it_as_refers_back(self):
+        part1 = self.post("Part 1: the scheduler", at=self.at(60))
+        part2 = self.post("Part 2: the scheduler", at=self.at(0))
+        self.ref(part2, self.url(part1))
+        self.cur.execute("UPDATE post_refs SET navigation = true WHERE post_id = %s", (part2,))
+        self.stage()
+        self.cur.execute("UPDATE posts SET refs_scanned_at = now() - interval '3 days' WHERE id = %s", (part2,))
+        self.cur.execute("UPDATE post_refs SET created_at = now() - interval '3 days', navigation = false, "
+                         "navigation_at = now() + interval '1 minute' WHERE post_id = %s", (part2,))
+        self.stage(now=datetime.now(timezone.utc) + timedelta(minutes=2))
+        self.assertEqual([(rel, rule) for _a, _b, rel, rule, *_ in self.edges()], [("refers_back", "author_link_own")])
+        self.assertEqual(sorted((rel, cur) for _a, _b, rel, _r, _p, _c, _e, cur in self.edges(current=False)),
+                         [("next_in_series", False), ("refers_back", True)])   # closed, never deleted
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1684,3 +1684,21 @@ export interface FeedItem {
   also_on?: AlsoOnLine[];
 }
 // The voices' calls are services/voices.ts (voicesApi): loaded only by the voice pages' own chunks.
+
+// 0134
+/** A part of a post's series (issue 0134): a stored post, its number as its title writes it ("3", "32a"). */
+export interface SeriesPart {
+  post_id: string; number: string | null; position: number; title: string | null; date: string | null; current: boolean;
+}
+/** The post's Series line: "Part 3 of 4 in <name>" (a series, every stored part) or "Issue #136 of <name>" (a column,
+ *  the previous and next issues only). */
+export interface PostSeries {
+  id: string; kind: 'series' | 'column'; name: string; number: string | null; position: number; count: number;
+  total: number; parts: SeriesPart[]; prev: SeriesPart | null; next: SeriesPart | null;
+}
+/** Connected with 0134's parts: the series line, and the same-source links that are series navigation (not Earlier /
+ *  Later rows). Older servers send neither. */
+export type PostConnectedSeries = PostConnected & {
+  series?: PostSeries | null;
+  navigation?: (ConnectedRow & { group: 'earlier' | 'later' })[];
+};
