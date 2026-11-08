@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-VERSION = 1                   # a bump recomputes every source's series (series_service)
+VERSION = 2                   # a bump recomputes every source's series (series_service); 2: 0137's shapes
 WINDOW = 60                   # fix 4: days between two parts (was 45)
 K_WINDOW = 120                # issue-style numbers: days between two issues
 K_STEP = 3                    # ... at most this many numbers apart
@@ -56,8 +56,18 @@ PART = re.compile(r"(?i)(?<![\w])(?:част[ьиеюя]|part|pt\.?|глава|c
                   r"(?:\s*(?:/|of|из)\s*(\d{1,4}))?")
 FRAC = re.compile(r"(?<![\w/.,:$€£])\(?(\d{1,2})\s?(?:/|of|из)\s?(\d{1,2})\)?(?![\w/.,:%])")
 ISSUE = re.compile(r"(?i)(?:(?<![\w&])#\s?|№\s?|(?<![\w])(?:no\.|issue|выпуск|episode|ep\.?|vol\.?|week|неделя)\s?#?\s?)"
-                   r"(\d{1,4})(?![\w.,])")
+                   r"(\d{1,4})(?![\w,]|\.\d)")      # "#34." ends a sentence (0137); "#3.5" is no issue
 SHORT = re.compile(r"^([A-Za-zА-Яа-яЁё][\w\-]{0,15}(?: [\w\-]{1,15}){0,2}) (\d{1,2})[:.]\s")   # "PPA 7: ..."
+# 0137: "Name N Title" ("Newsletter 483 The jobs report"): a short stem at the title's start, a bare number, no colon.
+# Only a run makes it a marker (N_RUN+ posts, numbers rising with the dates), never a pair; not a year, not a date.
+NAMED = re.compile(r"^([A-Za-zА-Яа-яЁё][\w\-]{0,15}(?: [\w\-]{1,15}){0,2}) (\d{1,5})(?=\s|$)(?![\s]*[:./%,])")
+MONTHS = re.compile(r"(?i)^\s*(?:(?:jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?\b|january|february|march|april|may\b|"
+                    r"june|july|august|september|october|november|december|(?:январ|феврал|март|апрел|июн|июл|август|"
+                    r"сентябр|октябр|ноябр|декабр)\w*|ма[яй]\b)")
+N_RUN, N_STEP = 3, 20         # a "Name N" run: this many posts, each at most this many numbers after the one before
+# the stem of "#N" (0137; "week N", "No. N" keep the whole prefix) is the title segment next to it: a guest's name before it or after it is not part of the stem
+# ("Musk v. Altman", "Dr. Who" are one segment: a full stop ends one after a word of 3+ letters)
+SEGMENT = re.compile(r"(?<=\w{3})\.\s|[:!?]\s|\s-\s|[|—–]")
 SEP = set(",:;()[]—–-|.!?«»\"'/")
 # a bare "previous post" / "first post" is weak: a follow-up says it too; it makes no group alone
 WEAK = re.compile(r"(?i)^\W*(?:предыдущ\w* пост|previous post|(?:the )?first post)\W*$")
@@ -165,6 +175,8 @@ def marker(p: Post) -> Optional[Marker]:
                 continue
             if m.start() > 3:
                 raw = t[:m.start()]
+                if style == "K" and t[m.start()] in "#№":
+                    raw = next((seg for seg in reversed(SEGMENT.split(raw)) if seg.strip(" ,;()[]#.")), raw)
             else:
                 raw = re.split(r"[:|—–]|\s-\s|\(|\[", t[m.end():].strip(" ,:;-–—|()[]#"), maxsplit=1)[0]
             shown = raw.strip(" ,:;-–—|()[]#.")
@@ -172,6 +184,18 @@ def marker(p: Post) -> Optional[Marker]:
     m = SHORT.match(t)
     if m:
         return Marker("S", int(m.group(2)), m.group(2), None, norm(m.group(1)), m.group(1))
+    return None
+
+
+def named_marker(p: Post) -> Optional[Marker]:
+    """0137: a "Name N Title" title's marker, a candidate only: build() keeps it when its stem runs (N_RUN+, rising).
+    Never on X: "Question 1", "Question 2" replies are a thread's tweets (fix 1), not a series."""
+    if p.kind == "x":
+        return None
+    t = clean_title(p)
+    m = NAMED.match(t)
+    if m and not MONTHS.match(t[m.end():]) and not 1900 <= int(m.group(2)) <= 2100:
+        return Marker("N", int(m.group(2)), m.group(2), None, norm(m.group(1)), m.group(1))
     return None
 
 
@@ -209,7 +233,7 @@ def build(posts: Sequence[Post], links: Iterable[NavLink] = ()) -> List[Group]:
 
     # E1: part-style and fraction with each other, issue-style with issue-style
     fam = lambda s: s if s in ("K", "S") else "PF"
-    ids = sorted((i for i in mk if mk[i].style != "S"), key=lambda i: by_id[i].at)
+    ids = sorted((i for i in mk if mk[i].style not in ("S", "N")), key=lambda i: by_id[i].at)
     for x, a in enumerate(ids):
         for b in ids[x + 1:]:
             d = _days(by_id[a].at, by_id[b].at)
@@ -248,6 +272,33 @@ def build(posts: Sequence[Post], links: Iterable[NavLink] = ()) -> List[Group]:
             if _days(min(ats), max(ats)) <= WINDOW:
                 for x in mem[1:]:
                     join(mem[0], x, "E1")
+    # N (0137): "Name N Title" runs, N_RUN+ posts whose numbers rise with their dates, each within K_WINDOW days and
+    # N_STEP numbers of the one before (a repost of a number is left out of the run, not breaking it)
+    named: Dict[str, List[str]] = defaultdict(list)
+    candidates = {p.id: m for p in posts if p.id not in mk and (m := named_marker(p))}
+    for i, m in candidates.items():
+        named[m.stem].append(i)
+
+    def run(chain: List[str]) -> None:
+        if len(chain) >= N_RUN:
+            for x in chain:
+                mk[x] = candidates[x]
+            for x in chain[1:]:
+                join(chain[0], x, "E1")
+
+    for _stem, members in named.items():
+        chain: List[str] = []
+        for i in sorted(members, key=lambda i: (by_id[i].at, candidates[i].number)):
+            last = chain[-1] if chain else None
+            if last is not None and candidates[i].number == candidates[last].number:
+                continue
+            if last is None or (0 < candidates[i].number - candidates[last].number <= N_STEP
+                                and _days(by_id[last].at, by_id[i].at) <= K_WINDOW):
+                chain.append(i)
+                continue
+            run(chain)
+            chain = [i]
+        run(chain)
     # E2: a navigation link to another post of the source
     links = [l for l in links if l.post in by_id]
     for l in links:
@@ -293,9 +344,9 @@ def build(posts: Sequence[Post], links: Iterable[NavLink] = ()) -> List[Group]:
         if not (ms or ev.get("E2") or ev.get("E3")):
             continue   # a weak link alone
         styles = Counter(m.style for m in ms)
-        k_major = styles.get("K", 0) >= max(1, styles.get("P", 0) + styles.get("F", 0))
+        k_major = styles.get("K", 0) + styles.get("N", 0) >= max(1, styles.get("P", 0) + styles.get("F", 0))
         groups.append(_group(g, by_id, mk, dict(ev), k_major))
-        issue_stems.append({mk[i].stem for i in g if i in mk and mk[i].style == "K"})
+        issue_stems.append({mk[i].stem for i in g if i in mk and mk[i].style in ("K", "N")})
     # an issue-style stem in two groups of the source is a column: it outlived the window
     recurs = Counter(s for stems in issue_stems for s in stems)
     for g, stems in zip(groups, issue_stems):

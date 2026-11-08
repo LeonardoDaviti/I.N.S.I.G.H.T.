@@ -245,9 +245,33 @@ SKIPPED_WARNING_SHARE = 0.5
 
 class FetchedPosts(list):
     """A fetch's posts, with a warning when it skipped over SKIPPED_WARNING_SHARE of its items
-    (issue 0135). A plain list to every caller; the runner reads `warning`."""
+    (issue 0135). A plain list to every caller; the runner reads `warning`. `failure`: the fetch
+    stored fewer posts than its items for no reason a feed gives (issue 0137 A1, collapsed): the
+    runner saves the posts and records the fetch as failing, with this reason."""
 
     warning: Optional[str] = None
+    failure: Optional[str] = None
+
+
+def collapsed(posts: list) -> Optional[str]:
+    """"the feed has 282 items but 1 would be stored (282 items share 1 address)" when items that are
+    not duplicates of each other (another guid, or another title) have one address, else None (issue 0137
+    A1). Duplicates (the same guid, or no guid and the same title) are no failure."""
+    from insight_core.utils.url_normalization import normalize_url
+
+    groups: dict = {}
+    for post in posts:
+        url = post.get("url") if isinstance(post, Mapping) else None
+        if isinstance(url, str):
+            key = normalize_url(url) or url
+            groups.setdefault(key, set()).add(post.get("guid") or " ".join(str(post.get("title") or "").split()))
+    distinct = sum(len(identities) for identities in groups.values())
+    stored = len(groups)
+    if stored >= distinct:
+        return None
+    shared = [identities for identities in groups.values() if len(identities) > 1]
+    return (f"the feed has {distinct} items but {stored} would be stored "
+            f"({sum(map(len, shared))} items share {len(shared)} address{'es' if len(shared) != 1 else ''})")
 
 
 def skip_reasons(skipped: Mapping[str, int]) -> str:
@@ -266,6 +290,7 @@ def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: 
         raise EmptyFetch(f"the feed has {items} {noun} but 0 were stored"
                          + (f" ({skip_reasons(skipped)} skipped)" if total_skipped else ""))
     result = FetchedPosts(posts)
+    result.failure = collapsed(posts)
     if items and total_skipped > items * SKIPPED_WARNING_SHARE:
         result.warning = f"{total_skipped} of {items} {noun} skipped: {skip_reasons(skipped)}"
     return result

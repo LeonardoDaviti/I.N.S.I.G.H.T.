@@ -101,7 +101,7 @@ class RdfFeedTests(unittest.TestCase):
     def test_an_rdf_item_without_a_date_is_kept_undated(self):
         (post,) = parse_feed_posts(RDF_UNDATED, f"{JOURNAL}/x")
         self.assertIsNone(post["date"])
-        self.assertEqual(post["date_precision"], "none")
+        self.assertEqual(post["date_precision"], "seen")   # dated when first seen (issue 0137 B9)
 
     def test_a_generic_rss_source_on_an_rdf_feed_stores_its_items(self):
         http = FakeHttp({f"{JOURNAL}/toc.rss": RDF})

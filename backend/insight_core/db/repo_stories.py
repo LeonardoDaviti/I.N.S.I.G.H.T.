@@ -246,15 +246,21 @@ class StoriesRepository:
         if links:
             cur.executemany(
                 """
-                INSERT INTO post_links (post_id, target_url, target_site, position, link_text, shared_url)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO post_links (post_id, target_url, target_site, position, link_text, shared_url, kind, boilerplate)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (post_id, target_url) DO UPDATE
                     SET target_site = EXCLUDED.target_site, position = EXCLUDED.position, link_text = EXCLUDED.link_text,
-                        shared_url = EXCLUDED.shared_url
-                    WHERE (post_links.target_site, post_links.position, post_links.link_text, post_links.shared_url)
-                          IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text, EXCLUDED.shared_url)
+                        shared_url = EXCLUDED.shared_url, kind = EXCLUDED.kind,
+                        -- A reference is boilerplate (issue 0137 B8); a link the signature pass marks.
+                        boilerplate = CASE WHEN EXCLUDED.kind = 'reference' THEN true
+                                           WHEN post_links.kind = 'reference' THEN false ELSE post_links.boilerplate END
+                    WHERE (post_links.target_site, post_links.position, post_links.link_text, post_links.shared_url,
+                           post_links.kind)
+                          IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text, EXCLUDED.shared_url,
+                                            EXCLUDED.kind)
                 """,
-                [(post_id, link.url, link.site, link.position, link.text, link.shared) for link in links],
+                [(post_id, link.url, link.site, link.position, link.text, link.shared, link.kind, link.kind == "reference")
+                 for link in links],
             )
 
     def save_post_links(self, cur: Cursor, post_id: str) -> None:
@@ -321,17 +327,18 @@ class StoriesRepository:
                        WHERE %(only)s::uuid[] IS NULL OR source_id = ANY(%(only)s::uuid[]) GROUP BY source_id),
             c AS (SELECT p.source_id, pl.target_url, count(*) AS posts
                   FROM post_links pl JOIN posts p ON p.id = pl.post_id
-                  WHERE %(only)s::uuid[] IS NULL OR p.source_id = ANY(%(only)s::uuid[]) GROUP BY 1, 2),
+                  WHERE (%(only)s::uuid[] IS NULL OR p.source_id = ANY(%(only)s::uuid[])) AND pl.kind = 'link' GROUP BY 1, 2),
             own AS (SELECT * FROM unnest(%(ids)s::uuid[], %(own)s::text[], %(by_host)s::bool[]) AS o(source_id, own, by_host)),
             want AS (
                 SELECT pl.post_id, pl.target_url,
-                       (c.posts >= %(min_posts)s AND c.posts >= %(share)s * n.posts)
+                       -- A reference is never an ordinary link (issue 0137 B8): always boilerplate.
+                       pl.kind = 'reference' OR (c.posts >= %(min_posts)s AND c.posts >= %(share)s * n.posts)
                        OR CASE WHEN own.by_host THEN substring(pl.target_url FROM '^[a-z]+://([^/?#:]+)') = own.own
                                ELSE pl.target_site = own.own END AS boilerplate
                 FROM post_links pl
                 JOIN posts p ON p.id = pl.post_id
                 JOIN n ON n.source_id = p.source_id
-                JOIN c ON c.source_id = p.source_id AND c.target_url = pl.target_url
+                LEFT JOIN c ON c.source_id = p.source_id AND c.target_url = pl.target_url
                 LEFT JOIN own ON own.source_id = p.source_id
             )
             UPDATE post_links pl SET boilerplate = COALESCE(want.boilerplate, false)

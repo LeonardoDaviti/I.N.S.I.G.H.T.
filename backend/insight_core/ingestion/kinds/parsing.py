@@ -1311,18 +1311,209 @@ def item_path(names: Sequence[str]) -> bool:
     return bool(names) and ITEM_PATHS.get(names[0]) == tuple(names)
 
 
+# What a feed's XML may hold that a strict parser refuses (issue 0137 B4): an ampersand that starts no
+# entity ("R&D"), and control characters XML 1.0 forbids. Both are repaired before giving up.
+BARE_AMPERSAND_RE = re.compile(r"&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);)")
+CONTROL_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def repaired_xml(text: str) -> str:
+    """text with its bare ampersands escaped and its forbidden control characters gone (issue 0137 B4)."""
+    return CONTROL_CHARS_RE.sub("", BARE_AMPERSAND_RE.sub("&amp;", text))
+
+
+def feed_root(feed_text: str) -> ET.Element:
+    """The feed's root element. A document a strict parser refuses is read again repaired
+    (repaired_xml); when that fails too, the first error is raised (the parser's own message)."""
+    try:
+        return ET.fromstring(feed_text)
+    except ET.ParseError as first:
+        try:
+            return ET.fromstring(repaired_xml(feed_text))
+        except ET.ParseError:
+            raise first from None
+
+
 def feed_items(feed_text: str) -> int:
     """How many items or entries the document holds, wherever they are (0 when it does not parse)."""
     try:
-        root = ET.fromstring(feed_text)
+        root = feed_root(feed_text)
     except ET.ParseError:
         return 0
     return sum(1 for node in root.iter() if local_name(node.tag).lower() in ("item", "entry"))
 
 
+# An item's identity (issue 0137 B1): its link, else its guid, else its enclosure's address, else its
+# title and date. Never the feed's own address, nor a link items with other guids share (a podcast
+# whose every episode links the show's page). A guid, or a title and date, that is no address is kept
+# on the feed's address as ITEM_PARAM: each item a post of its own, the same post at every fetch.
+ITEM_PARAM = "insight_item"
+# A link this many items with other identities share is the show's or the site's, not an item's; two
+# items sharing one (the same article posted twice) stay one post, as before.
+SHARED_LINK_ITEMS = 3
+
+
+def _is_address(value: Optional[str]) -> bool:
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def item_address(source_url: str, token: str) -> str:
+    """The address of an item that has none of its own: the feed's, with the item's token (ITEM_PARAM)."""
+    return f"{source_url}{'&' if '?' in source_url else '?'}{ITEM_PARAM}={urllib.parse.quote(token, safe='')}"
+
+
+def item_identity(link: Optional[str], guid: Optional[str], enclosure: Optional[str], title_date: Optional[str],
+                  source_url: str, shared: bool = False) -> str:
+    """The item's address by its identity (see ITEM_PARAM); shared: other items with other guids have this link."""
+    own = normalize_url(source_url) or source_url
+    if _is_address(link) and not shared and (normalize_url(link) or link) != own:
+        return link  # type: ignore[return-value]
+    if _is_address(guid) and (normalize_url(guid) or guid) != own:
+        return guid  # type: ignore[return-value]
+    if guid:
+        return item_address(source_url, guid)
+    if _is_address(enclosure):
+        return enclosure  # type: ignore[return-value]
+    if title_date:
+        return item_address(source_url, title_date)
+    return link or source_url
+
+
+def _identities(drafts: List[Dict[str, Any]], source_url: str) -> None:
+    """Each draft's url and title, in place, from its identity (item_identity); the candidates go."""
+    others: Dict[str, set] = {}
+    for draft in drafts:
+        if draft.get("_link"):
+            others.setdefault(draft["_link"], set()).add((draft.get("guid"), draft.get("_enclosure"), draft.get("_title_date")))
+    for draft in drafts:
+        link = draft.pop("_link", None)
+        url = item_identity(link, draft.get("guid"), draft.pop("_enclosure", None), draft.pop("_title_date", None),
+                            source_url, shared=bool(link) and len(others.get(link, ())) >= SHARED_LINK_ITEMS)
+        draft["url"] = normalize_feed_urls(url)
+        draft["title"] = readable_title(draft["title"], draft["url"])
+
+
+def _enclosure(node: ET.Element) -> Optional[str]:
+    """The item's enclosure address (an episode's audio), else None."""
+    for child in node:
+        name = local_name(child.tag)
+        if name == "enclosure" and _is_address(child.attrib.get("url")):
+            return child.attrib["url"].strip()
+        if name == "link" and child.attrib.get("rel") == "enclosure" and _is_address(child.attrib.get("href")):
+            return child.attrib["href"].strip()
+    return None
+
+
+def _title_date(title: Optional[str], when: Optional[str]) -> Optional[str]:
+    title = " ".join((title or "").split())
+    return f"{title}|{(when or '').strip()}" if title else None
+
+
+# Authors (issue 0137 B7): one per name element; an affiliation or an identifier is no author.
+AFFILIATION_TAGS = frozenset({"aff", "affiliation", "affiliations", "institution", "orgname", "orgdiv", "department",
+                              "address", "addr-line", "ror", "orcid", "identifier", "email", "xref", "sup", "label",
+                              "country", "city"})
+NAME_TAGS = frozenset({"name", "string-name", "contrib", "author", "creator", "persname", "fullname"})
+IDENTIFIER_URL_RE = re.compile(r"(?i)https?://(?:www\.)?(?:ror\.org|orcid\.org|isni\.org|viaf\.org)\S*")
+AFFILIATION_WORDS = (r"Department|Dept\.|Division|School|Faculty|University|Institute|Institut|Centre|Center|"
+                     r"Laboratory|Laboratoire|College|Hospital|Clinic|Academy|Research and Development")
+# An affiliation glued to a name ("Sam B. KimDepartment of Psychology"), or an item of its own after a comma.
+GLUED_AFFILIATION_RE = re.compile(rf"(?<=[a-z.)])(?=(?:{AFFILIATION_WORDS})\b)")
+AFFILIATION_ITEM_RE = re.compile(rf"^(?:the\s+)?(?:{AFFILIATION_WORDS})\b|\b(?:{AFFILIATION_WORDS}) (?:of|for)\b")
+GLUED_NAME_RE = re.compile(r"(?<=[a-z]{3})(?=[A-Z][a-z])")
+AUTHOR_SEPARATORS_RE = re.compile(r"\s*(?:[;,]|\band\b|&)\s*")
+AUTHOR_MAX_CHARS = 80
+
+
+def author_names(text: str) -> List[str]:
+    """The author names in one author line, affiliations and identifiers dropped (issue 0137 B7):
+    "Jo Ann Lee, Sam B. KimDepartment of Psychology, University of X" -> ["Jo Ann Lee", "Sam B. Kim"].
+    Names glued together ("Ann LeeSam Kim") are split only when every part reads as a name of two words
+    or more ("Ian VanderWaal" stays one)."""
+    text = html_lib.unescape(text or "")
+    if "<" in text and ">" in text:
+        text = _tagged_names(text)
+    text = " ".join(text.split())
+    for cut in (IDENTIFIER_URL_RE.search(text), GLUED_AFFILIATION_RE.search(text)):
+        text = text[:cut.start()] if cut else text
+    names: List[str] = []
+    for piece in AUTHOR_SEPARATORS_RE.split(text):
+        piece = piece.strip(" .*†‡§0123456789")
+        if not piece:
+            continue
+        if AFFILIATION_ITEM_RE.search(piece):
+            break       # the affiliations start here: no name follows them
+        parts = GLUED_NAME_RE.split(piece)
+        if len(parts) > 1 and all(len(part.split()) >= 2 for part in parts):
+            names += [part.strip() for part in parts]
+        else:
+            names.append(piece)
+    return list(dict.fromkeys(name[:AUTHOR_MAX_CHARS] for name in names if any(ch.isalpha() for ch in name)))
+
+
+class _TaggedNames(HTMLParser):
+    """An author line written as markup: each element's text apart, affiliations and labels dropped."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: List[str] = []
+        self.skip = 0
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        marks = " ".join(value or "" for name, value in attrs if name in ("class", "id", "itemprop")).lower()
+        if tag not in VOID_TAGS and (self.skip or tag in AFFILIATION_TAGS
+                                     or any(word in marks for word in ("aff", "institution", "orcid", "ror"))):
+            self.skip += 1
+        self.parts.append(", ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.skip and tag not in VOID_TAGS:
+            self.skip -= 1
+        self.parts.append(", ")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip:
+            self.parts.append(data)
+
+
+def _tagged_names(markup: str) -> str:
+    parser = _TaggedNames()
+    parser.feed(markup)
+    parser.close()
+    return "".join(parser.parts)
+
+
+def element_authors(node: ET.Element) -> List[str]:
+    """The authors one author element names (issue 0137 B7): one per name child, its affiliation and
+    identifier children dropped; else its own text (author_names)."""
+    named = [child for child in node if local_name(child.tag).lower() in NAME_TAGS]
+    if named:
+        return list(dict.fromkeys(name for child in named for name in element_authors(child)))
+    text = node.text or ""
+    for child in node:
+        if local_name(child.tag).lower() not in AFFILIATION_TAGS:
+            text += ", " + "".join(child.itertext()) + ", "
+        text += child.tail or ""
+    return author_names(text)
+
+
+def clean_authors(names: Sequence[Any]) -> List[str]:
+    """A stored author list with each line read again by author_names (the repair of issue 0137 B7)."""
+    return list(dict.fromkeys(name for line in names if isinstance(line, str) for name in author_names(line)))
+
+
+def _undated(post: Dict[str, Any]) -> Dict[str, Any]:
+    """An item with no date says it will be dated when first seen (issue 0137 B9: the saver keeps that time)."""
+    if post.get("date") is None:
+        post["date_precision"] = "seen"
+    return post
+
+
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
-    """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first."""
-    root = ET.fromstring(feed_text)
+    """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first. A document a
+    strict parser refuses is read repaired (feed_root, issue 0137 B4); each item's address is its
+    identity (item_identity, B1); an undated item is "seen" (B9)."""
+    root = feed_root(feed_text)
     posts: List[Dict[str, Any]] = []
 
     if local_name(root.tag) == "rss":
@@ -1333,62 +1524,71 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
             content_html = normalize_feed_urls(
                 child_inner_xml(item, "encoded") or child_inner_xml(item, "description")
             )
-            url = normalize_feed_urls(child_text(item, "link") or source_url)
-            posts.append({
+            when = child_text(item, "pubDate") or child_text(item, "updated") or child_text(item, "date")
+            title = normalize_feed_urls(child_text(item, "title") or "")
+            posts.append(_undated({
                 "platform": "rss",
                 "source": source_url,
-                "url": url,
+                "_link": normalize_feed_urls(child_text(item, "link")) or None,
+                "_enclosure": _enclosure(item),
+                "_title_date": _title_date(title, when),
                 "guid": child_text(item, "guid"),
-                "title": readable_title(normalize_feed_urls(child_text(item, "title") or ""), url),
+                "title": title,
                 "content": strip_html(content_html),
                 "content_html": content_html,
-                "date": parse_datetime_value(child_text(item, "pubDate") or child_text(item, "updated")),
-                "date_precision": date_precision(child_text(item, "pubDate") or child_text(item, "updated")),
+                "date": parse_datetime_value(when),
+                "date_precision": date_precision(when),
                 "media_urls": _extract_xml_media_urls(item, content_html),
                 "categories": _extract_xml_categories(item),
                 # <comments>: the item's discussion page (on Hacker News, the HN thread).
                 "metadata": {"comments_url": comments} if (comments := child_text(item, "comments")) else {},
-            })
+            }))
     elif local_name(root.tag) == "feed":
         entries = [child for child in root if local_name(child.tag) == "entry"]
         for entry in entries:
             content_html = normalize_feed_urls(
                 child_inner_xml(entry, "content") or child_inner_xml(entry, "summary")
             )
-            url = normalize_feed_urls(_extract_atom_link(entry) or source_url)
-            posts.append({
+            when = child_text(entry, "published") or child_text(entry, "updated")
+            title = normalize_feed_urls(child_text(entry, "title") or "")
+            posts.append(_undated({
                 "platform": "rss",
                 "source": source_url,
-                "url": url,
+                "_link": normalize_feed_urls(_extract_atom_link(entry)) or None,
+                "_enclosure": _enclosure(entry),
+                "_title_date": _title_date(title, when),
                 "guid": child_text(entry, "id"),
-                "title": readable_title(normalize_feed_urls(child_text(entry, "title") or ""), url),
+                "title": title,
                 "content": strip_html(content_html),
                 "content_html": content_html,
-                "date": parse_datetime_value(child_text(entry, "published") or child_text(entry, "updated")),
-                "date_precision": date_precision(child_text(entry, "published") or child_text(entry, "updated")),
+                "date": parse_datetime_value(when),
+                "date_precision": date_precision(when),
                 "media_urls": _extract_xml_media_urls(entry, content_html),
                 "categories": _extract_xml_categories(entry),
                 "metadata": {},
-            })
+            }))
     elif local_name(root.tag).lower() == "rdf":
         # RSS 1.0 (issue 0135): <rdf:RDF> holds its <item>s beside its <channel>, each dated by
-        # Dublin Core (dc:date) or PRISM (prism:publicationDate), its authors dc:creator.
+        # Dublin Core (dc:date) or PRISM (prism:publicationDate), its authors dc:creator: one author
+        # per name element, affiliations and identifiers dropped (issue 0137 B7).
         for item in (child for child in root if local_name(child.tag) == "item"):
             content_html = normalize_feed_urls(
                 child_inner_xml(item, "encoded") or child_inner_xml(item, "description")
             )
             about = next((value for key, value in item.attrib.items() if local_name(key) == "about"), None)
-            url = normalize_feed_urls(child_text(item, "link") or about or source_url)
             when = (child_text(item, "date") or child_text(item, "publicationDate")
                     or child_text(item, "coverDate") or child_text(item, "pubDate"))
-            creators = [name for child in item if local_name(child.tag) == "creator"
-                        if (name := " ".join((child.text or "").split()))]
-            posts.append({
+            creators = list(dict.fromkeys(name for child in item if local_name(child.tag) == "creator"
+                                          for name in element_authors(child)))
+            title = normalize_feed_urls(" ".join((child_text(item, "title") or "").split()))
+            posts.append(_undated({
                 "platform": "rss",
                 "source": source_url,
-                "url": url,
+                "_link": normalize_feed_urls(child_text(item, "link") or about) or None,
+                "_enclosure": _enclosure(item),
+                "_title_date": _title_date(title, when),
                 "guid": about or child_text(item, "identifier"),
-                "title": readable_title(normalize_feed_urls(" ".join((child_text(item, "title") or "").split())), url),
+                "title": title,
                 "content": strip_html(content_html),
                 "content_html": content_html,
                 "date": parse_datetime_value(when),
@@ -1396,8 +1596,9 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "media_urls": _extract_xml_media_urls(item, content_html),
                 "categories": _extract_xml_categories(item),
                 "metadata": {"authors": creators} if creators else {},
-            })
+            }))
 
+    _identities(posts, source_url)
     posts.sort(key=lambda post: post.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return posts
 

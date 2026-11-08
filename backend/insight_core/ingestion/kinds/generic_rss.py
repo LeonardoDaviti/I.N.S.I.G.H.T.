@@ -28,6 +28,7 @@ from insight_core.ingestion.kinds.base import (
     SKIP_STORED,
     SKIP_UNREADABLE,
     UNREADABLE,
+    FetchedPosts,
     Source,
     checked_fetch,
     resume_counts,
@@ -74,17 +75,21 @@ class GenericRssKind(BaseKind):
         posts. Either way, the source's teasers due another read come after (issue 0062)."""
         url = str(source["handle_or_url"])
         posts: List[Dict[str, Any]] = []
+        failure: Optional[str] = None
         if memory is None:
             feed_text, _ = await self.http.get_text(url)
         else:
             answer = await memory.get(self.http, url)
             feed_text = None if answer.not_modified else answer.text
         if feed_text is not None:
-            # A feed with items none of which were read is an error, not "empty" (issue 0135).
+            # A feed with items none of which were read is an error, not "empty" (issue 0135); items
+            # that would be stored as fewer posts than they are, a failure saying so (issue 0137 A1).
             parsed = parsing.parse_feed_posts(feed_text, url)
-            checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {})
+            failure = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {}).failure
             posts = await self._maybe_expand(source, parsed[:limit])
-        return await self._read_again(source, posts)
+        result = FetchedPosts(await self._read_again(source, posts))
+        result.failure = failure
+        return result
 
     async def inspect(self, source: Source) -> Inspection:
         """The feed's posts, and the sitemap's when it lists more of the feed's section (issue 0108):

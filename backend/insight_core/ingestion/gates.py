@@ -22,6 +22,7 @@ from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
 
 from insight_core.ingestion.host_budgets import HostBudgets
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
+from insight_core.ingestion.kinds.bluesky import BLUESKY_HOST_KEY
 from insight_core.ingestion.kinds.nitter_rss import NITTER_HOSTS
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY
 from insight_core.ingestion.kinds.telegram_mtproto import TELEGRAM_HOST_KEY
@@ -42,6 +43,7 @@ HOST_FLOORS: Mapping[str, float] = {
     "platform:reddit": 8.0,            # bare r/<sub> handles (kind reddit_subreddit)
     TELEGRAM_HOST_KEY: 2.0,            # every telegram_mtproto source (one shared client, B8)
     SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend, §10)
+    BLUESKY_HOST_KEY: 2.0,             # every bluesky source (one public AppView, issue 0137 B10)
 }
 
 # The learned pace (issue 0016). A host that limits us (HTTP 429) or times out is waited

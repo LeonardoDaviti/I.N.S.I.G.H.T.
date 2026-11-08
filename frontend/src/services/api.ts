@@ -1741,3 +1741,20 @@ export interface NotFollowedChannel {
 }
 export interface NotFollowedGroup { subject: { kind: 'voice' | 'source'; id: string; name: string }; channels: NotFollowedChannel[] }
 export interface VoiceSuggestions { not_followed?: NotFollowedGroup[]; profiles?: number }
+
+// 0137 references: a full text's reference list (post_links kind 'reference'), shown folded in Connected. Older
+// servers send none.
+export interface ConnectedReference { url: string; address: string; host: string; title: string | null }
+export type PostConnectedReferences = PostConnected & { references?: ConnectedReference[] };
+
+// 0137: the feed finder says why none, when only a saved search was found, and which feeds are the site's, not this
+// page's (with the page itself to follow). Older servers send none of these.
+export interface FoundFeed { /** The site's feed, not this page's. */ not_this_page?: 'other_scope' | 'stale' }
+export interface FeedFinding {
+  /** Why none: blocked, rate-limited, needs login, gone, server error, empty feed, no bridge, none found. */
+  reason?: string;
+  /** "only a saved search was found". */
+  note?: string;
+  /** Every feed found is the site's, not this page's: the page itself to follow, with its preview. */
+  watch?: PageOffer;
+}

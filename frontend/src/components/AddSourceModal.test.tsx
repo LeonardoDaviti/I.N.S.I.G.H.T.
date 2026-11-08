@@ -180,6 +180,31 @@ describe('new spheres (issue 0135)', () => {
     expect(within(dialog()).getByRole('button', { name: 'Add source' })).toBeDisabled();
   });
 
+  it('says why no feed was found (issue 0137)', async () => {
+    setup({ success: true, status: 'none', feeds: [], homepage: false, pages: [], reason: 'blocked' });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'shut.example/journal');
+    expect(await within(dialog()).findByText('No feed found: the site refused INSIGHT (blocked)')).toBeInTheDocument();
+  });
+
+  it('says when only a saved search was found (issue 0137)', async () => {
+    setup({ success: true, status: 'found', homepage: false, pages: [], note: 'only a saved search was found',
+      feeds: [{ url: 'https://journal.example/search/rss?q=x', title: 'Keyword search', saved_search: true }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'journal.example');
+    expect(await within(dialog()).findByText(/^Only a saved search was found/)).toBeInTheDocument();
+  });
+
+  it('a site\'s feed found for one author\'s page says so and offers to follow the page instead (issue 0137)', async () => {
+    const page = offer('https://tank.example/blog/an-author', '/blog/an-author/', 4);
+    const { onAdd } = setup({ success: true, status: 'found', homepage: false, pages: [], watch: page,
+      feeds: [{ url: 'https://tank.example/feed', title: 'The tank', not_this_page: 'other_scope' }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'tank.example/blog/an-author');
+    expect(await within(dialog()).findByText(/^Found the site's feed, not this page's/)).toBeInTheDocument();
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Follow this page instead' }));
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Add source' }));
+    expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({
+      handle_or_url: 'https://tank.example/blog/an-author', page_watch: { prefix: '/blog/an-author/' } }));
+  });
+
   it('the Telegram template builds on the server\'s bridge, and says so when there is none', async () => {
     bridge.mockResolvedValueOnce('https://tg.example');
     const first = renderWithProviders(<AddSourceModal onClose={vi.fn()} onAdd={vi.fn()} />, { api: makeFakeApi({}) });

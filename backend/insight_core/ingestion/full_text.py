@@ -15,6 +15,7 @@ reads in all, RETRY_APART between two. Each read is counted in metadata.page_tri
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
@@ -47,6 +48,8 @@ RETRY_SLICE = 20
 NOT_ARTICLE_HOSTS = frozenset({
     "github.com", "arxiv.org", "reddit.com", "youtube.com", "youtu.be", "t.me", "x.com", "twitter.com",
 })
+# An episode's audio or video file (a podcast item's enclosure, issue 0137 B1): never read as a page.
+MEDIA_FILE_RE = re.compile(r"(?i)\.(?:mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|mp4|m4v|mov|webm|mkv)$")
 
 
 def full_page_enabled(source: Mapping[str, Any]) -> bool:
@@ -54,7 +57,11 @@ def full_page_enabled(source: Mapping[str, Any]) -> bool:
 
 
 def page_is_article(url: Any) -> bool:
+    """Whether the address may be an article page to read. Never an episode's audio or video file, nor
+    an item with no address of its own (its feed's, parsing.ITEM_PARAM: issue 0137 B1)."""
     if not isinstance(url, str) or not url.startswith("http"):
+        return False
+    if f"{parsing.ITEM_PARAM}=" in url or MEDIA_FILE_RE.search(url.split("?", 1)[0].split("#", 1)[0]):
         return False
     host = host_of(url)
     return not any(host == blocked or host.endswith(f".{blocked}") for blocked in NOT_ARTICLE_HOSTS)
@@ -121,6 +128,8 @@ def with_full_text(post: Dict[str, Any], html: str, text: str,
         "content_html": html,
         "content": text,
         "date": post.get("date") or date,
+        # An undated item dated by its page (issue 0137 B9) is no longer "seen": the saver tells it by its time.
+        **({"date_precision": None} if not post.get("date") and date else {}),
         **({"canonical_url": moved} if moved else {}),
         "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
                      **({PAGE_READ_KEY: fidelity} if fidelity else {}),

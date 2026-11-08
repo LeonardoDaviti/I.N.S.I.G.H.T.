@@ -260,6 +260,10 @@ async def main() -> None:
     # caption markup, put right: the dates once, the transcripts a small budget per start; resumable, logged.
     from insight_core.scripts import repair_0135
     asyncio.get_running_loop().run_in_executor(None, repair_0135.repair_safely, db_url)
+    # Issue 0137: feeds collapsed onto one post read again in full once, author lines holding affiliations
+    # cleaned, bridge posts dated by MTProto's message date; no request, resumable, logged.
+    from insight_core.scripts import repair_0137
+    asyncio.get_running_loop().run_in_executor(None, repair_0137.repair_safely, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:

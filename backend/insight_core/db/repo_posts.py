@@ -37,10 +37,11 @@ TELEGRAM_POST_PREFIX = "https://t.me/"
 
 def published_precision(post: Dict[str, Any]) -> str:
     """How precise a post's date is (issue 0076, posts.published_precision): "none" (the source gave no
-    date), "date" (no time of day: as its kind read it, or stored as 00:00:00 UTC), else "exact"."""
+    date), "seen" (none, and its kind dates it when first seen: issue 0137 B9, the saver keeps the first
+    time), "date" (no time of day: as its kind read it, or stored as 00:00:00 UTC), else "exact"."""
     date = post.get("date")
     if not isinstance(date, datetime):
-        return "none"
+        return "seen" if post.get("date_precision") == "seen" else "none"
     told = post.get("date_precision")
     return told if told in ("date", "exact") else "date" if date_alone(date) else "exact"
 
@@ -370,7 +371,8 @@ class PostsRepository:
                 %(source_id)s,
                 %(url)s,
                 %(external_id)s,
-                %(published_at)s,
+                COALESCE(%(published_at)s::timestamptz,
+                         CASE WHEN %(published_precision)s::text = 'seen' THEN now() END),
                 %(published_precision)s,
                 %(title)s,
                 %(content)s,
@@ -684,9 +686,13 @@ class PostsRepository:
         if set_external_id:
             assignments.append(f"external_id = COALESCE(%(external_id)s, {row}external_id)")
         assignments.extend([
-            f"published_at = COALESCE(%(published_at)s, {row}published_at)",
-            f"published_precision = CASE WHEN %(published_at)s::timestamptz IS NULL THEN {row}published_precision"
-            f" ELSE %(published_precision)s END",
+            # An undated item is dated when first seen (issue 0137 B9): a stored one with no date takes
+            # the time it was first fetched; a stored date is never moved by "seen".
+            f"published_at = COALESCE(%(published_at)s, {row}published_at,"
+            f" CASE WHEN %(published_precision)s::text = 'seen' THEN {row}fetched_at END)",
+            f"published_precision = CASE WHEN %(published_at)s::timestamptz IS NOT NULL THEN %(published_precision)s"
+            f" WHEN {row}published_at IS NULL AND %(published_precision)s::text = 'seen' THEN 'seen'"
+            f" ELSE {row}published_precision END",
             f"title = COALESCE(%(title)s, {row}title)",
             f"content = CASE WHEN {keep} THEN {row}content ELSE COALESCE(%(content)s, {row}content) END",
             f"content_html = CASE WHEN {keep} THEN {row}content_html ELSE COALESCE(%(content_html)s, {row}content_html) END",

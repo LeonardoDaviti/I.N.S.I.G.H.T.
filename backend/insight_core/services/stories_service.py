@@ -536,7 +536,7 @@ class StoriesService:
             # ingestion; a post stored before it, told by its time as before).
             stored_at=row.get("stored_at"),
             date_alone=row["precision"] == "date" if row.get("precision") in ("date", "exact") else date_alone(row["t"]),
-            undated=row.get("precision") == "none",
+            undated=row.get("precision") in ("none", "seen"),   # "seen": dated when first seen (issue 0137 B9)
         )
         # Who owns it and who else put it before you (issue 0111): News counts one owner's channels once.
         post.owner = sources.owner_voice(post.voice)

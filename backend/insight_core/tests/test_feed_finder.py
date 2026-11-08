@@ -220,11 +220,14 @@ class FeedFinderTests(unittest.TestCase):
 
     def test_a_kind_or_adapter_that_reads_the_site_is_left_alone(self):
         for url in ("https://www.reddit.com/r/LocalLLaMA/", "https://simon.substack.com", "https://gwern.net/",
-                    "https://www.pipecraft.me/", "https://nitter.local/karpathy/rss"):
+                    "https://www.pipecraft.me/"):
             with self.subTest(url=url):
                 finding, http = find({}, url)
                 self.assertEqual(finding, FeedFinding("direct"))
                 self.assertEqual(http.requests, [])
+        # A bridge's address is probed first (issue 0137 B3): one that answers is direct.
+        finding, http = find({"https://nitter.local/karpathy/rss": atom("karpathy")}, "https://nitter.local/karpathy/rss")
+        self.assertEqual((finding, http.requests), (FeedFinding("direct"), ["https://nitter.local/karpathy/rss"]))
 
     def test_medium_and_github_rules_need_no_page(self):
         cases = {

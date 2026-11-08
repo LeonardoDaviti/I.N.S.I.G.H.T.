@@ -219,9 +219,11 @@ class SourceHealthTests(unittest.TestCase):
 
     def test_summary_counts_add_up_to_the_enabled_sources(self):
         summary = self.result["summary"]
-        self.assertEqual(summary, {"due_now": 3, "deferred": 1, "backoff": 1, "unavailable": 1, "errors": 1})
+        # "errors" counts every failing source, the one in backoff too (issue 0137 A1): the buckets less
+        # the backoff counted twice add up to the enabled sources.
+        self.assertEqual(summary, {"due_now": 3, "deferred": 1, "backoff": 1, "unavailable": 1, "errors": 2})
         enabled = [r for r in schedule_view() if r["enabled"]]
-        self.assertEqual(sum(summary.values()), len(enabled))
+        self.assertEqual(sum(summary.values()) - summary["backoff"], len(enabled))
         self.assertTrue(self.result["success"])
         self.assertEqual(self.result["generated_at"], NOW.isoformat())
 

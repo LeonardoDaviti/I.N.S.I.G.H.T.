@@ -21,7 +21,7 @@ import html
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 from insight_core.utils.addresses import PLATFORM_SITES, bare, host_of, is_tweet, publication_of, site_of
 from insight_core.utils.url_normalization import has_query_mark, normalize_url
@@ -82,6 +82,9 @@ class PostLink:
     # The address as the post wrote it, when its compared form dropped an access token or a share mark (issue
     # 0126): a gift link opens the article with it. None otherwise.
     shared: Optional[str] = None
+    # "reference": every place it is linked is inside the text's references or bibliography (issue 0137 B8);
+    # stored as boilerplate, so no story, News or Discover rule reads it. "link" otherwise.
+    kind: str = "link"
 
 
 def source_kind(platform: Optional[str], handle_or_url: Optional[str]) -> str:
@@ -220,6 +223,77 @@ def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> Li
     return out
 
 
+# A full text's reference list (issue 0137 B8, N13): a heading so named, up to the next heading of its level or
+# higher, or an element whose class or id says so, to its end. Its links are references, not ordinary links.
+REFERENCE_HEADINGS = frozenset({
+    "references", "reference", "reference list", "bibliography", "works cited", "cited works", "literature",
+    "literature cited", "references cited", "notes and references", "references and notes", "sources and references",
+    "список литературы", "литература", "библиография", "источники и литература",
+})
+HEADING = re.compile(r"(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>")
+HEADING_START = re.compile(r"(?is)<h([1-6])\b")
+HEADING_NUMBER = re.compile(r"^(?:\d+(?:\.\d+)*\.?|[ivxlc]+\.)\s+", re.I)
+REFERENCE_BLOCK = re.compile(
+    r"""(?is)<(ol|ul|section|div|aside)\b[^>]*?\b(?:class|id)\s*=\s*["'][^"']*?"""
+    r"""(?:references|bibliography|citations|ref-list|reflist|bibliographie)[^"']*["'][^>]*>""")
+
+
+def _heading_words(inner: str) -> str:
+    text = " ".join(html.unescape(TAG.sub(" ", inner)).split()).lower().rstrip(":. ")
+    return HEADING_NUMBER.sub("", text)
+
+
+def _block_end(content_html: str, tag: str, start: int) -> int:
+    """Where the element opened just before `start` closes (its nesting counted); the text's end if never."""
+    depth = 1
+    for match in re.finditer(rf"(?is)<(/?){tag}\b[^>]*>", content_html[start:]):
+        depth += -1 if match.group(1) else 1
+        if depth == 0:
+            return start + match.end()
+    return len(content_html)
+
+
+def reference_spans(content_html: Optional[str]) -> List[tuple]:
+    """The (start, end) character spans of the text's references or bibliography sections."""
+    if not content_html:
+        return []
+    spans = []
+    for match in HEADING.finditer(content_html):
+        if _heading_words(match.group(2)) not in REFERENCE_HEADINGS:
+            continue
+        level, end = int(match.group(1)), len(content_html)
+        for later in HEADING_START.finditer(content_html, match.end()):
+            if int(later.group(1)) <= level:
+                end = later.start()
+                break
+        spans.append((match.end(), end))
+    for match in REFERENCE_BLOCK.finditer(content_html):
+        spans.append((match.end(), _block_end(content_html, match.group(1), match.end())))
+    return spans
+
+
+# A search engine's or a site's search page (issue 0137 B8): a query, not a page; never kept.
+SEARCH_PARAMS = frozenset({"q", "query", "term", "terms", "search", "as_q", "keyword", "keywords", "text"})
+SEARCH_SEGMENTS = frozenset({"search", "results", "scholar", "find"})
+
+
+def is_search_link(url: str) -> bool:
+    """scholar.* (Google Scholar's lookups and profiles), or a search address: a search parameter on a search
+    path (/search?q=, /search/results?query=) or on a site's root (/?term=)."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host.startswith("scholar."):
+        return True
+    params = {key.lower() for key, value in parse_qsl(parsed.query) if value}
+    if not params & SEARCH_PARAMS:
+        return False
+    segments = [segment.lower() for segment in parsed.path.split("/") if segment]
+    return not segments or bool(set(segments) & SEARCH_SEGMENTS)
+
+
 def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str) -> List[PostLink]:
     """The outside links of one post, first seen first, each address once (its gift link kept, 0126).
     Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
@@ -235,6 +309,8 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
     seen = set()
     out: List[PostLink] = []
     at: Dict[str, int] = {}   # a kept link's place in `out`
+    spans = reference_spans(content_html)
+    cited = lambda offset: any(start <= offset < end for start, end in spans)  # noqa: E731
     for match in HREF.finditer(content_html):
         href = html.unescape(match.group(1)).strip()
         try:
@@ -244,7 +320,11 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
                 continue
         except ValueError:
             continue
+        if is_search_link(absolute):
+            continue
         url = normalize_url(absolute)
+        if url in at and out[at[url]].kind == "reference" and not cited(match.start()):
+            out[at[url]] = dataclasses.replace(out[at[url]], kind="link")   # linked in the text too: a link
         if url in at and out[at[url]].shared is None and has_query_mark(absolute):
             # A later link to the page by a gift link: the one kept for clicking (issue 0126).
             out[at[url]] = dataclasses.replace(out[at[url]], shared=absolute)
@@ -256,5 +336,6 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
             continue
         at[url] = len(out)
         out.append(PostLink(url, site, len(out), _link_text(content_html, match.end()),
-                            absolute if has_query_mark(absolute) else None))
+                            absolute if has_query_mark(absolute) else None,
+                            "reference" if cited(match.start()) else "link"))
     return out
