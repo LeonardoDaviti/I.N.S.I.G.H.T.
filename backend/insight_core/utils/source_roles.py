@@ -184,7 +184,8 @@ def load_reads(cur: Any, own_posts: Optional[Iterable[str]] = None) -> Dict[str,
         source_of[post_id] = source_id
     if not source_of:
         return out
-    cur.execute("""SELECT DISTINCT post_id::text, name, role, maker, type FROM mx_mentions
+    # v10.9.1: the current set (each post's newest valid entities answer), never every guide's rows at once
+    cur.execute("""SELECT DISTINCT post_id::text, name, role, maker, type FROM mx_mentions_now
                    WHERE post_id = ANY(%s::uuid[])""", (sorted(source_of),))
     for post_id, name, role, maker, type_ in cur.fetchall():
         out[source_of[post_id]][post_id].append(Mention(name=name, role=role, maker=maker, type=type_))

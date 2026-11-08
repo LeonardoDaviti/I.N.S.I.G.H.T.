@@ -221,6 +221,28 @@ class StoredAndRead(_Db):
         self.assertEqual([e["name"] for e in panel["sources"]], ["Kestrel Report", "Varga et al. 2021"])
         self.assertEqual(panel["sources"][1]["rule"], "citation")
 
+    def test_the_source_pages_and_voices_read_the_current_set_only(self):
+        # v10.9.1: after a guide switch a re-read post has two sets of rows; the source analysis page read only
+        # ent-v3's and the role rule (official, focused) read both. Both read the current set (mx_mentions_now).
+        from insight_core.markx import source_stats
+        from insight_core.utils import source_roles
+        p = self.post(0, T0, text=LONG)
+        self.answer(p, [ent("Word", "Word Corp", "org", "subject")])
+        call = self.cur.execute("SELECT id FROM mx_calls ORDER BY created_at DESC LIMIT 1").fetchone()[0]
+        repo.add_reading(self.cur, post_id=p, guide="read-v2", call_id=call, kind="report", events="one", lang="en",
+                         headline="Word Corp did a thing", reading={"kind": "report", "events": "one"})
+        names = lambda ms: sorted({m.name for m in ms})   # noqa: E731
+        self.assertEqual(names(next(iter(source_roles.load_reads(self.cur, [p]).values()))[p]), ["Word Corp"])
+        self.switch("ent-v4")
+        self.answer(p, [ent("Kestrel Report", "Kestrel Report", "document", "source", by="Word Corp")])
+        reads = source_roles.load_reads(self.cur, [p])
+        [(_src, posts)] = reads.items()
+        self.assertNotIn("Word Corp", names(posts[p]), "the old set's names are not counted again")
+        self.assertIn("Kestrel Report", names(posts[p]))
+        data = source_stats.load(self.cur, T0 + H)
+        self.assertNotIn("Word Corp", names(data.mentions.get(p, [])))
+        self.assertIn("Kestrel Report", names(data.mentions.get(p, [])))
+
     def test_an_empty_newer_answer_is_current_too(self):
         p = self.post(0, T0)
         self.answer(p, [ent("Acme", "Acme", "org", "subject")])

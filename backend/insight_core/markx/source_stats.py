@@ -392,9 +392,9 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
             read_sources[pid] = sid
             if is_repost(s, title, author, reposted_by, fwd):
                 read_reposts.add(pid)
-        cur.execute("""SELECT m.post_id::text, m.name, m.maker, m.role, m.type FROM mx_mentions m
-                        WHERE m.guide = %s AND m.post_id = ANY(%s::uuid[])""",
-                    (schemas.KINDS["entities"].guide, list(read_kinds)))
+        # v10.9.1: the current set (each post's newest valid entities answer, whatever the guide)
+        cur.execute("""SELECT m.post_id::text, m.name, m.maker, m.role, m.type FROM mx_mentions_now m
+                        WHERE m.post_id = ANY(%s::uuid[])""", (list(read_kinds),))
         for pid, name, maker, role, typ in cur.fetchall():
             mentions[pid].append(R.Mention(name, maker, role, typ))
 
