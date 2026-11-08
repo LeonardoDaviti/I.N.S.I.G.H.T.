@@ -589,7 +589,7 @@ def _plan_read3(cur: Cursor, **kw) -> int:
     return folds.plan(cur, **kw)
 
 
-WINDOWED = ("read", "entities", "embed", "read3")   # the planners the reading window (and a lease's `days`) applies to
+WINDOWED = ("read", "entities", "embed", "read3", "cite")   # the planners the reading window (and a lease's `days`) applies to (0133 v4.2: + cite)
 PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "entities": lambda cur, **kw: plan_posts(cur, "entities", **kw),
             "check": plan_checks,
@@ -655,7 +655,13 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         if arm is not None and arm.rule:   # 0133: the citation rule, merged in (never under ent-v3)
             from insight_core.markx import citations
             mentions = citations.for_post(cur, task["a"], mentions, name_key)
+        if task["guide"] == "ent-v4.2":    # 0133 v4.2: own title dropped, the cite answer merged (q2); no rule
+            from insight_core.markx import ent42
+            mentions = ent42.main_mentions(cur, task["a"], answer.get("entities") or [])
         repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions)
+    elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
+        from insight_core.markx import ent42
+        ent42.after_cite(cur, task, call_id, answer)
 
 
 def release(cur: Cursor, worker: str, task_ids: Optional[Sequence[Any]] = None) -> int:
@@ -780,3 +786,11 @@ def _with_last_posts(kind: str, planner: Any) -> Any:   # 0132 C1: the window's 
 PLANNERS["stance"] = plan_stance                                           # 0132 B
 PLANNERS["read"] = _with_last_posts("read", PLANNERS["read"])              # 0132 C1
 PLANNERS["entities"] = _with_last_posts("entities", PLANNERS["entities"])  # 0132 C1
+
+
+def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second question, cue posts only (ent42.plan)
+    from insight_core.markx import ent42   # ent42 imports this module
+    return ent42.plan(cur, **kw)
+
+
+PLANNERS["cite"] = _plan_cite                                              # 0133 v4.2

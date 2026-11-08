@@ -187,6 +187,15 @@ def _entities(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _cite(a: Dict[str, Any], input: str) -> Optional[str]:   # 0133 v4.2: the second question
+    for n, e in enumerate(a["entities"]):
+        if e["type"] != "document" and e["role"] != "source":
+            return f"entities[{n}].role {e['role']} on a {e['type']}: an org or a person is a source only"
+        if not occurs(e["span"], input):
+            return f"entities[{n}].span {e['span']!r} does not occur in the post"
+    return None
+
+
 _VERSION_NUMBER = re.compile(r"\d+(?:\.\d+)+")
 
 
@@ -371,6 +380,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
           "back": _back,       # 0136
+          "cite": _cite,       # 0133 v4.2
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

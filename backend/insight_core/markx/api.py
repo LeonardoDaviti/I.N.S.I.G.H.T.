@@ -117,6 +117,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, StrictInt
 
 from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
+from insight_core.markx import ent42   # 0133 v4.2
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -457,8 +458,33 @@ def _window(cur) -> Dict[str, Any]:
 def _entities_guide(cur) -> Dict[str, Any]:   # 0133: the entities guide switch (Worker tab)
     arm = schemas.entities_arm(cur)
     return {"guide": arm.guide, "chars": arm.chars, "rule": arm.rule, "default": schemas.DEFAULT_ARM,
-            "arms": [{"guide": a.guide, "chars": a.chars, "rule": a.rule, "ready": not schemas.is_placeholder(a.guide)}
-                     for a in schemas.ENTITY_ARMS.values()]}
+            "arms": [{"guide": a.guide, "chars": a.chars, "rule": a.rule, "ready": not schemas.is_placeholder(a.guide),
+                      **({"note": ent42.LAB} if a.guide == ent42.GUIDE else {})}                   # 0133 v4.2
+                     for a in schemas.ENTITY_ARMS.values()],
+            "labels": ent42.precision(cur)}                                                        # 0133 v4.2
+
+
+class MentionLabelIn(BaseModel):   # 0133 v4.2
+    guide: str
+    n: StrictInt
+    answer: str
+
+
+@router.post("/posts/{post_id}/mentions/label")
+def mx_label_mention(post_id: str, body: MentionLabelIn):
+    """0133 v4.2: the owner's right / wrong on one new entity of the post (a document, a source, a recommended, a
+    second-question one); the newest answer counts toward the running precision on the Worker tab."""
+    found = _uuid(post_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such post")
+    with transaction() as cur:
+        try:
+            got = ent42.label(cur, post=str(found), guide=body.guide, n=body.n, answer=body.answer)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {**got, "precision": ent42.precision(cur, body.guide)}
 
 
 class EntitiesGuideIn(BaseModel):   # 0133

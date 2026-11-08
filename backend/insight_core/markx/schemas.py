@@ -132,6 +132,22 @@ ENTITIES_V4_SCHEMA = {
     },
 }
 
+# 0133 v4.2: the second question (cite-v1): every document and cited org or person, nothing else; at most 30. A
+# document is a source, recommended or subject (a subject is dropped in the merge, ent42.merge_cite); an org or a
+# person is a source only (validate._cite).
+CITE_TYPES = ["document", "org", "person"]
+CITE_ROLES = ["source", "recommended", "subject"]
+CITE_MAX = 30
+CITE_SCHEMA = {
+    "type": "object",
+    "required": ["entities"],
+    "properties": {
+        "entities": {"type": "array", "maxItems": CITE_MAX, "items": {
+            "type": "object", "required": ["span", "name", "type", "role"],
+            "properties": {"span": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1},
+                           "type": {"enum": CITE_TYPES}, "role": {"enum": CITE_ROLES}, "by": _STR_OR_NULL}}}},
+}
+
 JUDGE_SCHEMA = {
     "type": "object",
     "required": ["relation", "confidence"],
@@ -311,6 +327,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
+    Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
 )}
 
 
@@ -334,6 +351,7 @@ ENTITY_ARMS: Dict[str, Arm] = {a.guide: a for a in (
     Arm("ent-v3", 1500, False, ENTITIES_SCHEMA),          # the default (the deploy changes nothing)
     Arm("ent-v4", 6000, True, ENTITIES_V4_SCHEMA),        # the lab's guide (a placeholder until out/entv41_v1 passes)
     Arm("ent-v3-6k", 6000, True, ENTITIES_SCHEMA),        # the spec's fallback: ent-v3's text at 6,000, with the rule
+    Arm("ent-v4.2", 6000, False, ENTITIES_V4_SCHEMA),     # 0133 v4.2: the lab's ent42_extract.md, the rule off, + `cite`
 )}
 DEFAULT_ARM = "ent-v3"
 PLACEHOLDER = "<!-- 0133 placeholder:"                    # a guide file starting so is not the lab's: never switched to

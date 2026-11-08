@@ -119,7 +119,9 @@ export interface MarkxPostPanel {
   entities: { name: string; type: string | null; role: string | null; maker: string | null; family: string | null;
     version: string | null; variant: string | null; span: string; entity_id?: string | null;
     /** 0133: 'citation' when the citation rule found it; a document's publisher; the guide of the answer. */
-    rule?: string | null; by?: string | null; guide?: string }[];
+    rule?: string | null; by?: string | null; guide?: string;
+    /** 0133 v4.2: its number in the set; the second question's; a new entity (labelled right / wrong); the owner's label. */
+    n?: number; q2?: boolean; new?: boolean; label?: 'right' | 'wrong' | null }[];
   /** 0133: the guide of the post's current entities (its newest valid answer); its documents and cited sources. */
   entities_guide?: string | null;
   documents?: MarkxPostPanel['entities'];
@@ -188,7 +190,25 @@ export interface MarkxEntitiesGuide {
   chars: number;
   rule: boolean;
   default: string;
-  arms: { guide: string; chars: number; rule: boolean; ready: boolean }[];
+  arms: { guide: string; chars: number; rule: boolean; ready: boolean; /** 0133 v4.2: the lab's stated line. */ note?: string }[];
+  /** 0133 v4.2: ent-v4.2's running precision on its new entities, from the owner's labels (absent from an older API). */
+  labels?: MarkxMentionPrecision;
+}
+
+/** 0133 v4.2: the owner's labels on a guide's new entities: all, and the second question's alone (Wilson 95%). */
+export interface MarkxPrecisionStat {
+  labelled: number;
+  right: number;
+  precision: number | null;
+  low: number | null;
+  high: number | null;
+}
+
+export interface MarkxMentionPrecision extends MarkxPrecisionStat {
+  guide: string;
+  q2: MarkxPrecisionStat;
+  lab: string;
+  leave_at: { labelled: number; low: number };
 }
 
 /** POST /api/markx/settings/reading-window's answer. */

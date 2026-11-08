@@ -6,6 +6,7 @@ import { markxGraphApi, type MarkxEdgeAnswer } from '../../services/api';   // 0
 import type { MarkxBefore, MarkxPostPanel } from '../../services/markx';
 import { Button, TextLink } from '../ui';
 import { judged, relationWords, whyWords } from '../../lib/markx';
+import { request } from '../../lib/request';   // 0133 v4.2
 import { plural } from '../../lib/format';
 import { postBylineTime } from '../../lib/dates';
 import MarkXTranslation from './MarkXTranslation';   // 0130 D
@@ -54,7 +55,7 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 Entities{data.entities_guide && data.entities_guide !== 'ent-v3' ? ` · ${data.entities_guide}` : ''}
               </h3>
               {data.entities.length ? (
-                <Entities items={data.entities.filter((e) => !CITED.has(e.role ?? ''))} />
+                <Entities postId={postId} items={data.entities.filter((e) => !CITED.has(e.role ?? ''))} />
               ) : <p className="mt-1 text-fg-3">None read yet.</p>}
             </section>
             {/* 0133: the documents it names and its cited sources, under their roles */}
@@ -62,11 +63,11 @@ export default function MarkXPanel({ postId }: { postId: string }) {
               <section aria-label="Documents and cited sources">
                 <h3 className="text-[0.75rem] font-medium text-fg-3">Documents and cited sources</h3>
                 {data.sources?.length ? <p className="mt-1 text-fg-3">cited as evidence</p> : null}
-                {data.sources?.length ? <Entities items={data.sources} /> : null}
+                {data.sources?.length ? <Entities postId={postId} items={data.sources} /> : null}
                 {data.recommended?.length ? <p className="mt-1 text-fg-3">recommended</p> : null}
-                {data.recommended?.length ? <Entities items={data.recommended} /> : null}
+                {data.recommended?.length ? <Entities postId={postId} items={data.recommended} /> : null}
                 {data.documents?.length ? <p className="mt-1 text-fg-3">documents it names</p> : null}
-                {data.documents?.length ? <Entities items={data.documents} /> : null}
+                {data.documents?.length ? <Entities postId={postId} items={data.documents} /> : null}
               </section>
             ) : null}
             <section aria-label="Mark X stories">
@@ -113,8 +114,9 @@ export default function MarkXPanel({ postId }: { postId: string }) {
 
 const CITED = new Set(['source', 'recommended']);   // 0133: listed under "Documents and cited sources"
 
-/** A post's entities, each opening its page; the citation rule's marked, a document's publisher after it (0133). */
-function Entities({ items }: { items: MarkxPostPanel['entities'] }) {
+/** A post's entities, each opening its page; the citation rule's marked, a document's publisher after it (0133);
+ *  the second question's marked, and right / wrong on each new entity (0133 v4.2). */
+function Entities({ postId, items }: { postId: string; items: MarkxPostPanel['entities'] }) {
   return (
     <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
       {items.map((e, n) => (
@@ -124,10 +126,45 @@ function Entities({ items }: { items: MarkxPostPanel['entities'] }) {
                       className={e.role === 'subject' ? 'font-semibold text-fg' : 'text-fg'}>{e.name}</TextLink>
           ) : <span className={e.role === 'subject' ? 'font-semibold text-fg' : 'text-fg'}>{e.name}</span>}
           <span className="text-fg-3"> {e.type}{e.version ? ` ${e.version}` : ''} · {e.role}
-            {e.by ? ` · by ${e.by}` : ''}{e.rule === 'citation' ? ' · citation rule' : ''}</span>
+            {e.by ? ` · by ${e.by}` : ''}{e.rule === 'citation' ? ' · citation rule' : ''}{e.q2 ? ' · second question' : ''}</span>
+          {e.new && e.n != null && e.guide ? <> <MentionButtons postId={postId} entity={e} /></> : null}
         </li>
       ))}
     </ul>
+  );
+}
+
+type MentionAnswer = 'right' | 'wrong';
+type LabelMention = (postId: string, guide: string, n: number, answer: MentionAnswer) => Promise<{ label: MentionAnswer }>;
+/** 0133 v4.2: the label's call, here (the panel's chunk) and not in api.ts; a test's fake api may provide it. */
+function markxMentionApi(api: object): { labelMarkxMention: LabelMention } {
+  const got = (api as { labelMarkxMention?: unknown }).labelMarkxMention;
+  return { labelMarkxMention: typeof got === 'function' ? (got as LabelMention)
+    : (postId, guide, n, answer) => request(`/api/markx/posts/${encodeURIComponent(postId)}/mentions/label`,
+      { method: 'POST', body: { guide, n, answer } }) };
+}
+
+/** 0133 v4.2: the owner's right / wrong on one new entity (ent-v4.2 is measured on the server by these labels). */
+function MentionButtons({ postId, entity }: { postId: string; entity: MarkxPostPanel['entities'][number] }) {
+  const api = markxMentionApi(useApi());
+  const client = useQueryClient();
+  const [mine, setMine] = useState<MentionAnswer | null>(entity.label ?? null);
+  const tap = useMutation({
+    mutationFn: (answer: MentionAnswer) => api.labelMarkxMention(postId, entity.guide ?? '', entity.n ?? 0, answer),
+    onSuccess: (got) => {
+      setMine(got.label);
+      void client.invalidateQueries({ queryKey: ['markx-post', postId] });
+    },
+  });
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1" role="group" aria-label={`Is ${entity.name} right?`}>
+      {mine ? <span className="text-fg-3">you said {mine}</span> : null}
+      <Button size="sm" variant="ghost" className="text-[0.75rem]" aria-label="entity right" aria-pressed={mine === 'right'}
+        disabled={tap.isPending} onClick={() => tap.mutate('right')}>✓</Button>
+      <Button size="sm" variant="ghost" className="text-[0.75rem]" aria-label="entity wrong" aria-pressed={mine === 'wrong'}
+        disabled={tap.isPending} onClick={() => tap.mutate('wrong')}>✗</Button>
+      {tap.isError ? <span className="text-fg">× not saved</span> : null}
+    </span>
   );
 }
 

@@ -217,11 +217,32 @@ function EntitiesGuide({ state }: { state: MarkxEntitiesGuide }) {
             <input type="radio" name="markx-entities-guide" checked={chosen === a.guide} disabled={save.isPending || !a.ready}
                    onChange={() => save.mutate(a.guide)} />
             {a.guide} · {a.chars.toLocaleString('en-US')} characters{a.rule ? ' · citation rule' : ''}
-            {a.ready ? '' : ' · waiting for the lab’s guide'}
+            {a.ready ? '' : ' · waiting for the lab’s guide'}{a.note ? ` · ${a.note}` : ''}
           </label>
         ))}
         {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
       </div>
+      {state.labels ? <Precision got={state.labels} /> : null}
+    </section>
+  );
+}
+
+const pct = (x: number | null) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+
+/** 0133 v4.2: the running precision of ent-v4.2's new entities from the owner's labels (Wilson 95%), the second
+ *  question's alone, the lab's stated line and the bar for leaving Shadow. */
+function Precision({ got }: { got: NonNullable<MarkxEntitiesGuide['labels']> }) {
+  return (
+    <section aria-label={`${got.guide} precision`} className="mt-2 text-[0.8125rem] text-fg-2">
+      <p>
+        {got.guide}, the owner’s labels: {got.labelled
+          ? `${got.right} of ${got.labelled} new entities right: ${pct(got.precision)} (95% from ${pct(got.low)} to ${pct(got.high)})`
+          : 'no new entity labelled yet (✓ / ✗ on the post panel)'}
+        {got.q2.labelled ? ` · second question: ${got.q2.right} of ${got.q2.labelled} right: ${pct(got.q2.precision)}` : ''}
+      </p>
+      <p className="text-fg-3">
+        {got.lab} · leaves Shadow at {got.leave_at.labelled}+ labelled with the lower bound ≥ {pct(got.leave_at.low)}
+      </p>
     </section>
   );
 }
