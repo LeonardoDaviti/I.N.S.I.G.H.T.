@@ -293,6 +293,25 @@ STANCE_SCHEMA = {
     },
 }
 
+# 0145 (tracks as topics): the judge's verdict on one post for one track (track-v1), and a track's sub-topics proposed
+# from its items (subtopics-v1). The checks that read the input (one line, the item numbers) are validate's.
+TRACK_WHY_CHARS = 300
+TRACK_SCHEMA = {
+    "type": "object",
+    "required": ["in", "confidence", "why"],
+    "properties": {"in": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                   "subtopic": _STR_OR_NULL, "why": {"type": "string", "minLength": 1}},
+}
+SUBTOPICS_MAX = 8             # the guide asks for 3-8 (fewer when the items are few or alike)
+SUBTOPICS_SCHEMA = {
+    "type": "object",
+    "required": ["subtopics"],
+    "properties": {"subtopics": {"type": "array", "minItems": 1, "maxItems": SUBTOPICS_MAX, "items": {
+        "type": "object", "required": ["name", "items"],
+        "properties": {"name": {"type": "string", "minLength": 1}, "definition": _STR_OR_NULL,
+                       "items": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}}},
+}
+
 
 # ---- the kinds -------------------------------------------------------------------------------------
 
@@ -329,6 +348,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
+    Kind("track", "track-v1", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py)
+    Kind("subtopics", "subtopics-v1", "track", SUBTOPICS_SCHEMA),    # 0145: a track's sub-topics, proposed
 )}
 
 

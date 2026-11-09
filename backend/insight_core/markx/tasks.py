@@ -687,6 +687,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
+    elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
+        from insight_core.markx import tracks
+        tracks.after_answer(cur, task, call_id, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])
@@ -822,3 +825,27 @@ def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second 
 
 
 PLANNERS["cite"] = _plan_cite                                              # 0133 v4.2
+
+
+# ---- 0145: tracks as topics (markx/tracks.py) --------------------------------------------------------------------
+
+def _plan_tracks(cur: Cursor, **kw: Any) -> int:   # 0145: active posts, passive ones the prefilter passes, the history pass
+    from insight_core.markx import tracks   # tracks imports this module
+    return tracks.plan(cur, **kw)
+
+
+def _plan_subtopics(cur: Cursor, **kw: Any) -> int:   # 0145: a track's sub-topics proposed (15+ items, then weekly)
+    from insight_core.markx import tracks
+    return tracks.plan_subtopics(cur, **kw)
+
+
+def _with_track_vectors(planner: Any) -> Any:   # 0145: the tracks' descriptions embedded with the posts (embed kind)
+    def plan(cur: Cursor, **kw: Any) -> int:
+        from insight_core.markx import tracks
+        return tracks.plan_vectors(cur) + planner(cur, **kw)
+    return plan
+
+
+PLANNERS["track"] = _plan_tracks                                           # 0145
+PLANNERS["subtopics"] = _plan_subtopics                                    # 0145
+PLANNERS["embed"] = _with_track_vectors(PLANNERS["embed"])                 # 0145

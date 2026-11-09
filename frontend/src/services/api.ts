@@ -120,7 +120,7 @@ export interface ReaderState {
 export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated' | 'history';
 export type FeedView = 'stream' | 'by_source';
 /** The reader's View: the feed's two, and News and Classics next to it (issue 0051). */
-export type ReaderView = FeedView | 'news' | 'classics';
+export type ReaderView = FeedView | 'news' | 'classics' | 'topic';   // topic: a track as a topic (0145, Mark X)
 
 export interface FeedItem {
   id: string; title: string; excerpt: string; url: string;   // title already falls back to the excerpt

@@ -375,12 +375,47 @@ def _back(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _track(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0145: `why` is one line, at most TRACK_WHY_CHARS; a post judged in may name its sub-topic."""
+    why = a["why"].strip()
+    if not why:
+        return "why: empty"
+    if "\n" in why:
+        return "why: one line"
+    if len(why) > schemas.TRACK_WHY_CHARS:
+        return f"why: at most {schemas.TRACK_WHY_CHARS} characters"
+    return None
+
+
+def _subtopics(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0145: each item number is one of the question's, in one sub-topic only; names are not repeated."""
+    from insight_core.markx import tracks
+    n = len(tracks.numbered(input))
+    seen: set = set()
+    names: set = set()
+    for s in a["subtopics"]:
+        key = tracks.fold_key(s["name"])
+        if not key:
+            return "a sub-topic with no name"
+        if key in names:
+            return f"sub-topic {s['name']!r} twice"
+        names.add(key)
+        for k in s["items"]:
+            if not 1 <= k <= n:
+                return f"a sub-topic names item {k}, not one of 1-{n}"
+            if k in seen:
+                return f"item {k} in two sub-topics"
+            seen.add(k)
+    return None
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
           "back": _back,       # 0136
           "cite": _cite,       # 0133 v4.2
+          "track": _track, "subtopics": _subtopics,   # 0145
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

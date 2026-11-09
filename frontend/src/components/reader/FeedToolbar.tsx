@@ -27,6 +27,8 @@ const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
 ];
 /** One source has nothing to group by source. */
 const SOURCE_VIEWS = VIEWS.filter((option) => option.value !== 'by_source');
+/** A track, with Mark X on, is also read as a topic (issue 0145): its sections by sub-topic, then Discover. */
+const TOPIC = { value: 'topic' as const, label: 'Topic' };
 const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
   { value: 'continuous', label: 'Continuous' },
   { value: 'single', label: 'One at a time' },
@@ -56,6 +58,8 @@ export interface FeedToolbarProps {
   onSearch: (query: string) => void;
   /** Offer Show Updated: one source that watches its pages for changes (issue 0039). */
   updates?: boolean;
+  /** Offer View Topic: a track while Mark X is on (issue 0145). */
+  topic?: boolean;
 }
 
 /**
@@ -69,11 +73,12 @@ export interface FeedToolbarProps {
  */
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
-  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false,
+  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false, topic = false,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
   // News and Classics rank stories and pages: Show (a read-state filter) and Posts say nothing there.
-  const ranked = view === 'news' || view === 'classics';
+  const ranked = view === 'news' || view === 'classics' || view === 'topic';
+  const views = oneSource ? SOURCE_VIEWS : topic ? [...VIEWS, TOPIC] : VIEWS;
   return (
     <ReaderToolbar
       title={title}
@@ -85,7 +90,7 @@ export default function FeedToolbar({
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
         {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
-        <SlashChoice label="View" value={view} options={oneSource ? SOURCE_VIEWS : VIEWS} onChange={onViewChange} />
+        <SlashChoice label="View" value={view} options={views} onChange={onViewChange} />
         {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
         {pill ? <div className="ml-auto">{pill}</div> : null}
       </div>
