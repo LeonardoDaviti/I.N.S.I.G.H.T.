@@ -27,6 +27,12 @@ it, never folded). With no order asked, 2+ words order by best match (SearchQuer
 is on (`markx`), a post matches by its own vector or by Mark X's English layer (mx_post_search,
 markx/search.py) read as `websearch_to_tsquery('english', q)`; its rank is the higher of the two, and
 a post only that layer matched has Mark X's headline as its line (`snippet_from: "markx"`).
+
+v10.13.1 (migration 0095): a name and a version number after it ("fable 5.2", "gpt 6.1") stand together in a post,
+one or two words apart, in both layers (search_pair_versions). Best match while Mark X is on ranks first the posts
+whose current mentions hold the entity the whole query names (that version, with one) as subject or actor
+(markx/search.entity_first_posts; a story or News story with such a post counts at its shown post), then the rest;
+best match within each.
 """
 from __future__ import annotations
 
@@ -67,17 +73,23 @@ FILL_BATCH = 500
 RANKED_MATCHES = 5000
 # Rank, normalised by 1 + log(length): a long text does not win by length.
 RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
-# Mark X's English layer (issue 0139, mx_post_search): the query read as English words.
-MX_TSQUERY = "websearch_to_tsquery('english', %s)"
-MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_TSQUERY}) = 'T' THEN {MX_TSQUERY}"
-                   f" ELSE replace(querytree({MX_TSQUERY}), ' & ', ' | ')::tsquery END)")
+# Mark X's English layer (issue 0139, mx_post_search): the query read as English words, a name and its version
+# together (v10.13.1, migration 0095), as search_query reads them.
+MX_TSQUERY = "search_query_english(%s)"
+# The words its line marks, each alone (a name and its version unpaired: the line's own parse has no version parts).
+MX_WORDS = "websearch_to_tsquery('english', %s)"
+MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_WORDS}) = 'T' THEN {MX_WORDS}"
+                   f" ELSE replace(querytree({MX_WORDS}), ' & ', ' | ')::tsquery END)")
 # A query of this many words or more orders by best match unless an order is asked (issue 0139).
 BEST_FROM_WORDS = 2
 # The words the line marks: any one of them, so the line shows the text's words even when the
 # others matched in the title or the source's name; never an excluded word (querytree drops
-# them). Its three %s are the same query.
-MARK_TSQUERY = (f"(CASE WHEN querytree({TSQUERY}) = 'T' THEN {TSQUERY}"
-                f" ELSE replace(querytree({TSQUERY}), ' & ', ' | ')::tsquery END)")
+# them). Its three %s are the same query. Its words are read unpaired (search_query_words, 0095): a name and
+# its version are marked each where it stands, as before v10.13.1; and the words split across the layers
+# (_split_match) are looked for one by one.
+WORDS = "search_query_words(%s)"
+MARK_TSQUERY = (f"(CASE WHEN querytree({WORDS}) = 'T' THEN {WORDS}"
+                f" ELSE replace(querytree({WORDS}), ' & ', ' | ')::tsquery END)")
 # A classic's words: its title (the stored post's, else its link words) and its address, read as
 # words but for a dot before a digit, so a version stays one (huggingface.co/Qwen/Qwen3.6-35B-A3B
 # reads "huggingface co Qwen Qwen3.6 35B A3B"); its title's letters plain (NFKC, issue 0070), as the
@@ -273,6 +285,17 @@ class SearchRepository:
             where.append(best_sql)
             params += best_params
         limit = query.limit
+        # Entity first (v10.13.1): with Mark X on, best match ranks first the posts naming the query's entity as
+        # subject or actor, and a group (story, News story) holding one, at whichever of its posts is shown.
+        first_ids: List[str] = []
+        if markx and query.order == "best":
+            from insight_core.markx import search as mx_search
+            first_ids = mx_search.entity_first_posts(cur, query.q)
+            if first_ids and group:
+                table, gkey = _GROUPS[group]
+                cur.execute(f"""SELECT DISTINCT o.post_id::text FROM {table} sp JOIN {table} o ON o.{gkey} = sp.{gkey}
+                                WHERE sp.post_id = ANY(%s::uuid[])""", (first_ids,))
+                first_ids = sorted(set(first_ids) | {r[0] for r in cur.fetchall()})
         if query.order == "best":
             # Ranked among the newest RANKED_MATCHES matches: ranking reads every vector it ranks.
             split = _words(query.q) >= 2
@@ -324,8 +347,8 @@ class SearchRepository:
                 ORDER BY u.sort_at DESC, u.id DESC
                 LIMIT %s
             ), hits AS (
-                SELECT m.id, m.sort_at, {rank} AS rank FROM matches m
-                ORDER BY rank DESC, sort_at DESC, id DESC
+                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first FROM matches m
+                ORDER BY first DESC, rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
@@ -338,9 +361,9 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
-            ORDER BY hits.rank DESC, hits.sort_at DESC, hits.id DESC
+            ORDER BY hits.first DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
-            [*layer_params, matches, *rank_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, first_ids, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).

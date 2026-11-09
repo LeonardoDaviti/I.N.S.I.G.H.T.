@@ -95,3 +95,34 @@ stopped before its jobs finished and its copies were dropped.
 - The fill runs at the API's start only while Mark X is on; turning Mark X on later fills at the next start (rows of
   new answers are written as they arrive either way).
 
+## v10.13.1: a name and its version (the owner's case of 2026-11-10)
+The owner searched a model's name and version (best match) and got posts about another model's same version number
+that also named the model anywhere, and the release posts mid-page under an older joke. Migration **0095**:
+- **The pair stands together.** `search_pair_versions(tsquery)`: a word of letters followed by a version number (5.2,
+  3.8, 4o, 70b; not a plain integer, not a version word like k3.1 that holds its name) becomes
+  `('name' <-> 'v' | 'name' <2> 'v')`, unless excluded, beside `or`, or already in a phrase. `search_query` reads it
+  first (the posts' own vector, `vector_ix`, Classics); Mark X's English layer reads `search_query_english(q)`. The name
+  alone and the number alone are read as before. A result's line marks the words unpaired (`search_query_words`, 0052's
+  reading), so a name and a number apart in the text are still marked where they stand. The readings are PL/pgSQL: a
+  search names them 20-odd times, and SQL functions nesting SQL functions were planned again each time (+10–20 ms).
+- **Entity first** (Mark X on, best match): `markx/search.entity_first_posts`: the entity the whole query names (its
+  key or alias; with a version, also a key or alias ending with the query as words, "acme zorblax 5.2" for
+  "zorblax 5.2"), read through the merges, and the posts whose current mentions hold it as subject or actor (a mention
+  identity has not linked yet counts by its own name key). Those posts, and a story or News story holding one at its
+  shown post, rank first; best match within each group. Newest first is unchanged.
+- **Cards:** with a version, the entity whose key ends with the query (the version's) comes first; a card needs 2+
+  posts or a subject or actor role. Reversed-key prefix indexes on `mx_entities` and `mx_entity_aliases` (the suffix
+  LIKE under the search's `enable_seqscan = off` took 340–570 ms; 1–2 ms with them).
+
+Tests: `test_search_v10131.py` (the rule in SQL on Russian and English text and Mark X's layer; search: own words, the
+layer and the split arm keep the pair, the line's marks, entity first with a linked and an unlinked mention, a story's
+shown post, the cards); `test_search.py`'s expectation for "kimi 3.1" is now the pair.
+
+Measured on the 5 Nov server copy (identity's link step run on a scratch copy): over 8 name+version queries the old
+rule matched 4,350 posts by their own words, 2,025 of them holding the name with its version; the new one 2,073, of
+them 2,020 (5 lost: 4 deep in long posts past the vector's last position, 1 inside an address). Latency, 10 queries ×
+5 runs, alternated: base p50 72–78 / p95 144–154 ms, head p50 66–68 / p95 141–145 ms. Rows: `plan/research/v10131-notes.md`.
+
+Open: a post Mark X has not read yet ranks by its words only; adjacency is lost past a vector's 16,383rd position
+(every later word sits there); a version inside an address is not split (0056's rule).
+
