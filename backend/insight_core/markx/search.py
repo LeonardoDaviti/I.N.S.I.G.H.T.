@@ -6,6 +6,8 @@ object, actors and numbers, B) and its current entity set (`mx_mentions_now`: ea
 name, A; the makers and the entities' aliases, B). It is written when a read, entities or cite answer is stored
 (`refresh`, from tasks.record) and by a resumable background fill (`fill_batch` / `pending`, like 0033's): a post with
 an answer and no row, a row of an older VERSION, or a row older than the post's newest reading or entity set.
+`vector_ix` is the same text under the posts' index rule (post_search_vector's: 'russian', NFKC, version parts), so a
+query's words split between the post's own text and Mark X's English (one in each) match the two together.
 
 Search reads it only while Mark X is on (`enabled`); Mark IX's `posts.search_vector` and its rule are unchanged.
 
@@ -21,7 +23,7 @@ from typing import Any, Dict, Iterable, List
 from psycopg import Cursor
 
 # The rule that makes a row: a change to what goes in the vector raises it, and the fill remakes every row.
-VERSION = 1
+VERSION = 2   # 2: vector_ix, the layer under the posts' index rule (the words split across both)
 FILL_BATCH = 500
 ENTITY_CARDS = 3
 PREFIX_MIN = 3          # a prefix matches from 3 letters
@@ -31,10 +33,13 @@ MAX_QUERY_WORDS = 8     # runs of words are read from the first 8
 # post of `ids`, as the row's vector, headline and version. Written for every id given, an empty vector when nothing is
 # left to read, so the fill never asks for a post again.
 _WRITE = """
-INSERT INTO mx_post_search (post_id, vector, headline, version, updated_at)
+INSERT INTO mx_post_search (post_id, vector, vector_ix, headline, version, updated_at)
 SELECT ids.id,
        setweight(to_tsvector('english', concat_ws(' ', r.headline, m.names)), 'A')
        || setweight(to_tsvector('english', concat_ws(' ', r.rest, m.rest)), 'B'),
+       search_vector_with_parts(
+         setweight(to_tsvector('russian', normalize(concat_ws(' ', r.headline, m.names), NFKC)), 'A')
+         || setweight(to_tsvector('russian', normalize(concat_ws(' ', r.rest, m.rest), NFKC)), 'B')),
        r.headline, %(version)s, now()
   FROM unnest(%(ids)s::uuid[]) AS ids(id)
   LEFT JOIN LATERAL (
@@ -58,7 +63,7 @@ SELECT ids.id,
          LEFT JOIN mx_entities e ON e.id = mm.entity_id
         WHERE mm.post_id = ids.id) m ON TRUE
 ON CONFLICT (post_id) DO UPDATE
-   SET vector = EXCLUDED.vector, headline = EXCLUDED.headline, version = EXCLUDED.version, updated_at = now()
+   SET vector = EXCLUDED.vector, vector_ix = EXCLUDED.vector_ix, headline = EXCLUDED.headline, version = EXCLUDED.version, updated_at = now()
 """
 
 # The posts whose row is missing, of an older rule, or older than their newest reading or entity set.

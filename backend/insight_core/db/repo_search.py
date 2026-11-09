@@ -89,23 +89,45 @@ CLASSIC_VECTOR = (
 )
 
 
-def _rank_sql(vector: str, post_id: str, markx: bool) -> str:
-    """A post's rank: its own vector's; with Mark X's layer, the higher of that and its English layer's (issue 0139).
+def _rank_sql(vector: str, post_id: str, markx: bool, split: bool = True) -> str:
+    """A post's rank: its own vector's; with Mark X's layer (issue 0139), the highest of that, its English layer's,
+    and, with `split` (2+ words), its own vector with the layer under the index's rule (the words split across both).
     Its parameters: _rank_params."""
     if not markx:
         return RANK.format(v=vector)
-    return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT ts_rank(mx.vector, {MX_TSQUERY}, 1)"
-            f" FROM mx_post_search mx WHERE mx.post_id = {post_id} AND mx.vector @@ {MX_TSQUERY}), 0))")
+    if not split:
+        return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT ts_rank(mx.vector, {MX_TSQUERY}, 1)"
+                f" FROM mx_post_search mx WHERE mx.post_id = {post_id} AND mx.vector @@ {MX_TSQUERY}), 0))")
+    # One read of the layer's row; the two together are ranked only when the post's own words don't match alone.
+    return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT GREATEST("
+            f"CASE WHEN mx.vector @@ {MX_TSQUERY} THEN ts_rank(mx.vector, {MX_TSQUERY}, 1) ELSE 0 END,"
+            f" CASE WHEN NOT {vector} @@ {TSQUERY} AND ({vector} || mx.vector_ix) @@ {TSQUERY}"
+            f" THEN ts_rank({vector} || mx.vector_ix, {TSQUERY}, 1) ELSE 0 END)"
+            f" FROM mx_post_search mx WHERE mx.post_id = {post_id}), 0))")
 
 
-def _rank_params(q: str, markx: bool) -> List[Any]:
-    return [q, q, q] if markx else [q]
+def _rank_params(q: str, markx: bool, split: bool = True) -> List[Any]:
+    return ([q] * 6 if split else [q] * 3) if markx else [q]
+
+
+def _split_match(post: str) -> str:
+    """Issue 0139: the query's words split between the post's own vector and Mark X's layer under the index's rule
+    (`vector_ix`). Its candidates are the posts whose own vector and whose layer each hold one of the words (both GIN
+    indexes); then the two together must match the whole query. Parameters: [q] * 7."""
+    return (f"({post}.search_vector @@ {MARK_TSQUERY}"
+            f" AND {post}.id IN (SELECT mx.post_id FROM mx_post_search mx WHERE mx.vector_ix @@ {MARK_TSQUERY})"
+            f" AND ({post}.search_vector || (SELECT mx.vector_ix FROM mx_post_search mx WHERE mx.post_id = {post}.id))"
+            f" @@ {TSQUERY})")
+
+
+def _words(q: str) -> int:
+    """How many words a query asks for: `or` and an excluded -word are no words."""
+    return len([w for w in q.split() if w.lower() != "or" and not w.startswith("-") and any(c.isalnum() for c in w)])
 
 
 def default_order(q: str) -> str:
-    """Best match for a query of 2+ words, newest for one (issue 0139): `or` and an excluded -word are no words."""
-    words = [w for w in q.split() if w.lower() != "or" and not w.startswith("-") and any(c.isalnum() for c in w)]
-    return "best" if len(words) >= BEST_FROM_WORDS else "newest"
+    """Best match for a query of 2+ words, newest for one (issue 0139)."""
+    return "best" if _words(q) >= BEST_FROM_WORDS else "newest"
 
 
 # The groups a result folds into: a story (0050) or a News story (0051), each post in at most one.
@@ -253,7 +275,8 @@ class SearchRepository:
         limit = query.limit
         if query.order == "best":
             # Ranked among the newest RANKED_MATCHES matches: ranking reads every vector it ranks.
-            rank, rank_params = _rank_sql("m.search_vector", "m.id", markx), _rank_params(query.q, markx)
+            split = _words(query.q) >= 2
+            rank, rank_params = _rank_sql("m.search_vector", "m.id", markx, split), _rank_params(query.q, markx, split)
             matches, page, page_params = RANKED_MATCHES, "OFFSET %s", [query.offset]
         else:
             matches, rank, rank_params, page, page_params = limit + 1, "0", [], "", []
@@ -285,8 +308,11 @@ class SearchRepository:
                 LIMIT %s)"""
         own = branch(f"p.search_vector @@ {TSQUERY}")
         if markx:
-            layers = (f"{own} UNION {branch(f'p.id IN (SELECT mx.post_id FROM mx_post_search mx WHERE mx.vector @@ {MX_TSQUERY})')}")
+            layers = f"{own} UNION {branch(f'p.id IN (SELECT mx.post_id FROM mx_post_search mx WHERE mx.vector @@ {MX_TSQUERY})')}"
             layer_params = [query.q, *params, matches, query.q, *params, matches]
+            if _words(query.q) >= 2:   # one word is never split between the two
+                layers += f" UNION {branch(_split_match('p'))}"
+                layer_params += [*[query.q] * 7, *params, matches]
         else:
             layers, layer_params = own, [query.q, *params, matches]
         cur.execute(
@@ -356,6 +382,9 @@ class SearchRepository:
         if since is not None:
             shown.append(f"{_on(SORT_KEY, 'op', 'os')} >= %s")
             params.append(since)
+        # The story's other posts are compared by their own words and Mark X's English, not by the words split
+        # across both (20 ms more a search on the copy): a story's other post matched only that way may show too.
+        split = False
         if markx:
             matched = (f"(op.search_vector @@ {TSQUERY} OR EXISTS (SELECT 1 FROM mx_post_search mx"
                        f" WHERE mx.post_id = op.id AND mx.vector @@ {MX_TSQUERY}))")
@@ -367,15 +396,16 @@ class SearchRepository:
             JOIN {table} o ON o.{key} = sp.{key} AND o.post_id <> sp.post_id
             JOIN posts op ON op.id = o.post_id
             JOIN sources os ON os.id = op.source_id
-            CROSS JOIN LATERAL (SELECT {_rank_sql('op.search_vector', 'op.id', markx)} AS other,
-                                       {_rank_sql('p.search_vector', 'p.id', markx)} AS this) r
+            CROSS JOIN LATERAL (SELECT {_rank_sql('op.search_vector', 'op.id', markx, split)} AS other,
+                                       {_rank_sql('p.search_vector', 'p.id', markx, split)} AS this) r
             WHERE sp.post_id = p.id AND {matched} AND {' AND '.join(shown)}
               AND (r.other > r.this
                    OR (r.other = r.this
                        AND ((o.role = 'report' AND sp.role = 'share')
                             OR (o.role = sp.role AND ({_ORDER_RANK.format(sp='o', p='op')})
                                                          < ({_ORDER_RANK.format(sp='sp', p='p')}))))))"""
-        return sql, [*_rank_params(query.q, markx), *_rank_params(query.q, markx), *matched_params, *params]
+        ranks = _rank_params(query.q, markx, split)
+        return sql, [*ranks, *ranks, *matched_params, *params]
 
     @staticmethod
     def attach_news(cur: Cursor, items: List[Dict[str, Any]], *, now: datetime) -> None:

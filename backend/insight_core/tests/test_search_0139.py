@@ -172,6 +172,22 @@ class MarkXLayer(_Api):
         self.assertEqual(self.found("3D library tokens")["items"], [])
         self.assertEqual([i["id"] for i in self.found("widget3d")["items"]], [pid])   # its own words still match
 
+    def test_words_split_between_its_own_text_and_mark_xs_english_match_together(self):
+        pid = self.ru_post()
+        other = self.ru_post()   # a second answered post holding only one of the words in each layer
+        self.cur.execute("UPDATE posts SET title = 'Заметка', content = 'Другая заметка без нужных слов.' WHERE id = %s", (other,))
+        self.cur.execute("UPDATE posts SET search_vector = post_search_vector(title, content, '') WHERE id = %s", (other,))
+        q = "трёхмерные library"   # the Russian word only in the post's own text, the English one only in Mark X's
+        for order in ("newest", "best"):
+            with self.subTest(order=order):
+                items = self.found(q, order=order)["items"]
+                self.assertEqual([i["id"] for i in items], [pid])
+                self.assertNotIn("snippet_from", items[0])   # its own line, its own word marked
+                self.assertIn("трёхмерные", [p["text"] for p in items[0]["snippet"] if p["mark"]])
+        self.assertEqual(self.found('"трёхмерные library"')["items"], [])   # a phrase is never split
+        os.environ["INSIGHT_MARKX"] = "off"
+        self.assertEqual(self.found(q)["items"], [])
+
     def test_a_post_its_own_words_match_keeps_its_own_line(self):
         pid = self.ru_post()
         (item,) = self.found("библиотека")["items"]

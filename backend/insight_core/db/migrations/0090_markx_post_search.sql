@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS mx_post_search (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS mx_post_search_vector_idx ON mx_post_search USING gin (vector);
+-- The same text under the posts' index rule (post_search_vector's: 'russian', NFKC, version parts): a query's words
+-- split between the post's own text and this layer match `posts.search_vector || vector_ix` (search_query).
+ALTER TABLE mx_post_search ADD COLUMN IF NOT EXISTS vector_ix tsvector;
+CREATE INDEX IF NOT EXISTS mx_post_search_vector_ix_idx ON mx_post_search USING gin (vector_ix);
 
 CREATE INDEX IF NOT EXISTS mx_entities_key_prefix_idx ON mx_entities (key text_pattern_ops);
 CREATE INDEX IF NOT EXISTS mx_entity_aliases_key_prefix_idx ON mx_entity_aliases (key text_pattern_ops);
