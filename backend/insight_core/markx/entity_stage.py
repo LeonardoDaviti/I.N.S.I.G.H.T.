@@ -64,6 +64,7 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
+    out["addresses"] = addresses(cur, now=now, since=since, full=whole and not left)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
     out["days_linked"] = len(days)
     if whole or since is None:
@@ -72,6 +73,22 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
                        OR EXISTS (SELECT 1 FROM mx_entity_pins WHERE created_at >= %(s)s OR undone_at >= %(s)s)""",
                 {"s": since})
     return out, (None if cur.fetchone()[0] else days)
+
+
+def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> Dict[str, Any]:
+    """0138 A: the entities' addresses of the posts whose current set came since (every post on the full pass's first
+    chunk run), no request. Derived and idempotent: a failure is logged in the counts and undone, never the run's."""
+    import logging
+    from insight_core.markx import entity_addresses
+    cur.execute("SAVEPOINT entity_addresses")
+    try:
+        got = entity_addresses.stage(cur, now=now, since=since, full=full)
+    except Exception as error:  # noqa: BLE001 - a derived stage never stops the run
+        cur.execute("ROLLBACK TO SAVEPOINT entity_addresses")
+        logging.getLogger(__name__).exception("Mark X: the entity addresses stage failed")
+        return {"error": str(error)[:200]}
+    cur.execute("RELEASE SAVEPOINT entity_addresses")
+    return got
 
 
 def surges(cur: Any, *, now: datetime, run_id: Any, days: Optional[Set[date]], since: Optional[datetime],

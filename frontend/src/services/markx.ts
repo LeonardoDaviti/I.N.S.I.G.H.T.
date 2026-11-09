@@ -375,6 +375,44 @@ export interface MarkxEntityPage {
   published?: { id: string; name: string; type: string | null }[];
   citing?: MarkxEntityPost[];
   recommending?: MarkxEntityPost[];
+  /** 0138 A: its original (a paper or release page its posts link, found by rules), stored or not, and its other pages. */
+  original?: MarkxOriginal | null;
+  addresses?: { kind: 'paper' | 'code' | 'demo' | 'release'; url: string; rule: string }[];
+  /** 0138: false when no post's current reading names it; `older` then lists the posts an earlier guide named it in. */
+  current?: boolean;
+  older?: MarkxOlderPost[];
+  /** 0138 E3: an org, person or document with 2+ works or 10+ posts: its sites, works and people. */
+  rabbit_hole?: MarkxRabbitHole | null;
+}
+
+export interface MarkxRabbitHole {
+  /** followed / stored: you have it; feed: Follow; page: Watch page; untested: Follow (the feed finder decides). */
+  sites: { url: string; host: string; state: 'followed' | 'stored' | 'feed' | 'page' | 'untested' }[];
+  works: { id: string; name: string; url: string | null; kind: string | null; stored: boolean; post_id: string | null }[];
+  people: { id: string; name: string }[];
+  left: { sites: number; works: number };
+}
+
+export interface MarkxOriginal {
+  url: string;
+  kind: 'paper' | 'release';
+  /** How it was found: identifier (an arXiv id, a DOI), title, maker (its maker's own site), lookup. */
+  rule: string;
+  /** The stored post at it; `collected` when Collect originals stored it. */
+  post: { id: string; title: string | null; collected: boolean } | null;
+  asked: { outcome: string; at: string } | null;
+}
+
+export interface MarkxOlderPost {
+  id: string;
+  title: string | null;
+  source: string | null;
+  at: string | null;
+  url: string | null;
+  guide: string;
+  span: string;
+  /** What the post's current reading names as its subjects instead. */
+  now: { id: string | null; name: string; type: string | null }[];
 }
 
 export type MarkxEntityAnswer = 'same' | 'other_version' | 'different' | 'not_entity';

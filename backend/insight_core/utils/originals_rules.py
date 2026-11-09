@@ -73,6 +73,30 @@ def collect_setting(stored: Optional[Mapping]) -> bool:
     return bool(value)
 
 
+# Look up unlinked originals (issue 0138 C): a title lookup (the arXiv API, Crossref) for a document entity no post
+# links. Off unless you switch it on (its own key in the scheduler's settings).
+LOOKUP_SETTING = "lookup_originals"
+LOOKUP_DEFAULT = False
+
+
+def lookup_setting(stored: Optional[Mapping]) -> bool:
+    """Whether Look up unlinked originals is on, from the scheduler's stored settings: off unless set true."""
+    value = (stored or {}).get(LOOKUP_SETTING)
+    return LOOKUP_DEFAULT if value is None else bool(value)
+
+
+# Store Classics (issue 0138 E1): every Classic not stored collected once, under its own backfill allowance. On unless
+# you switch it off.
+CLASSICS_SETTING = "store_classics"
+CLASSICS_DEFAULT = True
+
+
+def classics_setting(stored: Optional[Mapping]) -> bool:
+    """Whether Store Classics is on, from the scheduler's stored settings: on unless set false."""
+    value = (stored or {}).get(CLASSICS_SETTING)
+    return CLASSICS_DEFAULT if value is None else bool(value)
+
+
 def access_keys(url: str) -> Tuple[str, ...]:
     """The query keys of `url` that carry an access or gift token."""
     try:
@@ -151,9 +175,10 @@ def early_fetch_blocked(now: datetime, *, last_attempt: Optional[datetime], fail
 # ---- the shared budget -------------------------------------------------------------------------------
 
 
-def credit_after(credit: float, scheduled: int) -> float:
-    """The credit once `scheduled` more source fetches were made: EXTRA_SHARE of a request each, at most the cap."""
-    return min(EXTRA_CREDIT_CAP, max(0.0, credit) + EXTRA_SHARE * max(0, scheduled))
+def credit_after(credit: float, scheduled: int, cap: float = EXTRA_CREDIT_CAP) -> float:
+    """The credit once `scheduled` more source fetches were made: EXTRA_SHARE of a request each, at most the cap
+    (0138 B5: raised while an entity's original has waited on it over 72 hours)."""
+    return min(cap, max(0.0, credit) + EXTRA_SHARE * max(0, scheduled))
 
 
 def whole(credit: float) -> int:
@@ -226,7 +251,7 @@ def collect_order(rows: Sequence[Tuple[str, int, datetime]]) -> list:
 
 
 __all__ = [
-    "COLLECT_CHOSEN", "COLLECT_DEFAULT", "EXTRA_SHARE", "FOLLOWED", "FROM_QUOTE", "NO_ARTICLE", "PAGE", "SiteReads", "TWEET_UNHELD", "WALLED",
+    "COLLECT_CHOSEN", "COLLECT_DEFAULT", "LOOKUP_DEFAULT", "LOOKUP_SETTING", "lookup_setting", "CLASSICS_DEFAULT", "CLASSICS_SETTING", "classics_setting", "EXTRA_SHARE", "FOLLOWED", "FROM_QUOTE", "NO_ARTICLE", "PAGE", "SiteReads", "TWEET_UNHELD", "WALLED",
     "access_keys", "collect_order", "collect_setting", "credit_after", "early_fetch_blocked", "linked_wanted", "page_date", "site_reads_of",
     "strip_access_tokens", "tokened", "trigger_kind", "tweet_time", "whole",
 ]

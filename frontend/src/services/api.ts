@@ -477,6 +477,12 @@ export interface SchedulerConfig {
   /** Collect originals (issue 0123): a News story's original INSIGHT lacks is collected, one page, within the
    *  shared budget (under 1% of the schedule's requests). On unless you switched it off (issue 0126). */
   collect_originals?: boolean;
+  /** Look up unlinked originals (issue 0138 C): a document several sources talk about that none links is looked up by
+   *  its title (arXiv, Crossref), one request each, within the same budget. Off unless you switch it on. */
+  lookup_originals?: boolean;
+  /** Store Classics (issue 0138 E1): every Classic INSIGHT doesn't have collected once, under its own allowance (100
+   *  pages a day, one site at a time). On unless you switch it off. */
+  store_classics?: boolean;
   updated_at?: string | null;
   /** Only on GET /api/operations/scheduler. */
   state?: SchedulerState;
@@ -867,6 +873,11 @@ export interface SuggestedSource {
   origin_stories?: OriginStory[];
   /** A section of a site you follow: the places of it your sources hold (`anthropic.com/research`). */
   follows?: string[];
+  /** 0138 D2: how many originals of things your sources talked about were at this site in 30 days, and the line saying so. */
+  originals?: number;
+  originals_reason?: string;
+  /** 0138 F3: how often the long-reads you opened cite it (3+ from 2+ long-reads suggest it below the voices bar). */
+  cited_by_longreads?: number;
 }
 /** A story's origin (issue 0064) as Discover shows it: its page, its title when known, its voices. */
 export interface OriginStory { url: string; title: string | null; voices: number; stored: boolean; }
@@ -905,8 +916,13 @@ export interface SuggestedSourcesResponse {
   archives?: MissingOrigins[];
   /** Pages that start stories but name no account to follow (`youtube.com/watch`). */
   unnamed?: { place: string; origins: number }[];
-  /** Discover's Pages (issue 0113): each story's root you don't follow and haven't stored, one page a row. */
+  /** Discover's Pages (issue 0113): each story's root you don't follow and haven't stored, one page a row; then (0138 D1)
+   *  the originals of things several of your sources talked about (`entity`). */
   pages?: DiscoverPage[];
+  /** 0138 D3: sources you followed from an "original of N things" suggestion, and the originals each brought first. */
+  supplied?: { key: string; source_id: string; name: string; followed_at: string; originals_first: number }[];
+  /** 0138 E4: entities whose world has sites you don't follow or works you don't have. */
+  worlds?: { entity: { id: string; name: string }; sites: number; not_followed: number; works_not_stored: number }[];
 }
 
 /** One Pages row (issue 0113): a page your stories start at, savable as one post. */
@@ -925,6 +941,9 @@ export interface DiscoverPage {
   /** False when the server's reads of its site found it walled, or its address carried a token. */
   readable: boolean;
   stories: OriginStory[];
+  /** 0138 D1: the original of a thing (a Mark X entity) your sources talked about, not a story's root. */
+  entity?: { id: string; name: string };
+  voice_names?: string[];
 }
 
 /** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it
@@ -946,6 +965,8 @@ export interface SourceAnatomyRow {
   /** Change watching (0039); null: its kind cannot watch. */
   watch_changes: boolean | null;
   watched_pages: number;
+  /** 0138 F2: its pages other posts linked that its feed never carried, read once as its posts. */
+  feed_misses?: number;
   /** Conditional fetching (0044): validators stored; null: its kind always fetches in full. */
   validators: boolean | null;
   status: HealthStatus;
@@ -1242,6 +1263,8 @@ export function createApi() {
         intervalHours: config.interval_hours,
         ingestTickMinutes: config.ingest_tick_minutes,
         collectOriginals: config.collect_originals,
+        lookupOriginals: config.lookup_originals,
+        storeClassics: config.store_classics,
       },
     })),
     getVersion: () => request<BuildVersion>('/api/version'),

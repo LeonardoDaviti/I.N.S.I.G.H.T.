@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { useApi } from '../../services/ApiContext';
 import type { DiscoverPage } from '../../services/api';
-import { Button, ExternalLink } from '../ui';
+import { Button, ExternalLink, TextLink } from '../ui';
 import { EmptyState } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatLocalDateTime } from '../../lib/dates';
@@ -54,6 +54,13 @@ function PageRow({ page, onFollow, onDone }: {
             <ExternalLink href={page.url} dir="auto" title={page.url}>{title}</ExternalLink>
           </h3>
           <p className="text-[0.8125rem] leading-5 text-fg-3">{pageLine(page)}</p>
+          {page.entity ? (
+            <p className="mt-1 text-[0.8125rem] leading-5 text-fg-2">
+              The original of <TextLink to={`/markx/entities/${page.entity.id}`}>{page.entity.name}</TextLink>, which{' '}
+              {plural(page.voices, 'of your sources', 'of your sources')} wrote about
+              {page.voice_names?.length ? ` (${page.voice_names.join(', ')})` : ''}
+            </p>
+          ) : null}
           <ul className="mt-1 flex flex-col gap-0.5">
             {page.stories.map((story) => (
               <li key={story.url} className="text-[0.8125rem] leading-5 text-fg-2">
@@ -78,7 +85,8 @@ function PageRow({ page, onFollow, onDone }: {
  * Discover → Pages (issue 0113): each story's root that no source of yours publishes and INSIGHT doesn't store, one page
  * a row, the biggest stories first. Save page keeps it as one post (the save path: a followed source's page is fetched
  * there first, issue 0122), so its story has its original; Follow site… is Discover's follow (the feed finder and page
- * watching); Hide hides that page, never its site.
+ * watching); Hide hides that page, never its site. 0138 D1: then the originals of things (Mark X's entities) two of your
+ * sources wrote about, or one in a News lead, that INSIGHT doesn't have: "The original of <thing>".
  */
 export default function DiscoverPages({ pages, onFollow }: { pages: DiscoverPage[]; onFollow: (url: string) => void }) {
   const [gone, setGone] = useState<Set<string>>(() => new Set());

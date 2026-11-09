@@ -82,10 +82,15 @@ export function anatomyKindLabel(row: Pick<SourceAnatomyRow, 'kind'>): string {
 /** A short word and what it means. */
 export interface Cell { text: string; title: string }
 
-export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text'>): Cell {
-  if (row.full_text === 'on') return { text: 'on', title: 'Reads each post’s page for the whole text' };
-  if (row.full_text === 'off') return { text: 'off', title: 'Full text is off: only what the feed carries' };
-  return { text: 'in feed', title: 'The feed carries the whole post' };
+export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text'> & Partial<Pick<SourceAnatomyRow, 'feed_misses'>>): Cell {
+  const cell = row.full_text === 'on' ? { text: 'on', title: 'Reads each post’s page for the whole text' }
+    : row.full_text === 'off' ? { text: 'off', title: 'Full text is off: only what the feed carries' }
+      : { text: 'in feed', title: 'The feed carries the whole post' };
+  // 0138 F2: pages of it other posts linked that its feed never carried (each read once as its post).
+  const missed = row.feed_misses ?? 0;
+  if (!missed) return cell;
+  return { text: `${cell.text} · partial`,
+    title: `${cell.title}. Its feed missed ${formatCount(missed)} linked ${missed === 1 ? 'page' : 'pages'}; INSIGHT read ${missed === 1 ? 'it' : 'them'} once` };
 }
 
 export function watchCell(row: Pick<SourceAnatomyRow, 'watch_changes' | 'watched_pages'>): Cell {
