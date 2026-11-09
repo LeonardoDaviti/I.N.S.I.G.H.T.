@@ -52,6 +52,13 @@ their own fixtures (`SameArticleTests`, `CutMarkerTests`, `EmbeddedDataTests`).
 Measure 2 (teasers before/after by outcome on the newest 4,000) and 3 (three named posts read in full on the
 server) need the deploy: rows go to `plan/research/0140-notes.md`.
 
+## Checks
+- Backend: the 34 modules that touch full text, ingestion, the post page, anatomy and stories: 877 tests OK; after
+  the cut-marker fix the 7 closest modules again: 172 OK. Frontend: `npm run build` OK (bundle +0.05%),
+  `npx vitest run` 840 OK, `node --test src/lib/*.test.ts` 243 OK (the design-coverage test claims `post/teaser`).
+- realdata-check: run at merge (owner's rule of 2026-11-09; the check started here was stopped and its scratch
+  copies dropped).
+
 ## Open
 - Why the "all posts" tech-site feed's 108 teasers failed is not known from here (no page is stored). After the
   deploy their outcomes say it: `not_same_article` (the shingles or cut should have caught it: look), or
