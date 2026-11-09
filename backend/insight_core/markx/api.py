@@ -451,7 +451,9 @@ class WindowIn(BaseModel):
 
 
 def _window(cur) -> Dict[str, Any]:
+    from insight_core.markx import story_window
     return {"reading_window_days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS,
+            "story_window_days": story_window.setting(cur),                               # 0144 A1
             "entities_guide": _entities_guide(cur)}   # 0133
 
 
@@ -514,9 +516,20 @@ def mx_settings():
 @router.post("/settings/reading-window")
 def mx_set_reading_window(body: WindowIn):
     """The reading window from the page: a number of days, or null for every post. It counts from the next planner
-    run (the next lease), with no restart; the decision window stays 30 days."""
+    run (the next lease), with no restart; the decision window is the story window's (0144)."""
     with transaction() as cur:
         tasks.set_reading_window(cur, body.days)
+        return _window(cur)
+
+
+@router.post("/settings/story-window")
+def mx_set_story_window(body: WindowIn):
+    """0144 A1: the story window from the page: a number of days, or null for every post (the decision run makes Mark
+    X's own stories back that far, newest first, a step a run). It counts from the next decision run; News keeps its
+    own window."""
+    from insight_core.markx import story_window
+    with transaction() as cur:
+        story_window.set_window(cur, body.days)
         return _window(cur)
 
 
@@ -565,7 +578,13 @@ def mx_overview():
         return {"worker": {**news.worker(cur, contacts(cur)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS},
+                "story_window": _story_window_view(cur),   # 0144
                 "entities_guide": _entities_guide(cur)}   # 0133
+
+
+def _story_window_view(cur) -> Dict[str, Any]:
+    from insight_core.markx import story_window
+    return story_window.view(cur)
 
 
 @router.post("/decide")
@@ -703,14 +722,62 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str):
+def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000)):
+    """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
+    old stories to label (10 a page, 30 a day)."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:
-        got = entity_views.entity_page(cur, str(found)) if found else None
+        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got
+
+
+class EntitySourcesIn(BaseModel):   # 0144 B1
+    source_ids: List[str]
+    answer: str
+
+
+@router.post("/entities/{entity_id}/sources")
+def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
+    """0144 B1: the owner's yes / no on "These sources are <name>" (a source whose handle or name is the entity's)."""
+    from insight_core.markx import identity, person_page
+    found = _uuid(entity_id)
+    ids = [str(x) for x in (_uuid(s) for s in body.source_ids) if x]
+    if found is None or not ids:
+        raise HTTPException(status_code=404, detail="No such entity or source")
+    with transaction() as cur:
+        book = identity.load_book(cur)
+        if str(found) not in book.ents:
+            raise HTTPException(status_code=404, detail="No such entity")
+        try:
+            n = person_page.answer_sources(cur, book, str(found), ids, body.answer)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"answered": n, "answer": body.answer}
+
+
+class SampleLabelIn(BaseModel):   # 0144 C
+    answer: str
+
+
+@router.post("/stories/{story_id}/sample")
+def mx_story_sample(story_id: str, body: SampleLabelIn):
+    """0144 C: right / wrong / missed on an old story the entity page offered; the old stories' precision decides
+    whether the story window stays at everything."""
+    from insight_core.markx import person_page, story_window
+    found = _uuid(story_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such story")
+    with transaction() as cur:
+        try:
+            got = person_page.label_sample(cur, str(found), body.answer)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {**got, "precision": story_window.precision(cur)}
 
 
 # ---- perspectives and the story sheet (0119 B6-B7; added 2026-11-07; the routes above are unchanged; no bearer) ------

@@ -225,7 +225,9 @@ def _members(book: I.Book, root: str) -> Set[str]:
     return {e for e in book.ents if book.root(e) == root}
 
 
-def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
+                by_limit: Optional[int] = None, offer_sample: bool = False) -> Optional[Dict[str, Any]]:
+    from insight_core.markx import person_page as PP
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
@@ -241,36 +243,79 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
         ln = lines.setdefault(pid, {"roles": set(), "at": at, "source_id": src, "read": read, "as": set()})
         ln["roles"].add(role or "mention")
         ln["as"].add(book.ents[eid].name if eid in book.ents else "")
-    posts = _posts(cur, lines)
-    story_of = _stories(cur, lines)
-    heads = _story_heads(cur, {s for ss in story_of.values() for s in ss})
-    groups: Dict[str, List[str]] = defaultdict(list)
-    for pid in lines:
-        for s in story_of.get(pid) or ["-"]:
-            groups[s].append(pid)
+    current = bool(lines)
+    # 0144 B1: the sources that are this person or org; their posts are on the page with role `by`
+    selves = PP.by_sources(cur, book, root, members)
+    mine = PP.by_posts(cur, [s["id"] for s in selves["by"]])
+    for pid, (at, src, read) in mine.items():
+        ln = lines.setdefault(pid, {"roles": set(), "at": at, "source_id": src, "read": read, "as": set()})
+        ln["roles"].add("by")
+    # 0144 B2: every Mark X story of these posts and, for a post in none, its Mark IX story, each with all its posts
+    x_of, x_members = PP.mark_x_stories(cur, lines)
+    ix_of, ix_stories = PP.mark_ix_stories(cur, [p for p in lines if not x_of.get(p)])
+    shown = {p for ps in x_members.values() for p in ps} | {p for st in ix_stories.values() for p in st["posts"]}
+    posts = _posts(cur, set(lines) | shown)
+    heads = _story_heads(cur, x_members)
+
+    def at_of(pid: str) -> Any:
+        ln = lines.get(pid)
+        return ln["at"] if ln else ((posts.get(pid) or {}).get("at") or now)
+
+    def source_of(pid: str) -> Optional[str]:
+        ln = lines.get(pid)
+        return ln["source_id"] if ln else (posts.get(pid) or {}).get("source_id")
 
     def line(pid: str) -> Dict[str, Any]:
         p = posts.get(pid) or {"id": pid}
-        ln = lines[pid]
+        ln = lines.get(pid) or {"roles": set(), "read": None, "as": set()}
         return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")},
-                "roles": sorted(ln["roles"]), "read": ln["read"], "named": sorted(x for x in ln["as"] if x)}
-    blocks = []
-    for sid, ps in groups.items():
-        if sid == "-":
-            continue
-        ps.sort(key=lambda p: (lines[p]["at"], p))
-        blocks.append({"story": sid, "headline": heads.get(sid),
-                       "voices": len({lines[p]["source_id"] for p in ps}),
-                       "newest": max(lines[p]["at"] for p in ps), "posts": [line(p) for p in ps]})
+                "roles": sorted(ln["roles"]), "read": ln["read"], "named": sorted(x for x in ln["as"] if x),
+                "about": pid in lines}
+
+    def block(sid: str, ps: List[str], mark: str, *, headline: Optional[str], root_post: Optional[str] = None,
+              origin_url: Optional[str] = None, origin_title: Optional[str] = None) -> Dict[str, Any]:
+        orig = PP.original_of(ps, at_of, set(mine), root_post, origin_url)
+        ordered = sorted(ps, key=lambda p: (p != orig["post"], at_of(p), p))
+        if orig["url"]:
+            from insight_core.utils.url_normalization import normalize_url
+            cur.execute("SELECT id::text FROM posts WHERE normalized_url = %s LIMIT 1", (normalize_url(orig["url"]) or orig["url"],))
+            got = cur.fetchone()
+            orig = {**orig, "title": origin_title, "stored": got[0] if got else None}
+        return {"story": sid, "mark": mark, "headline": headline,
+                "voices": len({source_of(p) for p in ps if source_of(p)}),
+                "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps),
+                "original": orig, "posts": [line(p) for p in ordered]}
+    blocks = [block(sid, ps, "x", headline=heads.get(sid)) for sid, ps in x_members.items() if ps]
+    for sid, st in ix_stories.items():
+        rp = posts.get(st["root"]) or {}
+        blocks.append(block(sid, st["posts"], "ix", headline=st["origin_title"] or rp.get("title"),
+                            root_post=st["root"], origin_url=st["origin_url"], origin_title=st["origin_title"]))
     blocks.sort(key=lambda b: (-b["voices"], -b["newest"].timestamp(), b["story"]))
-    loose = sorted(groups.get("-", []), key=lambda p: (-lines[p]["at"].timestamp(), p))
+    in_story = set(x_of) | set(ix_of)
+    # 0144 B4: the loose posts by role: subject and actor, then by, then the other roles, then mentions
+    loose_all = sorted((p for p in lines if p not in in_story),
+                       key=lambda p: (PP.loose_order(lines[p]["roles"]), -lines[p]["at"].timestamp(), p))
+    groups_n = {"report": 0, "by": 0, "other": 0, "mention": 0}
+    names = ("report", "by", "other", "mention")
+    for p in loose_all:
+        groups_n[names[PP.loose_order(lines[p]["roles"])]] += 1
+    cap = PP.BY_LIMIT if by_limit is None else by_limit
+    by_seen = 0
+    loose = []
+    for p in loose_all:
+        if PP.loose_order(lines[p]["roles"]) == 1:
+            by_seen += 1
+            if by_seen > cap:
+                continue
+        loose.append(p)
     sources: Dict[str, Dict[str, Any]] = {}
     for pid, ln in lines.items():
         p = posts.get(pid) or {}
         s = sources.setdefault(ln["source_id"], {"id": ln["source_id"], "name": p.get("source"), "kind": p.get("kind"),
-                                                 "posts": 0, "reports": 0})
+                                                 "posts": 0, "reports": 0, "by": False})
         s["posts"] += 1
         s["reports"] += 1 if ln["roles"] & set(ROLE_REPORT) else 0
+        s["by"] = s["by"] or "by" in ln["roles"]
     e = book.ents[root]
     fam_root = root if e.level in ("family", "thing") else (_family_of(book, root) or {}).get("id")
     versions = []
@@ -286,7 +331,6 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
     versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
-    current = bool(lines)
     return {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
             "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
             **original(cur, book, root),   # 0138: its original first, and its other addresses
@@ -294,7 +338,10 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
             "maker": {"id": maker, "name": book.ents[maker].name} if maker in book.ents else None,
             "family": ({"id": fam_root, "name": book.ents[fam_root].name} if fam_root and fam_root != root else None),
             "versions": versions, "posts": len(lines), "voices": len(sources),
-            "stories": blocks, "loose": [line(p) for p in loose],
+            "stories": blocks, "loose": [line(p) for p in loose], "loose_counts": groups_n,   # 0144 B2-B4
+            "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
+            "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in blocks if b["mark"] == "x"}, now)
+            if offer_sample else [],                                                                  # 0144 C
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
             **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3

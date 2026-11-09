@@ -374,7 +374,7 @@ def finish_run(cur: Cursor, run_id: Id, *, counts: dict) -> None:
 
 
 def last_run(cur: Cursor) -> Optional[Dict[str, Any]]:
-    cur.execute("SELECT * FROM mx_runs ORDER BY started_at DESC, ctid DESC LIMIT 1")
+    cur.execute("SELECT * FROM mx_runs ORDER BY started_at DESC, finished_at DESC NULLS FIRST, ctid DESC LIMIT 1")
     return _one(cur)
 
 

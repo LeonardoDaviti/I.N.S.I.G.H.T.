@@ -96,7 +96,7 @@ describe('Mark X entities (issue 0119 A3)', () => {
     expect(getMarkxEntity).toHaveBeenCalledWith('e5');
     expect(screen.getByRole('link', { name: 'Nimbus 5.1' })).toHaveAttribute('href', '/markx/entities/e7');
     expect(screen.getByRole('region', { name: 'Acme releases Nimbus 5' })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'In no story' })).getByText(/mention/)).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'About Nimbus 5' })).getByText(/mention/)).toBeInTheDocument();
     expect(screen.getByText(/also written Nimbus V5/)).toBeInTheDocument();
   });
 });

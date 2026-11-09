@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxEntitiesGuide, MarkxJob, MarkxOverview } from '../../services/markx';
+import type { MarkxEntitiesGuide, MarkxJob, MarkxOverview, MarkxSettings, MarkxStoryWindow } from '../../services/markx';
 import { request } from '../../lib/request';   // 0133
 import { Button, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
@@ -161,7 +161,7 @@ function ReadingWindow({ days }: { days: number | null }) {
       <h2 className={H2}>Reading window</h2>
       <p className="mt-3 text-[0.8125rem] text-fg-2">
         The worker reads {chosen === null ? 'every post' : `the last ${plural(chosen ?? 30, 'day')}`}: readings, entities and
-        embeddings. A change counts from the next lease. The decisions keep to the last 30 days.
+        embeddings. A change counts from the next lease. The decisions follow the story window.
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.8125rem]" role="radiogroup" aria-label="Reading window">
         {WINDOWS.map((w) => (
@@ -181,6 +181,58 @@ function ReadingWindow({ days }: { days: number | null }) {
         </span>
         {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
       </div>
+    </section>
+  );
+}
+
+const STORY_WINDOWS: { label: string; days: number | null }[] = [
+  { label: '30 days', days: 30 }, { label: '120 days', days: 120 }, { label: '365 days', days: 365 }, { label: 'everything', days: null },
+];
+type SetStoryWindow = (days: number | null) => Promise<MarkxSettings>;
+/** The story window's call, here (in this tab's chunk) and not in api.ts; a test's fake api may provide it. */
+function storyWindowApi(api: object): { setMarkxStoryWindow: SetStoryWindow } {
+  const got = (api as { setMarkxStoryWindow?: unknown }).setMarkxStoryWindow;
+  return { setMarkxStoryWindow: typeof got === 'function' ? (got as SetStoryWindow)
+    : (days) => request('/api/markx/settings/story-window', { method: 'POST', body: { days } }) };
+}
+const pctOf = (p: number | null) => (p === null ? '–' : `${Math.round(p * 100)}%`);
+
+/** 0144 A: how far back the decision run makes Mark X's own stories: 30 days, 120, 365 or everything. Past 30 days the
+ *  window grows back a week a run, newest first, once that week's candidates are found and its questions asked; News
+ *  keeps its own window. With everything, the old stories' precision (labelled on the entity pages) must stay at 97%
+ *  or the window falls back, and says why. */
+export function StoryWindow({ state }: { state: MarkxStoryWindow }) {
+  const api = storyWindowApi(useApi());
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (d: number | null) => api.setMarkxStoryWindow(d),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] }); },
+  });
+  const chosen = save.isPending ? save.variables : state.days;
+  const { old, recent } = state.precision;
+  return (
+    <section aria-label="Story window">
+      <h2 className={H2}>Story window</h2>
+      <p className="mt-3 text-[0.8125rem] text-fg-2">
+        Mark X makes its own stories over {chosen === null ? 'every post' : `the last ${plural(chosen ?? 30, 'day')}`}.
+        {' '}A run decides the last {plural(state.run_days, 'day')}{state.reached ? `, back to ${state.reached}` : ''};
+        past 30 days it reaches a week further back a run, newest first. News keeps its own window.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.8125rem]" role="radiogroup" aria-label="Story window">
+        {STORY_WINDOWS.map((w) => (
+          <label key={w.label} className="flex items-center gap-1.5 text-fg">
+            <input type="radio" name="markx-story-window" checked={chosen === w.days} disabled={save.isPending}
+                   onChange={() => save.mutate(w.days)} />
+            {w.label}
+          </label>
+        ))}
+        {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
+      </div>
+      <p className="mt-2 text-[0.8125rem] tabular-nums text-fg-2">
+        Stories older than 30 days: {pctOf(old.precision)} right ({old.right} of {old.right + old.wrong}{old.missed ? `, ${old.missed} missed a post` : ''})
+        {' '}· newer: {pctOf(recent.precision)} ({recent.right} of {recent.right + recent.wrong}) · everything needs {pctOf(state.keep)} on {state.min_labels}+
+      </p>
+      {state.fallback ? <p className="mt-1 text-[0.8125rem] text-fg">Back to {plural(state.fallback.days, 'day')}: {state.fallback.why}.</p> : null}
     </section>
   );
 }
@@ -260,12 +312,13 @@ export function MarkXWorker() {
   });
   return (
     <Loaded>
-      {({ worker, reading_window: readingWindow, entities_guide: entitiesGuide }) => {
+      {({ worker, reading_window: readingWindow, story_window: storyWindow, entities_guide: entitiesGuide }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
           <div className="space-y-10">
             <ReadingWindow days={readingWindow ? readingWindow.days : 30} />
+            {storyWindow ? <StoryWindow state={storyWindow} /> : null}
             {entitiesGuide ? <EntitiesGuide state={entitiesGuide} /> : null}
             <section aria-label="Queue">
               <h2 className={H2}>Queue</h2>

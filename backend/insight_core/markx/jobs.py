@@ -193,6 +193,7 @@ class Jobs:
                 ids = waiting_posts(cur)
                 counts = candidates.run(cur, ids, since=since)
                 cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
+                backfill = candidates.backfill(cur, started)   # 0144 A2: the story window's next step, newest first
         except Exception as exc:   # the posts wait for the next run
             log.exception("Mark X candidates: the run failed; the posts wait for the next")
             self._finish("candidates", {"ok": False, "error": str(exc)[:500], "mentions_since": since_text,
@@ -201,7 +202,8 @@ class Jobs:
         seconds = round(time.monotonic() - t0, 1)
         log.info("Mark X candidates: %d posts, %s in %.1f s", len(ids), dict(counts), seconds)
         self._finish("candidates", {"ok": True, "posts": len(ids), "counts": dict(counts), "seconds": seconds,
-                                    "mentions_since": (started - MENTIONS_MARGIN).isoformat()})
+                                    "mentions_since": (started - MENTIONS_MARGIN).isoformat(),
+                                    **({"backfill": backfill} if backfill else {})})
         return counts
 
     def decide(self) -> Optional[Dict[str, Any]]:

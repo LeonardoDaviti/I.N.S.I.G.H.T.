@@ -1365,7 +1365,9 @@ export function createApi() {
         { method: 'POST', body: { story, post, answer } }),
     // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
-    getMarkxEntity: (id: string) => request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}`),
+    /** 0144: `byLimit`, the by posts listed loose (default 50). */
+    getMarkxEntity: (id: string, byLimit?: number) =>
+      request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${byLimit !== undefined ? `?by_limit=${byLimit}` : ''}`),
     getMarkxEntityQueue: () => request<MarkxEntityQueue>('/api/markx/entities/queue'),
     answerMarkxEntity: (item: string, answer: MarkxEntityAnswer) =>
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),

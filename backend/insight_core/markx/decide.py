@@ -92,7 +92,8 @@ class Config:
     # and 0 in the 30-day window; it missed the filing it was for.
     document_merges: bool = False
     document_days: int = 30         # ... when two of their posts linking it are at most this far apart
-    days: int = 30                  # the window a run decides (corrections 8)
+    days: int = 30                  # the window a run decides (corrections 8) ...
+    story_window: bool = True       # ... read from the owner's story window each run (0144 A: markx/story_window.py)
 
     @staticmethod
     def prototype() -> "Config":
@@ -597,9 +598,13 @@ class Ask:
     question is one task whatever ids come with it)."""
 
     def __init__(self, cur: Any, now: datetime, caps: Optional[Dict[str, int]] = None, memo: Any = None,
-                 dry: bool = False) -> None:
+                 dry: bool = False, old_after: Optional[int] = None, old_cap: int = 0) -> None:
         self.cur, self.now = cur, now
         self.caps = dict(caps or {})          # new tasks a kind may add this run (CAP for the kinds not named)
+        self.old_after = old_after            # 0144 A: while the story window reaches back, a question whose post is
+        self.old_cap = old_cap                # older than this many days is one of a page (old_cap a kind a run) ...
+        self.old_added: Counter = Counter()
+        self.waiting_old: Counter = Counter()
         self.memo = memo                      # 0116: the tasks and calls of this snapshot, read once (incremental.refresh)
         self.dry = dry                        # nothing added, nothing reopened (the check's incremental reading)
         self.added: Counter = Counter()
@@ -624,7 +629,15 @@ class Ask:
         else:
             task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
         if task is None:
-            if self.dry or self.added[kind] >= self.caps.get(kind, CAP):
+            old = self.old_after is not None and priority > self.old_after
+            if old:                           # ... at the backfill's priority, beside today's (story_window)
+                from insight_core.markx.story_window import BACKFILL_PRIORITY
+                if self.dry or self.old_added[kind] >= self.old_cap:
+                    self.waiting[kind] += 1
+                    self.waiting_old[kind] += 1
+                    return None
+                priority = BACKFILL_PRIORITY
+            elif self.dry or self.added[kind] >= self.caps.get(kind, CAP):
                 self.waiting[kind] += 1
                 return None
             try:
@@ -633,7 +646,7 @@ class Ask:
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
                 return None
-            self.added[kind] += 1
+            (self.old_added if old else self.added)[kind] += 1
             if memo is not None:
                 memo.tasks[(kind, h)] = (str(tid), "open", 0)
                 memo.keys[str(tid)] = (kind, h)
@@ -920,6 +933,25 @@ class Documents:
         return sorted(out)
 
 
+def _question_at(q: Question, world: World) -> Any:
+    """A question's newest post time (its post, anchor and the posts it shows)."""
+    ids = [x for x in (q.post, q.anchor, *q.side, *q.side_b) if x and x in world.posts]
+    return max((world.posts[x].at for x in ids), default=world.since)
+
+
+def _ask_all(q: "Questions", qs: Sequence[Question], world: World, outcome: Optional[Outcome] = None) -> List[Optional[Verdict]]:
+    """Each question's verdict, in `qs`'s order. While the story window reaches back (the Ask's `old_after`), they are
+    asked newest first (0144 A2: a run's page of old questions is the newest ones); the decisions never depend on the
+    order asked (`decide` sorts by kind, then question id)."""
+    order = list(range(len(qs)))
+    if q.ask.old_after is not None:
+        order.sort(key=lambda n: (_question_at(qs[n], world), qs[n].tid), reverse=True)
+    out: List[Optional[Verdict]] = [None] * len(qs)
+    for n in order:
+        out[n] = q.verdict(qs[n]) if outcome is None else q.verdict(qs[n], outcome)
+    return out
+
+
 def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
           answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
@@ -937,7 +969,8 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
         story_pairs += [(x, y, None) for x, y in docs.pairs(multi) if (x, y) not in found]
     q1 = plan_pass1(world.posts, world.stories, world.kinds(), world.candidates, story_pairs, config,
                     in_window=lambda a: world.posts[a].at >= world.since, copies=world.copies())
-    ans1 = [(x, v) for x in q1 if (v := q.verdict(x)) is not None]
+    got1 = _ask_all(q, q1, world)
+    ans1 = [(x, got1[n]) for n, x in enumerate(q1) if got1[n] is not None]
     p1 = decide(world.posts, world.stories, ans1, config, world.events())
     groups = {s["story"]: [p for p in s["posts"] if p in world.posts] for s in p1.stories(world.posts)
               if voices(world.posts, s["posts"]) >= 2}
@@ -949,7 +982,8 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
         x, y = by_posts.get(tuple(pa)), by_posts.get(tuple(pb))
         return cos2.get((min(x, y), max(x, y))) if x and y else None
     q2 = plan_pass2(world.posts, p1, centroid_cos, config, documents=docs.shared if docs is not None else None)
-    ans2 = [(x, v) for x in q2 if (v := q.verdict(x, p1)) is not None]
+    got2 = _ask_all(q, q2, world, p1)
+    ans2 = [(x, got2[n]) for n, x in enumerate(q2) if got2[n] is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
     if answered is not None:
         answered.extend(ans1 + ans2)
@@ -1172,8 +1206,10 @@ def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = Fal
     world = load(cur, now, config, memo=memo)
     cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
     waiting = cur.fetchone()[0]
+    from insight_core.markx import story_window
+    back = config.days > story_window.RECENT       # 0144 A: the window reaches back: old questions come in pages
     ask = Ask(cur, now, caps={"connect": max(0, min(config.connect_new, config.connect_open - waiting))}, memo=memo,
-              dry=dry)
+              dry=dry, old_after=story_window.RECENT if back else None, old_cap=story_window.BACKFILL_PAGE)
     out, counts = think(cur, world, config, ask, now)
     return world, ask, out, counts
 
@@ -1215,6 +1251,10 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         return {"skipped": "another decision run holds the lock"}
     started = _time.monotonic()
     now = now or _now()
+    from insight_core.markx import story_window
+    recent_days = min(config.days, story_window.RECENT)   # surges keep the News window (0144: never the backfill's)
+    if config.story_window:                               # 0144 A1: the owner's story window, read each run
+        config = replace(config, days=story_window.days_for_run(cur, now))
     mark("load")
     schemas.ensure_guides(cur)
     guides = {k.name: k.guide for k in schemas.KINDS.values()}
@@ -1265,11 +1305,18 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
                                                      full=full, budget=entity_budget)
     mark("surges")                      # 0119 A2
     counts["surges"] = entity_stage.surges(cur, now=now, run_id=run_id, days=days, since=previous,
-                                           window_days=config.days)
+                                           window_days=recent_days)
     mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
     from insight_core.markx import perspectives
     counts["perspectives"] = perspectives.stage(cur, ask=ask, now=now, run_id=run_id)
     counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
+    if config.story_window and story_window.backfilling(cur):   # 0144 A2: the backfill steps back once this step is asked and found
+        from insight_core.markx import candidates as mx_candidates
+        since_next = story_window.next_since(cur, now)
+        counts["story_window"] = {"days": config.days, **story_window.advance(
+            cur, now, waiting_old=sum(ask.waiting_old.values()),
+            candidates_left=mx_candidates.unfound_count(cur, since_next) if since_next else 0),
+            "old_added": dict(ask.old_added), "old_waiting": dict(ask.waiting_old)}
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
                      "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
