@@ -68,7 +68,8 @@ describe('search (issue 0040)', () => {
 
     expect(where()).toBe(`/search?q=mcp+servers&scope=source%3A${SOURCE}&filter=later`);
     expect(await screen.findByRole('button', { name: /Simon Willison/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(lastSearch(searchPosts)).toMatchObject({ q: 'mcp servers', scope: `source:${SOURCE}`, filter: 'later', order: 'newest' });
+    // Two words: best match first (issue 0139).
+    expect(lastSearch(searchPosts)).toMatchObject({ q: 'mcp servers', scope: `source:${SOURCE}`, filter: 'later', order: 'best' });
   });
 
   it('an empty field searches nothing', async () => {
@@ -238,5 +239,56 @@ describe('search finds stories (issue 0056)', () => {
     await user.click(screen.getByRole('button', { name: 'Search everything' }));
     expect(where()).toBe('/search?q=quantum');
     expect(await screen.findByText('No posts match “quantum”')).toBeInTheDocument();
+  });
+});
+
+describe('search that finds (issue 0139)', () => {
+  it('History is a chip, and the History list searches History', async () => {
+    const user = userEvent.setup();
+    const { api: fake, searchPosts } = api();
+    render(fake, '/?filter=history');
+    await user.type(await screen.findByRole('searchbox', { name: /^Search / }), 'robots{Enter}');
+    expect(where()).toBe('/search?q=robots&scope=all&filter=history');
+    expect(await screen.findByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
+    expect(lastSearch(searchPosts)).toMatchObject({ q: 'robots', filter: 'history', order: 'newest' });
+  });
+
+  it('2+ words list the best match first unless an order is chosen, which the URL keeps', async () => {
+    const user = userEvent.setup();
+    const { api: fake, searchPosts } = api();
+    render(fake, '/search?q=3D%20library%20tokens');
+    const order = await screen.findByRole('radiogroup', { name: 'Order' });
+    expect(within(order).getByRole('radio', { name: 'Best match' })).toHaveAttribute('aria-checked', 'true');
+    expect(lastSearch(searchPosts)).toMatchObject({ q: '3D library tokens', order: 'best' });
+
+    await user.click(within(order).getByRole('radio', { name: 'Newest' }));
+    expect(where()).toBe('/search?q=3D+library+tokens&order=newest');
+    expect(lastSearch(searchPosts)).toMatchObject({ order: 'newest' });
+  });
+
+  it('entity cards lead the results, each opening its page; a row Mark X matched says so', async () => {
+    const item = feedItem({
+      id: POST, title: 'Трёхмерные модели для дизайнеров',
+      snippet: [{ text: 'Acme released widget3d, a Python ', mark: false }, { text: '3D', mark: true },
+        { text: '-modeling ', mark: false }, { text: 'library', mark: true }],
+      snippet_from: 'markx',
+    });
+    const page = { ...feedPage([item]), entities: [{ id: 'e1', name: 'widget3d', type: 'software', maker: 'Acme', posts: 4, voices: 1 }] };
+    render(api(vi.fn().mockResolvedValue(page)).api, '/search?q=widget3d');
+
+    const cards = await screen.findByRole('list', { name: 'Entities' });
+    const card = within(cards).getByRole('link', { name: /widget3d/ });
+    expect(card).toHaveAttribute('href', '/markx/entities/e1');
+    expect(card).toHaveTextContent('software · by Acme');
+    expect(card).toHaveTextContent('4 posts · 1 voice');
+    const row = await screen.findByRole('article', { name: 'Трёхмерные модели для дизайнеров' });
+    expect(row.querySelector('[data-snippet-from="markx"]')).toHaveTextContent('Mark X');
+    expect(within(row).getByText('library', { selector: 'mark' })).toBeInTheDocument();
+  });
+
+  it('no entity cards while Mark X is off (none in the answer)', async () => {
+    render(api(vi.fn().mockResolvedValue(feedPage([feedItem({ id: POST })]))).api, '/search?q=robots');
+    await screen.findByRole('article');
+    expect(screen.queryByRole('list', { name: 'Entities' })).toBeNull();
   });
 });

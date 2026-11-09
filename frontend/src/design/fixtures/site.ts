@@ -100,10 +100,11 @@ function search({ query }: FixtureRequest, site: Site) {
     .filter((item) => filter !== 'news' || Boolean(item.story))
     .filter((item) => filter !== 'starred' || item.starred_at !== null)
     .filter((item) => filter !== 'later' || Boolean(item.later_at))
+    .filter((item) => filter !== 'history' || item.read_at !== null)   // History: what was opened (issue 0139)
     .filter((item) => words.every((word) => `${item.title} ${item.excerpt} ${item.source_display_name}`.toLowerCase().includes(word)))
     .map((item) => ({ ...item, snippet: markWords(item.excerpt, words) }));
   const { slice, next_cursor } = page(matches, query);
-  return { success: true, items: slice, next_cursor };
+  return { success: true, items: slice, next_cursor, entities: [] };
 }
 
 function markWords(text: string, words: string[]): FeedItem['snippet'] {

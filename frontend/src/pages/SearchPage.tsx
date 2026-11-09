@@ -14,7 +14,8 @@ import { useUnreadCounts } from '../hooks/useFeed';
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { useSearch } from '../hooks/useSearch';
 import { middleTruncate } from '../lib/format';
-import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, type SearchState } from '../lib/search';
+import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, searchOrder, type SearchState } from '../lib/search';
+import SearchEntities from '../components/reader/SearchEntities';
 
 const ShortcutHelp = lazy(() => import('../components/reader/ShortcutHelp'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
@@ -23,6 +24,7 @@ const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
 const LISTS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
   { value: 'later', label: 'Later' },
   { value: 'starred', label: 'Kept' },
+  { value: 'history', label: 'History' },   // what you opened, last open first (issue 0139)
   { value: 'news', label: 'News, last 30 days' },   // the stories job's window, not any date (issue 0070)
   { value: 'classics', label: 'Classics' },
 ];
@@ -39,7 +41,9 @@ const ORDERS: ReadonlyArray<{ value: SearchOrder; label: string }> = [
  * date), and a rail link narrows the search to that track or source. The results are the
  * reader's rows with their matching line, so read, Later and Keep work on them as anywhere
  * else; a story shows once, at its best-matching post, with its "covered by" line, as the Main
- * feed folds it (issue 0056). News searches the News stories of the last 30 days (issue 0070); Classics, the classics'
+ * feed folds it (issue 0056). History searches what you opened, last open first (issue 0139); while Mark X is
+ * on, a post also matches by Mark X's English reading of it, and up to 3 entity cards the words name lead the
+ * results. With no order chosen, 2+ words list the best match first. News searches the News stories of the last 30 days (issue 0070); Classics, the classics'
  * titles and addresses, as their list shows them.
  */
 export default function SearchPage() {
@@ -72,8 +76,10 @@ export default function SearchPage() {
   ].filter(Boolean).join(' · ');
   const searchEverything = useCallback(() => go({ scope: null, filter: 'all', days: null }), [go]);
   const emptyAction = useMemo(() => (narrowed ? { label: 'Search everything', onClick: searchEverything } : undefined), [narrowed, searchEverything]);
-  const classics = useMemo(() => ({ q: state.q, scope: state.scope, days: state.days, order: state.order, emptyAction }),
-    [emptyAction, state.days, state.order, state.q, state.scope]);
+  // No order chosen: best match for 2+ words, newest for one (issue 0139).
+  const order = searchOrder(state);
+  const classics = useMemo(() => ({ q: state.q, scope: state.scope, days: state.days, order, emptyAction }),
+    [emptyAction, state.days, order, state.q, state.scope]);
 
   return (
     <LiveRegionProvider>
@@ -126,7 +132,7 @@ export default function SearchPage() {
               ))}
             </div>
             <div className="-ml-1 mt-1 flex flex-wrap items-center gap-x-4 gap-y-0">
-              <SlashChoice label="Order" value={state.order} options={ORDERS} onChange={(order) => go({ order })} />
+              <SlashChoice label="Order" value={order} options={ORDERS} onChange={(chosen) => go({ order: chosen })} />
             </div>
           </ReaderToolbar>
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
@@ -135,6 +141,8 @@ export default function SearchPage() {
                 <ClassicsList scope={state.scope ?? 'all'} search={classics} />
               </Suspense>
             ) : state.q ? (
+              <>
+              {results.entities.length ? <SearchEntities entities={results.entities} /> : null}
               <PostList
                 feed={results}
                 scope={state.scope ?? 'all'}
@@ -147,11 +155,13 @@ export default function SearchPage() {
                 helpOpen={helpOpen}
                 onHelpOpenChange={setHelpOpen}
               />
+              </>
             ) : (
               <p className="px-1 text-[0.875rem] text-fg-2">
                 Search every post: its title, its text and its source. Word forms count in English and Russian;
-                “quoted phrases” and -word work, and “kimi 3.1” finds Kimi K3.1. News searches the stories many of
-                your sources covered; Classics, the pages they keep citing.
+                “quoted phrases” and -word work, and “kimi 3.1” finds Kimi K3.1. Two words or more list the best
+                match first. History searches what you opened; News, the stories many of your sources covered;
+                Classics, the pages they keep citing.
               </p>
             )}
           </div>

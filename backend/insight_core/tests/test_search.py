@@ -108,7 +108,8 @@ class SearchRouteTests(unittest.TestCase):
             return str(cur.fetchone()[0])
 
     def search(self, q: str, **query):
-        status, _, body = call(main.app, "GET", "/api/search", query={"q": f"{self.marker} {q}", **query})
+        # The marker makes every query 2+ words, which orders by best match unless asked (issue 0139): newest here.
+        status, _, body = call(main.app, "GET", "/api/search", query={"q": f"{self.marker} {q}", "order": "newest", **query})
         self.assertEqual(status, 200, body)
         return body
 

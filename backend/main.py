@@ -85,6 +85,15 @@ def fill_search_vectors() -> None:
             logger.info("Search: indexed %s posts stored before search or indexed by an older rule", filled)
     except Exception:
         logger.exception("Search: could not index the posts stored before search or indexed by an older rule")
+    from insight_core.markx import search as mx_search
+    if not mx_search.enabled():
+        return
+    try:   # issue 0139: Mark X's English layer, for the posts it answered (only read while Mark X is on)
+        filled = services().reader.fill_markx_search()
+        if filled:
+            logger.info("Search: Mark X's English layer written for %s posts", filled)
+    except Exception:
+        logger.exception("Search: could not write Mark X's English layer")
 
 
 def recompute_stories() -> None:
@@ -731,15 +740,19 @@ async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream"
 @app.get("/api/search")
 @error_detail("search")
 async def search_posts(q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
-                       order: str = "newest", cursor: str | None = None, limit: int = 30):
+                       order: str | None = None, cursor: str | None = None, limit: int = 30):
     """Search every post (issue 0040): title, source name and full text, word forms in English
     and Russian, "phrases", -word; a version word by its parts ("kimi 3.1" finds K3.1, issue 0056).
     scope: none (every post) | all (the Main feed) | source:<uuid> | folder:<uuid>;
-    filter: all | later | starred | news (News stories, any date) | classics (titles and addresses);
-    days: the last N days; order: newest (keyset cursor) | best (offset cursor; Classics: always).
+    filter: all | later | starred | history (what you opened, last open first, issue 0139) | news (News
+    stories, any date) | classics (titles and addresses);
+    days: the last N days; order: newest (keyset cursor) | best (offset cursor; Classics: always); none:
+    best for 2+ words, newest for one (issue 0139).
     Items carry `snippet`; a story shows once, at its best-matching post, with its `story`
-    (not in one source, Later or Kept); under News each with `story` and `news`. Classics answer
-    {classics, next_cursor}, shaped as GET /api/classics."""
+    (not in one source, Later, Kept or History); under News each with `story` and `news`. Classics answer
+    {classics, next_cursor}, shaped as GET /api/classics. While Mark X is on (issue 0139) a post also
+    matches by Mark X's English layer (its snippet then Mark X's headline, `snippet_from: "markx"`), and
+    `entities` holds up to 3 entity cards the words name ([] otherwise)."""
     query = SearchQuery.parse(q=q, scope=scope, filter=filter, days=days, order=order, cursor=cursor,
                               limit=limit)
     return services().reader.search(query)

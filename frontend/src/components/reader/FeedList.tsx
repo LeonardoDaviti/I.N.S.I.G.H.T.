@@ -389,6 +389,7 @@ function PostListBody({
                   setSize={hasNextPage ? -1 : items.length}
                   showSource={!scope.startsWith('source:')}
                   snippet={search ? item.snippet : undefined}
+                  snippetFrom={search ? item.snippet_from : undefined}
                   storyLine={ranked?.storyLine(item)}
                   {...shared}
                 />

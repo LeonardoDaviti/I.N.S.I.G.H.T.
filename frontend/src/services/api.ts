@@ -135,6 +135,8 @@ export interface FeedItem {
   /** Search results only (issue 0040): the matching line, its words marked; null when the
    *  words matched only the title or the source's name. */
   snippet?: SnippetPart[] | null;
+  /** Issue 0139: `markx` when only Mark X's English layer matched, the snippet then its English headline. */
+  snippet_from?: 'markx' | null;
   /** A watched page's last meaningful change (issue 0039); null or absent when it never changed. */
   update?: PageUpdate | null;
   /** The Main feed and a track (issue 0050): the story this row leads, its other posts folded
@@ -238,6 +240,12 @@ export interface PageUpdate {
   sections_added: number; sections_removed: number;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
+/** An entity the search's words name (issue 0139, Mark X on, a first page): it opens /markx/entities/:id. */
+export interface SearchEntity {
+  id: string; name: string; type: string | null; maker: string | null; posts: number; voices: number;
+}
+/** GET /api/search: a FeedPage and the entity cards ([] while Mark X is off or nothing matched). */
+export interface SearchPage extends FeedPage { entities?: SearchEntity[]; }
 export interface FeedGroup {
   source_id: string; source_display_name: string; platform: string;
   newest_sort_at: string; count: number; items: FeedItem[];   // items <= 3
@@ -265,9 +273,9 @@ export interface FeedParams {
 
 // ---- Search: GET /api/search (issue 0040) ----
 
-/** Search narrows to Later or Kept, never to read state; or searches News stories or Classics
- *  (issue 0056: `classics` answers ClassicsResponse with `next_cursor`, not a FeedPage). */
-export type SearchFilter = 'all' | 'later' | 'starred' | 'news' | 'classics';
+/** Search narrows to Later, Kept or History (issue 0139), never to read state; or searches News stories or
+ *  Classics (issue 0056: `classics` answers ClassicsResponse with `next_cursor`, not a FeedPage). */
+export type SearchFilter = 'all' | 'later' | 'starred' | 'history' | 'news' | 'classics';
 export type SearchOrder = 'newest' | 'best';
 export interface SearchParams {
   q: string;
@@ -287,7 +295,7 @@ function searchPath(params: SearchParams): string {
   if (params.scope) qs.set('scope', params.scope);
   if (params.filter && params.filter !== 'all') qs.set('filter', params.filter);
   if (params.days) qs.set('days', String(params.days));
-  if (params.order && params.order !== 'newest') qs.set('order', params.order);
+  if (params.order) qs.set('order', params.order);   // none: the backend's, by the words (issue 0139)
   if (params.cursor) qs.set('cursor', params.cursor);
   if (params.limit) qs.set('limit', String(params.limit));
   return `/api/search?${qs.toString()}`;
@@ -1097,7 +1105,7 @@ export function createApi() {
     /** One page of the by-source view: one group per source, at most 3 items each. */
     getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
     /** One page of search results (issue 0040): feed rows with their matching line. */
-    searchPosts: (params: SearchParams) => request<FeedPage>(searchPath(params), { signal: params.signal }),
+    searchPosts: (params: SearchParams) => request<SearchPage>(searchPath(params), { signal: params.signal }),
     /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
     getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
     /** Mark one post or many (at most 500) read or unread. Marking read takes them out of

@@ -632,6 +632,9 @@ def name_key(name: Optional[str]) -> str:
     return re.sub(r"[\s_\-/·,:;()\[\]\"'«»“”]+", " ", s).strip()
 
 
+SEARCHED_KINDS = ("read", "read3", "entities", "cite")   # 0139: the answers mx_post_search is made of
+
+
 def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> None:
     """The rows a task's first valid answer adds: a post's reading (mx_readings) or its entities (mx_mentions)."""
     if task["a"] is None:
@@ -662,6 +665,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
+    if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
+        from insight_core.markx import search
+        search.refresh_safely(cur, [task["a"]])
 
 
 def release(cur: Cursor, worker: str, task_ids: Optional[Sequence[Any]] = None) -> int:
