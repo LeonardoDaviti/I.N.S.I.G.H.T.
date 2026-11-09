@@ -338,3 +338,43 @@ def run(cur: Cursor, post_ids: Iterable[str] = (), *, since: Optional[datetime] 
         out.update(find(cur, mentioned, model=model, sources=("entity",)))
     return out
 
+
+# ---- the story window's backfill (0144 A2) ------------------------------------------------------------
+
+_UNFOUND = """FROM posts p
+               WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %(since)s
+                 AND EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = p.id AND e.model = %(model)s)
+                 AND NOT EXISTS (SELECT 1 FROM mx_candidate_posts c WHERE c.post_id = p.id AND c.found_at IS NOT NULL)"""
+
+
+def unfound(cur: Cursor, since: datetime, limit: int, model: str = MODEL) -> List[str]:
+    """The embedded posts since `since` the finder never read (no mx_candidate_posts row found), newest first."""
+    cur.execute(f"""SELECT p.id::text {_UNFOUND}
+                     ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id LIMIT %(limit)s""",
+                {"since": since, "model": model, "limit": limit})
+    return [r[0] for r in cur.fetchall()]
+
+
+def unfound_count(cur: Cursor, since: datetime, model: str = MODEL) -> int:
+    cur.execute(f"SELECT count(*) {_UNFOUND}", {"since": since, "model": model})
+    return cur.fetchone()[0]
+
+
+def backfill(cur: Cursor, now: datetime, *, limit: Optional[int] = None, model: str = MODEL) -> Dict[str, Any]:
+    """0144 A2: while the story window reaches past 30 days, the candidates of the posts one step past the decision
+    window (story_window.next_since) that the finder never read, `limit` (CANDIDATE_PAGE) a run, newest first, by the
+    same four sources and rules; each is then marked found (mx_candidate_posts). Resumable: the next run takes the
+    posts still unread. {} when the window is 30 days or less."""
+    from insight_core.markx import story_window
+    since = story_window.next_since(cur, now)
+    if since is None:
+        return {}
+    ids = unfound(cur, since, story_window.CANDIDATE_PAGE if limit is None else limit, model)
+    counts = find(cur, ids, model=model) if ids else Counter()
+    if ids:
+        cur.execute("""INSERT INTO mx_candidate_posts (post_id, noted_at, found_at)
+                       SELECT unnest(%s::uuid[]), %s, %s
+                       ON CONFLICT (post_id) DO UPDATE SET found_at = EXCLUDED.found_at""", (ids, now, now))
+    return {"since": since.isoformat(), "posts": len(ids), "counts": dict(counts),
+            "left": unfound_count(cur, since, model)}
+

@@ -718,7 +718,10 @@ class ReadingWindow(_Api):
             world = D.load(self.cur, self.now, D.Config())
         self.assertEqual(world.since, self.now - timedelta(days=30))
         import inspect
-        self.assertEqual(inspect.signature(tasks.plan_checks).parameters["days"].default, 30)
+        self.assertIs(inspect.signature(tasks.plan_checks).parameters["days"].default, tasks.SETTING)   # 0144: the story window's
+        from insight_core.markx import story_window
+        with self.conn.transaction():
+            self.assertEqual(story_window.days_for_run(self.cur, self.now), 30)   # no row: 30, whatever the reading window
 
 
 class EveryKindRoundTrips(_Api):

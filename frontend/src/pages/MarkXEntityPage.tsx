@@ -8,8 +8,82 @@ import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
-import type { MarkxEntityPage as EntityPageData, MarkxOlderPost, MarkxRabbitHole } from '../services/markx';
+import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
+  MarkxSampleAnswer } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
+import { request } from '../lib/request';
+
+type PageCalls = {
+  answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
+  labelMarkxSample: (story: string, answer: MarkxSampleAnswer) => Promise<unknown>;
+};
+/** 0144's calls, here (this page's chunk) and not in api.ts; a test's fake api may provide them. */
+function pageCalls(api: object): PageCalls {
+  const got = api as Partial<PageCalls>;
+  return {
+    answerMarkxEntitySources: got.answerMarkxEntitySources ?? ((entity, sourceIds, answer) =>
+      request(`/api/markx/entities/${encodeURIComponent(entity)}/sources`, { method: 'POST', body: { source_ids: sourceIds, answer } })),
+    labelMarkxSample: got.labelMarkxSample ?? ((story, answer) =>
+      request(`/api/markx/stories/${encodeURIComponent(story)}/sample`, { method: 'POST', body: { answer } })),
+  };
+}
+
+const WHY: Record<string, string> = { by: 'its own post', origin: 'the page it began from', root: 'the first post' };
+
+/** 0144 B2-B3: a Mark X story (or, marked so, the Mark IX story of a post in none) with all its posts, the original
+ *  first: the entity's own earliest post, else the story's root (Mark IX's outside page when it began from one). */
+export function StoryBlock({ s }: { s: MarkxEntityStory }) {
+  const o = s.original;
+  const title = s.headline ?? (s.mark === 'ix' ? 'A Mark IX story' : 'A Mark X story');
+  return (
+    <section aria-label={title}>
+      <h2 className={H2}>
+        {s.mark === 'x' ? <TextLink to={`/markx/stories/${encodeURIComponent(s.story)}`} muted>{title}</TextLink> : title}
+        {' · '}{plural(s.voices, 'source')} · {plural(s.posts.length, 'post')}{s.mark === 'ix' ? ' · Mark IX' : ''}
+      </h2>
+      {o?.url ? (
+        <p className="mt-2 text-[0.8125rem] text-fg-2">
+          <span className="font-semibold text-fg">Original</span>{' '}
+          {o.stored ? <TextLink to={`/posts/${encodeURIComponent(o.stored)}`}>{o.title || o.url}</TextLink>
+            : <ExternalLink href={o.url}>{o.title || o.url}</ExternalLink>}
+          <span className="text-fg-3"> · {WHY.origin}</span>
+        </p>
+      ) : null}
+      <ul className="mt-2 space-y-1">
+        {s.posts.map((p) => (o?.post === p.id ? (
+          <li key={p.id} className="text-[0.8125rem]" data-original>
+            <span className="font-semibold text-fg">Original</span>{' '}
+            <TextLink to={`/posts/${encodeURIComponent(p.id)}`}>{p.title || '(no title)'}</TextLink>
+            <span className="text-fg-3">{p.source ? ` · ${p.source}` : ''} · {WHY[o.why] ?? o.why}</span>
+          </li>
+        ) : <EntityPostLine key={p.id} post={p} />))}
+      </ul>
+    </section>
+  );
+}
+
+/** 0144 C: old stories to label: right, wrong, or it missed a post. */
+export function Sample({ items, onAnswer }: { items: NonNullable<EntityPageData['sample']>;
+  onAnswer: (story: string, answer: MarkxSampleAnswer) => void }) {
+  if (!items.length) return null;
+  return (
+    <section aria-label="Old stories to check">
+      <h2 className={H2}>Old stories to check · {plural(items.length, 'story')}</h2>
+      <ul className="mt-2 space-y-1 text-[0.8125rem] text-fg-2">
+        {items.map((it) => (
+          <li key={it.story} className="flex flex-wrap items-center gap-x-3">
+            <TextLink to={`/markx/stories/${encodeURIComponent(it.story)}`}>{it.first_at ? it.first_at.slice(0, 10) : 'a story'}</TextLink>
+            {(['right', 'wrong', 'missed'] as MarkxSampleAnswer[]).map((a) => (
+              <button key={a} type="button" aria-pressed={it.answer === a}
+                      className={`underline-offset-2 hover:underline ${it.answer === a ? 'font-semibold text-fg' : 'text-fg-2'}`}
+                      onClick={() => onAnswer(it.story, a)}>{a === 'missed' ? 'missed a post' : a}</button>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 const RULES: Record<string, string> = {
   identifier: 'by its identifier', title: 'by its title', maker: 'on its maker’s site', lookup: 'looked up by its title',
@@ -145,6 +219,10 @@ export function Older({ older }: { older: MarkxOlderPost[] }) {
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
+const ROLE_GROUP: Record<string, number> = { subject: 0, actor: 0, by: 1, venue: 2, source: 2, recommended: 2, mention: 3 };
+/** 0144 B4: subject or actor (0), by (1), venue / source / recommended (2), mentions (3): the server's order. */
+export const looseGroup = (p: MarkxEntityPost) => Math.min(3, ...(p.roles ?? []).map((r) => ROLE_GROUP[r] ?? 3));
+
 /**
  * An entity's page, `/markx/entities/<id>` (0119 A3, 0115 Decided 3): every post naming it in every role, grouped by
  * its Mark X stories (most voices first), the posts in no story last; every source with its counts; its family and
@@ -156,11 +234,24 @@ const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 export default function MarkXEntityPage() {
   const { entityId = '' } = useParams();
   const api = useApi();
-  const query = useQuery({ queryKey: ['markx-entity', entityId], queryFn: () => api.getMarkxEntity(entityId), staleTime: 30_000 });
+  const calls = pageCalls(api);
+  const client = useQueryClient();
+  const [byLimit, setByLimit] = useState<number | undefined>(undefined);
+  const [mentionsOpen, setMentionsOpen] = useState(false);
+  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null],
+    queryFn: () => (byLimit === undefined ? api.getMarkxEntity(entityId) : api.getMarkxEntity(entityId, byLimit)), staleTime: 30_000,
+    placeholderData: (previous, last) => (last?.queryKey[1] === entityId ? previous : undefined) });
+  const refresh = () => void client.invalidateQueries({ queryKey: ['markx-entity', entityId] });
+  const act = async (call: () => Promise<unknown>) => {
+    try { await call(); refresh(); } catch (error: unknown) { toast.error(errorMessage(error)); }
+  };
   if (query.isPending) return <Page><LoadingState label="Loading" rows={6} /></Page>;
   if (query.isError) return <Page><ErrorState error={query.error} onRetry={() => query.refetch()} /></Page>;
   const d = query.data;
   const e = d.entity;
+  const group = (n: number) => d.loose.filter((p) => looseGroup(p) === n);
+  const counts = d.loose_counts;
+  const byShown = group(1);
   return (
     <Page>
       <PageHeader title={e.name} meta={`${entityMeta(e)} · ${plural(d.voices, 'source')} · ${plural(d.posts, 'post')}`}>
@@ -215,16 +306,39 @@ export default function MarkXEntityPage() {
               <ul>{d.queue.map((item) => <QueueItem key={item.id} item={item} />)}</ul>
             </section>
           ) : null}
-          {d.stories.map((s) => (
-            <section key={s.story} aria-label={s.headline ?? 'A Mark X story'}>
-              <h2 className={H2}>{s.headline ?? 'A Mark X story'} · {plural(s.voices, 'source')}</h2>
-              <ul className="mt-2 space-y-1">{s.posts.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+          {d.sample?.length ? <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} /> : null}
+          {d.stories.map((s) => <StoryBlock key={s.story} s={s} />)}
+          {d.by && (d.by.sources.length || d.by.proposed.length) ? (
+            <section aria-label={`By ${e.name}`}>
+              <h2 className={H2}>By {e.name} · {plural(d.by.posts, 'post')}</h2>
+              {d.by.sources.length ? (
+                <p className="mt-2 text-[0.8125rem] text-fg-2">
+                  {d.by.sources.map((s, n) => <span key={s.id}>{n ? ', ' : ''}{s.name ?? 'a source'}</span>)}
+                  <span className="text-fg-3"> · {d.by.sources.every((s) => s.via === 'voice') ? 'its voice' : 'you said so'}</span>
+                </p>
+              ) : null}
+              {d.by.proposed.length ? (
+                <p className="mt-2 flex flex-wrap items-center gap-x-3 text-[0.8125rem] text-fg-2">
+                  <span>These sources are {e.name}: {d.by.proposed.map((s) => s.name ?? 'a source').join(', ')}?</span>
+                  <Button size="sm" variant="secondary" onClick={() => void act(() => calls.answerMarkxEntitySources(e.id, d.by!.proposed.map((s) => s.id), 'yes'))}>Yes</Button>
+                  <Button size="sm" variant="secondary" onClick={() => void act(() => calls.answerMarkxEntitySources(e.id, d.by!.proposed.map((s) => s.id), 'no'))}>No</Button>
+                </p>
+              ) : null}
+              {byShown.length ? <ul className="mt-2 space-y-1">{byShown.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul> : null}
+              {counts && counts.by > byShown.length ? (
+                <button type="button" className="mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline"
+                        onClick={() => setByLimit(counts.by)}>Show all {plural(counts.by, 'post')} in no story</button>
+              ) : null}
             </section>
-          ))}
-          {d.loose.length ? (
-            <section aria-label="In no story">
-              <h2 className={H2}>In no Mark X story · {plural(d.loose.length, 'post')}</h2>
-              <ul className="mt-2 space-y-1">{d.loose.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+          ) : null}
+          {group(0).length || group(2).length || group(3).length ? (
+            <section aria-label={`About ${e.name}`}>
+              <h2 className={H2}>About {e.name} · in no story · {plural(group(0).length + group(2).length + group(3).length, 'post')}</h2>
+              <ul className="mt-2 space-y-1">{[...group(0), ...group(2)].map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+              {group(3).length ? (mentionsOpen
+                ? <ul className="mt-1 space-y-1">{group(3).map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+                : <button type="button" className="mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline"
+                          onClick={() => setMentionsOpen(true)}>{plural(group(3).length, 'mention')}</button>) : null}
             </section>
           ) : null}
           <section aria-label="Sources">
@@ -233,7 +347,7 @@ export default function MarkXEntityPage() {
               {d.sources.map((s) => (
                 <li key={s.id} className="flex gap-3 border-t border-line py-1.5">
                   <span className="min-w-0 flex-1 truncate text-fg">{s.name ?? 'a source'}</span>
-                  <span className="tabular-nums">{plural(s.posts, 'post')}{s.reports ? ` · ${s.reports} about it` : ''}</span>
+                  <span className="tabular-nums">{plural(s.posts, 'post')}{s.reports ? ` · ${s.reports} about it` : ''}{s.by ? ' · by it' : ''}</span>
                 </li>
               ))}
             </ul>

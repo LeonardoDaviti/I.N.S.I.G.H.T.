@@ -35,7 +35,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
@@ -67,7 +67,8 @@ SETTING = object()                         # a planner's `days` when the caller 
 def reading_window(cur: Cursor) -> Optional[int]:
     """The read, entities and embed planners' window in days, as the owner set it on the page (0112 Decided 9): an
     int, or None for every post; PLAN_DAYS when it was never set. Read on every planner run, so a change counts from
-    the next one (no restart). The decision window (decide.Config.days) and plan_checks stay at PLAN_DAYS."""
+    the next one (no restart). The decision window (decide.Config.days) and plan_checks follow the story window
+    instead (0144 A1: markx/story_window.py)."""
     value = repo.get_setting(cur, READING_WINDOW, default=PLAN_DAYS)
     return None if value is None else int(value)
 
@@ -548,15 +549,36 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
             or [m for m in members if m.id != post.id])
 
 
-def plan_checks(cur: Cursor, *, days: int = PLAN_DAYS, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
-    """The checks `check_questions` asks of the last `days`, as tasks: how many were added."""
-    added = 0
-    for p, text in check_questions(cur, days=days, now=now):
-        if add(cur, "check", text, a=p.id)[1]:
-            added += 1
-            if added >= limit:
-                break
-    return added
+def plan_checks(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+    """The checks `check_questions` asks of the last `days` (by default the story window as the decision run reads
+    it, 0144 A1; None: every story), as tasks: how many were added. While the window reaches past 30 days, the checks
+    of posts older than that come newest first, at most a page (story_window.BACKFILL_PAGE) a call, at the backfill's
+    priority (0144 A2)."""
+    from insight_core.markx import story_window
+    at = now or datetime.now(timezone.utc)
+    if days is SETTING:
+        days = story_window.days_for_run(cur, at)
+    if days is not None and days <= story_window.RECENT:
+        added = 0
+        for p, text in check_questions(cur, days=days, now=now):
+            if add(cur, "check", text, a=p.id)[1]:
+                added += 1
+                if added >= limit:
+                    break
+        return added
+    edge = at - timedelta(days=story_window.RECENT)
+    asked = sorted(check_questions(cur, days=days, now=now), key=lambda pt: (pt[0].at, pt[0].id), reverse=True)
+    added = old = 0
+    for p, text in asked:
+        late = p.at < edge
+        if late and old >= story_window.BACKFILL_PAGE or not late and added >= limit:
+            continue
+        if add(cur, "check", text, a=p.id, priority=story_window.BACKFILL_PRIORITY if late else 0)[1]:
+            if late:
+                old += 1
+            else:
+                added += 1
+    return added + old
 
 
 def reasked(cur: Cursor) -> Dict[str, Dict[str, int]]:

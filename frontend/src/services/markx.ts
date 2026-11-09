@@ -180,8 +180,27 @@ export interface MarkxOverview {
     voices: number; examples: { id: string | null; title: string | null; source: string | null }[] }[]>;
   /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
   reading_window: { days: number | null; default: number };
+  /** 0144: how far back the decision run makes Mark X's own stories (absent from an older API). */
+  story_window?: MarkxStoryWindow;
   /** 0133: the entities guide switch (absent from an older API). */
   entities_guide?: MarkxEntitiesGuide;
+}
+
+/** 0144 C: the labelled old stories' answers (first post older than 30 days when offered) and the recent ones'. */
+export interface MarkxSamplePrecision { right: number; wrong: number; missed: number; labelled: number; precision: number | null }
+
+/** 0144 A: the story window: the owner's days (null: everything), the window in force (after the fallback), how far
+ *  back the backfill reached, and the old stories' precision that keeps "everything". */
+export interface MarkxStoryWindow {
+  days: number | null;
+  default: number;
+  in_force: number | null;
+  fallback: { days: number; why: string } | null;
+  run_days: number;
+  reached: string | null;
+  precision: Record<'old' | 'recent', MarkxSamplePrecision>;
+  keep: number;
+  min_labels: number;
 }
 
 /** 0133: which guide new entities tasks are asked under; `ready` false while a guide is the lab's placeholder. */
@@ -215,6 +234,8 @@ export interface MarkxMentionPrecision extends MarkxPrecisionStat {
 export interface MarkxSettings {
   reading_window_days: number | null;
   default: number;
+  /** 0144: the story window's days (null: everything). */
+  story_window_days?: number | null;
 }
 
 // ---- Labels (issue 0086 F): /api/markx/labels ----
@@ -330,7 +351,31 @@ export interface MarkxEntityPost {
   url?: string | null;
   read?: boolean;
   roles?: string[];
+  /** 0144: false for a story's post that neither names the entity nor is by it. */
+  about?: boolean;
 }
+
+/** 0144 B2-B3: a Mark X story (mark x) or, for a post in none, its Mark IX story (mark ix), with every post, the
+ *  original first: the entity's own earliest post (why `by`), else the root (Mark IX's outside page: why `origin`). */
+export interface MarkxEntityStory {
+  story: string;
+  headline: string | null;
+  voices: number;
+  newest: string;
+  mark?: 'x' | 'ix';
+  first_at?: string;
+  original?: { post: string | null; url: string | null; why: 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
+  posts: MarkxEntityPost[];
+}
+
+/** 0144 B1: the sources that are the entity (through its voice, or the owner's yes), and those offered. */
+export interface MarkxEntityBy {
+  sources: { id: string; name: string | null; kind: string | null; via: 'voice' | 'owner' }[];
+  proposed: { id: string; name: string | null; kind: string | null }[];
+  posts: number;
+}
+
+export type MarkxSampleAnswer = 'right' | 'wrong' | 'missed';
 
 export interface MarkxEntityRow extends MarkxEntityRef {
   voices: number;
@@ -364,9 +409,15 @@ export interface MarkxEntityPage {
   versions: { id: string; name: string; version: string | null; variant: string | null; level: string }[];
   posts: number;
   voices: number;
-  stories: { story: string; headline: string | null; voices: number; newest: string; posts: MarkxEntityPost[] }[];
+  stories: MarkxEntityStory[];
   loose: MarkxEntityPost[];
-  sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number }[];
+  /** 0144 B4: the loose posts by role: subject or actor, by, venue / source / recommended, mentions. */
+  loose_counts?: Record<'report' | 'by' | 'other' | 'mention', number>;
+  /** 0144 B1 (absent from an older API). */
+  by?: MarkxEntityBy;
+  /** 0144 C: old stories offered to label here (10 a page, 30 a day). */
+  sample?: { story: string; first_at: string | null; answer: MarkxSampleAnswer | null }[];
+  sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number; by?: boolean }[];
   surges: MarkxSurge[];
   accuracy: MarkxEntityAccuracy;
   queue: MarkxQueueItem[];
