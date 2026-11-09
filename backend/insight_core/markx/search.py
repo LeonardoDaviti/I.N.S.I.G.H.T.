@@ -194,17 +194,24 @@ def _plain(q: str) -> bool:
 def entity_first_posts(cur: Cursor, q: str) -> List[str]:
     """The posts whose current mentions (mx_mentions_now) hold, as subject or actor, the entity the whole query names:
     its key or alias is the query's key; for a name and its version ("fable 5.2"), also a key or alias ending with it
-    as words (that version's entity, "Claude Fable 5.2"). Read through the merges. [] when the query names none."""
+    as words (that version's entity, "Claude Fable 5.2"). Read through the merges. A mention identity has not linked
+    yet (a post read since its last run) counts by its own name key, by the same rule. [] when the query names none."""
     from insight_core.markx import names
     key = names.key(q)
     if len(key) < 2 or not _plain(q):
         return []
+    version = query_version(key)
     cur.execute(
         _NAMED + """
-        SELECT DISTINCT mm.post_id::text FROM mx_mentions_now mm
+        SELECT mm.post_id::text FROM mx_mentions_now mm
          WHERE mm.entity_id IN (SELECT id FROM members) AND mm.role = ANY(%(roles)s)
+        UNION
+        SELECT mm.post_id::text FROM mx_mentions_now mm
+         WHERE mm.entity_id IS NULL AND mm.role = ANY(%(roles)s)
+           AND (mm.name_key = %(key)s OR (%(ends)s::text IS NOT NULL AND mm.name_key LIKE %(ends)s))
         """,
-        {"key": key, "suffix": _suffix(key) if query_version(key) else None, "roles": list(LEAD_ROLES)},
+        {"key": key, "suffix": _suffix(key) if version else None, "ends": "% " + _like(key)[:-1] if version else None,
+         "roles": list(LEAD_ROLES)},
         prepare=False,
     )
     return [r[0] for r in cur.fetchall()]

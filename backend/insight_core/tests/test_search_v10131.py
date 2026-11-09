@@ -184,7 +184,7 @@ class NameAndVersionInSearch(_Api):
         version = self.entity("Acme Zorblax 5.2", level="version", version="5.2")
         variant = self.entity("Zorblax 5.2 Ultra Max", level="variant", version="5.2")
         self.link(about, "Acme Zorblax 5.2", version)
-        self.link(actor, "Acme Zorblax 5.2", version)
+        # `actor`'s mention is not linked yet (read since identity's last run): its own name key counts
         self.link(joke, "Zorblax 5.2 Ultra Max", variant)
         self.cur.execute("TRUNCATE mx_post_search")   # the words alone rank, on or off: only the entity moves a post
 
