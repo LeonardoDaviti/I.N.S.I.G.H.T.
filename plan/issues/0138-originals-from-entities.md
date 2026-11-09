@@ -83,6 +83,47 @@ alone):
 3. **Which suggestions worked:** a source followed from D2 records the follow date; Discover's row later shows how
    many originals it brought **before** any other source of yours (`first_seen`, 0137). Shown, not used to rank yet.
 
+### E. Long-reads that aren't feeds: Classics stored, work sites, and the rabbit hole (owner, 2026-11-09)
+**The owner:** "most interesting long-reads are not feeds, they are just classics, do we have ability to fetch them
+and store? … add that in 138 as well." Measured on the server (GET, 2026-11-09): **751 of 1,008 Classics are not
+stored** (328 papers, 281 article pages, 108 code repositories, 18 model cards, 16 platform posts); 218 of the pages
+are on sites you don't follow. A scenario/report site whose front page *is* the work (a forecast, an essay series, a
+declaration, an annual report) is linked mostly at its front page, so Discover drops it (a home page is "not a page")
+and Classics never lists it. Rows: `plan/research/0138-cases.md`.
+
+1. **Classics stored.** Every Classic not stored (and every new one) is collected once through B's path (the save
+   path's reader, the host gate, `story_originals` kind `classic`): article pages and paper abstract pages; a code
+   repository as its README; a model card as its card. Platform posts as 0123 does (from a quote, else not). A
+   **backfill allowance** of its own, apart from 0123's 1% credit: default 100 pages a day, one host at a time,
+   `PAGE_DELAY_S` apart, biggest voices first; a switch beside Collect originals ("Store Classics", default **on**).
+   A collected classic shows "· classic, collected" and leaves the "not stored" count.
+2. **A work site's front page is a work.** When a front page is linked by **2+ voices** and Mark X names the thing at
+   that address as a `document` (A's rules, with the front page allowed for documents only) — or the Classic rules
+   would list it but for being a home page — it is collected as a work, **with its own pages that your posts link**
+   (same site, e.g. its endings, research supplements, summary), at most 20 per site, through the same allowance. A
+   product's or app's front page (Mark X: `product`/`software`/`model`/`org`) is never collected: that is a site to
+   follow or nothing.
+3. **The rabbit hole (an entity's world), on the entity page** of an org, person or document with 2+ works or 10+
+   posts:
+   - **its sites:** its addresses (A, front pages included for works), joined with Discover's same-owner sites
+     ("also of …"); each shows Followed ✓, **Follow** (feed finder), **Watch page** (no feed) or **Stored** ✓;
+   - **its works:** its `published` documents with their addresses: Stored ✓ / **Collect**;
+   - **its people and voices:** the people it is `published` by / publishes with, and who talks about it (voices, a
+     platform's authors apart, 0132);
+   - **"Go down the rabbit hole":** one tap queues the rest: follow what has a feed, watch what doesn't, collect the
+     works, archive a followed blog back to a date (0130 C). Every add goes through the feed finder and page
+     watching (the source-adding rule); nothing is followed without this tap.
+4. **Discover:** a row "<org>: N sites, M not followed, K works not stored" for entities whose rabbit hole has
+   something left, and Discover's front-page drop no longer applies to work sites (E2).
+5. **Never:** products' and apps' sites, walled pages, a site's whole sitemap (only the pages your posts link, or the
+   ones the work's front page links on its own site, max 20).
+
+**Cases to pass (private rows, `plan/research/0138-cases.md`; checked after deploy by `plan/research/0138-check.py`):**
+work sites (a forecast scenario and its sequel, an essay series, a pacing report, a wiki, a declaration, an annual
+report) collected with their linked pages; unstored Classic long-reads on unfollowed sites stored; papers and
+repositories stored as abstract/README; product front pages (a local model runner, a VPN, an editor) **not**
+collected; the JEPA-paper entity gets its Original; the orphan entity shows its older guide.
+
 ## Not in this issue
 - Following a source automatically (stays the owner's tap).
 - Searching the web for unknown entities' originals beyond C's two lookups.
