@@ -340,7 +340,7 @@ class SearchRouteTests(unittest.TestCase):
                                  "claude3": ["claud", "3"], "a100": None, "26b5c67b": None, "kimi": None, "3.1": None,
                                  "x.com/a1": None})
         self.assertEqual(queries, [
-            "'kimi' & '3.1'",
+            "'kimi' <-> '3.1' | 'kimi' <2> '3.1'",   # a name and its version stand together (v10.13.1, 0095)
             "'k3.1' | 'k' <-> '3.1'",
             "'kimi' <-> 'k3.1' <-> 'pro'",   # a phrase keeps its word: an OR there takes its longest width
             "'gpt' <-> ( '-6.1' | '6.1' ) & !( 'qwen3.8' | 'qwen' <-> '3.8' )",

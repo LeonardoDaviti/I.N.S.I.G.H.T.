@@ -27,6 +27,12 @@ it, never folded). With no order asked, 2+ words order by best match (SearchQuer
 is on (`markx`), a post matches by its own vector or by Mark X's English layer (mx_post_search,
 markx/search.py) read as `websearch_to_tsquery('english', q)`; its rank is the higher of the two, and
 a post only that layer matched has Mark X's headline as its line (`snippet_from: "markx"`).
+
+v10.13.1 (migration 0095): a name and a version number after it ("fable 5.2", "gpt 6.1") stand together in a post,
+one or two words apart, in both layers (search_pair_versions). Best match while Mark X is on ranks first the posts
+whose current mentions hold the entity the whole query names (that version, with one) as subject or actor
+(markx/search.entity_first_posts; a story or News story with such a post counts at its shown post), then the rest;
+best match within each.
 """
 from __future__ import annotations
 
@@ -274,6 +280,17 @@ class SearchRepository:
             where.append(best_sql)
             params += best_params
         limit = query.limit
+        # Entity first (v10.13.1): with Mark X on, best match ranks first the posts naming the query's entity as
+        # subject or actor, and a group (story, News story) holding one, at whichever of its posts is shown.
+        first_ids: List[str] = []
+        if markx and query.order == "best":
+            from insight_core.markx import search as mx_search
+            first_ids = mx_search.entity_first_posts(cur, query.q)
+            if first_ids and group:
+                table, gkey = _GROUPS[group]
+                cur.execute(f"""SELECT DISTINCT o.post_id::text FROM {table} sp JOIN {table} o ON o.{gkey} = sp.{gkey}
+                                WHERE sp.post_id = ANY(%s::uuid[])""", (first_ids,))
+                first_ids = sorted(set(first_ids) | {r[0] for r in cur.fetchall()})
         if query.order == "best":
             # Ranked among the newest RANKED_MATCHES matches: ranking reads every vector it ranks.
             split = _words(query.q) >= 2
@@ -325,8 +342,8 @@ class SearchRepository:
                 ORDER BY u.sort_at DESC, u.id DESC
                 LIMIT %s
             ), hits AS (
-                SELECT m.id, m.sort_at, {rank} AS rank FROM matches m
-                ORDER BY rank DESC, sort_at DESC, id DESC
+                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first FROM matches m
+                ORDER BY first DESC, rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
@@ -339,9 +356,9 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
-            ORDER BY hits.rank DESC, hits.sort_at DESC, hits.id DESC
+            ORDER BY hits.first DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
-            [*layer_params, matches, *rank_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, first_ids, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).

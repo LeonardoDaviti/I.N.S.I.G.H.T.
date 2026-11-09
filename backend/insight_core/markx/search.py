@@ -14,11 +14,20 @@ Search reads it only while Mark X is on (`enabled`); Mark IX's `posts.search_vec
 `entity_cards(cur, q)`: up to 3 entities whose name or alias (identity's key, names.key) is the query or a run of its
 words, or starts with the query (3+ letters), read through the merges (redirects) to the entity shown; with each its
 type, maker, posts and voices (the current entity sets').
+
+v10.13.1 (the owner's "fable 5.2"): a query that is a name and its version (`query_version`: its key's last word a
+version number, as migration 0095's search_version_number reads it, after a word of letters) names the entities whose
+key or alias is the query or ends with it as words ("claude fable 5.2" for "fable 5.2": the version's entity, not the
+family's); a card shows them first. A card needs 2+ posts or a subject or actor role in a current entity set: a name
+met once in passing gets none. `entity_first_posts(cur, q)`: the posts whose current mentions hold the entity the
+whole query names (that version, with one) as subject or actor; best match ranks them above the posts that only match
+its words (db/repo_search.py).
 """
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, List
+import re
+from typing import Any, Dict, Iterable, List, Optional
 
 from psycopg import Cursor
 
@@ -28,6 +37,11 @@ FILL_BATCH = 500
 ENTITY_CARDS = 3
 PREFIX_MIN = 3          # a prefix matches from 3 letters
 MAX_QUERY_WORDS = 8     # runs of words are read from the first 8
+CARD_MIN_POSTS = 2      # a card needs this many posts, or a subject or actor role (v10.13.1)
+LEAD_ROLES = ("subject", "actor")
+# A version number, as migration 0095's search_version_number reads a query's lexeme (5.2, 3.8, 4o, 70b).
+VERSION_NUMBER = re.compile(r"^\d+((\.\d+)+[a-z]{0,2}|[a-z]{1,2})$")
+LETTERS = re.compile(r"^[^\W\d_]+$")
 
 # The current reading (the newest read guide's, as markx/news.post_panel reads it) and the current entity set of each
 # post of `ids`, as the row's vector, headline and version. Written for every id given, an empty vector when nothing is
@@ -127,16 +141,86 @@ def _like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+def query_version(key: str) -> Optional[str]:
+    """The version a query's key names after a name (its last word a version number after a word of letters:
+    "fable 5.2" -> "5.2", "qwen 3.8" from "Qwen3.8"); None for "fable", "5.2" or "fable 5"."""
+    words = key.split()
+    if len(words) >= 2 and VERSION_NUMBER.match(words[-1]) and LETTERS.match(words[-2]):
+        return words[-1]
+    return None
+
+
+def _suffix(key: str) -> str:
+    """LIKE pattern: a key that ends with this one as whole words ("claude fable 5.2" for "fable 5.2")."""
+    return "% " + _like(key)[:-1]
+
+
+# The entities a query names, as their current targets (through the redirects; never a not-entity), and every entity
+# merged into them (`members`): `%(key)s` is the query's key; `%(suffix)s` a key ending with it as words, for a name and
+# its version only (else NULL).
+_NAMED = """
+WITH RECURSIVE hit AS (
+     SELECT e.id FROM mx_entities e WHERE e.key = %(key)s
+     UNION ALL SELECT a.entity_id FROM mx_entity_aliases a WHERE a.key = %(key)s
+     UNION ALL SELECT e.id FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND e.key LIKE %(suffix)s
+     UNION ALL SELECT a.entity_id FROM mx_entity_aliases a WHERE %(suffix)s::text IS NOT NULL AND a.key LIKE %(suffix)s
+), up(start, id, depth) AS (
+     SELECT DISTINCT id, id, 0 FROM hit
+     UNION ALL
+     SELECT up.start, r.to_id, up.depth + 1 FROM up
+       JOIN mx_entity_redirects r ON r.from_id = up.id AND r.undone_at IS NULL
+      WHERE up.depth < 20
+), root AS (
+     SELECT DISTINCT ON (start) start, id FROM up ORDER BY start, depth DESC
+), named AS (
+     SELECT DISTINCT root.id FROM root JOIN mx_entities e ON e.id = root.id WHERE e.status <> 'not_entity'
+), members(id, depth) AS (
+     SELECT id, 0 FROM named
+     UNION ALL
+     SELECT r.from_id, members.depth + 1 FROM members
+       JOIN mx_entity_redirects r ON r.to_id = members.id AND r.undone_at IS NULL
+      WHERE members.depth < 20
+)
+"""
+
+
+def _plain(q: str) -> bool:
+    """A query of words only: no -word, no `or`."""
+    return not any(w.startswith("-") or w.lower() == "or" for w in q.split())
+
+
+def entity_first_posts(cur: Cursor, q: str) -> List[str]:
+    """The posts whose current mentions (mx_mentions_now) hold, as subject or actor, the entity the whole query names:
+    its key or alias is the query's key; for a name and its version ("fable 5.2"), also a key or alias ending with it
+    as words (that version's entity, "Claude Fable 5.2"). Read through the merges. [] when the query names none."""
+    from insight_core.markx import names
+    key = names.key(q)
+    if len(key) < 2 or not _plain(q):
+        return []
+    cur.execute(
+        _NAMED + """
+        SELECT DISTINCT mm.post_id::text FROM mx_mentions_now mm
+         WHERE mm.entity_id IN (SELECT id FROM members) AND mm.role = ANY(%(roles)s)
+        """,
+        {"key": key, "suffix": _suffix(key) if query_version(key) else None, "roles": list(LEAD_ROLES)},
+        prepare=False,
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
 def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[str, Any]]:
     """Up to `limit` entities the query names (its key, a run of its words, or a prefix of 3+ letters of a name or an
-    alias), each shown as the entity it redirects to: {id, name, type, maker, posts, voices, matched}. The whole query
-    first, then a run of its words, then a prefix; more posts first."""
+    alias), each shown as the entity it redirects to: {id, name, type, maker, posts, voices, matched}. For a name and
+    its version, an entity whose key or alias is the query or ends with it as words (the version's, "claude fable 5.2"
+    for "fable 5.2") comes first; then the whole query, a run of its words, a prefix; more posts first. A card needs
+    CARD_MIN_POSTS posts or a subject or actor role in a current entity set (v10.13.1)."""
     from insight_core.markx import names, schemas
     key = names.key(q)
     if len(key) < 2:
         return []
     runs = _runs(key)
     prefix = _like(key) if len(key) >= PREFIX_MIN else None
+    suffix = _suffix(key) if query_version(key) else None
     cur.execute(
         """
         WITH RECURSIVE hit AS (
@@ -145,6 +229,9 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
              UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(prefix)s::text IS NOT NULL AND e.key LIKE %(prefix)s
              UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
               WHERE %(prefix)s::text IS NOT NULL AND a.key LIKE %(prefix)s
+             UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND e.key LIKE %(suffix)s
+             UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
+              WHERE %(suffix)s::text IS NOT NULL AND a.key LIKE %(suffix)s
         ), up(start, id, depth) AS (
              SELECT DISTINCT id, id, 0 FROM hit
              UNION ALL
@@ -154,7 +241,10 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
         ), root AS (
              SELECT DISTINCT ON (start) start, id FROM up ORDER BY start, depth DESC
         ), scored AS (
-             SELECT root.id, min(CASE WHEN hit.matched = %(key)s THEN 0 WHEN hit.matched = ANY(%(runs)s) THEN 1 ELSE 2 END)
+             SELECT root.id, min(CASE WHEN %(suffix)s::text IS NOT NULL
+                                           AND (hit.matched = %(key)s OR hit.matched LIKE %(suffix)s) THEN 0
+                                      WHEN hit.matched = %(key)s THEN 1
+                                      WHEN hit.matched = ANY(%(runs)s) THEN 2 ELSE 3 END)
                     AS how, min(hit.matched) AS matched
                FROM hit JOIN root ON root.start = hit.id GROUP BY root.id
         ), members(root, id, depth) AS (
@@ -164,7 +254,8 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
                JOIN mx_entity_redirects r ON r.to_id = members.id AND r.undone_at IS NULL
               WHERE members.depth < 20
         ), counts AS (
-             SELECT mb.root, count(DISTINCT mm.post_id) AS posts, count(DISTINCT p.source_id) AS voices
+             SELECT mb.root, count(DISTINCT mm.post_id) AS posts, count(DISTINCT p.source_id) AS voices,
+                    bool_or(mm.role = ANY(%(roles)s)) AS lead
                FROM (SELECT DISTINCT root, id FROM members) mb
                JOIN mx_mentions_now mm ON mm.entity_id = mb.id
                JOIN posts p ON p.id = mm.post_id
@@ -176,11 +267,12 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
           JOIN mx_entities e ON e.id = s.id
           LEFT JOIN mx_entities pe ON pe.id = e.parent AND e.level IN ('family', 'thing')
           LEFT JOIN counts c ON c.root = s.id
-         WHERE e.status <> 'not_entity'
+         WHERE e.status <> 'not_entity' AND (COALESCE(c.posts, 0) >= %(min_posts)s OR COALESCE(c.lead, FALSE))
          ORDER BY s.how, COALESCE(c.posts, 0) DESC, e.name, e.id
          LIMIT %(limit)s
         """,
-        {"runs": runs, "prefix": prefix, "key": key, "limit": limit},
+        {"runs": runs, "prefix": prefix, "suffix": suffix, "key": key, "limit": limit,
+         "roles": list(LEAD_ROLES), "min_posts": CARD_MIN_POSTS},
         prepare=False,
     )
     return [{"id": eid, "name": name, "type": schemas.entity_type(type_), "maker": maker, "posts": int(posts),
