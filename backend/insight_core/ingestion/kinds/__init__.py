@@ -50,7 +50,7 @@ class KindRegistry:
         from insight_core.adapters import ADAPTER_CLASSES
         from insight_core.db.repo_posts import PostsRepository
         from insight_core.ingestion.kinds.bluesky import BlueskyKind
-        from insight_core.ingestion.kinds.generic_rss import GenericRssKind
+        from insight_core.ingestion.kinds.generic_rss import GenericRssKind, LearnedLadder
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.page_watch import PageWatchKind
         from insight_core.ingestion.kinds.reddit import RedditKind
@@ -73,7 +73,8 @@ class KindRegistry:
             NitterRssKind(http),
             BlueskyKind(http),   # matches nothing unless INSIGHT_BLUESKY is on (issue 0137 B10)
             TelegramKind(http=http),
-            GenericRssKind(http, stored_urls=stored_urls, teasers_due=posts.teasers_to_read_again if posts else None),
+            GenericRssKind(http, stored_urls=stored_urls, teasers_due=posts.teasers_to_read_again if posts else None,
+                           learned=LearnedLadder(db_url) if db_url else None),   # issue 0143's learned ladder
         ])
 
 

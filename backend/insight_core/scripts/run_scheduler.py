@@ -268,6 +268,10 @@ async def main() -> None:
     # (a site at a time, PAGE_DELAY_S apart); resumable (each read records its version), logged.
     from insight_core.scripts import repair_full_text
     asyncio.get_running_loop().run_in_executor(None, repair_full_text.repair_safely, db_url)
+    # Issue 0143: the feeds whose archive stopped at the feed planned again through the smart archiver, once, a
+    # source at a time; where more exists an archive is queued (one per host lane). Resumable (each is marked), logged.
+    from insight_core.scripts import rerun_archives_0143
+    asyncio.get_running_loop().run_in_executor(None, rerun_archives_0143.rerun_safely, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:

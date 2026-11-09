@@ -22,6 +22,7 @@ import { ConnectionsLink } from './connections';
 import { writeToClipboard } from '../lib/clipboard';
 import { sourceReadPath } from '../lib/feedContext';
 import ArchiveSection from './sources/ArchiveSection';
+import SourceDiscoveries from './sources/SourceDiscoveries';
 import ReplacementNotice from './sources/ReplacementNotice';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
@@ -370,6 +371,11 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
               </div>
             </>
           ) : null}
+
+          {/* What this source discovered (issue 0143): read from Discover's and Mark X's stores. */}
+          <div className="rounded-md border border-line p-3">
+            <SourceDiscoveries sourceId={source.id} />
+          </div>
 
           {saved ? null : <div className="sm:w-1/2">
             <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>

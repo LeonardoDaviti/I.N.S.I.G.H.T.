@@ -64,6 +64,9 @@ MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an i
 # children than a live fetch reads (one a year, one a section) keeps its older pages there.
 ARCHIVE_SITEMAPS = 60
 SITEMAP_MAX_BYTES = 5_000_000   # a sitemap is read up to this; a longer one keeps its first entries
+# The posts' sitemap files blog platforms write (an index's, WordPress's, Ghost's), read by an archive when
+# robots.txt names none and /sitemap.xml is missing (issue 0143).
+POST_SITEMAPS = ("sitemap_index.xml", "post-sitemap.xml", "sitemap-posts.xml", "wp-sitemap.xml", "sitemap.xml.gz")
 SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
 FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
 PREVIEW_ITEMS = 5
@@ -252,12 +255,18 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         robots = ""
     queue = [line.split(":", 1)[1].strip() for line in robots.splitlines()
              if line.lower().startswith("sitemap:")] or [f"{origin}/sitemap.xml"]
+    # An archive (posts_only) reads a gzip sitemap too, and when neither robots.txt nor /sitemap.xml gives one,
+    # the posts' files the blog platforms name (issue 0143).
+    fallbacks = [f"{origin}/{name}" for name in POST_SITEMAPS] if posts_only else []
     section = prefix.strip("/").split("/")[0]
     entries: List[Tuple[str, Optional[str]]] = []
     read = 0
-    while queue and read < max_files:
+    answered = False
+    while (queue or (fallbacks and not answered)) and read < max_files:
+        if not queue:
+            queue, fallbacks = fallbacks, []
         url = _clean(queue.pop(0))
-        if url is None or urllib.parse.urlparse(url).path.endswith(".gz"):
+        if url is None or (urllib.parse.urlparse(url).path.endswith(".gz") and not posts_only):
             continue
         read += 1
         try:
@@ -265,7 +274,10 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         except Exception as exc:  # noqa: BLE001 - a missing sitemap is no sitemap
             logger.debug("Page watch: sitemap %s skipped (%s)", url, exc)
             continue
+        if posts_only:
+            body = _ungzip(body)
         root, locs = _sitemap_locs(body)
+        answered = answered or bool(root)
         if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
@@ -275,6 +287,18 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         else:
             entries.extend((loc, lastmod) for loc, lastmod in locs if loc)
     return entries
+
+
+def _ungzip(body: Any) -> Any:
+    """A gzip sitemap's bytes unpacked (a sitemap.xml.gz, issue 0143); anything else as it is."""
+    if isinstance(body, bytes) and body[:2] == b"\x1f\x8b":
+        import gzip
+
+        try:
+            return gzip.decompress(body)
+        except (OSError, EOFError):
+            return body
+    return body
 
 
 def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:

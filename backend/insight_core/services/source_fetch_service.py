@@ -226,6 +226,8 @@ class SourceFetchService:
                     "rate_limit": archive.get("rate_limit") or {},
                     # {host, until} while it waits out a host's limit (issue 0107), else None.
                     "waiting": archive.get("waiting"),
+                    # The smart archiver's coverage (issue 0143): "stored N of ~M", the platform, the reasons.
+                    "coverage": coverage_of(archive, stored),
                 }
             )
         catalog.sort(key=lambda item: (item["archive_status"] != "partial",
@@ -274,8 +276,12 @@ class SourceFetchService:
             # post by post, however few: the feed's window is not all there is.
             sitemap = archive.get("sitemap_posts")
             from_sitemap = isinstance(sitemap, int) and not isinstance(sitemap, bool) and sitemap > 0
+            # The smart archiver (issue 0143): a feed whose site holds more than the feed by any strategy of its
+            # ladder (smart.found_more) archives, however short the feed. The deploy's re-run plans every feed
+            # measured before the ladder (scripts/rerun_archives_0143.py).
+            smart = archive.get("smart") if isinstance(archive.get("smart"), dict) else {}
             if (isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit
-                    and not from_sitemap):
+                    and not from_sitemap and not smart.get("found_more")):
                 return {**support, "archivable": False, "reason": (
                     f"This feed only lists its latest {available} post{'' if available == 1 else 's'}, "
                     f"and every fetch already reads up to {live_fetch_limit}.")}
@@ -753,7 +759,8 @@ class SourceFetchService:
         archive = settings.get("archive") or {}
         support = self._support(kind, settings, self.availability())
         sitemap = archive.get("sitemap_posts")
-        pages_back = support["archivable"] and (kind.available_basis != "feed_window" or (
+        smart = archive.get("smart") if isinstance(archive.get("smart"), dict) else {}
+        pages_back = support["archivable"] and (kind.available_basis != "feed_window" or bool(smart.get("found_more")) or (
             isinstance(sitemap, int) and not isinstance(sitemap, bool) and sitemap > 0))
         return {
             "count": len(pages),
@@ -865,6 +872,27 @@ class SourceFetchService:
         result = progress_callback(payload)
         if asyncio.iscoroutine(result):
             await result
+
+
+def coverage_of(archive: Dict[str, Any], stored: int) -> Optional[Dict[str, Any]]:
+    """A feed's coverage line (issue 0143): {stored, estimate, platform, strategy, reasons, exhausted}, from the
+    smart archiver's record in settings.archive; None before its ladder looked at the site."""
+    from insight_core.ingestion.archive_ladder import reasons
+
+    smart = archive.get("smart") if isinstance(archive.get("smart"), dict) else None
+    if smart is None:
+        return None
+    return {
+        "stored": stored,
+        "estimate": smart.get("estimate"),
+        "platform": smart.get("platform"),
+        "strategy": smart.get("strategy"),
+        "found_more": bool(smart.get("found_more")),
+        "exhausted": bool(smart.get("exhausted")),
+        "reasons": reasons(smart),
+        "worked": smart.get("worked") or {},
+        "web_archive": bool(archive.get("web_archive")),
+    }
 
 
 def archive_service(db_url: str) -> SourceFetchService:

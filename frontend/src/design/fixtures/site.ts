@@ -11,7 +11,8 @@ import type {
   SchedulerConfig, SourceHealthRow, SourceWithSettings, UnreadCounts,
 } from '../../services/api';
 import { healthResponse } from '../../components/ops/fixtures';
-import { backgroundWork } from './sites';
+import { backgroundWork, sourceId } from './sites';
+import type { ArchiveCoverage, SourceDiscoveries } from '../../services/smartArchive';
 import type { FixtureRequest, FixtureRoute } from '../frame/transport';
 
 export interface Site {
@@ -198,8 +199,47 @@ export function archiveCatalog(site: Site): ArchiveCatalogEntry[] {
       archive_status: available !== null && stored >= available ? 'archived' : stored > 0 ? 'partial' : 'not_archived',
       resume_ready: row.platform === 'youtube' && i % 2 === 0,
       rate_limit: { page_delay_seconds: 5, batch_size: 10, batch_cooldown_seconds: 30 },
+      coverage: coverageOf(row.source_id, stored),
     };
   });
+}
+
+/** Issue 0143: two feeds the smart archiver measured. One blog's feed lists its latest posts and its platform's
+ *  archive API holds 15 more; the other's site was read to its end. */
+export function coverageOf(id: string, stored: number): ArchiveCoverage | null {
+  if (id === sourceId('s-simon')) {
+    return { stored, estimate: stored + 15, platform: 'wordpress', strategy: 'api', found_more: true, exhausted: false,
+      reasons: { feed_pages: 'paging_same', sitemap: 'no_sitemap', listing: 'listing_no_posts' } };
+  }
+  if (id === sourceId('s-anthropic')) {
+    return { stored, estimate: stored, platform: 'unknown', strategy: 'sitemap', found_more: true, exhausted: true,
+      reasons: { feed_pages: 'no_paging', api: 'no_api', listing: 'listing_unread' }, worked: { sitemap: 12 } };
+  }
+  return null;
+}
+
+/** What a source discovered (issue 0143): the blog's links Discover lists, one followed after it linked it. */
+export function discoveriesOf(id: string, now: Date): SourceDiscoveries {
+  const day = 24 * 60 * 60 * 1000;
+  const ago = (days: number) => new Date(now.getTime() - days * day).toISOString();
+  const rich = id === sourceId('s-simon');
+  return {
+    source_id: id,
+    sites: rich ? [
+      { key: 'model-notes.example', site: 'model-notes.example', platform: false, state: 'followed', voices: 6, articles: 14, addresses: 15,
+        first_linked: ago(200), followed_source: { id: sourceId('s-anthropic'), name: 'A lab blog you follow', added_at: ago(120) } },
+      { key: 'eval-lab.example', site: 'eval-lab.example', platform: false, state: 'open', voices: 4, articles: 7, addresses: 9,
+        first_linked: ago(90), followed_source: null },
+      { key: 'github.com/an-example-org', site: 'github.com', platform: true, state: 'open', voices: 3, articles: 5, addresses: 5,
+        first_linked: ago(40), followed_source: null },
+    ] : [],
+    followed_from_here: rich ? [{ id: sourceId('s-anthropic'), name: 'A lab blog you follow', added_at: ago(120), key: 'model-notes.example' }] : [],
+    originals: rich ? [{ kind: 'collect', url: 'https://eval-lab.example/reports/long-context', outcome: 'collected', post_id: null,
+      story_id: null, asked_at: ago(3), title: 'Long-context evaluation report' }] : [],
+    entities: rich ? [{ id: 'e-ex-1', name: 'An example model', type: 'model', post_id: null, at: ago(12), post_title: null }] : [],
+    counts: {},
+    discover_counted: true,
+  };
 }
 
 function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusResponse {
@@ -214,6 +254,7 @@ function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusRes
       resume_ready: entry?.resume_ready ?? false,
       checkpoint: entry?.resume_ready ? { collected_posts: Math.round(stored / 2), pages_fetched: 6 } : null,
       rate_limit: entry?.rate_limit ?? null,
+      coverage: entry?.coverage ?? null,
     },
     support: {
       kind: entry?.kind ?? 'generic_rss',
@@ -298,6 +339,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/archive/catalog', respond: () => ({ success: true, sources: archiveCatalog(site), total: archiveCatalog(site).length }) },
     { path: '/api/archive/:sourceId/status', respond: (request) => archiveStatus(request, site) },
     { path: '/api/archive/:sourceId/linked', respond: (request) => linkedPages(request, site) },
+    { path: '/api/sources/:sourceId/discoveries', respond: ({ params }) => discoveriesOf(params.sourceId, new Date()) },
     { path: '/api/ingestion/logs', respond: (request) => logTail(request, site) },
   ];
 }

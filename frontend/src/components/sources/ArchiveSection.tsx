@@ -15,6 +15,7 @@ import { formatEstimate } from '../../lib/duration';
 import { formatCount, plural } from '../../lib/format';
 import { Button, Input, StatusGlyph } from '../ui';
 import { Notice } from '../states';
+import ArchiveCoverageLine from './ArchiveCoverageLine';
 
 const archiveStatusKey = (sourceId: string) => ['archive-status', sourceId] as const;
 const linkedKey = (sourceId: string) => ['archive-linked', sourceId] as const;
@@ -414,7 +415,10 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
           ) : null}
         </div>
       </dl>
-      {availableText.note ? <p className="text-[0.75rem] text-fg-2">{availableText.note}</p> : null}
+      {/* A feed the smart archiver measured (issue 0143): its coverage, not "nothing older is reachable". */}
+      {archive.coverage ? (
+        <ArchiveCoverageLine sourceId={sourceId} coverage={archive.coverage} onChanged={onChanged} />
+      ) : availableText.note ? <p className="text-[0.75rem] text-fg-2">{availableText.note}</p> : null}
 
       {running && run ? <Progress run={run} now={now} /> : (
         <>

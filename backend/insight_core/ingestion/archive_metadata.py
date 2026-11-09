@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Literal, Optional
 
+from insight_core.ingestion.archive_ladder import coverage_status
 from insight_core.ingestion.gates import HOST_FLOORS
 from insight_core.ingestion.kinds.base import RateLimit, Source, SourceKind
 
@@ -72,8 +73,13 @@ class ArchiveMetadataWriter:
             kind, source or {}, available_posts, stored, data.get("page_size", current.get("page_size")) or 1,
             kind.profile.rate_limit(data.get("rate_limit", current.get("rate_limit"))))
 
+        smart = self._smart(kind, current, data, mode)
         status = current.get("status", "not_archived")
-        if mode in {"archive", "archive_progress"}:
+        if smart is not None:
+            # A feed's coverage (issue 0143): archived only when the stored posts reach the site's estimate, or
+            # every strategy was tried and none finds more; a plan that found more makes it partial at once.
+            status = coverage_status(stored, smart)
+        elif mode in {"archive", "archive_progress"}:
             status = derive_archive_status(stored, data.get("available_posts"))
         elif mode == "live" and isinstance(available_posts, int):
             status = derive_archive_status(stored, available_posts)
@@ -111,7 +117,34 @@ class ArchiveMetadataWriter:
             "unreached": data.get("unreached", current.get("unreached")) if mode == "archive" else current.get("unreached"),
             "until": (data.get("until_reached") if mode == "archive" else current.get("until")),
         }
+        if smart is not None:
+            archive["smart"] = smart
+        # What a feed's plan measured besides (issue 0108's sitemap posts): kept for archive_support.
+        for key in ("sitemap_posts", "sitemap_prefix"):
+            if mode == "plan" and key in data:
+                archive[key] = data[key]
+            elif mode == "plan" and smart is not None:
+                archive[key] = None
         self.sources.merge_source_settings(source_id, {"archive": archive})
+
+    @staticmethod
+    def _smart(kind: SourceKind, current: Dict[str, Any], data: Dict[str, Any], mode: Mode) -> Optional[Dict[str, Any]]:
+        """The smart archiver's record (issue 0143): the plan's (data["smart"]), else the one kept; an archive that
+        ended with no strategy left to resume has tried them all (exhausted). None for a kind without one."""
+        smart = data.get("smart") if isinstance(data.get("smart"), dict) else current.get("smart")
+        if not isinstance(smart, dict):
+            return None
+        smart = dict(smart)
+        if mode == "archive" and not data.get("until_reached") and not data.get("paused") and not data.get("waiting") \
+                and data.get("success", True):
+            checkpoint = data.get("checkpoint")
+            smart["exhausted"] = not (isinstance(checkpoint, dict) and kind.checkpoint_resumable(checkpoint))
+            ladder = checkpoint.get("ladder") if isinstance(checkpoint, dict) else None
+            if isinstance(ladder, dict) and isinstance(ladder.get("worked"), dict):
+                smart["worked"] = ladder["worked"]
+        elif mode == "plan" and isinstance(data.get("smart"), dict):
+            smart["exhausted"] = False
+        return smart
 
     @staticmethod
     def _prepare_checkpoint(current: Dict[str, Any], data: Dict[str, Any], mode: Mode, now: str) -> Optional[Dict[str, Any]]:

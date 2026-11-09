@@ -1261,11 +1261,15 @@ async def get_archive_status(source_id: str):
     except Exception:
         logger.exception("Could not read the latest archive job for %s", source_id)
         latest_job = None
+    from insight_core.services.source_fetch_service import coverage_of
+
     return {
         "success": True,
         "source_id": source_id,
         "archive": {
             **source.get("settings", {}).get("archive", {}),
+            # A feed's coverage (issue 0143): stored of the site's estimate, its platform, why the rest is not.
+            "coverage": coverage_of(source.get("settings", {}).get("archive", {}) or {}, int(post_stats["post_count"])),
             "stored_posts": post_stats["post_count"],
             "oldest_published_at": oldest.isoformat() if oldest else None,
             "latest_published_at": latest.isoformat() if latest else None,
@@ -1771,3 +1775,5 @@ from insight_core.markx.api import router as markx_router  # noqa: E402
 app.include_router(markx_router)
 from insight_core.routers.voices import router as voices_router  # noqa: E402  (issue 0132 A)
 app.include_router(voices_router)
+from insight_core.routers.source_discoveries import router as source_discoveries_router  # noqa: E402  (issue 0143)
+app.include_router(source_discoveries_router)
