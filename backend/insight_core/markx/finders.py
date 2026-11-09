@@ -405,8 +405,8 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
 
 
 _SCORE = f"""
-WITH pr AS (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
-ex AS (SELECT e.v, CASE WHEN e.post_id = ANY(%(pos)s::uuid[]) THEN 'pos' ELSE 'neg' END AS g
+WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
+ex AS MATERIALIZED (SELECT e.v, CASE WHEN e.post_id = ANY(%(pos)s::uuid[]) THEN 'pos' ELSE 'neg' END AS g
          FROM mx_embeddings e WHERE e.model = %(model)s AND e.post_id = ANY(%(pos)s::uuid[] || %(neg)s::uuid[])),
 ps AS (SELECT p.id, {DATE} AS at, p.source_id, e.v, p.search_vector
          FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
