@@ -24,6 +24,8 @@ export interface TrackItem {
   rank: number;
   /** The rank is calibrated on 10+ labels (else it is the confidence). */
   calibrated: boolean;
+  /** 0147: the finders that put a passive post up for judging (probe, entity, domain, word, source, story, classifier). */
+  found_by?: string[];
 }
 
 export interface TrackSection {
@@ -72,6 +74,8 @@ export interface TrackPage {
     threshold: number; ready: boolean; pos: number; neg: number; description: boolean;
     last: Record<string, unknown> | null; totals: Record<string, number> | null;
     history: { done: string | null; at: string | null };
+    /** 0147: this version's example posts and near-misses, and how many items each finder found. */
+    probes?: number; near_misses?: number; found_by?: Record<string, number>;
   } | null;
 }
 
