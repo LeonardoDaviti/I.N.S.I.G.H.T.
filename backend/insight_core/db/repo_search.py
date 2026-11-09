@@ -67,8 +67,9 @@ FILL_BATCH = 500
 RANKED_MATCHES = 5000
 # Rank, normalised by 1 + log(length): a long text does not win by length.
 RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
-# Mark X's English layer (issue 0139, mx_post_search): the query read as English words.
-MX_TSQUERY = "websearch_to_tsquery('english', %s)"
+# Mark X's English layer (issue 0139, mx_post_search): the query read as English words, a name and its version
+# together (v10.13.1, migration 0095), as search_query reads them.
+MX_TSQUERY = "search_pair_versions(websearch_to_tsquery('english', %s))"
 MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_TSQUERY}) = 'T' THEN {MX_TSQUERY}"
                    f" ELSE replace(querytree({MX_TSQUERY}), ' & ', ' | ')::tsquery END)")
 # A query of this many words or more orders by best match unless an order is asked (issue 0139).
