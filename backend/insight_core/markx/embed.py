@@ -219,6 +219,12 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
         if task["status"] in ("answered", "failed"):
             repeated += 1
             continue
+        if task["subject_kind"] == "track":   # 0145: a track's description, for its prefilter (markx/tracks.py)
+            from insight_core.markx import tracks
+            tracks.store_vector(cur, task, v)
+            repo.answer_task(cur, task_id)
+            stored += 1
+            continue
         if task["kind"] == NAME_KIND:      # 0119 A1: a name's vector, for the alias candidates
             cur.execute("""INSERT INTO mx_entity_vectors (entity_id, model, model_sha256, text_hash, v)
                            VALUES (%s, %s, %s, %s, %s::halfvec) ON CONFLICT (entity_id, model) DO NOTHING""",

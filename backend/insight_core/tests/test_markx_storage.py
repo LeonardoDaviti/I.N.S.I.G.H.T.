@@ -68,7 +68,8 @@ class MigrationTests(_Rollback):
                          | {"mx_mention_sets"}                                          # 0082 (0133)
                          | {"mx_back"}                                                  # 0085 (0136)
                          | {"mx_entity_addresses"}                                     # 0089 (0138)
-                         | {"mx_post_search"})                                          # 0090 (0139)
+                         | {"mx_post_search"}                                           # 0090 (0139)
+                         | {"mx_tracks", "mx_track_items", "mx_track_subtopics"})       # 0093 (0145)
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -92,7 +93,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 31)       # 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one
+        self.assertEqual(self.cur.fetchone()[0], 34)       # 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0093 three
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")

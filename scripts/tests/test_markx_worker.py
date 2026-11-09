@@ -671,5 +671,35 @@ class TestParts(unittest.TestCase):
         self.assertEqual(W.parse_time("2026-11-05T12:00:00"), datetime(2026, 11, 5, 12, tzinfo=timezone.utc))
 
 
+class TestTracks(Base):
+    """0145: the track judge and the sub-topic proposal are default kinds, 10 posts a call and one track a call."""
+
+    def setUp(self):
+        super().setUp()
+        for kind, gid in (("track", "track-v1"), ("subtopics", "subtopics-v1")):
+            KIND_GUIDE[kind] = gid
+            self.addCleanup(KIND_GUIDE.pop, kind)
+            self.stub.guides[gid] = guide(gid, f"GUIDE {gid}")
+
+    def test_track_and_subtopics_are_default_kinds_with_their_call_sizes(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds[-2:], ["track", "subtopics"])
+        per = W.per_call_arg(W.PER_CALL)
+        self.assertEqual((per["track"], per["subtopics"]), (10, 1))
+
+    def test_tracks_asked_ten_a_call_subtopics_one(self):
+        self.stub.add("track", 25, start=1)
+        self.stub.add("subtopics", 2, start=101)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 27)
+        sizes = {}
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            sizes.setdefault(self.stub.tasks[str(ids[0])]["kind"], []).append(len(ids))
+        self.assertEqual(sorted(sizes["track"]), [5, 10, 10])
+        self.assertEqual(sizes["subtopics"], [1, 1])
+
+
 if __name__ == "__main__":
     unittest.main()

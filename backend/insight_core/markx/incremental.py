@@ -80,7 +80,10 @@ def memo_for(cur: Any, key: str) -> Tuple[Memo, bool]:
     that left it, with the same code, config and guides. Read before the run starts its own mx_runs row."""
     db = _db(cur)
     memo = _memos.get(db)
-    cur.execute("SELECT id::text FROM mx_runs WHERE finished_at IS NOT NULL ORDER BY started_at DESC, ctid DESC LIMIT 1")
+    # v10.11: runs started in one transaction (the tests') share started_at; finished_at (clock_timestamp) tells them
+    # apart, where ctid alone did not once a run's row grew (0145's two kinds in its config) and moved on its page.
+    cur.execute("""SELECT id::text FROM mx_runs WHERE finished_at IS NOT NULL
+                    ORDER BY started_at DESC, finished_at DESC, ctid DESC LIMIT 1""")
     row = cur.fetchone()
     warm = memo is not None and memo.key == key and memo.run_id is not None and row is not None and row[0] == memo.run_id
     return (memo if warm else fresh(db, key)), warm

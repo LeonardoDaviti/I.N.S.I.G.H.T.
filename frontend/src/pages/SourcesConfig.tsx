@@ -18,6 +18,7 @@ import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
 import SuggestedSources, { SUGGESTED_SOURCES_KEY } from '../components/sources/SuggestedSources';
+import TrackSourceLines from '../components/tracks/TrackSourceLines';   // 0145
 import { useListKeys } from '../components/sources/useListKeys';
 import {
   STATUS_FILTERS,
@@ -575,6 +576,7 @@ export default function SourcesConfig() {
         </TabsContent>
         <TabsContent value="discover" className="pt-0">
           <div className="pb-24">
+            <TrackSourceLines />
             <SuggestedSources onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} />
           </div>
         </TabsContent>

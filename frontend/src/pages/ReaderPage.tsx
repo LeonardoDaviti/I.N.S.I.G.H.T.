@@ -23,6 +23,7 @@ import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
 import { searchHref } from '../lib/search';
 import { loadAhead } from '../lib/loadAhead';
+import { useMarkxOn } from '../hooks/useMarkxOn';
 
 /**
  * How many posts arrived since the feed was loaded, from the scope's unread count.
@@ -55,6 +56,8 @@ const NewsList = lazy(() => import('../components/reader/NewsList'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
 // A voice's channels as tabs (issue 0132 A): its own chunk, loaded on a voice's or a channel's page only.
 const ScopeVoiceHeader = lazy(() => import('../components/voices/ScopeVoiceHeader'));
+// A track as a topic (issue 0145, Mark X): its own chunk, loaded on View Topic only.
+const TrackTopic = lazy(() => import('../components/tracks/TrackTopic'));
 
 // What a reader opens next, loaded ahead once per page load (issue 0061): the post page
 // with its text renderer first, then News and Classics.
@@ -62,7 +65,7 @@ const LOAD_AHEAD = [() => import('./PostDetailPage'), () => import('../component
 let loadedAhead = false;
 
 function isReaderView(value: string | null): value is ReaderView {
-  return value === 'stream' || value === 'by_source' || value === 'news' || value === 'classics';
+  return value === 'stream' || value === 'by_source' || value === 'news' || value === 'classics' || value === 'topic';
 }
 
 /** What Later costs (issue 0022): "Later · 6 posts · 52 min"; null when Later is empty. */
@@ -118,8 +121,11 @@ function Reader({ scope }: { scope: string }) {
   // classics it cites (issue 0077), as on the Main feed or a track (0051).
   const oneSource = scope.startsWith('source:');
   const rawView = params.get('view');
-  const readerView: ReaderView = isReaderView(rawView) && !(oneSource && rawView === 'by_source') ? rawView : 'stream';
-  const ranked = readerView === 'news' || readerView === 'classics';
+  const oneTrack = scope.startsWith('folder:');
+  const markxOn = useMarkxOn();
+  const readerView: ReaderView = isReaderView(rawView) && !(oneSource && rawView === 'by_source')
+    && !(rawView === 'topic' && !oneTrack) ? rawView : 'stream';
+  const ranked = readerView === 'news' || readerView === 'classics' || readerView === 'topic';
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
@@ -255,6 +261,7 @@ function Reader({ scope }: { scope: string }) {
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
+            topic={oneTrack && (markxOn || readerView === 'topic')}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
             // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
@@ -283,6 +290,10 @@ function Reader({ scope }: { scope: string }) {
               {readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
                   <NewsList scope={scope} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
+                </Suspense>
+              ) : readerView === 'topic' ? (
+                <Suspense fallback={<LoadingState label="Loading the topic" rows={6} />}>
+                  <TrackTopic folderId={scope.slice('folder:'.length)} />
                 </Suspense>
               ) : readerView === 'classics' ? (
                 <Suspense fallback={<LoadingState label="Loading Classics" rows={6} />}>
