@@ -23,8 +23,10 @@ export interface FeedFixture {
   counts: UnreadCounts;
 }
 
-export function feedKey(scope: string, filter: FeedFilter, view: FeedView, fixtureName?: string) {
-  return fixtureName ? [...FEED_ROOT_KEY, scope, filter, view, 'fixture', fixtureName] : [...FEED_ROOT_KEY, scope, filter, view];
+/** `allSources`: a topic track's every post of its sources, not only its items (v10.12.1): a list of its own. */
+export function feedKey(scope: string, filter: FeedFilter, view: FeedView, fixtureName?: string, allSources = false) {
+  const key = fixtureName ? [...FEED_ROOT_KEY, scope, filter, view, 'fixture', fixtureName] : [...FEED_ROOT_KEY, scope, filter, view];
+  return allSources ? [...key, 'all-sources'] : key;
 }
 
 function fixturePage(fixture: FeedFixture, view: FeedView, cursor: string | null): AnyFeedPage {
@@ -39,16 +41,16 @@ function fixturePage(fixture: FeedFixture, view: FeedView, cursor: string | null
  * with `staleTime: Infinity` and no refetch on focus, so nothing reorders the list
  * while it is being read. New posts surface through the unread counts instead.
  */
-export function useFeed({ scope, filter, view, fixture }: {
-  scope: string; filter: FeedFilter; view: FeedView; fixture?: FeedFixture | null;
+export function useFeed({ scope, filter, view, fixture, allSources = false }: {
+  scope: string; filter: FeedFilter; view: FeedView; fixture?: FeedFixture | null; allSources?: boolean;
 }) {
   const api = useApi();
   const query = useInfiniteQuery({
-    queryKey: feedKey(scope, filter, view, fixture?.name),
+    queryKey: feedKey(scope, filter, view, fixture?.name, allSources),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }): Promise<AnyFeedPage> => {
       if (fixture) return Promise.resolve(fixturePage(fixture, view, pageParam));
-      const params = { scope, filter, cursor: pageParam, limit: view === 'by_source' ? 20 : FEED_PAGE_SIZE, signal };
+      const params = { scope, filter, cursor: pageParam, limit: view === 'by_source' ? 20 : FEED_PAGE_SIZE, signal, ...(allSources ? { allSources } : {}) };
       return view === 'by_source' ? api.getFeedGroups(params) : api.getFeed(params);
     },
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,

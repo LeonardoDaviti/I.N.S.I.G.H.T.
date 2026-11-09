@@ -270,6 +270,8 @@ export interface FeedParams {
   cursor?: string | null;
   limit?: number;
   days?: number;
+  /** A topic track (0145, Mark X on) lists only its items; `true` lists every post of its sources (v10.12.1). */
+  allSources?: boolean;
   signal?: AbortSignal;
 }
 
@@ -1117,6 +1119,7 @@ function feedPath(params: FeedParams, view: FeedView): string {
   if (params.cursor) qs.set('cursor', params.cursor);
   if (params.limit) qs.set('limit', String(params.limit));
   if (params.days) qs.set('days', String(params.days));
+  if (params.allSources) qs.set('all_sources', '1');
   return `/api/feed?${qs.toString()}`;
 }
 
@@ -1145,9 +1148,13 @@ export function createApi() {
     /** Put posts in Later or take them out (issue 0022). */
     setPostsLater: (ids: string[], later: boolean) =>
       request<ReadStateResult>('/api/feed/later', { method: 'PUT', body: { ids, later } }),
-    /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
-    markReadThrough: (scope: string, through: string, newest: string) =>
-      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { scope, through_cursor: through, newest_cursor: newest } }),
+    /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). A topic track's
+     *  are its items, or every post of its sources with `allSources` (v10.12.1), as its list shows them. */
+    markReadThrough: (scope: string, through: string, newest: string, allSources = false) =>
+      request<ReadStateResult>('/api/feed/read', {
+        method: 'PUT',
+        body: allSources ? { scope, through_cursor: through, newest_cursor: newest, all_sources: true } : { scope, through_cursor: through, newest_cursor: newest },
+      }),
     /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
     setPostStarred: (postId: string, starred: boolean) =>
       request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/favorite`, { method: 'POST', body: { favorited: starred } }),

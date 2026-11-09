@@ -22,11 +22,18 @@ describe('the read-state and source routes', () => {
     await api.setPostsRead(['a'], true);
     await api.setPostsRead(['a', 'b'], false);
     await api.markReadThrough('folder:f', 'THROUGH', 'NEWEST');
+    await api.markReadThrough('folder:f', 'THROUGH', 'NEWEST', true);
+    await api.getFeed({ scope: 'folder:f', filter: 'unread' });
+    await api.getFeed({ scope: 'folder:f', filter: 'unread', allSources: true });
 
     expect(calls()).toEqual([
       ['PUT', '/api/feed/read', { ids: ['a'], read: true }],
       ['PUT', '/api/feed/read', { ids: ['a', 'b'], read: false }],
       ['PUT', '/api/feed/read', { scope: 'folder:f', through_cursor: 'THROUGH', newest_cursor: 'NEWEST' }],
+      // a topic track's every post of its sources (v10.12.1)
+      ['PUT', '/api/feed/read', { scope: 'folder:f', through_cursor: 'THROUGH', newest_cursor: 'NEWEST', all_sources: true }],
+      ['GET', '/api/feed?scope=folder%3Af&filter=unread&view=stream', undefined],
+      ['GET', '/api/feed?scope=folder%3Af&filter=unread&view=stream&all_sources=1', undefined],
     ]);
   });
 

@@ -6,6 +6,7 @@ results into the API shapes (FeedPage, FeedGroupsPage, ReadStateResult, UnreadCo
 """
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Sequence
 
@@ -27,9 +28,22 @@ class ReaderService:
         self.search_repo = SearchRepository()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def list_posts(self, query: FeedQuery) -> Dict[str, Any]:
-        """FeedPage {items, next_cursor}, or FeedGroupsPage {groups, next_cursor} for view=by_source."""
+    @staticmethod
+    def _track_scope(cur: Any, scope: FeedScope, all_sources: bool) -> FeedScope:
+        """A topic track's folder scope restricted to its items while Mark X is on (v10.12.1, markx/track_feed), unless
+        `all_sources`; every other scope as it came (Mark X is not imported for them)."""
+        if all_sources or scope.kind != "folder":
+            return scope
+        from insight_core.markx import track_feed
+        return track_feed.restrict(cur, scope)
+
+    def list_posts(self, query: FeedQuery, *, all_sources: bool = False) -> Dict[str, Any]:
+        """FeedPage {items, next_cursor}, or FeedGroupsPage {groups, next_cursor} for view=by_source.
+        A topic track (Mark X on) lists only its items unless `all_sources` (v10.12.1)."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            scope = self._track_scope(cur, query.scope, all_sources)
+            if scope is not query.scope:
+                query = dataclasses.replace(query, scope=scope)
             rows, next_cursor = self.repo.list_posts(cur, query, now=self.clock())
             if query.view != "by_source":   # one post on two channels of a voice shows once (issue 0132 A)
                 from insight_core.db.repo_voices import VoicesRepository
@@ -94,10 +108,13 @@ class ReaderService:
             conn.commit()
         return _read_state_result(ids)
 
-    def mark_read_through(self, scope: FeedScope, through: FeedCursor, newest: FeedCursor) -> Dict[str, Any]:
-        """Mark read every unread post in `scope` from `newest` down to `through`. `ids` undo it."""
+    def mark_read_through(self, scope: FeedScope, through: FeedCursor, newest: FeedCursor, *,
+                          all_sources: bool = False) -> Dict[str, Any]:
+        """Mark read every unread post in `scope` from `newest` down to `through`. `ids` undo it. A topic track's
+        are the posts its list shows (v10.12.1): only its items unless `all_sources`."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
+                scope = self._track_scope(cur, scope, all_sources)
                 ids = self.repo.mark_read_through(cur, scope, through, newest=newest, now=self.clock())
                 self.repo.clear_positions(cur, ids)
             conn.commit()

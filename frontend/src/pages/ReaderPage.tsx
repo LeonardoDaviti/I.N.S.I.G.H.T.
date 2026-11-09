@@ -128,10 +128,15 @@ function Reader({ scope }: { scope: string }) {
   // The view the URL names (null: none, or one this scope has not).
   const urlView: ReaderView | null = isReaderView(rawView) && !(oneSource && rawView === 'by_source')
     && !(rawView === 'topic' && !oneTrack) ? rawView : null;
-  // A track that is a topic (0145, Mark X on) opens on Topic: its items and Discover are there, and its Stream (its
-  // active sources' posts) may be empty. Stream is one click away (`?view=stream`). Anything else opens on Stream.
+  // A track that is a topic (0145, Mark X on) opens on Topic: its items and Discover are there (its Stream lists only its
+  // items, v10.12.1). Stream is one click away (`?view=stream`). Anything else opens on Stream.
   const topics = useTrackCounts(oneTrack);
-  const defaultView: ReaderView = oneTrack && markxOn && isTopicTrack(topics.data, scope.slice('folder:'.length)) ? 'topic' : 'stream';
+  const topicTrack = oneTrack && markxOn && isTopicTrack(topics.data, scope.slice('folder:'.length));
+  const defaultView: ReaderView = topicTrack ? 'topic' : 'stream';
+  // A topic track's Stream, By source and Show lists hold only the posts in the track (v10.12.1); the toolbar's switch
+  // (`?all_sources=1`) lists every post of its sources, as a plain folder does. The server decides the same way.
+  const allSources = topicTrack && params.get('all_sources') === '1';
+  const trackCount = topicTrack ? topics.data?.by_track[scope.slice('folder:'.length)] : undefined;
   // Not known yet (Mark X being asked, or the topics loading): the feed waits rather than flash Stream first.
   const viewPending = oneTrack && !urlView && (markxState === undefined || topics.pending);
   const readerView: ReaderView = urlView ?? defaultView;
@@ -149,12 +154,17 @@ function Reader({ scope }: { scope: string }) {
   const stopped = activity?.stopped ?? false;
   const [voiceName, setVoiceName] = useState<string | null>(null);
   const title = scope.startsWith('voice:') ? (voiceName ?? 'Voice') : scopeLabel(scope, folders.data, sourceNames);
-  const scopeCount = scopeUnreadCount(counts.data, scope);
+  // A topic track's own items counted (the server's, refreshed with the unread counts), unless every post is listed.
+  const scopeCount = trackCount && !allSources ? trackCount.unread : scopeUnreadCount(counts.data, scope);
   // One source that watches its pages for changes offers its Updates (issue 0039).
   const updates = oneSource && Boolean(health.data?.rows.find((row) => `source:${row.source_id}` === scope)?.watch_changes);
 
-  const currentKey = useMemo(() => feedKey(scope, filter, view, fixture?.name), [filter, fixture?.name, scope, view]);
+  const currentKey = useMemo(() => feedKey(scope, filter, view, fixture?.name, allSources), [allSources, filter, fixture?.name, scope, view]);
   const newPosts = useNewPosts(scopeCount, JSON.stringify(currentKey), scope);
+  // The track's own count is not patched as posts are read (only refetched): the pill's baseline follows it down.
+  const ownCount = Boolean(trackCount && !allSources);
+  const onUnreadDelta = ownCount ? undefined : newPosts.onUnreadDelta;
+  const waiting = trackCount && !allSources && (readerView === 'stream' || readerView === 'by_source') ? trackCount.waiting ?? 0 : 0;
 
   useEffect(() => {
     document.title = `${title} · INSIGHT`;
@@ -273,6 +283,7 @@ function Reader({ scope }: { scope: string }) {
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
             topic={oneTrack && (markxOn || readerView === 'topic')}
+            allSources={topicTrack ? { on: allSources, onChange: (on) => setParam('all_sources', on ? '1' : null) } : null}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
             // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
@@ -293,6 +304,11 @@ function Reader({ scope }: { scope: string }) {
               {laterLine ? (
                 <p className="mb-3 px-1 text-[0.8125rem] tabular-nums">
                   <TextLink to="/?filter=later" data-testid="reader-later-line" className="text-fg-2 decoration-transparent hover:decoration-fg-3">{laterLine}</TextLink>
+                </p>
+              ) : null}
+              {waiting > 0 ? (
+                <p className="mb-3 px-1 text-[0.8125rem] tabular-nums text-fg-3" data-testid="reader-track-waiting">
+                  {formatCount(waiting)} {waiting === 1 ? 'post from its sources is' : 'posts from its sources are'} still being judged
                 </p>
               ) : null}
               {oneSource || scope.startsWith('voice:') ? (
@@ -321,7 +337,8 @@ function Reader({ scope }: { scope: string }) {
                 emptyAction={empty.action}
                 helpOpen={helpOpen}
                 onHelpOpenChange={setHelpOpen}
-                onUnreadDelta={newPosts.onUnreadDelta}
+                onUnreadDelta={onUnreadDelta}
+                allSources={allSources}
               />
               )}
             </div>

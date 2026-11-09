@@ -5,8 +5,9 @@ import { request } from '../lib/request';
 import { UNREAD_COUNTS_KEY } from './useFeed';
 import { useMarkxOn } from './useMarkxOn';
 
-/** A topic track's count (v10.12.1): its unread track items plus its Discover suggestions not yet labelled. */
-export interface TopicTrackCount { unread: number; discover: number; count: number }
+/** A topic track's count (v10.12.1): its unread track items plus its Discover suggestions not yet labelled. `unread` is
+ *  also its Stream's count (the Stream lists only its items); `waiting`, its active sources' posts not judged yet. */
+export interface TopicTrackCount { unread: number; discover: number; count: number; waiting?: number }
 
 /** Only tracks that are topics are listed; a plain folder keeps its sources' unread count. */
 export interface TopicTrackCounts { by_track: Record<string, TopicTrackCount> }

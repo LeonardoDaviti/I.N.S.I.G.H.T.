@@ -368,6 +368,7 @@ class ReadStateRequest(BaseModel):
     scope: str = "all"
     through_cursor: str | None = None
     newest_cursor: str | None = None
+    all_sources: bool = False   # a topic track's mark-through over every post of its sources (v10.12.1)
 
 
 class LaterRequest(BaseModel):
@@ -729,13 +730,17 @@ def _require_post_ids(ids: List[str]) -> List[str]:
 @error_detail("load the feed")
 async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
                    cursor: str | None = None, limit: int = 30, days: int | None = None,
-                   date: str | None = None):
+                   date: str | None = None, all_sources: bool = False):
     """Every post list: newest first, keyset-paginated. FeedPage (stream) or FeedGroupsPage
     (by_source). scope: all | source:<uuid> | folder:<uuid>; filter: all | unread | later | starred
     (starred is Keep; later is oldest saved first);
-    days: the last N days, or date: one day (YYYY-MM-DD, UTC)."""
+    days: the last N days, or date: one day (YYYY-MM-DD, UTC).
+    A track that is a topic (0145, Mark X on) lists only the posts in the track; all_sources=1 lists every post of
+    its sources, as a plain folder does (v10.12.1)."""
     query = FeedQuery.parse(scope=scope, filter=filter, view=view, cursor=cursor, limit=limit,
                             days=days, date=date)
+    if all_sources:
+        return services().reader.list_posts(query, all_sources=True)
     return services().reader.list_posts(query)
 
 
@@ -784,6 +789,8 @@ async def set_read_state(request: ReadStateRequest):
         scope = FeedScope.parse(request.scope)
         through = FeedCursor.decode(request.through_cursor)
         newest = FeedCursor.decode(request.newest_cursor)
+        if request.all_sources:
+            return services().reader.mark_read_through(scope, through, newest, all_sources=True)
         return services().reader.mark_read_through(scope, through, newest)
     if request.ids is None:
         raise ValueError("send ids, or through_cursor and newest_cursor")
