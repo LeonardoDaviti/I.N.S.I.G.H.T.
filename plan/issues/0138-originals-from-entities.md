@@ -124,6 +124,26 @@ report) collected with their linked pages; unstored Classic long-reads on unfoll
 repositories stored as abstract/README; product front pages (a local model runner, a VPN, an editor) **not**
 collected; the JEPA-paper entity gets its Original; the orphan entity shows its older guide.
 
+### F. A long-read's references, and a followed source's missed pages (owner, 2026-11-09)
+**The owner:** "will our discover fetch links that was missed? why? how to not miss such things?" The case (private
+rows in `plan/research/report-proto/notes.md`): a 20k-character theme long-read the owner opened cites **27 pages**;
+INSIGHT stored **4**. Under A–E, almost none of the 23 would be fetched: they are cited by **one** voice (A–B and the
+Classics need 2+), they are news pieces, not the original of an entity (B), and the post is in no story (0123).
+Three of them are pages of sources you **follow** (two forum posts, one essay) that the followed feed never carried.
+1. **A curated long-read's references are collected.** A post is a curated long-read when it is long (≥ 8,000
+   characters of its own text), cites **8+ outside article pages**, and Mark X reads it as commentary / analysis /
+   roundup (not news). When **you opened or kept it** (History, Kept) — or its source is one you read most of — its
+   cited article pages are collected once (at most 30 per post) through E1's allowance, as references of that post
+   (`story_originals` kind `reference`, the citing post kept). Papers as abstracts, repositories as READMEs, platform
+   posts from quotes; never products, walled pages or front pages of sites (E2's rule applies).
+2. **A followed source's page that its feed missed** (linked by any post, not only a story's, 0114): read once as
+   that source's post (0122's rule: one post under the source). Counted per source ("feed misses N linked pages"), so
+   the sources page can say a feed is partial.
+3. **Discover:** a site cited by long-reads you opened gets "cited N times by long-reads you read" on its row; at 3+
+   such citations from 2+ long-reads it is suggested even below today's voices bar.
+4. **Measured on the case:** of the 27, how many end stored (target: every article page and paper; product pages
+   and app links not).
+
 ## Not in this issue
 - Following a source automatically (stays the owner's tap).
 - Searching the web for unknown entities' originals beyond C's two lookups.
