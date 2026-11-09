@@ -320,13 +320,29 @@ class TestValid(Base):
         d = self.done()
         self.assertEqual((d["tokens_in"], d["tokens_out"], d["valid"], d["exit"]), (7200, 1800, 45, 0))
 
+    def test_drain_keeps_the_old_order(self):
+        """--drain: a kind until it runs dry, then the next (the order before v10.12.1)."""
+        self.stub.add("read", 25, start=1)
+        self.stub.add("entities", 25, start=101)
+        p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "10", "--drain")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "read", "entities", "entities"])
+
+    def test_a_long_queue_does_not_starve_the_kinds_after_it(self):
+        """v10.12.1: with a long first queue and a batch budget it can fill alone, every kind still gets a turn."""
+        self.stub.add("read", 200, start=1)
+        self.stub.add("entities", 5, start=1001)
+        p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "3")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("entities", [w["kinds"] for w in self.stub.works])
+
     def test_one_kind_per_batch_in_the_kinds_order(self):
         self.stub.add("read", 25, start=1)
         self.stub.add("entities", 25, start=101)
         p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "10")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.stub.by_status("answered")), 50)
-        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "read", "entities", "entities"])
+        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "entities", "read", "entities"])   # v10.12.1: turns
         for c in self.fake_calls():
             ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
             kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}

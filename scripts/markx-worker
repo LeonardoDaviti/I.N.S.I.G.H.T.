@@ -897,11 +897,23 @@ class Worker:
         except (ServerUnreachable, ServerError) as e:
             return self.finish("server", str(e))
         kinds = [k.strip() for k in self.a.kinds.split(",") if k.strip()]
-        done, leased = set(), 0
+        done, leased, turn = set(), 0, 0
         while leased < self.a.batches and not self.stop.is_set():
             batches = []
             while len(batches) < self.a.parallel and leased < self.a.batches:
-                kind = next((k for k in kinds if k not in done), None)
+                # v10.12.1: kinds take turns (one lease each, in --kinds order, round and round), so one long queue
+                # (a re-read of every post) never starves the kinds after it; --drain keeps the old order (a kind
+                # until it runs dry, then the next).
+                if self.a.drain:
+                    kind = next((k for k in kinds if k not in done), None)
+                else:
+                    kind = None
+                    for _ in range(len(kinds)):
+                        k = kinds[turn % len(kinds)]
+                        turn += 1
+                        if k not in done:
+                            kind = k
+                            break
                 if kind is None:
                     break
                 try:
@@ -960,6 +972,8 @@ def main(argv=None):
     c = sub.add_parser("cycle", parents=[common], help="lease, ask Haiku, post")
     c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")
     c.add_argument("--batch", type=int, default=20, help="tasks per call (default 20)")
+    c.add_argument("--drain", action="store_true",
+                   help="lease each kind until it runs dry before the next (default: kinds take turns, v10.12.1)")
     c.add_argument("--per-call", type=per_call_arg, default=per_call_arg(PER_CALL),
                    help="tasks per call for some kinds, at most --batch (default " + PER_CALL + ": a merge is asked alone; "
                         "the lease still takes --batch)")
