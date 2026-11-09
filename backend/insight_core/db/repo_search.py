@@ -75,7 +75,7 @@ RANKED_MATCHES = 5000
 RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
 # Mark X's English layer (issue 0139, mx_post_search): the query read as English words, a name and its version
 # together (v10.13.1, migration 0095), as search_query reads them.
-MX_TSQUERY = "search_pair_versions(websearch_to_tsquery('english', %s))"
+MX_TSQUERY = "search_query_english(%s)"
 # The words its line marks, each alone (a name and its version unpaired: the line's own parse has no version parts).
 MX_WORDS = "websearch_to_tsquery('english', %s)"
 MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_WORDS}) = 'T' THEN {MX_WORDS}"

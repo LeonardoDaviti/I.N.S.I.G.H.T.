@@ -151,19 +151,21 @@ def query_version(key: str) -> Optional[str]:
 
 
 def _suffix(key: str) -> str:
-    """LIKE pattern: a key that ends with this one as whole words ("claude fable 5.2" for "fable 5.2")."""
-    return "% " + _like(key)[:-1]
+    """LIKE pattern on a reversed key: a key that ends with this one as whole words ("claude fable 5.2" for "fable 5.2"),
+    read by the reversed keys' prefix indexes (migration 0095)."""
+    return _like((" " + key)[::-1])
 
 
 # The entities a query names, as their current targets (through the redirects; never a not-entity), and every entity
-# merged into them (`members`): `%(key)s` is the query's key; `%(suffix)s` a key ending with it as words, for a name and
-# its version only (else NULL).
+# merged into them (`members`): `%(key)s` is the query's key; `%(suffix)s` a key ending with it as words (_suffix, on
+# the reversed key), for a name and its version only (else NULL).
 _NAMED = """
 WITH RECURSIVE hit AS (
      SELECT e.id FROM mx_entities e WHERE e.key = %(key)s
      UNION ALL SELECT a.entity_id FROM mx_entity_aliases a WHERE a.key = %(key)s
-     UNION ALL SELECT e.id FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND e.key LIKE %(suffix)s
-     UNION ALL SELECT a.entity_id FROM mx_entity_aliases a WHERE %(suffix)s::text IS NOT NULL AND a.key LIKE %(suffix)s
+     UNION ALL SELECT e.id FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND reverse(e.key) LIKE %(suffix)s
+     UNION ALL SELECT a.entity_id FROM mx_entity_aliases a
+      WHERE %(suffix)s::text IS NOT NULL AND reverse(a.key) LIKE %(suffix)s
 ), up(start, id, depth) AS (
      SELECT DISTINCT id, id, 0 FROM hit
      UNION ALL
@@ -229,9 +231,9 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
              UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(prefix)s::text IS NOT NULL AND e.key LIKE %(prefix)s
              UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
               WHERE %(prefix)s::text IS NOT NULL AND a.key LIKE %(prefix)s
-             UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND e.key LIKE %(suffix)s
+             UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND reverse(e.key) LIKE %(suffix)s
              UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
-              WHERE %(suffix)s::text IS NOT NULL AND a.key LIKE %(suffix)s
+              WHERE %(suffix)s::text IS NOT NULL AND reverse(a.key) LIKE %(suffix)s
         ), up(start, id, depth) AS (
              SELECT DISTINCT id, id, 0 FROM hit
              UNION ALL
@@ -242,7 +244,7 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
              SELECT DISTINCT ON (start) start, id FROM up ORDER BY start, depth DESC
         ), scored AS (
              SELECT root.id, min(CASE WHEN %(suffix)s::text IS NOT NULL
-                                           AND (hit.matched = %(key)s OR hit.matched LIKE %(suffix)s) THEN 0
+                                           AND (hit.matched = %(key)s OR reverse(hit.matched) LIKE %(suffix)s) THEN 0
                                       WHEN hit.matched = %(key)s THEN 1
                                       WHEN hit.matched = ANY(%(runs)s) THEN 2 ELSE 3 END)
                     AS how, min(hit.matched) AS matched

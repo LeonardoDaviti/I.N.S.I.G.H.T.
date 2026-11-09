@@ -13,9 +13,10 @@
 --
 -- search_query (the posts' index, Mark X's layer under the index's rule, Classics) pairs before it reads version
 -- words by their parts (0042, 0052; that step is search_version_words now); Mark X's English layer is read as
--- search_pair_versions(websearch_to_tsquery('english', q)) by the backend. search_query_words(q) is the query as
+-- search_query_english(q), websearch_to_tsquery('english', q) paired. search_query_words(q) is the query as
 -- 0052 read it, unpaired: the words a result's line marks, each where it stands. No vector changes, so nothing is
--- refilled. Idempotent.
+-- refilled. Two Mark X indexes: the entities' and aliases' keys reversed (the entity a name and its version names, by
+-- its key's last words). Idempotent.
 
 -- Whether a query's lexeme is a version number (see above).
 CREATE OR REPLACE FUNCTION search_version_number(lexeme text) RETURNS boolean
@@ -75,14 +76,35 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
   ) AS w
 $$;
 
+-- The three readings of a query below are PL/pgSQL: a search names them 20-odd times, each read once as its plan is
+-- made; a PL/pgSQL function keeps its statements' plans for the connection, where a SQL function nesting two more
+-- plans them all again each time (measured: 1.1 ms a reading, +10-20 ms a search; this way 0.6 ms, as 0052's).
+
 -- The query's words unpaired, as 0052's search_query read them: what a result's line marks, each word where it stands.
 CREATE OR REPLACE FUNCTION search_query_words(q text) RETURNS tsquery
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-  SELECT search_version_words(websearch_to_tsquery('russian', normalize($1, NFKC)))
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  RETURN search_version_words(websearch_to_tsquery('russian', normalize(q, NFKC)));
+END
 $$;
 
 -- A search's words (0052's), its name-version pairs read first.
 CREATE OR REPLACE FUNCTION search_query(q text) RETURNS tsquery
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-  SELECT search_version_words(search_pair_versions(websearch_to_tsquery('russian', normalize($1, NFKC))))
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  RETURN search_version_words(search_pair_versions(websearch_to_tsquery('russian', normalize(q, NFKC))));
+END
 $$;
+
+-- Mark X's English layer's reading of a query (issue 0139's websearch_to_tsquery('english', q)), its pairs read first.
+CREATE OR REPLACE FUNCTION search_query_english(q text) RETURNS tsquery
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  RETURN search_pair_versions(websearch_to_tsquery('english', q));
+END
+$$;
+
+-- A name and its version names the entities whose key or alias ends with it as words ("claude fable 5.2" for "fable
+-- 5.2"; markx/search.py): read as a prefix of the reversed key, so no search reads every entity.
+CREATE INDEX IF NOT EXISTS mx_entities_key_reversed_idx ON mx_entities (reverse(key) text_pattern_ops);
+CREATE INDEX IF NOT EXISTS mx_entity_aliases_key_reversed_idx ON mx_entity_aliases (reverse(key) text_pattern_ops);
