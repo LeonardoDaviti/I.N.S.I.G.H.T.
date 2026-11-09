@@ -15,7 +15,7 @@ finder is one signal; none decides alone (the owner's ensemble rule): each only 
      the last SHARE_DAYS' posts; a post naming one as subject or actor.
   3. **domain**: link domains (post_links, not boilerplate, not a home page, not a platform) of DOMAIN_MIN+ ✓ items,
      in at most DOMAIN_MAX_SHARE of the posts; and the domain classes the description names by its words (code
-     hosts, model hubs, 3D-model sites: DOMAIN_CLASSES); a post linking one (not its home page).
+     hosts and 3D-model sites: DOMAIN_CLASSES; model hubs measured out); a post linking one (not its home page).
   4. **word**: the terms most over-represented in ✓ items against the last SHARE_DAYS' posts (log-odds with an
      informative prior, z >= WORD_Z, in WORD_MIN_POS+ ✓ items, the top WORDS), looked up in the post's index
      (posts.search_vector) and Mark X's English layer (mx_post_search, 0139); WORD_MIN_HITS+ fire. The units of the
@@ -35,6 +35,9 @@ finders' hits are counted first, the probes fill the rest (at least half of it).
 probe score: the bar that keeps PASS_SHARE of the ✓ items passing. The union is ordered by the classifier when it
 exists, else by how many finders fired, then the probe score (`order_key`), and capped by the per-run budget
 (tracks.TASKS_PER_RUN).
+
+**Adopted** (`ADOPTED`, or INSIGHT_TRACK_FINDERS): probe, domain and word, the finders that added recall on the server
+copy (0147-built.md); the others are computed and never fire until the owner's labels show they add some.
 
 Only mx_* tables are written.
 """
@@ -83,7 +86,8 @@ DOMAIN_CLASSES = {
     "code": ({"github.com", "gitlab.com", "codeberg.org", "sr.ht", "bitbucket.org", "sourceforge.net"},
              r"open[- ]source|\brepo|\bcode\b|\bfork|side projects?|\bhacks?\b|\btools?\b|\bbuilds?\b"),
     # model hubs ({"huggingface.co", "ollama.com", ...} for "models", "quantisation", "local AI") were measured and left
-    # out: on the setups track they added no recall and brought model launches the judge let in (3 of 8 right).
+    # out: on the local-setups track they added no recall at the 30% budget and cost 8 points at 10% (hub links ride on
+    # model launches, which then rank first as two-finder posts). 0147-built.md.
     "3d": ({"printables.com", "thingiverse.com", "makerworld.com", "cults3d.com", "thangs.com", "myminifactory.com"},
            r"3d[- ]print|\bprints?\b|\bstl\b|printable"),
 }
