@@ -356,6 +356,8 @@ export interface ArchiveState {
   checkpoint?: { collected_posts?: number; pages_fetched?: number; completed?: boolean } | null;
   rate_limit?: ArchiveRateLimit | null;
   oldest_published_at?: string | null;
+  /** A feed's coverage, once the smart archiver measured its site (issue 0143). */
+  coverage?: import('./smartArchive').ArchiveCoverage | null;
 }
 
 export interface ArchiveStatusResponse extends Envelope {
@@ -421,6 +423,8 @@ export interface ArchiveCatalogEntry {
   rate_limit?: Record<string, unknown>;
   /** Issue 0107: the archive waits out this host's limit and continues by itself at `until`. */
   waiting?: ArchiveWaiting | null;
+  /** Issue 0143: a feed's coverage ("19 of ~34 stored"), once the smart archiver measured its site. */
+  coverage?: import('./smartArchive').ArchiveCoverage | null;
 }
 
 export interface ArchiveWaiting {

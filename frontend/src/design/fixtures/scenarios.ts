@@ -158,6 +158,14 @@ const SCENARIOS: FrameScenario[] = [
     page: 'sources', state: 'ingestion-archive', label: 'Archive: the catalog, one channel picked for a backfill',
     url: `/settings/sources?tab=ingestion&sub=archive&source=${sourceId('s-papers')}`, routes: site(normalSite), documented: true,
   },
+  {
+    page: 'sources', state: 'archive-coverage', label: 'A feed measured by the smart archiver: stored of ~the site, how, why not the rest',
+    url: `/settings/sources?tab=ingestion&sub=archive&source=${sourceId('s-simon')}`, routes: site(normalSite), documented: true,
+  },
+  {
+    page: 'sources', state: 'source-discoveries', label: 'The source sheet: what this source discovered',
+    url: `/settings/sources?source=${sourceId('s-simon')}`, routes: site(normalSite), documented: true,
+  },
   { page: 'sources', state: 'ingestion-logs', label: 'Logs: the application log tail', url: '/settings/sources?tab=ingestion&sub=logs', routes: site(normalSite), documented: true },
   { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
   {

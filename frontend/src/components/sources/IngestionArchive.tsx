@@ -9,6 +9,7 @@ import { useApi } from '../../services/ApiContext';
 import { waitingLine } from '../../lib/archiveWaiting';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
+import { catalogCoverage } from '../../lib/archiveCoverage';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { Button, Input, StatusGlyph, type Status } from '../ui';
 import ArchiveSection, { ARCHIVE_CATALOG_KEY } from './ArchiveSection';
@@ -27,7 +28,9 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date, state?: 'queued' | 'in
   const stored = formatCount(entry.stored_posts ?? 0);
   const parts = [
     entry.platform,
-    typeof entry.available_posts === 'number' ? `${stored} of ${formatCount(entry.available_posts)} stored` : `${stored} stored`,
+    // A feed the smart archiver measured (issue 0143): stored of the site's estimate, "19 of ~34 stored".
+    catalogCoverage(entry.coverage) ?? (
+      typeof entry.available_posts === 'number' ? `${stored} of ${formatCount(entry.available_posts)} stored` : `${stored} stored`),
   ];
   if (typeof entry.backlog_posts === 'number') {
     parts.push(entry.backlog_posts === 0 ? 'nothing older to archive' : `${plural(entry.backlog_posts, 'older post')} not archived`);
