@@ -23,7 +23,8 @@ import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
 import { searchHref } from '../lib/search';
 import { loadAhead } from '../lib/loadAhead';
-import { useMarkxOn } from '../hooks/useMarkxOn';
+import { useMarkxState } from '../hooks/useMarkxOn';
+import { isTopicTrack, useTrackCounts } from '../hooks/useTrackCounts';
 
 /**
  * How many posts arrived since the feed was loaded, from the scope's unread count.
@@ -122,9 +123,18 @@ function Reader({ scope }: { scope: string }) {
   const oneSource = scope.startsWith('source:');
   const rawView = params.get('view');
   const oneTrack = scope.startsWith('folder:');
-  const markxOn = useMarkxOn();
-  const readerView: ReaderView = isReaderView(rawView) && !(oneSource && rawView === 'by_source')
-    && !(rawView === 'topic' && !oneTrack) ? rawView : 'stream';
+  const markxState = useMarkxState();
+  const markxOn = markxState === true;
+  // The view the URL names (null: none, or one this scope has not).
+  const urlView: ReaderView | null = isReaderView(rawView) && !(oneSource && rawView === 'by_source')
+    && !(rawView === 'topic' && !oneTrack) ? rawView : null;
+  // A track that is a topic (0145, Mark X on) opens on Topic: its items and Discover are there, and its Stream (its
+  // active sources' posts) may be empty. Stream is one click away (`?view=stream`). Anything else opens on Stream.
+  const topics = useTrackCounts(oneTrack);
+  const defaultView: ReaderView = oneTrack && markxOn && isTopicTrack(topics.data, scope.slice('folder:'.length)) ? 'topic' : 'stream';
+  // Not known yet (Mark X being asked, or the topics loading): the feed waits rather than flash Stream first.
+  const viewPending = oneTrack && !urlView && (markxState === undefined || topics.pending);
+  const readerView: ReaderView = urlView ?? defaultView;
   const ranked = readerView === 'news' || readerView === 'classics' || readerView === 'topic';
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
@@ -182,11 +192,12 @@ function Reader({ scope }: { scope: string }) {
     // Later and Kept are the Main feed's lists, not a way to read a track or source; History
     // is a way to look back in each (issue 0052), so it stays as All does.
     if (!ranked && (filter === 'all' || filter === 'history')) keep.set('filter', filter);
-    if (readerView !== 'stream') keep.set('view', readerView);
+    // The view the URL names, not a default: a topic track's Topic does not follow to the next scope.
+    if (urlView && urlView !== 'stream') keep.set('view', urlView);
     if (dataName) keep.set('data', dataName);
     const text = keep.toString();
     return text ? `?${text}` : '';
-  }, [dataName, filter, ranked, readerView]);
+  }, [dataName, filter, ranked, urlView]);
 
   const showNewPosts = useCallback(() => {
     void queryClient.resetQueries({ queryKey: currentKey, exact: true });
@@ -257,7 +268,7 @@ function Reader({ scope }: { scope: string }) {
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
             updates={updates || filter === 'updated'}
             view={readerView}
-            onViewChange={(value) => setParam('view', value === 'stream' ? null : value)}
+            onViewChange={(value) => setParam('view', value === defaultView ? null : value)}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
@@ -287,7 +298,7 @@ function Reader({ scope }: { scope: string }) {
               {oneSource || scope.startsWith('voice:') ? (
                 <Suspense fallback={null}><ScopeVoiceHeader scope={scope} onName={setVoiceName} /></Suspense>
               ) : null}
-              {readerView === 'news' ? (
+              {viewPending ? <LoadingState label="Loading" rows={6} /> : readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
                   <NewsList scope={scope} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
                 </Suspense>

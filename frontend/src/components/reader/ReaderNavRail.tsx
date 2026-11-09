@@ -5,6 +5,7 @@ import { Inbox, X } from 'lucide-react';
 
 import type { UnreadCounts } from '../../services/api';
 import { useReaderDirectory, useSourceDirectory } from '../../hooks/useReaderDirectory';
+import { useTrackCounts } from '../../hooks/useTrackCounts';
 import { scopePath } from '../../lib/feedContext';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
 import { formatCount, middleTruncate } from '../../lib/format';
@@ -91,6 +92,8 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
   scope: string; counts: UnreadCounts | undefined; search: string; scopeHref?: (scope: string) => string; onNavigate?: () => void;
 }) {
   const { folders } = useReaderDirectory();
+  // A topic track (0145, Mark X on) counts its unread items and its Discover suggestions, not its sources' posts.
+  const topics = useTrackCounts();
   const [showAllSources, setShowAllSources] = useState(false);
   const [query, setQuery] = useState('');
   const words = useMemo(() => queryWords(query), [query]);
@@ -143,7 +146,7 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
                 to={href(folderScope)}
                 current={scope === folderScope}
                 label={folder.name}
-                count={counts?.by_folder?.[folder.id]}
+                count={topics.data?.by_track[folder.id]?.count ?? counts?.by_folder?.[folder.id]}
                 onNavigate={onNavigate}
               />
             );

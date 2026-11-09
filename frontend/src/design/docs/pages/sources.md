@@ -65,7 +65,7 @@ Where sources are managed, and the only home of ingestion jobs and secrets (P7):
 
 - `j`/`k` move the active row, `x` select, `o`/Enter open the sheet, Esc clear the selection. Never inside a field, dialog or menu; single keys follow the reader's shortcut switch. Shift-click selects a range.
 - Adding a source fetches it straight away (an enabled one): its toast goes from "Added — fetching now" to the run's result, so nobody waits for the scheduler.
-- Deleting a source or a track asks first and says what goes with it (`ConfirmDialog`). New track and Rename are small dialogs.
+- Deleting a source or a track asks first and says what goes with it (`ConfirmDialog`). New track and Rename are small dialogs. New track asks a name (`For example: Local AI setups`); while Mark X is on (v10.12.1) its line reads "Describe it in your own words and INSIGHT finds posts from every source." and it also offers **What belongs** and **What doesn't belong** (optional textareas; what belongs filled makes the track a topic, saved as the track sheet saves it, `PUT /api/markx/tracks/{id}`, issue 0145); with Mark X off, "A track groups sources into their own reading view." and the name only.
 - Switching tabs closes the sheet; a link out of the sheet ("add in Connections") switches tab.
 
 ## Worst cases
