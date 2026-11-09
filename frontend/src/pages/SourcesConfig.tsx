@@ -19,6 +19,9 @@ import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
 import SuggestedSources, { SUGGESTED_SOURCES_KEY } from '../components/sources/SuggestedSources';
 import TrackSourceLines from '../components/tracks/TrackSourceLines';   // 0145
+import { tracksApi } from '../services/tracks';
+import { useMarkxOn } from '../hooks/useMarkxOn';
+import { TRACK_COUNTS_KEY } from '../hooks/useTrackCounts';
 import { useListKeys } from '../components/sources/useListKeys';
 import {
   STATUS_FILTERS,
@@ -36,7 +39,7 @@ import {
   type SourcesView,
   type StatusFilter,
 } from '../components/sources/sourceList';
-import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
+import { Button, Dialog, DialogContent, DialogFooter, Field, Input, Page, Textarea, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { ConnectionsPanel } from '../components/connections';
 import DataPanel from '../components/data/DataPanel';
 import { EmptyState, ErrorState, LoadingState, Notice } from '../components/states';
@@ -208,6 +211,10 @@ export default function SourcesConfig() {
   }, [followParam, searchParams, setSearchParams]);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
+  // v10.12.1: while Mark X is on, a new track may be described in the owner's words (0145): then it is a topic.
+  const markxOn = useMarkxOn();
+  const [newTrackBelongs, setNewTrackBelongs] = useState('');
+  const [newTrackExcludes, setNewTrackExcludes] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [renameText, setRenameText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -376,8 +383,20 @@ export default function SourcesConfig() {
     if (!name) return;
     const r = await api.createFolder({ name });
     if (!r.success) { setError(r.error || 'Could not create the track'); return; }
+    // What belongs, filled: the track is a topic, saved as the track sheet saves it (PUT /api/markx/tracks/{id}).
+    const belongs = newTrackBelongs.trim();
+    if (markxOn && belongs && r.folder?.id) {
+      try {
+        await tracksApi.describe(r.folder.id, { description: belongs, excludes: newTrackExcludes.trim() });
+        void queryClient.invalidateQueries({ queryKey: [...TRACK_COUNTS_KEY] });
+      } catch (e) {
+        setError(`The track was created, but its words were not saved: ${errorMessage(e)}`);
+      }
+    }
     setNewTrackOpen(false);
     setNewTrackName('');
+    setNewTrackBelongs('');
+    setNewTrackExcludes('');
     invalidate();
   };
 
@@ -632,7 +651,12 @@ export default function SourcesConfig() {
       ) : null}
 
       <Dialog open={newTrackOpen} onOpenChange={setNewTrackOpen}>
-        <DialogContent title="New track" description="A track groups sources into their own reading view.">
+        <DialogContent
+          title="New track"
+          description={markxOn
+            ? 'Describe it in your own words and INSIGHT finds posts from every source.'
+            : 'A track groups sources into their own reading view.'}
+        >
           <form
             className="mt-4 space-y-4"
             onSubmit={(event) => { event.preventDefault(); void createTrack(); }}
@@ -641,10 +665,22 @@ export default function SourcesConfig() {
               aria-label="Track name"
               value={newTrackName}
               onChange={(event) => setNewTrackName(event.target.value)}
-              placeholder="For example: AR glasses"
+              placeholder="For example: Local AI setups"
               maxLength={120}
               autoFocus
             />
+            {markxOn ? (
+              <>
+                <Field label="What belongs" htmlFor="new-track-belongs" hint="Optional. Filled, the track is a topic: every post is judged against it.">
+                  <Textarea id="new-track-belongs" value={newTrackBelongs} onChange={(event) => setNewTrackBelongs(event.target.value)}
+                    placeholder="e.g. Running models on your own machine: cheap, fast setups and why they work" />
+                </Field>
+                <Field label="What doesn’t belong" htmlFor="new-track-excludes" hint="Optional.">
+                  <Textarea id="new-track-excludes" value={newTrackExcludes} onChange={(event) => setNewTrackExcludes(event.target.value)}
+                    placeholder="e.g. cloud GPU deals, benchmark tables alone" />
+                </Field>
+              </>
+            ) : null}
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setNewTrackOpen(false)}>Cancel</Button>
               <Button type="submit" variant="primary" disabled={!newTrackName.trim()}>Create track</Button>
