@@ -25,7 +25,7 @@ what this post presents."
 - **The model to learn from:** a human long-read (a Russian tech-site essay, 8 Nov 2026, ~20k characters) on "weird
   artifacts of machine minds in 2026": an intro, **5 numbered cases**, each a story cluster of 3–6 sources (research
   posts, investigations, news, a paper, a repository), a commentary voice, a closing that ties them together. **27
-  linked sources over ~6 months; INSIGHT stored 3 of them** (measured by GET).
+  linked sources over ~6 months; INSIGHT stored 4 of them** (measured by GET).
 - **What the essay is made of (measured, 2026-11-09):** 27 links: research forums and an essay blog (6), an
   investigations outlet (5), tech news sites (6), a paper, a repository, an incident database, a research write-up,
   a psychology blog, two product links; ~6 months of dates; each case mixes **one primary** (a paper, an experiment,
