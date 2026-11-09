@@ -62,6 +62,28 @@ function connections(build: (now: Date) => CredentialsResponse) {
 const SET = { set: true, last4: 'a3f9', source: 'db' as const, updated_at: '2026-10-10T08:00:00Z' };
 const tested = (now: Date, ok: boolean, message: string) => ({ ok, message, tested_at: at(now, -10 * MINUTE) });
 
+/** Issue 0139, Mark X on: two entity cards (one long), a Russian post only Mark X's English reading matched, and a
+ *  post its own words matched. */
+function markxSearch(now: Date) {
+  const [own, ...rest] = normalSite(now).items;
+  const russian = {
+    ...rest[0], id: 'mx-0139-ru', title: 'Трёхмерные модели для дизайнеров: библиотека, с которой модели тратят меньше токенов',
+    excerpt: 'Вышла библиотека на Python: модели пишут трёхмерные объекты кодом.',
+    snippet: [{ text: 'Acme released widget3d, a Python ', mark: false }, { text: '3D', mark: true },
+      { text: '-modeling ', mark: false }, { text: 'library', mark: true }, { text: ' built for language models', mark: false }],
+    snippet_from: 'markx' as const,
+  };
+  const mine = { ...own, title: 'A 3D library for robot simulation', snippet: [{ text: 'A ', mark: false }, { text: '3D', mark: true },
+    { text: ' ', mark: false }, { text: 'library', mark: true }, { text: ' for robot simulation, open source.', mark: false }] };
+  return {
+    success: true, items: [russian, mine], next_cursor: null,
+    entities: [
+      { id: 'e-widget3d', name: 'widget3d', type: 'software', maker: 'Acme', posts: 4, voices: 2 },
+      { id: 'e-long', name: 'A Very Long Three-Dimensional Modelling Library Name That Keeps Going', type: 'software', maker: null, posts: 1, voices: 1 },
+    ],
+  };
+}
+
 const SCENARIOS: FrameScenario[] = [
   // ---- reader ----
   { page: 'reader', state: 'normal', label: 'Unread rows under day headers', url: '/', routes: site(normalSite), documented: true },
@@ -74,6 +96,12 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'reader', state: 'error', label: 'Could not load the feed, with Retry', url: '/', routes: failing, documented: true },
   { page: 'reader', state: 'worst', label: 'Long, unbroken, RTL and CJK titles; 1,000+ items', url: '/', routes: site(worstSite), documented: true },
   { page: 'reader', state: 'search', label: 'Search results in the Main feed, the words marked', url: '/search?q=prompt&scope=all', routes: site(normalSite), documented: true },
+  { page: 'reader', state: 'search-history', label: 'History searched: only what you opened, last open first', url: '/search?q=the&filter=history', routes: site(normalSite), documented: true },
+  {
+    page: 'reader', state: 'search-markx', label: 'Mark X on: entity cards above the results; a Russian post found by its English reading, its line marked Mark X',
+    url: '/search?q=3D%20library', documented: true,
+    routes: (now) => [{ path: '/api/search', respond: () => markxSearch(now) }, ...siteRoutes(normalSite(now))],
+  },
   { page: 'reader', state: 'search-empty', label: 'No posts match, narrowed: Search everything', url: '/search?q=quantum%20knitting&scope=all&days=7', routes: site(normalSite), documented: true },
   { page: 'reader', state: 'history', label: 'Show history: what you opened, by the day you opened it', url: '/?filter=history', routes: (now) => withSite(now, (s) => {
     // The read posts, opened over the last few days, some long after they were published.

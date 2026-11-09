@@ -39,18 +39,32 @@ class ReaderService:
         return {"success": True, key: rows, "next_cursor": next_cursor.encode() if next_cursor else None}
 
     def search(self, query: SearchQuery) -> Dict[str, Any]:
-        """SearchPage {items (each with its snippet; a story's with its `story`), next_cursor};
-        under Classics {classics, next_cursor}, as GET /api/classics shapes them."""
+        """SearchPage {items (each with its snippet; a story's with its `story`), next_cursor, entities};
+        under Classics {classics, next_cursor, entities}, as GET /api/classics shapes them.
+
+        While Mark X is on (issue 0139) a post also matches by its English layer (mx_post_search), and
+        `entities` holds up to 3 entity cards the words name, on a first page not of one source; else []."""
+        from insight_core.markx import search as mx_search
+        markx = mx_search.enabled()
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            items, next_cursor = self.search_repo.search(cur, query, now=self.clock())
+            items, next_cursor = self.search_repo.search(cur, query, now=self.clock(), markx=markx)
+            first = query.cursor is None and query.offset == 0
+            one_source = query.scope is not None and query.scope.kind == "source"
+            entities = mx_search.entity_cards(cur, query.q) if markx and first and not one_source else []
         key = "classics" if query.filter == "classics" else "items"
-        return {"success": True, key: items, "next_cursor": next_cursor}
+        return {"success": True, key: items, "next_cursor": next_cursor, "entities": entities}
 
     def fill_search_vectors(self) -> int:
         """Give every post whose search vector is missing (stored before 0033) or made by an
         older rule (0042's search_version) its vector, FILL_BATCH posts a transaction, so no
         write waits on a long one, until none is left (issue 0069). Returns how many were filled."""
         return db.fill_until_done(self.db_url, self.search_repo.fill_missing_vectors, self.search_repo.missing_vectors)
+
+    def fill_markx_search(self) -> int:
+        """Mark X's English layer (issue 0139): every post with a read or entities answer and no row, a row of an
+        older rule or older than its answers gets it, FILL_BATCH posts a transaction, until none is left."""
+        from insight_core.markx import search as mx_search
+        return db.fill_until_done(self.db_url, mx_search.fill_batch, mx_search.pending)
 
     def unread_counts(self) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:

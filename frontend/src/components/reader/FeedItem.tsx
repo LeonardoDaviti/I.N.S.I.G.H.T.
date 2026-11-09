@@ -185,6 +185,8 @@ export interface FeedItemProps {
   showSource?: boolean;
   /** A search result's matching line (issue 0040), shown instead of the excerpt, its words in bold. */
   snippet?: SnippetPart[] | null;
+  /** Issue 0139: `markx` when only Mark X's English layer matched: the line is its headline, labelled "Mark X". */
+  snippetFrom?: 'markx' | null;
   /** A story's line in place of "covered by …": News says what its score is made of (issue 0051). */
   storyLine?: string;
 }
@@ -201,7 +203,7 @@ export interface FeedItemProps {
  */
 function FeedItem({
   item, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onToggleLater, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
-  snippet, storyLine,
+  snippet, snippetFrom, storyLine,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -363,6 +365,10 @@ function FeedItem({
         {snippet?.length ? (
           // The words that matched carry weight and the full tone, never a fill (P2, P3).
           <p dir="auto" data-snippet className="mt-0.5 line-clamp-2 max-sm:col-start-1 max-sm:row-start-3 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
+            {snippetFrom === 'markx' ? (
+              // Why it matched (issue 0139): Mark X's English reading of the post, not its own words.
+              <span data-snippet-from="markx" className="mr-1.5 text-[0.75rem] text-fg-3">Mark X ·</span>
+            ) : null}
             {snippet.map((part, index) => (part.mark
               ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.text}</mark>
               : <Fragment key={index}>{part.text}</Fragment>))}

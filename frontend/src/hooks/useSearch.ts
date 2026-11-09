@@ -2,9 +2,9 @@ import { useMemo } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
-import type { FeedItem, FeedPage } from '../services/api';
+import type { FeedItem, SearchEntity, SearchPage } from '../services/api';
 import type { ContextEntry } from '../lib/feedContext';
-import type { SearchState } from '../lib/search';
+import { searchOrder, type SearchState } from '../lib/search';
 import { FEED_ROOT_KEY } from './useFeed';
 
 /** Each row's matching line is read from its text, so a page is smaller than the feed's. */
@@ -12,7 +12,7 @@ export const SEARCH_PAGE_SIZE = 20;
 
 /** Under the feed's root key: read, Later and Keep patch the results like any cached feed. */
 export function searchKey(state: SearchState) {
-  return [...FEED_ROOT_KEY, 'search', state.q.trim(), state.scope ?? '', state.filter, state.days ?? 0, state.order];
+  return [...FEED_ROOT_KEY, 'search', state.q.trim(), state.scope ?? '', state.filter, state.days ?? 0, searchOrder(state)];
 }
 
 /**
@@ -25,8 +25,8 @@ export function useSearch(state: SearchState) {
   const query = useInfiniteQuery({
     queryKey: searchKey(state),
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam, signal }): Promise<FeedPage> => api.searchPosts({
-      q: state.q.trim(), scope: state.scope, filter: state.filter, days: state.days, order: state.order,
+    queryFn: ({ pageParam, signal }): Promise<SearchPage> => api.searchPosts({
+      q: state.q.trim(), scope: state.scope, filter: state.filter, days: state.days, order: searchOrder(state),
       cursor: pageParam, limit: SEARCH_PAGE_SIZE, signal,
     }),
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
@@ -48,7 +48,9 @@ export function useSearch(state: SearchState) {
         entries.push({ id: item.id, pageCursor });
       }
     });
-    return { items, groups: [], entries };
+    // The entity cards the words name (issue 0139): the first page's, [] while Mark X is off.
+    const entities: SearchEntity[] = data?.pages[0]?.entities ?? [];
+    return { items, groups: [], entries, entities };
   }, [query.data]);
 
   return { ...query, ...derived };

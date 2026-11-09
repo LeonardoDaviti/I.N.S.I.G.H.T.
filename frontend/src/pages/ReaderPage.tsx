@@ -256,8 +256,8 @@ function Reader({ scope }: { scope: string }) {
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
-            // Scoped to what is on screen: this scope, and Later or Kept when that is the list shown.
-            onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' ? filter : 'all' }))}
+            // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
+            onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
           />
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
             <div className="min-w-0">

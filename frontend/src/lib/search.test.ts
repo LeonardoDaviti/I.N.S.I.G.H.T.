@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isNarrowed, parseSearch, searchHref } from './search.ts';
+import { defaultOrder, isNarrowed, parseSearch, searchHref, searchOrder } from './search.ts';
 
 const SOURCE = 'source:0a5e90ae-2533-4a31-bf0a-cafd414fc0ce';
 
@@ -25,8 +25,25 @@ test('search URL: News and Classics are lists to search, as Later and Kept (issu
 
 test('search URL: an unknown scope, filter, date or order is the default', () => {
   const state = parseSearch(new URLSearchParams('q=x&scope=tag:x&filter=unread&days=3&order=oldest'));
-  assert.deepEqual(state, { q: 'x', scope: null, filter: 'all', days: null, order: 'newest' });
+  assert.deepEqual(state, { q: 'x', scope: null, filter: 'all', days: null, order: null });
   assert.equal(isNarrowed(state), false);
   assert.equal(isNarrowed({ ...state, scope: 'all' }), true);
   assert.equal(isNarrowed({ ...state, days: 7 }), true);
+});
+
+test('search URL: History is a list to search (issue 0139)', () => {
+  const href = searchHref({ q: '3D library', filter: 'history' });
+  assert.equal(href, '/search?q=3D+library&filter=history');
+  assert.equal(parseSearch(new URL(href, 'http://x').searchParams).filter, 'history');
+});
+
+test('search order: best match for 2+ words, newest for one, a chosen order kept (issue 0139)', () => {
+  assert.equal(searchOrder({ q: '3D library tokens', order: null }), 'best');
+  assert.equal(searchOrder({ q: 'robots', order: null }), 'newest');
+  assert.equal(searchOrder({ q: 'robots -phone', order: null }), 'newest');
+  assert.equal(searchOrder({ q: 'robots or androids', order: null }), 'best');
+  assert.equal(defaultOrder('"open file"'), 'best');
+  assert.equal(searchOrder({ q: '3D library tokens', order: 'newest' }), 'newest');
+  assert.equal(searchHref({ q: '3D library', order: 'newest' }), '/search?q=3D+library&order=newest');
+  assert.equal(parseSearch(new URLSearchParams('q=x&order=newest')).order, 'newest');
 });

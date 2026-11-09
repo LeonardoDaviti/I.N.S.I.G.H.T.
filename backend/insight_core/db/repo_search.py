@@ -21,6 +21,12 @@ titles and addresses and answers classics, as GET /api/classics does, paged by o
 
 The stored vectors carry the rule that made them (`posts.search_version`, 0042): the background
 fill refills every post whose vector is missing or older than `search_vector_version()`.
+
+Issue 0139: History is a list to search (the posts it lists, its key their last open, keyset-paged on
+it, never folded). With no order asked, 2+ words order by best match (SearchQuery.parse). While Mark X
+is on (`markx`), a post matches by its own vector or by Mark X's English layer (mx_post_search,
+markx/search.py) read as `websearch_to_tsquery('english', q)`; its rank is the higher of the two, and
+a post only that layer matched has Mark X's headline as its line (`snippet_from: "markx"`).
 """
 from __future__ import annotations
 
@@ -33,7 +39,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_news import NewsRepository, _scope_sql as news_scope_sql
 from insight_core.db.repo_reader import (
-    _ITEM_COLUMNS, _ORDER_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
+    _ITEM_COLUMNS, _ORDER_RANK, HISTORY_CTE, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
     _item, _on, story_voices, voiced,
 )
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
@@ -41,9 +47,9 @@ from insight_core.utils.classic_rules import cited_again
 from insight_core.utils.news_rules import NEWS_RECENT, lead
 from insight_core.db.repo_post_parts import shown_title
 
-SearchFilter = Literal["all", "later", "starred", "news", "classics"]   # starred is Keep ("Kept")
+SearchFilter = Literal["all", "later", "starred", "history", "news", "classics"]   # starred is Keep ("Kept")
 SearchOrder = Literal["newest", "best"]
-SEARCH_FILTERS: Tuple[str, ...] = ("all", "later", "starred", "news", "classics")
+SEARCH_FILTERS: Tuple[str, ...] = ("all", "later", "starred", "history", "news", "classics")
 SEARCH_ORDERS: Tuple[str, ...] = ("newest", "best")
 MAX_QUERY_CHARS = 500
 
@@ -61,6 +67,12 @@ FILL_BATCH = 500
 RANKED_MATCHES = 5000
 # Rank, normalised by 1 + log(length): a long text does not win by length.
 RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
+# Mark X's English layer (issue 0139, mx_post_search): the query read as English words.
+MX_TSQUERY = "websearch_to_tsquery('english', %s)"
+MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_TSQUERY}) = 'T' THEN {MX_TSQUERY}"
+                   f" ELSE replace(querytree({MX_TSQUERY}), ' & ', ' | ')::tsquery END)")
+# A query of this many words or more orders by best match unless an order is asked (issue 0139).
+BEST_FROM_WORDS = 2
 # The words the line marks: any one of them, so the line shows the text's words even when the
 # others matched in the title or the source's name; never an excluded word (querytree drops
 # them). Its three %s are the same query.
@@ -75,6 +87,49 @@ CLASSIC_VECTOR = (
     "setweight(to_tsvector('russian', normalize(COALESCE(NULLIF(btrim(t.title), ''), c.title, ''), NFKC)), 'A')"
     " || setweight(to_tsvector('russian', regexp_replace(c.target_url, '^https?://(www\\.)?|[/:_?=&#%%+-]+|\\.(?![0-9])', ' ', 'g')), 'B'))"
 )
+
+
+def _rank_sql(vector: str, post_id: str, markx: bool, split: bool = True) -> str:
+    """A post's rank: its own vector's; with Mark X's layer (issue 0139), the highest of that, its English layer's,
+    and, with `split` (2+ words), its own vector with the layer under the index's rule (the words split across both).
+    Its parameters: _rank_params."""
+    if not markx:
+        return RANK.format(v=vector)
+    if not split:
+        return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT ts_rank(mx.vector, {MX_TSQUERY}, 1)"
+                f" FROM mx_post_search mx WHERE mx.post_id = {post_id} AND mx.vector @@ {MX_TSQUERY}), 0))")
+    # One read of the layer's row; the two together are ranked only when the post's own words don't match alone.
+    return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT GREATEST("
+            f"CASE WHEN mx.vector @@ {MX_TSQUERY} THEN ts_rank(mx.vector, {MX_TSQUERY}, 1) ELSE 0 END,"
+            f" CASE WHEN NOT {vector} @@ {TSQUERY} AND ({vector} || mx.vector_ix) @@ {TSQUERY}"
+            f" THEN ts_rank({vector} || mx.vector_ix, {TSQUERY}, 1) ELSE 0 END)"
+            f" FROM mx_post_search mx WHERE mx.post_id = {post_id}), 0))")
+
+
+def _rank_params(q: str, markx: bool, split: bool = True) -> List[Any]:
+    return ([q] * 6 if split else [q] * 3) if markx else [q]
+
+
+def _split_match(post: str) -> str:
+    """Issue 0139: the query's words split between the post's own vector and Mark X's layer under the index's rule
+    (`vector_ix`). Its candidates are the posts whose own vector and whose layer each hold one of the words (both GIN
+    indexes); then the two together must match the whole query. Parameters: [q] * 7."""
+    return (f"({post}.search_vector @@ {MARK_TSQUERY}"
+            f" AND {post}.id IN (SELECT mx.post_id FROM mx_post_search mx WHERE mx.vector_ix @@ {MARK_TSQUERY})"
+            f" AND ({post}.search_vector || (SELECT mx.vector_ix FROM mx_post_search mx WHERE mx.post_id = {post}.id))"
+            f" @@ {TSQUERY})")
+
+
+def _words(q: str) -> int:
+    """How many words a query asks for: `or` and an excluded -word are no words."""
+    return len([w for w in q.split() if w.lower() != "or" and not w.startswith("-") and any(c.isalnum() for c in w)])
+
+
+def default_order(q: str) -> str:
+    """Best match for a query of 2+ words, newest for one (issue 0139)."""
+    return "best" if _words(q) >= BEST_FROM_WORDS else "newest"
+
+
 # The groups a result folds into: a story (0050) or a News story (0051), each post in at most one.
 _GROUPS = {"story": ("story_posts", "story_id"), "news": ("news_posts", "news_id")}
 
@@ -127,9 +182,11 @@ class SearchQuery:
 
     @staticmethod
     def parse(*, q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
-              order: str = "newest", cursor: str | None = None, limit: int = 30) -> "SearchQuery":
+              order: str | None = None, cursor: str | None = None, limit: int = 30) -> "SearchQuery":
         """The API's query string: no `scope` searches everything; `cursor` is the last page's
-        next_cursor (a feed cursor for newest, an offset for best and for Classics)."""
+        next_cursor (a feed cursor for newest, an offset for best and for Classics). No `order`:
+        best match for 2+ words, newest for one (issue 0139)."""
+        order = order or default_order(q)
         feed_cursor, offset = None, 0
         if cursor and (order == "best" or filter == "classics"):
             if not cursor.isdigit():
@@ -144,10 +201,11 @@ class SearchQuery:
         )
 
 
-def snippet_parts(headline: str | None) -> Optional[List[Dict[str, Any]]]:
+def snippet_parts(headline: str | None, *, plain: bool = False) -> Optional[List[Dict[str, Any]]]:
     """ts_headline's line as [{text, mark}] parts; None when no word in it is marked (the
-    match was in the title or the source's name)."""
-    if not headline or MARK_START not in headline:
+    match was in the title or the source's name), unless `plain` (Mark X's headline, issue
+    0139, matched by an entity's name or alias it does not hold): then its words unmarked."""
+    if not headline or (MARK_START not in headline and not plain):
         return None
     parts: List[Dict[str, Any]] = []
     for i, chunk in enumerate(WHITESPACE_RE.sub(" ", headline).strip().split(MARK_START)):
@@ -168,19 +226,27 @@ class SearchRepository:
     def __init__(self, reader: ReaderRepository | None = None):
         self.reader = reader or ReaderRepository(unread_window_days=None)
 
-    def search(self, cur: Cursor, query: SearchQuery, *, now: datetime
+    def search(self, cur: Cursor, query: SearchQuery, *, now: datetime, markx: bool = False
                ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """One page of results and the next page's cursor (encoded), or None at the end. Under
-        Classics the results are classics; else feed rows."""
+        Classics the results are classics; else feed rows. `markx` (Mark X on, issue 0139): a post
+        matches by its own vector or by its Mark X English layer (mx_post_search)."""
         cur.execute(f"SELECT numnode({TSQUERY})", (query.q,))
         if not cur.fetchone()[0]:
             return [], None   # only stop words or punctuation: nothing can match
         if query.filter == "classics":
             return self._classics(cur, query, now=now)
         since = now - timedelta(days=query.days) if query.days else None
+        history = query.filter == "history"
+        # History (issue 0139): the posts it lists, its key their last open (issue 0052).
+        key = "h.opened_at" if history else SORT_KEY
+        joins = f"JOIN ({HISTORY_CTE}) h ON h.post_id = p.id" if history else ""
         # The query is written out, not taken from a CTE, so the planner sees its words: a
-        # common word walks the feed's order index, a rare one the GIN index.
-        where, params = [f"p.search_vector @@ {TSQUERY}", NOT_ALBUM_PIECE], [query.q]
+        # common word walks the feed's order index, a rare one the GIN index. Mark X's layer
+        # (issue 0139) is a second branch of its own, limited the same way and joined after: an OR
+        # across two tables reads neither index, and a union of both match sets sorts every match.
+        where: List[str] = [NOT_ALBUM_PIECE]
+        params: List[Any] = []
         news = query.filter == "news"
         scope_sql, scope_params = "TRUE", []
         if query.scope is not None:
@@ -192,52 +258,80 @@ class SearchRepository:
                              WHERE np.post_id = p.id AND {_on(scope_sql, 'op', 'os')})""")
         else:
             where.append(scope_sql)
-            filter_sql, filter_params = self.reader._filter_sql(query.filter)
-            where.append(filter_sql)
-            scope_params = scope_params + filter_params
+            if not history:   # History is its join
+                filter_sql, filter_params = self.reader._filter_sql(query.filter)
+                where.append(filter_sql)
+                scope_params = scope_params + filter_params
         params += scope_params
         if since is not None:
-            where.append(f"{SORT_KEY} >= %s")
+            where.append(f"{key} >= %s")
             params.append(since)
         group = query.folds
         if group:
             best_sql, best_params = self._best_of_group_sql(group, query, scope_sql if not news else "TRUE",
-                                                            scope_params if not news else [], since)
+                                                            scope_params if not news else [], since, markx=markx)
             where.append(best_sql)
             params += best_params
         limit = query.limit
         if query.order == "best":
             # Ranked among the newest RANKED_MATCHES matches: ranking reads every vector it ranks.
-            matches, rank, rank_params = RANKED_MATCHES, RANK.format(v="search_vector"), [query.q]
-            page, page_params = "OFFSET %s", [query.offset]
+            split = _words(query.q) >= 2
+            rank, rank_params = _rank_sql("m.search_vector", "m.id", markx, split), _rank_params(query.q, markx, split)
+            matches, page, page_params = RANKED_MATCHES, "OFFSET %s", [query.offset]
         else:
             matches, rank, rank_params, page, page_params = limit + 1, "0", [], "", []
             if query.cursor is not None:
-                where.append(f"({SORT_KEY}, p.id) < (%s, %s::uuid)")
+                where.append(f"({key}, p.id) < (%s, %s::uuid)")
                 params += [query.cursor.sort_at, query.cursor.post_id]
         # A word in a third of the posts looks cheap to find by reading the whole table, but
         # every row read then unpacks its vector (400 ms on 50k posts); the GIN index's bitmap
         # needs none of them. For this transaction only.
         cur.execute("SET LOCAL enable_seqscan = off")
+        # Mark X's line (issue 0139): its English headline, for a post its own words did not match.
+        if markx:
+            mx_line = (f"(SELECT ts_headline('english', translate(mx.headline, %s, ''), {MX_MARK_TSQUERY}, %s)"
+                       f" FROM mx_post_search mx WHERE mx.post_id = p.id AND mx.headline IS NOT NULL"
+                       f" AND NOT p.search_vector @@ {TSQUERY} AND mx.vector @@ {MX_TSQUERY})")
+            line_params = [MARK_START + MARK_END, query.q, query.q, query.q, HEADLINE_OPTIONS, query.q, query.q]
+        else:
+            mx_line, line_params = "NULL::text", []
         # The matches newest first (the feed's order index, or the GIN index for a rare word),
         # then the page, then the line for its rows only: ts_headline re-reads each text.
-        cur.execute(
-            f"""
-            WITH matches AS (
-                SELECT p.id, {SORT_KEY} AS sort_at, p.search_vector
+        def branch(match: str) -> str:   # the matches of one layer, newest first, limited
+            return f"""(SELECT p.id, {key} AS sort_at
                 FROM posts p
                 JOIN sources s ON s.id = p.source_id
                 LEFT JOIN post_reader_state rs ON rs.post_id = p.id
-                WHERE {' AND '.join(where)}
+                {joins}
+                WHERE {match} AND {' AND '.join(where)}
                 ORDER BY sort_at DESC, p.id DESC
+                LIMIT %s)"""
+        own = branch(f"p.search_vector @@ {TSQUERY}")
+        if markx:
+            layers = f"{own} UNION {branch(f'p.id IN (SELECT mx.post_id FROM mx_post_search mx WHERE mx.vector @@ {MX_TSQUERY})')}"
+            layer_params = [query.q, *params, matches, query.q, *params, matches]
+            if _words(query.q) >= 2:   # one word is never split between the two
+                layers += f" UNION {branch(_split_match('p'))}"
+                layer_params += [*[query.q] * 7, *params, matches]
+        else:
+            layers, layer_params = own, [query.q, *params, matches]
+        cur.execute(
+            f"""
+            WITH matches AS (
+                SELECT u.id, u.sort_at, p.search_vector
+                FROM ({layers}) u
+                JOIN posts p ON p.id = u.id
+                ORDER BY u.sort_at DESC, u.id DESC
                 LIMIT %s
             ), hits AS (
-                SELECT id, sort_at, {rank} AS rank FROM matches
+                SELECT m.id, m.sort_at, {rank} AS rank FROM matches m
                 ORDER BY rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
             SELECT {_ITEM_COLUMNS},
+                   hits.sort_at,
+                   {mx_line},
                    ts_headline('russian', translate(left(p.content, {HEADLINE_CHARS}), %s, ''), {MARK_TSQUERY}, %s)
             FROM hits
             JOIN posts p ON p.id = hits.id
@@ -246,7 +340,7 @@ class SearchRepository:
             LEFT JOIN post_parts pp ON pp.post_id = p.id
             ORDER BY hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
-            [*params, matches, *rank_params, *page_params, limit + 1, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).
@@ -255,8 +349,15 @@ class SearchRepository:
         rows = cur.fetchall()
         items = []
         for row in rows[:limit]:
-            item = _item(row[:-1])
-            item["snippet"] = snippet_parts(row[-1])
+            item = _item(row[:-3])
+            sort_at, markx_line, own_line = row[-3:]
+            if history:   # its key is the last open, as History lists it (issue 0052)
+                item["sort_at"] = item["opened_at"] = sort_at
+            if markx_line is not None:   # only Mark X's English layer matched: its headline, marked "Mark X"
+                item["snippet"] = snippet_parts(markx_line, plain=True)
+                item["snippet_from"] = "markx"
+            else:
+                item["snippet"] = snippet_parts(own_line)
             items.append(item)
         if group == "story":
             self.reader.attach_stories(cur, items)
@@ -270,30 +371,41 @@ class SearchRepository:
 
     @staticmethod
     def _best_of_group_sql(group: str, query: SearchQuery, scope_sql: str, scope_params: List[Any],
-                           since: Optional[datetime]) -> Tuple[str, List[Any]]:
+                           since: Optional[datetime], *, markx: bool = False) -> Tuple[str, List[Any]]:
         """`p` is its group's best-matching post among the results (or in no group): no other
         matching post of its story, in the scope and the dates, ranks higher, or ranks the same and
-        comes first as the feed's lead does (a report before a share, then the first posted)."""
+        comes first as the feed's lead does (a report before a share, then the first posted). With
+        Mark X's layer (issue 0139) a post matches and ranks by either of its vectors."""
         table, key = _GROUPS[group]
         shown = [_on(scope_sql, "op", "os")]
-        params: List[Any] = [query.q, *scope_params]
+        params: List[Any] = [*scope_params]
         if since is not None:
             shown.append(f"{_on(SORT_KEY, 'op', 'os')} >= %s")
             params.append(since)
+        # The story's other posts are compared by their own words and Mark X's English, not by the words split
+        # across both (20 ms more a search on the copy): a story's other post matched only that way may show too.
+        split = False
+        if markx:
+            matched = (f"(op.search_vector @@ {TSQUERY} OR EXISTS (SELECT 1 FROM mx_post_search mx"
+                       f" WHERE mx.post_id = op.id AND mx.vector @@ {MX_TSQUERY}))")
+            matched_params = [query.q, query.q]
+        else:
+            matched, matched_params = f"op.search_vector @@ {TSQUERY}", [query.q]
         sql = f"""NOT EXISTS (
             SELECT 1 FROM {table} sp
             JOIN {table} o ON o.{key} = sp.{key} AND o.post_id <> sp.post_id
             JOIN posts op ON op.id = o.post_id
             JOIN sources os ON os.id = op.source_id
-            CROSS JOIN LATERAL (SELECT {RANK.format(v='op.search_vector')} AS other,
-                                       {RANK.format(v='p.search_vector')} AS this) r
-            WHERE sp.post_id = p.id AND op.search_vector @@ {TSQUERY} AND {' AND '.join(shown)}
+            CROSS JOIN LATERAL (SELECT {_rank_sql('op.search_vector', 'op.id', markx, split)} AS other,
+                                       {_rank_sql('p.search_vector', 'p.id', markx, split)} AS this) r
+            WHERE sp.post_id = p.id AND {matched} AND {' AND '.join(shown)}
               AND (r.other > r.this
                    OR (r.other = r.this
                        AND ((o.role = 'report' AND sp.role = 'share')
                             OR (o.role = sp.role AND ({_ORDER_RANK.format(sp='o', p='op')})
                                                          < ({_ORDER_RANK.format(sp='sp', p='p')}))))))"""
-        return sql, [query.q, query.q, *params]
+        ranks = _rank_params(query.q, markx, split)
+        return sql, [*ranks, *ranks, *matched_params, *params]
 
     @staticmethod
     def attach_news(cur: Cursor, items: List[Dict[str, Any]], *, now: datetime) -> None:
