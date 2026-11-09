@@ -106,6 +106,7 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'post', state: 'long-title', label: 'A title of several lines and the worst body', url: '/posts/p-long-title', routes: postRoutes('long-title'), documented: true },
   { page: 'post', state: 'headings', label: 'h1–h6, lists, quote, table and code', url: '/posts/p-headings', routes: postRoutes('headings'), documented: true },
   { page: 'post', state: 'missing-title', label: 'A Telegram post with no title', url: '/posts/p-missing-title', routes: postRoutes('missing-title'), documented: true },
+  { page: 'post', state: 'teaser', label: 'The feed’s summary only: why, and the page', url: '/posts/p-teaser', routes: postRoutes('teaser'), documented: true },
   { page: 'post', state: 'story', label: 'Covered by 4 at the end; a link to a stored post opens it here', url: '/posts/p-story', routes: postRoutes('story'), documented: true },
   { page: 'post', state: 'thread', label: 'An X thread read in order after its first post', url: '/posts/p-bg', routes: postRoutes('thread'), documented: true },
   { page: 'post', state: 'loading', label: 'The skeleton in the post column', url: '/posts/p-article', routes: loading, documented: true },

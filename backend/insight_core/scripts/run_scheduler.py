@@ -264,6 +264,10 @@ async def main() -> None:
     # cleaned, bridge posts dated by MTProto's message date; no request, resumable, logged.
     from insight_core.scripts import repair_0137
     asyncio.get_running_loop().run_in_executor(None, repair_0137.repair_safely, db_url)
+    # Issue 0140: the teasers left short read again once per version of the full-text rules, newest first, politely
+    # (a site at a time, PAGE_DELAY_S apart); resumable (each read records its version), logged.
+    from insight_core.scripts import repair_full_text
+    asyncio.get_running_loop().run_in_executor(None, repair_full_text.repair_safely, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:

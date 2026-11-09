@@ -68,6 +68,28 @@ def moved_to(page: Optional[str], url: str) -> Optional[str]:
     return None
 
 
+def page_addresses(page: Optional[str], url: str) -> set:
+    """The addresses a page says it is (issue 0140), normalized: its <link rel="canonical"> and its og:url."""
+    found = set()
+    for tag, attributes in MOVED_TAG_RE.findall((page or "")[:200_000]):
+        values: Dict[str, str] = {}
+        for name, double, single, bare in MOVED_ATTR_RE.findall(attributes):
+            values.setdefault(name.lower(), double or single or bare)
+        if tag.lower() == "link" and "canonical" in values.get("rel", "").lower().split():
+            candidate = values.get("href", "")
+        elif tag.lower() == "meta" and values.get("property", values.get("name", "")).lower() == "og:url":
+            candidate = values.get("content", "")
+        else:
+            continue
+        try:
+            normalized = normalize_url(urllib.parse.urljoin(url, html_lib.unescape(candidate).strip()))
+        except ValueError:
+            continue
+        if normalized:
+            found.add(normalized)
+    return found
+
+
 def parse_datetime_value(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -1087,6 +1109,32 @@ def _repeats_title(block: str, titles: List[str]) -> bool:
 def _page_titles(page: str) -> List[str]:
     found = [meta_content(page, "og:title"), (TITLE_TAG_RE.search(page) or [None, ""])[1]]
     return [_title_key(html_lib.unescape(title)) for title in found if title and title.strip()]
+
+
+H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
+
+
+def page_title_keys(page: Optional[str]) -> List[str]:
+    """The titles a page gives itself (issue 0140), as compared (title_key): its og:title, its <title> and
+    its <h1>s (scripts and styles aside)."""
+    cleaned = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", "", page or "")
+    return [key for key in _page_titles(cleaned) + [_title_key(h1) for h1 in H1_RE.findall(cleaned)[:3]] if key]
+
+
+def same_title(title: Optional[str], page_titles: Sequence[str]) -> bool:
+    """Whether a post's title is one of a page's titles (page_title_keys): the same words, or the same words
+    with the site's name after or before a separator ("Title | Site", "Site — Title")."""
+    key = _title_key(title or "")
+    if not key:
+        return False
+    for page_title in page_titles:
+        if page_title == key:
+            return True
+        if page_title.startswith(key) and page_title[len(key):].lstrip().startswith(TITLE_SEPARATORS):
+            return True
+        if page_title.endswith(key) and page_title[:-len(key)].rstrip().endswith(TITLE_SEPARATORS):
+            return True
+    return False
 
 
 PICTURE_RUN = 3            # list items in a row, each only a linked picture (a blog's 6-22 upvoters); not measured

@@ -1,4 +1,4 @@
-import os, sys, json, hashlib
+import os, sys, json, hashlib, re
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -31,6 +31,11 @@ PAGE_READ_KEY = "page_read"
 # metadata key of a teaser's page reads (issue 0062): {"count", "last_at", "failed"}. A re-fetch
 # of the feed keeps it (_post_update_assignments); ingestion/full_text.py reads and writes it.
 PAGE_TRIES_KEY = "page_tries"
+# metadata keys of a teaser's last page read (issue 0140): {"outcome", "at"} (full, nothing_longer,
+# not_same_article, needs_script, error:<class>, http:<status>), and the version of the rules it was read by
+# (ingestion/full_text.FULL_TEXT_RULE: the repair reads a post again once per version). A re-fetch keeps both.
+PAGE_OUTCOME_KEY = "page_read_outcome"
+FULL_TEXT_RULE_KEY = "full_text_rule"
 # A Telegram post's address (the bridge links each item to t.me): its channel's albums are folded.
 TELEGRAM_POST_PREFIX = "https://t.me/"
 
@@ -672,8 +677,11 @@ class PostsRepository:
         # Where its page moved (issue 0108) too, and its canonical with it, unless the kind brings it again.
         moved = (f"({row}metadata ? '{MOVED_KEY}' AND NOT "
                  f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{MOVED_KEY}')")
+        # A teaser's last page read and its rules' version (issue 0140) too.
         metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}',"
-                    f" '{MOVED_KEY}', {row}metadata -> '{MOVED_KEY}'))"
+                    f" '{MOVED_KEY}', {row}metadata -> '{MOVED_KEY}',"
+                    f" '{PAGE_OUTCOME_KEY}', {row}metadata -> '{PAGE_OUTCOME_KEY}',"
+                    f" '{FULL_TEXT_RULE_KEY}', {row}metadata -> '{FULL_TEXT_RULE_KEY}'))"
                     f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}',"
                     # A page you saved stays one you saved (issue 0122), whatever the feed brings.
@@ -960,24 +968,56 @@ class PostsRepository:
                      "metadata": row[6] or {}} for row in cur.fetchall()]
 
     def full_text_candidates(self, cur: Cursor, *, short_chars: int, source_id: Optional[str] = None,
-                             retry: bool = False, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+                             retry: bool = False, limit: Optional[int] = None,
+                             rule: Optional[int] = None, outcomes: Sequence[str] = (),
+                             skip_hosts: Sequence[str] = ()) -> List[Dict[str, Any]]:
         """Stored posts whose body is shorter than short_chars, or a paid teaser of any length,
         never read from its page, newest first, each with its source. retry includes those a
-        repair already tried."""
-        cur.execute(
-            f"""
-            SELECT p.id, p.url, p.title, p.content, p.content_html, p.metadata,
-                   s.id, s.platform, s.handle_or_url, s.settings
-            FROM posts p JOIN sources s ON s.id = p.source_id
-            WHERE (length(coalesce(p.content, '')) < %(short)s OR p.metadata @> '{{"paywalled": true}}')
-              AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
-              AND (%(retry)s OR NOT p.metadata ? '{FULL_TEXT_CHECKED}')
-              AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)
-            ORDER BY p.published_at DESC NULLS LAST, p.id
-            LIMIT %(limit)s
-            """,
-            {"short": short_chars, "retry": retry, "source_id": source_id, "limit": limit},
-        )
+        repair already tried.
+
+        With `rule` (issue 0140): instead, the posts never read in full whose rules' version
+        (metadata.full_text_rule) is older than `rule` and whose last page read ended in one of
+        `outcomes` or left none; short, or (a read-more cut marker, checked by the caller) holding a
+        link to their own address; no paid teaser (they need the session, not a rule); none at
+        `skip_hosts` or under them (a tweet, a Telegram message: never an article page)."""
+        if rule is not None:
+            hosts = "|".join(re.escape(host) for host in skip_hosts) or r"no-host\.invalid"
+            cur.execute(
+                f"""
+                SELECT p.id, p.url, p.title, p.content, p.content_html, p.metadata,
+                       s.id, s.platform, s.handle_or_url, s.settings
+                FROM posts p JOIN sources s ON s.id = p.source_id
+                WHERE NOT p.metadata ? '{FULL_TEXT_FLAG}'
+                  AND NOT p.metadata @> '{{"paywalled": true}}'
+                  AND COALESCE((p.metadata ->> '{FULL_TEXT_RULE_KEY}')::int, 0) < %(rule)s
+                  AND (NOT p.metadata ? '{PAGE_OUTCOME_KEY}'
+                       OR p.metadata -> '{PAGE_OUTCOME_KEY}' ->> 'outcome' = ANY(%(outcomes)s))
+                  AND (length(coalesce(p.content, '')) < %(short)s
+                       OR (p.url ~ '^https?://' AND strpos(coalesce(p.content_html, ''),
+                           split_part(split_part(p.url, '#', 1), '?', 1)) > 0))
+                  AND coalesce(p.url, '') !~* %(skip)s
+                  AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)
+                ORDER BY p.published_at DESC NULLS LAST, p.id
+                LIMIT %(limit)s
+                """,
+                {"short": short_chars, "rule": rule, "outcomes": list(outcomes), "source_id": source_id, "limit": limit,
+                 "skip": rf"^https?://([^/?#]*\.)?({hosts})([/:?#]|$)"},
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT p.id, p.url, p.title, p.content, p.content_html, p.metadata,
+                       s.id, s.platform, s.handle_or_url, s.settings
+                FROM posts p JOIN sources s ON s.id = p.source_id
+                WHERE (length(coalesce(p.content, '')) < %(short)s OR p.metadata @> '{{"paywalled": true}}')
+                  AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
+                  AND (%(retry)s OR NOT p.metadata ? '{FULL_TEXT_CHECKED}')
+                  AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)
+                ORDER BY p.published_at DESC NULLS LAST, p.id
+                LIMIT %(limit)s
+                """,
+                {"short": short_chars, "retry": retry, "source_id": source_id, "limit": limit},
+            )
         return [
             {
                 "id": str(row[0]), "url": row[1], "title": row[2], "content": row[3],

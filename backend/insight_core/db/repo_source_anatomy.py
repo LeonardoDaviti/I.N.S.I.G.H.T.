@@ -12,7 +12,7 @@ from typing import Any, Dict, Tuple
 
 from psycopg import Cursor
 
-from insight_core.db.repo_posts import FULL_TEXT_FLAG
+from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_OUTCOME_KEY
 from insight_core.ingestion.kinds.saved import PLATFORM as SAVED_PLATFORM
 
 # A post's date as the feed sorts it.
@@ -104,7 +104,8 @@ class SourceAnatomyRepository:
     @staticmethod
     def reading(cur: Cursor) -> Dict[str, Dict[str, Any]]:
         """How each source is read, beyond its settings: validators stored (0044), any post read
-        from its article page (full text), and its watched pages (0039)."""
+        from its article page (full text), its watched pages (0039), and its posts left as the
+        feed's summary by their last page read's outcome (teasers, issue 0140)."""
         cur.execute(
             f"""
             SELECT s.id,
@@ -114,5 +115,20 @@ class SourceAnatomyRepository:
             FROM sources s
             """
         )
-        return {str(r[0]): {"validators": bool(r[1]), "pages_read": bool(r[2]), "watched_pages": int(r[3] or 0)}
-                for r in cur.fetchall()}
+        found = {str(r[0]): {"validators": bool(r[1]), "pages_read": bool(r[2]), "watched_pages": int(r[3] or 0),
+                             "teasers": {}}
+                 for r in cur.fetchall()}
+        # Its posts left as the feed's summary (issue 0140), by their last page read's outcome.
+        cur.execute(
+            f"""
+            SELECT p.source_id, p.metadata -> '{PAGE_OUTCOME_KEY}' ->> 'outcome', count(*)
+            FROM posts p
+            WHERE p.metadata ? '{PAGE_OUTCOME_KEY}' AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
+              AND p.metadata -> '{PAGE_OUTCOME_KEY}' ->> 'outcome' <> 'full'
+            GROUP BY 1, 2
+            """
+        )
+        for source_id, outcome, count in cur.fetchall():
+            if str(source_id) in found and outcome:
+                found[str(source_id)]["teasers"][outcome] = int(count)
+        return found
