@@ -139,7 +139,8 @@ def oldest_post(cur: Any) -> Optional[datetime]:
 
 def advance(cur: Any, now: datetime, *, waiting_old: int, candidates_left: int) -> Dict[str, Any]:
     """After a decision run: the backfill steps STEP_DAYS further back when the run left no old question waiting and
-    the candidate finder found every post of the next step, never past the window or the oldest post. The state as
+    the candidate finder found every post of the next step, never past the window or the oldest post; a step with no
+    post goes on to the week of the next older post (a misdated post years back costs one step, not hundreds). The state as
     the page shows it: {"reached", "done", "stepped"}."""
     state = dict(repo.get_setting(cur, BACKFILL, default=None) or {})
     if not backfilling(cur):
@@ -153,6 +154,11 @@ def advance(cur: Any, now: datetime, *, waiting_old: int, candidates_left: int) 
     stepped = False
     if not done and waiting_old == 0 and candidates_left == 0:
         target = current - timedelta(days=STEP_DAYS)
+        cur.execute("SELECT max(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts "
+                    "WHERE COALESCE(surfaced_at, published_at, fetched_at) < %s", (current,))
+        newest_before = cur.fetchone()[0]           # a step with no post: on to the next post's week (no empty runs)
+        if newest_before is not None and newest_before.astimezone(timezone.utc).date() < target:
+            target = newest_before.astimezone(timezone.utc).date() - timedelta(days=STEP_DAYS - 1)
         if floor is not None and target < floor:
             target = floor
         state["reached"] = target.isoformat()

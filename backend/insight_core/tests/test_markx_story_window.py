@@ -128,7 +128,7 @@ class Window(unittest.TestCase):
             steps.append(out["story_window"]["days"])
             if out["story_window"]["old_added"].get("pair"):
                 break
-        self.assertEqual(steps[:3], [30, 37, 44], "a step of 7 days a run, newest first")
+        self.assertEqual(steps, [30, 68], "back from the newest day; the weeks with no post skipped to the pair's week")
         self.cur.execute("SELECT priority FROM mx_tasks WHERE kind = 'pair'")
         self.assertEqual(self.cur.fetchall(), [(W.BACKFILL_PRIORITY,)], "an old question at the backfill's priority")
         self.answer("pair", {"relation": "same_event", "confidence": 90, "reason": "same release"})
@@ -153,9 +153,13 @@ class Window(unittest.TestCase):
         self.post(T - 400 * DAYS, "An old post")     # the oldest post: the floor
         self.assertFalse(W.advance(self.cur, self.now, waiting_old=3, candidates_left=0)["stepped"])
         self.assertFalse(W.advance(self.cur, self.now, waiting_old=0, candidates_left=5)["stepped"])
+        self.post(T - 33 * DAYS, "A post of the next step")
         got = W.advance(self.cur, self.now, waiting_old=0, candidates_left=0)
         self.assertTrue(got["stepped"])
         self.assertEqual(W.days_for_run(self.cur, self.now), 37)
+        W.advance(self.cur, self.now, waiting_old=0, candidates_left=0)
+        self.assertGreaterEqual(W.days_for_run(self.cur, self.now), 400,
+                                "no post for a year: one step on to the older post's week, not 52 empty ones")
 
     def test_the_candidate_backfill_is_newest_first_and_resumes(self):
         from insight_core.tests.test_markx_candidates import at_cos
