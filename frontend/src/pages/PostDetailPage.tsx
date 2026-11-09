@@ -1331,7 +1331,21 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               )}
             </div>
           ) : bodyIsTitle ? null : renderContent.trim() ? (
-            markdownBody
+            <>
+              {markdownBody}
+              {/* A teaser (issue 0140): the feed's summary only, why, and the page itself. */}
+              {post.teaser_reason ? (
+                <p data-teaser className="mt-4 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
+                  {`Summary only · ${post.teaser_reason}`}
+                  {post.url ? (
+                    <>
+                      {' · '}
+                      <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Open the page ↗</a>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+            </>
           ) : post.link?.post_id ? (
             // A link post's page stored in INSIGHT (issue 0072) opens here.
             <p data-read-on><Link to={`/posts/${post.link.post_id}`} className="text-link">{readOnLabel(post.link, displayTitle)}</Link></p>

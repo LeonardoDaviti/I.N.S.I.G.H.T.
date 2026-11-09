@@ -241,27 +241,28 @@ class GenericRssKind(BaseKind):
         for index, post in enumerate(post for post in teasers if post["url"] not in stored):
             if index:
                 await self.http.sleep(full_text.PAGE_DELAY_S)
-            read = await self._read(post)
-            if read is not None:
-                expanded[post["url"]] = read
+            expanded[post["url"]] = await self._read(post, str(source.get("handle_or_url") or ""))
         return [expanded.get(post.get("url"), post) for post in posts]
 
-    async def _read(self, post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """The post read from its page; None when the page holds nothing longer, or the read went
-        wrong in a way no retry mends (the summary is kept). A failed request (an HttpError: an
-        HTTP error, a timeout, a dropped connection) is the post with that try counted, and so is a
-        page with nothing longer for a post with no body at all (issue 0108)."""
+    async def _read(self, post: Dict[str, Any], site: str) -> Dict[str, Any]:
+        """The post read from its page, or its summary kept, with the read's outcome (issue 0140): why
+        the page was not taken (nothing longer, not the same article, a script needed, the error). A
+        failed request (an HttpError: an HTTP error, a timeout, a dropped connection) is counted as a
+        try, and so is a page with nothing longer for a post with no body at all (issue 0108)."""
+        now = self.clock()
         try:
-            article = await full_text.read_article(self.http, post["url"], full_text.body_text(post))
+            read = await full_text.read_page(self.http, post["url"], full_text.body_text(post),
+                                             title=post.get("title"), site=site)
         except HttpError as exc:
-            logger.debug("Full-text read failed for %s: %s", post["url"], exc)
-            return full_text.with_page_try(post, self.clock(), failed=True)
+            logger.info("Full-text read failed for %s: %s", post["url"], str(exc)[:200])
+            return full_text.with_outcome(full_text.with_page_try(post, now, failed=True), full_text.error_outcome(exc), now)
         except Exception as exc:  # noqa: BLE001 - the summary is kept
-            logger.debug("Full-text expansion skipped for %s: %s", post["url"], exc)
-            return None
-        if article is None:
-            return full_text.with_page_try(post, self.clock(), failed=True) if full_text.empty_read_failed(post) else None
-        return full_text.with_full_text(post, *article)
+            logger.warning("Full-text read of %s went wrong (%s): %s", post["url"], type(exc).__name__, str(exc)[:200])
+            return full_text.with_outcome(post, full_text.error_outcome(exc), now)
+        if read.article is None:
+            kept = full_text.with_page_try(post, now, failed=True) if full_text.empty_read_failed(post) else post
+            return full_text.with_outcome(kept, read.outcome, now)
+        return full_text.with_outcome(full_text.with_full_text(post, *read.article), read.outcome, now)
 
     async def _read_again(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The source's stored teasers whose page read failed, read again (issue 0062): a slice
@@ -282,21 +283,26 @@ class GenericRssKind(BaseKind):
         for index, stored in enumerate(post for post in due if full_text.page_is_article(post.get("url"))):
             if index or posts:
                 await self.http.sleep(full_text.PAGE_DELAY_S)
+            now = self.clock()
             try:
-                article = await full_text.read_article(self.http, stored["url"], full_text.body_text(stored))
+                read = await full_text.read_page(self.http, stored["url"], full_text.body_text(stored),
+                                                 title=stored.get("title"), site=str(source.get("handle_or_url") or ""))
             except HttpError as exc:
-                read_again[stored["url"]] = full_text.with_page_try(stored, self.clock(), failed=True)
+                read_again[stored["url"]] = full_text.with_outcome(
+                    full_text.with_page_try(stored, now, failed=True), full_text.error_outcome(exc), now)
                 if exc.limiting:
                     logger.info("%s is limiting us (%s): %s teasers left for the next fetch",
                                 stored["url"], str(exc)[:200], len(due) - index - 1)
                     break
                 continue
             except Exception as exc:  # noqa: BLE001 - not a failed request: no more tries
-                logger.debug("Full-text read again skipped for %s: %s", stored["url"], exc)
-                article = None
+                logger.warning("Full-text read again of %s went wrong (%s): %s", stored["url"], type(exc).__name__,
+                               str(exc)[:200])
+                read = full_text.PageRead(full_text.error_outcome(exc))
+            article = read.article
             # Nothing longer ends it, unless the post has no body at all (issue 0108).
-            counted = full_text.with_page_try(stored, self.clock(),
-                                              failed=article is None and full_text.empty_read_failed(stored))
+            counted = full_text.with_outcome(full_text.with_page_try(
+                stored, now, failed=article is None and full_text.empty_read_failed(stored)), read.outcome, now)
             read_again[stored["url"]] = full_text.with_full_text(counted, *article) if article else counted
         if read_again:
             logger.info("%s: %s teasers read again, %s in full", source.get("handle_or_url"), len(read_again),

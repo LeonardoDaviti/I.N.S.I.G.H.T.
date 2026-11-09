@@ -88,3 +88,13 @@ test('the cells say how it is read in a word, with what it means on hover', () =
   assert.equal(lastFetchCell(row('a', { last_outcome: 'error', last_error: 'HTTP 404' }), NOW).text, 'failed 3h: HTTP 404');
   assert.equal(lastFetchCell(row('a', { last_attempt_at: null }), NOW).text, '—');
 });
+
+test('full text on counts the posts left as the summary, and says why on hover (issue 0140)', () => {
+  const teasers = { needs_script: 3, not_same_article: 8, nothing_longer: 40, 'http:404': 1, 'error:RuntimeError': 1 };
+  const cell = fullTextCell({ full_text: 'on', teasers });
+  assert.equal(cell.text, 'on · 13 summary only');
+  assert.equal(cell.title, 'Reads each post’s page for the whole text. Left as the feed’s summary: 40 the page held nothing longer, '
+    + '8 not the same article, 3 the page needs a script, 1 HTTP 404, 1 could not be read');
+  assert.equal(fullTextCell({ full_text: 'on', teasers: { nothing_longer: 2 } }).text, 'on');
+  assert.equal(fullTextCell({ full_text: 'on' }).title, 'Reads each post’s page for the whole text');
+});

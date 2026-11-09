@@ -122,6 +122,17 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         content_html: undefined,
         url: 'https://t.me/ai_newz/3150',
       }, now);
+    case 'teaser':
+      // Issue 0140: the feed's written abstract, its page built by a script that holds no data to read.
+      return detail('p-teaser', {
+        title: 'Serving a sparse model with wide expert parallelism',
+        source_display_name: 'An example project blog',
+        source: 'https://blog.example.org/feed.xml',
+        url: 'https://blog.example.org/2026/10/23/sparse-serving',
+        content_html: '<p>This post explains how a sparse mixture-of-experts model is served across many devices at once, why the two stages of inference are split, and which numbers matter when you size a cluster for it.</p>',
+        content: 'This post explains how a sparse mixture-of-experts model is served across many devices at once.',
+        teaser_reason: 'its page needs a script to show the article',
+      }, now);
     case 'story':
       // Covered by (issue 0055) and a link to a stored post (issue 0057): a Russian/English story.
       return detail('p-story', {

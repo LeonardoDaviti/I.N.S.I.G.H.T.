@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 import psycopg
 
 from insight_core.db import database as db
+from insight_core.ingestion import full_text
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
@@ -146,6 +147,8 @@ class PostDetailService:
             "link": link,
             # Its News row (issue 0083): {id, title, voices, lead_id, scope}, the page says "In News".
             "news": news,
+            # Why it shows its feed's summary only (issue 0140), or None: "Summary only · <reason> · Open the page".
+            "teaser_reason": full_text.teaser_reason(row[11], url=row[2], title=row[6], content_html=row[8]),
         }
 
     @staticmethod

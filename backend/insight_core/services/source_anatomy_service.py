@@ -80,7 +80,10 @@ def anatomy_row(source: Dict[str, Any], kind: Any, health: Dict[str, Any], readi
         "platform": source.get("platform"),
         "enabled": health["enabled"],
         "kind": key,
-        "full_text": full_text_mode(key, kind, source, bool(reading.get("pages_read"))),
+        # A feed whose page reads all left the summary (issue 0140) still reads them: on.
+        "full_text": full_text_mode(key, kind, source, bool(reading.get("pages_read") or reading.get("teasers"))),
+        # Its posts left as the feed's summary, by their last page read's outcome (issue 0140): {outcome: count}.
+        "teasers": dict(reading.get("teasers") or {}),
         # null: its kind cannot do it.
         "watch_changes": health["watch_changes"] if health["watchable"] else None,
         "watched_pages": int(reading.get("watched_pages") or 0),

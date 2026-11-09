@@ -82,6 +82,8 @@ export interface Post {
   link?: { url: string; title: string | null; post_id: string | null; kind?: 'page' | 'picture' | 'video' } | null;
   /** Its News row (issue 0083): the row's title and voices, and the scope whose News shows it; null when none. */
   news?: { id: string; title: string; voices: number; lead_id: string; scope: string } | null;
+  /** Why it shows its feed's summary only (issue 0140: "its page needs a script to show the article"); null when read in full or whole. */
+  teaser_reason?: string | null;
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
@@ -943,6 +945,9 @@ export interface SourceAnatomyRow {
   kind: AnatomyKind;
   /** on: it reads each post's page; off: switched off; feed: the feed carries the whole post. */
   full_text: 'on' | 'off' | 'feed';
+  /** Its posts left as the feed's summary, by their last page read's outcome (issue 0140): nothing_longer,
+   *  not_same_article, needs_script, error:<class>, http:<status> → count. Absent from an older API. */
+  teasers?: Record<string, number>;
   /** Change watching (0039); null: its kind cannot watch. */
   watch_changes: boolean | null;
   watched_pages: number;

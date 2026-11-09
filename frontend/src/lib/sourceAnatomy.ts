@@ -82,8 +82,32 @@ export function anatomyKindLabel(row: Pick<SourceAnatomyRow, 'kind'>): string {
 /** A short word and what it means. */
 export interface Cell { text: string; title: string }
 
-export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text'>): Cell {
-  if (row.full_text === 'on') return { text: 'on', title: 'Reads each post’s page for the whole text' };
+/** Why a post was left as the feed's summary (issue 0140), in a few words. */
+export function teaserWords(outcome: string): string {
+  if (outcome === 'nothing_longer') return 'the page held nothing longer';
+  if (outcome === 'not_same_article') return 'not the same article';
+  if (outcome === 'needs_script') return 'the page needs a script';
+  if (outcome.startsWith('http:')) return `HTTP ${outcome.slice(5)}`;
+  return 'could not be read';
+}
+
+/** The posts its page reads left as the summary (issue 0140), a page that held nothing longer aside (often a whole short post). */
+export function summaryOnly(row: Pick<SourceAnatomyRow, 'teasers'>): number {
+  return Object.entries(row.teasers ?? {}).reduce((sum, [outcome, n]) => sum + (outcome === 'nothing_longer' ? 0 : n), 0);
+}
+
+function teaserBreakdown(row: Pick<SourceAnatomyRow, 'teasers'>): string {
+  const words = new Map<string, number>();
+  for (const [outcome, n] of Object.entries(row.teasers ?? {})) words.set(teaserWords(outcome), (words.get(teaserWords(outcome)) ?? 0) + n);
+  const parts = [...words].sort((a, b) => b[1] - a[1]).map(([word, n]) => `${formatCount(n)} ${word}`);
+  return parts.length ? `. Left as the feed’s summary: ${parts.join(', ')}` : '';
+}
+
+export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text' | 'teasers'>): Cell {
+  if (row.full_text === 'on') {
+    const short = summaryOnly(row);
+    return { text: short ? `on · ${formatCount(short)} summary only` : 'on', title: `Reads each post’s page for the whole text${teaserBreakdown(row)}` };
+  }
   if (row.full_text === 'off') return { text: 'off', title: 'Full text is off: only what the feed carries' };
   return { text: 'in feed', title: 'The feed carries the whole post' };
 }
