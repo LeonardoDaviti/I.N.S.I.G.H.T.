@@ -557,6 +557,94 @@ class DiscoverRepository:
         return namers
 
 
+SUPPLIERS_KEY = "originals_suppliers"   # 0138 D2: kept by OriginalsService.keep_suppliers (ingestion)
+
+
+def light_facts(cur: Cursor) -> Any:
+    """0138: the sources' facts from the sources table alone (names, own sites, followed sites), with none of their
+    posts read: what Discover's per-open rows need, cheap enough for every open (the full SourceFacts reads posts)."""
+    from insight_core.db.repo_stories import SourceFacts
+    cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) "
+                "FROM sources")
+    return SourceFacts.of(cur.fetchall(), [])
+
+
+def entity_pages(cur: Cursor, db_url: str, now: datetime, *, hidden: Set[str], names: Any,
+                 skip: Set[str]) -> List[Dict[str, Any]]:
+    """Discover → Pages, 0138 D1: the Mark X entities' originals not stored whose entity meets Collect originals'
+    trigger (2+ voices in 7 days, or a News lead), beside the stories' roots: {url, title, site, hide_key, video,
+    tweet, first_linked_at, voices, readable, stories: [], entity: {id, name}, voice_names}. `names`: a source id's
+    name; `skip`: the addresses already a row. Collected ones are stored, so they leave by themselves."""
+    from insight_core.services.originals_service import OriginalsService, site_reads
+    from insight_core.utils.addresses import is_tweet, site_of
+    from insight_core.utils.discover_rules import page_key_of
+    from insight_core.utils.originals_rules import SiteReads, strip_access_tokens, tokened
+    wanted, _ = OriginalsService(db_url).plan_entities(cur, now, listing=True)
+    walls = site_reads(cur)
+    out = []
+    for w in wanted:
+        url = strip_access_tokens(w["url"])
+        if url in skip or page_key_of(url) in hidden:
+            continue
+        skip.add(url)
+        site = site_of(host_of(url))
+        out.append({"url": url, "title": None, "site": site, "hide_key": page_key_of(url), "video": False,
+                    "tweet": is_tweet(url), "first_linked_at": w["first_at"].isoformat(), "voices": w["voices"],
+                    "readable": not (tokened(w["url"]) or walls.get(site, SiteReads()).walled), "stories": [],
+                    "entity": {"id": w["entity_id"], "name": w["name"]},
+                    "voice_names": sorted({names(s) for s in w["sources"] if names(s)})[:6]})
+    if out:
+        titled = DiscoverRepository.read_titles(cur, [r["url"] for r in out])
+        for r in out:
+            r["title"] = titled.get(r["url"])
+    return out
+
+
+def suppliers(cur: Cursor) -> Dict[str, Any]:
+    """0138 D2-D3 as OriginalsService.keep_suppliers kept them: {current: {key: {n, urls, since}}, suggested: {key:
+    first suggested at}}."""
+    row = SystemSettingsRepository.get(cur, SUPPLIERS_KEY)
+    return (row[0] if row else None) or {}
+
+
+def longread_citations(cur: Cursor) -> Dict[str, Dict[str, int]]:
+    """0138 F3 as OriginalsService.keep_cited kept it: {key: {n: citations, posts: long-reads}}."""
+    row = SystemSettingsRepository.get(cur, "longread_citations")
+    return (row[0] if row else None) or {}
+
+
+def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> List[Dict[str, Any]]:
+    """0138 D3 (shown, not used to rank yet): each source you followed at a site D2 suggested, after it was suggested,
+    and how many originals it brought before any other source of yours: its posts since you followed it at an
+    address that is an original (an entity's address, a story's root, an original asked for) whose first linking
+    post of another source, if any, came later. [{key, source_id, name, followed_at, originals_first}]."""
+    from insight_core.utils.addresses import site_of
+    if not suggested:
+        return []
+    cur.execute("SELECT id::text, created_at FROM sources WHERE enabled")
+    created = dict(cur.fetchall())
+    out = []
+    for key, since in sorted(suggested.items()):
+        at = datetime.fromisoformat(since)
+        site = key.split("/", 1)[0]
+        ids = [sid for sid, s in facts.site.items() if s and (s == key or s == site or site_of(s) == site_of(site))
+               and sid in created and created[sid] >= at]
+        for sid in ids:
+            cur.execute("""
+                SELECT count(*) FROM posts p
+                 WHERE p.source_id = %(s)s AND COALESCE(p.published_at, p.fetched_at) >= %(at)s
+                   AND (EXISTS (SELECT 1 FROM mx_entity_addresses a WHERE a.url = p.normalized_url)
+                        OR EXISTS (SELECT 1 FROM stories st WHERE st.origin_url = p.normalized_url)
+                        OR EXISTS (SELECT 1 FROM story_originals o WHERE o.url = p.normalized_url))
+                   AND NOT EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
+                                    WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
+                                      AND COALESCE(q.published_at, q.fetched_at) < COALESCE(p.published_at, p.fetched_at))""",
+                        {"s": sid, "at": created[sid]})
+            out.append({"key": key, "source_id": sid, "name": facts.name.get(sid, ""),
+                        "followed_at": created[sid].isoformat(), "originals_first": cur.fetchone()[0]})
+    return out
+
+
 def voice_source(voice: str, site_namers: Dict[str, str]) -> Optional[str]:
     """The source a voice is named after (SourceFacts.voice_name): a website the source of its
     first kept link (`site_namers`), a source voice its own; a Reddit author none."""

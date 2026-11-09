@@ -19,6 +19,14 @@ function setup(pages: DiscoverPage[], api: Record<string, unknown> = {}) {
 }
 
 describe('DiscoverPages (issue 0113)', () => {
+  it('lists an entity original (0138 D1): the thing it is the original of, with its sources', () => {
+    setup([{ ...essay, url: 'https://arxiv.org/abs/2611.01234', title: null, site: 'arxiv.org', stories: [], voices: 2,
+      hide_key: 'page:arxiv.org/abs/2611.01234', entity: { id: 'e1', name: 'The Nimbus Paper' }, voice_names: ['Channel A', 'Channel B'] }]);
+    expect(screen.getByRole('link', { name: 'The Nimbus Paper' })).toHaveAttribute('href', '/markx/entities/e1');
+    expect(screen.getByText(/which 2 of your sources wrote about \(Channel A, Channel B\)/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save page' })).toBeInTheDocument();
+  });
+
   it('lists a page with its site, its story and the three actions', () => {
     setup([essay]);
     expect(screen.getByText('An essay about the release')).toBeInTheDocument();

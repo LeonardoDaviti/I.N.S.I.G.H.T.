@@ -103,13 +103,18 @@ function teaserBreakdown(row: Pick<SourceAnatomyRow, 'teasers'>): string {
   return parts.length ? `. Left as the feed’s summary: ${parts.join(', ')}` : '';
 }
 
-export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text' | 'teasers'>): Cell {
+export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text' | 'teasers'> & Partial<Pick<SourceAnatomyRow, 'feed_misses'>>): Cell {
+  let cell: Cell;
   if (row.full_text === 'on') {
     const short = summaryOnly(row);
-    return { text: short ? `on · ${formatCount(short)} summary only` : 'on', title: `Reads each post’s page for the whole text${teaserBreakdown(row)}` };
-  }
-  if (row.full_text === 'off') return { text: 'off', title: 'Full text is off: only what the feed carries' };
-  return { text: 'in feed', title: 'The feed carries the whole post' };
+    cell = { text: short ? `on · ${formatCount(short)} summary only` : 'on', title: `Reads each post’s page for the whole text${teaserBreakdown(row)}` };
+  } else if (row.full_text === 'off') cell = { text: 'off', title: 'Full text is off: only what the feed carries' };
+  else cell = { text: 'in feed', title: 'The feed carries the whole post' };
+  // 0138 F2: pages of it other posts linked that its feed never carried (each read once as its post).
+  const missed = row.feed_misses ?? 0;
+  if (!missed) return cell;
+  return { text: `${cell.text} · partial`,
+    title: `${cell.title}. Its feed missed ${formatCount(missed)} linked ${missed === 1 ? 'page' : 'pages'}; INSIGHT read ${missed === 1 ? 'it' : 'them'} once` };
 }
 
 export function watchCell(row: Pick<SourceAnatomyRow, 'watch_changes' | 'watched_pages'>): Cell {

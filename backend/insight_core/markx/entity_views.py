@@ -144,6 +144,83 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
             "queue": open_count(cur)}
 
 
+def named_now(cur: Any, book: I.Book) -> Set[str]:
+    """0138: the entities (roots) some post's current reading names (mx_mentions_now, through the owner's pins). An
+    entity only an earlier guide named has its page (with those posts) but is listed nowhere else. A document's
+    publisher named by a current mention's `by` counts as named. Kept on the book (one read a request)."""
+    got = getattr(book, "_named_now", None)
+    if got is not None:
+        return got
+    cur.execute("SELECT post_id::text, guide, n, entity_id::text, by_name FROM mx_mentions_now WHERE guide = ANY(%s) "
+                "AND (entity_id IS NOT NULL OR by_name IS NOT NULL)", (_guide(),))
+    got = set()
+    for p, g, n, e, by in cur.fetchall():
+        if e:
+            got.add(book.root(book.pins.get((p, g, n), e)))
+        if by and book.by_key(N.key(by)):
+            got.add(book.root(book.by_key(N.key(by))))
+    book._named_now = got   # type: ignore[attr-defined]
+    return got
+
+
+def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any]]:
+    """0138: the posts that named one of `members` under an earlier guide (mx_mentions, every guide), each with the
+    guide, the words, and what its current reading names as its subjects instead: [{id, title, source, at, url,
+    guide, span, now: [{id, name, type}]}], newest first."""
+    from insight_core.markx.news import _posts
+    ids = sorted(members)
+    if not ids:
+        return []
+    cur.execute("""SELECT DISTINCT ON (m.post_id) m.post_id::text, m.guide, m.span
+                     FROM mx_mentions m
+                    WHERE m.entity_id = ANY(%s::uuid[])
+                       OR (m.post_id, m.guide, m.n) IN (SELECT post_id, guide, n FROM mx_entity_pins
+                                                        WHERE entity_id = ANY(%s::uuid[]))
+                    ORDER BY m.post_id, m.guide DESC""", (ids, ids))
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    pids = [r[0] for r in rows]
+    cur.execute("""SELECT post_id::text, guide, n, entity_id::text, name, type FROM mx_mentions_now
+                    WHERE post_id = ANY(%s::uuid[]) AND role = 'subject' ORDER BY post_id, n""", (pids,))
+    now: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for pid, g, n, eid, name, type_ in cur.fetchall():
+        root = book.root(book.pins.get((pid, g, n), eid)) if eid else None
+        if all(x.get("id") != root or root is None for x in now[pid]):
+            now[pid].append({"id": root if root in book.ents else None,
+                             "name": book.ents[root].name if root in book.ents else name, "type": schemas_type(type_)})
+    posts = _posts(cur, pids)
+    out = [{**{k: (posts.get(pid) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "url")},
+            "id": pid, "guide": guide, "span": span, "now": now.get(pid, [])} for pid, guide, span in rows]
+    out.sort(key=lambda x: (x["at"] is None, -(x["at"].timestamp() if x["at"] else 0), x["id"]))
+    return out
+
+
+def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
+    """0138: the entity's original and its other addresses (markx/entity_addresses.py): {original: {url, kind, rule,
+    post: {id, title} when stored, collected: when Collect originals stored it} or None, addresses: [{kind, url,
+    rule}]}."""
+    from insight_core.markx import entity_addresses as EA
+    from insight_core.utils import entity_originals as R
+    from insight_core.utils.url_normalization import normalize_url
+    picked = EA.of_root(cur, book, root)
+    got = R.original_of({k: (v["url"], v["rule"], v["first_at"]) for k, v in picked.items()})
+    addresses = [{"kind": k, "url": v["url"], "rule": v["rule"]} for k, v in sorted(picked.items(), key=lambda kv: R.KINDS.index(kv[0]))]
+    if not got:
+        return {"original": None, "addresses": addresses}
+    kind, url = got
+    cur.execute("SELECT id::text, title, metadata ? 'collected_original' FROM posts WHERE normalized_url = %s LIMIT 1",
+                (normalize_url(url) or url,))
+    row = cur.fetchone()
+    cur.execute("SELECT outcome, asked_at FROM story_originals WHERE kind IN ('entity', 'collect') AND url = %s "
+                "ORDER BY asked_at LIMIT 1", (url,))
+    asked = cur.fetchone()
+    return {"original": {"url": url, "kind": kind, "rule": picked[kind]["rule"],
+                         "post": {"id": row[0], "title": row[1], "collected": bool(row[2])} if row else None,
+                         "asked": {"outcome": asked[0], "at": asked[1]} if asked else None},
+            "addresses": [a for a in addresses if a["url"] != url]}
+
+
 def _members(book: I.Book, root: str) -> Set[str]:
     return {e for e in book.ents if book.root(e) == root}
 
@@ -205,9 +282,14 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
                           key=lambda v: (tuple((0, x, "") if isinstance(x, int) else (1, 0, str(x))
                                                for x in (book.ents[v["id"]].version_key or ())), v["name"]),
                           reverse=True)
+    named = named_now(cur, book)
+    versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
+    current = bool(lines)
     return {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
+            "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
+            **original(cur, book, root),   # 0138: its original first, and its other addresses
             "aliases": sorted(book.ents[m].name for m in members),
             "maker": {"id": maker, "name": book.ents[maker].name} if maker in book.ents else None,
             "family": ({"id": fam_root, "name": book.ents[fam_root].name} if fam_root and fam_root != root else None),
@@ -215,8 +297,17 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None) -> 
             "stories": blocks, "loose": [line(p) for p in loose],
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
             **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
+            "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": [q for q in queue(cur, book=book)["open"] if root in (q["a"]["id"], (q.get("b") or {}).get("id"))]}
+
+
+def _rabbit_hole(cur: Any, book: I.Book, root: str, members: Set[str], posts: int) -> Optional[Dict[str, Any]]:
+    """0138 E3: the entity's world (markx/rabbit_hole.py) when it is an org, person or document with 2+ works or 10+
+    posts, else None."""
+    from insight_core.markx import rabbit_hole
+    by, works = published_edges(cur, book, members)
+    return rabbit_hole.of(cur, book, root, works=works, people=by + works, posts=posts)
 
 
 def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str], List[str]]:
@@ -235,7 +326,8 @@ def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str
             by[ra] += 1
         if a in members and rb not in members:
             works[rb] += 1
-    order = lambda c: [e for e, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0])) if e in book.ents]
+    named = named_now(cur, book)   # 0138: an edge's other end no current reading names is not shown
+    order = lambda c: [e for e, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0])) if e in book.ents and e in named]
     return order(by), order(works)
 
 
@@ -289,7 +381,8 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
                           created_at FROM mx_entity_queue WHERE closed_at IS NULL
                     ORDER BY answer IS NOT NULL, answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at""")
     rows = cur.fetchall()
-    open_rows = [r for r in rows if r[8] is None]
+    named = named_now(cur, book)   # 0138: an item about an entity no current reading names waits, unshown
+    open_rows = [r for r in rows if r[8] is None and all(book.root(x) in named for x in (r[2], r[3]) if x)]
     done_rows = [r for r in rows if r[8] is not None][:history]
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
 

@@ -31,7 +31,7 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.env import env_float
 from insight_core.utils.json_safe import iso, json_safe
-from insight_core.utils.originals_rules import COLLECT_CHOSEN, collect_setting
+from insight_core.utils.originals_rules import COLLECT_CHOSEN, classics_setting, collect_setting, lookup_setting
 
 
 # Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
@@ -397,6 +397,8 @@ class OperationsService:
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
             "collect_originals": merged["collect_originals"],
             COLLECT_CHOSEN[0]: COLLECT_CHOSEN[1],
+            "lookup_originals": merged["lookup_originals"],   # issue 0138 C: off unless you switch it on
+            "store_classics": merged["store_classics"],       # issue 0138 E1: on unless you switch it off
         }
 
         with db.connection(self.db_url) as conn:
@@ -1064,6 +1066,10 @@ class OperationsService:
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
             # Issue 0123: a News story's original collected when INSIGHT lacks it. On unless you switched it off (0126).
             "collect_originals": collect_setting(config),
+            # Issue 0138 C: a title lookup for a document entity no post links. Off unless you switch it on.
+            "lookup_originals": lookup_setting(config),
+            # Issue 0138 E1: every Classic not stored collected once, under its own allowance. On unless switched off.
+            "store_classics": classics_setting(config),
             "updated_at": config.get("updated_at"),
         }
 

@@ -87,6 +87,8 @@ def anatomy_row(source: Dict[str, Any], kind: Any, health: Dict[str, Any], readi
         # null: its kind cannot do it.
         "watch_changes": health["watch_changes"] if health["watchable"] else None,
         "watched_pages": int(reading.get("watched_pages") or 0),
+        # 0138 F2: its pages other posts linked that its feed never carried, read once as its posts
+        "feed_misses": int(reading.get("feed_misses") or 0),
         "validators": bool(reading.get("validators")) if getattr(kind, "conditional", False) else None,
         "status": health["status"],
         "interval_hours": health["interval_hours"],
@@ -129,6 +131,10 @@ class SourceAnatomyService:
             cur.execute("SET TRANSACTION READ ONLY")
             view = FetchStateRepository().load_schedule_view(cur)
             reading = repo.reading(cur)
+            cur.execute("SELECT source_id::text, count(*) FROM story_originals WHERE kind = 'missed' "
+                        "AND source_id IS NOT NULL GROUP BY 1")
+            for sid, n in cur.fetchall():   # 0138 F2
+                reading.setdefault(sid, {})["feed_misses"] = n
             counts: Dict[str, Dict[str, Sequence[int]]] = {
                 "posts": repo.posts(cur, since),
                 "stories": repo.stories(cur, since),

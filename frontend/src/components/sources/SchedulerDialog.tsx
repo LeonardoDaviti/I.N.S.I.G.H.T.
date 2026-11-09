@@ -23,6 +23,10 @@ export default function SchedulerDialog({
   const [tick, setTick] = useState(String(config.ingest_tick_minutes ?? 60));
   // On unless you switched it off (issue 0126): the API sends the stored choice.
   const [collect, setCollect] = useState(config.collect_originals ?? true);
+  // Off unless you switch it on (issue 0138 C).
+  const [lookup, setLookup] = useState(config.lookup_originals ?? false);
+  // On unless you switch it off (issue 0138 E1).
+  const [classics, setClassics] = useState(config.store_classics ?? true);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -31,6 +35,8 @@ export default function SchedulerDialog({
       ...config,
       ingest_tick_minutes: Math.max(15, Math.round(Number(tick)) || 15),
       collect_originals: collect,
+      lookup_originals: lookup,
+      store_classics: classics,
     });
     setSaving(false);
     if (saved) onClose();
@@ -56,7 +62,29 @@ export default function SchedulerDialog({
               <label htmlFor="collect-originals" className="text-[0.8125rem] font-medium text-fg">Collect originals</label>
               <p className="mt-0.5 text-[0.75rem] text-fg-3">
                 When a News story starts at a page you don&rsquo;t have, fetch that one page, without following its site.
-                Never a paywalled page; at most 1% more requests than the schedule makes. On unless you switch it off.
+                Also the paper or release page of a thing two of your sources write about. Never a paywalled page; at
+                most 1% more requests than the schedule makes. On unless you switch it off.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Switch id="lookup-originals" checked={lookup} onCheckedChange={setLookup} className="mt-0.5" />
+            <div>
+              <label htmlFor="lookup-originals" className="text-[0.8125rem] font-medium text-fg">Look up unlinked originals</label>
+              <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                When two of your sources write about a paper and none links it, look it up once by its title (arXiv, then
+                Crossref). Within the same budget. Off unless you switch it on.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Switch id="store-classics" checked={classics} onCheckedChange={setClassics} className="mt-0.5" />
+            <div>
+              <label htmlFor="store-classics" className="text-[0.8125rem] font-medium text-fg">Store Classics</label>
+              <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                Keep every Classic you don&rsquo;t have, and a work site two of your sources link (a report, an essay
+                series) with its pages they link: up to 100 pages a day, one site at a time. Never a product&rsquo;s or
+                an app&rsquo;s site, never a paywalled page. On unless you switch it off.
               </p>
             </div>
           </div>

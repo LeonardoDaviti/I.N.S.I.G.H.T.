@@ -52,6 +52,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, reposter_voice, threads)
 from insight_core.utils.discover_rules import page_key_of, pages as pages_of
+from insight_core.utils.entity_originals import supplier_reason
 from insight_core.utils.originals_rules import SiteReads, site_reads_of, strip_access_tokens, tokened
 from insight_core.utils.tree_rules import _PAGE, slug_title
 from insight_core.utils.url_normalization import normalize_url
@@ -66,6 +67,7 @@ KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
 CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (story_rules.keys)
 KEYED_EDGES = ("text", "title", "address", "link", "quote")   # the connections a key makes (story_rules.Edge.via)
 DISCOVER_ARTICLES_SHOWN = 20
+CITED_MIN, CITED_POSTS = 3, 2   # 0138 F3: a site cited this often, by this many long-reads you read, is suggested
 ORIGIN_STORIES_SHOWN = 3      # the stories a suggestion started, shown on its card (issue 0065)
 STOPPED_DAYS = 183            # an archive row's source whose newest post is this old: its feed stopped (issue 0109)
 
@@ -666,6 +668,7 @@ class StoriesService:
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
             result = {**result, "archives": _archive_rows(result["archives"], states, self.clock())}
+        result = self._from_originals(result)   # 0138 D: read now, never kept with the list
         ranked, also = result["suggestions"], result.get("also", [])
         if q:
             words = q.casefold().split()
@@ -675,6 +678,66 @@ class StoriesService:
         # A followed source's other channels are one folded group, with the first page (issue 0109).
         return {**result, "suggestions": ranked[offset:end], "also": also if offset == 0 else [], "total": len(ranked),
                 "offset": offset, "more": end < len(ranked)}
+
+    def _from_originals(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Issue 0138 D, read on each open (Mark X's entities and the originals asked change between story runs):
+        D1, the Pages rows of entities' originals after the stories' roots; D2, the sites that supplied 3+ originals in
+        30 days as suggestions ("the original of N things your sources talked about"; one already suggested gains the
+        line), followed through the feed finder as every suggestion; D3, the sources followed from such a suggestion
+        and the originals each brought first (`supplied`); E4, the entities whose world (markx/rabbit_hole.py) has
+        sites not followed or works not stored (`worlds`). A failure leaves the list as it was."""
+        from insight_core.db import repo_discover
+        try:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                sources = repo_discover.light_facts(cur)
+                hidden = self.repo.hidden(cur)
+                now = self.clock()
+                pages = list(result.get("pages") or [])
+                pages += repo_discover.entity_pages(cur, self.db_url, now, hidden=hidden,
+                                                    names=lambda sid: sources.name.get(sid, ""),
+                                                    skip={p["url"] for p in pages})
+                from insight_core.markx import rabbit_hole
+                worlds = rabbit_hole.discover_rows(cur)   # 0138 E4
+                kept = repo_discover.suppliers(cur)
+                cited = repo_discover.longread_citations(cur)
+                supplied = repo_discover.supplied_first(cur, kept.get("suggested") or {}, facts=sources)
+                conn.rollback()
+        except Exception:  # noqa: BLE001 - Discover's own list stands without them
+            logger.exception("Discover: the originals' rows were not read")
+            return result
+        followed = sources.followed() | sources.followed_accounts()
+        ranked = [dict(s) for s in result["suggestions"]]
+        by_key = {s["key"]: s for s in ranked}
+        for key, got in (kept.get("current") or {}).items():
+            site = key.split("/", 1)[0]
+            if key in followed or site in followed or key.lower() in hidden or site in hidden:
+                continue
+            s = by_key.get(key)
+            if s is None:
+                s = by_key[key] = {"key": key, "url": "https://" + key, "voices": 0, "voice_names": [],
+                                   "article_count": got["n"], "link_count": got["n"], "classics": 0, "opened": 0,
+                                   "origins": 0, "articles": [{"url": u, "title": None, "linked_by": []}
+                                                              for u in got["urls"][:DISCOVER_ARTICLES_SHOWN]],
+                                   "score": round(score(origins=got["n"], classics=0, opened=0, voices=0, days=None), 3)}
+                ranked.append(s)
+            s["originals"] = got["n"]
+            s["originals_reason"] = supplier_reason(got["n"])
+        for key, got in cited.items():   # 0138 F3: the sites the long-reads you opened cite
+            site = key.split("/", 1)[0]
+            if key in followed or site in followed or key.lower() in hidden or site in hidden:
+                continue
+            s = by_key.get(key)
+            if s is None:
+                if got["n"] < CITED_MIN or got["posts"] < CITED_POSTS:
+                    continue   # below today's bar it takes 3+ citations from 2+ long-reads
+                s = by_key[key] = {"key": key, "url": "https://" + key, "voices": 0, "voice_names": [],
+                                   "article_count": got["n"], "link_count": got["n"], "classics": 0, "opened": 0,
+                                   "origins": 0, "articles": [],
+                                   "score": round(score(origins=0, classics=0, opened=got["n"], voices=got["posts"],
+                                                        days=None), 3)}
+                ranked.append(s)
+            s["cited_by_longreads"] = got["n"]
+        return {**result, "suggestions": order(ranked), "pages": pages, "supplied": supplied, "worlds": worlds}
 
     def _discover_all(self) -> Dict[str, Any]:
         """The whole list: this process's last when its inputs and code are unchanged, else the one the

@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 
 import { useApi } from '../../services/ApiContext';
 import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResponse } from '../../services/api';
-import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger } from '../ui';
+import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import DiscoverPages from './DiscoverPages';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
@@ -111,6 +111,12 @@ function Suggestion({ suggestion, onFollow, onHide }: {
               </span>
             ) : null}
           </h3>
+          {suggestion.cited_by_longreads ? (
+            <p className="text-[0.8125rem] leading-5 text-fg-2">Cited {plural(suggestion.cited_by_longreads, 'time')} by long-reads you read</p>
+          ) : null}
+          {suggestion.originals_reason ? (
+            <p className="text-[0.8125rem] leading-5 text-fg-2">The {suggestion.originals_reason.replace(/^the /, '')}</p>
+          ) : null}
           {suggestion.origins ? (
             <>
               <p className="text-[0.8125rem] leading-5 text-fg-2">{originReason(suggestion)}</p>
@@ -294,6 +300,25 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
             <Button size="sm" variant="secondary" className="mt-3" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
               {query.isFetchingNextPage ? 'Loading…' : `More (${formatCount((first.total ?? all.length) - all.length)})`}
             </Button>
+          ) : null}
+          {first.worlds?.length && !words.length ? (
+            <section aria-label="Worlds to explore" className="pt-3">
+              <h2 className="text-[0.75rem] font-medium text-fg-3">Worlds to explore</h2>
+              <ul className="mt-1 space-y-0.5 text-[0.8125rem] text-fg-2">
+                {first.worlds.map((w) => (
+                  <li key={w.entity.id}>
+                    <TextLink to={`/markx/entities/${w.entity.id}`}>{w.entity.name}</TextLink>
+                    {`: ${plural(w.sites, 'site')}, ${formatCount(w.not_followed)} not followed, ${plural(w.works_not_stored, 'work')} not stored`}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {first.supplied?.length && !words.length ? (
+            <p className="pt-3 text-[0.75rem] text-fg-3">
+              Followed for their originals:{' '}
+              {first.supplied.map((s) => `${s.name || s.key} brought ${s.originals_first} first`).join(' · ')}.
+            </p>
           ) : null}
           {also.length && !words.length ? <OtherChannels also={also} /> : null}
           {references.length && !words.length ? (

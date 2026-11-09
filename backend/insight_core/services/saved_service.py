@@ -153,12 +153,14 @@ class SavedService:
 
     # ------------------------------------------------------------------ collected originals (issue 0123)
 
-    async def collect(self, http: KindHttp, url: str, title: Optional[str] = None) -> Dict[str, Any]:
+    async def collect(self, http: KindHttp, url: str, title: Optional[str] = None, *,
+                      collected_as: Optional[str] = None) -> Dict[str, Any]:
         """A News story's original no followed source owns, read once and stored as a Saved post by itself:
         never in Later (no tap of yours), sorted by its own date, `metadata.collected_original` the time, and
         `story_only` (issue 0126): shown inside its story and on its post page, no row of a feed, no unread count.
         Its address keeps no access or gift token. A page that can't be read as an article is not stored
-        ("unreadable"). Stored or owned already: "already" or "followed", nothing read. One request."""
+        ("unreadable"). Stored or owned already: "already" or "followed", nothing read. One request. `collected_as`
+        (issue 0138 E): "classic" or "work", kept in its metadata (`collected_as`) for the post page's line."""
         address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
         if not _web_page(address):
             raise ValueError("Only an http or https page can be collected")
@@ -176,10 +178,36 @@ class SavedService:
         if stored:
             return {"status": "already", "requests": 1, **stored}
         post = {**post, "url": landed, "external_id": landed, "guid": landed,
-                "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat(), STORY_ONLY_KEY: True}}
+                "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat(), STORY_ONLY_KEY: True,
+                             **({"collected_as": collected_as} if collected_as else {})}}
         if not isinstance(post.get("date"), datetime) or post["date"] >= now:
             post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
         source_id = await asyncio.to_thread(self.saved_source_id)
+        post_id = await asyncio.to_thread(self._insert, source_id, post)
+        return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
+
+    async def collect_for_source(self, http: KindHttp, url: str, source_id: str) -> Dict[str, Any]:
+        """Issue 0138 F2: a followed source's page its feed never carried, read once and stored as that source's post
+        (0122's rule: one post under the source), not in Later (no tap of yours), `metadata.missed_by_feed` the
+        time; dated by the page, else by the first post linking it. Stored already: "already". One request."""
+        address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
+        if not _web_page(address):
+            raise ValueError("Only an http or https page can be collected")
+        now = self.clock()
+        stored = await asyncio.to_thread(self.stored_post, [address])
+        if stored:
+            return {"status": "already", **stored}
+        post, reason = await self.read(http, address, "")
+        if reason is not None:
+            return {"status": "unreadable", "reason": reason, "requests": 1}
+        landed = strip_access_tokens(post["url"])
+        stored = landed != address and await asyncio.to_thread(self.stored_post, [landed])
+        if stored:
+            return {"status": "already", "requests": 1, **stored}
+        post = {**post, "url": landed, "external_id": landed, "guid": landed,
+                "metadata": {**post.get("metadata", {}), "missed_by_feed": now.isoformat()}}
+        if not isinstance(post.get("date"), datetime) or post["date"] >= now:
+            post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
         post_id = await asyncio.to_thread(self._insert, source_id, post)
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
 

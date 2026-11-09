@@ -330,7 +330,9 @@ class IngestionRunRequest(BaseModel):
 class SchedulerConfigRequest(BaseModel):
     intervalHours: float | None = None
     ingestTickMinutes: float | None = None
-    collectOriginals: bool | None = None   # issue 0123: Collect originals, default off
+    collectOriginals: bool | None = None   # issue 0123: Collect originals (0126: on by default)
+    lookupOriginals: bool | None = None    # issue 0138 C: Look up unlinked originals, default off
+    storeClassics: bool | None = None      # issue 0138 E1: Store Classics, default on
 
 
 class PostReaderSessionRequest(BaseModel):
@@ -1719,6 +1721,10 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
         payload["ingest_tick_minutes"] = request.ingestTickMinutes
     if request.collectOriginals is not None:
         payload["collect_originals"] = request.collectOriginals
+    if request.lookupOriginals is not None:
+        payload["lookup_originals"] = request.lookupOriginals
+    if request.storeClassics is not None:
+        payload["store_classics"] = request.storeClassics
     return {"success": True, "scheduler": services().operations.update_scheduler_config(payload)}
 
 
