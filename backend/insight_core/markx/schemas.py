@@ -51,7 +51,8 @@ def stored_types(types: Any) -> list:
     out += [k for k, v in TYPE_READS.items() if v in out and k not in out]
     return out
 ENTITY_RELATIONS = ["released", "announced", "acquired", "invested_in", "partnered_with", "sued", "hired", "joined",
-                    "left", "leads", "based_on", "beats", "part_of"]
+                    "left", "leads", "based_on", "beats", "part_of",
+                    "published"]   # v10.10.1: ent-v4.2's guide asks for it (a issues or publishes document b)
 MAX_ENTITIES = 20
 
 # The judge's seven relations (judge-*-v1, judge-story-v1, connect-v1), and those that make a post "about" a story.

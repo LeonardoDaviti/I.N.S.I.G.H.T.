@@ -62,6 +62,14 @@ class TheRoles(unittest.TestCase):
     def check(self, guide, *ents):
         return validate.check("entities", {"entities": list(ents), "relations": []}, self.TEXT, guide)[1]
 
+    def test_a_published_relation_validates_under_ent_v4_2(self):
+        """v10.10.1: ent-v4.2's guide asks for `published` (a issues or publishes document b); the schema refused it."""
+        a = ent("Orbit Filing", "Orbit Filing", "document", "source", by="Acme Corp")
+        c = ent("Acme Corp", "Acme Corp", "org", "source")
+        answer = {"entities": [a, c], "relations": [{"a": "Acme Corp", "rel": "published", "b": "Orbit Filing"}]}
+        self.assertIsNone(validate.check("entities", answer, self.TEXT, "ent-v4.2")[1])
+        self.assertIn("published", schemas.ENTITY_RELATIONS)
+
     def test_the_new_roles_and_type_validate_under_ent_v4_only(self):
         a = ent("Orbit Filing", "Orbit Filing", "document", "source", by="Acme Corp")
         b = ent("Deep Book", "Deep Book", "document", "recommended")
