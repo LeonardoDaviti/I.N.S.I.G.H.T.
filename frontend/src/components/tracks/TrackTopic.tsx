@@ -7,7 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import TrackSheet from './TrackSheet';
-import { joinLine, precisionLine, rankWords, suggestionLine, footerLine } from './trackWords';
+import { foundByLine, joinLine, precisionLine, rankWords, suggestionLine, footerLine } from './trackWords';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
 
@@ -48,7 +48,8 @@ function Row({ folderId, item, discover = false }: { folderId: string; item: Tra
         <p className="text-[0.9375rem] font-semibold leading-[1.35] text-fg [overflow-wrap:anywhere]">
           <TextLink to={`/posts/${encodeURIComponent(item.post_id)}`}>{item.title || '(no title)'}</TextLink>
         </p>
-        <p className="mt-0.5 text-[0.8125rem] tabular-nums leading-5 text-fg-3 [overflow-wrap:anywhere]">
+        <p className="mt-0.5 text-[0.8125rem] tabular-nums leading-5 text-fg-3 [overflow-wrap:anywhere]"
+          title={foundByLine(item) ?? undefined}>
           {[item.source, item.at ? postBylineTime(item.at) : null,
             item.place === 'joined' ? 'joined by INSIGHT' : null,
             discover ? rankWords(item) : null].filter(Boolean).join(' · ')}

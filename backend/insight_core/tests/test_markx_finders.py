@@ -1,0 +1,392 @@
+"""0147 (Stealth v10.13): track recall, several finders. Example posts (probes) planned once per track version,
+embedded, scored by max cosine with near-misses subtracted; entity, domain and word sets learned from ✓ items with their
+thresholds; numbers with the ✓ items' units as words; source and story priors; the classifier's gate (30 labels, 8 of
+each) and its retrain each 10; the union's order and budget; "found by" on items. Synthetic data only; the DB tests
+run on a database whose name ends in _test."""
+from __future__ import annotations
+
+import json
+import os
+import unittest
+import uuid
+from datetime import timedelta
+from unittest import mock
+
+from insight_core.markx import finders, repo, schemas, tasks, tracks, validate
+from insight_core.tests.test_markx_api import call
+from insight_core.tests.test_markx_tracks import NOW, _Tracks, b64, BUILD, unit, verdict
+
+PROBES = {"probes": [f"Example post {k}: a printed drawer organiser with the STL" for k in range(12)],
+          "near_misses": ["A printer review", "A filament deal"]}
+
+
+class Pure(unittest.TestCase):
+    def test_the_kind_its_guide_and_its_answer(self):
+        k = schemas.KINDS["probes"]
+        self.assertEqual((k.guide, k.subject), ("probes-v1", "track"))
+        self.assertIn("near_misses", schemas.guide_body("probes-v1"))
+        self.assertIn("probes", tasks.PLANNERS)
+        self.assertIsNone(validate.check("probes", PROBES, "q")[1])
+        self.assertIsNotNone(validate.check("probes", {"probes": ["one"] * 3}, "q")[1])          # fewer than 12
+        self.assertIn("twice", validate.check("probes", {"probes": ["same"] * 12}, "q")[1])
+        self.assertIsNotNone(validate.check("probes", dict(PROBES, near_misses=["x"] * 5), "q")[1])
+
+    def test_max_sim_with_near_miss_subtraction(self):
+        self.assertEqual(finders.probe_score(0.6, None), 0.6)
+        self.assertEqual(finders.probe_score(0.6, 0.5), 0.6)                  # the near-miss is further: nothing
+        self.assertAlmostEqual(finders.probe_score(0.6, 0.7), 0.5)            # closer to a near-miss by 0.1: -0.1
+        self.assertIsNone(finders.probe_score(None, 0.7))
+
+    def test_entities_in_two_items_and_rare(self):
+        pos = [["a", "b", "common"], ["a", "common"], ["b2"]]
+        self.assertEqual(finders.entity_set(pos, {"a": 3, "common": 500}, 1000), ["a"])   # in 2 ✓, at most 1%
+        self.assertEqual(finders.entity_set([["a"]], {"a": 1}, 1000), [])                # one ✓ is not enough
+
+    def test_domains_of_two_items_not_platforms_and_the_classes_the_description_names(self):
+        pos = [["example.org", "reddit.com", "busy.com"], ["example.org", "reddit.com", "busy.com"]]
+        got = finders.domain_set(pos, {"example.org": 4, "busy.com": 900}, 1000, "a reading list")
+        self.assertEqual(got, ["example.org"])                                # reddit a platform, busy.com too common
+        printed = finders.domain_set([], {}, 1000, "Things worth 3D printing")
+        self.assertIn("printables.com", printed)
+        self.assertNotIn("github.com", printed)
+        self.assertIn("github.com", finders.domain_set([], {}, 1000, "open-source side projects"))
+        self.assertNotIn("huggingface.co", finders.domain_set([], {}, 1000, "local AI: quantised models"))   # measured out
+
+    def test_the_lexicon_over_represented_in_items(self):
+        pos = [["tok", "vram", "the", "quant"], ["tok", "vram", "the"], ["tok", "the", "rare"]]
+        df = {"tok": 4, "vram": 3, "the": 900, "quant": 2, "rare": 1}
+        got = finders.lexicon(pos, df, 20000)
+        self.assertEqual(got[:2], ["tok", "vram"])
+        self.assertNotIn("the", got)                                          # everywhere: not over-represented
+        self.assertNotIn("quant", got)                                        # in one ✓ only
+        many = [f"w{k}" for k in range(50)]
+        self.assertEqual(len(finders.lexicon([many] * 3, {w: 6 for w in many}, 20000)), finders.WORDS)   # the top 30
+
+    def test_numbers_with_the_items_units_count_as_a_word(self):
+        self.assertEqual(finders.units_of(["22 tok/s on an RTX 3060", "16 GB VRAM", "$300"]), {"tok/s", "gb", "$"})
+        units = finders.unit_set([["22 tok/s", "12 GB"], ["48 tok/s"], ["8 GB", "$1,200"]])
+        self.assertEqual(units, ["gb", "tok/s"])                              # $ in one item only
+        import re
+        rx = finders.units_regex(units)
+        self.assertTrue(re.search(rx, "about 30 tok/s", re.I))
+        self.assertTrue(re.search(rx, "a 24 GB card", re.I))
+        self.assertFalse(re.search(rx, "Gbps networking", re.I))
+        self.assertIsNone(finders.units_regex([]))
+
+    def test_the_source_prior(self):
+        self.assertEqual(finders.source_set({"a": 3, "b": 3, "c": 2}, {"a": 10, "b": 20, "c": 2}), ["a"])   # b 15%, c 2
+
+    def test_what_fires(self):
+        prep = {"bar": 0.5, "model": None}
+        d = finders.fire({"probe": 0.47, "words": 2, "source": True}, prep)
+        self.assertEqual(d, ["word", "source"])                               # the source lowers the bar by 0.05
+        self.assertEqual(finders.fire({"probe": 0.44, "words": 1, "source": True}, prep), [])
+        self.assertEqual(finders.fire({"probe": 0.5, "entity": True, "domain": True, "story": True}, prep),
+                         ["probe", "entity", "domain", "story"])
+
+    def test_the_adopted_finders_and_the_env(self):
+        self.assertEqual(finders.active(), finders.ADOPTED)
+        with mock.patch.dict(os.environ, {finders.FINDERS_ENV: "entity, story,bogus"}):
+            self.assertEqual(finders.active(), ("probe", "entity", "story"))    # the example posts always
+        off = {"bar": 0.5, "model": None, "on": ("probe",)}
+        self.assertEqual(finders.fire({"probe": 0.6, "entity": True, "words": 3}, off), ["probe"])
+
+    def test_the_union_order(self):
+        a = {"fired": ["probe", "entity"], "probe": 0.4, "p": None}
+        b = {"fired": ["probe"], "probe": 0.6, "p": None}
+        c = {"fired": ["word"], "probe": 0.3, "p": None}
+        self.assertEqual(sorted([c, b, a], key=finders.order_key, reverse=True), [a, b, c])   # count, then probe
+        a["p"], b["p"] = 0.2, 0.9
+        self.assertEqual(sorted([a, b], key=finders.order_key, reverse=True), [b, a])        # the classifier first
+
+    def test_the_budget_bar(self):
+        rows = [{"probe": 1 - k / 100} for k in range(100)]
+        self.assertEqual(finders.budget_bar(rows, 0.3, 0.99), 0.71)           # 30 by probe alone
+        for d in rows[50:60]:
+            d["fired"] = ["entity"]                                            # 10 other hits first
+        self.assertEqual(finders.budget_bar(rows, 0.3, 0.99), 0.81)           # the probes fill 20
+        for d in rows[60:100]:
+            d["fired"] = ["entity"]                                            # 50 others: probes keep half
+        self.assertEqual(finders.budget_bar(rows, 0.3, 0.99), 0.86)
+        self.assertEqual(finders.budget_bar(rows, 0.3, 0.5), 0.5)             # at most the cap
+
+    def test_the_classifier_gate_and_fit(self):
+        self.assertFalse(finders.gate(29, 1))
+        self.assertFalse(finders.gate(25, 7))
+        self.assertTrue(finders.gate(22, 8))
+        xs = [[1.0, 0.0] for _ in range(10)] + [[0.0, 1.0] for _ in range(10)]
+        ys = [1] * 10 + [0] * 10
+        m = finders.train(xs, ys)
+        self.assertGreater(finders.predict(m, [1.0, 0.0]), 0.8)
+        self.assertLess(finders.predict(m, [0.0, 1.0]), 0.2)
+
+
+class _Finders(_Tracks):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.object(finders, "ADOPTED", finders.FINDERS))   # every finder, to test each
+        self.cur.execute("TRUNCATE mx_track_probes, mx_track_models")
+        self.addCleanup(self.cur.execute, "TRUNCATE mx_track_probes, mx_track_models")
+
+    def probes(self, answer=PROBES):
+        with self.conn.transaction():
+            self.assertEqual(finders.plan_probes(self.cur), 1)
+        status, body = self.lease("probes")
+        self.assertEqual(status, 200, body)
+        mine = [t for t in body["tasks"] if t["kind"] == "probes"]
+        status, got = self.answer((mine[0]["id"], dict(answer, id="x")))
+        self.assertEqual((status, got["valid"]), (200, 1), got)
+        return mine[0]
+
+    def probe_vector(self, text, v, near=False):
+        self.cur.execute("UPDATE mx_track_probes SET v = %s::halfvec WHERE track_id = %s AND text = %s",
+                         (repo.vector_text(v), self.folder, text))
+
+    def label_many(self, ids, answer):
+        for p in ids:
+            repo.add_label(self.cur, item_kind="track", a=p, b=self.folder, answer=answer)
+
+
+class Probes(_Finders):
+    def test_planned_once_per_version_embedded_and_stored(self):
+        self.describe()
+        task = self.probes()
+        self.assertTrue(task["input"].startswith("TRACK: Prints"))
+        self.assertNotIn("Marked in", task["input"])                         # once a version, not once a label
+        rows = finders.probe_rows(self.cur, self.folder, 1)
+        self.assertEqual((sum(not r["near"] for r in rows), sum(r["near"] for r in rows)), (12, 2))
+        with self.conn.transaction():
+            self.assertEqual(finders.plan_probes(self.cur), 0)                # this version has its example posts
+        status, body = self.lease("embed", limit=100)
+        probe_tasks = [t for t in body["tasks"] if t["input"] in PROBES["probes"] + PROBES["near_misses"]]
+        self.assertEqual(len(probe_tasks), 14)
+        self.cur.execute("SELECT DISTINCT subject_kind, priority FROM mx_tasks WHERE id = ANY(%s::uuid[])",
+                         ([t["id"] for t in probe_tasks],))
+        self.assertEqual(self.cur.fetchall(), [("track_probe", -1)])
+        status, got = call("POST", "/api/markx/embeddings", token=self.token,
+                           body={"worker": "device-1", "model": "bge-m3", "model_sha256": BUILD,
+                                 "vectors": [{"task_id": t["id"], "vector": b64(unit((k + 1, 1)))}
+                                             for k, t in enumerate(probe_tasks)]})
+        self.assertEqual((status, got["stored"]), (200, 14), got)
+        self.assertTrue(all(r["embedded"] for r in finders.probe_rows(self.cur, self.folder, 1)))
+        self.describe("Things worth 3D printing for the workshop")
+        with self.conn.transaction():
+            self.assertEqual(finders.plan_probes(self.cur), 1)                # a new version: asked again
+
+    def test_max_sim_and_the_near_miss(self):
+        self.describe()
+        self.desc_vector(unit((0, 1)))
+        self.probes()
+        self.probe_vector(PROBES["probes"][0], unit((1, 1)))
+        self.probe_vector(PROBES["near_misses"][0], unit((2, 1)))
+        a = self.post(title="like the probe", source=self.other)
+        b = self.post(title="like the near-miss", source=self.other)
+        self.vector(a, unit((1, 1), (0, 0.1)))
+        self.vector(b, unit((2, 1), (1, 0.5)))
+        t = tracks.get(self.cur, self.folder)
+        prep = finders.prepare(self.cur, t, {"in": [], "out": []}, now=NOW, train_model=False)
+        got = {d["post_id"]: d for d in finders.score(self.cur, t, prep, ids=[a, b])}
+        self.assertGreater(got[a]["probe"], 0.95)                              # the max over the probes, not the mean
+        self.assertLess(got[a]["desc"], 0.2)                                   # the description alone misses it
+        self.assertLess(got[b]["probe"], got[b]["probe_pos"])                  # nearer a near-miss: pulled down
+
+    def test_before_probes_the_description_alone(self):
+        self.describe()
+        self.desc_vector(unit((0, 1)))
+        p = self.post(title="near", source=self.other)
+        self.vector(p, unit((0, 1), (1, 0.3)))
+        self.plan()
+        self.cur.execute("SELECT found_by, score FROM mx_track_items WHERE post_id = %s", (p,))
+        found, score = self.cur.fetchone()
+        self.assertEqual(found, ["probe"])
+        self.assertGreater(score, 0.9)
+
+
+class Learned(_Finders):
+    def setUp(self):
+        super().setUp()
+        self.describe("Cheap local AI setups")
+        self.desc_vector(unit((0, 1)))
+        self.dim = 100
+
+    def far(self):
+        """A vector of its own: far from the description and from every other post."""
+        self.dim += 1
+        return unit((self.dim, 1))
+
+    def passive(self, title, text=None, links=(), at=None):
+        p = self.post(title=title, text=text, source=self.other, links=links, at=at)
+        self.vector(p, self.far())
+        return p
+
+    def a_call(self, post, kind, guide):
+        schemas.ensure_guides(self.cur)
+        tid, _ = repo.add_task(self.cur, kind=kind, guide=guide, subject_kind="post", input=f"{kind} {post}", a=post)
+        return repo.add_call(self.cur, task_id=tid, executor="claude-code", model="test", valid=True, answer={})
+
+    def mention(self, post, name, role="subject"):
+        repo.add_mentions(self.cur, post_id=post, guide="ent-v3", call_id=self.a_call(post, "entities", "ent-v3"),
+                          mentions=[{"span": name, "name": name, "name_key": name.lower(), "type": "software",
+                                     "role": role}])
+
+    def numbers(self, post, numbers):
+        repo.add_reading(self.cur, post_id=post, guide="read-v2", call_id=self.a_call(post, "read", "read-v2"),
+                         kind="report", events="one", lang="en", headline="h", reading={"main": {"numbers": numbers}})
+
+    def prepare(self):
+        t = tracks.get(self.cur, self.folder)
+        return t, finders.prepare(self.cur, t, tracks.examples(self.cur, self.folder), train_model=False)
+
+    def test_an_entity_of_two_items_finds_a_post(self):
+        items = [self.passive(f"item {k}") for k in range(2)]
+        for p in items:
+            self.mention(p, "Llamafile")
+        other = self.passive("names it as subject")
+        self.mention(other, "Llamafile")
+        passing = self.passive("names it in passing")
+        self.mention(passing, "Llamafile", role="mention")
+        self.label_many(items, "in")
+        t, prep = self.prepare()
+        self.assertEqual(len(prep["learned"]["entities"]), 1)
+        got = {d["post_id"]: d["fired"] for d in finders.score(self.cur, t, prep, ids=[other, passing])}
+        self.assertEqual((got[other], got[passing]), (["entity"], []))
+
+    def test_a_domain_of_two_items_finds_a_post_not_its_home_page(self):
+        items = [self.passive(f"item {k}", links=[(f"https://example.com/build/{k}", "build")]) for k in range(2)]
+        self.label_many(items, "in")
+        deep = self.passive("deep link", links=[("https://example.com/build/9", "x")])
+        home = self.passive("home page", links=[("https://example.com/", "x")])
+        t, prep = self.prepare()
+        self.assertIn("example.com", prep["learned"]["domains"])
+        got = {d["post_id"]: d["fired"] for d in finders.score(self.cur, t, prep, ids=[deep, home])}
+        self.assertEqual((got[deep], got[home]), (["domain"], []))
+
+    def test_words_of_the_items_and_numbers_with_their_units(self):
+        texts = [f"Running a quantised model on a used card {k}: 22 tok/s with llamafile and kobold" for k in range(3)]
+        items = [self.passive(f"item {k}", text=x) for k, x in enumerate(texts)]
+        for k in range(30):
+            self.passive(f"background {k}", text=" ".join(f"garden{k}x{j}" for j in range(120)))   # a month of other words
+        self.label_many(items, "in")
+        two = self.passive("two words", text="A post about llamafile and kobold together")
+        one = self.passive("one word", text="A post about llamafile alone")
+        for p in items + [one]:
+            self.numbers(p, ["30 tok/s"])
+        t, prep = self.prepare()
+        self.assertTrue({"llamafil", "kobold"} <= set(prep["learned"]["words"]) or
+                        {"llamafile", "kobold"} <= set(prep["learned"]["words"]), prep["learned"]["words"])
+        self.assertEqual(prep["learned"]["units"], ["tok/s"])
+        got = {d["post_id"]: d for d in finders.score(self.cur, t, prep, ids=[two, one])}
+        self.assertIn("word", got[two]["fired"])
+        self.assertIn("word", got[one]["fired"])                              # one word + a number in tok/s
+
+    def test_source_and_story_priors(self):
+        items = [self.passive(f"item {k}") for k in range(3)]
+        self.label_many(items, "in")
+        sibling = self.post(title="same story", source=self.third)
+        self.vector(sibling, self.far())
+        self.cur.execute("INSERT INTO mx_stories DEFAULT VALUES RETURNING id")
+        story = self.cur.fetchone()[0]
+        for p in (items[0], sibling):
+            self.cur.execute("INSERT INTO mx_story_posts (story_id, post_id, role, reason) VALUES (%s, %s, 'member', 'test')",
+                             (story, p))
+        t, prep = self.prepare()
+        self.assertEqual(prep["learned"]["sources"], [self.other])
+        near = self.post(title="from the source, near the bar", source=self.other)
+        self.vector(near, unit((0, 1), (99, 1.05)))                          # 0.69 to the description
+        prep["bar"] = 0.72
+        got = {d["post_id"]: d for d in finders.score(self.cur, t, prep, ids=[sibling, near])}
+        self.assertEqual(got[sibling]["fired"], ["story"])
+        self.assertGreater(got[near]["probe"], 0.67)
+        self.assertLess(got[near]["probe"], 0.72)
+        self.assertEqual(got[near]["fired"], ["source"])
+
+    def test_found_by_on_items_and_the_page(self):
+        items = [self.passive(f"item {k}") for k in range(2)]
+        for p in items:
+            self.mention(p, "Llamafile")
+        self.label_many(items, "in")
+        p = self.passive("names it")
+        self.mention(p, "Llamafile")
+        self.plan()
+        self.cur.execute("SELECT found_by FROM mx_track_items WHERE post_id = %s", (p,))
+        self.assertEqual(self.cur.fetchone()[0], ["entity"])
+        self.judge(p, verdict())
+        body = self.page()
+        shown = next(it for it in body["discover"] if it["post_id"] == p)
+        self.assertEqual(shown["found_by"], ["entity"])
+        self.assertEqual(body["prefilter"]["found_by"]["entity"], 1)
+
+    def test_the_capped_union_goes_by_finders_fired_then_probe(self):
+        two = self.passive("two finders")
+        one = self.passive("one finder")
+        for p in (two, one):
+            self.mention(p, "Llamafile")
+        items = [self.passive(f"item {k}", links=[(f"https://example.com/b/{k}", "b")]) for k in range(2)]
+        for x in items:
+            self.mention(x, "Llamafile")
+        self.label_many(items, "in")
+        self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, 'example.com', 0)",
+                         (two, "https://example.com/b/7"))
+        self.plan(cap=1)
+        self.assertEqual(list(self.items()), [two])
+
+
+class Classifier(_Finders):
+    def setUp(self):
+        super().setUp()
+        self.describe("Cheap local AI setups")
+        self.desc_vector(unit((0, 1)))
+
+    def labelled(self, n_in, n_out):
+        ins, outs = [], []
+        for k in range(n_in):
+            p = self.post(title=f"in {k} {uuid.uuid4().hex[:4]}", source=self.other)
+            self.vector(p, unit((1, 1), (10 + k, 0.3)))
+            ins.append(p)
+        for k in range(n_out):
+            p = self.post(title=f"out {k} {uuid.uuid4().hex[:4]}", source=self.other)
+            self.vector(p, unit((2, 1), (100 + k, 0.3)))
+            outs.append(p)
+        self.label_many(ins, "in")
+        self.label_many(outs, "out")
+        return ins, outs
+
+    def prepare(self):
+        t = tracks.get(self.cur, self.folder)
+        return finders.prepare(self.cur, t, tracks.examples(self.cur, self.folder), now=NOW)
+
+    def models(self):
+        self.cur.execute("SELECT labels, valid_to IS NULL FROM mx_track_models WHERE track_id = %s ORDER BY created_at",
+                         (self.folder,))
+        return self.cur.fetchall()
+
+    def test_the_gate_then_a_retrain_each_ten_labels(self):
+        self.labelled(22, 7)
+        self.assertIsNone(self.prepare()["model"])                            # 29 labels, 7 out: shut
+        self.labelled(0, 1)
+        prep = self.prepare()
+        self.assertIsNotNone(prep["model"])                                   # 30, 8 of each: trained
+        self.assertEqual(self.models(), [(30, True)])
+        self.labelled(5, 0)
+        self.prepare()
+        self.assertEqual(len(self.models()), 1)                               # 5 new: the same model
+        self.labelled(3, 2)
+        self.prepare()
+        self.assertEqual(self.models(), [(30, False), (40, True)])            # 10 new: retrained
+
+    def test_it_ranks_and_finds(self):
+        self.labelled(20, 10)
+        prep = self.prepare()
+        t = tracks.get(self.cur, self.folder)
+        like_in = self.post(title="like the ins", source=self.other)
+        like_out = self.post(title="like the outs", source=self.other)
+        self.vector(like_in, unit((1, 1), (500, 0.3)))
+        self.vector(like_out, unit((2, 1), (501, 0.3)))
+        got = {d["post_id"]: d for d in finders.score(self.cur, t, prep, ids=[like_in, like_out])}
+        self.assertGreater(got[like_in]["p"], got[like_out]["p"])
+        self.assertIn("classifier", got[like_in]["fired"])
+        self.assertNotIn("classifier", got[like_out]["fired"])
+
+
+if __name__ == "__main__":
+    unittest.main()

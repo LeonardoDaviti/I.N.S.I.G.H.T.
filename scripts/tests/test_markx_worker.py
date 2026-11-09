@@ -717,5 +717,35 @@ class TestTracks(Base):
         self.assertEqual(sizes["subtopics"], [1, 1])
 
 
+class TestProbes(Base):
+    """0147: a track's example posts (probes-v1) are a default kind, leased before the track judge, one track a call."""
+
+    def setUp(self):
+        super().setUp()
+        for kind, gid in (("probes", "probes-v1"), ("track", "track-v1")):
+            KIND_GUIDE[kind] = gid
+            self.addCleanup(KIND_GUIDE.pop, kind)
+            self.stub.guides[gid] = guide(gid, f"GUIDE {gid}")
+
+    def test_probes_is_a_default_kind_before_the_judge_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertIn("probes", kinds)
+        self.assertLess(kinds.index("probes"), kinds.index("track"))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["probes"], 1)
+
+    def test_probes_asked_one_track_a_call(self):
+        self.stub.add("probes", 3, start=1)
+        self.stub.add("track", 4, start=101)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = {}
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            sizes.setdefault(self.stub.tasks[str(ids[0])]["kind"], []).append(len(ids))
+        self.assertEqual(sizes["probes"], [1, 1, 1])
+        self.assertEqual(sizes["track"], [4])
+
+
 if __name__ == "__main__":
     unittest.main()

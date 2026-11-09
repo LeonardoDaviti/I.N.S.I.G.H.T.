@@ -23,6 +23,17 @@ export function rankWords(item: TrackItem): string {
   return item.calibrated ? `~${pct(item.rank)} precise at this confidence` : `confidence ${pct(item.confidence ?? 0)}`;
 }
 
+const FINDER_WORDS: Record<string, string> = {
+  probe: 'example post', entity: 'entity', domain: 'domain', word: 'words', source: 'source', story: 'story',
+  classifier: 'classifier',
+};
+
+/** 0147: "found by: example post, entity, domain" (null for an active source's item, which every post is). */
+export function foundByLine(item: Pick<TrackItem, 'found_by'>): string | null {
+  const got = (item.found_by ?? []).map((f) => FINDER_WORDS[f] ?? f);
+  return got.length ? `found by: ${got.join(', ')}` : null;
+}
+
 export function suggestionLine(s: TrackSuggestion): string {
   return `${s.source}: ${s.n} of your ${s.track_name} in 30 days — make it active?`;
 }

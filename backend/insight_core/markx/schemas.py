@@ -311,6 +311,15 @@ SUBTOPICS_SCHEMA = {
         "properties": {"name": {"type": "string", "minLength": 1}, "definition": _STR_OR_NULL,
                        "items": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}}},
 }
+# 0147 (track recall): a track's example posts (probes-v1): 12-20 that belong, up to 4 near-misses that don't.
+PROBES_MIN, PROBES_MAX, NEAR_MAX, PROBE_CHARS = 12, 20, 4, 300
+PROBES_SCHEMA = {
+    "type": "object",
+    "required": ["probes"],
+    "properties": {"probes": {"type": "array", "minItems": PROBES_MIN, "maxItems": PROBES_MAX,
+                              "items": {"type": "string", "minLength": 1}},
+                   "near_misses": {"type": "array", "maxItems": NEAR_MAX, "items": {"type": "string", "minLength": 1}}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -350,6 +359,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
     Kind("track", "track-v1", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py)
     Kind("subtopics", "subtopics-v1", "track", SUBTOPICS_SCHEMA),    # 0145: a track's sub-topics, proposed
+    Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # 0147: a track's example posts (track recall)
 )}
 
 

@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 
 import TrackTopic from './TrackTopic';
 import TrackSourceLines from './TrackSourceLines';
-import { footerLine, joinLine, precisionLine, rankWords, suggestionLine } from './trackWords';
+import { footerLine, foundByLine, joinLine, precisionLine, rankWords, suggestionLine } from './trackWords';
 import { tracksApi, type TrackItem, type TrackPage } from '../../services/tracks';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
@@ -54,6 +54,21 @@ describe('the lines in words', () => {
     expect(rankWords(item({ rank: 0.83, calibrated: true }))).toBe('~83% precise at this confidence');
     expect(suggestionLine(PAGE.suggestions[0])).toBe('Example Blog: 3 of your Prints in 30 days — make it active?');
     expect(footerLine(PAGE.footer!, PAGE.counts)).toBe('$0.12 so far · $0.01 a day · 1.29 items a day · 40 questions · 5 posts judged out (kept)');
+  });
+});
+
+describe('found by (0147)', () => {
+  it('names the finders that put a passive post up for judging, on hover', async () => {
+    expect(foundByLine({ found_by: ['probe', 'entity', 'domain'] })).toBe('found by: example post, entity, domain');
+    expect(foundByLine({ found_by: [] })).toBeNull();
+    expect(foundByLine({})).toBeNull();
+    const page = { ...PAGE, discover: [{ ...PAGE.discover[0], found_by: ['word', 'source'] }] };
+    vi.spyOn(tracksApi, 'page').mockResolvedValue(page);
+    renderWithProviders(<TrackTopic folderId="f1" />, { api: makeFakeApi({}) });
+    const discover = await screen.findByRole('region', { name: 'Discover' });
+    expect(within(discover).getByText(/confidence 70%/)).toHaveAttribute('title', 'found by: words, source');
+    const storage = screen.getByRole('region', { name: 'Wall storage' });
+    expect(within(storage).getAllByText(/Example Channel/)[0]).not.toHaveAttribute('title');
   });
 });
 

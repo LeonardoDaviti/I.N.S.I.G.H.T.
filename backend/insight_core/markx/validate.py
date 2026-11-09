@@ -409,6 +409,21 @@ def _subtopics(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _probes(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0147: the example posts are distinct; each at most PROBE_CHARS (a longer one is a guide not followed)."""
+    seen: set = set()
+    for p in list(a["probes"]) + list(a.get("near_misses") or []):
+        t = " ".join(p.split()).casefold()
+        if not t:
+            return "an empty example post"
+        if len(t) > schemas.PROBE_CHARS * 2:
+            return f"an example post over {schemas.PROBE_CHARS * 2} characters"
+        if t in seen:
+            return "an example post twice"
+        seen.add(t)
+    return None
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -416,6 +431,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "back": _back,       # 0136
           "cite": _cite,       # 0133 v4.2
           "track": _track, "subtopics": _subtopics,   # 0145
+          "probes": _probes,                          # 0147
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

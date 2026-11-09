@@ -67,7 +67,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import finders, repo, schemas, tasks
 
 log = logging.getLogger(__name__)
 
@@ -415,14 +415,16 @@ def _fill(cur: Cursor, where: str, params: Sequence[Any], call_id: Any, answer: 
 
 
 def _ask(cur: Cursor, track: Dict[str, Any], head: str, p: tasks.Post, *, origin: str, cos: Optional[float],
-         priority: int) -> bool:
-    """One post's question for the track, and its row: whether a task was added."""
+         priority: int, found_by: Optional[Sequence[str]] = None, score: Optional[float] = None) -> bool:
+    """One post's question for the track, and its row (a passive one with the finders that found it, 0147): whether a
+    task was added."""
     schemas.ensure_guides(cur)
     task_id, new = repo.add_task(cur, kind=KIND, guide=schemas.KINDS[KIND].guide, subject_kind="post_track",
                                  input=track_input(head, p), a=p.id, b=track["folder_id"], priority=priority)
-    cur.execute("""INSERT INTO mx_track_items (track_id, post_id, version, task_id, origin, cos)
-                   VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
-                (track["folder_id"], p.id, track["version"], task_id, origin, cos))
+    cur.execute("""INSERT INTO mx_track_items (track_id, post_id, version, task_id, origin, cos, found_by, score)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                (track["folder_id"], p.id, track["version"], task_id, origin, cos,
+                 list(found_by) if found_by else None, score))
     if not new:
         got = _answered_verdict(cur, task_id)
         if got:
@@ -447,41 +449,29 @@ def _active_rows(cur: Cursor, track: Dict[str, Any], *, days: Optional[int], lim
     return cur.fetchall()
 
 
-_PASSIVE = """FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
-             WHERE p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)"""
+def _recent(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, limit: int, now: datetime):
+    """The passive posts of the last RECENT_DAYS: (scanned, passed: a finder fired, [scored post] to ask, in the
+    union's order: finders.order_key). It overlaps the history pass (which starts at the version's start) on purpose:
+    a post dated before it but stored after is still read."""
+    rows = finders.score(cur, track, prep, since=now - timedelta(days=RECENT_DAYS), until=now)
+    hits = [d for d in rows if d["fired"]]
+    have = _has_item(cur, track, [d["post_id"] for d in hits]) | finders.labelled(prep)
+    todo = sorted((d for d in hits if d["post_id"] not in have), key=finders.order_key, reverse=True)
+    return len(rows), len(hits), todo[:max(0, limit)]
 
 
-def _recent(cur: Cursor, track: Dict[str, Any], prof: Dict[str, Any], *, limit: int, now: datetime):
-    """The passive posts of the last RECENT_DAYS: (scanned, passed, [(id, at, cos)] to ask). It overlaps the history
-    pass (which starts at the version's start) on purpose: a post dated before it but stored after is still read."""
-    since = now - timedelta(days=RECENT_DAYS)
-    q = {"model": MODEL, "t": track["folder_id"], "since": since, "now": now, "thr": prof["threshold"],
-         "v": track["version"], "limit": limit, "q": repo.vector_text(prof["vector"])}
-    cur.execute(f"""SELECT count(*), count(*) FILTER (WHERE 1 - (e.v <=> %(q)s::halfvec) >= %(thr)s)
-                    {_PASSIVE} AND {_date()} >= %(since)s AND {_date()} <= %(now)s""", q)
-    scanned, passed = cur.fetchone()
-    cur.execute(f"""SELECT p.id::text, {_date()}, 1 - (e.v <=> %(q)s::halfvec) {_PASSIVE}
-                       AND {_date()} >= %(since)s AND {_date()} <= %(now)s
-                       AND 1 - (e.v <=> %(q)s::halfvec) >= %(thr)s
-                       AND NOT EXISTS (SELECT 1 FROM mx_track_items i
-                                        WHERE i.track_id = %(t)s AND i.post_id = p.id AND i.version = %(v)s)
-                     ORDER BY {_date()} DESC, p.id DESC LIMIT %(limit)s""", q)
-    return scanned, passed, cur.fetchall()
-
-
-def _history_page(cur: Cursor, track: Dict[str, Any], prof: Dict[str, Any]):
-    """The history pass's next page: [(id, at, cos or None: no vector, active)], newest first, before the cursor
-    (or the version's start)."""
+def _history_page(cur: Cursor, track: Dict[str, Any]):
+    """The history pass's next page: [(id, at, has a vector, active)], newest first, before the cursor (or the
+    version's start)."""
     at, pid = track.get("history_at"), track.get("history_id")
-    cur.execute(f"""SELECT p.id::text, {_date()},
-                           CASE WHEN e.v IS NULL THEN NULL ELSE 1 - (e.v <=> %(q)s::halfvec) END,
+    cur.execute(f"""SELECT p.id::text, {_date()}, e.post_id IS NOT NULL,
                            p.source_id IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
                       FROM posts p LEFT JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
                      WHERE {_date()} IS NOT NULL
                        AND ({_date()}, p.id) < (%(at)s::timestamptz, %(id)s::uuid)
                      ORDER BY {_date()} DESC, p.id DESC LIMIT %(limit)s""",
-                {"q": repo.vector_text(prof["vector"]), "t": track["folder_id"], "model": MODEL,
-                 "at": at or track["version_at"], "id": pid if at else MAX_UUID, "limit": HISTORY_PAGE})
+                {"t": track["folder_id"], "model": MODEL, "at": at or track["version_at"],
+                 "id": pid if at else MAX_UUID, "limit": HISTORY_PAGE})
     return cur.fetchall()
 
 
@@ -493,30 +483,32 @@ def _has_item(cur: Cursor, track: Dict[str, Any], ids: Sequence[str]) -> set:
     return {r[0] for r in cur.fetchall()}
 
 
-def _history(cur: Cursor, t: Dict[str, Any], prof: Dict[str, Any], head: str, *, budget: int, now: datetime
+def _history(cur: Cursor, t: Dict[str, Any], prep: Dict[str, Any], head: str, *, budget: int, now: datetime
              ) -> Tuple[int, int, int, int]:
     """The history pass's next stretch: at most `budget` tasks and HISTORY_PAGES pages, the cursor kept after each
-    post read (so a stop at the cap resumes there); done when a page comes back short. (planned, scanned, passed,
-    posts with no vector yet: not read again by this pass)."""
+    post read (so a stop at the cap resumes there); done when a page comes back short. A post is asked when a finder
+    fires for it (0147). (planned, scanned, passed, posts with no vector yet: not read again by this pass)."""
     n = scanned = passed = unembedded = 0
-    thr = prof["threshold"]
     for _page in range(HISTORY_PAGES):
-        page = _history_page(cur, t, prof)
-        hits = [r for r in page if r[2] is not None and not r[3] and r[2] >= thr]
-        have = _has_item(cur, t, [r[0] for r in hits])
-        posts = tasks.load_posts(cur, [r[0] for r in hits if r[0] not in have])
+        page = _history_page(cur, t)
+        scored = {d["post_id"]: d for d in finders.score(cur, t, prep, ids=[r[0] for r in page if r[2] and not r[3]])}
+        hits = [pid for pid, d in scored.items() if d["fired"]]
+        have = _has_item(cur, t, hits) | finders.labelled(prep)
+        posts = tasks.load_posts(cur, [p for p in hits if p not in have])
         last, full = None, False
-        for pid, at, cos, active in page:
+        for pid, at, embedded, active in page:
             if n >= budget:
                 full = True
                 break
             scanned += 1
-            unembedded += cos is None
-            if cos is not None and not active and cos >= thr:
+            unembedded += not embedded
+            d = scored.get(pid)
+            if d is not None and d["fired"]:
                 passed += 1
                 p = posts.get(pid)
-                if pid not in have and p is not None and _ask(cur, t, head, p, origin="passive", cos=float(cos),
-                                                              priority=HISTORY_PRIORITY + _age(at, now)):
+                if pid not in have and p is not None and _ask(
+                        cur, t, head, p, origin="passive", cos=d["desc"], priority=HISTORY_PRIORITY + _age(at, now),
+                        found_by=d["fired"], score=d["probe"]):
                     n += 1
             last = (at, pid)
         if last:
@@ -558,7 +550,7 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     for t in ts:
         ex = examples(cur, t["folder_id"])
         heads[t["folder_id"]] = header(cur, t, ex)
-        profs[t["folder_id"]] = profile(cur, t, ex)
+        profs[t["folder_id"]] = finders.prepare(cur, t, ex, now=now)   # 0147: the finders, their bar, the classifier
 
     def share(left: int, k: int) -> int:
         return max(1, -(-left // max(1, k)))
@@ -580,23 +572,23 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     # 2. passive, recent
     for k, t in enumerate(ts):
         prof = profs[t["folder_id"]]
-        if prof["vector"] is None:
+        if not prof["ready"]:
             continue
         left = room - added
         scanned, passed, rows = _recent(cur, t, prof, limit=max(0, share(left, len(ts) - k)) if left > 0 else 0, now=now)
-        posts = tasks.load_posts(cur, [r[0] for r in rows])
+        posts = tasks.load_posts(cur, [d["post_id"] for d in rows])
         n = 0
-        for pid, at, cos in rows:
-            p = posts.get(pid)
-            if p is not None and _ask(cur, t, heads[t["folder_id"]], p, origin="passive", cos=float(cos),
-                                      priority=_age(at, now)):
+        for d in rows:
+            p = posts.get(d["post_id"])
+            if p is not None and _ask(cur, t, heads[t["folder_id"]], p, origin="passive", cos=d["desc"],
+                                      priority=_age(d["at"], now), found_by=d["fired"], score=d["probe"]):
                 n += 1
         added += n
         _stat(stats[t["folder_id"]], "recent", scanned=scanned, passed=passed, planned=n)
     # 3. passive, history (once a version, resumable)
     for k, t in enumerate(ts):
         prof = profs[t["folder_id"]]
-        if prof["vector"] is None or t.get("history_done_at") is not None:
+        if not prof["ready"] or t.get("history_done_at") is not None:
             continue
         budget = share(room - added, len(ts) - k) if room - added > 0 else 0
         if budget <= 0:
@@ -614,7 +606,7 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
         for phase, d in s.items():
             for key, v in d.items():
                 totals[f"{phase}_{key}"] = totals.get(f"{phase}_{key}", 0) + v
-        new = {"last": {"at": now.isoformat(), "threshold": profs[t["folder_id"]]["threshold"], **s}, "totals": totals}
+        new = {"last": {"at": now.isoformat(), "threshold": profs[t["folder_id"]]["bar"], **s}, "totals": totals}
         cur.execute("UPDATE mx_tracks SET stats = %s::jsonb WHERE folder_id = %s",
                     (json.dumps(new), t["folder_id"]))
         log.info("track %s: %s", t["folder_id"], s)
@@ -851,14 +843,14 @@ def rank_of(cal: Dict[str, Any], conf: Optional[float]) -> float:
 def _items(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
     """The track's judged posts: each post's newest verdict (any version)."""
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, i.subtopic, i.why, i.origin,
-                           i.cos, i.answered_at, i.version, p.title, p.url, {_date()}, p.source_id::text,
+                           i.cos, i.answered_at, i.version, i.found_by, p.title, p.url, {_date()}, p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                     s.handle_or_url)
                       FROM mx_track_items i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
                      WHERE i.track_id = %s AND i.verdict IS NOT NULL
                      ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
-    cols = ("post_id", "verdict", "confidence", "subtopic", "why", "origin", "cos", "answered_at", "version", "title",
-            "url", "at", "source_id", "source")
+    cols = ("post_id", "verdict", "confidence", "subtopic", "why", "origin", "cos", "answered_at", "version", "found_by",
+            "title", "url", "at", "source_id", "source")
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
@@ -905,7 +897,8 @@ def _shown(it: Dict[str, Any]) -> Dict[str, Any]:
             "source": it["source"], "source_id": it["source_id"],
             "confidence": None if it["confidence"] is None else round(it["confidence"], 3),
             "subtopic": it["subtopic"], "why": it["why"], "origin": "active" if it["active"] else "passive",
-            "place": it["place"], "label": it["label"], "rank": round(it["rank"], 4), "calibrated": it["calibrated"]}
+            "place": it["place"], "label": it["label"], "rank": round(it["rank"], 4), "calibrated": it["calibrated"],
+            "found_by": list(it.get("found_by") or [])}
 
 
 def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -996,6 +989,7 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     ex = examples(cur, folder_id)
     shown_ex = tasks.load_posts(cur, ex["in"][:20] + ex["out"][:20])
     prof = profile(cur, t, ex)
+    probes = finders.probe_rows(cur, folder_id, t["version"])
     stats = t.get("stats") or {}
     return {"track": {**base, "version": t["version"], "version_at": _iso(t["version_at"])},
             "sections": sections, "discover": [_shown(it) for it in disc[:DISCOVER_ITEMS]],
@@ -1007,7 +1001,10 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
             "prefilter": {"threshold": prof["threshold"], "ready": prof["vector"] is not None, "pos": prof["pos"],
                           "neg": prof["neg"], "description": prof["description"], "last": stats.get("last"),
                           "totals": stats.get("totals"),
-                          "history": {"done": _iso(t["history_done_at"]), "at": _iso(t["history_at"])}}}
+                          "history": {"done": _iso(t["history_done_at"]), "at": _iso(t["history_at"])},
+                          # 0147: the example posts of this version and how many items each finder found
+                          "probes": sum(1 for r in probes if not r["near"]), "near_misses": sum(1 for r in probes if r["near"]),
+                          "found_by": dict(Counter(f for it in items for f in (it.get("found_by") or [])))}}
 
 
 def label(cur: Cursor, folder_id: Any, *, post: Any, answer: str, note: Optional[str] = None) -> Dict[str, Any]:

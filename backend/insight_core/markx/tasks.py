@@ -690,6 +690,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
         from insight_core.markx import tracks
         tracks.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "probes":                  # 0147: a track's example posts
+        from insight_core.markx import finders
+        finders.after_answer(cur, task, call_id, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])
@@ -840,12 +843,18 @@ def _plan_subtopics(cur: Cursor, **kw: Any) -> int:   # 0145: a track's sub-topi
 
 
 def _with_track_vectors(planner: Any) -> Any:   # 0145: the tracks' descriptions embedded with the posts (embed kind)
-    def plan(cur: Cursor, **kw: Any) -> int:
-        from insight_core.markx import tracks
-        return tracks.plan_vectors(cur) + planner(cur, **kw)
+    def plan(cur: Cursor, **kw: Any) -> int:      # 0147: and their example posts
+        from insight_core.markx import finders, tracks
+        return tracks.plan_vectors(cur) + finders.plan_vectors(cur) + planner(cur, **kw)
     return plan
+
+
+def _plan_probes(cur: Cursor, **kw: Any) -> int:   # 0147: a track's example posts, once a version
+    from insight_core.markx import finders
+    return finders.plan_probes(cur, **kw)
 
 
 PLANNERS["track"] = _plan_tracks                                           # 0145
 PLANNERS["subtopics"] = _plan_subtopics                                    # 0145
+PLANNERS["probes"] = _plan_probes                                          # 0147
 PLANNERS["embed"] = _with_track_vectors(PLANNERS["embed"])                 # 0145
