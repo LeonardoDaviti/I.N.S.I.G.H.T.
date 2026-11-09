@@ -75,6 +75,8 @@ NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts 
 # A page Collect originals stored (issue 0126) is shown only inside its story: no row of a feed (the Main feed,
 # a track, a source's list) and no unread count. Later, Kept and History list it when you put it there.
 NOT_STORY_ONLY = f"NOT (p.metadata ? '{STORY_ONLY_KEY}')"
+# A scope's restriction to some posts (FeedScope.only, v10.12.1), its one parameter the ids.
+ONLY_SQL = "p.id = ANY(%s::uuid[])"
 _YOURS_FILTERS = ("later", "starred", "history")
 # A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
@@ -150,10 +152,15 @@ class FeedScope:
 
     kind: Literal["all", "folder", "source", "voice"]
     id: Optional[str] = None
+    # Only these posts of the scope (v10.12.1: a topic track's items, which Mark X decides; the reader stays generic).
+    # None (every scope the API parses): no restriction, and the SQL is as it always was.
+    only: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         if self.kind not in SCOPE_KINDS:
             raise ValueError(f"invalid feed scope kind: {self.kind!r}")
+        if self.only is not None:
+            object.__setattr__(self, "only", tuple(str(i) for i in self.only))
         if self.kind == "all":
             if self.id is not None:
                 raise ValueError("scope 'all' takes no id")
@@ -413,8 +420,12 @@ class ReaderRepository:
     @staticmethod
     def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
         """The posts a scope lists; never a Telegram album's picture, which its post shows (issue 0069), nor a
-        page shown only inside its story (issue 0126) unless you put it in Later, Kept or History."""
+        page shown only inside its story (issue 0126) unless you put it in Later, Kept or History.
+        A scope with `only` (v10.12.1, a topic track) lists those posts, whatever their source (a post INSIGHT
+        joined to the track may come from a source outside the folder)."""
         shown = NOT_ALBUM_PIECE if filter in _YOURS_FILTERS else f"{NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY}"
+        if scope.only is not None:
+            return f"{shown} AND {ONLY_SQL}", [list(scope.only)]
         if scope.kind == "all":
             return f"{shown} AND {'TRUE' if filter in _EVERY_SOURCE_FILTERS else 's.in_main_digest'}", []
         if scope.kind == "folder":
@@ -823,6 +834,8 @@ class ReaderRepository:
         group_rows = cur.fetchall()
         page = group_rows[:groups]
         items_by_source: Dict[str, List[Dict[str, Any]]] = {str(row[0]): [] for row in page}
+        # A restricted scope (v10.12.1) lists only its posts in each group too; else nothing is added.
+        only_sql, only_params = ("", []) if scope.only is None else (f" AND {ONLY_SQL}", [list(scope.only)])
         if page:
             cur.execute(
                 f"""
@@ -834,12 +847,12 @@ class ReaderRepository:
                     JOIN sources s ON s.id = p.source_id
                     LEFT JOIN post_reader_state rs ON rs.post_id = p.id
                     LEFT JOIN post_parts pp ON pp.post_id = p.id
-                    WHERE p.source_id = g.source_id AND {filter_sql} AND {window_sql}
+                    WHERE p.source_id = g.source_id AND {filter_sql} AND {window_sql}{only_sql}
                     ORDER BY {SORT_KEY} DESC, p.id DESC
                     LIMIT %s
                 ) x
                 """,
-                [list(items_by_source), *filter_params, *window_params, per_source],
+                [list(items_by_source), *filter_params, *window_params, *only_params, per_source],
             )
             for row in cur.fetchall():
                 item = _item(row)
@@ -1066,3 +1079,20 @@ class ReaderRepository:
         later_count, later_minutes = cur.fetchone()
         return {"total": total, "by_source": by_source, "newest_unread": newest_unread, "by_folder": by_folder,
                 "later": {"count": int(later_count), "minutes": int(later_minutes)}}
+
+    def scope_unread(self, cur: Cursor, scope: FeedScope) -> int:
+        """One scope's unread rows, as unread_counts counts a track's (a story with unread posts is one): for a scope
+        restricted to some posts (v10.12.1, a topic track's items), which unread_counts has no key for."""
+        scope_sql, params = self._scope_sql(scope, "unread")
+        window_sql, window_params = self._window_sql()
+        cur.execute(
+            f"""
+            SELECT COUNT(DISTINCT COALESCE(sp.story_id, p.id))
+            FROM posts p
+            JOIN sources s ON s.id = p.source_id
+            LEFT JOIN story_posts sp ON sp.post_id = p.id
+            WHERE {scope_sql} AND {UNREAD_SQL} AND {window_sql}
+            """,
+            [*params, *window_params],
+        )
+        return int(cur.fetchone()[0])

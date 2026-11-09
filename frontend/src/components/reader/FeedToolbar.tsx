@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import type { FeedFilter, ReaderView } from '../../services/api';
 import { useFlowPreference, type ReadingFlow } from '../../hooks/useShortcutPreference';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
+import Switch from '../ui/Switch';
 import SearchField from './SearchField';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
@@ -60,6 +61,8 @@ export interface FeedToolbarProps {
   updates?: boolean;
   /** Offer View Topic: a track while Mark X is on (issue 0145). */
   topic?: boolean;
+  /** A topic track's reading views (v10.12.1): its items only, or, switched on, every post of its sources. */
+  allSources?: { on: boolean; onChange: (on: boolean) => void } | null;
 }
 
 /**
@@ -73,7 +76,7 @@ export interface FeedToolbarProps {
  */
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
-  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false, topic = false,
+  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false, topic = false, allSources = null,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
   // News and Classics rank stories and pages: Show (a read-state filter) and Posts say nothing there.
@@ -92,6 +95,12 @@ export default function FeedToolbar({
         {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
         <SlashChoice label="View" value={view} options={views} onChange={onViewChange} />
         {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
+        {allSources && !ranked ? (
+          <label className="inline-flex min-h-[2.25rem] items-center gap-2 whitespace-nowrap px-1 text-[0.875rem] lowercase text-fg-2 coarse:min-h-[2.75rem]">
+            <Switch checked={allSources.on} onCheckedChange={allSources.onChange} data-testid="reader-all-sources" />
+            All posts from its sources
+          </label>
+        ) : null}
         {pill ? <div className="ml-auto">{pill}</div> : null}
       </div>
     </ReaderToolbar>

@@ -33,6 +33,8 @@ export interface FeedListProps {
   onHelpOpenChange?: (open: boolean) => void;
   /** Each local change applied to the cached unread counts (for the "N new posts" pill). */
   onUnreadDelta?: (change: UnreadChange) => void;
+  /** A topic track (0145, Mark X on): every post of its sources, not only its items (v10.12.1). */
+  allSources?: boolean;
 }
 
 const UNDO_MS = 5_000;
@@ -78,7 +80,7 @@ export interface PostListProps extends Omit<FeedListProps, 'fixture'> {
 
 /** The reader list (spec §F.3, §F.5, §F.6): FeedList loads the feed; the search page hands its results to PostList. */
 function FeedList({ fixture = null, ...props }: FeedListProps) {
-  const feed = useFeed({ scope: props.scope, filter: props.filter, view: props.view, fixture });
+  const feed = useFeed({ scope: props.scope, filter: props.filter, view: props.view, fixture, allSources: props.allSources });
   return <PostList feed={feed} dryRun={Boolean(fixture)} {...props} />;
 }
 
@@ -90,7 +92,7 @@ function FeedList({ fixture = null, ...props }: FeedListProps) {
  */
 function PostListBody({
   feed, scope, filter, view, dryRun = false, search = false, ranked, emptyTitle, emptyDescription, emptyAction,
-  helpOpen, onHelpOpenChange, onUnreadDelta,
+  helpOpen, onHelpOpenChange, onUnreadDelta, allSources = false,
 }: PostListProps) {
   const announce = useAnnounce();
   const navigate = useNavigate();
@@ -216,7 +218,7 @@ function PostListBody({
     setConfirm(null);
     if (!pending || !items.length) return;
     try {
-      const marked = await mutations.markReadThrough(scope, pending.through, items[0], items);
+      const marked = await mutations.markReadThrough(scope, pending.through, items[0], items, allSources);
       const message = `Marked ${plural(marked.length, 'post')} as read`;
       announce(message);
       toast.success(message, {
@@ -238,7 +240,7 @@ function PostListBody({
       announce(errorMessage(error));
       toast.error(errorMessage(error));
     }
-  }, [announce, confirm, items, mutations, scope]);
+  }, [allSources, announce, confirm, items, mutations, scope]);
 
   // ---- keyboard selection ----
   const [nav, setNav] = useState(() => initialNavState());

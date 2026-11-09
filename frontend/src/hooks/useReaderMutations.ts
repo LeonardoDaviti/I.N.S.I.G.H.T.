@@ -202,13 +202,15 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
   }, [api, dryRun, queryClient, refreshCounts]);
 
   /** Mark read from `newest` (the first loaded item) down to `through`. Resolves the ids it marked. */
-  const markReadThrough = useCallback(async (scope: string, through: FeedItem, newest: FeedItem, loaded: FeedItem[]) => {
+  const markReadThrough = useCallback(async (scope: string, through: FeedItem, newest: FeedItem, loaded: FeedItem[], allSources = false) => {
     let ids: string[];
     if (dryRun) {
       const end = loaded.findIndex((item) => item.id === through.id);
       ids = loaded.slice(0, end + 1).filter((item) => !item.read_at).map((item) => item.id);
     } else {
-      const result = await api.markReadThrough(scope, feedCursorFor(through), feedCursorFor(newest));
+      const result = allSources
+        ? await api.markReadThrough(scope, feedCursorFor(through), feedCursorFor(newest), true)
+        : await api.markReadThrough(scope, feedCursorFor(through), feedCursorFor(newest));
       ids = result.ids ?? [];
     }
     applyRead([...findFeedItems(queryClient, ids).values()], true);

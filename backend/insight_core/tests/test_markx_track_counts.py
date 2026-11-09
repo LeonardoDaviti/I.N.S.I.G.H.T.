@@ -33,7 +33,7 @@ class TopicCounts(_Tracks):
         d = self.passive("passive in")
         e = self.passive("passive in, labelled out")
         f = self.passive("passive out")
-        self.assertEqual(self.counts()[self.folder], {"unread": 0, "discover": 0, "count": 0})   # nothing judged yet
+        self.assertEqual(self.counts()[self.folder], {"unread": 0, "discover": 0, "count": 0, "waiting": 3})   # nothing judged yet: 3 active waiting
         self.plan()
         self.judge(a, verdict())
         self.judge(b, verdict())
@@ -44,9 +44,9 @@ class TopicCounts(_Tracks):
         self.label(e, "out")
         self.cur.execute("INSERT INTO post_reader_state (post_id, read_at) VALUES (%s, now())", (b,))
         self.addCleanup(self.cur.execute, "DELETE FROM post_reader_state WHERE post_id = %s", (b,))
-        self.assertEqual(self.counts()[self.folder], {"unread": 1, "discover": 1, "count": 2})
+        self.assertEqual(self.counts()[self.folder], {"unread": 1, "discover": 1, "count": 2, "waiting": 0})
         self.label(d, "in")                                                   # labelled in: out of Discover, into the track
-        self.assertEqual(self.counts()[self.folder], {"unread": 2, "discover": 0, "count": 2})
+        self.assertEqual(self.counts()[self.folder], {"unread": 2, "discover": 0, "count": 2, "waiting": 0})
 
     def test_the_path_is_not_a_track_id_and_a_track_still_is(self):
         self.describe()
