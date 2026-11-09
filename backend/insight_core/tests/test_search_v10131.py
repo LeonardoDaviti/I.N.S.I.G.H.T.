@@ -146,6 +146,17 @@ class NameAndVersionInSearch(_Api):
                     self.assertEqual(sorted(self.ids("zorblax", order=order)), sorted([ru, en, apart, bench]))
                     self.assertEqual(sorted(self.ids("5.2", order=order)), sorted([ru, en, apart, bench]))
 
+    def test_the_line_marks_the_name_and_the_version_each(self):
+        # the pair in its title; its text has the two words apart: the line still marks each (as before v10.13.1)
+        pid = self.post("Zorblax 5.2", "Сегодня Acme выпустила Zorblax. Он быстрее, чем версия 4, и номер его 5.2.")
+        found = self.post("Сводка", "Короткая сводка.")
+        self.read(found, "Acme released Zorblax 5.2, a faster model.")
+        items = {i["id"]: i for i in self.reader.search(SearchQuery.parse(q="zorblax 5.2"))["items"]}
+        self.assertEqual(set(items), {pid, found})
+        self.assertTrue({"Zorblax", "5.2"} <= {p["text"].strip(" ,") for p in items[pid]["snippet"] if p["mark"]})
+        self.assertEqual(items[found]["snippet_from"], "markx")
+        self.assertTrue({"Zorblax", "5.2"} <= {p["text"].strip(" ,") for p in items[found]["snippet"] if p["mark"]})
+
     def test_mark_xs_english_layer_and_the_split_keep_the_pair(self):
         found = self.post("Новость дня", "Компания выпустила модель, она быстрее прежней.")
         self.read(found, "Acme released Zorblax 5.2, a faster model.")

@@ -12,8 +12,10 @@
 -- (k3.1, qwen3.8: it holds its name itself). "fable" alone and "5.2" alone are read as before.
 --
 -- search_query (the posts' index, Mark X's layer under the index's rule, Classics) pairs before it reads version
--- words by their parts (0042, 0052); Mark X's English layer is read as search_pair_versions(websearch_to_tsquery(
--- 'english', q)) by the backend. No vector changes, so nothing is refilled. Idempotent.
+-- words by their parts (0042, 0052; that step is search_version_words now); Mark X's English layer is read as
+-- search_pair_versions(websearch_to_tsquery('english', q)) by the backend. search_query_words(q) is the query as
+-- 0052 read it, unpaired: the words a result's line marks, each where it stands. No vector changes, so nothing is
+-- refilled. Idempotent.
 
 -- Whether a query's lexeme is a version number (see above).
 CREATE OR REPLACE FUNCTION search_version_number(lexeme text) RETURNS boolean
@@ -54,8 +56,8 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
   ) AS p
 $$;
 
--- 0052's query, its name-version pairs read first.
-CREATE OR REPLACE FUNCTION search_query(q text) RETURNS tsquery
+-- A query's lexemes with each version word W read as (W | its parts as a phrase): 0052's search_query, on a tsquery.
+CREATE OR REPLACE FUNCTION search_version_words(q tsquery) RETURNS tsquery
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
   SELECT COALESCE(string_agg(
            CASE WHEN w.parts IS NULL OR (t.in_phrase AND cardinality(array_remove(w.parts, NULL)) > 1) THEN t.tok
@@ -65,11 +67,22 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT m.a[1] AS tok, m.n,
            COALESCE(lag(m.a[1]) OVER (ORDER BY m.n) ~ '>\s*$', FALSE)
              OR COALESCE(lead(m.a[1]) OVER (ORDER BY m.n) ~ '^\s*<', FALSE) AS in_phrase
-    FROM regexp_matches(search_pair_versions(websearch_to_tsquery('russian', normalize($1, NFKC)))::text,
-                        '''(?:[^'']|'''')*''|[^'']+', 'g') WITH ORDINALITY AS m(a, n)
+    FROM regexp_matches($1::text, '''(?:[^'']|'''')*''|[^'']+', 'g') WITH ORDINALITY AS m(a, n)
   ) AS t
   CROSS JOIN LATERAL (
     SELECT CASE WHEN left(t.tok, 1) = ''''
                 THEN search_version_parts(replace(substr(t.tok, 2, length(t.tok) - 2), '''''', '''')) END AS parts
   ) AS w
+$$;
+
+-- The query's words unpaired, as 0052's search_query read them: what a result's line marks, each word where it stands.
+CREATE OR REPLACE FUNCTION search_query_words(q text) RETURNS tsquery
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT search_version_words(websearch_to_tsquery('russian', normalize($1, NFKC)))
+$$;
+
+-- A search's words (0052's), its name-version pairs read first.
+CREATE OR REPLACE FUNCTION search_query(q text) RETURNS tsquery
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT search_version_words(search_pair_versions(websearch_to_tsquery('russian', normalize($1, NFKC))))
 $$;

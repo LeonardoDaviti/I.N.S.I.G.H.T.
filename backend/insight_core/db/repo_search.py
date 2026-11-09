@@ -76,15 +76,20 @@ RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
 # Mark X's English layer (issue 0139, mx_post_search): the query read as English words, a name and its version
 # together (v10.13.1, migration 0095), as search_query reads them.
 MX_TSQUERY = "search_pair_versions(websearch_to_tsquery('english', %s))"
-MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_TSQUERY}) = 'T' THEN {MX_TSQUERY}"
-                   f" ELSE replace(querytree({MX_TSQUERY}), ' & ', ' | ')::tsquery END)")
+# The words its line marks, each alone (a name and its version unpaired: the line's own parse has no version parts).
+MX_WORDS = "websearch_to_tsquery('english', %s)"
+MX_MARK_TSQUERY = (f"(CASE WHEN querytree({MX_WORDS}) = 'T' THEN {MX_WORDS}"
+                   f" ELSE replace(querytree({MX_WORDS}), ' & ', ' | ')::tsquery END)")
 # A query of this many words or more orders by best match unless an order is asked (issue 0139).
 BEST_FROM_WORDS = 2
 # The words the line marks: any one of them, so the line shows the text's words even when the
 # others matched in the title or the source's name; never an excluded word (querytree drops
-# them). Its three %s are the same query.
-MARK_TSQUERY = (f"(CASE WHEN querytree({TSQUERY}) = 'T' THEN {TSQUERY}"
-                f" ELSE replace(querytree({TSQUERY}), ' & ', ' | ')::tsquery END)")
+# them). Its three %s are the same query. Its words are read unpaired (search_query_words, 0095): a name and
+# its version are marked each where it stands, as before v10.13.1; and the words split across the layers
+# (_split_match) are looked for one by one.
+WORDS = "search_query_words(%s)"
+MARK_TSQUERY = (f"(CASE WHEN querytree({WORDS}) = 'T' THEN {WORDS}"
+                f" ELSE replace(querytree({WORDS}), ' & ', ' | ')::tsquery END)")
 # A classic's words: its title (the stored post's, else its link words) and its address, read as
 # words but for a dot before a digit, so a version stays one (huggingface.co/Qwen/Qwen3.6-35B-A3B
 # reads "huggingface co Qwen Qwen3.6 35B A3B"); its title's letters plain (NFKC, issue 0070), as the
