@@ -249,6 +249,94 @@ class Addresses(_AddressCase):
         self.assertEqual(self.addresses(root), {})
 
 
+class PlatformRule(unittest.TestCase):
+    """v10.13.5: rule `repo`, a platform's page of one thing whose <thing> segment is the entity's name."""
+
+    def repo(self, url, *names):
+        return E.by_repo(url, {N.key(n) for n in names}, N.key, N.squash)
+
+    def test_a_model_hub_a_code_host_and_a_package_index(self):
+        self.assertEqual(self.repo("https://huggingface.co/quillwort-ai/Laryx", "Laryx"), ("release", "quillwort-ai"))
+        self.assertEqual(self.repo("https://hf.co/quillwort-ai/Laryx-2.5", "Laryx 2.5"), ("release", "quillwort-ai"))
+        self.assertEqual(self.repo("https://huggingface.co/datasets/quillwort-ai/FernBench", "FernBench"),
+                         ("release", "quillwort-ai"))
+        self.assertEqual(self.repo("https://github.com/tarnwick/ember_sync", "Ember Sync"), ("code", "tarnwick"))
+        self.assertEqual(self.repo("https://codeberg.org/tarnwick/embersync", "EmberSync"), ("code", "tarnwick"))
+        self.assertEqual(self.repo("https://pypi.org/project/embersync/", "embersync"), ("package", None))
+        self.assertEqual(self.repo("https://pypi.org/project/embersync/1.2.0", "embersync"), ("package", None))
+        self.assertEqual(self.repo("https://www.npmjs.com/package/@tarnwick/embersync", "embersync"),
+                         ("package", "tarnwick"))
+        self.assertEqual(self.repo("https://crates.io/crates/embersync", "embersync"), ("package", None))
+
+    def test_the_whole_name_only(self):
+        self.assertIsNone(self.repo("https://huggingface.co/quillwort-ai/Laryx-7B-Instruct", "Laryx"),
+                          "a longer name holding it (a variant) is another thing")
+        self.assertIsNone(self.repo("https://huggingface.co/someone/Laryx-GGUF", "Laryx"),
+                          "no build tag dropped: a third party's quantised copy is not the model's page")
+        self.assertIsNone(self.repo("https://github.com/tarnwick/laryxkit", "Laryx"), "a substring")
+        self.assertIsNone(self.repo("https://github.com/tarnwick/ember", "Ember Sync"), "a different name")
+        self.assertIsNone(self.repo("https://github.com/tarnwick/abc", "ABC"), "a name too short names nothing")
+
+    def test_never_a_home_page_an_org_page_a_section_or_a_file(self):
+        for url in ("https://huggingface.co/Laryx", "https://github.com/laryx", "https://huggingface.co/",
+                    "https://github.com/topics/laryx", "https://huggingface.co/blog/laryx",
+                    "https://huggingface.co/spaces/quillwort-ai/laryx", "https://github.com/tarnwick/laryx/blob/main/x.py",
+                    "https://docs.github.com/tarnwick/laryx", "https://gist.github.com/tarnwick/laryx",
+                    "https://pypi.org/search/laryx", "https://pkgs.example/tarnwick/laryx"):
+            self.assertIsNone(self.repo(url, "Laryx"), url)
+
+    def test_one_owner_a_kind(self):
+        rows = [("code", "https://github.com/ggwell/emberkit", "ggwell"), ("code", "https://github.com/fork1/emberkit", "fork1")]
+        self.assertEqual(E.one_owner(rows, {"ggwell"}, N.squash), {"https://github.com/ggwell/emberkit"})
+        self.assertEqual(E.one_owner(rows, set(), N.squash), set(), "two owners and no stated maker: neither")
+        self.assertEqual(E.one_owner(rows[1:], set(), N.squash), {"https://github.com/fork1/emberkit"})
+        self.assertTrue(E.owner_agrees("quillwort-ai", {"quillwort"}, N.squash), "a handle suffix aside")
+        self.assertFalse(E.owner_agrees("tarnwick", {"quillwort"}, N.squash))
+
+
+@requires_test_db
+class PlatformAddresses(_AddressCase):
+    def test_a_bare_model_page_link_is_the_models_address_and_its_owner_a_maker_candidate(self):
+        url = "https://huggingface.co/quillwort-ai/Laryx"
+        a = self.post(0, T0, text="New weights.", links=[url])
+        self.link_text(a, url, url)   # a bare link: its words are its address
+        self.say(a, m("Laryx", type_="model"))
+        out = self.stage()
+        root = self.root(a)
+        self.assertEqual(out["addresses"]["by_rule"], {"repo": 1})
+        self.assertEqual(self.addresses(root), {"release": (url, "repo")})
+        self.cur.execute("SELECT owner FROM mx_entity_addresses WHERE entity_id = %s::uuid", (root,))
+        self.assertEqual(self.cur.fetchall(), [("quillwort-ai",)])
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertEqual(page["original"]["url"], url)
+        self.assertEqual(page["original"]["owner"], "quillwort-ai")
+        self.assertEqual(page["maker_candidates"], [{"name": "quillwort-ai", "id": None, "agrees": False}])
+        self.assertIsNone(page["maker"], "proposed, never asserted")
+
+    def test_code_and_package_pages_and_the_negatives(self):
+        urls = ["https://github.com/tarnwick/embersync", "https://pypi.org/project/embersync/",
+                "https://github.com/tarnwick/embersync-plugins", "https://github.com/embersync"]
+        a = self.post(0, T0, text="A tool.", links=urls)
+        self.say(a, m("EmberSync", type_="software"))
+        self.stage()
+        root = self.root(a)
+        self.assertEqual(self.addresses(root), {"code": (urls[0], "repo"), "package": (urls[1], "repo")})
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertIsNone(page["original"], "a repository and a package page are no original")
+        self.assertEqual({x["kind"]: x["owner"] for x in page["addresses"]}, {"code": "tarnwick", "package": None})
+
+    def test_two_owners_keep_the_stated_makers_only(self):
+        mine, fork = "https://github.com/tarnwick/emberkit", "https://github.com/zzfork/emberkit"
+        a = self.post(0, T0, text="A tool.", links=[fork, mine])
+        self.say(a, m("Emberkit", type_="software", maker="Tarnwick"))
+        self.stage()
+        root = self.root(a)
+        self.assertEqual(self.addresses(root), {"code": (mine, "repo")})
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertIn({"name": "tarnwick", "id": page["maker"]["id"] if page["maker"] else None, "agrees": True},
+                      page["maker_candidates"])
+
+
 @requires_test_db
 class OlderGuide(_AddressCase):
     """Also (0138): an entity only an earlier guide named has its page with those posts, and is listed nowhere else."""
