@@ -756,6 +756,13 @@ class PostsRepository:
             raise
         cur.execute(f"RELEASE SAVEPOINT {name}")
 
+    @staticmethod
+    def place_undated_backlog(cur: Cursor, post_ids: Sequence[str]) -> None:
+        """v10.13.9: undated older posts stored outside save_batch (a collected original, a page its feed missed) sort
+        as save_batch's undated backlog does: before their source's oldest post, never at the time they were read."""
+        ids = [str(post_id) for post_id in post_ids if post_id]
+        if ids:
+            cur.execute(UNDATED_BACKLOG_SQL, {"ids": ids})
 
     def save_batch(
         self,

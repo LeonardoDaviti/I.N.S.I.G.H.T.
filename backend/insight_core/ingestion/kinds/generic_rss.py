@@ -8,7 +8,12 @@ site's platform, and each strategy that finds more than the feed holds (the feed
 sitemap, the listing pages, the Web Archive's index when the source opts in), in order. A post found by its address
 is read from its page (page watch's reader: its body, title and date; not a post without a date or og:type
 article), one per archive page so the host gate spaces them; a feed or API page's posts as the feed's. Resumable by
-its checkpoint (its mode the strategy's, its "ladder" the rest). Nothing stored is removed."""
+its checkpoint (its mode the strategy's, its "ladder" the rest). Nothing stored is removed.
+
+v10.13.9: the archive reads the source's own site (archive_ladder.source_site: the feed's host or its channel link,
+never the host its items link); a sitemap of another site is refused and a checkpoint on another site stops
+(`stopped: foreign_site`), an archive that found a post in under 5% of 1,000 pages stops (`low_yield`), and an
+address crawl waits at least MIN_PAGE_DELAY_S between pages."""
 from __future__ import annotations
 
 import asyncio
@@ -40,6 +45,7 @@ from insight_core.ingestion.kinds.base import (
 )
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
+from insight_core.utils.originals_rules import address_hint
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.generic_rss")
@@ -104,8 +110,11 @@ class GenericRssKind(BaseKind):
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None,
                  teasers_due: Optional[TeasersDue] = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-                 learned: Optional[Any] = None) -> None:
+                 learned: Optional[Any] = None, min_page_delay: float = archive_ladder.MIN_PAGE_DELAY_S) -> None:
         self.http = http
+        # v10.13.9: a sitemap / listing / Web Archive crawl's least gap between two pages, less the source's own
+        # page delay (the archive loop waits that); tests pass 0
+        self.min_page_delay = min_page_delay
         self.stored_urls = stored_urls
         self.teasers_due = teasers_due
         self.clock = clock
@@ -191,8 +200,8 @@ class GenericRssKind(BaseKind):
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         """An archive stopped in a strategy of the ladder (issue 0143), or in the sitemap's posts (issue 0108),
         continues there; one whose strategy ended continues with the next one it found more in."""
-        if not isinstance(checkpoint, dict):
-            return False
+        if not isinstance(checkpoint, dict) or checkpoint.get("stopped"):
+            return False   # v10.13.9: an archive stopped for a reason (foreign_site, low_yield) starts afresh
         ladder = checkpoint.get("ladder") if isinstance(checkpoint.get("ladder"), dict) else None
         if ladder is not None and ladder.get("order"):
             return checkpoint.get("mode") in LADDER_MODES
@@ -211,11 +220,21 @@ class GenericRssKind(BaseKind):
         if self.checkpoint_resumable(checkpoint):
             assert checkpoint is not None
             held: set = set()
+            if self._foreign(source, checkpoint):
+                # v10.13.9: a checkpoint on another site than the source's own (an older archive took its site from
+                # the first item's link: a link blog crawled a newspaper) is not resumed. What it stored is kept.
+                logger.warning("Archive of %s: its checkpoint is on another site (%s); stopped", url,
+                               checkpoint.get("site") or checkpoint.get("listing"))
+                yield ArchivePage([], {**checkpoint, "end": True, "stopped": archive_ladder.FOREIGN_SITE})
+                return
             if not isinstance(checkpoint.get("ladder"), dict):
                 # An archive in the sitemap's posts from before the ladder (issue 0108): the sitemap alone.
                 listed = (await self._sitemap_posts([], site=checkpoint.get("site"), prefix=checkpoint.get("prefix")))[2]
-                async for page in self._sitemap_pages(source, checkpoint, listed, held, target):
+                async for page in self._sitemap_pages(source, checkpoint, listed, held, target, rate):
                     yield page
+                    if _low_yield(page.checkpoint):
+                        yield self._low_yield_stop(url, page.checkpoint)
+                        return
                 return
         else:
             feed_text, headers = await self.http.get_text(url)
@@ -230,6 +249,9 @@ class GenericRssKind(BaseKind):
             first = found[0]
             starts = {name: plan.probes[name].state for name in found}
             ladder = {"platform": plan.platform.platform, "order": found[1:], "estimate": plan.estimate,
+                      # v10.13.9: the source's own site the ladder read (never an item's host): a resume keeps to it
+                      "site": archive_ladder.source_site(url, feed_text, [p["url"] for p in feed
+                                                                           if isinstance(p.get("url"), str)]),
                       "items": [p["url"] for p in feed if isinstance(p.get("url"), str)][:LADDER_ITEMS],
                       "starts": {name: _public(state) for name, state in starts.items()}, "worked": {}}
             checkpoint = self._start(first, starts[first], ladder, pages_fetched=1, collected=len(posts))
@@ -240,10 +262,13 @@ class GenericRssKind(BaseKind):
             last = checkpoint
             got = 0
             if not checkpoint.get("end"):
-                async for page in self._strategy_pages(source, checkpoint, held, hint):
+                async for page in self._strategy_pages(source, checkpoint, held, hint, rate):
                     got += len(page.posts)
                     last = page.checkpoint or last
                     yield page
+                    if _low_yield(last):
+                        yield self._low_yield_stop(url, last)
+                        return
                 if not last.get("end"):
                     # The strategy ended without saying so (no more pages): its checkpoint says it now.
                     last = {**last, "end": True}
@@ -264,6 +289,36 @@ class GenericRssKind(BaseKind):
                                      pages_fetched=int(last.get("pages_fetched") or 0),
                                      collected=int(last.get("collected_posts") or 0), skipped=last.get("skipped"))
             hint = None
+
+    @staticmethod
+    def _foreign(source: Source, checkpoint: dict) -> bool:
+        """v10.13.9: whether a checkpoint reads another site than the source's own: its sitemap's site or its listing
+        on neither the feed's site nor the site its ladder recorded (a ladder from before v10.13.9 recorded none)."""
+        feed = str(source.get("handle_or_url") or "")
+        ladder = checkpoint.get("ladder") if isinstance(checkpoint.get("ladder"), dict) else {}
+        site = str(ladder.get("site") or feed)
+        starts = ladder.get("starts") if isinstance(ladder.get("starts"), dict) else {}
+        named = [checkpoint.get("site") if checkpoint.get("mode") == SITEMAP_MODE else None,
+                 checkpoint.get("listing") if checkpoint.get("mode") == LISTING_MODE else None]
+        for strategy, key in ((archive_ladder.SITEMAP, "site"), (archive_ladder.LISTING, "listing")):
+            if strategy in (ladder.get("order") or []) and isinstance(starts.get(strategy), dict):
+                named.append(starts[strategy].get(key))
+        return any(isinstance(where, str) and where and not archive_ladder.own_site(where, site, feed)
+                   for where in named)
+
+    @staticmethod
+    def _low_yield_stop(url: str, checkpoint: dict) -> ArchivePage:
+        logger.warning("Archive of %s: %s posts in %s pages (under %s%%); stopped", url,
+                       checkpoint.get("collected_posts"), checkpoint.get("pages_fetched"),
+                       int(archive_ladder.LOW_YIELD_SHARE * 100))
+        return ArchivePage([], {**checkpoint, "end": True, "stopped": archive_ladder.LOW_YIELD})
+
+    async def _polite(self, rate: Any) -> None:
+        """v10.13.9: the least gap between two pages of an address crawl, beyond what the source's own page delay
+        already waits (the archive loop's gate waits that)."""
+        gap = self.min_page_delay - float(getattr(rate, "page_delay_s", 0) or 0)
+        if gap > 0:
+            await self.http.sleep(gap)
 
     async def _learn(self, platform: Optional[str], strategy: str, posts: int) -> None:
         """A strategy that gave posts is counted for its platform (system_settings archive_learned)."""
@@ -293,17 +348,18 @@ class GenericRssKind(BaseKind):
                     "next_index": 0, **base}
         return {"mode": WEB_ARCHIVE_MODE, "urls": None, "next_index": 0, **base}
 
-    def _strategy_pages(self, source: Source, checkpoint: dict, held: set, listed: Optional[list] = None):
+    def _strategy_pages(self, source: Source, checkpoint: dict, held: set, listed: Optional[list] = None,
+                        rate: Any = None):
         mode = checkpoint["mode"]
         if mode == SITEMAP_MODE:
-            return self._sitemap_pages(source, checkpoint, listed, held, UNBOUNDED)
+            return self._sitemap_pages(source, checkpoint, listed, held, UNBOUNDED, rate)
         if mode == FEED_PAGES_MODE:
             return self._feed_pages(source, checkpoint, held)
         if mode == API_MODE:
             return self._api_pages(source, checkpoint, held)
         if mode == LISTING_MODE:
-            return self._listing_pages(source, checkpoint, held)
-        return self._web_archive_pages(source, checkpoint, held)
+            return self._listing_pages(source, checkpoint, held, rate)
+        return self._web_archive_pages(source, checkpoint, held, rate)
 
     @staticmethod
     def _next(checkpoint: dict, **changes: Any) -> dict:
@@ -311,14 +367,15 @@ class GenericRssKind(BaseKind):
 
     # ------------------------------------------------------------------ the strategies' pages
 
-    async def _sitemap_pages(self, source: Source, checkpoint: dict, listed: Optional[list], held: set, target: int):
+    async def _sitemap_pages(self, source: Source, checkpoint: dict, listed: Optional[list], held: set, target: int,
+                             rate: Any = None):
         """The sitemap's posts one page each from next_index (issue 0108); a stored one is not read again."""
         site, prefix = str(checkpoint.get("site") or ""), str(checkpoint.get("prefix") or "/")
         if listed is None:
             listed = (await self._sitemap_posts([], site=site or None, prefix=prefix if site else None))[2]
         collected, pages_fetched = resume_counts(checkpoint)
         skipped = skipped_counts(checkpoint)
-        start = int(checkpoint.get("next_index") or 0)
+        start, start_pages = int(checkpoint.get("next_index") or 0), pages_fetched
         stored = (await asyncio.to_thread(self.stored_urls, [loc for loc, _ in listed[start:]])
                   if self.stored_urls and listed[start:] else set())
         index = start
@@ -331,6 +388,8 @@ class GenericRssKind(BaseKind):
                 held.add(key)
                 continue
             held.add(key)
+            if pages_fetched > start_pages:
+                await self._polite(rate)
             post = await self._sitemap_post(source, loc, lastmod)
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
@@ -342,9 +401,13 @@ class GenericRssKind(BaseKind):
                                   if "ladder" in checkpoint else {})}
             yield ArchivePage([post] if post else [], page_checkpoint)
 
-    async def _addressed(self, source: Source, checkpoint: dict, urls: List[Any], held: set):
-        """Pages read one each from an address list (listing, Web Archive): the checkpoint's next_index on."""
+    async def _addressed(self, source: Source, checkpoint: dict, urls: List[Any], held: set, rate: Any = None):
+        """Pages read one each from an address list (listing, Web Archive): the checkpoint's next_index on. An
+        address off the source's own site is never read (v10.13.9)."""
+        feed = str(source.get("handle_or_url") or "")
+        site = str((checkpoint.get("ladder") or {}).get("site") or feed)
         collected, pages_fetched = resume_counts(checkpoint)
+        start_pages = pages_fetched
         skipped = skipped_counts(checkpoint)
         index = int(checkpoint.get("next_index") or 0)
         rest = [entry[0] if isinstance(entry, (list, tuple)) else entry for entry in urls[index:]]
@@ -359,6 +422,11 @@ class GenericRssKind(BaseKind):
                 held.add(key)
                 continue
             held.add(key)
+            if not archive_ladder.own_site(loc, site, feed):
+                skipped[SKIP_NO_POST] += 1
+                continue
+            if pages_fetched > start_pages:
+                await self._polite(rate)
             post = await self._sitemap_post(source, loc, None, archived=stamp)
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
@@ -479,7 +547,7 @@ class GenericRssKind(BaseKind):
             yield ArchivePage(posts, self._next(checkpoint, inner=page.checkpoint, pages_fetched=pages_fetched,
                                                 collected_posts=collected))
 
-    async def _listing_pages(self, source: Source, checkpoint: dict, held: set):
+    async def _listing_pages(self, source: Source, checkpoint: dict, held: set, rate: Any = None):
         """The blog's listing pages, one archive page each (their post links kept in the checkpoint, read by the
         shape the feed's items have), following rel=next or /page/N/; then each listed post one page each."""
         ladder = checkpoint.get("ladder") or {}
@@ -488,7 +556,10 @@ class GenericRssKind(BaseKind):
         walked = {normalize_url(url) for url in urls}
         listing, number = checkpoint.get("listing"), int(checkpoint.get("listing_page") or 1)
         pages_fetched = int(checkpoint.get("pages_fetched") or 0)
+        start_pages = pages_fetched
         while listing and shape is not None:
+            if pages_fetched > start_pages:
+                await self._polite(rate)
             try:
                 page, _ = await self.http.get_text(listing)
             except HttpError as exc:
@@ -513,16 +584,17 @@ class GenericRssKind(BaseKind):
         if not urls:
             yield ArchivePage([], checkpoint)
             return
-        async for page in self._addressed(source, checkpoint, urls, held):
+        async for page in self._addressed(source, checkpoint, urls, held, rate):
             yield page
 
-    async def _web_archive_pages(self, source: Source, checkpoint: dict, held: set):
+    async def _web_archive_pages(self, source: Source, checkpoint: dict, held: set, rate: Any = None):
         """The Web Archive's address index for the posts' section (opt-in, issue 0143): its list read once (one
         archive page), then each address read from the live site, or its archived copy when the live one is gone."""
         urls = checkpoint.get("urls")
         if urls is None:
             ladder = checkpoint.get("ladder") or {}
-            probe = archive_ladder.Ladder(self, source, [{"url": url} for url in ladder.get("items") or []], "")
+            probe = archive_ladder.Ladder(self, source, [{"url": url} for url in ladder.get("items") or []], "",
+                                          site=ladder.get("site") or None)
             try:
                 urls = [[url, stamp] for url, stamp in await probe.cdx_entries()]
             except HttpError as exc:
@@ -536,7 +608,7 @@ class GenericRssKind(BaseKind):
                                     end=not urls)
             yield ArchivePage([], checkpoint)
         if urls:
-            async for page in self._addressed(source, checkpoint, urls, held):
+            async for page in self._addressed(source, checkpoint, urls, held, rate):
                 yield page
 
     @staticmethod
@@ -546,24 +618,30 @@ class GenericRssKind(BaseKind):
                 "pages_fetched": pages_fetched, "collected_posts": collected, "total_candidates": total,
                 "skipped": dict(skipped or {})}
 
-    async def _sitemap_read(self, posts: Sequence[Dict[str, Any]], *, http: Any = None
-                            ) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]], int]:
-        """(the site, the feed's section, the sitemap's posts under it, how many entries the sitemap has):
-        the feed's items' site and the path they share ("/posts/" for /posts/2021/03/a and /posts/2020/12/b;
-        "/" for /a/ and /b/), and the sitemap's addresses there, newest lastmod first, once each (issue 0108).
-        No entries: no sitemap could be read."""
+    async def _sitemap_read(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None, http: Any = None
+                            ) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]], int, Optional[str]]:
+        """(the site, the feed's section, the sitemap's posts under it, how many entries the sitemap has, why it was
+        refused): the source's own site (archive_ladder.source_site, v10.13.9: never the host its items link) and the
+        path its items there share ("/posts/" for /posts/2021/03/a and /posts/2020/12/b; "/" for /a/ and /b/, or when
+        no item is on the site: a link blog), and the sitemap's addresses there, newest lastmod first, once each
+        (issue 0108). No entries: no sitemap could be read. A sitemap that lists only another site's pages is
+        refused (foreign_site)."""
         from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries   # page_watch imports this module
 
+        if not site:
+            return "", "/", [], 0, None
         links = [p["url"] for p in posts if isinstance(p.get("url"), str) and p["url"].startswith("http")]
-        if not links:
-            return "", "/", [], 0
-        site, prefix = parsing.origin_from_source(links[0], ""), feed_section(links)
+        own = [link for link in links if archive_ladder.own_site(link, site)]
+        prefix = feed_section(own) if own else "/"
         try:
             entries = await sitemap_entries(http or self.http, site + "/", prefix, posts_only=True, max_files=ARCHIVE_SITEMAPS)
         except Exception as exc:  # noqa: BLE001 - no sitemap: the feed is the archive
             logger.debug("Sitemap of %s not read: %s", site, exc)
-            return site, prefix, [], 0
-        return site, prefix, _under_section(entries, site, prefix), len(entries)
+            return site, prefix, [], 0, None
+        if entries and not any(archive_ladder.own_site(loc, site) for loc, _ in entries):
+            logger.info("Sitemap of %s lists another site's pages: refused", site)
+            return site, prefix, [], len(entries), archive_ladder.FOREIGN_SITE
+        return site, prefix, _under_section(entries, site, prefix), len(entries), None
 
     async def _sitemap_posts(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None,
                              prefix: Optional[str] = None) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]]]:
@@ -575,7 +653,7 @@ class GenericRssKind(BaseKind):
         if site is None or prefix is None:
             if not links:
                 return "", "/", []
-            site, prefix, listed, _ = await self._sitemap_read(posts)
+            site, prefix, listed, _, _ = await self._sitemap_read(posts, site=site)
         else:
             try:
                 entries = await sitemap_entries(self.http, site + "/", prefix, posts_only=True, max_files=ARCHIVE_SITEMAPS)
@@ -619,14 +697,12 @@ class GenericRssKind(BaseKind):
         date = page_date(page, url)
         if date is None and parsing.meta_content(page, "og:type").lower() != "article":
             return None
-        post = article_post(page, str(source["handle_or_url"]), url, date or lastmod, adapter=self.name)
+        # v10.13.9: no date of its own: its address's month (/2003/07/: the 1st) before the sitemap's lastmod, else
+        # undated (article_post keeps None): the saver sorts it before the source's oldest post, never at today's top
+        post = article_post(page, str(source["handle_or_url"]), url, date or address_hint(url) or lastmod,
+                            adapter=self.name)
         if post is not None:
             post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
-            if date is None and lastmod is None:
-                # v10.13.6: an older page with no date anywhere stays undated (article_post dates a page "now", right
-                # for a page watch's new page, wrong for an archive's 2008 page): the saver sorts it before the
-                # source's oldest post (repo_posts' undated backlog), never at today's top
-                post["date"] = None
         return post
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -719,6 +795,15 @@ class GenericRssKind(BaseKind):
                         sum(1 for post in read_again.values() if post["metadata"].get(full_text.FULL_TEXT_FLAG)))
         # A teaser still in the feed is the read-again post, once.
         return [post for post in posts if post.get("url") not in read_again] + list(read_again.values())
+
+
+def _low_yield(checkpoint: Optional[dict]) -> bool:
+    """v10.13.9: an archive that read LOW_YIELD_PAGES pages and found a post in under LOW_YIELD_SHARE of them."""
+    if not isinstance(checkpoint, dict):
+        return False
+    pages = int(checkpoint.get("pages_fetched") or 0)
+    return pages >= archive_ladder.LOW_YIELD_PAGES and \
+        int(checkpoint.get("collected_posts") or 0) < archive_ladder.LOW_YIELD_SHARE * pages
 
 
 def _public(state: Dict[str, Any]) -> Dict[str, Any]:
