@@ -623,6 +623,11 @@ class GenericRssKind(BaseKind):
         post = article_post(page, str(source["handle_or_url"]), url, date or lastmod, adapter=self.name)
         if post is not None:
             post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
+            if date is None and lastmod is None:
+                # v10.13.6: an older page with no date anywhere stays undated (article_post dates a page "now", right
+                # for a page watch's new page, wrong for an archive's 2008 page): the saver sorts it before the
+                # source's oldest post (repo_posts' undated backlog), never at today's top
+                post["date"] = None
         return post
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
