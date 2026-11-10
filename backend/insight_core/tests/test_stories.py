@@ -510,6 +510,59 @@ class StoryJobTests(unittest.TestCase):
 
 
 @requires_test_db
+class StoryJobYieldsTests(unittest.TestCase):
+    """v10.13.7: an incremental run stops after STEP_BUDGET_S with work left, then rests REST_AFTER_YIELD_S, so the
+    decision run (which waits for the story job's lock) gets its turn; a run with nothing left ends as before."""
+
+    def setUp(self):
+        from insight_core.services import stories_service as S
+        self.S = S
+        self.now = datetime.now(timezone.utc)
+        self.service = S.StoriesService(db_url(), clock=lambda: self.now)
+        for name in ("catch_up_safely",):
+            patcher = mock.patch.object(S, name, lambda *a, **k: None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ("fill_links", "fill_refs", "fill_series"):
+            patcher = mock.patch.object(S.StoriesService, name, lambda self_, *a, **k: 0)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(self._clear)
+        self._clear()
+
+    def _clear(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM system_settings WHERE key = %s", (self.S.YIELD_KEY,))
+
+    def _advance(self, steps):
+        left = iter(steps)
+
+        def advance(self_, cur, totals, **kw):
+            totals["batches"] += 1
+            return next(left)
+        return mock.patch.object(self.S.StoriesService, "advance", advance)
+
+    def test_a_run_with_work_left_yields_after_its_budget_then_rests(self):
+        with mock.patch.object(self.S, "STEP_BUDGET_S", 0.0), self._advance([True, True, True]):
+            first = self.service.recompute()
+        self.assertTrue(first.get("yielded"), first)
+        self.assertEqual(first["batches"], 1)                              # one batch, then its budget was spent
+        with self._advance([True]):
+            self.assertEqual(self.service.recompute(), {"skipped": "resting after a yield"})
+        self.now += timedelta(seconds=self.S.REST_AFTER_YIELD_S + 1)       # the rest is over
+        with mock.patch.object(self.S, "STEP_BUDGET_S", 0.0), self._advance([False]):
+            again = self.service.recompute()
+        self.assertNotIn("skipped", again)
+
+    def test_a_run_that_empties_its_queue_never_yields(self):
+        with self._advance([True, True, False]):
+            done = self.service.recompute()
+        self.assertNotIn("yielded", done)
+        self.assertEqual(done["batches"], 3)
+        with self._advance([False]):
+            self.assertNotIn("skipped", self.service.recompute())          # no rest without a yield
+
+
 class DiscoverServiceTests(unittest.TestCase):
     """GET /api/sources/suggested's service on committed rows (the service opens its own connections)."""
 

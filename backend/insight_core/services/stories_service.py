@@ -62,6 +62,12 @@ logger = logging.getLogger(__name__)
 STORY_WINDOW = SAME_TEXT_WITHIN   # News keeps the stories begun in it (NewsService.NEWS_KEEP)
 SETTINGS_KEY = "stories"
 LOCK_KEY = "insight.stories"
+# v10.13.7: one incremental run works STEP_BUDGET_S at most, then yields (its queue waits for the next run, after the
+# next fetch that saves posts) and the job rests REST_AFTER_YIELD_S: with every post read and archives streaming,
+# a run never emptied its queue (944 s for 1,034 posts) and held the lock a decision run waits for (jobs.mark_ix_busy).
+STEP_BUDGET_S = 180.0
+REST_AFTER_YIELD_S = 90.0
+YIELD_KEY = "stories_yield"   # system_settings: {"at": ISO} of the last run that yielded
 STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewer; a rule change's are all)
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
 CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (story_rules.keys)
@@ -116,6 +122,8 @@ class StoriesService:
         """The story job: what the queue holds, a batch a transaction (a rule change's rebuild first),
         or with `full` every post at once (the oracle). Returns a summary."""
         started = time.monotonic()
+        if not full and self._resting():   # v10.13.7: the decision run's turn after a yield; nothing read meanwhile
+            return {"skipped": "resting after a yield"}
         catch_up_safely(self.db_url)   # every post read once first (issue 0076): what the job and the pages read
         filled = self.fill_links()
         self.fill_refs()
@@ -138,6 +146,27 @@ class StoriesService:
                 if not self.advance(cur, totals, links_filled=filled, started=started):
                     return {"computed_at": self.clock().isoformat(), "full": False, **totals, "links_filled": filled,
                             "batches": totals["batches"], "seconds": round(time.monotonic() - started, 2)}
+                if time.monotonic() - started >= STEP_BUDGET_S:
+                    SystemSettingsRepository.upsert(cur, YIELD_KEY, {"at": self.clock().isoformat()})
+                    logger.info("Stories: yielded after %.0f s with work left (%d batches)",
+                                time.monotonic() - started, totals["batches"])
+                    return {"computed_at": self.clock().isoformat(), "full": False, **totals, "links_filled": filled,
+                            "batches": totals["batches"], "yielded": True,
+                            "seconds": round(time.monotonic() - started, 2)}
+
+    def _resting(self) -> bool:
+        """v10.13.7: the last run yielded less than REST_AFTER_YIELD_S ago (the decision run's turn)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            got = SystemSettingsRepository.get(cur, YIELD_KEY)
+        value = (got or ({}, None))[0] or {}
+        at = value.get("at") if isinstance(value, dict) else None
+        if not at:
+            return False
+        try:
+            since = (self.clock() - datetime.fromisoformat(at)).total_seconds()
+        except ValueError:
+            return False
+        return 0 <= since < REST_AFTER_YIELD_S
 
     def full_on(self, cur: Any) -> Dict[str, Any]:
         """Every post at once (`regroup`), on the caller's transaction, and the setting that says so."""
