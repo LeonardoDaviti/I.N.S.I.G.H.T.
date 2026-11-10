@@ -14,6 +14,7 @@ import os
 import sys
 import unittest
 import uuid
+from unittest import mock
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -601,6 +602,35 @@ class GuidesAndInputs(_Api):
             self.assertEqual(tasks.plan_posts(self.cur, "read", now=now, limit=2), 1)
         self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'read' AND a = ANY(%s::uuid[])", ([first, below],))
         self.assertEqual({r[0] for r in self.cur.fetchall()}, {first, below})
+
+
+class ChecksOffTheLease(_Api):
+    """v10.13.2: with the story window past 30 days, planning the checks reads every story it reaches (over a minute
+    on the server), longer than a worker waits; a lease then leaves it to the decision job."""
+
+    def test_a_wide_story_window_leases_without_planning_checks(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.dict(tasks.PLANNERS, {"check": mock.Mock(return_value=0)}) as planners:
+            status, body = self.lease("check")
+            self.assertEqual(status, 200, body)
+            planners["check"].assert_not_called()
+
+    def test_within_30_days_a_lease_still_plans_them(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: False), \
+                mock.patch.dict(tasks.PLANNERS, {"check": mock.Mock(return_value=0)}) as planners:
+            status, body = self.lease("check")
+            self.assertEqual(status, 200, body)
+            planners["check"].assert_called_once()
+
+    def test_the_story_window_decides_who_plans(self):
+        from insight_core.markx import story_window, tasks
+        now = datetime.now(timezone.utc)
+        with mock.patch.object(story_window, "days_for_run", lambda cur, at: 30):
+            self.assertFalse(tasks.checks_in_background(self.cur, now))
+        with mock.patch.object(story_window, "days_for_run", lambda cur, at: 31):
+            self.assertTrue(tasks.checks_in_background(self.cur, now))
 
 
 class ReadingWindow(_Api):

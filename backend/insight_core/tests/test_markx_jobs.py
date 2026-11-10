@@ -400,5 +400,46 @@ def _sleep_forever(db_url, job):   # module level: a spawned child imports it by
     time.sleep(60)
 
 
+
+class ChecksBeforeTheDecisionRun(_Api):
+    """v10.13.2: the decision job plans the checks (outside its budget) while the story window is past 30 days."""
+
+    def jobs_(self):
+        return jobs.Jobs(db_url())
+
+    def test_a_wide_window_plans_them_here(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=7)) as plan:
+            got = self.jobs_().checks()
+        plan.assert_called_once()
+        self.assertEqual(got["added"], 7)
+
+    def test_within_30_days_the_lease_plans_them(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: False), \
+                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=7)) as plan:
+            got = self.jobs_().checks()
+        plan.assert_not_called()
+        self.assertEqual(got, {"planned": "by the lease"})
+
+    def test_a_failure_never_fails_the_decision_run(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.object(tasks, "plan_checks", mock.Mock(side_effect=RuntimeError("boom"))):
+            got = self.jobs_().checks()
+        self.assertIn("boom", got["error"])
+
+    def test_the_run_records_what_it_planned(self):
+        from insight_core.markx import tasks
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=3)), \
+                mock.patch("insight_core.markx.candidates.run", lambda cur, ids, since=None: {}):
+            jobs.Jobs(db_url()).decide()
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertTrue(last["ok"], last)
+        self.assertEqual(last["checks"]["added"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

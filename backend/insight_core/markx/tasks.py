@@ -549,6 +549,14 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
             or [m for m in members if m.id != post.id])
 
 
+def checks_in_background(cur: Cursor, now: Optional[datetime] = None) -> bool:
+    """v10.13.2: while the story window reaches past RECENT days, planning the checks reads every story it reaches
+    (over a minute on the server with `everything`, longer than a worker waits for its lease), so the decision job
+    plans them before its run (jobs.Jobs.decide) and a lease never does. Within RECENT days a lease plans them."""
+    from insight_core.markx import story_window
+    return story_window.days_for_run(cur, now or datetime.now(timezone.utc)) > story_window.RECENT
+
+
 def plan_checks(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
     """The checks `check_questions` asks of the last `days` (by default the story window as the decision run reads
     it, 0144 A1; None: every story), as tasks: how many were added. While the window reaches past 30 days, the checks

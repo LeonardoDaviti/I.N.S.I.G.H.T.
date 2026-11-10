@@ -42,7 +42,8 @@ A cycle
    spent either way; only --timeout kills it): answers that come back after the lease ended are still
    posted (they are paid for; the server keeps a second answer as a call and changes nothing) and are
    never retried.
-9. The server unreachable: leasing stops and it exits 3. Answers whose post fails (after --post-tries
+9. The server unreachable: leasing stops and it exits 3. A lease that times out (one kind's planner slow on the
+   server) skips that kind for the cycle; SLOW_LEASES such leases in a row count as unreachable (v10.13.2). Answers whose post fails (after --post-tries
    tries) are written to the spool and posted first by the next cycle. The leases it could not release
    expire on the server after 30 minutes.
 
@@ -147,6 +148,7 @@ HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY J
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
 
+SLOW_LEASES = 3   # v10.13.2: this many slow leases in a row (no answer within the timeout) end the cycle as exit 3
 EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
 REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal (2026-11-08)
 EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
@@ -162,6 +164,10 @@ AUTH_RE = re.compile(r"/login|invalid api key|not logged in|authentication|oauth
 
 class ServerUnreachable(Exception):
     pass
+
+
+class ServerSlow(ServerUnreachable):
+    """The server answered nothing within the timeout (v10.13.2): a lease of one kind is skipped for the cycle."""
 
 
 class ServerError(Exception):
@@ -216,7 +222,13 @@ class Server:
                 raise ServerAuth(f"{method} {path}: {e.code}") from None
             detail = e.read()[:300].decode("utf-8", "replace")
             raise ServerError(f"{method} {path}: {e.code} {detail}", e.code) from None
-        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as e:
+        except (socket.timeout, TimeoutError) as e:
+            raise ServerSlow(f"{method} {path}: timed out") from None
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, (socket.timeout, TimeoutError)):
+                raise ServerSlow(f"{method} {path}: timed out") from None
+            raise ServerUnreachable(f"{method} {path}: {getattr(e, 'reason', e)}") from None
+        except (ConnectionError, OSError) as e:
             raise ServerUnreachable(f"{method} {path}: {getattr(e, 'reason', e)}") from None
         try:
             return json.loads(raw.decode() or "null")
@@ -897,7 +909,7 @@ class Worker:
         except (ServerUnreachable, ServerError) as e:
             return self.finish("server", str(e))
         kinds = [k.strip() for k in self.a.kinds.split(",") if k.strip()]
-        done, leased, turn = set(), 0, 0
+        done, leased, turn, slow = set(), 0, 0, 0
         while leased < self.a.batches and not self.stop.is_set():
             batches = []
             while len(batches) < self.a.parallel and leased < self.a.batches:
@@ -921,12 +933,23 @@ class Worker:
                 except ServerAuth as e:
                     self.set_fatal("token", str(e))
                     break
+                except ServerSlow as e:
+                    # v10.13.2: one kind's lease took longer than the timeout (its planner is slow on the server):
+                    # that kind sits out this cycle, the others go on (its tasks, if leased, come back at the lease's end)
+                    self.log("lease-slow", kind=kind, error=str(e)[:300])
+                    done.add(kind)
+                    slow += 1
+                    if slow >= SLOW_LEASES:          # every kind slow: the server is down in all but name
+                        self.set_fatal("server", str(e))
+                        break
+                    continue
                 except (ServerUnreachable, ServerError) as e:
                     self.set_fatal("server", str(e))
                     break
                 except (KeyError, ValueError, TypeError) as e:
                     self.set_fatal("server", f"bad /work answer: {e!r}")
                     break
+                slow = 0
                 if n < self.a.batch:
                     done.add(kind)
                 if n:
@@ -987,6 +1010,7 @@ def main(argv=None):
     c.add_argument("--claude", default=os.environ.get("MARKX_CLAUDE", "claude"), help="the claude binary")
     c.add_argument("--timeout", type=float, default=1800, help="seconds per call at most (default 1800)")
     c.add_argument("--lease-margin", type=float, default=120, help="no call with less lease left (default 120 s)")
+    c.add_argument("--server-timeout", type=float, default=60, help="seconds a request to the server may take (default 60)")
     c.add_argument("--post-tries", type=int, default=3, help="tries per post (default 3)")
     c.add_argument("--retry-wait", type=float, default=2.0, help="seconds between post tries, times the try")
     c.add_argument("--no-retry", action="store_true", help="no retry of missing or invalid answers")
@@ -1005,7 +1029,7 @@ def main(argv=None):
     except SystemExit as e:
         print(e, file=sys.stderr)
         return EXIT_SETUP
-    server = Server(a.server, token)
+    server = Server(a.server, token, timeout=getattr(a, "server_timeout", 60))
     log = Log(a.log or None, quiet=a.quiet)
     try:
         if a.cmd == "status":

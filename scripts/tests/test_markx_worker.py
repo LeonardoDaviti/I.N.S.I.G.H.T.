@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,6 +60,7 @@ class Stub:
         self.releases = []          # every release body
         self.works = []             # every /work query
         self.fail_posts = 0         # answer this many posts with 503 first
+        self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
         self.guides = dict(GUIDES)
         self.lock = threading.Lock()
         stub = self
@@ -87,6 +89,8 @@ class Stub:
                 u = urlparse(self.path)
                 if u.path == "/api/markx/work":
                     q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                    if q.get("kinds") in stub.slow_kinds:
+                        time.sleep(2)
                     self._send(200, stub.work(q))
                 elif u.path == "/api/markx/status":
                     self._send(200, stub.status())
@@ -593,6 +597,23 @@ class TestServer(Base):
         self.assertEqual(p.returncode, 3, p.stderr)
         self.assertEqual(self.fake_calls(), [])
         self.assertIn("/api/markx/work", self.done()["why"])
+
+    def test_a_slow_lease_skips_its_kind_and_the_others_go_on(self):
+        self.stub.add("read", 20)
+        self.stub.add("entities", 5, start=100)
+        self.stub.slow_kinds = {"entities"}
+        p = self.run_worker("--kinds", "entities,read", "--server-timeout", "0.5")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)          # every read answered
+        self.assertEqual([e["kind"] for e in self.events("lease-slow")], ["entities"])
+
+    def test_slow_leases_in_a_row_count_as_unreachable(self):
+        self.stub.add("read", 5)
+        self.stub.slow_kinds = {"read", "entities", "merge"}
+        p = self.run_worker("--kinds", "read,entities,merge", "--server-timeout", "0.5")
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(len(self.events("lease-slow")), 3)
+        self.assertEqual(self.fake_calls(), [])
 
     def test_post_fails_answers_spooled_then_posted_next_cycle(self):
         self.stub.add("read", 20)

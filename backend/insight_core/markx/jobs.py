@@ -206,10 +206,28 @@ class Jobs:
                                     **({"backfill": backfill} if backfill else {})})
         return counts
 
+    def checks(self) -> Dict[str, Any]:
+        """v10.13.2: the checks planned here, before the decision run and outside its budget, while the story window
+        reaches past 30 days (tasks.checks_in_background): the lease no longer plans them. Never fails the run."""
+        from insight_core.markx import tasks
+        t = time.monotonic()
+        try:
+            with self._tx() as cur:
+                if not tasks.checks_in_background(cur, self.clock()):
+                    return {"planned": "by the lease"}
+                added = tasks.plan_checks(cur)
+        except Exception as exc:
+            log.exception("Mark X jobs: planning the checks failed")
+            return {"error": str(exc)[:300]}
+        seconds = round(time.monotonic() - t, 1)
+        log.info("Mark X jobs: %d checks planned in %.1f s", added, seconds)
+        return {"added": added, "seconds": seconds}
+
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
         stage logged with its duration; a failed or stopped run is wanted again."""
         from insight_core.markx import decide
+        checks = self.checks()
         log.info("Mark X decision run started")
         t0 = time.monotonic()
         self._begin("decide", "candidates")
@@ -258,7 +276,8 @@ class Jobs:
                  {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
                                 "skipped": out.get("skipped"), "stages": stages,
-                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
+                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")},
+                                "checks": checks},
                      again="skipped" in out)
         return out
 
