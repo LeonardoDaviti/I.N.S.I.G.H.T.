@@ -116,6 +116,47 @@ class SearchRouteTests(unittest.TestCase):
     def ids(self, q: str, **query) -> list[str]:
         return [item["id"] for item in self.search(q, **query)["items"]]
 
+    # ---- v10.13.6: a pasted address, a slug, a title phrase first ----------------------------------------
+
+    def _addressed(self, source_id: str, url: str, title: str) -> str:
+        from insight_core.utils.url_normalization import normalize_url
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO posts (source_id, url, normalized_url, published_at, title, content)"
+                        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                        (source_id, url, normalize_url(url), self.now - timedelta(hours=2), f"{title} {self.marker}", "Body."))
+            return str(cur.fetchone()[0])
+
+    def raw(self, q: str, **query) -> list[str]:
+        status, _, body = call(main.app, "GET", "/api/search", query={"q": q, **query})
+        self.assertEqual(status, 200, body)
+        return [item["id"] for item in body["items"]]
+
+    def test_a_pasted_address_finds_its_post(self):
+        source = self._source()
+        slug = f"the-{self.marker}-playbook-guide"
+        post = self._addressed(source, f"https://example.test/resources/articles/{slug}", "A playbook")
+        self._post(source, "Another post")
+        self.assertEqual(self.raw(f"https://example.test/resources/articles/{slug}"), [post])
+        self.assertEqual(self.raw(f"https://www.example.test/resources/articles/{slug}/?utm_source=x"), [post])
+        self.assertEqual(self.raw(f"example.test/resources/articles/{slug}"), [post])
+        self.assertEqual(self.raw(slug), [post])                                  # its slug alone
+        self.assertEqual(self.raw("https://example.test/nothing-stored-here-at-all"), [])
+
+    def test_an_address_outside_the_scope_is_not_found(self):
+        a, b = self._source(name="Scratch A"), self._source(name="Scratch B")
+        url = f"https://example.test/a/{self.marker}-x-y"
+        self._addressed(a, url, "A page")
+        self.assertEqual(self.raw(url, scope=f"source:{b}"), [])
+
+    def test_best_match_puts_a_title_holding_the_whole_query_first(self):
+        source = self._source()
+        exact = self._post(source, "The zeta-native widget playbook", "Short.")
+        self._post(source, "Notes", "zeta native widget playbook " * 30, hours_ago=0.5)   # more matches, newer
+        status, _, body = call(main.app, "GET", "/api/search",
+                               query={"q": f"zeta-native widget playbook {self.marker}", "order": "best"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["items"][0]["id"], exact)
+
     # ---- what matches -------------------------------------------------------------------
 
     def test_english_word_forms(self):

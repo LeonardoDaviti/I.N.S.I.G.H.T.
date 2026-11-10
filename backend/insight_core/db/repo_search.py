@@ -36,6 +36,7 @@ best match within each.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -232,6 +233,30 @@ def snippet_parts(headline: str | None, *, plain: bool = False) -> Optional[List
     return parts
 
 
+_URL_RE = re.compile(r"^(?:https?://)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]\S*)?$", re.IGNORECASE)
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+){2,}$", re.IGNORECASE)
+
+
+def title_phrase(q: str) -> str:
+    """The query as a title phrase: lower case, every run of non-letters one space (v10.13.6)."""
+    return " ".join(re.sub(r"[^\w]+", " ", (q or "").lower().replace("_", " ")).split())
+
+
+def address_query(q: str) -> Optional[Tuple[str, str]]:
+    """("url", its normalized form) for a pasted address, ("slug", it) for a page's slug (3+ hyphenated words, no
+    space), else None (v10.13.6: "do I have this page?")."""
+    from insight_core.utils.url_normalization import normalize_url
+    text = (q or "").strip().strip("<>\"'")
+    if not text or " " in text:
+        return None
+    if _URL_RE.match(text) and ("/" in text or text.lower().startswith("http")):
+        normalized = normalize_url(text if "://" in text else f"https://{text}")
+        return ("url", normalized) if normalized else None
+    if _SLUG_RE.match(text) and len(text) >= 12:
+        return ("slug", text.lower())
+    return None
+
+
 class SearchRepository:
     """SQL for search. Takes the caller's cursor; the caller owns the commit."""
 
@@ -243,6 +268,10 @@ class SearchRepository:
         """One page of results and the next page's cursor (encoded), or None at the end. Under
         Classics the results are classics; else feed rows. `markx` (Mark X on, issue 0139): a post
         matches by its own vector or by its Mark X English layer (mx_post_search)."""
+        if query.filter != "classics" and query.cursor is None and query.offset == 0:
+            found = self._by_address(cur, query)
+            if found is not None:
+                return found, None
         cur.execute(f"SELECT numnode({TSQUERY})", (query.q,))
         if not cur.fetchone()[0]:
             return [], None   # only stop words or punctuation: nothing can match
@@ -306,6 +335,15 @@ class SearchRepository:
             if query.cursor is not None:
                 where.append(f"({key}, p.id) < (%s, %s::uuid)")
                 params += [query.cursor.sort_at, query.cursor.post_id]
+        # v10.13.6: in best order a post whose title holds the whole query as a phrase (word for word, any case or
+        # punctuation: "AI-native SDLC playbook" in "The AI-native SDLC playbook") comes before the ranked rest
+        phrase = title_phrase(query.q)
+        if query.order == "best" and _words(query.q) >= 2 and phrase:
+            titled = ("(' ' || btrim(regexp_replace(lower(coalesce(m.title, '')), '[^[:alnum:]]+', ' ', 'g')) || ' ')"
+                      " LIKE ('%% ' || %s || ' %%')")
+            titled_params = [phrase]
+        else:
+            titled, titled_params = "false", []
         # A word in a third of the posts looks cheap to find by reading the whole table, but
         # every row read then unpacks its vector (400 ms on 50k posts); the GIN index's bitmap
         # needs none of them. For this transaction only.
@@ -341,14 +379,14 @@ class SearchRepository:
         cur.execute(
             f"""
             WITH matches AS (
-                SELECT u.id, u.sort_at, p.search_vector
+                SELECT u.id, u.sort_at, p.search_vector, p.title
                 FROM ({layers}) u
                 JOIN posts p ON p.id = u.id
                 ORDER BY u.sort_at DESC, u.id DESC
                 LIMIT %s
             ), hits AS (
-                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first FROM matches m
-                ORDER BY first DESC, rank DESC, sort_at DESC, id DESC
+                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first, {titled} AS titled FROM matches m
+                ORDER BY first DESC, titled DESC, rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
@@ -361,9 +399,9 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
-            ORDER BY hits.first DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
+            ORDER BY hits.first DESC, hits.titled DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
-            [*layer_params, matches, *rank_params, first_ids, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, first_ids, *titled_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).
@@ -429,6 +467,50 @@ class SearchRepository:
                                                          < ({_ORDER_RANK.format(sp='sp', p='p')}))))))"""
         ranks = _rank_params(query.q, markx, split)
         return sql, [*ranks, *ranks, *matched_params, *params]
+
+    def _by_address(self, cur: Cursor, query: SearchQuery) -> Optional[List[Dict[str, Any]]]:
+        """v10.13.6: a pasted address finds its post (its normalized address or canonical), a slug the posts whose
+        address holds it, in the query's scope and filter; None when the query is no address or nothing has it (the
+        word search then runs as before)."""
+        kind = address_query(query.q)
+        if kind is None or query.filter == "history":   # History lists what you opened: its own path
+            return None
+        where: List[str] = [NOT_ALBUM_PIECE]
+        params: List[Any] = []
+        if query.scope is not None:
+            scope_sql, scope_params = self.reader._scope_sql(query.scope, query.filter if query.filter != "news" else "all")
+            where.append(scope_sql)
+            params += scope_params
+        if query.filter not in ("news", "history"):
+            filter_sql, filter_params = self.reader._filter_sql(query.filter)
+            where.append(filter_sql)
+            params += filter_params
+        if kind[0] == "url":
+            match = "p.normalized_url = %s"   # its index; every stored address is kept normalized
+            match_params = [kind[1]]
+        else:
+            match = "p.normalized_url LIKE %s"
+            match_params = [f"%/{kind[1]}%"]
+        cur.execute(
+            f"""SELECT {_ITEM_COLUMNS}, {SORT_KEY}
+                  FROM posts p
+                  JOIN sources s ON s.id = p.source_id
+                  LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+                  LEFT JOIN post_parts pp ON pp.post_id = p.id
+                 WHERE {match} AND {' AND '.join(where)}
+                 ORDER BY {SORT_KEY} DESC, p.id DESC
+                 LIMIT %s""",
+            [*match_params, *params, query.limit], prepare=False)
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        items = []
+        for row in rows:
+            item = _item(row[:-1])
+            item["snippet"] = None
+            item["matched"] = "address"
+            items.append(item)
+        return items
 
     @staticmethod
     def attach_news(cur: Cursor, items: List[Dict[str, Any]], *, now: datetime) -> None:
