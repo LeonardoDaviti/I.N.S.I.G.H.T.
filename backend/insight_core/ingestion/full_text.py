@@ -306,7 +306,7 @@ async def read_page(http: KindHttp, url: str, current_text: str, *, title: Optio
             outcome = NEEDS_SCRIPT
     if outcome != FULL:
         return PageRead(outcome)
-    date = page_date(page)
+    date = page_date(page, url)
     return PageRead(FULL, (html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None, moved))
 
 

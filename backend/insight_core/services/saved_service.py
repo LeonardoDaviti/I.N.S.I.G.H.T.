@@ -257,7 +257,7 @@ class SavedService:
             logger.info("Save a page: %s could not be read (%s)", address, str(exc)[:300])
             reason = _reason(exc)
         url = landed or address
-        stated = page_date(page) if page else None
+        stated = page_date(page, url) if page else None
         post = article_post(page, saved.HANDLE, url, stated, adapter=ADAPTER, platform=saved.PLATFORM) if page else None
         if post is not None:
             # A saved page's identity is its whole address: two sites' "/" are two posts. Its

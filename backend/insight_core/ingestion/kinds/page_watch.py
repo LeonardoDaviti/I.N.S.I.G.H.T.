@@ -335,7 +335,10 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
     return root, locs
 
 
-def page_date(page: str) -> Optional[datetime]:
+FUTURE_SLACK = timedelta(days=1)   # v10.13.7: a page date past now + this is no post's date (an event, a sponsor)
+
+
+def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
     """The page's own publication date: meta article:published_time, JSON-LD datePublished,
     meta date, then a <time datetime>, then a paper's scholarly meta date (SCHOLARLY_DATES, the
     first publication first), then a date written on the page; the <time> and the written date
@@ -344,14 +347,20 @@ def page_date(page: str) -> Optional[datetime]:
     one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
               *(parsing.meta_content(page, name) for name in META_DATES), one_time)
+    latest = datetime.now(timezone.utc) + FUTURE_SLACK
     for value in values:
-        if value and (date := parsing.parse_datetime_value(value.strip())) is not None:
+        if value and (date := parsing.parse_datetime_value(value.strip())) is not None and date <= latest:
             return date
     for name in SCHOLARLY_DATES:
-        if (date := scholarly_date(parsing.meta_content(page, name))) is not None:
+        if (date := scholarly_date(parsing.meta_content(page, name))) is not None and date <= latest:
+            return date
+    if url:   # v10.13.7: the day the address names (/2008/Jul/7/) before a date written somewhere on the page
+        from insight_core.utils.originals_rules import address_day
+        if (date := address_day(url)) is not None and date <= latest:
             return date
     written = set(TEXT_DATE_RE.findall(parsing.strip_html(SCRIPT_STYLE_RE.sub(" ", page))))
-    return _written_date(written.pop()) if len(written) == 1 else None
+    date = _written_date(written.pop()) if len(written) == 1 else None
+    return date if date is not None and date <= latest else None
 
 
 def scholarly_date(value: str) -> Optional[datetime]:
@@ -416,8 +425,7 @@ def page_title(page: str, url: str) -> str:
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
     """The post the page at url is, or None when it is no article (see the module docstring). A page whose markup
     states no date is dated by its address (/2026/10/21/, /2008/Jul/7/: v10.13.5) before the sitemap's lastmod."""
-    from insight_core.utils.originals_rules import address_day as address_date
-    date = page_date(page) or address_date(url)
+    date = page_date(page, url)
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
     return article_post(page, source_url, url, date or lastmod, adapter=PageWatchKind.adapter_type)
@@ -429,7 +437,7 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
     never new to you). None when the page has no article or no date of its own: stored at the time it
     was read, an old page would sort as new. Raises what the request raises."""
     page, _ = await http.get_text(url)
-    date = page_date(page)
+    date = page_date(page, url)
     if date is None or date > datetime.now(timezone.utc):
         return None
     post = article_post(page, str(source["handle_or_url"]), url, date, adapter=adapter)

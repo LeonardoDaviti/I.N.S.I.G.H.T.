@@ -432,6 +432,36 @@ def day(year: int, month: int, date: int) -> datetime:
     return datetime(year, month, date, tzinfo=timezone.utc)
 
 
+
+class AddressAndFutureDateTests(unittest.TestCase):
+    """v10.13.7: the address's day ranks above a date written once on the page (a sponsor's or an event's), and
+    no date more than a day ahead is a post's."""
+
+    PAGE = ('<html><head><title>x</title><meta property="og:type" content="article"></head><body><article>'
+            '<p>Some text.</p><aside>Join us on November 17, 2099 for the launch.</aside></article></body></html>')
+
+    def test_the_address_day_beats_a_written_date(self):
+        from insight_core.ingestion.kinds.page_watch import page_date
+        got = page_date(self.PAGE, "https://blog.example/2025/Nov/5/a-post/")
+        self.assertEqual(got.date().isoformat(), "2025-11-05")
+
+    def test_a_future_written_date_is_no_date(self):
+        from insight_core.ingestion.kinds.page_watch import page_date
+        self.assertIsNone(page_date(self.PAGE, "https://blog.example/a-post/"))
+        self.assertIsNone(page_date(self.PAGE))
+
+    def test_a_future_meta_date_is_skipped_for_the_next_source(self):
+        from insight_core.ingestion.kinds.page_watch import page_date
+        page = ('<html><head><meta property="article:published_time" content="2099-01-01T00:00:00Z">'
+                '<meta name="citation_date" content="2024/03/08"></head><body></body></html>')
+        self.assertEqual(page_date(page).date().isoformat(), "2024-03-08")
+
+    def test_a_structured_date_still_beats_the_address(self):
+        from insight_core.ingestion.kinds.page_watch import page_date
+        page = '<html><head><meta property="article:published_time" content="2025-11-06T09:00:00Z"></head></html>'
+        self.assertEqual(page_date(page, "https://blog.example/2025/Nov/5/a/").date().isoformat(), "2025-11-06")
+
+
 class ScholarlyDateTests(unittest.TestCase):
     """A paper's scholarly meta tags (Highwire / Google Scholar, Dublin Core, PRISM) date its page."""
 
