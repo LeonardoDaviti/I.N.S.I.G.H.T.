@@ -15,7 +15,8 @@ first, then the sitemap's by lastmod (newest first); an archive reads them all, 
 page per archive page so the host gate spaces them.
 
 An article page is read with the full-text reader (extract_article_html). Its date is the
-page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>), else
+page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>, a
+paper's scholarly meta date: citation_publication_date and the like, its one written date), else
 the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
 publication's. A page with no article body, or with neither a date nor og:type article (a
 category page), is not a post. A live fetch remembers the pages it skipped for the process's
@@ -90,6 +91,20 @@ TITLE_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
 SITE_SUFFIX_RE = re.compile(r"\s+[|\\·–—-]\s+([^|\\·–—-]{1,40})$")    # "Title \ Anthropic"
 META_DATES = ("date", "dc.date", "pubdate")       # <meta name> dates, after the two above
+# The scholarly (Highwire / Google Scholar, Dublin Core, PRISM) <meta name> dates papers carry (arXiv,
+# bioRxiv, journals, proceedings), read after the dates above and before a date written in the text.
+# The first publication comes first: a paper's later version or its issue's cover never moves its date,
+# so the online date (arXiv's: the latest version's) is the last.
+SCHOLARLY_DATES = ("citation_publication_date", "citation_date", "dc.date.issued", "dcterms.issued",
+                   "dc.date.created", "dcterms.created", "prism.publicationdate", "citation_cover_date",
+                   "citation_online_date")
+# The forms they are written in, each a whole day (UTC): "2026/06/11", "2026-6-11", "2026 Jun 11",
+# "Jun 11, 2026", "11 June 2026". A year or a month alone ("2026", "2026/6") is no date: stored as the
+# 1st it would read as precise and sort the paper months early, so the next tag (or none) is used.
+SCHOLARLY_YMD_RE = re.compile(r"^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$")
+SCHOLARLY_Y_MON_D_RE = re.compile(r"^(\d{4})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})$")
+SCHOLARLY_D_MON_Y_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+(\d{4})$")
+SCHOLARLY_MON_D_Y_RE = re.compile(r"^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$")
 LISTING_MAX_BYTES = 4_000_000                     # a listing page is read up to this (groq.com's: 0.9 MB)
 # A date written on the page ("June 29, 2026", "Jun 29, 2026"): ai.meta.com's articles have no other.
 TEXT_DATE_RE = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}, (?:19|20)\d\d\b")
@@ -322,8 +337,9 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
 
 def page_date(page: str) -> Optional[datetime]:
     """The page's own publication date: meta article:published_time, JSON-LD datePublished,
-    meta date, then a <time datetime> or a date written on the page, each only when the page
-    has one (a tag or category page lists many)."""
+    meta date, then a <time datetime>, then a paper's scholarly meta date (SCHOLARLY_DATES, the
+    first publication first), then a date written on the page; the <time> and the written date
+    only when the page has one (a tag or category page lists many)."""
     json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
     one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
@@ -331,8 +347,35 @@ def page_date(page: str) -> Optional[datetime]:
     for value in values:
         if value and (date := parsing.parse_datetime_value(value.strip())) is not None:
             return date
+    for name in SCHOLARLY_DATES:
+        if (date := scholarly_date(parsing.meta_content(page, name))) is not None:
+            return date
     written = set(TEXT_DATE_RE.findall(parsing.strip_html(SCRIPT_STYLE_RE.sub(" ", page))))
     return _written_date(written.pop()) if len(written) == 1 else None
+
+
+def scholarly_date(value: str) -> Optional[datetime]:
+    """A scholarly meta tag's date (see SCHOLARLY_DATES): an ISO date-time as written, or a whole day
+    in one of the forms papers use, UTC; None for a year or a month alone, or anything else."""
+    value = html.unescape(value or "").strip()
+    if not value or re.fullmatch(r"\d{4}([/.-]\d{1,2})?", value):
+        return None
+    if (match := SCHOLARLY_YMD_RE.match(value)) is not None:
+        year, month, day = match.groups()
+    elif (match := SCHOLARLY_Y_MON_D_RE.match(value)) is not None:
+        year, month, day = match.group(1), match.group(2), match.group(3)
+    elif (match := SCHOLARLY_D_MON_Y_RE.match(value)) is not None:
+        year, month, day = match.group(3), match.group(2), match.group(1)
+    elif (match := SCHOLARLY_MON_D_Y_RE.match(value)) is not None:
+        year, month, day = match.group(3), match.group(1), match.group(2)
+    else:
+        return parsing.parse_datetime_value(value)
+    try:
+        if not month.isdigit():
+            month = str(datetime.strptime(month[:3].title(), "%b").month)
+        return datetime(int(year), int(month), int(day), tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _written_date(text: str) -> Optional[datetime]:

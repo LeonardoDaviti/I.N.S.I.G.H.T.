@@ -11,6 +11,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Tuple
 from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -418,6 +419,77 @@ class AddPageWatchSourceTests(unittest.TestCase):
         self.assertEqual(SourcesService._valid_settings({"page_watch": {}}), {"page_watch": {}})
         with self.assertRaises(ValueError):
             SourcesService._valid_settings({"page_watch": "yes"})
+
+
+def paper(*metas: Tuple[str, str], body: str = "") -> str:
+    """A fictional paper's page: its <meta name> tags, a title and an abstract."""
+    tags = "".join(f'<meta name="{name}" content="{value}" />' for name, value in metas)
+    return (f"<html><head><title>On Quiet Lattices of Imaginary Moss</title>{tags}</head>"
+            f"<body><article><h1>On Quiet Lattices of Imaginary Moss</h1>{body}{PARAGRAPH}</article></body></html>")
+
+
+def day(year: int, month: int, date: int) -> datetime:
+    return datetime(year, month, date, tzinfo=timezone.utc)
+
+
+class ScholarlyDateTests(unittest.TestCase):
+    """A paper's scholarly meta tags (Highwire / Google Scholar, Dublin Core, PRISM) date its page."""
+
+    def test_each_tag_dates_a_paper(self):
+        for name in ("citation_publication_date", "citation_date", "citation_online_date", "citation_cover_date",
+                     "DC.date.issued", "dc.date.issued", "DC.Date.created", "dcterms.issued", "prism.publicationDate"):
+            with self.subTest(name=name):
+                self.assertEqual(page_watch.page_date(paper((name, "2026/06/11"))), day(2026, 6, 11))
+
+    def test_each_form_is_one_day_in_utc(self):
+        forms = {"2026/06/11": day(2026, 6, 11), "2026-06-11": day(2026, 6, 11), "2026/6/1": day(2026, 6, 1),
+                 "2026 Jun 11": day(2026, 6, 11), "Jun 11, 2026": day(2026, 6, 11), "11 June 2026": day(2026, 6, 11),
+                 "2026-06-11T08:30:00Z": datetime(2026, 6, 11, 8, 30, tzinfo=timezone.utc)}
+        for value, expected in forms.items():
+            with self.subTest(value=value):
+                self.assertEqual(page_watch.page_date(paper(("citation_date", value))), expected)
+
+    def test_the_first_publication_wins_over_a_later_version_or_cover(self):
+        # A paper's v3 (its online date) or its issue's cover date never moves its date.
+        updated = paper(("citation_online_date", "2026/11/04"), ("citation_date", "2026/06/11"))
+        covered = paper(("citation_cover_date", "2026/09/01"), ("citation_publication_date", "2026/05/02"),
+                        ("citation_date", "2026/06/11"))
+        self.assertEqual(page_watch.page_date(updated), day(2026, 6, 11))
+        self.assertEqual(page_watch.page_date(covered), day(2026, 5, 2))
+        self.assertEqual(page_watch.page_date(paper(("citation_online_date", "2026/11/04"))), day(2026, 11, 4))
+
+    def test_a_year_or_a_month_alone_is_no_date(self):
+        # Stored as the 1st it would read as precise: the next tag dates the paper, or nothing does.
+        self.assertIsNone(page_watch.page_date(paper(("citation_publication_date", "2026"))))
+        self.assertIsNone(page_watch.page_date(paper(("citation_publication_date", "2026/6"))))
+        self.assertEqual(page_watch.page_date(paper(("citation_publication_date", "2026"),
+                                                    ("citation_online_date", "2026/03/09"))), day(2026, 3, 9))
+        for value in ("", "soon", "2026/13/40"):
+            self.assertIsNone(page_watch.scholarly_date(value))
+
+    def test_a_reference_list_names_no_date(self):
+        # A paper's references carry their own years inside citation_reference: never its date.
+        cited = paper(("citation_reference", "citation_title=An Older Moss;citation_publication_date=2011;"))
+        self.assertIsNone(page_watch.page_date(cited))
+
+    def test_dates_read_before_keep_their_place(self):
+        # The page's own published time, JSON-LD, meta date and one <time> still come first.
+        scholarly = ("citation_publication_date", "2026/01/01")
+        self.assertEqual(page_watch.page_date(paper(("article:published_time", "2026-01-02"), scholarly)), day(2026, 1, 2))
+        self.assertEqual(page_watch.page_date(paper(("dc.date", "2026-07-24"), scholarly)), day(2026, 7, 24))
+        self.assertEqual(page_watch.page_date(paper(scholarly, body='<time datetime="2026-02-03">x</time>')),
+                         day(2026, 2, 3))
+        ld = '<script type="application/ld+json">{"datePublished": "2026-04-05"}</script>'
+        self.assertEqual(page_watch.page_date(paper(scholarly, body=ld)), day(2026, 4, 5))
+        # A date written in the text is a guess: the tag comes before it; without a tag it still dates.
+        self.assertEqual(page_watch.page_date(paper(scholarly, body="<p>June 29, 2026</p>")), day(2026, 1, 1))
+        self.assertEqual(page_watch.page_date(paper(body="<p>June 29, 2026</p>")), day(2026, 6, 29))
+
+    def test_a_saved_paper_takes_its_scholarly_date(self):
+        page = paper(("citation_date", "2026/06/11"), ("citation_online_date", "2026/11/04"))
+        post = page_watch.article_post(page, "https://saved.example", "https://papers.example.org/abs/1234",
+                                       page_watch.page_date(page), adapter="saved")
+        self.assertEqual(post["date"], day(2026, 6, 11))
 
 
 if __name__ == "__main__":
