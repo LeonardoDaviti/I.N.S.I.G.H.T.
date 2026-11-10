@@ -166,6 +166,30 @@ def address_day(url: str) -> Optional[datetime]:
     return page_date(url) if match and match.group(3) else None
 
 
+def address_month(url: str) -> Optional[datetime]:
+    """v10.13.9: the 1st of the month an address names when it names a month and no day (/2003/07/slug, /2026-10/),
+    None otherwise (a day: address_day; a year alone: no guess)."""
+    if is_tweet(url):
+        return None
+    path = urlsplit(url).path
+    match = ADDRESS_DATE.search(path)
+    if not match or match.group(3) or ADDRESS_DATE_NAMED.search(path):
+        return None
+    return datetime(int(match.group(1)), int(match.group(2)), 1, tzinfo=timezone.utc)
+
+
+def address_hint(url: Optional[str], now: Optional[datetime] = None) -> Optional[datetime]:
+    """v10.13.9: an older page's sort hint by its address alone, for the backlog's paths only (an archive's page, a
+    collected original, a page its feed missed): the address's whole day, else the 1st of its month (stored as a
+    date alone, precision "date": posts.published_precision has no month), never a year alone, never a date more
+    than a day ahead. Never above the date the page states: callers ask for it only when the page states none."""
+    if not url:
+        return None
+    hint = address_day(url) or address_month(url)
+    latest = (now or datetime.now(timezone.utc)) + timedelta(days=1)
+    return hint if hint is not None and hint <= latest else None
+
+
 # ---- 0114: a followed source's page a story links -------------------------------------------------
 
 

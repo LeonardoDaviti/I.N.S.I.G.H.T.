@@ -422,13 +422,25 @@ def page_title(page: str, url: str) -> str:
     return title or url
 
 
-def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
+def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime], *,
+              new: bool = False) -> Optional[Dict[str, Any]]:
     """The post the page at url is, or None when it is no article (see the module docstring). A page whose markup
-    states no date is dated by its address (/2026/10/21/, /2008/Jul/7/: v10.13.5) before the sitemap's lastmod."""
+    states no date is dated by its address (/2026/10/21/, /2008/Jul/7/: v10.13.5), then (v10.13.9) its address's
+    month, before the sitemap's lastmod. `new`: a page the watched listing shows now, dated now when nothing dates
+    it; any other page (the sitemap's, an archive's, a page read again) stays undated (None)."""
     date = page_date(page, url)
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
-    return article_post(page, source_url, url, date or lastmod, adapter=PageWatchKind.adapter_type)
+    date = date or (None if new else older_date(url)) or lastmod or (datetime.now(timezone.utc) if new else None)
+    return article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
+
+
+def older_date(url: str) -> Optional[datetime]:
+    """v10.13.9: an older page's sort hint by its address (originals_rules.address_hint: the day, else the month's
+    1st), when the page states no date."""
+    from insight_core.utils.originals_rules import address_hint
+
+    return address_hint(url)
 
 
 async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: str) -> Optional[Dict[str, Any]]:
@@ -448,8 +460,10 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
 
 def article_post(page: str, source_url: str, url: str, date: Optional[datetime], *,
                  adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
-    """The post any article page is: its body (the full-text reader), title, date (else now) and
-    images; None when the page has no article body. Page watch and a saved page (issue 0031)."""
+    """The post any article page is: its body (the full-text reader), title, date and images; None when the page
+    has no article body. Page watch and a saved page (issue 0031). v10.13.9: the date as given, None staying None
+    (never "now": an older page dated at its fetch sits under Today); a caller that reads a genuinely new page
+    passes now itself."""
     content_html, fidelity = parsing.read_article_page(page, base_url=url)
     content = parsing.strip_html(content_html)
     if not content:
@@ -465,7 +479,7 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "title": page_title(page, url),
         "content": content,
         "content_html": content_html,
-        "date": date or datetime.now(timezone.utc),
+        "date": date,
         "media_urls": media_urls,
         "categories": [],
         # When the page says it last changed: what a watched page is checked by (issue 0039).
@@ -627,7 +641,8 @@ class PageWatchKind(BaseSourceAdapter):
                 await self.http.sleep(self.PAGE_DELAY_SECONDS)
             reads += 1
             page = await self._page(url)
-            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url)) if page else None
+            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url),
+                             new=url in listed) if page else None
             if post is None:
                 skips += 1
                 SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
@@ -659,7 +674,10 @@ class PageWatchKind(BaseSourceAdapter):
             page = await self._page(url)
             if page is None:
                 return UNREADABLE
-            return post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url))
+            post = post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url))
+            if post is not None:
+                post[BACKLOG_KEY] = True   # an archive's page: never new to you, undated sorts before the oldest
+            return post
 
         async for page in self.index_pages(source, candidates, target, checkpoint, fetch_one, stored=stored):
             yield page

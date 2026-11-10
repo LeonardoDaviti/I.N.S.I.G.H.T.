@@ -47,7 +47,7 @@ from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, saved
 from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
 from insight_core.services.reader_service import ReaderService
-from insight_core.utils.originals_rules import strip_access_tokens
+from insight_core.utils.originals_rules import address_hint, strip_access_tokens
 from insight_core.utils.post_fields import COLLECTED_KEY, SAVED_KEY, STORY_ONLY_KEY
 from insight_core.utils.url_normalization import normalize_url
 
@@ -129,7 +129,8 @@ class SavedService:
         if stored:
             return await self._already(stored, saved_at)
         if post.get("date") is None:   # no date of its own: no later than the first post linking it (0122;
-            # 0113: every page, a source's or Saved's, so its story's 72 hours are its links', never the save's)
+            # 0113: every page, a source's or Saved's, so its story's 72 hours are its links', never the save's);
+            # none: the save time (dated_by_page), your own save. v10.13.9: the month hint is the backlog's only
             post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         if owner:
             source_id = owner["id"]
@@ -180,8 +181,7 @@ class SavedService:
         post = {**post, "url": landed, "external_id": landed, "guid": landed,
                 "metadata": {**post.get("metadata", {}), COLLECTED_KEY: now.isoformat(), STORY_ONLY_KEY: True,
                              **({"collected_as": collected_as} if collected_as else {})}}
-        if not isinstance(post.get("date"), datetime) or post["date"] >= now:
-            post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
+        post["date"] = await self._older_date(post, address, landed, now)
         source_id = await asyncio.to_thread(self.saved_source_id)
         post_id = await asyncio.to_thread(self._insert, source_id, post)
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
@@ -206,8 +206,7 @@ class SavedService:
             return {"status": "already", "requests": 1, **stored}
         post = {**post, "url": landed, "external_id": landed, "guid": landed,
                 "metadata": {**post.get("metadata", {}), "missed_by_feed": now.isoformat()}}
-        if not isinstance(post.get("date"), datetime) or post["date"] >= now:
-            post["date"] = await asyncio.to_thread(self.first_linked, [address, landed], now)
+        post["date"] = await self._older_date(post, address, landed, now)
         post_id = await asyncio.to_thread(self._insert, source_id, post)
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
 
@@ -226,6 +225,16 @@ class SavedService:
                              STORY_ONLY_KEY: True}}
         post_id = self._insert(self.saved_source_id(), post)
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 0}
+
+    async def _older_date(self, post: Dict[str, Any], address: str, landed: str, now: datetime) -> Optional[datetime]:
+        """v10.13.9: a collected page's date (an older page, never "now"): the date it states, else its address's day
+        or month (/2003/07/: the 1st), else when the first stored post linking it was published, else None (undated:
+        _insert sorts it before its source's oldest post)."""
+        stated = post.get("date")
+        if isinstance(stated, datetime) and stated < now:
+            return stated
+        return (address_hint(landed, now) or address_hint(address, now)
+                or await asyncio.to_thread(self.first_linked, [address, landed], now))
 
     async def _fetch_first(self, source_id: str, now: datetime, fetch: StartFetch) -> Optional[str]:
         """The fetch job a save of this source's page waits for: one running, else one started now; None
@@ -338,15 +347,15 @@ class SavedService:
             row = cur.fetchone()
         return str(row[0]) if row else None
 
-    def first_linked(self, urls: List[str], saved_at: datetime) -> datetime:
-        """When the first stored post linking one of these addresses was published, else the save time;
-        never later than the save."""
+    def first_linked(self, urls: List[str], saved_at: datetime) -> Optional[datetime]:
+        """When the first stored post linking one of these addresses was published (its published date: v10.13.9,
+        never an undated post's fetch time), never later than the save; None when no dated post links it."""
         normalized = sorted({n for n in map(normalize_url, urls) if n})
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            cur.execute("SELECT min(COALESCE(p.published_at, p.fetched_at)) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
+            cur.execute("SELECT min(p.published_at) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
                         "WHERE pl.target_url = ANY(%s)", (normalized,))
             (first,) = cur.fetchone()
-        return min(first, saved_at) if first is not None else saved_at
+        return min(first, saved_at) if first is not None else None
 
     def saved_source_id(self) -> str:
         """The Saved source's id, created (and written to sources.json) the first time."""
@@ -377,9 +386,12 @@ class SavedService:
         """The new post, saved; sorts_at (the save time, for a page dated earlier) is where the
         feed sorts it (surfaced_at)."""
         with db.transaction(self.db_url) as cur:
-            post_id, _ = self.posts.upsert_post(cur, post, source_id)
+            post_id, inserted = self.posts.upsert_post(cur, post, source_id)
             if sorts_at is not None:
                 cur.execute("UPDATE posts SET surfaced_at = %s WHERE id = %s::uuid", (sorts_at, post_id))
+            elif inserted and not isinstance(post.get("date"), datetime):
+                # v10.13.9: an undated older page sorts before its source's oldest post, as an archive's does
+                PostsRepository.place_undated_backlog(cur, [str(post_id)])
         return str(post_id)
 
     def unfollowed_feed(self, finding: FeedFinding) -> Optional[Dict[str, str]]:

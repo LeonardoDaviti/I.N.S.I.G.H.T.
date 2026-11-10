@@ -38,7 +38,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.kinds import parsing
-from insight_core.utils.addresses import host_of, publication_of
+from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.archive_ladder")
@@ -53,6 +53,12 @@ LISTING_PROBES = 4            # listing addresses a probe reads at most
 WP_PER_PAGE = 50
 BLOGGER_PER_PAGE = 150
 LEARNED_KEY = "archive_learned"   # system_settings: {platform: {strategy: posts}}
+# v10.13.9: why an archive stopped or a strategy was refused (the checkpoint's "stopped", a probe's outcome)
+FOREIGN_SITE = "foreign_site"     # the sitemap, listing or checkpoint names another site than the source's own
+LOW_YIELD = "low_yield"           # LOW_YIELD_PAGES pages read, under LOW_YIELD_SHARE of them a post
+LOW_YIELD_PAGES = 1000
+LOW_YIELD_SHARE = 0.05
+MIN_PAGE_DELAY_S = 1.0            # a sitemap / listing / Web Archive crawl's least gap between two pages
 CDX_URL = "https://web.archive.org/cdx/search/cdx"
 WAYBACK_URL = "https://web.archive.org/web"
 
@@ -204,6 +210,52 @@ def fingerprint(feed_text: str, feed_url: str, *, items: Sequence[str] = (), hom
         return Fingerprint(UNKNOWN.name)
     best = max(votes, key=lambda name: (votes[name], -[p.name for p in PLATFORMS].index(name)))
     return Fingerprint(best, tuple(evidence[best]))
+
+
+# ---------------------------------------------------------------------------------------------- the source's site
+
+
+def channel_link(feed_text: str) -> Optional[str]:
+    """The feed's own link to its site: RSS's channel <link>, Atom's feed-level rel=alternate link; None without one."""
+    try:
+        root = parsing.feed_root(feed_text or "")
+    except Exception:  # noqa: BLE001 - no feed: no link
+        return None
+    atom = parsing.local_name(root.tag) == "feed"
+    for node in root.iter():
+        name = parsing.local_name(node.tag)
+        if name in ("item", "entry"):
+            break   # an item's link is the item's, never the feed's
+        if name == "link" and node.text and node.text.strip().startswith("http"):
+            return node.text.strip()
+        if atom and name == "link" and node.attrib.get("rel") in (None, "", "alternate") \
+                and node.attrib.get("href", "").startswith("http"):
+            return node.attrib["href"]
+    return None
+
+
+def source_site(feed_url: str, feed_text: str = "", items: Sequence[str] = ()) -> str:
+    """The site an archive reads (v10.13.9): the source's own publication, never the host its items link. The
+    feed's items' host when it is the feed's own site (a feed at feeds.<site> of posts at <site>); else the feed's
+    channel link when it is on the feed's site, or is a home page (a feed served by a feed host for its blog); else
+    the feed's own host. A link blog whose items link a newspaper, or a feed of a code host's pages made elsewhere,
+    archive their own site, never the one their items name."""
+    own = parsing.origin_from_source(feed_url, "")
+    feed_host = host_of(feed_url)
+    for item in items:
+        if isinstance(item, str) and item.startswith("http") and same_site(host_of(item), feed_host):
+            return parsing.origin_from_source(item, own)
+    link = channel_link(feed_text)
+    if link and host_of(link):
+        if same_site(host_of(link), feed_host) or (urllib.parse.urlparse(link).path or "/") == "/":
+            return parsing.origin_from_source(link, own)
+    return own
+
+
+def own_site(url: Optional[str], site: str, feed_url: str = "") -> bool:
+    """Whether an address is on the source's own site: the archive's site (source_site) or the feed's."""
+    host = host_of(url)
+    return bool(host) and (same_site(host, host_of(site)) or same_site(host, host_of(feed_url)))
 
 
 # ---------------------------------------------------------------------------------------------- post shapes
@@ -476,7 +528,8 @@ class Ladder:
     reader); `feed` the feed's posts as parsed; `feed_text` and `headers` the feed's answer."""
 
     def __init__(self, kind: Any, source: Mapping[str, Any], feed: Sequence[Dict[str, Any]], feed_text: str,
-                 headers: Optional[Mapping[str, str]] = None, *, learned: Optional[Mapping[str, Any]] = None) -> None:
+                 headers: Optional[Mapping[str, str]] = None, *, learned: Optional[Mapping[str, Any]] = None,
+                 site: Optional[str] = None) -> None:
         self.kind = kind
         self.http = CountingHttp(kind.http)
         self.source = source
@@ -486,8 +539,10 @@ class Ladder:
         self.headers = dict(headers or {})
         self.links = [p["url"] for p in feed if isinstance(p.get("url"), str) and p["url"].startswith("http")]
         self.held = {normalize_url(link) for link in self.links} - {None}
-        self.site = parsing.origin_from_source(self.links[0] if self.links else self.feed_url, "")
-        self.shape = post_shape(self.links)
+        # v10.13.9: the source's own site, never the first item's host (a link blog's items link other sites)
+        self.site = site or source_site(self.feed_url, self.feed_text, self.links)
+        self.own_links = [link for link in self.links if same_site(host_of(link), host_of(self.site))]
+        self.shape = post_shape(self.own_links)
         self.learned = learned
         self._home: Optional[Tuple[str, Dict[str, str]]] = None
         self._home_read = False
@@ -669,7 +724,9 @@ class Ladder:
     async def probe_sitemap(self, platform: Platform) -> Probe:
         if self.http.count:
             await self.http.sleep(PROBE_GAP_S)
-        site, prefix, listed, entries = await self.kind._sitemap_read(self.feed, http=self.http)
+        site, prefix, listed, entries, refused = await self.kind._sitemap_read(self.feed, site=self.site, http=self.http)
+        if refused:
+            return Probe(refused)
         if not entries:
             return Probe("no_sitemap")
         new = self.new_addresses(loc for loc, _ in listed)
@@ -680,25 +737,12 @@ class Ladder:
     # ------------------------------------------------------------------ 4. listing pages
 
     def listing_candidates(self, platform: Platform) -> List[str]:
-        channel_link = None
-        try:
-            root = parsing.feed_root(self.feed_text)
-            for node in root.iter():
-                name = parsing.local_name(node.tag)
-                if name == "link" and node.text and node.text.strip().startswith("http"):
-                    channel_link = node.text.strip()
-                    break
-                if name == "link" and node.attrib.get("rel") in (None, "", "alternate") and node.attrib.get("href", "").startswith("http") \
-                        and parsing.local_name(root.tag) == "feed":
-                    channel_link = node.attrib["href"]
-                    break
-        except Exception:  # noqa: BLE001
-            pass
+        channel = channel_link(self.feed_text)
         prefix = self.shape.prefix if self.shape else "/"
         paths = [*platform.listings, *([prefix] if prefix != "/" else []), "/blog/", "/archive/", "/posts/"]
         found = [clean(path, self.site + "/") for path in paths if not path.startswith("/page/")]
-        if channel_link and publication_of(host_of(channel_link)) == publication_of(host_of(self.site)):
-            found.insert(len(platform.listings), channel_link)
+        if channel and publication_of(host_of(channel)) == publication_of(host_of(self.site)):
+            found.insert(len(platform.listings), channel)
         found.append(self.site + "/")
         return list(dict.fromkeys(url for url in found if url))
 
@@ -827,6 +871,7 @@ def blogger_post(entry: Mapping[str, Any], source_url: str) -> Optional[Dict[str
 def _post(source_url: str, url: str, guid: str, title: str, content_html: str, date: Optional[datetime], *,
           protected: bool = False) -> Dict[str, Any]:
     from insight_core.db.repo_posts import BACKLOG_KEY
+    from insight_core.utils.originals_rules import address_hint
 
     content_html = parsing.normalize_feed_urls(content_html)
     return {
@@ -837,7 +882,9 @@ def _post(source_url: str, url: str, guid: str, title: str, content_html: str, d
         "title": title,
         "content": parsing.strip_html(content_html),
         "content_html": content_html,
-        "date": date or datetime.now(timezone.utc),
+        # v10.13.9: no date stays undated (never the fetch's "now"): a backlog post, the saver sorts it before the
+        # source's oldest; the address's day, else its month's 1st (originals_rules.address_hint), is its sort hint
+        "date": date or address_hint(url),
         "media_urls": parsing.extract_html_image_urls(content_html),
         "categories": [],
         "metadata": {"archive_strategy": API, **({"protected": True} if protected else {})},
