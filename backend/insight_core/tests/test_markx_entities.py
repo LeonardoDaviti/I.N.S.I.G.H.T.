@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import unittest
+from unittest import mock
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -332,9 +333,14 @@ class TheStagesOwnBudget(_Db):
         first = self.run_stage(full=True, budget=0)
         self.assertEqual(first["kind"], "full")
         self.assertFalse(first["full"]["done"])
-        self.assertEqual(first["full"]["chunks"], 1)        # one chunk, then the budget is spent
-        self.assertIsNotNone(first["full"]["after"])
-        seen = [first]
+        # v10.13.9: the relinking's one page, then the budget is spent: the pool's first chunk is the next run's
+        self.assertEqual((first["full"]["phase"], first["full"]["chunks"], first["full"]["after"]), ("pool", 0, None))
+        self.assertEqual(first["check"], {"same": True, "relinked": 0})
+        second = self.run_stage(budget=0)
+        self.assertEqual((second["full"]["phase"], second["full"]["chunks"]), ("pool", 1))   # one chunk, then stops
+        self.assertIsNotNone(second["full"]["after"])
+        self.assertNotIn("check", second)                   # resumed: nothing relinked again
+        seen = [first, second]
         while not seen[-1]["full"]["done"]:
             seen.append(self.run_stage(budget=0))           # not forced: the half-done pass is resumed
             self.assertEqual(seen[-1]["kind"], "full")
@@ -364,6 +370,145 @@ class TheStagesOwnBudget(_Db):
         self.assertTrue(out["full"]["done"])
         self.assertEqual(out["full"]["chunks"], out["full"]["of"])
         self.assertEqual(out["check"], {"same": True, "relinked": 0})
+
+
+class BothPassesKeepToTheBudget(_Db):
+    """v10.13.9: the incremental pass links, pools and decides in chunks and stops after the chunk past its budget;
+    the mentions it leaves stay unlinked and the next runs take them (nothing lost, nothing done twice). The full
+    pass's relinking stops between its pages likewise."""
+
+    names = TheStagesOwnBudget.names
+    run_stage = TheStagesOwnBudget.run_stage
+
+    def nights_pass_done(self):
+        self.run_stage(full=True)    # nothing to read yet: the night's pass is done, so the next runs are incremental
+
+    def unlinked(self):
+        self.cur.execute("SELECT count(*) FROM mx_mentions WHERE entity_id IS NULL")
+        return self.cur.fetchone()[0]
+
+    def test_the_incremental_pass_stops_at_its_budget_and_the_next_run_goes_on(self):
+        self.nights_pass_done()
+        n = self.names()
+        seen = []
+        with mock.patch.object(I, "MENTION_CHUNK", 1):
+            while not seen or not seen[-1]["incremental"]["done"]:
+                seen.append(self.run_stage(budget=0))
+                self.assertEqual(seen[-1]["kind"], "incremental")
+                self.assertLess(len(seen), 20)
+        first = seen[0]
+        self.assertEqual((first["incremental"]["parts"], first["incremental"]["of"], first["incremental"]["left"]),
+                         (1, 2 * n, 2 * n - 1))                            # one chunk, then the budget is spent
+        self.assertEqual(first["link"]["entities_made"], 2 * n)            # every key's entity made at once
+        self.assertEqual(len(seen), 2 * n)                                 # a mention a run
+        self.assertEqual([o["link"]["linked"] for o in seen], [1] * (2 * n))   # each linked once
+        self.assertEqual(sum(o["entities_made"] for o in seen), 2 * n)     # none made twice
+        self.assertEqual(self.unlinked(), 0)
+        self.assertEqual(sum(o["merged"] for o in seen), n)                # every pair, once
+        self.cur.execute("SELECT count(*), count(DISTINCT from_id) FROM mx_entity_redirects")
+        self.assertEqual(self.cur.fetchone(), (n, n))
+        book = self.book()
+        self.assertEqual(len({book.root(e) for e in book.mentioned}), n)
+        self.assertEqual([o["days_linked"] for o in seen], [1] * (2 * n))
+
+    def test_without_a_budget_one_incremental_run_does_every_chunk(self):
+        self.nights_pass_done()
+        n = self.names()
+        with mock.patch.object(I, "MENTION_CHUNK", 1):
+            out = self.run_stage(budget=None)
+        self.assertEqual(out["incremental"], {"done": True, "parts": 2 * n, "of": 2 * n, "left": 0})
+        self.assertEqual((out["link"]["linked"], out["merged"], self.unlinked()), (2 * n, n, 0))
+
+    def test_the_relinking_stops_between_pages_and_the_pass_resumes_there(self):
+        n = self.names()
+        self.stage()
+        self.cur.execute("DELETE FROM mx_entity_redirects")
+        seen = []
+        with mock.patch.object(I, "RELINK_PAGE", 1):
+            seen.append(self.run_stage(full=True, budget=0))
+            while not seen[-1]["full"]["done"]:
+                seen.append(self.run_stage(budget=0))
+                self.assertLess(len(seen), 50)
+        relinking = [o for o in seen if "check" in o]
+        self.assertEqual(len(relinking), 2 * n)                    # a post a run
+        self.assertTrue(all(o["full"]["phase"] == "link" and o["full"]["link_after"] for o in relinking[:-1]))
+        self.assertEqual(sum(o["link"]["mentions"] for o in relinking), 2 * n)   # every mention relinked once
+        self.assertTrue(all(o["check"] == {"same": True, "relinked": 0} for o in relinking))
+        self.assertEqual(sum(o["merged"] for o in seen), n)
+        self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))
+
+    def test_an_unfinished_pass_recorded_before_resumes_in_its_pool(self):
+        self.names()
+        self.stage()
+        self.cur.execute("UPDATE mx_runs SET counts = jsonb_set(counts, '{entities,full}', %s::jsonb)",
+                         (json.dumps({"done": False, "after": "00000000-0000-0000-0000-000000000000"}),))
+        self.assertIsNotNone(entity_stage.unfinished(self.cur))
+        out = self.run_stage(budget=None)
+        self.assertEqual((out["kind"], out["full"]["resumed"], out["full"]["done"]), ("full", True, True))
+        self.assertNotIn("check", out)                               # its relinking was done
+
+
+class PublishedIndexed(unittest.TestCase):
+    """v10.13.9: published() reads a publisher's type from an index of the mentions, not a scan of them for each
+    document; on random mentions it does exactly what the scan did."""
+
+    class Cur:
+        def __init__(self):
+            self.calls, self.rowcount = [], 1
+
+        def execute(self, sql, params=None):
+            self.calls.append(params)
+
+    class Writer:
+        def __init__(self, book):
+            self.book, self.made = book, []
+
+        def entity(self, *, type_, name, key, level, parent, maker, fields, first_seen):
+            eid = f"made-{len(self.made)}"
+            self.made.append((eid, type_, name, key, first_seen))
+            self.book.alias.setdefault(key, eid)
+            return eid
+
+    @staticmethod
+    def scan(cur, book, w, ms):
+        """published() as it was before v10.13.9 (the scan), the reference."""
+        added = 0
+        for m in ms:
+            if not (m.by_name and m.entity_id and I.schemas_type(m.type) == "document"):
+                continue
+            k = N.key(m.by_name)
+            if not k or k == m.key:
+                continue
+            pub = book.by_key(k)
+            if pub is None:
+                typ = next((x.type for x in ms if x.post_id == m.post_id and x.key == k and x.type in ("org", "person")),
+                           "org")
+                pub = w.entity(type_=typ, name=m.by_name.strip(), key=k, level="thing", parent=None, maker=None,
+                               fields=dict(N.NONE), first_seen=m.at)
+            cur.execute("INSERT", (pub, m.entity_id, m.call_id,
+                                   json.dumps({"post": m.post_id, "guide": m.guide, "n": m.n, "by": m.by_name})))
+            added += cur.rowcount
+        return added
+
+    def test_random_mentions(self):
+        import random
+        names = ["Acme Corp", "acme corp", "Ivo Kestrel", "Orbit Labs", "The Orbit Labs", "Nimbus Paper", ""]
+        types = ["document", "paper", "org", "person", "product", None]
+        for seed in range(400):
+            rnd = random.Random(seed)
+            ms = [I.Mention(f"p{rnd.randrange(4)}", "ent-v3", n, "", rnd.choice(names), rnd.choice(types), "subject",
+                            None, {}, rnd.choice([None, f"e{n}"]), T0 + n * H, None,
+                            rnd.choice([None, None] + names), f"c{n}")
+                  for n in range(rnd.randrange(0, 25))]
+            known = {N.key(x): f"k-{x}" for x in rnd.sample(names, 2) if N.key(x)}
+            got = []
+            for f in (self.scan, I.published):
+                book = I.Book()
+                book.alias = dict(known)
+                cur, w = self.Cur(), self.Writer(book)
+                added = f(cur, book, w, ms)
+                got.append((added, cur.calls, w.made))
+            self.assertEqual(got[0], got[1], f"seed {seed}")
 
 
 class Merging(_Db):
