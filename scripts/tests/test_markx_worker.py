@@ -59,6 +59,7 @@ class Stub:
         self.posts = []             # every answers payload
         self.releases = []          # every release body
         self.works = []             # every /work query
+        self.picked = []            # tasks each /work leased
         self.fail_posts = 0         # answer this many posts with 503 first
         self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
         self.guides = dict(GUIDES)
@@ -142,6 +143,7 @@ class Stub:
             until = now + timedelta(seconds=self.lease_seconds)
             pick = [t for t in self.tasks.values() if t["status"] == "open" and t["kind"] in kinds]
             pick = pick[:int(q["limit"])]
+            self.picked.append(len(pick))
             for t in pick:
                 t.update(status="leased", lease_until=until, leased_by=q["worker"])
             return {"lease_until": until.isoformat(), "guides": {t["guide"]: self.guides[t["guide"]] for t in pick},
@@ -354,8 +356,9 @@ class TestValid(Base):
             self.assertEqual(c["system"], W.system_for(GUIDES[KIND_GUIDE[kinds.pop()]]))
 
     def test_merges_are_asked_one_per_call_and_leased_twenty_at_a_time(self):
-        """0112 Decided 8: a merge is asked alone (313 of 313 answered live at --batch 1); the lease stays --batch, so
-        --batches still counts leases, and the other kinds keep 20 a call."""
+        """0112 Decided 8: a merge is asked alone (313 of 313 answered live at --batch 1); --batches still counts
+        leases, and the other kinds keep 20 a call. v10.13.3: a merge lease takes --parallel (4 here), the calls the
+        callers start at once, so no merge waits out its lease in the queue."""
         self.stub.add("merge", 7, start=1)
         self.stub.add("read", 25, start=101)
         p = self.run_worker("--kinds", "merge,read", "--parallel", "4", "--batches", "10")
@@ -368,7 +371,7 @@ class TestValid(Base):
             sizes.setdefault(kind, []).append(len(ids))
         self.assertEqual(sizes["merge"], [1] * 7)
         self.assertEqual(sorted(sizes["read"]), [5, 20])
-        self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "20")])
+        self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "4")])
 
     def test_per_call_sets_a_kinds_call_size(self):
         self.stub.add("merge", 7)
@@ -524,7 +527,11 @@ class TestStops(Base):
         self.assertEqual(len(self.fake_calls()), 3)              # the three already started finish
         self.assertEqual(len(self.stub.by_status("answered")), 40)
         self.assertEqual(self.stub.by_status("leased"), [])
-        self.assertEqual(len(self.stub.works), 3)                # nothing leased after it
+        # nothing leased after it: v10.13.3's leaser runs ahead of the calls, so it may have asked once more,
+        # and found nothing (the 60 were leased); every task is answered or released
+        self.assertLessEqual(len(self.stub.works), 4)
+        self.assertEqual(self.stub.picked[:3], [20, 20, 20])
+        self.assertEqual(sum(self.stub.picked[3:]), 0)
 
     def test_auth_error(self):
         self.stub.add("read", 20)
@@ -597,6 +604,50 @@ class TestServer(Base):
         self.assertEqual(p.returncode, 3, p.stderr)
         self.assertEqual(self.fake_calls(), [])
         self.assertIn("/api/markx/work", self.done()["why"])
+
+    def test_a_lease_of_100_is_asked_in_calls_of_the_batch(self):
+        self.stub.add("read", 100)
+        p = self.run_worker("--kinds", "read", "--batch", "20", "--lease", "100", "--batches", "1", "--parallel", "5")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([w["limit"] for w in self.stub.works], ["100"])
+        self.assertEqual(len(self.fake_calls()), 5)
+        self.assertEqual(len(self.stub.by_status("answered")), 100)
+
+    def test_a_slow_call_holds_back_no_other_batch(self):
+        """v10.13.3: the pipeline: with 2 callers, while the first call sleeps the other caller asks the rest;
+        rounds (before) waited for the slowest call of each round, so two slow calls in two rounds took twice."""
+        self.stub.add("read", 80)
+        t = time.monotonic()
+        p = self.run_worker("--kinds", "read", "--batches", "4", "--parallel", "2", plan="sleep:3,valid,valid,sleep:3")
+        took = time.monotonic() - t
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 80)
+        self.assertLess(took, 5.5, took)           # rounds: 3 s + 3 s at least; the pipeline: about 3 s
+
+    def test_a_merge_lease_takes_no_more_than_the_callers_start(self):
+        self.stub.add("merge", 30)
+        p = self.run_worker("--kinds", "merge", "--lease", "100", "--batches", "1", "--parallel", "4")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.stub.works[0]["limit"], "4")       # merge is one a call: 4 callers, 4 tasks
+
+    def test_a_bad_lease_size_is_refused(self):
+        for bad in ("0", "-5", "101"):
+            p = self.run_worker("--kinds", "read", "--lease", bad)
+            self.assertEqual(p.returncode, 2, (bad, p.stderr))
+            self.assertIn("--lease", p.stderr)
+
+    def test_a_bug_in_a_batch_stops_the_cycle_with_exit_1(self):
+        """v10.13.3: a batch that raises is never swallowed into exit 0; its tasks are released."""
+        from unittest import mock
+        self.stub.add("read", 40)
+        argv = ["cycle", "--server", self.stub.url, "--token-file", str(self.token_file), "--worker", "test-device",
+                "--log", str(self.log), "--quiet", "--claude", str(FAKE), "--spool", str(self.spool),
+                "--retry-wait", "0", "--kinds", "read", "--parallel", "1"]
+        with mock.patch.object(W.Worker, "first", side_effect=RuntimeError("boom")):
+            code = W.main(argv)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.events("bug")[0]["where"], "batch")
+        self.assertEqual(self.stub.by_status("leased"), [])     # released
 
     def test_a_slow_lease_skips_its_kind_and_the_others_go_on(self):
         self.stub.add("read", 20)

@@ -181,6 +181,13 @@ def fail_attempt(cur: Cursor, task_id: Id, error: str, max_attempts: int = MAX_A
     return row[0] if row else None
 
 
+def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
+    """{kind: open tasks} of `kinds` only (v10.13.3: a lease asks this, by the queue index, not the whole table)."""
+    cur.execute("SELECT kind, count(*) FROM mx_tasks WHERE status = 'open' AND kind = ANY(%s) GROUP BY kind",
+                (list(kinds),))
+    return {kind: n for kind, n in cur.fetchall()}
+
+
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
     """{kind: {status: tasks}} (GET /api/markx/status)."""
     cur.execute("SELECT kind, status, count(*) FROM mx_tasks GROUP BY kind, status ORDER BY kind, status")

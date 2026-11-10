@@ -49,7 +49,8 @@ A cycle
 
 Exit codes: 0 done (also: nothing to do); 2 bad arguments, token file or `claude` not found, or the
 embedder unreachable; 3 server unreachable or a server error; 4 Claude usage limit; 5 Claude auth error;
-6 the server refused the token (401/403); 7 the server refused the embedder's build or model (409/400).
+6 the server refused the token (401/403); 7 the server refused the embedder's build or model (409/400);
+1 a bug: a batch or the leaser raised (v10.13.3: the pipeline logs it as "bug" and stops, never exits 0).
 
 Embeddings (the `embed` kind, issue 0086 B, the build plan's corrections 6)
 -------------------------------------------------------------------------
@@ -122,6 +123,7 @@ import base64
 import hashlib
 import json
 import os
+import queue
 import re
 import socket
 import struct
@@ -141,15 +143,17 @@ EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
 DEFAULT_KINDS = "read,read3,entities,cite,alias,alias2,collide,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,briefing,translate,stance,probes,track,subtopics"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
-# the lease still takes --batch of them. --per-call overrides it.
+# a lease takes --lease of them (v10.13.3), at most --parallel calls' worth. --per-call overrides it.
 PER_CALL = "merge=1,collide=6,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1"   # 0119: the collision judge 6 a call, as the lab asked it; a story's
 # perspectives (one group of at most 5 members a task) and its sheet one a call (0119 B3-B4); 0127: read-v3 5 a call (rv3d)
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
 
+LEASE_MAX = 100   # v10.13.3: the server's MAX_LIMIT, tasks a lease may ask
 SLOW_LEASES = 3   # v10.13.2: this many slow leases in a row (no answer within the timeout) end the cycle as exit 3
 EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
+EXIT_BUG = 1
 REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal (2026-11-08)
 EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
 EMBED_KINDS = (EMBED_KIND, "embed_name")   # 0119 A1: a name's vector is embedded as a post's is
@@ -849,33 +853,18 @@ class Worker:
                  ms_per_post=round(ms / max(1, len(rows)), 1))
         self.post_vectors(rows)
 
-    def run_round(self, batches):
-        embeds = [b for b in batches if b.kind in EMBED_KINDS]
-        batches = [b for b in batches if b.kind not in EMBED_KINDS]
-        if embeds:
-            with ThreadPoolExecutor(self.a.parallel) as ex:
-                list(ex.map(self.embed, embeds))
-        if not batches or self.stop.is_set():
-            return
-        with ThreadPoolExecutor(self.a.parallel) as ex:
-            again = list(ex.map(self.first, batches))
-        if self.stop.is_set() or self.a.no_retry:
-            return
-        retry = []
-        for b, todo in zip(batches, again):
-            n = self.per_call(b.kind)
-            for k in range(0, len(todo), n):
-                retry.append(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until))
-        if retry:
-            with ThreadPoolExecutor(self.a.parallel) as ex:
-                list(ex.map(self.second, retry))
-
     def per_call(self, kind):
         """Tasks per call of `kind`: --per-call's, else --batch."""
         return max(1, min(self.a.batch, (self.a.per_call or {}).get(kind, self.a.batch)))
 
+    def lease_size(self, kind):
+        """Tasks per lease of `kind` (v10.13.3): --lease, else --batch (the server takes LEASE_MAX at most), and no
+        more than --parallel calls of the kind, so a lease of one-a-call tasks (merge) never queues more calls than
+        the callers start at once while its 30 minutes run."""
+        return max(1, min(LEASE_MAX, self.a.lease or self.a.batch, self.per_call(kind) * self.a.parallel))
+
     def lease(self, kind):
-        w = self.server.work(kind, self.a.batch, self.a.worker, self.a.days) or {}
+        w = self.server.work(kind, self.lease_size(kind), self.a.worker, self.a.days) or {}
         tasks = w.get("tasks") or []
         if not tasks:
             return [], 0
@@ -886,7 +875,8 @@ class Worker:
             groups.setdefault((t.get("kind") or kind, t["guide"]), []).append(t)
             with self.lock:
                 self.held[str(t["id"])] = t["id"]
-        self.counts["leased"] += len(tasks)
+        with self.lock:
+            self.counts["leased"] += len(tasks)
         out = []
         for (k, gid), ts in groups.items():
             g = guides.get(gid)
@@ -909,13 +899,35 @@ class Worker:
         except (ServerUnreachable, ServerError) as e:
             return self.finish("server", str(e))
         kinds = [k.strip() for k in self.a.kinds.split(",") if k.strip()]
+        # v10.13.3: a pipeline, not rounds. One thread leases (kinds in turn, as before) into a short queue, and
+        # --parallel callers each take the next batch as soon as they are free: Haiku no longer waits for the leases
+        # of a round, nor a round for its slowest call. The queue holds --parallel batches; the leaser waits on it.
+        ready = queue.Queue(maxsize=max(1, self.a.parallel))
+        callers = [threading.Thread(target=self.call_loop, args=(ready,), name=f"caller-{i}", daemon=True)
+                   for i in range(self.a.parallel)]
+        for t in callers:
+            t.start()
+        self.lease_all(kinds, ready, len(callers))
+        for t in callers:
+            t.join()
+        return self.finish(self.fatal, self.fatal_why)
+
+    def call_loop(self, ready):
+        """A caller (v10.13.3): batches from `ready` until None; after a stop the rest are only taken off (their
+        tasks are released by finish, or left to expire when the server or the token failed)."""
+        while True:
+            b = ready.get()
+            if b is None:
+                return
+            if not self.stop.is_set():
+                self.run_batch(b)
+
+    def lease_all(self, kinds, ready, callers):
+        """The leaser (v10.13.3): --batches leases, kinds taking turns (v10.12.1; --drain: each until dry), each
+        lease's batches put on `ready`; a None for each caller at the end."""
         done, leased, turn, slow = set(), 0, 0, 0
-        while leased < self.a.batches and not self.stop.is_set():
-            batches = []
-            while len(batches) < self.a.parallel and leased < self.a.batches:
-                # v10.12.1: kinds take turns (one lease each, in --kinds order, round and round), so one long queue
-                # (a re-read of every post) never starves the kinds after it; --drain keeps the old order (a kind
-                # until it runs dry, then the next).
+        try:
+            while leased < self.a.batches and not self.stop.is_set():
                 if self.a.drain:
                     kind = next((k for k in kinds if k not in done), None)
                 else:
@@ -946,19 +958,43 @@ class Worker:
                 except (ServerUnreachable, ServerError) as e:
                     self.set_fatal("server", str(e))
                     break
-                except (KeyError, ValueError, TypeError) as e:
+                except (KeyError, ValueError, TypeError, AttributeError) as e:
                     self.set_fatal("server", f"bad /work answer: {e!r}")
                     break
                 slow = 0
-                if n < self.a.batch:
+                if n < self.lease_size(kind):
                     done.add(kind)
                 if n:
                     leased += 1
-                    batches += bs
-            if not batches:
-                break
-            self.run_round(batches)
-        return self.finish(self.fatal, self.fatal_why)
+                    for b in bs:
+                        ready.put(b)
+        except Exception as e:   # a bug in the leaser: stop, never exit 0
+            self.log("bug", where="leaser", error=repr(e)[:300])
+            self.set_fatal("bug", repr(e)[:300])
+        finally:
+            for _ in range(callers):
+                ready.put(None)
+
+    def run_batch(self, b):
+        """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked once more in calls
+        of per_call(kind) (as a round's retry did before v10.13.3)."""
+        try:
+            if b.kind in EMBED_KINDS:
+                self.embed(b)
+                return
+            if self.stop.is_set():
+                return
+            todo = self.first(b)
+            if not todo or self.stop.is_set() or self.a.no_retry:
+                return
+            n = self.per_call(b.kind)
+            for k in range(0, len(todo), n):
+                if self.stop.is_set():
+                    return
+                self.second(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until))
+        except Exception as e:   # a bug: logged, the cycle stops and exits 1 (never 0)
+            self.log("bug", where="batch", kind=b.kind, error=repr(e)[:300])
+            self.set_fatal("bug", repr(e)[:300])
 
     def finish(self, fatal, why):
         try:
@@ -975,7 +1011,7 @@ class Worker:
             fatal, why = fatal or "server", why or str(e)
         self.counts["cost_usd"] = round(self.counts["cost_usd"], 6)
         code = {None: EXIT_OK, "usage": EXIT_USAGE, "auth": EXIT_AUTH, "setup": EXIT_SETUP, "build": EXIT_BUILD,
-                "server": EXIT_SERVER, "token": EXIT_TOKEN}[fatal]
+                "server": EXIT_SERVER, "token": EXIT_TOKEN, "bug": EXIT_BUG}[fatal]
         self.log("done", exit=code, stopped=fatal, why=(why or None) and str(why)[:300], **self.counts)
         return code
 
@@ -999,7 +1035,9 @@ def main(argv=None):
                    help="lease each kind until it runs dry before the next (default: kinds take turns, v10.12.1)")
     c.add_argument("--per-call", type=per_call_arg, default=per_call_arg(PER_CALL),
                    help="tasks per call for some kinds, at most --batch (default " + PER_CALL + ": a merge is asked alone; "
-                        "the lease still takes --batch)")
+                        "a lease takes --lease, at most --parallel calls of the kind)")
+    c.add_argument("--lease", type=int, default=None,
+                   help="tasks per lease, at most 100 (default --batch); a call still asks --batch / --per-call of them")
     c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
     c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3; start at 10 at most and raise "
                    "it in steps: about 100 at once broke the device's DNS)")
@@ -1023,6 +1061,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == "cycle" and (a.batch < 1 or a.batches < 1 or a.parallel < 1 or a.post_tries < 1):
         ap.error("--batch, --batches, --parallel and --post-tries must be at least 1")
+    if a.cmd == "cycle" and a.lease is not None and not 1 <= a.lease <= LEASE_MAX:
+        ap.error(f"--lease must be 1 to {LEASE_MAX} (the server's most a lease)")
 
     try:
         token = read_token(a.token_file)

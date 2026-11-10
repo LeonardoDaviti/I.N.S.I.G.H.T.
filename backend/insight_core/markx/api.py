@@ -109,6 +109,7 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -247,6 +248,17 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 # ---- the worker's routes -------------------------------------------------------------------------
 
+PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests this long before a lease runs it again
+_PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
+
+
+def _plan_resting(kind: str) -> bool:
+    """v10.13.3: most kinds' queues run near empty, so nearly every lease ran its kind's planner, and a planner that
+    finds nothing still reads its whole window (seconds a lease on the server); after a run that added nothing, the
+    lease skips it for PLAN_REST_SECONDS. New work still arrives within a minute."""
+    return _PLAN_REST.get(kind, 0.0) > time.monotonic()
+
+
 @router.get("/work", dependencies=[Depends(_worker_auth)])
 def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), worker: str = Query(...),
          days: Optional[str] = Query(None)):
@@ -264,7 +276,7 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     _contact(worker)
     with transaction() as cur:
         ensure_guides(cur)
-        queue = repo.queue_counts(cur)
+        waiting = repo.open_counts(cur, wanted)
         setting = tasks.reading_window(cur)
         for kind in wanted:
             if kind not in tasks.PLANNERS:
@@ -276,8 +288,9 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
             elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
                 tasks.PLANNERS[kind](cur, days=setting)          # the page's window changed: at once
                 tasks.note_planned(cur, kind, setting)
-            elif queue.get(kind, {}).get("open", 0) < limit:
-                tasks.PLANNERS[kind](cur)
+            elif waiting.get(kind, 0) < limit and not _plan_resting(kind):
+                if not tasks.PLANNERS[kind](cur):
+                    _PLAN_REST[kind] = time.monotonic() + PLAN_REST_SECONDS
         leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker, windowed=tasks.WINDOWED,
                                   days=setting if window is tasks.SETTING else window)
         guides = repo.guides(cur, sorted({t["guide"] for t in leased})) if leased else {}

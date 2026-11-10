@@ -104,6 +104,9 @@ class _Api(unittest.TestCase):
         api.token_store = api.TokenStore(box=SecretBox(SecretBox.generate_key()))
         schemas._ready.clear()
         api._contacts.clear()
+        api._PLAN_REST.clear()                                   # v10.13.3: no planner rests across tests,
+        self.addCleanup(setattr, api, "PLAN_REST_SECONDS", api.PLAN_REST_SECONDS)
+        api.PLAN_REST_SECONDS = 0.0                              # nor within one unless it asks (PlannersRest)
         if not self.plan:
             self.addCleanup(setattr, tasks, "PLANNERS", tasks.PLANNERS)
             tasks.PLANNERS = {}
@@ -224,18 +227,18 @@ class Leases(_Api):
         schemas._ready.clear()
         tasks.PLANNERS = {"read": lambda cur, **kw: tasks.plan_posts(cur, "read", **kw)}
         self.post(title="Globex raised $300m")
-        counts, first = repo.queue_counts, threading.Event()
+        counts, first = repo.open_counts, threading.Event()   # v10.13.3: the lease's count
 
-        def slow_first(cur):                    # the first lease holds its transaction open after loading the guides
+        def slow_first(cur, kinds):                    # the first lease holds its transaction open after loading the guides
             if not first.is_set():
                 first.set()
                 time.sleep(1.0)
-            return counts(cur)
+            return counts(cur, kinds)
         got = {}
 
         def lease(name):
             got[name] = self.lease(worker=name)
-        with mock.patch.object(repo, "queue_counts", slow_first):
+        with mock.patch.object(repo, "open_counts", slow_first):
             one = threading.Thread(target=lease, args=("device-1",))
             one.start()
             self.assertTrue(first.wait(5))
@@ -631,6 +634,50 @@ class ChecksOffTheLease(_Api):
             self.assertFalse(tasks.checks_in_background(self.cur, now))
         with mock.patch.object(story_window, "days_for_run", lambda cur, at: 31):
             self.assertTrue(tasks.checks_in_background(self.cur, now))
+
+
+class PlannersRest(_Api):
+    """v10.13.3: a lease counts only its kinds' open tasks, and a planner that added nothing rests a minute."""
+
+    def setUp(self):
+        super().setUp()
+        api.PLAN_REST_SECONDS = 60.0
+
+    def test_open_counts_reads_only_the_kinds_asked_and_only_open_tasks(self):
+        with self.conn.transaction():
+            a, _ = tasks.add(self.cur, "read", "rest-test one " + uuid.uuid4().hex, a=None)
+            tasks.add(self.cur, "read", "rest-test two " + uuid.uuid4().hex, a=None)
+            tasks.add(self.cur, "entities", "rest-test three " + uuid.uuid4().hex, a=None)
+            self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (a,))
+            got = repo.open_counts(self.cur, ["read"])
+        self.assertEqual(set(got), {"read"})
+        with self.conn.transaction():
+            self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'read' AND status = 'open'")
+            self.assertEqual(got["read"], self.cur.fetchone()[0])
+
+    def test_a_planner_that_added_nothing_rests_then_runs_again(self):
+        planner = mock.Mock(return_value=0)
+        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
+            self.lease("relate")
+            self.lease("relate")
+            self.assertEqual(planner.call_count, 1)               # resting
+            api._PLAN_REST["relate"] = 0.0                         # its minute is over
+            self.lease("relate")
+            self.assertEqual(planner.call_count, 2)
+
+    def test_a_planner_that_added_work_never_rests(self):
+        planner = mock.Mock(return_value=3)
+        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
+            self.lease("relate")
+            self.lease("relate")
+        self.assertEqual(planner.call_count, 2)
+
+    def test_one_kinds_rest_leaves_the_others_planned_in_the_same_lease(self):
+        idle, busy = mock.Mock(return_value=0), mock.Mock(return_value=2)
+        with mock.patch.dict(tasks.PLANNERS, {"relate": idle, "back": busy}):
+            self.lease("relate,back")                              # relate added nothing: it rests
+            self.lease("relate,back")
+        self.assertEqual((idle.call_count, busy.call_count), (1, 2))
 
 
 class ReadingWindow(_Api):
