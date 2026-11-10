@@ -10,7 +10,15 @@ the links its posts carry that are that thing's page, by these rules in this ord
      host's canonical page).
   2. `title`: a link whose read title (the page's title, else the link's own words) is the entity's name or an alias
      by identity's name key (whole, or one part of a "Title | Site" title).
-  3. `maker`: a model, product or software entity whose maker's name is the site's own word: a page on that site
+  3. `repo` (v10.13.5): a platform's page of one thing, <host>/<owner>/<thing> on a code host or a model hub (a
+     dataset's /datasets/<owner>/<thing>), or a package index's page of one package, whose <thing> is the entity's
+     name or an alias whole (the name key run together, no suffix dropped). A bare platform link has no link words,
+     the platform's read title is "<owner>/<thing> · Hub" (never the name alone), and the platform is nobody's maker
+     site, so rules 2 and 4 never took it. Kind by the platform: code, release (a model hub's card) or package;
+     <owner> is kept on the row (`owner`) as a maker candidate, shown, never asserted. Never a longer name holding
+     the entity's, never an owner's page alone (`is_home`), never a platform's own section (/topics/). One entity's
+     rows of one kind under 2+ owners (a fork, a namesake) keep only the stated maker's (`one_owner`).
+  4. `maker`: a model, product or software entity whose maker's name is the site's own word: a page on that site
      whose title holds the entity's name (word for word). Never a front page or a profile (`is_home`).
 A paper or a release page is the **original**; a code repository and a demo are kept as its links (the post that
 gave the paper by rule 1 gives them, when it links one of each).
@@ -37,11 +45,11 @@ from insight_core.utils.discover_rules import paper_address, place_kind
 from insight_core.utils.post_links import is_home
 from insight_core.utils.url_normalization import normalize_url
 
-PAPER, CODE, DEMO, RELEASE, WORK = "paper", "code", "demo", "release", "work"
-KINDS = (PAPER, CODE, DEMO, RELEASE, WORK)
+PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE = "paper", "code", "demo", "release", "work", "package"
+KINDS = (PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE)
 ORIGINAL_KINDS = (PAPER, RELEASE, WORK)
-IDENTIFIER, TITLE, MAKER, SITE, LOOKUP = "identifier", "title", "maker", "site", "lookup"
-RULE_ORDER = (IDENTIFIER, TITLE, SITE, MAKER, LOOKUP)
+IDENTIFIER, TITLE, MAKER, SITE, LOOKUP, REPO = "identifier", "title", "maker", "site", "lookup", "repo"
+RULE_ORDER = (IDENTIFIER, TITLE, REPO, SITE, MAKER, LOOKUP)
 # E2: a front page is a work only for a document; one an entity of these types is named by (its site word) never is.
 NEVER_FRONT_TYPES = ("product", "software", "model", "org", "person")
 WORK_PAGES_MAX = 20                # E2: a work site's own pages your posts link, at most
@@ -64,6 +72,17 @@ SUPPLY_MIN = 3
 LOOKUP_RESULTS = 3
 CODE_SITES = frozenset({"github.com", "gitlab.com", "codeberg.org", "bitbucket.org", "sr.ht"})
 DEMO_SUFFIX = (".hf.space",)
+MODEL_HUBS = frozenset({"huggingface.co", "hf.co"})   # the model hub address_kind knows (hf.co: its short host)
+# a package index's page of one package: the section word before its name (npm's may be @scope/<name>)
+PACKAGE_SITES = {"pypi.org": "project", "npmjs.com": "package", "crates.io": "crates"}
+# a code host's or a model hub's own sections where an owner would stand, never an owner (github.com/topics/<x>,
+# huggingface.co/blog/<slug>): a vocabulary of page kinds, not of sites
+PLATFORM_SECTIONS = frozenset({
+    "about", "apps", "blog", "changelog", "chat", "codespaces", "collections", "contact", "customer-stories",
+    "dashboard", "datasets", "docs", "enterprise", "events", "explore", "features", "groups", "help", "issues", "join",
+    "learn", "login", "marketplace", "models", "new", "notifications", "organizations", "orgs", "papers", "posts",
+    "pricing", "pulls", "readme", "resources", "search", "security", "settings", "signup", "site", "solutions",
+    "spaces", "sponsors", "tasks", "team", "topics", "trending", "users", "-"})
 _TITLE_PARTS = re.compile(r"\s+[|·—–-]\s+")
 _LEADING_ID = re.compile(r"^\s*\[[^\]]{1,40}\]\s*")
 
@@ -180,6 +199,79 @@ def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: It
     # the name is what the page is about: half its title's words or more ("Introducing Nimbus 4"), never a page that
     # names it in passing ("How Nimbus helped a lab ...": measured, the maker rule's wrong rows were all so)
     return any(len(n) >= NAME_MIN and word_contains(n, t) and 2 * len(n.split()) >= len(t.split()) for n in names)
+
+
+def platform_thing(url: str) -> Optional[Tuple[str, Optional[str], str]]:
+    """(kind, owner, thing) of a platform's page of one thing: a code host's <owner>/<repository> (kind code), a model
+    hub's <owner>/<model> or datasets/<owner>/<dataset> (kind release), a package index's page of one package (kind
+    package: npm's @scope is its owner, the others name none). The platform's own host only (not docs., gist.), and
+    the thing's own page only, not a file or an issue under it; None otherwise."""
+    host = host_of(url)
+    host = host[4:] if host.startswith("www.") else host
+    site = site_of(host)
+    if host != site:
+        return None
+    segs = _segments(url)
+    if site in PACKAGE_SITES:
+        if len(segs) < 2 or segs[0] != PACKAGE_SITES[site]:
+            return None
+        if segs[1].startswith("@"):
+            return (PACKAGE, segs[1][1:], segs[2]) if len(segs) >= 3 and len(segs[1]) > 1 else None
+        return PACKAGE, None, segs[1]
+    if site in CODE_SITES:
+        if len(segs) == 2 and segs[0].lower() not in PLATFORM_SECTIONS:
+            return CODE, segs[0].lstrip("~"), segs[1]
+        return None
+    if site in MODEL_HUBS:
+        if len(segs) == 3 and segs[0].lower() == "datasets":
+            return RELEASE, segs[1], segs[2]
+        if len(segs) == 2 and segs[0].lower() not in PLATFORM_SECTIONS:
+            return RELEASE, segs[0], segs[1]
+    return None
+
+
+def by_repo(url: str, names: Iterable[str], key, squash) -> Optional[Tuple[str, Optional[str]]]:
+    """Rule `repo`: (kind, owner) when `url` is a platform's page of one thing (platform_thing) whose thing is the
+    entity's name or an alias, whole, by the name key run together (NAME_MIN+ characters); None otherwise, and for any
+    home page. No suffix is dropped: measured on the server's copy (v10.13.5), dropping a build tag (-GGUF, -FP8)
+    took a third party's quantised copy for the model's own page (21 of its 53 extra rows), and dropping a variant
+    (-Instruct, -Base) added one entity in 2,161."""
+    if is_home(url):
+        return None
+    got = platform_thing(url)
+    if not got:
+        return None
+    kind, owner, thing = got
+    want = {w for w in (squash(n) for n in names if n) if len(w) >= NAME_MIN}
+    return (kind, owner or None) if squash(key(thing)) in want else None
+
+
+def owner_agrees(owner: Optional[str], makers: Iterable[str], squash) -> bool:
+    """A platform owner is the entity's stated maker: the maker's name run together is the owner's, whole or less a
+    handle suffix ("acme-ai" is Acme's)."""
+    if not owner:
+        return False
+    from insight_core.markx.names import handle_forms
+    forms = set(handle_forms(owner)) | {squash(owner.casefold())}
+    return any(squash(m) in forms for m in makers if m and len(squash(m)) >= 3)
+
+
+def one_owner(rows: Sequence[Tuple[str, str, Optional[str]]], makers: Iterable[str], squash) -> Set[str]:
+    """(kind, url, owner) rows of rule `repo` -> the urls kept: a kind whose rows name 2+ owners (a fork, a namesake,
+    a republisher: measured, 5 of 530 entities) keeps only the rows whose owner is the stated maker, none when no
+    owner is; a kind of one owner keeps its rows."""
+    makers = [m for m in makers if m]
+    by_kind: Dict[str, List[Tuple[str, Optional[str]]]] = {}
+    for kind, url, owner in rows:
+        by_kind.setdefault(kind, []).append((url, owner))
+    keep: Set[str] = set()
+    for items in by_kind.values():
+        owners = {squash((o or "").casefold()) for _, o in items}
+        if len(owners) <= 1:
+            keep.update(u for u, _ in items)
+        else:
+            keep.update(u for u, o in items if owner_agrees(o, makers, squash))
+    return keep
 
 
 def front_page(url: str) -> bool:
@@ -356,6 +448,7 @@ __all__ = [
     "LONGREAD_CHARS", "LONGREAD_KINDS", "LONGREAD_LINKS", "MISSED_WITHIN", "REFERENCES_MAX", "cited_page",
     "BACKFILL_PER_RUN", "CLASSICS_DAILY", "NEVER_FRONT_TYPES", "PAGE_DELAY_S", "SITE", "WORK", "WORK_PAGES_MAX",
     "by_site", "front_page", "site_word", "work_front_allowed",
+    "MODEL_HUBS", "PACKAGE", "PACKAGE_SITES", "PLATFORM_SECTIONS", "REPO", "by_repo", "one_owner", "owner_agrees", "platform_thing",
     "CODE", "DEMO", "IDENTIFIER", "KINDS", "LOOKUP", "MAKER", "MAKER_TYPES", "PAPER", "RELEASE", "TITLE",
     "not_a_release", "address_kind", "arxiv_query", "by_identifier", "by_maker", "by_names", "by_title", "credit_cap", "crossref_query",
     "lookup_match", "original_of", "paper_page", "paper_ref", "parse_arxiv", "parse_crossref", "pick", "ref_page",

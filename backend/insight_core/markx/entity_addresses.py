@@ -90,34 +90,39 @@ def _titles(cur: Any, urls: Iterable[str]) -> Dict[str, str]:
 
 def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: str, name: str,
                   links: List[Tuple[str, Optional[str]]], titles: Dict[str, str], documents: int,
-                  names: Set[str], makers: Set[str]) -> List[Tuple[str, str, str]]:
-    """[(kind, address, rule)] one mention's post gives its entity, by the three rules."""
+                  names: Set[str], makers: Set[str]) -> List[Tuple[str, str, str, Optional[str]]]:
+    """[(kind, address, rule, owner)] one mention's post gives its entity, by the rules; `owner` is a platform page's
+    owner segment when its thing is the entity's name (rule `repo`'s maker candidate), else None."""
     from insight_core.markx import citations, schemas
     t = schemas.entity_type(type_)
     urls = [u for u, _ in links]
-    out: List[Tuple[str, str, str]] = []
+    out: List[Tuple[str, str, str, Optional[str]]] = []
     paper = R.by_identifier(ref=ref, span_ids=citations.ids_in(f"{span} {name}"), links=urls, documents=documents,
                             is_document=t == "document")
     if paper:
-        out.append((R.PAPER, paper, R.IDENTIFIER))
+        out.append((R.PAPER, paper, R.IDENTIFIER, None))
         for kind in (R.CODE, R.DEMO):   # the paper's own links: one of each in the post that gives it
             same = sorted({u for u in urls if R.address_kind(u) == kind})
             if len(same) == 1:
-                out.append((kind, same[0], R.IDENTIFIER))
+                out.append((kind, same[0], R.IDENTIFIER, None))
     for url, text in links:
         title = titles.get(url) or text
         if R.is_home(url):   # never an address, but a document's work site (E2): its front page is the work
             rule = R.by_site(url, title, names, N.key, N.squash) if t == "document" else None
             if rule:
-                out.append((R.WORK, url, rule))
+                out.append((R.WORK, url, rule, None))
             continue
-        kind = R.address_kind(url)
-        if kind == R.RELEASE and R.not_a_release(url):
+        repo = R.by_repo(url, names, N.key, N.squash)   # v10.13.5: a platform's page of one thing named as it
+        kind = repo[0] if repo else R.address_kind(url)
+        owner = repo[1] if repo else None
+        if not repo and kind == R.RELEASE and R.not_a_release(url):
             continue
         if R.by_title(title, names, N.key):
-            out.append((kind, url, R.TITLE))
+            out.append((kind, url, R.TITLE, owner))
+        elif repo:
+            out.append((kind, url, R.REPO, owner))
         elif t in R.MAKER_TYPES and R.by_maker(url, title, makers=makers, names=names, squash=N.squash):
-            out.append((kind, url, R.MAKER))
+            out.append((kind, url, R.MAKER, None))
     return out
 
 
@@ -138,7 +143,7 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> 
     names = _names(book)
     makers: Dict[str, Set[str]] = {}
     ids = sorted({r[0] for r in rows})
-    found: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
+    found: Dict[Tuple[str, str], Tuple[str, str, str, Optional[str]]] = {}
     by_rule: Dict[str, int] = defaultdict(int)
     by_post: Dict[str, List[Tuple]] = defaultdict(list)   # v10.13.4: each chunk reads its own posts' rows, not all
     for r in rows:
@@ -154,15 +159,15 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> 
                 continue
             if root not in makers:
                 makers[root] = _makers(book, root)
-            for kind, url, rule in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
+            for kind, url, rule, owner in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
                                                  links=links[pid], titles=titles, documents=docs.get(pid, 0),
                                                  names=names.get(root, set()), makers=makers[root]):
-                found.setdefault((root, url), (kind, rule, pid))
+                found.setdefault((root, url), (kind, rule, pid, owner))
     added = 0
-    for (root, url), (kind, rule, pid) in sorted(found.items()):
-        cur.execute("""INSERT INTO mx_entity_addresses (entity_id, url, kind, rule, post_id, first_at)
-                       VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (entity_id, url) DO NOTHING""",
-                    (root, url, kind, rule, pid, now))
+    for (root, url), (kind, rule, pid, owner) in sorted(found.items()):
+        cur.execute("""INSERT INTO mx_entity_addresses (entity_id, url, kind, rule, post_id, first_at, owner)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (entity_id, url) DO NOTHING""",
+                    (root, url, kind, rule, pid, now, owner))
         added += cur.rowcount
         by_rule[rule] += 1
     return {"posts": len(ids), "found": len(found), "added": added, "by_rule": dict(by_rule)}
@@ -178,14 +183,20 @@ def add(cur: Any, *, root: str, url: str, kind: str, rule: str, post_id: Optiona
 
 def current(cur: Any, book: I.Book, roots: Optional[Iterable[str]] = None) -> Dict[str, List[Tuple[str, str, str, Any, Optional[str]]]]:
     """{root: [(kind, url, rule, first_at, post_id)]}: the stored addresses read through the merges, each kept only
-    while its post still names that root in its current set (a lookup's, with no post, always)."""
+    while its post still names that root in its current set (a lookup's, with no post, always); rule `repo`'s rows
+    of one kind under 2+ owners only the stated maker's (R.one_owner)."""
+    return {root: [r[:5] for r in rows] for root, rows in _current(cur, book, roots).items()}
+
+
+def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str, List[Tuple]]:
+    """current's rows with the owner last: (kind, url, rule, first_at, post_id, owner)."""
     roots = None if roots is None else set(roots)
+    cols = "entity_id::text, url, kind, rule, first_at, post_id::text, owner"
     if roots is not None:
         members = sorted(e for e in book.ents if book.root(e) in roots)
-        cur.execute("""SELECT entity_id::text, url, kind, rule, first_at, post_id::text FROM mx_entity_addresses
-                        WHERE entity_id = ANY(%s::uuid[])""", (members,))
+        cur.execute(f"SELECT {cols} FROM mx_entity_addresses WHERE entity_id = ANY(%s::uuid[])", (members,))
     else:
-        cur.execute("SELECT entity_id::text, url, kind, rule, first_at, post_id::text FROM mx_entity_addresses")
+        cur.execute(f"SELECT {cols} FROM mx_entity_addresses")
     rows = cur.fetchall()
     posts = sorted({r[5] for r in rows if r[5]})
     named: Set[Tuple[str, str]] = set()
@@ -195,23 +206,30 @@ def current(cur: Any, book: I.Book, roots: Optional[Iterable[str]] = None) -> Di
                         WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""",
                     (schemas.mention_guides(), posts))
         named = {(pid, book.root(book.pins.get((pid, g, n), eid))) for pid, g, n, eid in cur.fetchall()}
-    out: Dict[str, List[Tuple[str, str, str, Any, Optional[str]]]] = defaultdict(list)
-    for eid, url, kind, rule, at, pid in rows:
+    out: Dict[str, List[Tuple]] = defaultdict(list)
+    for eid, url, kind, rule, at, pid, owner in rows:
         root = book.root(eid)
         if roots is not None and root not in roots:
             continue
         if pid and (pid, root) not in named:
             continue
-        out[root].append((kind, url, rule, at, pid))
+        out[root].append((kind, url, rule, at, pid, owner))
+    for root, got in out.items():   # a fork or a namesake: 2+ owners of one kind keep the stated maker's only
+        repo = [(k, u, o) for k, u, r, _, _, o in got if r == R.REPO]
+        if len({(k, N.squash((o or "").casefold())) for k, _, o in repo}) > len({k for k, _, _ in repo}):
+            keep = R.one_owner(repo, _makers(book, root), N.squash)
+            out[root] = [g for g in got if g[2] != R.REPO or g[1] in keep]
     return out
 
 
 def of_root(cur: Any, book: I.Book, root: str) -> Dict[str, Dict[str, Any]]:
-    """{kind: {url, rule, first_at, post_id}} of one entity: one address a kind (the rules' order)."""
-    rows = current(cur, book, [root]).get(root, [])
-    picked = R.pick((k, u, r, at) for k, u, r, at, _ in rows)
-    posts = {(k, u): pid for k, u, _, _, pid in rows}
-    return {k: {"url": u, "rule": r, "first_at": at, "post_id": posts.get((k, u))} for k, (u, r, at) in picked.items()}
+    """{kind: {url, rule, first_at, post_id, owner}} of one entity: one address a kind (the rules' order); `owner` is
+    a platform page's owner segment (rule `repo`'s maker candidate), else None."""
+    rows = _current(cur, book, [root]).get(root, [])
+    picked = R.pick((k, u, r, at) for k, u, r, at, _, _ in rows)
+    posts = {(k, u): (pid, owner) for k, u, _, _, pid, owner in rows}
+    return {k: {"url": u, "rule": r, "first_at": at, "post_id": posts.get((k, u), (None, None))[0],
+                "owner": posts.get((k, u), (None, None))[1]} for k, (u, r, at) in picked.items()}
 
 
 __all__ = ["add", "current", "found_in_post", "of_root", "stage"]

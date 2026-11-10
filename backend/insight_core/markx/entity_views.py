@@ -205,9 +205,11 @@ def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
     from insight_core.utils.url_normalization import normalize_url
     picked = EA.of_root(cur, book, root)
     got = R.original_of({k: (v["url"], v["rule"], v["first_at"]) for k, v in picked.items()})
-    addresses = [{"kind": k, "url": v["url"], "rule": v["rule"]} for k, v in sorted(picked.items(), key=lambda kv: R.KINDS.index(kv[0]))]
+    addresses = [{"kind": k, "url": v["url"], "rule": v["rule"], "owner": v.get("owner")}
+                 for k, v in sorted(picked.items(), key=lambda kv: R.KINDS.index(kv[0]))]
+    makers = maker_candidates(book, root, [v.get("owner") for v in picked.values()])
     if not got:
-        return {"original": None, "addresses": addresses}
+        return {"original": None, "addresses": addresses, "maker_candidates": makers}
     kind, url = got
     cur.execute("SELECT id::text, title, metadata ? 'collected_original' FROM posts WHERE normalized_url = %s LIMIT 1",
                 (normalize_url(url) or url,))
@@ -215,10 +217,30 @@ def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
     cur.execute("SELECT outcome, asked_at FROM story_originals WHERE kind IN ('entity', 'collect') AND url = %s "
                 "ORDER BY asked_at LIMIT 1", (url,))
     asked = cur.fetchone()
-    return {"original": {"url": url, "kind": kind, "rule": picked[kind]["rule"],
+    return {"original": {"url": url, "kind": kind, "rule": picked[kind]["rule"], "owner": picked[kind].get("owner"),
                          "post": {"id": row[0], "title": row[1], "collected": bool(row[2])} if row else None,
                          "asked": {"outcome": asked[0], "at": asked[1]} if asked else None},
-            "addresses": [a for a in addresses if a["url"] != url]}
+            "addresses": [a for a in addresses if a["url"] != url], "maker_candidates": makers}
+
+
+def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -> List[Dict[str, Any]]:
+    """v10.13.5: who may make it, proposed by its platform pages' owners (rule `repo`), never asserted: [{name, id: the
+    org or person entity of that name run together (handle suffixes aside) or None, agrees: it is the stated maker}]."""
+    from insight_core.utils import entity_originals as R
+    stated = set()
+    e = book.ents.get(root)
+    if e is not None:
+        stated = {N.key(e.maker)} if e.maker else set()
+        if e.parent and e.level in ("family", "thing") and book.root(e.parent) in book.ents:
+            stated.add(book.ents[book.root(e.parent)].key)
+    out: List[Dict[str, Any]] = []
+    for owner in sorted({o for o in owners if o}, key=str.casefold):
+        forms = set(N.handle_forms(owner)) | {N.squash(owner.casefold())}
+        ids = sorted(x for x, ent in book.ents.items() if book.root(x) == x and ent.type in ("org", "person")
+                     and ent.status != "not_entity" and ent.sq in forms)
+        out.append({"name": owner, "id": ids[0] if ids else None,
+                    "agrees": R.owner_agrees(owner, stated, N.squash)})
+    return out
 
 
 def _members(book: I.Book, root: str) -> Set[str]:
