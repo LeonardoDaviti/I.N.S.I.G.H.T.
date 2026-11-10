@@ -88,7 +88,7 @@ export function Sample({ items, onAnswer }: { items: NonNullable<EntityPageData[
 const RULES: Record<string, string> = {
   identifier: 'by its identifier', title: 'by its title', maker: 'on its maker’s site', lookup: 'looked up by its title',
 };
-const KINDS: Record<string, string> = { paper: 'paper', release: 'release page', code: 'code', demo: 'demo' };
+const KINDS: Record<string, string> = { paper: 'paper', release: 'release page', code: 'code', demo: 'demo', package: 'package' };
 
 /** 0138: the entity's original first: the stored post when INSIGHT has it, else the page with how it was found. */
 export function Original({ d }: { d: EntityPageData }) {
