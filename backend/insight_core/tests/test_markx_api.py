@@ -627,6 +627,16 @@ class ChecksOffTheLease(_Api):
             self.assertEqual(status, 200, body)
             planners["check"].assert_called_once()
 
+    def test_cite_and_track_are_never_planned_by_a_lease(self):
+        from insight_core.markx import tasks
+        planners = {"cite": mock.Mock(return_value=0), "track": mock.Mock(return_value=0)}
+        with mock.patch.dict(tasks.PLANNERS, planners):
+            for kind in ("cite", "track"):
+                status, body = self.lease(kind)
+                self.assertEqual(status, 200, body)
+        planners["cite"].assert_not_called()
+        planners["track"].assert_not_called()
+
     def test_the_story_window_decides_who_plans(self):
         from insight_core.markx import story_window, tasks
         now = datetime.now(timezone.utc)

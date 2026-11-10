@@ -549,6 +549,18 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
             or [m for m in members if m.id != post.id])
 
 
+BACKGROUND_PLANNED = ("check", "cite", "track")   # v10.13.4: kinds the decision job plans, never a lease
+
+
+def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:
+    """v10.13.4: whether the decision job (jobs.Jobs.plan_background), not a lease, plans `kind`. `cite` (ent42.plan
+    pages through every post read without a cite task: ~60 s on the server) and `track` (tracks.plan learns each
+    track's finders over 30 days of posts: ~47 s) always; `check` while the story window is wide (v10.13.2)."""
+    if kind == "check":
+        return checks_in_background(cur, now)
+    return kind in BACKGROUND_PLANNED
+
+
 def checks_in_background(cur: Cursor, now: Optional[datetime] = None) -> bool:
     """v10.13.2: while the story window reaches past RECENT days, planning the checks reads every story it reaches
     (over a minute on the server with `everything`, longer than a worker waits for its lease), so the decision job

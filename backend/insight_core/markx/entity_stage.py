@@ -24,12 +24,39 @@ NIGHTLY_HOUR = 4
 MARGIN = timedelta(minutes=2)
 
 
-def full_due(cur: Any, now: datetime) -> bool:
-    """No full pass finished (its last chunk decided) since the night's NIGHTLY_HOUR."""
+FULL_DEFERRED = "entities_full_deferred"   # mx_settings: {"at": ISO, "why": ...} (v10.13.4)
+
+
+def defer_full(cur: Any, why: str) -> None:
+    """v10.13.4: a decision run was killed in the entities stage. Its first full-pass run is not resumable (a killed
+    run rolls back, so `unfinished` finds nothing), and the next run would start it again and be killed again, so
+    no decision run finishes: the full pass waits for the next night (full_due), and the runs between are
+    incremental. Shown on /markx with `why`."""
+    from insight_core.markx import repo
+    repo.set_setting(cur, FULL_DEFERRED, {"at": datetime.now().astimezone().isoformat(), "why": why})
+
+
+def full_deferred(cur: Any) -> Optional[Dict[str, Any]]:
+    from insight_core.markx import repo
+    got = repo.get_setting(cur, FULL_DEFERRED, default=None)
+    return got if isinstance(got, dict) and got.get("at") else None
+
+
+def _night_mark(now: datetime) -> datetime:
     local = now.astimezone()
     mark = local.replace(hour=NIGHTLY_HOUR, minute=0, second=0, microsecond=0)
     if mark > local:
         mark -= timedelta(days=1)
+    return mark
+
+
+def full_due(cur: Any, now: datetime) -> bool:
+    """No full pass finished (its last chunk decided) since the night's NIGHTLY_HOUR, and none deferred since then
+    (v10.13.4: a full pass killed tonight waits for the next night)."""
+    mark = _night_mark(now)
+    deferred = full_deferred(cur)
+    if deferred and datetime.fromisoformat(deferred["at"]) >= mark:
+        return False
     cur.execute("""SELECT max((counts->'run'->>'now')::timestamptz) FROM mx_runs
                     WHERE finished_at IS NOT NULL AND counts->'entities'->>'kind' = 'full'
                       AND COALESCE(counts->'entities'->'full'->>'done', 'true') = 'true'""")

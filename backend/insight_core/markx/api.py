@@ -281,8 +281,8 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
         for kind in wanted:
             if kind not in tasks.PLANNERS:
                 continue
-            if kind == "check" and tasks.checks_in_background(cur):
-                continue                                          # v10.13.2: the decision job plans them
+            if tasks.planned_in_background(cur, kind):
+                continue                                          # v10.13.2/4: the decision job plans them
             if window is not tasks.SETTING and kind in tasks.WINDOWED:
                 tasks.PLANNERS[kind](cur, days=window)
             elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:

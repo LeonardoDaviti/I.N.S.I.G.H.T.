@@ -130,7 +130,7 @@ class TheRunner(_Api):
     """insight-ingestion's side, inline (spawn=False): the job due runs, its state is recorded, a failure retries."""
 
     def runner(self, **kw):
-        return jobs.Runner(db_url(), spawn=False, **kw)
+        return jobs.Runner(db_url(), spawn=False, **{"plan_every": None, **kw})   # v10.13.4: the plan job apart
 
     def test_off_nothing_runs(self):
         os.environ["INSIGHT_MARKX"] = "off"
@@ -401,44 +401,97 @@ def _sleep_forever(db_url, job):   # module level: a spawned child imports it by
 
 
 
-class ChecksBeforeTheDecisionRun(_Api):
-    """v10.13.2: the decision job plans the checks (outside its budget) while the story window is past 30 days."""
+class PlanningInTheBackground(_Api):
+    """v10.13.2/4: check (wide story window), cite and track are planned by the job "plan", never a lease."""
 
     def jobs_(self):
         return jobs.Jobs(db_url())
 
-    def test_a_wide_window_plans_them_here(self):
+    def test_the_slow_kinds_are_planned_here(self):
         from insight_core.markx import tasks
+        planners = {k: mock.Mock(return_value=n) for k, n in (("check", 7), ("cite", 2), ("track", 0))}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
-                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=7)) as plan:
-            got = self.jobs_().checks()
-        plan.assert_called_once()
-        self.assertEqual(got["added"], 7)
+                mock.patch.dict(tasks.PLANNERS, planners):
+            got = self.jobs_().plan_background()
+        self.assertEqual({k: v["added"] for k, v in got.items()}, {"check": 7, "cite": 2, "track": 0})
 
-    def test_within_30_days_the_lease_plans_them(self):
+    def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track")}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: False), \
-                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=7)) as plan:
-            got = self.jobs_().checks()
-        plan.assert_not_called()
-        self.assertEqual(got, {"planned": "by the lease"})
+                mock.patch.dict(tasks.PLANNERS, planners):
+            got = self.jobs_().plan_background()
+        planners["check"].assert_not_called()
+        self.assertEqual(got["check"], {"planned": "by the lease"})
+        self.assertEqual(got["cite"]["added"], 1)
 
-    def test_a_failure_never_fails_the_decision_run(self):
+    def test_one_failure_never_stops_the_others(self):
         from insight_core.markx import tasks
+        planners = {"check": mock.Mock(side_effect=RuntimeError("boom")), "cite": mock.Mock(return_value=3),
+                    "track": mock.Mock(return_value=0)}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
-                mock.patch.object(tasks, "plan_checks", mock.Mock(side_effect=RuntimeError("boom"))):
-            got = self.jobs_().checks()
-        self.assertIn("boom", got["error"])
+                mock.patch.dict(tasks.PLANNERS, planners):
+            got = self.jobs_().plan_background()
+        self.assertIn("boom", got["check"]["error"])
+        self.assertEqual(got["cite"]["added"], 3)
 
-    def test_the_run_records_what_it_planned(self):
+    def test_the_plan_job_records_its_run(self):
         from insight_core.markx import tasks
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track")}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
-                mock.patch.object(tasks, "plan_checks", mock.Mock(return_value=3)), \
-                mock.patch("insight_core.markx.candidates.run", lambda cur, ids, since=None: {}):
-            jobs.Jobs(db_url()).decide()
-        last = jobs.state(self.cur)["decide"]["last"]
+                mock.patch.dict(tasks.PLANNERS, planners):
+            self.jobs_().plan()
+        last = jobs.state(self.cur)["plan"]["last"]
         self.assertTrue(last["ok"], last)
-        self.assertEqual(last["checks"]["added"], 3)
+        self.assertEqual(last["kinds"]["cite"]["added"], 1)
+
+    def test_the_plan_job_is_due_every_5_minutes_before_a_decision_run(self):
+        s = _states(plan={"started_at": T0 - timedelta(seconds=301)}, decide={"started_at": T0 - timedelta(hours=2)})
+        self.assertEqual(jobs.due(s, T0, plan_every=300), "plan")
+        s = _states(plan={"started_at": T0 - timedelta(seconds=10)}, decide={"started_at": T0 - timedelta(hours=2)})
+        self.assertEqual(jobs.due(s, T0, plan_every=300), "decide")
+        self.assertEqual(jobs.due(_states(), T0), "decide")              # without plan_every: as before
+        s = _states(plan={"started_at": None}, candidates={"stage": "finding"})
+        self.assertNotEqual(jobs.due(s, T0, plan_every=300), "plan")    # never beside the candidate finder
+
+
+class AKilledEntitiesStage(_Api):
+    """v10.13.4: a decision run killed in the entities stage defers the full pass to the next night, so the runs
+    between are incremental and finish (before, the first full-pass run started again and was killed again)."""
+
+    def kill_in(self, stage):
+        with self.conn.transaction():
+            self.cur.execute("INSERT INTO mx_jobs (job) VALUES ('decide') ON CONFLICT (job) DO NOTHING")
+            self.cur.execute("UPDATE mx_jobs SET stage = %s, started_at = now() WHERE job = 'decide'", (stage,))
+        alive = mock.Mock()
+        alive.is_alive.return_value = True
+        with mock.patch("multiprocessing.get_context") as ctx:
+            ctx.return_value.Process.return_value = alive
+            jobs.Runner(db_url(), hard_limit=0.01)._in_own_process("decide")
+        alive.kill.assert_called_once()
+        self.addCleanup(self._clear)
+
+    def _clear(self):
+        from insight_core.markx import entity_stage
+        with self.conn.transaction():
+            self.cur.execute("DELETE FROM mx_settings WHERE key = %s", (entity_stage.FULL_DEFERRED,))
+
+    def test_killed_in_entities_the_full_pass_waits_for_the_next_night(self):
+        from insight_core.markx import entity_stage
+        self.kill_in("entities")
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertEqual(last["stage"], "entities")
+        with self.conn.transaction():
+            self.assertIsNotNone(entity_stage.full_deferred(self.cur))
+            self.assertFalse(entity_stage.full_due(self.cur, datetime.now(timezone.utc)))
+            self.assertTrue(entity_stage.full_due(self.cur, datetime.now(timezone.utc) + timedelta(days=1)))
+
+    def test_killed_elsewhere_nothing_is_deferred(self):
+        from insight_core.markx import entity_stage
+        self.kill_in("connections")
+        self.assertEqual(jobs.state(self.cur)["decide"]["last"]["stage"], "connections")
+        with self.conn.transaction():
+            self.assertIsNone(entity_stage.full_deferred(self.cur))
 
 
 if __name__ == "__main__":

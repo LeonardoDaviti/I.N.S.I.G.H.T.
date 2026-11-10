@@ -864,9 +864,12 @@ class Worker:
         return max(1, min(LEASE_MAX, self.a.lease or self.a.batch, self.per_call(kind) * self.a.parallel))
 
     def lease(self, kind):
+        t0 = time.monotonic()
         w = self.server.work(kind, self.lease_size(kind), self.a.worker, self.a.days) or {}
+        ms = int((time.monotonic() - t0) * 1000)   # v10.13.4: the server's time for this lease (planning included)
         tasks = w.get("tasks") or []
         if not tasks:
+            self.log("leased", kind=kind, tasks=0, ms=ms)
             return [], 0
         until = parse_time(w["lease_until"])
         guides = w.get("guides") or {}
@@ -888,7 +891,7 @@ class Worker:
                 continue
             n = self.per_call(k)
             out += [Batch(k, gid, g, ts[i:i + n], until) for i in range(0, len(ts), n)]
-        self.log("leased", kind=kind, tasks=len(tasks), lease_until=until.isoformat(timespec="seconds"))
+        self.log("leased", kind=kind, tasks=len(tasks), ms=ms, lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
 
     def cycle(self):

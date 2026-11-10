@@ -53,7 +53,8 @@ OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
-JOBS = ("candidates", "decide")
+JOBS = ("candidates", "decide", "plan")
+PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 
 
 class TooLong(Exception):
@@ -206,28 +207,42 @@ class Jobs:
                                     **({"backfill": backfill} if backfill else {})})
         return counts
 
-    def checks(self) -> Dict[str, Any]:
-        """v10.13.2: the checks planned here, before the decision run and outside its budget, while the story window
-        reaches past 30 days (tasks.checks_in_background): the lease no longer plans them. Never fails the run."""
+    def plan(self) -> Dict[str, Any]:
+        """v10.13.4: the job "plan", in its own process like the others: plan_background, its outcome recorded."""
+        t0 = time.monotonic()
+        self._begin("plan", "planning")
+        out = self.plan_background()
+        self._finish("plan", {"ok": not any("error" in v for v in out.values()),
+                              "seconds": round(time.monotonic() - t0, 1), "kinds": out})
+        return out
+
+    def plan_background(self) -> Dict[str, Any]:
+        """v10.13.2/4: the kinds a lease no longer plans (tasks.BACKGROUND_PLANNED), each in its own transaction before
+        the decision run and outside its budget, so they are planned even while a decision run fails. Never fails the
+        run: {kind: {added, seconds} | {planned: "by the lease"} | {error}}."""
         from insight_core.markx import tasks
-        t = time.monotonic()
-        try:
-            with self._tx() as cur:
-                if not tasks.checks_in_background(cur, self.clock()):
-                    return {"planned": "by the lease"}
-                added = tasks.plan_checks(cur)
-        except Exception as exc:
-            log.exception("Mark X jobs: planning the checks failed")
-            return {"error": str(exc)[:300]}
-        seconds = round(time.monotonic() - t, 1)
-        log.info("Mark X jobs: %d checks planned in %.1f s", added, seconds)
-        return {"added": added, "seconds": seconds}
+        out: Dict[str, Any] = {}
+        for kind in tasks.BACKGROUND_PLANNED:
+            t = time.monotonic()
+            try:
+                with self._tx() as cur:
+                    if not tasks.planned_in_background(cur, kind, self.clock()):
+                        out[kind] = {"planned": "by the lease"}
+                        continue
+                    added = tasks.PLANNERS[kind](cur)
+            except Exception as exc:
+                log.exception("Mark X jobs: planning %s failed", kind)
+                out[kind] = {"error": str(exc)[:300]}
+                continue
+            seconds = round(time.monotonic() - t, 1)
+            log.info("Mark X jobs: %d %s tasks planned in %.1f s", added, kind, seconds)
+            out[kind] = {"added": added, "seconds": seconds}
+        return out
 
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
         stage logged with its duration; a failed or stopped run is wanted again."""
         from insight_core.markx import decide
-        checks = self.checks()
         log.info("Mark X decision run started")
         t0 = time.monotonic()
         self._begin("decide", "candidates")
@@ -276,18 +291,22 @@ class Jobs:
                  {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
                                 "skipped": out.get("skipped"), "stages": stages,
-                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")},
-                                "checks": checks},
+                                "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
                      again="skipped" in out)
         return out
 
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
-        gap: float = GAP, busy: Optional[str] = None) -> Optional[str]:
+        gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
     one started (or never ran), never within GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
-    arrived."""
+    arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that long
+    ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows."""
+    p = states.get("plan") or {}
+    if plan_every is not None and states["candidates"]["stage"] is None and (
+            p.get("started_at") is None or (now - p["started_at"]).total_seconds() >= plan_every):
+        return "plan"
     d = states["decide"]
     since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
     if busy is None and states["candidates"]["stage"] is None and (since is None or since >= gap):
@@ -313,8 +332,9 @@ class Runner:
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
                  on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
-                 gap: float = GAP, hard_limit: float = HARD_LIMIT) -> None:
+                 gap: float = GAP, hard_limit: float = HARD_LIMIT, plan_every: Optional[float] = PLAN_EVERY) -> None:
         self.db_url, self.clock, self.spawn = db_url, clock, spawn
+        self.plan_every = plan_every
         self.on = on or enabled
         self.settle, self.every, self.gap, self.hard_limit = settle, every, gap, hard_limit
         self.stop = threading.Event()
@@ -346,7 +366,8 @@ class Runner:
             return None
         try:
             states = self._states()
-            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy)
+            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
+                      plan_every=self.plan_every)
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
@@ -372,7 +393,17 @@ class Runner:
             process.join(10)
             log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", job, self.hard_limit)
             try:
-                Jobs(self.db_url)._finish(job, {"ok": False, "error": f"killed after {self.hard_limit:.0f} s"}, again=True)
+                from insight_core.db import database
+                with database.transaction(self.db_url) as cur:
+                    cur.execute("SELECT stage FROM mx_jobs WHERE job = %s", (job,))
+                    row = cur.fetchone()
+                    stage = row[0] if row else None
+                    if job == "decide" and stage == "entities":
+                        from insight_core.markx import entity_stage
+                        entity_stage.defer_full(cur, f"a decision run was killed in the entities stage after "
+                                                     f"{self.hard_limit:.0f} s")
+                Jobs(self.db_url)._finish(job, {"ok": False, "error": f"killed after {self.hard_limit:.0f} s",
+                                                "stage": stage}, again=True)
             except Exception:
                 log.exception("Mark X jobs: could not record the killed run")
         elif process.exitcode:

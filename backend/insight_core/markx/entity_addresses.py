@@ -140,15 +140,15 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> 
     ids = sorted({r[0] for r in rows})
     found: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
     by_rule: Dict[str, int] = defaultdict(int)
+    by_post: Dict[str, List[Tuple]] = defaultdict(list)   # v10.13.4: each chunk reads its own posts' rows, not all
+    for r in rows:
+        by_post[r[0]].append(r)
     for k in range(0, len(ids), CHUNK):
         chunk = ids[k:k + CHUNK]
         links = _links(cur, chunk)
         docs = _documents(cur, chunk)
         titles = _titles(cur, {u for pid in chunk for u, _ in links.get(pid, ())})
-        mine = set(chunk)
-        for pid, guide, n, eid, type_, ref, span, name in rows:
-            if pid not in mine or not links.get(pid):
-                continue
+        for pid, guide, n, eid, type_, ref, span, name in (r for p in chunk if links.get(p) for r in by_post[p]):
             root = book.root(book.pins.get((pid, guide, n), eid))
             if root not in book.ents or book.ents[root].status == "not_entity":
                 continue

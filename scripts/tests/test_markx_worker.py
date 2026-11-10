@@ -605,6 +605,18 @@ class TestServer(Base):
         self.assertEqual(self.fake_calls(), [])
         self.assertIn("/api/markx/work", self.done()["why"])
 
+    def test_each_lease_logs_the_servers_time(self):
+        self.stub.add("read", 20)
+        self.stub.slow_kinds = set()
+        p = self.run_worker("--kinds", "read,entities", "--batches", "2")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        got = {}
+        for e in self.events("leased"):
+            got.setdefault(e["kind"], e)                              # each kind's first lease
+        self.assertEqual(got["read"]["tasks"], 20)
+        self.assertEqual(got["entities"]["tasks"], 0)                 # an empty lease is logged too
+        self.assertTrue(all(isinstance(e["ms"], int) and e["ms"] >= 0 for e in got.values()))
+
     def test_a_lease_of_100_is_asked_in_calls_of_the_batch(self):
         self.stub.add("read", 100)
         p = self.run_worker("--kinds", "read", "--batch", "20", "--lease", "100", "--batches", "1", "--parallel", "5")
