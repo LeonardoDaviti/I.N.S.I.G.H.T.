@@ -68,6 +68,10 @@ LOCK_KEY = "insight.stories"
 STEP_BUDGET_S = 180.0
 REST_AFTER_YIELD_S = 90.0
 YIELD_KEY = "stories_yield"   # system_settings: {"at": ISO} of the last run that yielded
+# v10.13.8: runs that each end within the budget still follow each other at once (one after every fetch that saves),
+# so a decision run (it waits while this job holds its lock) waited all day. When one has waited DECISION_WAIT_S, a
+# run steps aside (skips) until it has started.
+DECISION_WAIT_S = 600.0
 STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewer; a rule change's are all)
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
 CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (story_rules.keys)
@@ -124,6 +128,8 @@ class StoriesService:
         started = time.monotonic()
         if not full and self._resting():   # v10.13.7: the decision run's turn after a yield; nothing read meanwhile
             return {"skipped": "resting after a yield"}
+        if not full and self._decision_waiting():   # v10.13.8: its turn after waiting DECISION_WAIT_S
+            return {"skipped": "a decision run's turn"}
         catch_up_safely(self.db_url)   # every post read once first (issue 0076): what the job and the pages read
         filled = self.fill_links()
         self.fill_refs()
@@ -153,6 +159,21 @@ class StoriesService:
                     return {"computed_at": self.clock().isoformat(), "full": False, **totals, "links_filled": filled,
                             "batches": totals["batches"], "yielded": True,
                             "seconds": round(time.monotonic() - started, 2)}
+
+    def _decision_waiting(self) -> bool:
+        """v10.13.8: Mark X's decision run is wanted, not running, and has waited (wanted, and not started since)
+        DECISION_WAIT_S or more. False when Mark X has no jobs table or no such row."""
+        try:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                cur.execute("""SELECT wanted_at, started_at, stage FROM mx_jobs WHERE job = 'decide'""")
+                row = cur.fetchone()
+        except Exception:  # noqa: BLE001 - Mark X absent: nothing waits
+            return False
+        if not row or row[0] is None or row[2] is not None:
+            return False
+        wanted, started = row[0], row[1]
+        waited_since = max(wanted, started) if started is not None else wanted
+        return (self.clock() - waited_since).total_seconds() >= DECISION_WAIT_S
 
     def _resting(self) -> bool:
         """v10.13.7: the last run yielded less than REST_AFTER_YIELD_S ago (the decision run's turn)."""
