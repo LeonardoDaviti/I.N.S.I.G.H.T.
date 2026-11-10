@@ -38,7 +38,8 @@ part of the world around it: what it builds on, who makes it, where they publish
 
 ## What it does
 ### 1. A research run
-- Started from the search box or any entity/post page: **Research this**. Its seed is one of: a **link**; an
+- Started from the search box or any entity/post page: **Research this**. Its seed is one of: a **pasted post** (text
+  and links from a platform INSIGHT can't read, e.g. one behind a login wall); a **link**; an
   **entity** (a model, a person, an org, a paper); a **name** typed (resolved to an entity, or a new one
   proposed); a **question** (0141's meaning search finds its entities first, then each is a seed).
 - One run is a page of its own (`/research/<id>`), kept; it shows each step as it lands. Re-run any time (only new
@@ -48,6 +49,13 @@ part of the world around it: what it builds on, who makes it, where they publish
 - The seed's entity (merging what identity proposes: two names of one model are offered as one, owner taps), every post,
   story, original, address and voice; posts linking any address of it under every version of the address (arXiv abs /
   html / pdf / vN; a repo and its releases).
+
+### 2b. The same announcement elsewhere (no request first)
+- For a pasted post or a link: shorteners resolved (one request each); then the posts INSIGHT holds that share a
+  **unique link** with it (a notebook, a repo, a blog post: the strongest sign), then near-duplicate text by vectors
+  (the post embedded on the fly), then posts by the same person's channels in the days around. Each hit says why.
+- Test 3 (private notes): a post pasted from a login-walled platform; INSIGHT already held the same announcement on a
+  subreddit (same notebook link, 3 hours later) but nothing tied it to the person; the company blog had it (no feed).
 
 ### 3. Step 2: the maker and the identity graph (requests: platform pages only)
 - **Maker from addresses**: a model hub, code host, package index or paper address names its owner (v10.13.5 records the
@@ -85,6 +93,8 @@ part of the world around it: what it builds on, who makes it, where they publish
   calls a paper, the Haiku `identity` calls (≤ 20, ≈ $0.01) and the test reads' judgements (≤ 800, ≈ $0.15).
 
 ## Measure (the two real tests are the gold)
+0. From the pasted post of test 3: the subreddit post INSIGHT holds found first (by the shared link), the blog post
+   found outside, and no false "same post".
 1. From the bare entity name of test 2: the maker found, and of the 11 channels found by hand, how many are found,
    how many read well, how many wrong (a wrong identity or a platform's own feed must be 0).
 2. From the link of test 1: references matched (held / not held), citing papers, the authors' newer papers, the
