@@ -56,6 +56,7 @@ LEARNED_KEY = "archive_learned"   # system_settings: {platform: {strategy: posts
 # v10.13.9: why an archive stopped or a strategy was refused (the checkpoint's "stopped", a probe's outcome)
 FOREIGN_SITE = "foreign_site"     # the sitemap, listing or checkpoint names another site than the source's own
 LOW_YIELD = "low_yield"           # LOW_YIELD_PAGES pages read, under LOW_YIELD_SHARE of them a post
+OWNER_STOP = "stopped_by_owner"   # POST /api/archive/{id}/stop: the owner stopped it (never resumed by itself)
 LOW_YIELD_PAGES = 1000
 LOW_YIELD_SHARE = 0.05
 MIN_PAGE_DELAY_S = 1.0            # a sitemap / listing / Web Archive crawl's least gap between two pages

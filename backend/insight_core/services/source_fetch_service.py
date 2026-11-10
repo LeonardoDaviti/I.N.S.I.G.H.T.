@@ -29,12 +29,14 @@ finding the source sheet offers.
 from __future__ import annotations
 
 import asyncio
+import time
 import contextlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from insight_core.db import database as db
+from insight_core.ingestion import archive_ladder
 
 from insight_core.db.repo_linked import LinkedPage, linked_not_stored
 from insight_core.db.repo_posts import BACKLOG_KEY, PostDraft, PostsRepository, SaveBatchResult
@@ -78,6 +80,8 @@ ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
 
 # The target of an archive whose source reports no size: it runs until the source ends.
 UNBOUNDED_ARCHIVE = 1_000_000_000
+ARCHIVE_STOP_KEY = "archive_stop:"
+STOP_CHECK_S = 20.0   # v10.13.9: a running archive looks for a stop request at most this often (one small read)   # v10.13.9: system_settings key + source id: the owner asked its archive to stop
 
 # Issue 0107. A host that refused twice in a row is waited out: FIRST_WAIT_S, doubling up to
 # LAST_WAIT_S while no page comes; after MAX_WAITS such waits the archive pauses.
@@ -470,6 +474,31 @@ class SourceFetchService:
         async with self._kind_session(kind):
             return await self._archive(source_id, source, kind, plan, progress_callback, carried=carried)
 
+    # ---- v10.13.9: the owner stops a running archive ------------------------------------------------
+
+    def request_stop(self, source_id: str) -> None:
+        """Ask the running archive of the source to stop after its current page (whichever process runs it)."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            SystemSettingsRepository.upsert(cur, ARCHIVE_STOP_KEY + str(source_id),
+                                            {"at": datetime.now(timezone.utc).isoformat()})
+            conn.commit()
+
+    def stop_requested(self, source_id: str) -> bool:
+        """Whether the owner asked this source's archive to stop; a check that fails never stops an archive."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        try:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                return SystemSettingsRepository.get(cur, ARCHIVE_STOP_KEY + str(source_id)) is not None
+        except Exception:  # noqa: BLE001 - the archive goes on
+            self.logger.warning("Archive: could not read the stop request of %s", source_id)
+            return False
+
+    def clear_stop(self, source_id: str) -> None:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM system_settings WHERE key = %s", (ARCHIVE_STOP_KEY + str(source_id),))
+            conn.commit()
+
     async def _archive(
         self,
         source_id: str,
@@ -552,6 +581,8 @@ class SourceFetchService:
         pages_this_leg = 0
         stopped: Optional[HttpError] = None
         reached: Optional[datetime] = None   # the oldest post of the page that passed `until` (issue 0130 C)
+        owner_stopped = False                # v10.13.9: POST /api/archive/{id}/stop
+        stop_checked = time.monotonic()      # the first look after STOP_CHECK_S
         pace = _Pace(self, gates, host, progress_callback)
         await gates.budgets.archive_started(host)
         try:
@@ -596,12 +627,24 @@ class SourceFetchService:
                             "message": (f"Read linked page {total_pages_fetched} of {len(checkpoint.get('urls') or ())}"
                                         if linked else f"Fetched {kind.name} page {total_pages_fetched}"),
                         })
+                        if (not linked and time.monotonic() - stop_checked >= STOP_CHECK_S
+                                and await asyncio.to_thread(self.stop_requested, source_id)):
+                            # v10.13.9: the owner stopped it (POST /api/archive/{id}/stop), between two pages:
+                            # what is stored stays; the checkpoint says why and is never resumed by itself
+                            checkpoint = {**(checkpoint or {}), "end": True, "stopped": archive_ladder.OWNER_STOP}
+                            await record(source_id, {**plan, "pages_fetched": total_pages_fetched,
+                                                     "posts_fetched": total_posts_fetched,
+                                                     "posts_inserted": total_inserted, "posts_updated": total_updated,
+                                                     "checkpoint": checkpoint}, mode="archive_progress", kind=kind)
+                            await asyncio.to_thread(self.clear_stop, source_id)
+                            owner_stopped = True
+                            break
                         if horizon is not None and page.posts:
                             dates = [d for d in (_post_time(post) for post in page.posts) if d is not None]
                             if dates and min(dates) < horizon:
                                 reached = min(dates)
                                 break
-                    if reached is not None:
+                    if reached is not None or owner_stopped:
                         await gated.aclose()
                         with contextlib.suppress(Exception):
                             await pages.aclose()   # type: ignore[attr-defined]
@@ -645,7 +688,8 @@ class SourceFetchService:
                                        waits=0 if pages_this_leg else int(carried.get("waits") or 0),
                                        refill_s=refill, progress_callback=progress_callback, record=record)
         result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
-        message = f"Archive completed with {total_posts_fetched} posts"
+        message = (f"Archive stopped by you after {total_pages_fetched} pages ({total_posts_fetched} posts kept)"
+                   if owner_stopped else f"Archive completed with {total_posts_fetched} posts")
         skipped = skipped_counts(checkpoint)
         if not linked:
             # Why it added no more (issue 0130 B4): what its pages skipped, and what was stored already.

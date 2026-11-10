@@ -1378,6 +1378,7 @@ async def queue_archive(source_id: str, request: ArchiveRequest):
     until, bad = _archive_until(request, support)
     if bad is not None:
         return bad
+    await asyncio.to_thread(services().source_fetch.clear_stop, source_id)   # v10.13.9: a new archive starts afresh
     rate = {"page_delay_seconds": request.pageDelaySeconds, "batch_size": request.batchSize,
             "batch_cooldown_seconds": request.batchCooldownSeconds}
     job_id, status = await asyncio.to_thread(_archive_jobs().enqueue, source_id, resume=bool(request.resume),
@@ -1387,6 +1388,16 @@ async def queue_archive(source_id: str, request: ArchiveRequest):
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     content = _accepted_job_response(job_id, "archive_source", message="Queued")
     return JSONResponse(status_code=202, content={**content, "status": "queued"})
+
+
+@app.post("/api/archive/{source_id}/stop")
+@error_detail("stop the archive")
+async def stop_archive(source_id: str):
+    """Stop the source's running archive after its current page (v10.13.9), whichever process runs it: what it
+    stored is kept, and its checkpoint says "stopped_by_owner" (never resumed by itself; queue it again to restart).
+    202 {stopping: true}."""
+    await asyncio.to_thread(services().source_fetch.request_stop, source_id)
+    return JSONResponse(status_code=202, content={"success": True, "stopping": True})
 
 
 @app.post("/api/archive/{source_id}/plan")

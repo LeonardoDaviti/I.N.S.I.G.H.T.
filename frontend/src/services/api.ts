@@ -1595,6 +1595,10 @@ export const archiveQueueApi = {
     if (!response.job_id) throw new Error('Could not queue the archive');
     return { job_id: response.job_id, status: 'queued', message: response.message };
   },
+  /** v10.13.9: stop the source's running archive after its current page (POST /stop: 202). */
+  stopArchive: async (sourceId: string): Promise<void> => {
+    await request<{ stopping?: boolean }>(archivePath(sourceId, 'stop'), { method: 'POST', body: {} });
+  },
   /** Queue every source whose last archive a restart interrupted, to resume from its checkpoint. */
   resumeInterrupted: async (): Promise<{ count: number }> => {
     const response = await request<{ count?: number }>('/api/archive/resume-interrupted', { method: 'POST', body: {} });

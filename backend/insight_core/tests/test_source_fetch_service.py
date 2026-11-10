@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -346,6 +347,38 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["pages_fetched"], 2)
         self.assertEqual(result["checkpoint"]["collected_posts"], 3)
         self.assertEqual([e["stage"] for e in events], ["planning_complete", "page_fetched", "page_fetched", "completed"])
+
+
+class ArchiveStopTests(unittest.IsolatedAsyncioTestCase):
+    """v10.13.9: POST /api/archive/{id}/stop: the running archive stops after its current page, keeps what it stored,
+    and its checkpoint says why (never resumed by itself); the flag is cleared."""
+
+    async def test_a_stop_requested_ends_the_archive_after_the_current_page(self):
+        pages = [ArchivePage([{"url": f"u{n}"}], {"mode": "fake", "pages_fetched": n, "collected_posts": n})
+                 for n in (1, 2, 3)]
+        kind = FakeKind("fake_paged", inspection=Inspection(3, 2, None), pages=pages)
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
+                                     gates=SpyFetchGates())
+        service.sources_service = sources = _PlanSources()
+        service.posts_service = _Posts()
+        service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)
+        saved, asked = [], {"n": 0}
+        service._save_posts = lambda source_id, posts: (saved.append(posts[0]["url"]), SaveBatchResult())[1]
+
+        def stop_requested(source_id):
+            asked["n"] += 1
+            return asked["n"] >= 1          # asked after the first page: stop
+        cleared = []
+        service.stop_requested = stop_requested
+        service.clear_stop = cleared.append
+        from insight_core.services import source_fetch_service as sfs
+        with mock.patch.object(sfs, "STOP_CHECK_S", 0.0):
+            result = await service.archive_source("s1")
+        self.assertEqual(saved, ["u1"])
+        self.assertEqual(result["checkpoint"]["stopped"], "stopped_by_owner")
+        self.assertTrue(result["checkpoint"]["end"])
+        self.assertEqual(cleared, ["s1"])
+        self.assertIn("stopped by you", result["message"])
 
 
 def _page(n: int) -> ArchivePage:
