@@ -55,6 +55,9 @@ WALLED_MIN_READS = 2                     # a site read this often, never titled,
 # compared address drops it, and share marks too; a share mark opens no wall).
 TWITTER_EPOCH_MS = 1288834974657
 ADDRESS_DATE = re.compile(r"/((?:19|20)\d\d)[/-](0[1-9]|1[0-2])(?:[/-]([0-3]\d))?(?=/|$|-|\.)")
+# v10.13.5: a month written by name in the address (/2008/Jul/7/, /2019/september/03/), a whole day only
+ADDRESS_DATE_NAMED = re.compile(r"/((?:19|20)\d\d)/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/([0-3]?\d)(?=/|$)",
+                                re.IGNORECASE)
 
 
 # Collect originals' switch (issue 0126 (4), the owner 2026-11-07: on by default). A stored false counts as your
@@ -132,16 +135,35 @@ def tweet_time(url: str) -> Optional[datetime]:
 
 
 def page_date(url: str) -> Optional[datetime]:
-    """The date an address states: a tweet's id, else /2026/10/21/ or /2026-10/ in its path."""
+    """The date an address states: a tweet's id, else /2026/10/21/ or /2026-10/ in its path, or a month by name
+    with its day (/2008/Jul/7/, v10.13.5)."""
     if is_tweet(url):
         return tweet_time(url)
-    match = ADDRESS_DATE.search(urlsplit(url).path)
+    path = urlsplit(url).path
+    named = ADDRESS_DATE_NAMED.search(path)
+    if named and not ADDRESS_DATE.search(path):
+        try:
+            month = datetime.strptime(named.group(2)[:3].title(), "%b").month
+            return datetime(int(named.group(1)), month, int(named.group(3)), tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    match = ADDRESS_DATE.search(path)
     if not match:
         return None
     try:
         return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3) or 1), tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def address_day(url: str) -> Optional[datetime]:
+    """v10.13.5: the day an address states, only when it names a whole day (/2026/10/21/, /2008/Jul/7/), never a month
+    alone (/2026-10/ is no day): what dates a page that states none in its markup."""
+    path = urlsplit(url).path
+    if is_tweet(url) or ADDRESS_DATE_NAMED.search(path):
+        return page_date(url)
+    match = ADDRESS_DATE.search(path)
+    return page_date(url) if match and match.group(3) else None
 
 
 # ---- 0114: a followed source's page a story links -------------------------------------------------

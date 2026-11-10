@@ -817,7 +817,9 @@ class PostsRepository:
                         result._count(draft.source_id, "inserted")
                         if str(post.get("url") or "").startswith(TELEGRAM_POST_PREFIX):
                             channels.add(draft.source_id)
-                        if not post.get("date") and str(draft.source_id) not in fetched_before:
+                        # an undated post of a source's first fetch, or an undated older post of any fetch (an
+                        # archive's page: v10.13.5), sorts before the source's oldest post, never at its fetch time
+                        if not post.get("date") and (backlog or str(draft.source_id) not in fetched_before):
                             backlog_undated.setdefault(str(draft.source_id), []).append(post_id)
                     else:
                         result.updated_ids.append(post_id)
