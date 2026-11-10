@@ -163,7 +163,7 @@ export function ArchiveProgressBar({ percent }: { percent: number }) {
   );
 }
 
-function Progress({ run, now }: { run: RunView; now: Date }) {
+function Progress({ run, now, onStop, stopping }: { run: RunView; now: Date; onStop?: () => void; stopping?: boolean }) {
   const percent = Math.max(0, Math.min(100, Math.round(run.progress ?? 0)));
   return (
     <div className="space-y-1.5" role="status">
@@ -174,6 +174,11 @@ function Progress({ run, now }: { run: RunView; now: Date }) {
       <ArchiveProgressBar percent={percent} />
       {run.lastEvent ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{run.lastEvent}</p> : null}
       {run.startedAt ? <p className="text-[0.75rem] text-fg-3">started {formatRelativeTime(run.startedAt, now)}</p> : null}
+      {onStop ? (
+        <Button variant="secondary" size="sm" onClick={onStop} disabled={stopping} aria-busy={stopping}>
+          {stopping ? 'Stopping after this page…' : 'Stop archive'}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -334,6 +339,22 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
     }
   };
 
+  // v10.13.9: stop the running archive after its current page (whichever process runs it); what it stored stays.
+  const [stopping, setStopping] = useState(false);
+  const stopArchive = async () => {
+    setStopping(true);
+    setError(null);
+    try {
+      await archiveQueueApi.stopArchive(sourceId);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStopping(false);
+    }
+  };
+  useEffect(() => {
+    if (!running) setStopping(false);
+  }, [running]);
+
   const fetchLinked = async () => {
     setStarting(true);
     setError(null);
@@ -390,7 +411,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
   if (linkedOnly) {
     return (
       <div className="space-y-3">
-        {running && run ? <Progress run={run} now={now} /> : <LinkedLine linked={linked} busy={starting} onFetch={() => void fetchLinked()} />}
+        {running && run ? <Progress run={run} now={now} onStop={run.linked ? undefined : () => void stopArchive()} stopping={stopping} /> : <LinkedLine linked={linked} busy={starting} onFetch={() => void fetchLinked()} />}
         {error ? <Notice tone="error" title={error} /> : null}
         {lastRun}
       </div>
@@ -420,7 +441,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
         <ArchiveCoverageLine sourceId={sourceId} coverage={archive.coverage} onChanged={onChanged} />
       ) : availableText.note ? <p className="text-[0.75rem] text-fg-2">{availableText.note}</p> : null}
 
-      {running && run ? <Progress run={run} now={now} /> : (
+      {running && run ? <Progress run={run} now={now} onStop={run.linked ? undefined : () => void stopArchive()} stopping={stopping} /> : (
         <>
           <LinkedLine linked={linked} busy={starting || planning} onFetch={() => void fetchLinked()} />
           {resumeReady ? (
