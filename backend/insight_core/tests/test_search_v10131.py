@@ -201,6 +201,21 @@ class NameAndVersionInSearch(_Api):
         self.assertEqual(mx_search.entity_first_posts(self.cur, "zorblax -5.2"), [])
         self.assertEqual(mx_search.entity_first_posts(self.cur, "quillon 5.2"), [])
 
+    def test_a_title_that_is_the_query_ranks_before_the_entitys_posts(self):
+        """v10.13.8: the thing's own page (its title is the query, less "The") comes first, before a post naming the
+        entity as subject; a title that only holds the query stays after them (the joke card, above)."""
+        filler = " ".join(["Длинный текст о других делах и новостях недели."] * 30)
+        own = self.post("The Quillon delivery playbook", "How teams ship with it, step by step.", at=self.at(5))
+        about = self.post("Обзор недели", f"{filler} Все читают Quillon delivery playbook.", at=self.at(1))
+        self.mentions(about, [{"span": "Quillon delivery playbook", "name": "Quillon delivery playbook",
+                               "type": "product", "role": "subject"}])
+        doc = self.entity("Quillon delivery playbook", level="thing", type_="product")
+        self.link(about, "Quillon delivery playbook", doc)
+        self.cur.execute("TRUNCATE mx_post_search")
+        os.environ["INSIGHT_MARKX"] = "on"
+        self.assertIn(about, mx_search.entity_first_posts(self.cur, "quillon delivery playbook"))
+        self.assertEqual(self.ids("quillon delivery playbook", order="best")[:2], [own, about])
+
     def test_a_story_with_such_a_post_counts_at_its_shown_post(self):
         filler = " ".join(["Длинный текст о других делах и новостях недели."] * 30)
         about = self.post("Обзор недели", f"{filler} Acme выпустила Zorblax 5.2 сегодня.", at=self.at(3))
