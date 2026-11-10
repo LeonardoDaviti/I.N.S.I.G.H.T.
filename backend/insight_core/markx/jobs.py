@@ -18,9 +18,13 @@ at 101% CPU and every /api/* request timed out.
     change's rebuild is in progress or due (`mark_ix_busy`): it waits, then runs once. Nor while the candidate finder
     runs; and a run whose own candidate finder failed doesn't run on candidates that aren't there: both wait.
   - **A decision run has a time limit and stage logs** (0112 Decided 12): "Mark X decision run started", each stage
-    with its duration (candidates, load, questions and decisions, write, connections, headlines, news), the finish.
-    Past LIMIT seconds it stops before the next stage and logs which; its one transaction rolls back (nothing half
-    done) and the run is wanted again. A stage that never ends is killed with its process at HARD_LIMIT.
+    with its duration (candidates, load, questions and decisions, write, connections, graph, back, headlines, news,
+    entities, surges, perspectives_plan), the finish. Past LIMIT seconds it stops before the next stage and logs which;
+    its one transaction rolls back (nothing half done) and the run is wanted again. A stage that never ends is killed
+    with its process at HARD_LIMIT.
+  - **A run that dies is a failed run** (v10.13.9): killed at HARD_LIMIT or ended with a non-zero exit code (an OOM
+    kill, a segfault), it is recorded with the stage it was in and wanted again. A stage shown for longer than
+    HARD_LIMIT + STALE_MARGIN is a dead run's (`stale`): the runner clears it, so nothing waits on it until a restart.
   - **The entities stage has a budget of its own** (0128): ENTITY_BUDGET seconds that LIMIT doesn't count, so its
     nightly full pass (63 s on the server) can't push the other stages over the limit. Past its budget the stage
     stops after a chunk of entities, the run goes on, and the next run resumes the pass (entity_stage).
@@ -53,6 +57,7 @@ OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
+STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan")
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 
@@ -270,7 +275,7 @@ class Jobs:
             return None
         try:
             with decide.snapshot(self.db_url) as cur:
-                out = decide.run(cur, stage=stage, entity_budget=self.entity_budget)
+                out = decide.run(cur, stage=stage, entity_budget=self.entity_budget, limit=self.limit, began=t0)
         except TooLong as exc:
             # the retry waits for the 5-minute gap between two starts (GAP), not the next 30 s look (0124)
             log.warning("Mark X decision run %s; nothing written, it runs again within %.0f minutes", exc, GAP / 60)
@@ -319,6 +324,15 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     return None
 
 
+def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HARD_LIMIT + STALE_MARGIN) -> List[str]:
+    """v10.13.9: the jobs shown running whose stage began more than `after` seconds ago. No run lives that long (its
+    process is killed at HARD_LIMIT), so such a stage is a run that died without a word: due() would wait on it
+    forever (the candidate finder's stage holds back every decision run and plan)."""
+    return [job for job, s in states.items()
+            if s.get("stage") is not None and s.get("stage_at") is not None
+            and (now - s["stage_at"]).total_seconds() > after]
+
+
 def _job_main(db_url: str, job: str) -> None:
     """A child process: one job, then exit (what it read goes back to the OS)."""
     from insight_core.logs.core.logger_config import setup_logging
@@ -360,12 +374,30 @@ class Runner:
         except Exception:
             log.exception("Mark X jobs: could not recover the runs a restart ended")
 
+    def _reap(self, job: str, s: Dict[str, Any]) -> None:
+        """A stale stage (`stale`): the run is recorded as dead, wanted again, its stage cleared (only if the row still
+        shows that stage: a run that moved on meanwhile is alive). `s` is updated as due() should see it."""
+        from insight_core.db import database
+        error = f"no word from the run for over {self.hard_limit + STALE_MARGIN:.0f} s"
+        with database.transaction(self.db_url) as cur:
+            cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
+                                  wanted_at = COALESCE(wanted_at, now())
+                            WHERE job = %s AND stage = %s AND stage_at = %s RETURNING wanted_at""",
+                        (_json({"ok": False, "error": error, "stage": s["stage"]}), job, s["stage"], s["stage_at"]))
+            row = cur.fetchone()
+        if row:
+            log.error("Mark X jobs: the %s run shown in stage %s since %s is dead (%s); wanted again",
+                      job, s["stage"], s["stage_at"], error)
+            s.update(stage=None, stage_at=None, wanted_at=row[0])
+
     def tick(self) -> Optional[str]:
         """One look: the job that ran, or None."""
         if not self.on():
             return None
         try:
             states = self._states()
+            for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
+                self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
                       plan_every=self.plan_every)
             if self._busy != getattr(self, "_told", None):
@@ -392,22 +424,35 @@ class Runner:
             process.kill()
             process.join(10)
             log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", job, self.hard_limit)
-            try:
-                from insight_core.db import database
-                with database.transaction(self.db_url) as cur:
-                    cur.execute("SELECT stage FROM mx_jobs WHERE job = %s", (job,))
-                    row = cur.fetchone()
-                    stage = row[0] if row else None
-                    if job == "decide" and stage == "entities":
-                        from insight_core.markx import entity_stage
-                        entity_stage.defer_full(cur, f"a decision run was killed in the entities stage after "
-                                                     f"{self.hard_limit:.0f} s")
-                Jobs(self.db_url)._finish(job, {"ok": False, "error": f"killed after {self.hard_limit:.0f} s",
-                                                "stage": stage}, again=True)
-            except Exception:
-                log.exception("Mark X jobs: could not record the killed run")
+            self._dead(job, f"killed after {self.hard_limit:.0f} s", always=True)
         elif process.exitcode:
+            # v10.13.9: a crash (an OOM kill's -9, a segfault) is a killed run: recorded, wanted again, its stage
+            # cleared. Before, it only logged and the stage stayed set, so due() waited for it until a restart.
             log.error("Mark X jobs: the %s run ended with exit code %s", job, process.exitcode)
+            self._dead(job, f"exited with code {process.exitcode}")
+
+    def _dead(self, job: str, error: str, *, always: bool = False) -> None:
+        """A run whose process ended without finishing: {"ok": False, error, the stage it was in}, wanted again, no
+        stage; so is the candidate finder a decision run was running inside it. Ended in the entities stage, the full
+        pass waits for the next night. Without `always`, a run that recorded its own end (no stage left) stays as is."""
+        try:
+            from insight_core.db import database
+            with database.transaction(self.db_url) as cur:
+                cur.execute("SELECT job, stage FROM mx_jobs WHERE stage IS NOT NULL AND job = ANY(%s)",
+                            ([job, "candidates"] if job == "decide" else [job],))
+                stages = dict(cur.fetchall())
+                stage = stages.get(job)
+                if job == "decide" and stage == "entities":
+                    from insight_core.markx import entity_stage
+                    entity_stage.defer_full(cur, f"a decision run ended in the entities stage ({error})")
+            for other, at in stages.items():
+                if other != job:
+                    Jobs(self.db_url)._finish(other, {"ok": False, "error": f"{error} (inside the {job} run)",
+                                                      "stage": at}, again=True)
+            if stage is not None or always:
+                Jobs(self.db_url)._finish(job, {"ok": False, "error": error, "stage": stage}, again=True)
+        except Exception:
+            log.exception("Mark X jobs: could not record the %s run that ended (%s)", job, error)
 
     def start(self, poll: float = POLL) -> bool:
         """The loop in a daemon thread (run_scheduler.py); False when Mark X is off at the start."""

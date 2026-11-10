@@ -51,6 +51,14 @@ class Rules(unittest.TestCase):
         self.assertIn("ivokestrel", PP.source_keys("rss", "https://nitter.example/ikes/rss", "Ivo Kestrel"))
         self.assertNotIn("feed", PP.source_keys("rss", "https://news.example/feed.xml", None))
 
+    def test_room_half_the_limit_and_twice_the_entities_budget(self):
+        """v10.13.9: the window steps back only after a run under half its limit whose entities stage stayed within
+        twice its budget."""
+        self.assertIsNone(W.room(59, 120, entities=90, entity_budget=45))
+        self.assertEqual(W.room(60, 120), "held: run took 60 s (steps back under 60 s, 50% of 120 s)")
+        self.assertIn("held: the entities stage took 441 s", W.room(10, 120, entities=441, entity_budget=45))
+        self.assertIsNone(W.room(10, 120, entities=441, entity_budget=None), "no budget: nothing to exceed")
+
 
 # ---- A: the window --------------------------------------------------------------------------------------
 
@@ -160,6 +168,31 @@ class Window(unittest.TestCase):
         W.advance(self.cur, self.now, waiting_old=0, candidates_left=0)
         self.assertGreaterEqual(W.days_for_run(self.cur, self.now), 400,
                                 "no post for a year: one step on to the older post's week, not 52 empty ones")
+
+    def test_a_step_needs_room_else_the_window_holds_and_says_why(self):
+        """v10.13.9: every step makes the next run bigger, so a run that used half its limit (or twice the entities
+        budget) holds the window, all else ready."""
+        W.set_window(self.cur, None)
+        self.post(T - 400 * DAYS, "An old post")
+        self.post(T - 33 * DAYS, "A post of the next step")
+        got = W.advance(self.cur, self.now, waiting_old=0, candidates_left=0, held="held: run took 70 s")
+        self.assertEqual((got["stepped"], got["held"]), (False, "held: run took 70 s"))
+        self.assertEqual(W.days_for_run(self.cur, self.now), 30)
+        self.assertTrue(W.advance(self.cur, self.now, waiting_old=0, candidates_left=0, held=None)["stepped"])
+
+    def test_the_decision_run_holds_the_window_when_it_left_no_room(self):
+        old = T - 60 * DAYS
+        a, b = self.post(old, "Acme released Widget 4"), self.post(old + H, "Widget 4 by Acme is here")
+        repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
+        self.read_all([a, b])
+        W.set_window(self.cur, 90)
+        out = DD.run(self.cur, now=self.now, limit=1e-6)       # any run is over half of a millionth of a second
+        self.assertFalse(out["story_window"]["stepped"])
+        self.assertTrue(out["story_window"]["held"].startswith("held: run took"), out["story_window"])
+        self.assertEqual(W.days_for_run(self.cur, self.now), 30)
+        out = DD.run(self.cur, now=self.now)                   # the default limit (120 s): room, it steps
+        self.assertTrue(out["story_window"]["stepped"])
+        self.assertNotIn("held", out["story_window"])
 
     def test_the_candidate_backfill_is_newest_first_and_resumes(self):
         from insight_core.tests.test_markx_candidates import at_cos
