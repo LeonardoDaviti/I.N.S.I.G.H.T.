@@ -201,6 +201,41 @@ class RankByCoverage(FindFeedWithLinks):
         self.assertNotIn("holds", body["pages"][0])
 
 
+class AnArticleWithNoFeed(FindFeedWithLinks):
+    """v10.13.5: a company's article (/blog/<slug>) on a site with no feed at all; its home page names
+    /blog and /news in plain HTML; /blog lists the articles. The article offers its own section to follow."""
+
+    def site(self) -> dict:
+        responses = {f"{SITE}/": page(body='<a href="/blog">Blog</a><a href="/news">News</a>'),
+                     f"{SITE}/news": page(body="<p>Coming soon</p>"), **section("/blog", 4)}
+        responses[f"{SITE}/blog/{slug(0)}"] = page(body='<nav><a href="/blog">Blog</a><a href="/news">News</a></nav><p>A post</p>')
+        return responses
+
+    def test_an_article_offers_its_section(self):
+        body, _ = self.ask(self.site(), f"{SITE}/blog/{slug(0)}", [])
+        self.assertEqual((body["status"], body["homepage"], body["start"]), ("none", False, None))
+        self.assertEqual([(offer["url"], offer["found"]) for offer in body["pages"]], [(f"{SITE}/blog", 4)])
+
+    def test_the_home_page_offers_the_blog_as_before(self):
+        body, _ = self.ask(self.site(), SITE, [])
+        self.assertEqual((body["status"], body["homepage"]), ("none", True))
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SITE}/blog"])
+
+    def test_an_account_page_is_not_offered_the_sites_blog(self):
+        # A platform's account page: the platform's /blog is another section, never offered.
+        responses = self.site()
+        responses[f"{SITE}/example-org"] = page(body='<nav><a href="/blog">Blog</a></nav><a href="/example-org/widget">Widget</a>')
+        body, _ = self.ask(responses, f"{SITE}/example-org", [])
+        self.assertEqual((body["status"], body["pages"]), ("none", []))
+
+    def test_own_section(self):
+        read = [f"{SITE}/blog/", f"{SITE}/news", "https://other.example/blog/x"]
+        self.assertEqual(where_linked.own_section(f"{SITE}/blog/{slug(0)}", read), [f"{SITE}/blog"])
+        self.assertEqual(where_linked.own_section(f"{SITE}/example-org", read), [])
+        self.assertEqual(where_linked.own_section(f"{SITE}/", read), [])
+        self.assertEqual(where_linked.own_section(f"{SITE}/rss", read), [])
+
+
 class FeedItemsTests(unittest.TestCase):
     def test_rss_and_atom_item_addresses_are_read(self):
         self.assertEqual(_feed_items(rss("X", items=2).encode(), "https://x.example/feed"),

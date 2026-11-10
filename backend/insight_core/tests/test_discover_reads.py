@@ -126,12 +126,19 @@ class FeedOfThesePagesTests(unittest.TestCase):
     def test_a_hubs_feed_is_not_its_owners(self):
         owner = ["https://hub.example/anowner/model-one", "https://hub.example/anowner/model-two"]
         responses = {"https://hub.example/anowner": page(),
-                     "https://hub.example/": page('<link rel="alternate" type="application/rss+xml" href="/blog/feed.xml">'),
-                     "https://hub.example/blog/feed.xml": site_rss("hub.example", ["/blog/post-1", "/blog/post-2"])}
+                     "https://hub.example/": page('<link rel="alternate" type="application/rss+xml" href="/feed.xml">'),
+                     "https://hub.example/feed.xml": site_rss("hub.example", ["/blog/post-1", "/blog/post-2"])}
         http = FakeHttp(responses)
         got = asyncio.run(discover_reads.follow_test(http, KindRegistry.default(http, None), "https://hub.example/anowner",
                                                      owner + ["https://hub.example/blog/post-1"]))
         self.assertEqual(got, "other_feed", "the hub's blog post linked elsewhere is not the owner's")
+        # The hub's blog feed under another section (/blog/feed.xml) is not even found for an owner (v10.13.5).
+        responses["https://hub.example/"] = page('<link rel="alternate" type="application/rss+xml" href="/blog/feed.xml">')
+        responses["https://hub.example/blog/feed.xml"] = responses.pop("https://hub.example/feed.xml")
+        http = FakeHttp(responses)
+        got = asyncio.run(discover_reads.follow_test(http, KindRegistry.default(http, None), "https://hub.example/anowner",
+                                                     owner + ["https://hub.example/blog/post-1"]))
+        self.assertEqual(got, "headlines")
 
     def test_a_feed_holding_a_linked_page_is_found(self):
         linked = ["https://news.example/2026/10/a-story", "https://news.example/2026/10/another"]
