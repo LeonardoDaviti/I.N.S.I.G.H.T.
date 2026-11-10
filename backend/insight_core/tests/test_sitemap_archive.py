@@ -148,6 +148,22 @@ class SitemapArchiveTests(unittest.TestCase):
         self.assertEqual(old[0]["date"].date().isoformat(), "2008-07-07", "the address's day, not the lastmod")
         self.assertTrue(old[0][BACKLOG_KEY])
 
+    def test_an_older_page_with_no_date_anywhere_stays_undated(self):
+        """v10.13.6: no date in its markup, its address or the sitemap: undated (the saver sorts it before the
+        source's oldest), never dated "now" as a page watch's new page is."""
+        plain = f"{BLOG}/an-old-note/"
+        page = ('<html><head><title>an-old-note</title><meta property="og:type" content="article"></head><body>'
+                f"<article><p>{'An old note. ' * 40}</p></article></body></html>")
+        responses = blog(**{plain: page})
+        responses[f"{BLOG}/sitemap-posts.xml"] = (
+            '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            + "".join(f"<url><loc>{post_url(slug)}</loc></url>" for slug in IN_FEED) + f"<url><loc>{plain}</loc></url></urlset>")
+        pages = asyncio.run(archive(kind(FakeHttp(responses))))
+        old = [post for page in pages for post in page.posts if post["url"] == plain]
+        self.assertEqual(len(old), 1)
+        self.assertIsNone(old[0]["date"])
+        self.assertTrue(old[0][BACKLOG_KEY])
+
     def test_a_sitemap_page_that_is_no_post_is_skipped(self):
         responses = blog()
         responses[post_url("third-post")] = '<html><head><meta property="og:type" content="website"></head><body><p>Tags</p></body></html>'
