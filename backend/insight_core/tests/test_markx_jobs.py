@@ -318,12 +318,12 @@ class TheLimitAndTheStages(_Api):
         self.assertIn("run", out)
         text = "\n".join(logs.output)
         self.assertIn("Mark X decision run started", text)
-        for name in ("candidates", "load", "questions and decisions", "write", "connections", "headlines", "news", "entities", "surges", "perspectives_plan"):
+        for name in ("candidates", "load", "questions and decisions", "write", "connections", "graph", "back", "headlines", "news", "entities", "surges", "perspectives_plan"):
             self.assertIn(f"Mark X decision run: {name} took", text, name)
         self.assertIn("Mark X decision run finished in", text)
         last = jobs.state(self.cur)["decide"]["last"]
         self.assertEqual([s for s, _ in last["stages"]], ["candidates", "load", "questions and decisions", "write", "connections",
-                                                "headlines", "news", "entities", "surges", "perspectives_plan"])   # 0119
+                                                "graph", "back", "headlines", "news", "entities", "surges", "perspectives_plan"])   # 0119
 
     def test_a_run_over_the_limit_stops_between_stages_and_writes_nothing(self):
         self.cur.execute("SELECT count(*) FROM mx_runs")
@@ -341,7 +341,7 @@ class TheLimitAndTheStages(_Api):
         self.assertIsNone(s["stage"])
         # 0124 (the v10.0.2 review's W6): the stage's whole name, and the retry as it happens (the 5-minute gap)
         self.assertEqual(s["last"]["stopped_before"], s["last"]["error"].split("stopped before ", 1)[1])
-        self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "headlines", "news"))
+        self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "graph", "back", "headlines", "news"))
         self.assertIn("it runs again within 5 minutes", "\n".join(logs.output))
 
     def test_the_entities_stages_own_budget_is_not_counted_in_the_limit(self):
@@ -492,6 +492,67 @@ class AKilledEntitiesStage(_Api):
         self.assertEqual(jobs.state(self.cur)["decide"]["last"]["stage"], "connections")
         with self.conn.transaction():
             self.assertIsNone(entity_stage.full_deferred(self.cur))
+
+
+class ADeadRun(_Api):
+    """v10.13.9: a run that crashed (OOM -9, a segfault) is recorded like a killed one, and a stage nobody updates
+    for longer than any run can live is cleared, so no job waits on a dead run until a restart."""
+
+    def set_stage(self, job, stage, ago=0):
+        with self.conn.transaction():
+            self.cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
+            self.cur.execute("""UPDATE mx_jobs SET stage = %s, started_at = now() - make_interval(secs => %s),
+                                       stage_at = now() - make_interval(secs => %s), wanted_at = NULL WHERE job = %s""",
+                             (stage, ago, ago, job))
+
+    def exit_with(self, code):
+        ended = mock.Mock()
+        ended.is_alive.return_value = False
+        ended.exitcode = code
+        with mock.patch("multiprocessing.get_context") as ctx, self.assertLogs(jobs.log, "ERROR"):
+            ctx.return_value.Process.return_value = ended
+            jobs.Runner(db_url())._in_own_process("decide")
+
+    def test_a_crashed_run_is_recorded_like_a_killed_one(self):
+        self.set_stage("decide", "connections")
+        self.set_stage("candidates", "candidates")      # the finder the decision run was running inside it
+        self.exit_with(-9)
+        s = jobs.state(self.cur)
+        self.assertEqual(s["decide"]["last"], {"ok": False, "error": "exited with code -9", "stage": "connections"})
+        self.assertIsNone(s["decide"]["stage"])
+        self.assertIsNotNone(s["decide"]["wanted_at"])
+        self.assertIsNone(s["candidates"]["stage"])
+        self.assertIsNotNone(s["candidates"]["wanted_at"])
+        self.assertIn("inside the decide run", s["candidates"]["last"]["error"])
+        self.assertEqual(jobs.due(s, datetime.now(timezone.utc) + timedelta(minutes=10)), "decide", "nothing waits")
+
+    def test_a_run_that_recorded_its_end_keeps_its_record(self):
+        jobs.Jobs(db_url())._finish("decide", {"ok": True, "seconds": 1.0})
+        self.exit_with(1)
+        self.assertEqual(jobs.state(self.cur)["decide"]["last"], {"ok": True, "seconds": 1.0})
+
+    def test_stale_is_a_stage_older_than_any_run_can_live(self):
+        old = {"stage": "candidates", "stage_at": T0 - timedelta(seconds=jobs.HARD_LIMIT + jobs.STALE_MARGIN + 1)}
+        young = {"stage": "load", "stage_at": T0 - timedelta(seconds=jobs.HARD_LIMIT)}
+        self.assertEqual(jobs.stale(_states(candidates=old, decide=young), T0), ["candidates"])
+        self.assertEqual(jobs.stale(_states(), T0), [])
+
+    def test_the_runner_clears_a_dead_runs_stage_and_wants_it_again(self):
+        self.set_stage("candidates", "candidates", ago=jobs.HARD_LIMIT + jobs.STALE_MARGIN + 60)
+        self.set_stage("decide", "load", ago=5)          # alive: left alone
+        seen = {}
+
+        def due(states, now, **kw):
+            seen.update(states)
+            return None
+        with mock.patch.object(jobs, "due", due), self.assertLogs(jobs.log, "ERROR"):
+            jobs.Runner(db_url(), spawn=False, on=lambda: True).tick()
+        self.assertIsNone(seen["candidates"]["stage"], "due() sees it cleared")
+        s = jobs.state(self.cur)
+        self.assertIsNone(s["candidates"]["stage"])
+        self.assertIsNotNone(s["candidates"]["wanted_at"])
+        self.assertIn("no word from the run", s["candidates"]["last"]["error"])
+        self.assertEqual(s["decide"]["stage"], "load")
 
 
 if __name__ == "__main__":

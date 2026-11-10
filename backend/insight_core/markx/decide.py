@@ -1226,7 +1226,8 @@ def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dic
 
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None,
-        entity_budget: Optional[float] = None) -> Dict[str, Any]:
+        entity_budget: Optional[float] = None, limit: Optional[float] = None,
+        began: Optional[float] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
@@ -1239,11 +1240,20 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     run would, writing nothing, and logs any difference from the full reading (`counts.check`).
 
     0128: `entity_budget` is the entities stage's own seconds (entity_stage.entities); its full pass stops after a
-    chunk past it and the next run resumes it. None: no limit."""
+    chunk past it and the next run resumes it. None: no limit.
+
+    v10.13.9: the story window steps back only when this run left room (story_window.room): `limit` is the caller's
+    LIMIT (jobs.LIMIT when None), `began` the time.monotonic() its run began (jobs: before its candidate finder, as
+    LIMIT counts; this call's start when None)."""
     import json as _json
     import time as _time
     from insight_core.markx import incremental, news as mx_news, repo, schemas
-    mark = stage or (lambda name: None)
+    timed: List[Tuple[str, float]] = []           # (stage, when it began): the room check's own clock
+
+    def mark(name: str) -> None:
+        if stage is not None:
+            stage(name)
+        timed.append((name, _time.monotonic()))
     cur.execute("SHOW transaction_isolation")
     isolation = cur.fetchone()[0]
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (LOCK_KEY,))
@@ -1285,8 +1295,12 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("connections")
     conns = connections(cur, out, ids, world, ask, config, news_keys)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
+    # v10.13.9: graph and back are stages of their own (were inside "connections", 95.8 s on the server, unsplit).
+    # graph counts in LIMIT: its backfills stop at their own deadline, sized as a share of LIMIT (BACKFILL_SECONDS)
+    mark("graph")
     from insight_core.markx import graph   # 0131: Stalker's first edges (authors' links, identity, the judge)
     counts["graph"] = graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open)
+    mark("back")
     from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
     counts["back"] = back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open)
     mark("headlines")
@@ -1313,9 +1327,17 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     if config.story_window and story_window.backfilling(cur):   # 0144 A2: the backfill steps back once this step is asked and found
         from insight_core.markx import candidates as mx_candidates
         since_next = story_window.next_since(cur, now)
+        from insight_core.markx import jobs as mx_jobs
+        at = _time.monotonic()
+        took = {name: round((timed[i + 1][1] if i + 1 < len(timed) else at) - t, 1)
+                for i, (name, t) in enumerate(timed)}
+        own = sum(s for name, s in took.items() if name in mx_jobs.OWN_BUDGET)
+        held = story_window.room(at - (started if began is None else began) - own,
+                                 mx_jobs.LIMIT if limit is None else limit,
+                                 entities=took.get("entities"), entity_budget=entity_budget)
         counts["story_window"] = {"days": config.days, **story_window.advance(
             cur, now, waiting_old=sum(ask.waiting_old.values()),
-            candidates_left=mx_candidates.unfound_count(cur, since_next) if since_next else 0),
+            candidates_left=mx_candidates.unfound_count(cur, since_next) if since_next else 0, held=held),
             "old_added": dict(ask.old_added), "old_waiting": dict(ask.waiting_old)}
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
