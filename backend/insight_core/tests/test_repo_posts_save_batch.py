@@ -174,6 +174,20 @@ class SaveBatchTests(unittest.TestCase):
         self.assertEqual(self._feed_order(self.source_a)[0][0], "new")
         self.assertGreater(self._feed_order(self.source_a)[0][1], "2026-10-06")
 
+    def test_a_later_fetchs_undated_older_post_sorts_below_too(self):
+        """v10.13.5: an archive's undated older page (backlog) of a source fetched before sorted at its fetch: a
+        blog's 2008 entries showed under Today. It sorts before the source's oldest post, as a first fetch's does."""
+        from datetime import datetime, timezone
+        from insight_core.db.repo_posts import BACKLOG_KEY
+        url = f"https://test.invalid/mark-ix-post/{self.tag}/"
+        self._save([PostDraft(self.source_a, {"url": url + "d", "title": "d", "content": "d",
+                                              "date": datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)})])
+        self._save([PostDraft(self.source_a, {"url": url + "old", "title": "o", "content": "o", "date": None,
+                                              BACKLOG_KEY: True})])
+        order = self._feed_order(self.source_a)
+        self.assertEqual([u for u, _ in order], ["d", "old"])
+        self.assertLess(order[1][1], "2026-10-05T00:00:01")
+
 
 if __name__ == "__main__":
     unittest.main()

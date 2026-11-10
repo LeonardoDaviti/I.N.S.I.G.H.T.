@@ -40,6 +40,17 @@ class DateTests(unittest.TestCase):
         self.assertEqual(page_date("https://blog.example.com/2026/10/21/a-post"), datetime(2026, 10, 21, tzinfo=timezone.utc))
         self.assertEqual(page_date("https://example.com/news/2026-09/a-post"), datetime(2026, 9, 1, tzinfo=timezone.utc))
         self.assertIsNone(page_date("https://example.com/news/a-post"))
+        # v10.13.5: a month by name with its day
+        self.assertEqual(page_date("https://blog.example.com/2008/Jul/7/a-link/"), datetime(2008, 7, 7, tzinfo=timezone.utc))
+        self.assertEqual(page_date("https://example.com/2019/september/03/x"), datetime(2019, 9, 3, tzinfo=timezone.utc))
+        self.assertIsNone(page_date("https://example.com/2025/Feb/30/x/"))
+
+    def test_address_day_needs_a_whole_day(self):
+        from insight_core.utils.originals_rules import address_day
+        self.assertEqual(address_day("https://blog.example.com/2026/10/21/a-post"), datetime(2026, 10, 21, tzinfo=timezone.utc))
+        self.assertEqual(address_day("https://blog.example.com/2008/Jul/7/a-link/"), datetime(2008, 7, 7, tzinfo=timezone.utc))
+        self.assertIsNone(address_day("https://example.com/news/2026-09/a-post"))     # a month alone is no day
+        self.assertIsNone(address_day("https://example.com/news/a-post"))
 
 
 class LinkedTests(unittest.TestCase):

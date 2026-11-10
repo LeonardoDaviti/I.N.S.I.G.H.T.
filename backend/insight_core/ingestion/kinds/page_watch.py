@@ -414,8 +414,10 @@ def page_title(page: str, url: str) -> str:
 
 
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
-    """The post the page at url is, or None when it is no article (see the module docstring)."""
-    date = page_date(page)
+    """The post the page at url is, or None when it is no article (see the module docstring). A page whose markup
+    states no date is dated by its address (/2026/10/21/, /2008/Jul/7/: v10.13.5) before the sitemap's lastmod."""
+    from insight_core.utils.originals_rules import address_day as address_date
+    date = page_date(page) or address_date(url)
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
     return article_post(page, source_url, url, date or lastmod, adapter=PageWatchKind.adapter_type)

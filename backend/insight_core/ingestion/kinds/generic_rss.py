@@ -595,6 +595,7 @@ class GenericRssKind(BaseKind):
         us stops the archive: it resumes). `archived`: the Web Archive's capture of it, read when the live page
         is gone (404 / 410)."""
         from insight_core.ingestion.kinds.page_watch import article_post, page_date
+        from insight_core.utils.originals_rules import address_day as address_date
 
         try:
             page, _ = await self.http.get_text(url)
@@ -614,7 +615,9 @@ class GenericRssKind(BaseKind):
         except ValueError as exc:
             logger.info("Archive: %s could not be read (%s)", url, exc)
             return UNREADABLE
-        date = page_date(page)
+        # v10.13.5: an archived page that states no date in its markup is dated by its address (/2008/Jul/7/)
+        # before the sitemap's lastmod (a site's lastmod is often its last rebuild, not the post's day)
+        date = page_date(page) or address_date(url)
         if date is None and parsing.meta_content(page, "og:type").lower() != "article":
             return None
         post = article_post(page, str(source["handle_or_url"]), url, date or lastmod, adapter=self.name)
