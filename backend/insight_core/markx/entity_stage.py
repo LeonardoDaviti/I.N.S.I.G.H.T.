@@ -12,6 +12,12 @@ towards the run's limit, so a long full pass can't starve the other stages. The 
 chunks (identity.SEED_CHUNK) and stops after the chunk that passes the budget; the run's counts keep where
 (`entities.full`: done, after), and the next run resumes it there. The night's pass is done only when its last chunk
 is (`full_due`).
+
+v10.13.9: **both passes keep to it.** The incremental pass links, pools and decides its mentions in chunks and stops
+after the chunk that passes the budget; the mentions it leaves stay unlinked, so the next run takes them. The full pass
+relinks in pages of posts (`full.phase` 'link', `link_after`) before its entity chunks (phase 'pool', `after`), and the
+addresses' sweep of every post stops likewise (`addresses`: done, after) and goes on in the next runs. The book is read
+once a run, for both.
 """
 from __future__ import annotations
 
@@ -64,14 +70,26 @@ def full_due(cur: Any, now: datetime) -> bool:
     return last is None or last < mark
 
 
-def unfinished(cur: Any) -> Optional[Dict[str, Any]]:
-    """The full pass the last finished run left half done ({done: false, after, ...}), else None."""
-    cur.execute("""SELECT counts->'entities'->'full' FROM mx_runs
+def _last(cur: Any, part: str) -> Any:
+    cur.execute("""SELECT counts->'entities'->%s FROM mx_runs
                     WHERE finished_at IS NOT NULL AND counts ? 'entities'
-                    ORDER BY finished_at DESC, started_at DESC LIMIT 1""")
+                    ORDER BY finished_at DESC, started_at DESC LIMIT 1""", (part,))
     row = cur.fetchone()
-    got = row[0] if row else None
-    return got if isinstance(got, dict) and got.get("done") is False and got.get("after") else None
+    return row[0] if row else None
+
+
+def unfinished(cur: Any) -> Optional[Dict[str, Any]]:
+    """The full pass the last finished run left half done ({done: false, phase, after, link_after, ...}), else None
+    (v10.13.9: phase 'link' with `link_after`, or 'pool' with `after`; a record from before has `after` only)."""
+    got = _last(cur, "full")
+    left = isinstance(got, dict) and got.get("done") is False and (got.get("after") or got.get("phase"))
+    return got if left else None
+
+
+def addresses_left(cur: Any) -> Optional[str]:
+    """v10.13.9: the post the last finished run's addresses sweep stopped after, else None."""
+    got = _last(cur, "addresses")
+    return got.get("after") if isinstance(got, dict) and got.get("done") is False and got.get("after") else None
 
 
 def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[datetime],
@@ -85,13 +103,17 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     whole = bool(full) or left is not None or full_due(cur, now)
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
+    book = identity.load_book(cur)   # read once a run: identity's stage and the addresses share it
     out = identity.stage(cur, ask=ask, now=now, run_id=run_id, full=whole, since=since,
-                         after=left["after"] if left else None, deadline=deadline, chunk=chunk)
+                         after=left.get("after") if left else None, link_after=left.get("link_after") if left else None,
+                         phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book)
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
-    out["addresses"] = addresses(cur, now=now, since=since, full=whole and not left)
+    sweep = whole and not left
+    out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
+                                 deadline=deadline, also=out.pop("posts_linked", []), book=book)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
     out["days_linked"] = len(days)
     if whole or since is None:
@@ -102,14 +124,17 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     return out, (None if cur.fetchone()[0] else days)
 
 
-def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> Dict[str, Any]:
-    """0138 A: the entities' addresses of the posts whose current set came since (every post on the full pass's first
-    chunk run), no request. Derived and idempotent: a failure is logged in the counts and undone, never the run's."""
+def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, after: Optional[str] = None,
+              deadline: Optional[float] = None, also: Any = (), book: Any = None) -> Dict[str, Any]:
+    """0138 A: the entities' addresses of the posts whose current set came since and of the posts the run linked
+    (every post on the full pass's first chunk run, a sweep that resumes `after` where the last run's stopped), no
+    request. Derived and idempotent: a failure is logged in the counts and undone, never the run's."""
     import logging
     from insight_core.markx import entity_addresses
     cur.execute("SAVEPOINT entity_addresses")
     try:
-        got = entity_addresses.stage(cur, now=now, since=since, full=full)
+        got = entity_addresses.stage(cur, now=now, since=since, full=full, after=after, deadline=deadline, also=also,
+                                     book=book)
     except Exception as error:  # noqa: BLE001 - a derived stage never stops the run
         cur.execute("ROLLBACK TO SAVEPOINT entity_addresses")
         logging.getLogger(__name__).exception("Mark X: the entity addresses stage failed")

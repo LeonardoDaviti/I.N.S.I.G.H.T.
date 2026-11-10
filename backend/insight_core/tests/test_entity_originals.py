@@ -207,6 +207,36 @@ class Addresses(_AddressCase):
                                                 "release": ("https://summaries.example/p/nimbus", "title")})
         self.assertEqual(self.stage()["addresses"]["added"], 0, "written once")
 
+    def test_a_sweep_past_its_deadline_stops_after_a_chunk_and_resumes_where_it_stopped(self):
+        """v10.13.9: the sweep of every post keeps to the stage's budget; the next runs go on from its `after`, and
+        together they find what one sweep finds."""
+        import time
+        from unittest import mock
+        posts = []
+        for n in range(4):
+            pid = self.post(n % 5, T0 + n * H, text="A paper is out.", links=[PAPER.replace("01234", f"0123{n}")])
+            self.say(pid, m(f"Nimbus Paper {n}", ref=f"arXiv:2611.0123{n}"))
+            posts.append(pid)
+        self.stage()
+        self.cur.execute("TRUNCATE mx_entity_addresses")
+        self.cur.execute("SAVEPOINT once")
+        once = EA.stage(self.cur, now=T0, since=None, full=True)
+        self.cur.execute("SELECT entity_id::text, url FROM mx_entity_addresses")
+        want = set(self.cur.fetchall())
+        self.cur.execute("ROLLBACK TO SAVEPOINT once")
+        self.assertEqual((once["posts"], once["done"], len(want)), (4, True, 4))
+        seen, after = [], None
+        with mock.patch.object(EA, "CHUNK", 1):
+            while not seen or not seen[-1]["done"]:
+                seen.append(EA.stage(self.cur, now=T0, since=datetime.now(timezone.utc) + D, full=not seen, after=after,
+                                     deadline=time.monotonic() - 1))
+                after = seen[-1]["after"]
+                self.assertLess(len(seen), 10)
+        self.assertEqual([o["posts"] for o in seen], [1, 1, 1, 1])     # a chunk a run, none read twice
+        self.assertEqual([o["after"] for o in seen], sorted(posts)[:3] + [None])
+        self.cur.execute("SELECT entity_id::text, url FROM mx_entity_addresses")
+        self.assertEqual(set(self.cur.fetchall()), want)
+
     def test_a_front_page_is_never_an_address(self):
         a = self.post(0, T0, links=["https://nimbuslab.example/", "https://nimbuslab.example/nimbus-4"])
         self.link_text(a, "https://nimbuslab.example/", "Nimbus 4")

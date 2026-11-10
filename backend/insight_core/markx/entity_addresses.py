@@ -32,12 +32,13 @@ def _names(book: I.Book) -> Dict[str, Set[str]]:
     return out
 
 
-def _makers(book: I.Book, root: str) -> Set[str]:
-    """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity)."""
+def _makers(book: I.Book, root: str, members: Optional[Dict[str, Set[str]]] = None) -> Set[str]:
+    """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity).
+    `members` (book.members(), v10.13.9): read once for many roots (each root walked every entity before)."""
     out: Set[str] = set()
-    for eid, e in book.ents.items():
-        if book.root(eid) != root:
-            continue
+    ids = members.get(root, ()) if members is not None else [eid for eid in book.ents if book.root(eid) == root]
+    for eid in ids:
+        e = book.ents[eid]
         if e.maker:
             out.add(N.key(e.maker))
         if e.parent and e.level == "thing" and e.parent in book.ents:
@@ -45,14 +46,19 @@ def _makers(book: I.Book, root: str) -> Set[str]:
     return {m for m in out if m}
 
 
-def _mentions(cur: Any, post_ids: Optional[List[str]]) -> List[Tuple]:
+def _mentions(cur: Any, post_ids: Optional[List[str]], after: Optional[str] = None) -> List[Tuple]:
+    """The linked mentions of the specific types, of `post_ids` (None: every post), or `after` that post as well."""
     from insight_core.markx import schemas
     from insight_core.markx.candidates import SPECIFIC_TYPES
-    where = "AND m.post_id = ANY(%(ids)s::uuid[])" if post_ids is not None else ""
+    if after is not None:
+        where = "AND (m.post_id > %(after)s::uuid OR m.post_id = ANY(%(ids)s::uuid[]))"
+    else:
+        where = "AND m.post_id = ANY(%(ids)s::uuid[])" if post_ids is not None else ""
     cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.type, m.ref, m.span, m.name
                       FROM mx_mentions_now m
                      WHERE m.guide = ANY(%(g)s) AND m.entity_id IS NOT NULL AND m.type = ANY(%(t)s) {where}""",
-                {"g": schemas.mention_guides(), "t": schemas.stored_types(SPECIFIC_TYPES), "ids": post_ids})
+                {"g": schemas.mention_guides(), "t": schemas.stored_types(SPECIFIC_TYPES), "ids": list(post_ids or []),
+                 "after": after})
     return cur.fetchall()
 
 
@@ -126,30 +132,45 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
     return out
 
 
-def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> Dict[str, Any]:
-    """Find and store the addresses of the posts whose current set came since `since` (every post when `full` or
-    there is no `since`). Returns {posts, found, added, by_rule}."""
-    if full or since is None:
-        post_ids = None
-    else:
+def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, after: Optional[str] = None,
+          deadline: Optional[float] = None, also: Iterable[str] = (), book: Optional[I.Book] = None) -> Dict[str, Any]:
+    """Find and store the addresses of the posts whose current set came since `since` and the posts in `also` (the
+    posts whose mentions the run linked: v10.13.9, a run that stops at its budget links the rest later, after their
+    set came). `full` or no `since`: a sweep of every post, in post id order; `after` resumes a sweep past that post.
+    A sweep stops after the chunk of CHUNK posts that passes `deadline` (a time.monotonic() value) and says where
+    ({done: false, after}); the run's own posts are done first, always. Returns {posts, found, added, by_rule, done,
+    after}."""
+    import time
+    sweep = full or since is None or after is not None
+    first: Set[str] = set(also)
+    if since is not None and not full:
         cur.execute("SELECT post_id::text FROM mx_mention_sets WHERE at >= %s", (since - MARGIN,))
-        post_ids = [r[0] for r in cur.fetchall()]
-        if not post_ids:
-            return {"posts": 0, "found": 0, "added": 0, "by_rule": {}}
-    rows = _mentions(cur, post_ids)
+        first |= {r[0] for r in cur.fetchall()}
+    empty = {"posts": 0, "found": 0, "added": 0, "by_rule": {}, "done": True, "after": None}
+    if not sweep and not first:
+        return empty
+    # a resumed sweep reads the posts past where it stopped (and the run's own), not every post again
+    rows = _mentions(cur, sorted(first), after) if after is not None else \
+        _mentions(cur, None if sweep else sorted(first))
     if not rows:
-        return {"posts": 0, "found": 0, "added": 0, "by_rule": {}}
-    book = I.load_book(cur)
+        return empty
+    book = book if book is not None else I.load_book(cur)
     names = _names(book)
+    members = book.members()
     makers: Dict[str, Set[str]] = {}
-    ids = sorted({r[0] for r in rows})
+    have = {r[0] for r in rows}
+    head = sorted(have & first)
+    rest = sorted(p for p in have - first if after is None or p > after) if sweep else []
     found: Dict[Tuple[str, str], Tuple[str, str, str, Optional[str]]] = {}
     by_rule: Dict[str, int] = defaultdict(int)
     by_post: Dict[str, List[Tuple]] = defaultdict(list)   # v10.13.4: each chunk reads its own posts' rows, not all
     for r in rows:
         by_post[r[0]].append(r)
-    for k in range(0, len(ids), CHUNK):
-        chunk = ids[k:k + CHUNK]
+    chunks = [head[k:k + CHUNK] for k in range(0, len(head), CHUNK)]
+    n_head = len(chunks)
+    chunks += [rest[k:k + CHUNK] for k in range(0, len(rest), CHUNK)]
+    done_posts, last, done = 0, after, True
+    for k, chunk in enumerate(chunks):
         links = _links(cur, chunk)
         docs = _documents(cur, chunk)
         titles = _titles(cur, {u for pid in chunk for u, _ in links.get(pid, ())})
@@ -158,11 +179,17 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> 
             if root not in book.ents or book.ents[root].status == "not_entity":
                 continue
             if root not in makers:
-                makers[root] = _makers(book, root)
+                makers[root] = _makers(book, root, members)
             for kind, url, rule, owner in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
                                                  links=links[pid], titles=titles, documents=docs.get(pid, 0),
                                                  names=names.get(root, set()), makers=makers[root]):
                 found.setdefault((root, url), (kind, rule, pid, owner))
+        done_posts += len(chunk)
+        if k >= n_head:
+            last = chunk[-1]
+        if n_head <= k < len(chunks) - 1 and deadline is not None and time.monotonic() > deadline:
+            done = False   # the sweep's posts left are the next run's (it stops only after one of its own chunks)
+            break
     added = 0
     for (root, url), (kind, rule, pid, owner) in sorted(found.items()):
         cur.execute("""INSERT INTO mx_entity_addresses (entity_id, url, kind, rule, post_id, first_at, owner)
@@ -170,7 +197,8 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool) -> 
                     (root, url, kind, rule, pid, now, owner))
         added += cur.rowcount
         by_rule[rule] += 1
-    return {"posts": len(ids), "found": len(found), "added": added, "by_rule": dict(by_rule)}
+    return {"posts": done_posts, "found": len(found), "added": added, "by_rule": dict(by_rule), "done": done,
+            "after": None if done else last}
 
 
 def add(cur: Any, *, root: str, url: str, kind: str, rule: str, post_id: Optional[str], now: datetime) -> bool:
@@ -214,10 +242,13 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
         if pid and (pid, root) not in named:
             continue
         out[root].append((kind, url, rule, at, pid, owner))
+    members: Optional[Dict[str, Set[str]]] = None
     for root, got in out.items():   # a fork or a namesake: 2+ owners of one kind keep the stated maker's only
         repo = [(k, u, o) for k, u, r, _, _, o in got if r == R.REPO]
         if len({(k, N.squash((o or "").casefold())) for k, _, o in repo}) > len({k for k, _, _ in repo}):
-            keep = R.one_owner(repo, _makers(book, root), N.squash)
+            if members is None and roots is None:
+                members = book.members()
+            keep = R.one_owner(repo, _makers(book, root, members), N.squash)
             out[root] = [g for g in got if g[2] != R.REPO or g[1] in keep]
     return out
 
