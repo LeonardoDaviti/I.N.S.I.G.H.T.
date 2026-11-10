@@ -339,11 +339,20 @@ class SearchRepository:
         # punctuation: "AI-native SDLC playbook" in "The AI-native SDLC playbook") comes before the ranked rest
         phrase = title_phrase(query.q)
         if query.order == "best" and _words(query.q) >= 2 and phrase:
-            titled = ("(' ' || btrim(regexp_replace(lower(coalesce(m.title, '')), '[^[:alnum:]]+', ' ', 'g')) || ' ')"
-                      " LIKE ('%% ' || %s || ' %%')")
+            norm = "btrim(regexp_replace(lower(coalesce(m.title, '')), '[^[:alnum:]]+', ' ', 'g'))"
+            titled = f"(' ' || {norm} || ' ') LIKE ('%% ' || %s || ' %%')"
+            # v10.13.8: a title that IS the query (less a leading "the", "a", "an") is the thing's own page: first
+            # of all, before the entity's posts (a post about a guide ranked above the guide); a title that only
+            # holds the query ("Zorblax 5.2 Ultra joke") stays after them (v10.13.1's joke card)
+            bare = re.sub(r"^(the|a|an) ", "", phrase)
+            typed = [w for w in query.q.split() if w.lower() not in ("the", "a", "an")]
+            if len(typed) >= 3:   # a title's length as typed, not a name's ("fable 5.2" keeps v10.13.1's order)
+                exact, exact_params = f"regexp_replace({norm}, '^(the|a|an) ', '') = %s", [bare]
+            else:
+                exact, exact_params = "false", []
             titled_params = [phrase]
         else:
-            titled, titled_params = "false", []
+            titled, titled_params, exact, exact_params = "false", [], "false", []
         # A word in a third of the posts looks cheap to find by reading the whole table, but
         # every row read then unpacks its vector (400 ms on 50k posts); the GIN index's bitmap
         # needs none of them. For this transaction only.
@@ -385,8 +394,9 @@ class SearchRepository:
                 ORDER BY u.sort_at DESC, u.id DESC
                 LIMIT %s
             ), hits AS (
-                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first, {titled} AS titled FROM matches m
-                ORDER BY first DESC, titled DESC, rank DESC, sort_at DESC, id DESC
+                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first, {titled} AS titled,
+                       {exact} AS exact FROM matches m
+                ORDER BY exact DESC, first DESC, titled DESC, rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
@@ -399,9 +409,9 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
-            ORDER BY hits.first DESC, hits.titled DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
+            ORDER BY hits.exact DESC, hits.first DESC, hits.titled DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
-            [*layer_params, matches, *rank_params, first_ids, *titled_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, first_ids, *titled_params, *exact_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).

@@ -554,6 +554,25 @@ class StoryJobYieldsTests(unittest.TestCase):
             again = self.service.recompute()
         self.assertNotIn("skipped", again)
 
+    def test_a_run_steps_aside_for_a_decision_run_that_waited_ten_minutes(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO mx_jobs (job) VALUES ('decide') ON CONFLICT (job) DO NOTHING")
+            cur.execute("SELECT wanted_at, started_at, stage FROM mx_jobs WHERE job = 'decide'")
+            saved = cur.fetchone()
+            cur.execute("UPDATE mx_jobs SET wanted_at = %s, started_at = %s, stage = NULL WHERE job = 'decide'",
+                        (self.now - timedelta(minutes=11), self.now - timedelta(minutes=30)))
+        self.addCleanup(self._restore_decide, saved)
+        with self._advance([False]):
+            self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # it started: the job goes on
+            cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'", (self.now - timedelta(minutes=1),))
+        with self._advance([False]):
+            self.assertNotIn("skipped", self.service.recompute())
+
+    def _restore_decide(self, saved):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE mx_jobs SET wanted_at = %s, started_at = %s, stage = %s WHERE job = 'decide'", saved)
+
     def test_a_run_that_empties_its_queue_never_yields(self):
         with self._advance([True, True, False]):
             done = self.service.recompute()
