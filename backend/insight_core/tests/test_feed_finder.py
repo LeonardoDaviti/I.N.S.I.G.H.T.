@@ -630,5 +630,125 @@ class BlogOnAnotherDomainTests(unittest.TestCase):
         self.assertEqual(finding.feeds[1].moved_to, "blog.example")
 
 
+# ---- v10.13.5: an account or project page on a platform ------------------------------------------
+
+def items_rss(title: str, *links: str) -> str:
+    entries = "".join(f"<item><title>{n}</title><link>{url}</link><description>x</description></item>"
+                      for n, url in enumerate(links))
+    return f'<?xml version="1.0"?><rss version="2.0"><channel><title>{title}</title>{entries}</channel></rss>'
+
+
+def empty_atom(title: str) -> str:
+    return f'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>{title}</title></feed>'
+
+
+def alternate(href: str) -> str:
+    return f'<link rel="alternate" type="application/rss+xml" href="{href}">'
+
+
+HUB = "https://hub.example"          # a platform: accounts at /<name>, its own blog at /blog
+HUB_BLOG_FEED = f"{HUB}/blog/feed.xml"
+HUB_BLOG_ELSEWHERE = {               # the platform's blog on a domain of its own (github.blog's shape)
+    "https://hub-blog.example/": page(alternate("/feed/")),
+    "https://hub-blog.example/feed/": items_rss("The Hub Blog", "https://hub-blog.example/a-post"),
+}
+
+
+def hub_site(**more) -> dict:
+    """The measured shape: an account page with no feed; the home page names the platform's blog feed
+    (its items under /blog/) and links its blog, whose page names it too."""
+    return {f"{HUB}/": page(alternate("/blog/feed.xml"), '<a href="/blog">Blog</a>'),
+            f"{HUB}/blog": page(alternate("/blog/feed.xml")),
+            HUB_BLOG_FEED: items_rss("Hub - Blog", f"{HUB}/blog/a-launch-post", f"{HUB}/blog/another-post"),
+            **more}
+
+
+class PlatformAccountTests(unittest.TestCase):
+    """An account or project page on a platform is never offered the platform's own blog (v10.13.5)."""
+
+    def test_an_account_or_model_page_is_not_offered_the_platforms_blog_feed(self):
+        for url in (f"{HUB}/example-org", f"{HUB}/example-org/widget-model"):
+            with self.subTest(url=url):
+                finding, _ = find(hub_site(**{url: page(body="<p>An account</p>")}), url)
+                self.assertEqual((finding.status, finding.feeds, finding.reason), ("none", (), "none found"))
+
+    def test_the_home_page_still_gets_the_platforms_blog_feed(self):
+        finding, _ = find(hub_site(), f"{HUB}/")
+        self.assertEqual([feed.url for feed in finding.feeds], [HUB_BLOG_FEED])
+
+    def test_a_feed_holding_the_sections_posts_is_the_pages(self):
+        # Posts under /posts/, the feed at /blog/feed.xml: still the article's.
+        responses = {"https://x.example/posts/a-post": page(body="<p>A post</p>"),
+                     "https://x.example/": page(alternate("/blog/feed.xml")),
+                     "https://x.example/blog/feed.xml": items_rss("X", "https://x.example/posts/a-post")}
+        finding, _ = find(responses, "https://x.example/posts/a-post")
+        self.assertEqual([feed.url for feed in finding.feeds], ["https://x.example/blog/feed.xml"])
+
+    def test_a_root_feed_and_the_sections_own_feed_are_still_an_articles(self):
+        for feed_url in ("https://x.example/feed.xml", "https://x.example/rss/all.xml", "https://x.example/essays/feed.xml"):
+            with self.subTest(feed=feed_url):
+                responses = {"https://x.example/essays/one.html": page(body="<p>An essay</p>"),
+                             "https://x.example/": page(alternate(feed_url)),
+                             feed_url: items_rss("X", "https://x.example/elsewhere/a")}
+                finding, _ = find(responses, "https://x.example/essays/one.html")
+                self.assertEqual([feed.url for feed in finding.feeds], [feed_url])
+
+    def test_the_home_pages_menu_blog_elsewhere_is_the_home_pages_only(self):
+        home = nav(("https://hub-blog.example/", "Blog"))
+        finding, http = find({f"{HUB}/": home, f"{HUB}/example-org": page(), **HUB_BLOG_ELSEWHERE}, f"{HUB}/example-org")
+        self.assertEqual((finding.status, finding.feeds), ("none", ()))
+        self.assertNotIn("https://hub-blog.example/feed/", http.requests)
+        finding, _ = find({f"{HUB}/": home, **HUB_BLOG_ELSEWHERE}, f"{HUB}/")
+        self.assertEqual([feed.url for feed in finding.feeds], ["https://hub-blog.example/feed/"])
+
+    def test_github_account_pages_take_their_activity_feed(self):
+        feed = "https://github.com/example-org.atom"
+        finding, http = find({feed: atom("example-org")}, "https://github.com/example-org")
+        self.assertEqual(finding, found((feed, "example-org")))
+        self.assertEqual(http.requests, [feed])
+
+    def test_a_github_org_with_an_empty_activity_feed_or_a_repo_without_releases_gets_none_not_the_blog(self):
+        for url, rule in (("https://github.com/example-org", "https://github.com/example-org.atom"),
+                          ("https://github.com/example-org/widget", "https://github.com/example-org/widget/releases.atom")):
+            with self.subTest(url=url):
+                responses = {rule: empty_atom("Public Timeline"), url: nav(("https://hub-blog.example/", "Blog")),
+                             "https://github.com/": nav(("https://hub-blog.example/", "Blog")), **HUB_BLOG_ELSEWHERE}
+                finding, http = find(responses, url)
+                self.assertEqual((finding.status, finding.feeds), ("none", ()))
+                self.assertNotIn("https://hub-blog.example/feed/", http.requests)
+
+    def test_arxiv_and_pypi_rules_need_no_page(self):
+        cases = {
+            "https://arxiv.org/list/cs.XY/recent": "https://rss.arxiv.org/rss/cs.XY",
+            "https://arxiv.org/list/cs.XY/pastweek?show=50": "https://rss.arxiv.org/rss/cs.XY",
+            "https://arxiv.org/archive/math": "https://rss.arxiv.org/rss/math",
+            "https://pypi.org/project/widget/": "https://pypi.org/rss/project/widget/releases.xml",
+            "https://pypi.org/project/widget/1.2.0/": "https://pypi.org/rss/project/widget/releases.xml",
+        }
+        for url, feed in cases.items():
+            with self.subTest(url=url):
+                finding, http = find({feed: atom("Updates")}, url)
+                self.assertEqual(finding, found((feed, "Updates")))
+                self.assertEqual(http.requests, [feed])
+
+    def test_a_pypi_project_is_offered_its_releases_not_the_sites_feeds(self):
+        head = "".join(alternate(href) for href in ("/rss/updates.xml", "/rss/packages.xml", "/rss/project/widget/releases.xml"))
+        responses = {"https://pypi.org/project/widget/": page(head),
+                     "https://pypi.org/rss/updates.xml": items_rss("Recent updates", "https://pypi.org/project/other/1/"),
+                     "https://pypi.org/rss/packages.xml": items_rss("Newest packages", "https://pypi.org/project/new/"),
+                     "https://pypi.org/rss/project/widget/releases.xml": items_rss("widget", "https://pypi.org/project/widget/1.2.0/")}
+        finding, _ = find(responses, "https://pypi.org/project/widget/")
+        self.assertEqual([feed.url for feed in finding.feeds], ["https://pypi.org/rss/project/widget/releases.xml"])
+
+    def test_a_normal_blogs_post_still_finds_the_blogs_feed_on_its_home_page(self):
+        post = "https://writer.example/2026/10/a-post-here"
+        responses = {"https://writer.example/": page(alternate("/atom.xml")), post: page(body="<p>A post</p>"),
+                     "https://writer.example/atom.xml": items_rss("Writer", "https://writer.example/2026/09/older")}
+        for url in ("https://writer.example/", post):
+            with self.subTest(url=url):
+                finding, _ = find(responses, url)
+                self.assertEqual([feed.url for feed in finding.feeds], ["https://writer.example/atom.xml"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,10 @@ normalized as post_links keeps them). With none, Follow behaves as before (issue
    read at their new address too: the one extra request.
 3. The ranking: the most held first; a tie goes to the narrower path (/resources/articles/ over
    /resources/); then the order the finder or the preview gave. No site and no word is named.
+4. A page deeper than the home page, with no feed and no section to start from (an article,
+   /blog/<slug>), is offered its own section to follow (v10.13.5): the section page (/blog) and the
+   blog or news pages the finder read under that same section, those with articles. A page under an
+   account (huggingface.co/<org>) is never offered the site's blog that is another section.
 """
 from __future__ import annotations
 
@@ -42,7 +46,7 @@ from insight_core.ingestion import feed_finder
 from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
-from insight_core.ingestion.kinds.parsing import web_address
+from insight_core.ingestion.kinds.parsing import path_segments, web_address
 from insight_core.utils.addresses import host_of, same_site
 from insight_core.utils.post_links import NUMBERISH, SECTION_MIN, SECTION_SHARE
 from insight_core.utils.url_normalization import normalize_url
@@ -251,6 +255,25 @@ def _others(found: Sequence[feed_finder.Feed], more: Sequence[feed_finder.Feed])
     return [feed for feed in more if normalize_url(feed.url) not in urls and not (feed.items and feed.items[0] in firsts)]
 
 
+def own_section(page: str, read: Sequence[str]) -> List[str]:
+    """The pages a page deeper than its home page can be followed by (v10.13.5): its section page
+    (/blog for /blog/<slug>), when the page is not the section itself, then the pages the finder read
+    (FeedFinding.pages) under that section on its site. None for a page with no section."""
+    section = feed_finder.section_of(page)
+    if not section:
+        return []
+    parsed = urllib.parse.urlparse(page)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    first = path_segments(page)[0]
+    own = [f"{origin}/{first}"] if len(path_segments(page)) >= 2 else []
+    own += [other for other in read if same_site(host_of(other), host_of(page))
+            and feed_finder.section_of(other) == section]
+    once: Dict[str, str] = {}
+    for other in own:
+        once.setdefault(other.rstrip("/"), other)        # /blog and /blog/ are one page
+    return list(once.values())
+
+
 async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Sequence[str],
                  known: Sequence[str] = ()) -> Dict[str, Any]:
     """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}, with
@@ -283,6 +306,8 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
             start = None
     elif finding.status == "none" and home:
         pages = await page_watch.offers(http, finding.pages, finding.menu)
+    elif finding.status == "none":
+        pages = await page_watch.offers(http, own_section(finding.landed or address, finding.pages))
     found = list(finding.feeds)
     if start and found:
         # The section's feeds beside the home page's own: the narrower is not always the one

@@ -6,7 +6,8 @@
 
 One search, cheapest first, stopping at the first stage that finds something:
   0. No request. A kind or site adapter reads the address directly ("direct"), or a platform
-     rule names its feed (Medium, GitHub releases).
+     rule names its feed (Medium, GitHub releases and a GitHub account's activity, an arXiv
+     category, a PyPI project's releases).
   1. The address itself: a feed ("feed"); else its page's <link rel="alternate"> feeds, then
      its <a> links that look like feeds.
   2. The section page (/blog/) and the home page, fetched in parallel, the same way.
@@ -25,6 +26,13 @@ A feed found whose entries carry no body may be a blog that moved (issue 0108): 
 page is read, and when it redirects (by HTTP, a meta refresh or a canonical link) to another site,
 the finder runs on that page too. Its feeds come first; the old feed follows, saying where its
 posts now live (Feed.moved_to).
+A page under an account or section of a site (its first path segment: github.com/<name>,
+huggingface.co/<org>/<model>) is not offered what the site keeps for everyone else (v10.13.5): a feed
+found away from the page (its section, home, blog pages, common paths) that lives on the same site
+under another section (/blog/feed.xml) and holds no item under the page's section is another
+section's feed, left out; and the home page's menu blog on another domain (github.blog) is taken for
+the home page only. A feed at the site's root, on its blog subdomain's root, or on another site
+linked as a feed (an essayist's feed hosted elsewhere) is still the page's.
 A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
 be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
 run at once, each within REQUEST_TIMEOUT_S, the whole search within BUDGET_S: a slow or
@@ -141,6 +149,9 @@ X_RESERVED = frozenset({"home", "search", "explore", "i", "intent", "share", "ha
                         "notifications", "login", "signup", "tos", "privacy"})
 TELEGRAM_RESERVED = frozenset({"c", "joinchat", "addstickers", "addemoji", "share", "proxy", "socks", "login"})
 BRIDGE_KINDS = frozenset({"nitter_rss", "telegram_rss"})
+# Platform rules (stage 0, v10.13.5): a GitHub account name; arXiv's hosts.
+GITHUB_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+ARXIV_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 APPLE_PODCAST_HOSTS = frozenset({"podcasts.apple.com", "itunes.apple.com"})
 APPLE_ID_RE = re.compile(r"(?:^|/)id(\d{4,})(?:$|[/?])")
 APPLE_LOOKUP = "https://itunes.apple.com/lookup?id={}&entity=podcast"
@@ -429,6 +440,15 @@ class _Search:
         logger.info("Feed finder: the posts of %s now live at %s", old.url, host)
         return replace(finding, status="found", feeds=feeds)
 
+    def _in_scope(self, feeds: Tuple[Feed, ...], start: str) -> Tuple[Feed, ...]:
+        """The feeds found away from the page at start that can be its own (v10.13.5): another
+        section's feed on its site is left out (see _other_section)."""
+        kept = tuple(feed for feed in feeds if not _other_section(feed, start))
+        for feed in feeds:
+            if feed not in kept:
+                logger.info("Feed finder: %s left out for %s: another section's feed", feed.url, start)
+        return kept
+
     async def _run(self, url: str) -> FeedFinding:
         if urllib.parse.urlparse(url).scheme not in ("http", "https"):
             return FeedFinding("none")
@@ -479,14 +499,15 @@ class _Search:
 
         around = _around(here, url)
         pages = await asyncio.gather(*(self._get(other, PAGE_BYTES) for other in around))
-        if feeds := self._offer(await self._prove([link for got in pages if got for link in _feed_links(*got)])
+        if feeds := self._offer(self._in_scope(await self._prove([link for got in pages if got for link in _feed_links(*got)]), here)
                                 or await self._directory()):
             return FeedFinding("found", feeds)
 
-        # An address that cannot be read (a feed gone) takes its home page's links instead.
+        # An address that cannot be read (a feed gone) takes its home page's links instead. The
+        # home page's menu blog elsewhere is the home page's: never an account's (github.blog).
         origin = origin_from_source(here, "")
         home = dict(zip(around, pages)).get(f"{origin}/")
-        if home and not self.elsewhere:
+        if home and not self.elsewhere and not section_of(here):
             self.elsewhere = tuple(_elsewhere_blogs(_links(home[0]), home[1]))
         linking = page or home
         if page and home:
@@ -501,13 +522,14 @@ class _Search:
                                          and got[1].rstrip("/") != here.rstrip("/")))
         if linking and not self.pages:
             self.menu = tuple(_menu_links(links, linking[1]))
-        if feeds := self._offer(await self._prove([link for got in blog_pages if got for link in _feed_links(*got)])):
+        if feeds := self._offer(self._in_scope(
+                await self._prove([link for got in blog_pages if got for link in _feed_links(*got)]), here)):
             return FeedFinding("found", feeds)
 
         # Common paths under the blogs the page links first (more specific), then at the root.
         bases = [*(blog.rstrip("/") for blog in blogs), origin]
         guesses = [base + path for base in dict.fromkeys(bases) for path in COMMON_PATHS]
-        if feeds := self._offer(await self._prove(guesses, limit=None, first=True)):
+        if feeds := self._offer(self._in_scope(await self._prove(guesses, limit=None, first=True), here)):
             return FeedFinding("found", feeds[:1])
         return FeedFinding("none", pages=self.pages, menu=self.menu)
 
@@ -642,8 +664,10 @@ def _first_known(tasks: Sequence["asyncio.Task[Optional[Tuple[str, Feed]]]"]) ->
 
 
 def _platform_feed(url: str) -> Optional[str]:
-    """The feed a platform keeps at a known address for this page, else None."""
-    parsed = urllib.parse.urlparse(url)
+    """The feed a platform keeps at a known address for this page, else None: a Medium writer or
+    publication; a GitHub repository's releases, a GitHub user's or organization's public activity
+    (github.com/<name>.atom; an organization's may hold no entry: then it is no feed); an arXiv
+    category's listing (/list/<cat>/..., /archive/<cat>) its category feed; a PyPI project its releases."""
     host = publication_of(host_of(url))
     segments = path_segments(url)
     feed = None
@@ -653,7 +677,37 @@ def _platform_feed(url: str) -> Optional[str]:
         feed = f"https://{host}/feed"
     elif host == "github.com" and len(segments) >= 2:
         feed = f"https://github.com/{segments[0]}/{segments[1]}/releases.atom"
+    elif host == "github.com" and len(segments) == 1 and GITHUB_NAME_RE.match(segments[0]):
+        feed = f"https://github.com/{segments[0]}.atom"
+    elif host in ARXIV_HOSTS and len(segments) >= 2 and segments[0] in ("list", "archive"):
+        feed = f"https://rss.arxiv.org/rss/{segments[1]}"
+    elif host == "pypi.org" and len(segments) >= 2 and segments[0] == "project":
+        feed = f"https://pypi.org/rss/project/{segments[1]}/releases.xml"
     return feed if feed != url else None
+
+
+def section_of(url: str) -> str:
+    """The account or section a page is under (v10.13.5): its first path segment, lowercased; "" for a
+    home page, or when that segment names a feed (/rss, /feed.xml: a gone feed stands for its site)."""
+    segments = path_segments(url)
+    if not segments:
+        return ""
+    first = segments[0].lower()
+    return "" if first.rsplit(".", 1)[0] in FEED_WORDS | DIRECTORY_WORDS else first
+
+
+def _other_section(feed: Feed, start: str) -> bool:
+    """Whether a feed found away from the page at start is another section's on its site (v10.13.5):
+    start is under a section; the feed lives on the same site under another first segment (not a feed
+    word: /blog/feed.xml, not /feed or /rss/x); its address does not carry start's section; and none of
+    its items read lives under that section. huggingface.co/<org> and its /blog/feed.xml."""
+    section = section_of(start)
+    if not section or not same_site(host_of(feed.url), host_of(start)):
+        return False
+    feed_section = section_of(feed.url)
+    if not feed_section or "." in feed_section or section in (segment.lower() for segment in path_segments(feed.url)):
+        return False
+    return not any(same_site(host_of(item), host_of(start)) and section_of(item) == section for item in feed.items)
 
 
 def _around(here: str, url: str) -> List[str]:
