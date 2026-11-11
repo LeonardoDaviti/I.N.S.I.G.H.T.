@@ -646,7 +646,8 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
 def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capped like the decision run's
     from insight_core.markx import back
     from insight_core.markx.decide import Config
-    return back.plan(cur, open_cap=Config().back_open)
+    from insight_core.markx import later   # 0163: later developments' questions, under the same cap, after back's
+    return back.plan(cur, open_cap=Config().back_open) + later.plan(cur, open_cap=Config().back_open)
 
 
 def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's

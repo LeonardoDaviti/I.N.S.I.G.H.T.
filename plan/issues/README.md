@@ -148,6 +148,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0135](0135-built.md) | Stealth v10.8: silent failures outside AI news: RSS 1.0 feeds, empty fetches as errors, the video's own transcript language, caption formats, Telegram bridge dates, search feeds, blocked pages' feeds; a resumable repair | built, merged (v10.8); spec uncommitted |
 | [0136](0136-built.md) | Stealth v10.8: back in the news in Shadow, an old story's fresh development on the Mark X News tab with labels (the trigger, the back judge) | built, merged (v10.8); spec uncommitted |
 | [0137](0137-built.md) | Stealth v10.9: new spheres round 2: health counts backoff, items stored as fewer posts fail, blocked pages' feeds, podcast item identity, another-scope and stale feeds flagged, why none was found, series shapes, reference lists apart, a first-seen date, Bluesky (off) | built, merged (v10.9); spec uncommitted |
+| [0163](0163-built.md) | Stealth v10.13.11: later developments in Shadow: a story about a paper, document, model, software or dataset keeps gathering its follow-ups at any age (one source, its subject by entity or a later version, its pages or the subject's addresses; the back judge), a Later section on the story and entity pages, Stop following; not on News | built, not merged ([spec](0163-later-developments.md)) |
 
 ## Analysis archive
 
