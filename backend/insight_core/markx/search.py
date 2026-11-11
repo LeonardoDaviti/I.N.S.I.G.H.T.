@@ -22,6 +22,12 @@ family's); a card shows them first. A card needs 2+ posts or a subject or actor 
 met once in passing gets none. `entity_first_posts(cur, q)`: the posts whose current mentions hold the entity the
 whole query names (that version, with one) as subject or actor; best match ranks them above the posts that only match
 its words (db/repo_search.py).
+
+v10.13.13: a name and its version also name that version of the family however its entities are spelled
+(`_VERSIONS`): the family's versions, variants and checkpoints whose version is the query's less a letter prefix
+("Kimi K3.1", "Kimi K3.1 Pro" and an unmerged "Kimi3.1" for "kimi 3.1"), and a key that is the name, a version
+letter or not, the version, then any words. Entity first holds all their posts; their cards come first, more posts
+first, so an unmerged spelling with one post never stands for the version.
 """
 from __future__ import annotations
 
@@ -156,16 +162,73 @@ def _suffix(key: str) -> str:
     return _like((" " + key)[::-1])
 
 
+def _version_params(key: str) -> Dict[str, Optional[str]]:
+    """v10.13.13: for a name and its version ("kimi 3.1"), that version of the family the name names, however its
+    entities are spelled: `vname` the name ("kimi"), `version` ("3.1"), `vprefix` a key starting with the name, `vre`
+    a key that is the name, a version's letter prefix or not ("kimi k 3.1", from "Kimi K3.1"), the version, then
+    any words ("kimi k 3.1 pro"). All None for a query that names no version."""
+    version = query_version(key)
+    if not version:
+        return {"vname": None, "version": None, "vprefix": None, "vre": None}
+    name = key[: -len(version)].strip()
+    return {"vname": name, "version": version, "vprefix": _like(name + " "),
+            "vre": "^" + re.escape(name) + "( [a-z]{1,2})? " + re.escape(version) + "( |$)"}
+
+
+# v10.13.13: the entities that are the query's version of the family its name names (`versions`, empty for a query
+# with no version): an entity the family (its key or alias the name, read through the merges, and every entity merged
+# into it) holds as a version, a variant or a checkpoint (`parent`, up to three levels down), whose version is the
+# query's once a letter prefix is dropped ("K3.1" = "3.1", as identity's ver_eq reads two versions). "Kimi K3.1",
+# "Kimi K3.1 Pro" and an unmerged "Kimi3.1" are all "kimi 3.1": one spelling never stands for the version alone.
+_VERSIONS = r"""
+WITH RECURSIVE fam AS (
+     SELECT e.id FROM mx_entities e WHERE %(vname)s::text IS NOT NULL AND e.key = %(vname)s
+     UNION SELECT a.entity_id FROM mx_entity_aliases a WHERE %(vname)s::text IS NOT NULL AND a.key = %(vname)s
+), fam_up(start, id, depth) AS (
+     SELECT id, id, 0 FROM fam
+     UNION ALL
+     SELECT fam_up.start, r.to_id, fam_up.depth + 1 FROM fam_up
+       JOIN mx_entity_redirects r ON r.from_id = fam_up.id AND r.undone_at IS NULL
+      WHERE fam_up.depth < 20
+), fam_root AS (
+     SELECT DISTINCT ON (start) start, id FROM fam_up ORDER BY start, depth DESC
+), fam_members(id, depth) AS (
+     SELECT DISTINCT id, 0 FROM fam_root
+     UNION ALL
+     SELECT r.from_id, fam_members.depth + 1 FROM fam_members
+       JOIN mx_entity_redirects r ON r.to_id = fam_members.id AND r.undone_at IS NULL
+      WHERE fam_members.depth < 20
+), fam_down(id, depth) AS (
+     SELECT id, 0 FROM fam_members
+     UNION ALL
+     SELECT c.id, fam_down.depth + 1 FROM fam_down JOIN mx_entities c ON c.parent = fam_down.id
+      WHERE fam_down.depth < 3
+), versions AS (
+     SELECT DISTINCT e.id, e.key FROM fam_down d JOIN mx_entities e ON e.id = d.id
+      WHERE d.depth > 0 AND regexp_replace(lower(btrim(e.version)), '^[[:alpha:]]+([0-9])', '\1') = %(version)s
+),
+"""
+
+# A name and its version: also a key or alias read by `vre` (from the name's prefix index), and the family's version.
+_VERSION_HITS = """
+     UNION ALL SELECT e.id{m} FROM mx_entities e
+      WHERE %(vre)s::text IS NOT NULL AND e.key LIKE %(vprefix)s AND e.key ~ %(vre)s
+     UNION ALL SELECT a.entity_id{am} FROM mx_entity_aliases a
+      WHERE %(vre)s::text IS NOT NULL AND a.key LIKE %(vprefix)s AND a.key ~ %(vre)s
+     UNION ALL SELECT v.id{vm} FROM versions v
+"""
+
 # The entities a query names, as their current targets (through the redirects; never a not-entity), and every entity
 # merged into them (`members`): `%(key)s` is the query's key; `%(suffix)s` a key ending with it as words (_suffix, on
-# the reversed key), for a name and its version only (else NULL).
-_NAMED = """
-WITH RECURSIVE hit AS (
+# the reversed key), for a name and its version only (else NULL); and that version of the family (_VERSIONS).
+_NAMED = _VERSIONS + """
+hit AS (
      SELECT e.id FROM mx_entities e WHERE e.key = %(key)s
      UNION ALL SELECT a.entity_id FROM mx_entity_aliases a WHERE a.key = %(key)s
      UNION ALL SELECT e.id FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND reverse(e.key) LIKE %(suffix)s
      UNION ALL SELECT a.entity_id FROM mx_entity_aliases a
       WHERE %(suffix)s::text IS NOT NULL AND reverse(a.key) LIKE %(suffix)s
+""" + _VERSION_HITS.format(m="", am="", vm="") + """
 ), up(start, id, depth) AS (
      SELECT DISTINCT id, id, 0 FROM hit
      UNION ALL
@@ -194,8 +257,10 @@ def _plain(q: str) -> bool:
 def entity_first_posts(cur: Cursor, q: str) -> List[str]:
     """The posts whose current mentions (mx_mentions_now) hold, as subject or actor, the entity the whole query names:
     its key or alias is the query's key; for a name and its version ("fable 5.2"), also a key or alias ending with it
-    as words (that version's entity, "Claude Fable 5.2"). Read through the merges. A mention identity has not linked
-    yet (a post read since its last run) counts by its own name key, by the same rule. [] when the query names none."""
+    as words (that version's entity, "Claude Fable 5.2"), and that version of the family however spelled ("Kimi K3.1",
+    "Kimi K3.1 Pro", "Kimi3.1" for "kimi 3.1": _VERSIONS, v10.13.13). Read through the merges. A mention identity has
+    not linked yet (a post read since its last run) counts by its own name key, by the same rule. [] when the query
+    names none."""
     from insight_core.markx import names
     key = names.key(q)
     if len(key) < 2 or not _plain(q):
@@ -208,10 +273,11 @@ def entity_first_posts(cur: Cursor, q: str) -> List[str]:
         UNION
         SELECT mm.post_id::text FROM mx_mentions_now mm
          WHERE mm.entity_id IS NULL AND mm.role = ANY(%(roles)s)
-           AND (mm.name_key = %(key)s OR (%(ends)s::text IS NOT NULL AND mm.name_key LIKE %(ends)s))
+           AND (mm.name_key = %(key)s OR (%(ends)s::text IS NOT NULL AND mm.name_key LIKE %(ends)s)
+                OR (%(vre)s::text IS NOT NULL AND mm.name_key LIKE %(vprefix)s AND mm.name_key ~ %(vre)s))
         """,
         {"key": key, "suffix": _suffix(key) if version else None, "ends": "% " + _like(key)[:-1] if version else None,
-         "roles": list(LEAD_ROLES)},
+         "roles": list(LEAD_ROLES), **_version_params(key)},
         prepare=False,
     )
     return [r[0] for r in cur.fetchall()]
@@ -221,7 +287,9 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
     """Up to `limit` entities the query names (its key, a run of its words, or a prefix of 3+ letters of a name or an
     alias), each shown as the entity it redirects to: {id, name, type, maker, posts, voices, matched}. For a name and
     its version, an entity whose key or alias is the query or ends with it as words (the version's, "claude fable 5.2"
-    for "fable 5.2") comes first; then the whole query, a run of its words, a prefix; more posts first. A card needs
+    for "fable 5.2") or that version of the family however spelled (_VERSIONS: "Kimi K3.1 Pro" and an unmerged
+    "Kimi3.1" for "kimi 3.1", the one with more posts first, v10.13.13) comes first; then the whole query, a run of
+    its words, a prefix; more posts first. A card needs
     CARD_MIN_POSTS posts or a subject or actor role in a current entity set (v10.13.1)."""
     from insight_core.markx import names, schemas
     key = names.key(q)
@@ -231,16 +299,17 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
     prefix = _like(key) if len(key) >= PREFIX_MIN else None
     suffix = _suffix(key) if query_version(key) else None
     cur.execute(
-        """
-        WITH RECURSIVE hit AS (
-             SELECT e.id, e.key AS matched FROM mx_entities e WHERE e.key = ANY(%(runs)s)
-             UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a WHERE a.key = ANY(%(runs)s)
-             UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(prefix)s::text IS NOT NULL AND e.key LIKE %(prefix)s
-             UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
+        _VERSIONS + """
+        hit AS (
+             SELECT e.id, e.key AS matched, FALSE AS v FROM mx_entities e WHERE e.key = ANY(%(runs)s)
+             UNION ALL SELECT a.entity_id, a.key, FALSE FROM mx_entity_aliases a WHERE a.key = ANY(%(runs)s)
+             UNION ALL SELECT e.id, e.key, FALSE FROM mx_entities e WHERE %(prefix)s::text IS NOT NULL AND e.key LIKE %(prefix)s
+             UNION ALL SELECT a.entity_id, a.key, FALSE FROM mx_entity_aliases a
               WHERE %(prefix)s::text IS NOT NULL AND a.key LIKE %(prefix)s
-             UNION ALL SELECT e.id, e.key FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND reverse(e.key) LIKE %(suffix)s
-             UNION ALL SELECT a.entity_id, a.key FROM mx_entity_aliases a
+             UNION ALL SELECT e.id, e.key, FALSE FROM mx_entities e WHERE %(suffix)s::text IS NOT NULL AND reverse(e.key) LIKE %(suffix)s
+             UNION ALL SELECT a.entity_id, a.key, FALSE FROM mx_entity_aliases a
               WHERE %(suffix)s::text IS NOT NULL AND reverse(a.key) LIKE %(suffix)s
+        """ + _VERSION_HITS.format(m=", e.key, TRUE", am=", a.key, TRUE", vm=", v.key, TRUE") + """
         ), up(start, id, depth) AS (
              SELECT DISTINCT id, id, 0 FROM hit
              UNION ALL
@@ -250,7 +319,8 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
         ), root AS (
              SELECT DISTINCT ON (start) start, id FROM up ORDER BY start, depth DESC
         ), scored AS (
-             SELECT root.id, min(CASE WHEN %(suffix)s::text IS NOT NULL
+             SELECT root.id, min(CASE WHEN hit.v THEN 0
+                                      WHEN %(suffix)s::text IS NOT NULL
                                            AND (hit.matched = %(key)s OR reverse(hit.matched) LIKE %(suffix)s) THEN 0
                                       WHEN hit.matched = %(key)s THEN 1
                                       WHEN hit.matched = ANY(%(runs)s) THEN 2 ELSE 3 END)
@@ -282,7 +352,7 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
          LIMIT %(limit)s
         """,
         {"runs": runs, "prefix": prefix, "suffix": suffix, "key": key, "limit": limit,
-         "roles": list(LEAD_ROLES), "min_posts": CARD_MIN_POSTS},
+         "roles": list(LEAD_ROLES), "min_posts": CARD_MIN_POSTS, **_version_params(key)},
         prepare=False,
     )
     return [{"id": eid, "name": name, "type": schemas.entity_type(type_), "maker": maker, "posts": int(posts),
