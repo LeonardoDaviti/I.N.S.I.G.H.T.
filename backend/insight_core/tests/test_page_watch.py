@@ -360,6 +360,99 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual((result["prefix"], result["found"], result["sitemap"], result["items"]), ("/posts/", 2, False, []))
 
 
+EX = "https://www.example.com"
+MENU = ('<header><a href="/">Home</a><a href="/pricing">Pricing</a><a href="/product/sales-engagement-suite">Suite</a>'
+        '<a href="/resources/articles">Articles</a></header>'
+        '<nav><a href="/solutions/for-revenue-teams-everywhere">Teams</a><a href="/about">About</a></nav>')
+FOOTER = '<footer><a href="/careers">Careers</a><a href="/post/one-footer-link-here">Old post</a></footer>'
+SLUGS = ("why-rates-rose-again", "how-we-plan-meetings", "the-quarter-in-review", "a-new-routing-engine")
+
+
+def listing_page(*paths: str) -> str:
+    cards = "".join(f'<a href="{path}"><h3>{path}</h3></a>' for path in paths)
+    return f"<!DOCTYPE html><html><head><title>Listing</title></head><body>{MENU}<main>{cards}</main>{FOOTER}</body></html>"
+
+
+def sitemap_of(*paths: str) -> str:
+    return ('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            + "".join(f"<url><loc>{EX}{path}</loc><lastmod>2026-10-0{n % 9 + 1}</lastmod></url>"
+                      for n, path in enumerate(paths)) + "</urlset>")
+
+
+def example_site(listing: str, page: str, sitemap: str = "", articles=()) -> dict:
+    responses = {f"{EX}{listing}": page, f"{EX}/robots.txt": f"Sitemap: {EX}/sitemap.xml\n"}
+    if sitemap:
+        responses[f"{EX}/sitemap.xml"] = sitemap
+    for n, path in enumerate(articles):
+        responses[f"{EX}{path}"] = article(f"Article {n}", f"2026-10-{10 + n:02d}T00:00:00.000Z")
+    return responses
+
+
+class SectionPrefixTests(unittest.TestCase):
+    """v10.13.10: a listing page whose own path holds no articles is followed under its article links' section;
+    the pages that work today keep the listing's path."""
+
+    def preview(self, listing: str, page: str, sitemap: str = "", articles=(), prefix=None):
+        self.http = FakeHttp(example_site(listing, page, sitemap, articles))
+        return run(preview(self.http, f"{EX}{listing}", prefix))
+
+    def test_a_listing_whose_articles_live_elsewhere_takes_their_section(self):
+        posts = [f"/post/{slug}" for slug in SLUGS]
+        result = self.preview("/resources/articles", listing_page(*posts),
+                              sitemap_of("/", "/pricing", *posts, "/post/an-older-post-only-here"), posts)
+        self.assertEqual((result["prefix"], result["found"], result["sitemap"]), ("/post/", 6, True))
+        self.assertEqual(len(result["items"]), 4)
+        self.assertEqual(self.http.requests.count(f"{EX}/sitemap.xml"), 1)   # read once for both prefixes
+
+    def test_a_blog_listing_keeps_its_path(self):
+        posts = [f"/blog/{slug}" for slug in SLUGS]
+        result = self.preview("/blog", listing_page(*posts, *(f"/post/{slug}" for slug in SLUGS)), "", posts)
+        self.assertEqual((result["prefix"], result["found"]), ("/blog/", 4))
+
+    def test_a_news_listing_of_dated_paths_keeps_its_path(self):
+        posts = [f"/news/2026/{slug}" for slug in SLUGS]
+        result = self.preview("/news", listing_page(*posts), sitemap_of(*posts), posts)
+        self.assertEqual((result["prefix"], result["found"]), ("/news/", 4))
+
+    def test_a_listing_built_by_script_whose_sitemap_fills_its_path_keeps_it(self):
+        # No article links under /news on the page; the sitemap has them: today's behaviour stays.
+        news = [f"/news/{slug}" for slug in SLUGS]
+        page = listing_page(*(f"/post/{slug}" for slug in SLUGS))
+        result = self.preview("/news", page, sitemap_of(*news), news)
+        self.assertEqual((result["prefix"], result["found"]), ("/news/", 4))
+
+    def test_a_page_of_menu_links_keeps_its_path(self):
+        menu = [f"/solutions/{slug}" for slug in SLUGS] + [f"/product/{slug}" for slug in SLUGS] + ["/pricing", "/about"]
+        result = self.preview("/insights", listing_page(*menu))
+        self.assertEqual((result["prefix"], result["found"]), ("/insights/", 0))
+
+    def test_too_few_article_links_keep_the_path(self):
+        result = self.preview("/insights", listing_page("/post/why-rates-rose-again", "/post/how-we-plan-meetings"))
+        self.assertEqual(result["prefix"], "/insights/")
+
+    def test_a_home_page_is_unchanged(self):
+        posts = [f"/posts/{slug}" for slug in SLUGS]
+        result = self.preview("/", listing_page(*posts), "", posts)
+        self.assertEqual((result["prefix"], result["found"]), ("/posts/", 4))
+
+    def test_the_owners_prefix_always_wins(self):
+        posts = [f"/post/{slug}" for slug in SLUGS]
+        result = self.preview("/resources/articles", listing_page(*posts), "", posts, prefix="resources/articles")
+        self.assertEqual((result["prefix"], result["found"]), ("/resources/articles/", 0))
+
+    def test_the_section_is_the_most_linked_and_a_tie_goes_to_the_first(self):
+        from insight_core.ingestion.kinds.page_watch import section_prefix
+        links = [f"{EX}/stories/{slug}" for slug in SLUGS[:3]] + [f"{EX}/post/{slug}" for slug in SLUGS[:3]]
+        self.assertEqual(section_prefix(f"{EX}/resources", links), "/stories/")
+        self.assertEqual(section_prefix(f"{EX}/resources", list(reversed(links))), "/post/")
+        self.assertEqual(section_prefix(f"{EX}/resources", links + [f"{EX}/post/{SLUGS[3]}"]), "/post/")
+        # Not article-shaped (one segment, a short slug), another site, or a menu section: no section.
+        self.assertIsNone(section_prefix(f"{EX}/resources", [f"{EX}/{slug}" for slug in SLUGS]
+                                         + [f"{EX}/post/{n}" for n in range(5)]
+                                         + [f"https://other.example.org/post/{slug}" for slug in SLUGS]
+                                         + [f"{EX}/tags/{slug}" for slug in SLUGS]))
+
+
 class PreviewRouteTests(unittest.TestCase):
     def setUp(self):
         self.http = FakeHttp(anthropic())

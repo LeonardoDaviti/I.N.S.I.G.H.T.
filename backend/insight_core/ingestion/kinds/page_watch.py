@@ -3,7 +3,9 @@
 A source is platform rss, handle_or_url the listing page (https://www.anthropic.com/news) and
 settings.page_watch = {"prefix": "/news/"}; the setting is what selects this kind. The prefix
 is optional: by default it is the listing page's path ("/news" -> "/news/"), or for a site's
-home page the most common first segment of its deeper links.
+home page the most common first segment of its deeper links. A listing page whose own path holds
+fewer than SECTION_MIN articles (its links and the sitemap's) is followed under the section its
+article links share instead (/resources/articles listing /post/<slug> -> "/post/", v10.13.10).
 
 The articles are the union of
   - the listing page's same-host links under the prefix, in page order (newest first), and
@@ -143,6 +145,41 @@ def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
     return f"/{firsts.most_common(1)[0][0]}/" if firsts else "/"
 
 
+# v10.13.10: a listing page whose own path holds fewer than SECTION_MIN articles (its links and the sitemap's)
+# is followed under the section its article links share instead (a /resources/articles page listing
+# /post/<slug>): the first segment shared by the most of its content links in the feed finder's article shape
+# (issue 0137 B2), at least SECTION_MIN of them, never a menu section.
+SECTION_MIN = 3
+MENU_SECTIONS = frozenset({
+    "about", "author", "authors", "careers", "categories", "category", "company", "contact", "customers", "docs",
+    "features", "help", "integrations", "jobs", "legal", "login", "partners", "platform", "pricing", "privacy",
+    "product", "products", "search", "signup", "solution", "solutions", "support", "tag", "tags", "team", "terms",
+    "topic", "topics", "use-cases"})
+MENU_BLOCK_RE = re.compile(r"(?is)<(nav|header|footer)\b.*?</\1\s*>")
+
+
+def article_shaped(url: str) -> bool:
+    """Two or more path segments, the last a slug of three words or more ("/post/why-rates-rose"): the feed
+    finder's article link (feed_finder._article_links)."""
+    segments = parsing.path_segments(url)
+    last = segments[-1].lower().rsplit(".", 1)[0] if segments else ""
+    return len(segments) >= 2 and bool(parsing.SLUG_RE.match(last)) and last.count("-") >= 2
+
+
+def section_prefix(listing_url: str, content_links: Sequence[str]) -> Optional[str]:
+    """The section the page's articles live in: "/<first segment>/" shared by the most of its same-site,
+    article-shaped content links (menus already left out by the caller), at least SECTION_MIN of them, outside
+    MENU_SECTIONS; a tie goes to the one linked first. None when there is none."""
+    site, listing = publication_of(host_of(listing_url)), listing_url.rstrip("/")
+    firsts = Counter(parsing.path_segments(link)[0] for link in dict.fromkeys(content_links)
+                     if publication_of(host_of(link)) == site and link.rstrip("/") != listing and article_shaped(link)
+                     and parsing.path_segments(link)[0].lower() not in MENU_SECTIONS)
+    if not firsts:
+        return None
+    first, count = firsts.most_common(1)[0]
+    return f"/{first}/" if count >= SECTION_MIN else None
+
+
 @dataclass(frozen=True)
 class Discovery:
     prefix: str
@@ -224,20 +261,36 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
     page = body.decode("utf-8", "replace")
     listing = _clean(landed) or landed
     links = [url for href in LINK_RE.findall(page) if (url := _clean(href, landed))]
-    prefix = normalise_prefix(prefix) if prefix else infer_prefix(listing, links)
     site = publication_of(host_of(listing))
+    reads = {} if reads is None else reads    # a sitemap file read for one prefix is not read again for another
 
-    def under(url: str) -> bool:
+    def under(url: str, prefix: str) -> bool:
         path = urllib.parse.urlparse(url).path
         return publication_of(host_of(url)) == site and url != listing and path.startswith(prefix) and path + "/" != prefix
 
-    listed = tuple(dict.fromkeys(url for url in links if under(url)))
-    sitemap: Dict[str, Optional[datetime]] = {}
-    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads, max_files=max_sitemaps):
-        url = _clean(loc)
-        if url and under(url):
-            sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
-    return Discovery(prefix, listed, sitemap)
+    async def found_under(prefix: str) -> Discovery:
+        listed = tuple(dict.fromkeys(url for url in links if under(url, prefix)))
+        sitemap: Dict[str, Optional[datetime]] = {}
+        for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads, max_files=max_sitemaps):
+            url = _clean(loc)
+            if url and under(url, prefix):
+                sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
+        return Discovery(prefix, listed, sitemap)
+
+    if prefix:   # the owner's prefix always wins
+        return await found_under(normalise_prefix(prefix))
+    inferred = infer_prefix(listing, links)
+    if not parsing.path_segments(listing) or sum(under(url, inferred) for url in set(links)) >= SECTION_MIN:
+        return await found_under(inferred)
+    # The listing's own path holds few of its links: unless the sitemap fills it, the section its article links
+    # share, when that finds more (v10.13.10).
+    content = [url for href in LINK_RE.findall(MENU_BLOCK_RE.sub(" ", page)) if (url := _clean(href, landed))]
+    section = section_prefix(listing, content)
+    own = await found_under(inferred)
+    if section is None or section == inferred or len(own.candidates()) >= SECTION_MIN:
+        return own
+    other = await found_under(section)
+    return other if len(other.candidates()) > len(own.candidates()) else own
 
 
 async def _shared(reads: Optional[SiteReads], url: str,
@@ -683,5 +736,6 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "discover_changed", "infer_prefix", "is_home",
-           "normalise_prefix", "offers", "page_date", "page_title", "preview", "read_page_post", "sitemap_entries"]
+__all__ = ["Discovery", "PageWatchKind", "article_post", "article_shaped", "discover", "discover_changed",
+           "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_title", "preview",
+           "read_page_post", "section_prefix", "sitemap_entries"]
