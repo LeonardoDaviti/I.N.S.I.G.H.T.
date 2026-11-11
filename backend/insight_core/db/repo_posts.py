@@ -36,6 +36,9 @@ PAGE_TRIES_KEY = "page_tries"
 # (ingestion/full_text.FULL_TEXT_RULE: the repair reads a post again once per version). A re-fetch keeps both.
 PAGE_OUTCOME_KEY = "page_read_outcome"
 FULL_TEXT_RULE_KEY = "full_text_rule"
+# metadata key of an X Article read for a tweet Nitter gave as its link alone (ingestion/kinds/x_articles.py):
+# {"id", "via" (text | preview), "complete", "at"}.
+X_ARTICLE_KEY = "x_article"
 # A Telegram post's address (the bridge links each item to t.me): its channel's albums are folded.
 TELEGRAM_POST_PREFIX = "https://t.me/"
 
@@ -945,6 +948,17 @@ class PostsRepository:
             cur.execute("SELECT url FROM posts WHERE url = ANY(%s)", (list(urls),))
             return {row[0] for row in cur.fetchall()}
 
+    def stored_x_articles(self, urls: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """Which of these urls are stored with their X Article read (metadata.x_article), each as stored:
+        {url: {title, content, content_html, media_urls, metadata}} (the Nitter kind keeps it, kinds/x_articles.py)."""
+        if not urls:
+            return {}
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute(f"""SELECT url, title, content, content_html, media_urls, metadata FROM posts
+                            WHERE url = ANY(%s) AND metadata ? '{X_ARTICLE_KEY}'""", (list(urls),))
+            return {row[0]: {"title": row[1], "content": row[2] or "", "content_html": row[3],
+                             "media_urls": row[4] or [], "metadata": row[5] or {}} for row in cur.fetchall()}
+
     def drop_story_only(self, post_id: str) -> None:
         """A post shown only inside its story (issue 0126) becomes a row of its feed: you saved it."""
         with db.transaction(self.db_url) as cur:
@@ -1050,6 +1064,8 @@ class PostsRepository:
                 published_precision = CASE WHEN published_at IS NULL AND %(date)s::timestamptz IS NOT NULL
                                            THEN %(precision)s ELSE published_precision END,
                 published_at = COALESCE(published_at, %(date)s::timestamptz),
+                -- An X Article read for its tweet (kinds/x_articles.py) brings its title; a page, none.
+                title = COALESCE(%(title)s, title),
                 content = %(content)s,
                 content_html = %(content_html)s,
                 content_hash = %(content_hash)s,
@@ -1066,6 +1082,7 @@ class PostsRepository:
                 "id": post_id,
                 "date": post.get("date"),
                 "precision": published_precision(post),
+                "title": post.get("title"),
                 "content": post.get("content") or "",
                 "content_html": post.get("content_html"),
                 "content_hash": fields["content_hash"],

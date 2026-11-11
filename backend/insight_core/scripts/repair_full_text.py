@@ -19,6 +19,9 @@ Which posts: a body shorter than full_text.SHORT_BODY_CHARS, or a paid teaser of
     paid ones only with the Substack session in Connections);
   - a generic RSS source: the article page, as new posts are read (ingestion/full_text.py),
     unless the source has `fetch_full_content: false` or the link is not an article;
+  - a tweet of the nitter_rss kind that is an X Article the bridge gave as a link (its own words aside)
+    (kinds/x_articles.py, v10.13.10): its article, by its status id, under --rule too (once: the
+    read records its outcome and the rules' version);
   - every other kind is skipped: a tweet, a Telegram message, a Reddit post or a video
     description is the whole post.
 
@@ -42,6 +45,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -56,6 +60,7 @@ from insight_core.db.repo_posts import FULL_TEXT_CHECKED, PAGE_TRIES_KEY, PostsR
 from insight_core.ingestion import full_text  # noqa: E402
 from insight_core.ingestion.http import HttpError, KindHttp  # noqa: E402
 from insight_core.ingestion.kinds import KindRegistry  # noqa: E402
+from insight_core.ingestion.kinds import x_articles  # noqa: E402
 from insight_core.ingestion.kinds.base import KindUnavailable  # noqa: E402
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY, SubstackKind  # noqa: E402
 from insight_core.utils.addresses import host_of  # noqa: E402
@@ -78,7 +83,9 @@ def plan(posts: Sequence[Dict[str, Any]], registry: KindRegistry, *, rule: bool 
     for post in posts:
         source = post["source"]
         kind = registry.resolve(source)
-        if rule and kind.name == "generic_rss" and not isinstance(kind, SubstackKind) and not full_text.is_teaser(post):
+        if kind.name == "nitter_rss" and x_articles.is_article_post(post) and x_articles.lookups_on(getattr(kind, "env", os.environ)):
+            sites[x_articles.HOST_KEY].append((post, kind))   # an X Article the bridge gave as a link (v10.13.10)
+        elif rule and kind.name == "generic_rss" and not isinstance(kind, SubstackKind) and not full_text.is_teaser(post):
             skipped["no teaser"] += 1
         elif rule and (isinstance(kind, SubstackKind) or kind.name != "generic_rss"):
             skipped[f"kind {kind.name}"] += 1
@@ -195,6 +202,12 @@ class Repair:
     async def _read(self, post: Dict[str, Any], kind: Any) -> Tuple[Optional[Dict[str, Any]], str]:
         """(the full body ({content, content_html, metadata}) or None, the read's outcome: issue 0140)."""
         current = full_text.body_text(post)
+        if kind.name == "nitter_rss":
+            fresh = await kind.read_article_post(post)
+            if fresh is None:
+                raise x_articles.ArticleUnavailable(f"no X Article for {post['url']}")
+            found = {key: fresh[key] for key in ("title", "content", "content_html", "metadata")}
+            return found, full_text.outcome_of(fresh["metadata"]) or full_text.FULL
         if isinstance(kind, SubstackKind):
             fresh = await kind.read_post(post["source"], post["url"])
             if not fresh or fresh["metadata"].get("paywalled") or len(full_text.body_text(fresh)) <= len(current):

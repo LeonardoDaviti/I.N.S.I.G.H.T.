@@ -54,6 +54,8 @@ SAME_ARTICLE_MIN_CHARS = 200
 FULL_TEXT_RULE = 2
 # A page read's outcome (metadata.page_read_outcome.outcome); else error:<class> or http:<status>.
 FULL, NOTHING_LONGER, NOT_SAME_ARTICLE, NEEDS_SCRIPT = "full", "nothing_longer", "not_same_article", "needs_script"
+# An X Article of which only the title and opening could be read (kinds/x_articles.py, v10.13.10).
+PREVIEW_ONLY = "preview_only"
 # The outcomes a later rule may change: the repair reads them again once per rule version.
 READ_AGAIN_OUTCOMES = (NOTHING_LONGER, NOT_SAME_ARTICLE, NEEDS_SCRIPT)
 # The same article (issue 0140): a title this short is no evidence ("Update", "Notes"); the teaser's runs
@@ -361,6 +363,7 @@ TEASER_REASONS = {
     NOT_SAME_ARTICLE: "its page did not read as the same article",
     NEEDS_SCRIPT: "its page needs a script to show the article",
     NOTHING_LONGER: "its page held nothing longer",
+    PREVIEW_ONLY: "X gave only the article's opening",
 }
 
 
