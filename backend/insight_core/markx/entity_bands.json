@@ -10,7 +10,7 @@
   },
   "repairs": {
     "about": "0164 (markx/entity_repair.py): the identity repairs each run. org_family: a product family merged into an org is cut apart (automatic redirects undone; never the owner's). reparent: a version whose family is an org gets a family entity. families: families differing only by their maker's name or brand merge, then their same versions. suffix: orgs one once a corporate suffix goes merge only with min posts naming one beside the other's things (unmeasured: off sets the alias questions alone to decide). shown: the name and type shown, by evidence.",
-    "org_family": true, "reparent": true, "families": true, "suffix": true, "suffix_min_posts": 2, "shown": true
+    "org_family": true, "reparent": true, "families": true, "suffix": false, "suffix_min_posts": 2, "shown": true
   },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},
