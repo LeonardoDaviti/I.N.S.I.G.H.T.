@@ -750,5 +750,94 @@ class PlatformAccountTests(unittest.TestCase):
                 self.assertEqual([feed.url for feed in finding.feeds], ["https://writer.example/atom.xml"])
 
 
+PROFILE_API = "https://substack.com/api/v1/user/examplewriter/public_profile"
+
+
+def profile(primary=None, *memberships) -> str:
+    """Substack's public profile answer: primaryPublication and publicationUsers [(role, publication)]."""
+    import json
+
+    return json.dumps({"id": 1, "handle": "examplewriter", "name": "Example Writer", "primaryPublication": primary,
+                       "publicationUsers": [{"role": role, "publication": pub} for role, pub in memberships]})
+
+
+def publication(subdomain: str, name: str, custom_domain=None, optional: bool = False) -> dict:
+    return {"id": abs(hash(subdomain)) % 1000, "subdomain": subdomain, "custom_domain": custom_domain,
+            "custom_domain_optional": optional, "name": name}
+
+
+class SubstackProfileTests(unittest.TestCase):
+    """A Substack profile is offered the person's publications, never Substack's own feed (v10.13.10)."""
+
+    def assert_only_the_profile_asked(self, http):
+        self.assertEqual(http.requests, [PROFILE_API])
+        self.assertNotIn("https://substack.com/feed", http.requests)
+
+    def test_a_profile_is_offered_its_primary_publications_feed(self):
+        answer = profile(publication("examplewriter", "Example Notes"))
+        for url in ("https://substack.com/@examplewriter", "https://substack.com/@examplewriter/posts",
+                    "https://www.substack.com/@examplewriter", "substack.com/@examplewriter?utm_source=x"):
+            with self.subTest(url=url):
+                finding, http = find({PROFILE_API: answer}, url)
+                self.assertEqual(finding, found(("https://examplewriter.substack.com/feed", "Example Notes")))
+                self.assert_only_the_profile_asked(http)
+
+    def test_a_custom_domain_is_the_publications_address(self):
+        answer = profile(publication("examplewriter", "Example Notes", custom_domain="www.example-notes.com"))
+        finding, http = find({PROFILE_API: answer}, "https://substack.com/@examplewriter")
+        self.assertEqual(finding, found(("https://www.example-notes.com/feed", "Example Notes")))
+        self.assert_only_the_profile_asked(http)
+
+    def test_several_publications_primary_first_writers_only_once_each(self):
+        primary = publication("examplewriter", "Example Notes")
+        answer = profile(primary, ("admin", publication("sideproject", "Side Project", custom_domain="side.example")),
+                         ("contributor", publication("guestspot", "Guest Spot")),
+                         ("author", publication("groupblog", "Group Blog")), ("admin", primary))
+        finding, _ = find({PROFILE_API: answer}, "https://substack.com/@examplewriter")
+        self.assertEqual(finding, found(("https://examplewriter.substack.com/feed", "Example Notes"),
+                                        ("https://side.example/feed", "Side Project"),
+                                        ("https://groupblog.substack.com/feed", "Group Blog")))
+
+    def test_a_reader_without_a_primary_publication_is_offered_the_ones_they_write_for(self):
+        answer = profile(None, ("admin", publication("groupblog", "Group Blog")))
+        finding, _ = find({PROFILE_API: answer}, "https://substack.com/@examplewriter")
+        self.assertEqual(finding, found(("https://groupblog.substack.com/feed", "Group Blog")))
+
+    def test_a_profile_with_no_publication_is_none_never_substacks_own_feed(self):
+        for answer in (profile(None), profile(None, ("contributor", publication("guestspot", "Guest Spot"))),
+                       profile({"subdomain": None, "custom_domain": None, "name": "Nothing"}), "[]"):
+            with self.subTest(answer=answer):
+                finding, http = find({PROFILE_API: answer, "https://substack.com/feed": rss("Substack")},
+                                     "https://substack.com/@examplewriter")
+                self.assertEqual((finding.status, finding.feeds, finding.reason),
+                                 ("none", (), feed_finder.NO_PUBLICATION))
+                self.assert_only_the_profile_asked(http)
+
+    def test_a_profile_that_cant_be_read_is_none_saying_so(self):
+        from insight_core.ingestion.http import HttpError
+
+        cases = ((HttpError("HTTP 404", status=404), feed_finder.NO_PROFILE),
+                 (HttpError("HTTP 503", status=503), feed_finder.PROFILE_UNREADABLE),
+                 ("<html>not json</html>", feed_finder.PROFILE_UNREADABLE))
+        for answer, reason in cases:
+            with self.subTest(reason=reason):
+                finding, http = find({PROFILE_API: answer, "https://substack.com/feed": rss("Substack")},
+                                     "https://substack.com/@examplewriter")
+                self.assertEqual((finding.status, finding.feeds, finding.reason), ("none", (), reason))
+                self.assert_only_the_profile_asked(http)
+
+    def test_an_app_link_to_a_publication_takes_its_feed(self):
+        feed = "https://examplewriter.substack.com/feed"
+        finding, http = find({feed: atom("Example Notes")}, "https://open.substack.com/pub/examplewriter/p/a-post")
+        self.assertEqual(finding, found((feed, "Example Notes")))
+        self.assertEqual(http.requests, [feed])
+
+    def test_a_publication_on_substack_is_still_read_directly(self):
+        for url in ("https://examplewriter.substack.com", "https://examplewriter.substack.com/p/a-post"):
+            with self.subTest(url=url):
+                finding, http = find({}, url)
+                self.assertEqual((finding, http.requests), (FeedFinding("direct"), []))
+
+
 if __name__ == "__main__":
     unittest.main()

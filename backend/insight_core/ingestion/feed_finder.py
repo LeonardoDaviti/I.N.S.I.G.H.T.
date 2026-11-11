@@ -7,7 +7,10 @@
 One search, cheapest first, stopping at the first stage that finds something:
   0. No request. A kind or site adapter reads the address directly ("direct"), or a platform
      rule names its feed (Medium, GitHub releases and a GitHub account's activity, an arXiv
-     category, a PyPI project's releases).
+     category, a PyPI project's releases, the publication of an open.substack.com/pub/<name> link).
+     A Substack profile (substack.com/@<handle>, v10.13.10) asks Substack's public profile once and is
+     offered the person's publications' feeds, the primary first; never Substack's own (the platform's
+     /feed is a 404): a profile with none, or unreadable, is "none" saying so.
   1. The address itself: a feed ("feed"); else its page's <link rel="alternate"> feeds, then
      its <a> links that look like feeds.
   2. The section page (/blog/) and the home page, fetched in parallel, the same way.
@@ -60,6 +63,7 @@ Issue 0137 (new spheres, round 2):
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import json
 import re
@@ -155,6 +159,16 @@ ARXIV_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 APPLE_PODCAST_HOSTS = frozenset({"podcasts.apple.com", "itunes.apple.com"})
 APPLE_ID_RE = re.compile(r"(?:^|/)id(\d{4,})(?:$|[/?])")
 APPLE_LOOKUP = "https://itunes.apple.com/lookup?id={}&entity=podcast"
+# A Substack profile (substack.com/@<handle>, v10.13.10) is no publication: its public profile names the
+# person's publications, offered by their own feeds (the primary first, then those they write for).
+SUBSTACK_PROFILE_HOSTS = frozenset({"substack.com", "www.substack.com"})
+SUBSTACK_HANDLE_RE = re.compile(r"^@([A-Za-z0-9_.-]{1,80})$")
+SUBSTACK_SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62})$")
+SUBSTACK_PROFILE_API = "https://substack.com/api/v1/user/{}/public_profile"
+SUBSTACK_WRITER_ROLES = frozenset({"admin", "author"})
+NO_PUBLICATION = "a Substack profile with no publication"
+PROFILE_UNREADABLE = "the Substack profile could not be read"
+NO_PROFILE = "no such Substack profile"
 # "none" says why (issue 0137 B5), from the address's own answer.
 REASON_BY_STATUS = {401: "needs login", 407: "needs login", 403: "blocked", 429: "rate-limited", 404: "gone", 410: "gone"}
 NONE_FOUND, EMPTY_FEED, NO_BRIDGE, SERVER_ERROR = "none found", "empty feed", "no bridge", "server error"
@@ -222,9 +236,12 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str, known: Se
     address = _normalise(url)
     search = _Search(http, known)
     started = time.monotonic()
+    handle = substack_profile_handle(address)
     kind = registry.resolve({"platform": "rss", "handle_or_url": address}).name
     bridged = bridge_feed(address) if kind == "generic_rss" else None
-    if kind != "generic_rss" or bridged is not None:
+    if handle is not None:
+        finding = await search.substack_profile(handle)
+    elif kind != "generic_rss" or bridged is not None:
         finding = await search.through_bridge(address, kind, bridged)
     else:
         try:
@@ -341,6 +358,23 @@ class _Search:
             if address in self.statuses:
                 return FeedFinding("none", reason=self.reason(address))
         return FeedFinding("direct")
+
+    async def substack_profile(self, handle: str) -> FeedFinding:
+        """A Substack profile's publications (v10.13.10), from its public profile: one request, the feeds
+        offered unread (each a publication's /feed). Never Substack's own feed: a profile that can't be read,
+        or names no publication, is "none" saying so."""
+        url = SUBSTACK_PROFILE_API.format(urllib.parse.quote(handle, safe=""))
+        self.requests += 1
+        try:
+            body, _ = await asyncio.wait_for(self.http.get_text(url), REQUEST_TIMEOUT_S)
+            data = json.loads(body)
+        except Exception as exc:  # noqa: BLE001 - an unreadable profile is "none", never Substack's own feed
+            status = getattr(exc, "status", None)
+            logger.info("Feed finder: the Substack profile @%s could not be read (%s %s)", handle,
+                        type(exc).__name__, status or "")
+            return FeedFinding("none", reason=NO_PROFILE if status in (404, 410) else PROFILE_UNREADABLE)
+        feeds = substack_profile_feeds(data)
+        return FeedFinding("found", feeds) if feeds else FeedFinding("none", reason=NO_PUBLICATION)
 
     def reason(self, address: str) -> str:
         """Why the search found nothing (issue 0137 B5), from the address's own answer."""
@@ -683,7 +717,53 @@ def _platform_feed(url: str) -> Optional[str]:
         feed = f"https://rss.arxiv.org/rss/{segments[1]}"
     elif host == "pypi.org" and len(segments) >= 2 and segments[0] == "project":
         feed = f"https://pypi.org/rss/project/{segments[1]}/releases.xml"
+    elif (host == "open.substack.com" and len(segments) >= 2 and segments[0] == "pub"
+          and SUBSTACK_SUBDOMAIN_RE.match(segments[1].lower())):
+        feed = f"https://{segments[1].lower()}.substack.com/feed"
     return feed if feed != url else None
+
+
+def substack_profile_handle(url: str) -> Optional[str]:
+    """The handle of a Substack profile address (substack.com/@<handle>, /@<handle>/posts, www.), else None."""
+    if host_of(url) not in SUBSTACK_PROFILE_HOSTS:
+        return None
+    segments = path_segments(url)
+    found = SUBSTACK_HANDLE_RE.match(segments[0]) if segments else None
+    return found.group(1) if found else None
+
+
+def _substack_publication(publication: object) -> Optional[Tuple[str, str]]:
+    """(the publication's address, its name) from a profile's publication: its custom domain, else
+    <subdomain>.substack.com; None when it names neither (or only Substack's own host)."""
+    if not isinstance(publication, dict):
+        return None
+    custom = str(publication.get("custom_domain") or "").strip().lower()
+    custom = host_of(custom if "://" in custom else f"https://{custom}") if custom else ""
+    subdomain = str(publication.get("subdomain") or "").strip().lower()
+    if custom and "." in custom and not custom.endswith("substack.com"):
+        base = f"https://{custom}"
+    elif SUBSTACK_SUBDOMAIN_RE.match(subdomain) and subdomain not in ("www", "open"):
+        base = f"https://{subdomain}.substack.com"
+    else:
+        return None
+    return base, html.unescape(str(publication.get("name") or "")).strip()
+
+
+def substack_profile_feeds(data: object) -> Tuple[Feed, ...]:
+    """The feeds of a Substack profile's publications (v10.13.10): its primaryPublication first, then the
+    publications its publicationUsers say the person runs or writes for (role admin or author), once each."""
+    if not isinstance(data, dict):
+        return ()
+    publications = [data.get("primaryPublication")]
+    for entry in data.get("publicationUsers") or []:
+        if isinstance(entry, dict) and str(entry.get("role") or "").lower() in SUBSTACK_WRITER_ROLES:
+            publications.append(entry.get("publication"))
+    feeds: Dict[str, Feed] = {}
+    for publication in publications:
+        found = _substack_publication(publication)
+        if found:
+            feeds.setdefault(f"{found[0]}/feed", Feed(f"{found[0]}/feed", found[1]))
+    return tuple(feeds.values())
 
 
 def section_of(url: str) -> str:

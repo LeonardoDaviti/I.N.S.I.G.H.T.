@@ -24,6 +24,7 @@ from insight_core.ingestion.kinds.substack import (
     SUBSTACK_HOST_KEY,
     SubstackKind,
     paid_publication_hosts,
+    publication_base,
 )
 from insight_core.tests._kind_fakes import FakeHttp
 
@@ -87,6 +88,25 @@ class SubstackResolutionTests(unittest.TestCase):
         self.assertEqual(registry.resolve(_src(f"{BASE}/feed")).name, "substack")
         self.assertEqual(registry.resolve(_src("https://www.example-news.com/", substack=True)).name, "substack")
         self.assertEqual(registry.resolve(_src("https://www.other-news.com/")).name, "generic_rss")
+
+    def test_substack_itself_is_never_a_publication(self):
+        # A profile (substack.com/@<handle>) or an app link saved as is: never read as Substack's own feed (v10.13.10).
+        registry = self._registry()
+        kind = SubstackKind(FakeHttp(), sid="")
+        for url in ("https://substack.com/@examplewriter", "https://substack.com/@examplewriter/posts",
+                    "https://www.substack.com/@examplewriter", "https://substack.com/", "https://substack.com/feed",
+                    "https://open.substack.com/pub/examplewriter/p/a-post"):
+            with self.subTest(url=url):
+                self.assertFalse(kind.matches(_src(url)))
+                self.assertFalse(kind.matches(_src(url, substack=True)))
+                self.assertEqual(registry.resolve(_src(url)).name, "generic_rss")
+                with self.assertRaises(ValueError):
+                    publication_base(_src(url))
+        for url, base in ((f"{BASE}/", BASE), ("https://examplewriter.substack.com/feed", "https://examplewriter.substack.com"),
+                          ("https://www.example-news.com/feed", "https://www.example-news.com")):
+            with self.subTest(url=url):
+                self.assertTrue(kind.matches(_src(url, substack=True)))
+                self.assertEqual(publication_base(_src(url)), base)
 
     def test_every_substack_source_shares_one_floored_host_key(self):
         kind = SubstackKind(FakeHttp(), sid="")
