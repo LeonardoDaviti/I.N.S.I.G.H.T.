@@ -4,17 +4,24 @@ An archive that continues below the stored tweets jumps by date: its first page 
 bridge's search RSS, /<user>/search/rss?f=tweets&q=&until=<day> (until is exclusive), and
 later pages add the same min-id cursor as the feed's pager. Every page's checkpoint keeps
 search_until, so a resume stays on the search (checked on the owner's bridge, 2026-10-16).
+
+A tweet that is an X Article, which the bridge gives as its link alone, is read again by its status id
+(kinds/x_articles.py, v10.13.10): on a live fetch and an archive alike, at most x_articles.MAX_PER_FETCH a
+fetch (an archive: a page). One stored with its article is kept as stored, not looked up again (a preview: once
+a day); one stored as the link alone is looked up again, and the saver writes its article over it.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import KindHttp
-from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds import parsing, x_articles
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
     BaseKind,
@@ -26,6 +33,12 @@ from insight_core.ingestion.kinds.base import (
     start_at,
 )
 from insight_core.utils.addresses import host_of
+
+logger = logging.getLogger("insight.ingestion.nitter_rss")
+
+# Which of these urls are stored with their X Article read, each as stored (blocking; run in a thread):
+# PostsRepository.stored_x_articles.
+StoredArticles = Callable[[Sequence[str]], Dict[str, Dict[str, Any]]]
 
 # Your Nitter (issue 0137 B3), configured like the Telegram bridge: NITTER_HOSTS, a comma list of hosts or
 # origins, the first used for an x.com address pasted in the Add-source dialog ("nitter.local" when unset,
@@ -100,8 +113,13 @@ class NitterRssKind(BaseKind):
     available_basis = "estimate"   # the profile counter (replies and reposts included)
     profile = NITTER_PROFILE
 
-    def __init__(self, http: KindHttp) -> None:
+    def __init__(self, http: KindHttp, *, stored_articles: Optional[StoredArticles] = None,
+                 env: Mapping[str, str] = os.environ,
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         self.http = http
+        self.stored_articles = stored_articles
+        self.env = env
+        self.clock = clock
 
     def matches(self, source: Source) -> bool:
         url = str(source.get("handle_or_url") or "")
@@ -126,7 +144,7 @@ class NitterRssKind(BaseKind):
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         posts: List[Dict[str, Any]] = []
         async for page in self._pages(str(source["handle_or_url"]), limit, None, None, 0, 0,
-                                      self.profile.rate_limit()):
+                                      self.profile.rate_limit(), [x_articles.MAX_PER_FETCH]):
             posts.extend(page.posts)
         return posts[:limit]
 
@@ -148,9 +166,12 @@ class NitterRssKind(BaseKind):
         return Inspection(extract_nitter_tweet_count(profile_html), page_size, None)
 
     async def _pages(self, source_url: str, target: int, cursor: Optional[str], search_until: Optional[str],
-                     initial_collected: int, initial_pages: int, rate: Optional[RateLimit]):
+                     initial_collected: int, initial_pages: int, rate: Optional[RateLimit],
+                     lookups: Optional[List[int]] = None):
         """Pages until target posts (counting initial_collected). With a rate (a live fetch) the
-        pause between pages is slept here; an archive passes None, its loop paces the pages."""
+        pause between pages is slept here; an archive passes None, its loop paces the pages.
+        lookups: the X Article lookups left for the whole fetch ([n], shared by its pages); None gives each
+        page x_articles.MAX_PER_FETCH (an archive)."""
         seen_urls: set[str] = set()
         collected = initial_collected
         pages_fetched = initial_pages
@@ -171,6 +192,7 @@ class NitterRssKind(BaseKind):
                 collected += 1
                 if collected >= target:
                     break
+            unique = await self._with_articles(unique, lookups if lookups is not None else [x_articles.MAX_PER_FETCH])
 
             checkpoint = {
                 "mode": "nitter_cursor",
@@ -206,3 +228,49 @@ class NitterRssKind(BaseKind):
             if external_id:
                 post["external_id"] = external_id
         return posts, headers.get("min-id")
+
+    # ------------------------------------------------------------------ X Articles (v10.13.10)
+
+    async def read_article_post(self, post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The tweet with its X Article (x_articles.with_article), or None when it is none or no route gave it."""
+        status = x_articles.status_of(str(post.get("url") or ""))
+        if status is None or not x_articles.is_article_post(post):
+            return None
+        article = await x_articles.read_article(self.http, *status, env=self.env)
+        return x_articles.with_article(post, article, self.clock()) if article else None
+
+    async def _with_articles(self, posts: List[Dict[str, Any]], lookups: List[int]) -> List[Dict[str, Any]]:
+        """The page's tweets, each X Article read (lookups[0] at most, LOOKUP_DELAY_S apart). One stored with its
+        article comes as stored (the saver writes it back as it is), unless a preview is due again."""
+        found = [post for post in posts if x_articles.is_article_post(post) and x_articles.status_of(post["url"])]
+        if not found or not x_articles.lookups_on(self.env):
+            return posts
+        stored: Dict[str, Dict[str, Any]] = {}
+        if self.stored_articles is not None:
+            try:
+                stored = await asyncio.to_thread(self.stored_articles, [post["url"] for post in found])
+            except Exception as exc:  # noqa: BLE001 - the tweets are still saved, their articles looked up
+                logger.warning("X Article lookup of stored tweets failed: %s", exc)
+        now = self.clock()
+        read: Dict[str, Dict[str, Any]] = {}
+        asked = 0
+        for post in found:
+            kept = stored.get(post["url"])
+            if kept is not None and not x_articles.due_again(kept, now):
+                read[post["url"]] = {**post, **kept}
+                continue
+            if lookups[0] <= 0:
+                logger.info("X Articles: lookups used up for this fetch; %s waits for the next", post["url"])
+                if kept is not None:
+                    read[post["url"]] = {**post, **kept}
+                continue
+            if asked:
+                await self.http.sleep(x_articles.LOOKUP_DELAY_S)
+            lookups[0] -= 1
+            asked += 1
+            fresh = await self.read_article_post(post)
+            if fresh is not None:
+                read[post["url"]] = fresh
+            elif kept is not None:
+                read[post["url"]] = {**post, **kept}
+        return [read.get(post["url"], post) for post in posts]

@@ -70,7 +70,7 @@ class KindRegistry:
             RedditKind(http),
             YouTubeKind(youtube),
             TelegramRssKind(http),
-            NitterRssKind(http),
+            NitterRssKind(http, stored_articles=posts.stored_x_articles if posts else None),
             BlueskyKind(http),   # matches nothing unless INSIGHT_BLUESKY is on (issue 0137 B10)
             TelegramKind(http=http),
             GenericRssKind(http, stored_urls=stored_urls, teasers_due=posts.teasers_to_read_again if posts else None,
