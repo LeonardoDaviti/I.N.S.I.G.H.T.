@@ -318,12 +318,12 @@ class TheLimitAndTheStages(_Api):
         self.assertIn("run", out)
         text = "\n".join(logs.output)
         self.assertIn("Mark X decision run started", text)
-        for name in ("candidates", "load", "questions and decisions", "write", "connections", "graph", "back", "headlines", "news", "entities", "surges", "perspectives_plan"):
+        for name in ("candidates", "load", "questions and decisions", "write", "connections", "graph", "back", "later", "headlines", "news", "entities", "surges", "perspectives_plan"):
             self.assertIn(f"Mark X decision run: {name} took", text, name)
         self.assertIn("Mark X decision run finished in", text)
         last = jobs.state(self.cur)["decide"]["last"]
         self.assertEqual([s for s, _ in last["stages"]], ["candidates", "load", "questions and decisions", "write", "connections",
-                                                "graph", "back", "headlines", "news", "entities", "surges", "perspectives_plan"])   # 0119
+                                                "graph", "back", "later", "headlines", "news", "entities", "surges", "perspectives_plan"])   # 0119
 
     def test_a_run_over_the_limit_stops_between_stages_and_writes_nothing(self):
         self.cur.execute("SELECT count(*) FROM mx_runs")
@@ -341,7 +341,7 @@ class TheLimitAndTheStages(_Api):
         self.assertIsNone(s["stage"])
         # 0124 (the v10.0.2 review's W6): the stage's whole name, and the retry as it happens (the 5-minute gap)
         self.assertEqual(s["last"]["stopped_before"], s["last"]["error"].split("stopped before ", 1)[1])
-        self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "graph", "back", "headlines", "news"))
+        self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "graph", "back", "later", "headlines", "news"))
         self.assertIn("it runs again within 5 minutes", "\n".join(logs.output))
 
     def test_the_entities_stages_own_budget_is_not_counted_in_the_limit(self):

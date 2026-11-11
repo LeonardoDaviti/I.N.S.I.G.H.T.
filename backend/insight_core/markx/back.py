@@ -5,7 +5,8 @@ only read, and the row never enters Mark IX's News.
   1. **The trigger** (no model; the lab's back_v2 `bk_cands.py`). An old story is a Mark IX story with 2+ sources. It
      can fire in a 72-hour window starting at least FIRST_DAYS after its first post and LAST_DAYS after its last one,
      once (the lab's: a story's earliest burst; on the server copy, letting a story fire again 7 days after its last
-     return made 535 candidates of 197 stories in four months, mostly the same perennial stories, V above all). In that
+     return made 535 candidates of 197 stories in four months, mostly the same perennial stories, V above all;
+     0163: a long-lived story, markx/later.py's, may fire again later.AGAIN after its last window). In that
      window 2+ distinct sources post, outside the story, about:
        E  its subject: the ent-v3 subject (current mention set) of 2+ of its posts (of 1 when only one post was read),
           of a specific type (not org, person or place), by exact name: another version is another name;
@@ -162,9 +163,11 @@ class Story:
         self.sources = {p.src for p in self.members}
         self.subjects: Set[str] = set()
         self.pages: Set[str] = set()
+        self.again: Optional[datetime] = None   # 0163: a long-lived story fires again from here (its last window + 30 days)
 
     def t0(self) -> datetime:
-        return max(self.first + timedelta(days=FIRST_DAYS), self.last + timedelta(days=LAST_DAYS))
+        t = max(self.first + timedelta(days=FIRST_DAYS), self.last + timedelta(days=LAST_DAYS))
+        return max(t, self.again) if self.again else t
 
 
 def stories(cur: Any, now: datetime) -> Dict[str, Story]:
@@ -179,9 +182,15 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
             by[sid].append(_P(pid, src, at, url, False))
             origin[sid] = o
     out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if len({m.src for m in ms}) >= MIN_SOURCES}
-    cur.execute("SELECT DISTINCT story::text FROM mx_back")
-    fired = {r[0] for r in cur.fetchall()}
-    out = {sid: s for sid, s in out.items() if s.t0() <= now and sid not in fired}
+    cur.execute("SELECT story::text, max(window_at) FROM mx_back GROUP BY story")
+    fired = dict(cur.fetchall())
+    again = sorted(sid for sid in fired if sid in out)
+    if again:   # 0163: a long-lived story (later.py), still followed, may fire again AGAIN after its last window
+        from insight_core.markx import later
+        lived = set(later.long_lived(cur, story_ids=again)) - later.stopped(cur, again)
+        for sid in lived:
+            out[sid].again = fired[sid] + later.AGAIN
+    out = {sid: s for sid, s in out.items() if s.t0() <= now and (sid not in fired or s.again is not None)}
     mids = sorted({m.id for s in out.values() for m in s.members})
     subj, read = _subjects(cur, mids)
     links = _links(cur, mids)

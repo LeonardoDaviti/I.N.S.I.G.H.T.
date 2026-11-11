@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
+import { EntityLater } from '../components/markx/MarkXLater';   // 0163: later developments
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
@@ -280,6 +281,7 @@ export default function MarkXEntityPage() {
               </ul>
             </section>
           ) : null}
+          <EntityLater entityId={e.id} />
           {d.published?.length ? (
             <section aria-label="Published">
               <h2 className={H2}>Published</h2>
