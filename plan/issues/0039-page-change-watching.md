@@ -82,6 +82,23 @@ Status: **built, not deployed** (2026-10-28; migration 0037). Planned for v9.5 (
   feed. Archives never set it. The feed's sort key is now `COALESCE(surfaced_at, published_at,
   fetched_at)` (both feed-order indexes rebuilt on it in 0037), so every feed post (surfaced_at
   NULL) sorts exactly as before.
+  - **v10.13.13: a post its feed added late** (owner, 2026-11-11: a lab's news feed, read at
+    17:08 without its 10:00 post, which the next read stored ~31 h after its date, under 2 days,
+    so it sorted below everything new). Any kind's live read (the runner's saver: `save_batch(live=True)`),
+    not only page-based ones, sets `surfaced_at = fetched_at` on a post it inserts whose date is more
+    than `ADDED_LATE_SLACK` (15 min) before the source's previous successful read
+    (`source_fetch_state.last_success_at`, read by the saver before the runner records this read's
+    outcome). The signal is exact without storing anything: every item a successful read returned
+    was stored then (posts are unique by address), so a post inserted now was not in that read. A
+    daily-dated feed (every item 00:00) surfaces only the items the previous read did not have.
+    Not on a source's first fetch (no previous read), an archive (`live` False), a backlog page, or
+    known news (0058); a source switched to a new address (`switch_source`) has its
+    `last_success_at` cleared, so the new address's first read is a first fetch. Server data
+    (2026-10-20 to 11-05, a lower bound: only reads that stored something are visible): about 123
+    posts would have been placed by it that the 2-day rule doesn't cover, 97 of them an X account's
+    reposts (dated by the original post). Not retroactive (no read history is stored). The row says
+    "published <date>" only past 2 days (`LATE_FIND_MS`), so a post placed by this rule shows its
+    date on its page, not on its row. Tests: `test_added_late.py`.
   - Trade-off: search's "newest" uses the same key, so a resurfaced or late-found page ranks by
     when it reached you there too. One key keeps one index and one cursor; the alternative (search
     by published date) needs a second pair of indexes for a handful of posts. The day view

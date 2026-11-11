@@ -86,6 +86,13 @@ def _transaction_is_poisoned(conn) -> bool:
 BACKLOG_KEY = "_backlog"
 # A page first seen this long after its date is new to you: it sorts at when it was first seen.
 NEW_TO_YOU_AFTER = "2 days"
+# A post a live read first sees, dated before the source's previous successful read by more than this,
+# was added to its feed after INSIGHT last looked (a feed that lists a post late, with an earlier date):
+# it is new to you and sorts at when it was first seen, as NEW_TO_YOU_AFTER's do. "First seen" is the
+# exact part: every item a successful read returned was stored then (posts are unique by address), so
+# a post inserted now was not in that read. The slack covers the previous read's own length (its
+# last_success_at is recorded when its save ends, after the feed was read) and clock rounding.
+ADDED_LATE_SLACK = "15 minutes"
 # The stored bodies the repair reads at a time (drop_hidden_link_labels): ~15 MB of HTML on the lab.
 # Not tuned; any batch far below the 2,958 bodies bounds the peak.
 BODIES_BATCH = 200
@@ -115,7 +122,9 @@ class PostDraft:
 
     watch: its source watches its pages for changes (issue 0039): the text's hash is kept and
     a meaningful change brings the post back. surface: a page-based source's live fetch, after
-    its first: a new post first seen long after its date sorts at when it was first seen."""
+    its first: a new post first seen long after its date sorts at when it was first seen. Any
+    live read's new post dated before the source's previous read is new to you too: save_batch's
+    live (ADDED_LATE_SLACK)."""
 
     source_id: str
     post: dict
@@ -773,8 +782,16 @@ class PostsRepository:
         drafts: Sequence[PostDraft],
         *,
         commit_every: Optional[int] = None,
+        live: bool = False,
     ) -> SaveBatchResult:
         """Upsert many drafts with per-post isolation; owns the transaction on `conn`.
+
+        live: the drafts are a live read's (the runner's saver), not an archive's: a new post dated
+        before its source's previous successful read (source_fetch_state.last_success_at, read here,
+        before the runner records this read's outcome after the save) was added to the feed after
+        INSIGHT last looked, and sorts at when it was first seen (ADDED_LATE_SLACK). A source with no
+        successful read yet (its first fetch: the backlog) has none, and a page read from a site's
+        backlog (BACKLOG_KEY) is never new to you.
 
         Precondition: `conn` is not in autocommit mode and is idle. Commits every
         `commit_every` attempted drafts (failures included: a failed post costs savepoints
@@ -797,6 +814,12 @@ class PostsRepository:
             cur.execute("SELECT s FROM unnest(%s::uuid[]) s WHERE EXISTS (SELECT 1 FROM posts WHERE source_id = s)",
                         (list({str(draft.source_id) for draft in drafts}),))
             fetched_before = {str(row[0]) for row in cur.fetchall()}
+            read_before: Dict[str, Any] = {}   # source -> its previous successful read (a live read's)
+            if live:
+                cur.execute("SELECT source_id, last_success_at FROM source_fetch_state"
+                            " WHERE source_id = ANY(%s::uuid[]) AND last_success_at IS NOT NULL",
+                            (list({str(draft.source_id) for draft in drafts}),))
+                read_before = {str(source_id): at for source_id, at in cur.fetchall()}
             for index, draft in enumerate(drafts, start=1):
                 post = dict(draft.post)
                 post.pop("_source_id", None)
@@ -820,7 +843,8 @@ class PostsRepository:
                     post_id = str(post_id)
                     window.append((draft, post_id, was_inserted))
                     if self._after_save(cur, draft, post, post_id, was_inserted, old,
-                                        surface=draft.surface and not backlog):
+                                        surface=draft.surface and not backlog,
+                                        read_before=None if backlog else read_before.get(str(draft.source_id))):
                         result.resurfaced_ids.append(post_id)
                     if was_inserted:
                         result.inserted_ids.append(post_id)
@@ -861,9 +885,12 @@ class PostsRepository:
         return {"content": row[0], "content_html": row[1]} if row else None
 
     def _after_save(self, cur: Cursor, draft: PostDraft, post: Dict[str, Any], post_id: str,
-                    was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool) -> bool:
+                    was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool,
+                    read_before: Optional[Any] = None) -> bool:
         """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
-        date sorts at when it was first seen (surface), unless another source's post linked it
+        date (surface), or dated more than ADDED_LATE_SLACK before its source's previous successful
+        read (read_before: its feed added it after that read), sorts at when it was first seen,
+        unless another source's post linked it
         before (0058: LINKED_BEFORE_SQL; only other posts' links count, so reading this post's
         own links first changes nothing); a watched post keeps its text's hash and
         comes back when it changed meaningfully. Issue 0050: its outside links are read from what
@@ -873,12 +900,14 @@ class PostsRepository:
         try:
             with self._savepoint(cur, "insight_after_save"):
                 self.stories.save_post_links(cur, post_id)
-                if surface and was_inserted:
+                if was_inserted and (surface or read_before is not None):
                     cur.execute(
                         f"""UPDATE posts p SET surfaced_at = p.fetched_at
-                             WHERE p.id = %s::uuid AND p.published_at < p.fetched_at - interval '{NEW_TO_YOU_AFTER}'
+                             WHERE p.id = %(id)s::uuid
+                               AND ((%(surface)s AND p.published_at < p.fetched_at - interval '{NEW_TO_YOU_AFTER}')
+                                    OR p.published_at < %(read_before)s::timestamptz - interval '{ADDED_LATE_SLACK}')
                                AND NOT {LINKED_BEFORE_SQL}""",
-                        (post_id,),
+                        {"id": post_id, "surface": surface, "read_before": read_before},
                     )
                 if draft.watch:
                     return self.watch.saved(cur, post_id, draft.source_id, post, None if was_inserted else old)
