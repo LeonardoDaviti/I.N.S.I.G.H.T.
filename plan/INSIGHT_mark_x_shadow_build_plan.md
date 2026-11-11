@@ -136,7 +136,6 @@ In the branch's last commit and in a private handoff under `plan/research/markx-
 | Entity identity: name key, maker-prefix aliases, version hierarchy, merge queue | 0090 B–C | measured; rules decided |
 | Surges per exact version, subjects only | 0090 E | measured: 96% precise |
 | Back in the news | 0092 | measured: trigger changed, judge 73% |
-| Later developments (a long-lived story's follow-ups at any age; the story page's "Later", the entity page's "Later developments") | 0163 | built in Shadow (v10.13.11); News waits for its measure |
 | Numbers over time | 0095 | measured: extraction 87%; needs a metric list and 0090 C |
 | Discover by attribution | 0101 | measured: which credits count |
 | Questions with citations | 0098 | retrieval measured; answers not yet |
