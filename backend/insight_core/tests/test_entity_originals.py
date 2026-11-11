@@ -32,7 +32,7 @@ TITLE = "Proving the Nimbus Hypothesis with Lattices"
 DELETE_ORDER = ("mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news",
                 "mx_connections", "mx_story_posts", "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins",
                 "mx_entity_queue", "mx_entity_redirects", "mx_entity_aliases", "mx_entity_addresses", "mx_mentions",
-                "mx_entities", "mx_stories", "mx_candidate_posts", "mx_candidates", "mx_jobs", "mx_runs", "mx_embeddings",
+                "mx_entity_fixes", "mx_entities", "mx_stories", "mx_candidate_posts", "mx_candidates", "mx_jobs", "mx_runs", "mx_embeddings",
                 "mx_readings", "mx_calls", "mx_tasks", "mx_workers")
 
 

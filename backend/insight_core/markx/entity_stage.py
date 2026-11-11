@@ -18,6 +18,9 @@ after the chunk that passes the budget; the mentions it leaves stay unlinked, so
 relinks in pages of posts (`full.phase` 'link', `link_after`) before its entity chunks (phase 'pool', `after`), and the
 addresses' sweep of every post stops likewise (`addresses`: done, after) and goes on in the next runs. The book is read
 once a run, for both.
+
+0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
+names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ from insight_core.markx import identity, surges as S
 
 NIGHTLY_HOUR = 4
 MARGIN = timedelta(minutes=2)
+REPAIR_SHARE = 0.25   # 0164: the identity repairs' share of the stage's budget (each step skipped past it)
 
 
 FULL_DEFERRED = "entities_full_deferred"   # mx_settings: {"at": ISO, "why": ...} (v10.13.4)
@@ -104,16 +108,22 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
     book = identity.load_book(cur)   # read once a run: identity's stage and the addresses share it
+    # 0164: the identity repairs first (the linking then sees them), in their share of the budget
+    fixed, book = repairs(cur, book, run_id=run_id, full=whole,
+                          deadline=None if budget is None else time.monotonic() + budget * REPAIR_SHARE)
     out = identity.stage(cur, ask=ask, now=now, run_id=run_id, full=whole, since=since,
                          after=left.get("after") if left else None, link_after=left.get("link_after") if left else None,
                          phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book)
+    out["repair"] = fixed
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
+    linked = out.pop("posts_linked", [])
+    out["shown"] = shown(cur, book, whole=whole, since=since, posts=linked, deadline=deadline)
     sweep = whole and not left
     out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
-                                 deadline=deadline, also=out.pop("posts_linked", []), book=book)
+                                 deadline=deadline, also=linked, book=book)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
     out["days_linked"] = len(days)
     if whole or since is None:
@@ -122,6 +132,56 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
                        OR EXISTS (SELECT 1 FROM mx_entity_pins WHERE created_at >= %(s)s OR undone_at >= %(s)s)""",
                 {"s": since})
     return out, (None if cur.fetchone()[0] else days)
+
+
+def repairs(cur: Any, book: Any, *, run_id: Any, full: bool, deadline: Optional[float]) -> Tuple[Dict[str, Any], Any]:
+    """0164: entity_repair.repair in a savepoint: (its counts, the book). A failure is logged in the counts and
+    undone (the book read again), never the run's."""
+    import logging
+    from insight_core.markx import entity_repair
+    cur.execute("SAVEPOINT entity_repair")
+    try:
+        got = entity_repair.repair(cur, book, run_id=run_id, full=full, deadline=deadline)
+    except Exception as error:  # noqa: BLE001 - a derived step never stops the run
+        cur.execute("ROLLBACK TO SAVEPOINT entity_repair")
+        logging.getLogger(__name__).exception("Mark X: the entity repairs failed")
+        return {"error": str(error)[:200]}, identity.load_book(cur)
+    cur.execute("RELEASE SAVEPOINT entity_repair")
+    return got, book
+
+
+def shown(cur: Any, book: Any, *, whole: bool, since: Optional[datetime], posts: Any,
+          deadline: Optional[float]) -> Dict[str, Any]:
+    """0164: the shown names and types (entity_repair.shown): the clusters this run touched (its posts' entities, the
+    merges and undos since), and every cluster on a full pass or until one is done (resumed where the last run's
+    stopped, `after`). In a savepoint: a failure is logged in the counts, never the run's."""
+    import logging
+    from insight_core.markx import entity_repair, schemas
+    if not entity_repair.config()["shown"]:
+        return {"off": True}
+    guide = schemas.mention_guides()
+    last = _last(cur, "shown")
+    resume = last.get("after") if isinstance(last, dict) and last.get("done") is False else None
+    every = whole or resume is not None or not isinstance(last, dict) or since is None
+    cur.execute("SAVEPOINT entity_shown")
+    try:
+        if every:
+            got = entity_repair.shown(cur, book, guide, roots=None, after=None if whole and resume is None else resume,
+                                      deadline=deadline)
+        else:
+            cur.execute("""SELECT DISTINCT entity_id::text FROM mx_mentions_now
+                            WHERE post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (list(posts),))
+            roots = {r[0] for r in cur.fetchall()}
+            cur.execute("""SELECT from_id::text, to_id::text FROM mx_entity_redirects
+                            WHERE at >= %(s)s OR undone_at >= %(s)s""", {"s": since})
+            roots |= {x for row in cur.fetchall() for x in row}
+            got = {**entity_repair.shown(cur, book, guide, roots=roots), "done": True}
+    except Exception as error:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT entity_shown")
+        logging.getLogger(__name__).exception("Mark X: the shown names failed")
+        return {"error": str(error)[:200], "done": False, "after": resume}
+    cur.execute("RELEASE SAVEPOINT entity_shown")
+    return got
 
 
 def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, after: Optional[str] = None,

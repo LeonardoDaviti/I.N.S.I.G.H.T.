@@ -38,6 +38,17 @@ entity_id only:
 
 The owner's answers (`answer`, the API's, in the request's own transaction: mx_entity* and mx_labels only) apply at
 once for the pages, which read through redirects and pins; the next run's snapshot sees them.
+
+0164 (entity identity fixes; the repairs of data already made are markx/entity_repair.py's, run first in the stage):
+  - the type guard reads clusters too (`org_family`): a cluster holding a product family (Book.sides) and one holding
+    an org or person are never merged automatically, whatever the two names' own types (a family's name typed an
+    org by Haiku, "Zentra Vela", was the way in); such a merge is queued ('type', reasons org_family);
+  - a version's family is never an org (`family_under`): when its family key aliases an org-like cluster ("Zentra 5"
+    by Zentra), its family is a `family` entity of that name under the org;
+  - two versions of one family cluster stating the same version, variant, size and build merge by the rule
+    `family_version` (the families "Vela" and "Zentra Vela" once one: "Vela 5" = "Zentra Vela 5");
+  - the name and type a cluster is shown under are its root's shown_name / shown_type (Book.label, shown_type),
+    chosen by evidence; `name` and `type` stay what it was made as and decide identity.
 """
 from __future__ import annotations
 
@@ -156,6 +167,8 @@ class Ent:
     status: str = "provisional"
     first_seen: Optional[datetime] = None
     haiku: Dict[str, Any] = field(default_factory=dict)       # the fields as Haiku gave them (majority mention)
+    shown_name: Optional[str] = None     # 0164: the name and type it is shown under (a root's, chosen by evidence;
+    shown_type: Optional[str] = None     # entity_repair.shown); None: `name` / `type`. Never decide identity.
 
     # v10.13.9: worked out once an entity (its name, type, maker and fields never change once made); a pair's rules
     # read them many times (the decisions spent most of their time parsing the same names again)
@@ -176,13 +189,39 @@ class Ent:
         return N.grams(self.sq)
 
 
+class Redirects(dict):
+    """from -> (to, automatic), counting its changes (0164: the clusters read through it are kept until it changes)."""
+    rev = 0
+
+    def __setitem__(self, k: Any, v: Any) -> None:
+        self.rev += 1
+        super().__setitem__(k, v)
+
+    def __delitem__(self, k: Any) -> None:
+        self.rev += 1
+        super().__delitem__(k)
+
+    def pop(self, *a: Any) -> Any:
+        self.rev += 1
+        return super().pop(*a)
+
+    def update(self, *a: Any, **kw: Any) -> None:
+        self.rev += 1
+        super().update(*a, **kw)
+
+
+VERSION_LEVELS = ("version", "variant", "checkpoint")
+ORGISH = ("org", "person")
+
+
 class Book:
     """The entities, aliases, current redirects and pins, read once a run (or once a request)."""
 
     def __init__(self) -> None:
         self.ents: Dict[str, Ent] = {}
         self.alias: Dict[str, str] = {}
-        self.redirect: Dict[str, Tuple[str, bool]] = {}      # from -> (to, automatic)
+        self.redirect: Dict[str, Tuple[str, bool]] = Redirects()   # from -> (to, automatic)
+        self.types: Dict[str, Counter] = {}                  # 0164: entity -> its current mentions' types, counted
         self.pins: Dict[Tuple[str, str, int], str] = {}
         self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # 0133: (post, name key): (guide, its pin)
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
@@ -207,36 +246,109 @@ class Book:
 
     def cluster_size(self, root: str) -> int:
         """len(members()[root]) without walking every entity (v10.13.9: a merge asked it of the whole book each
-        time): the entities whose redirects lead to `root`, read from the current redirects (never cached, so an
-        undo or a merge in between is always seen)."""
-        into: Dict[str, List[str]] = defaultdict(list)
-        for frm, (to, _) in self.redirect.items():
-            into[to].append(frm)
-        seen, todo, n = {root}, [root], 0
+        time): the entities whose redirects lead to `root`, read from the current redirects (an undo or a merge in
+        between is always seen)."""
+        return len(self.cluster(root))
+
+    def _into(self) -> Dict[str, List[str]]:
+        """{to: [from]} of the current redirects; kept while they don't change (0164: Redirects counts its changes;
+        a plain dict is read again each time)."""
+        rev = (id(self.redirect), getattr(self.redirect, "rev", None), len(self.redirect))
+        got = self.__dict__.get("_into_cache")
+        if got is None or got[0] != rev or rev[1] is None:
+            into: Dict[str, List[str]] = defaultdict(list)
+            for frm, (to, _) in self.redirect.items():
+                into[to].append(frm)
+            got = (rev, into)
+            self.__dict__["_into_cache"] = got
+        return got[1]
+
+    def cluster(self, root: str) -> List[str]:
+        """The entities whose redirects lead to `root` (root's own included when it is an entity)."""
+        into = self._into()
+        seen, todo, out = {root}, [root], []
         while todo:
             x = todo.pop()
             if x in self.ents and self.root(x) == root:
-                n += 1
+                out.append(x)
             for y in into.get(x, ()):
                 if y not in seen:
                     seen.add(y)
                     todo.append(y)
-        return n
+        return out
+
+    def etype(self, eid: str) -> Optional[str]:
+        """0164: the type most of an entity's current mentions give (as read: schemas.entity_type), else its own."""
+        got = self.types.get(eid)
+        if got:
+            return schemas_type(max(got.items(), key=lambda kv: (kv[1], str(kv[0])))[0])
+        e = self.ents.get(eid)
+        return schemas_type(e.type) if e else None
+
+    def version_parents(self) -> Set[str]:
+        """0164: the entities some version, variant or checkpoint names as its parent (kept; the Writer adds)."""
+        got = self.__dict__.get("_version_parents")
+        if got is None:
+            got = {e.parent for e in self.ents.values() if e.parent and e.level in VERSION_LEVELS}
+            self.__dict__["_version_parents"] = got
+        return got
+
+    def families(self) -> Dict[str, List[str]]:
+        """0164: {key: the `family` entities made for it} (kept; the Writer adds)."""
+        got = self.__dict__.get("_families")
+        if got is None:
+            got = {}
+            for e in self.ents.values():
+                if e.level == "family":
+                    got.setdefault(e.key, []).append(e.id)
+            self.__dict__["_families"] = got
+        return got
+
+    def sides(self, members: Iterable[str]) -> Tuple[Set[str], Set[str]]:
+        """0164: (a cluster's family side, its org side). The family side: a `family` entity, or one a version names
+        as its parent, whose mentions are mostly not an org or person; and a name that is a family name with words
+        in front ("Zentra Vela" beside the family "Vela"), whatever its mentions' type. The org side: an org or
+        person that is neither."""
+        ms = [m for m in members if m in self.ents]
+        vp = self.version_parents()
+        fam = {m for m in ms if (self.ents[m].level == "family" or m in vp) and self.etype(m) not in ORGISH}
+        keys = {self.ents[m].key for m in fam if len(self.ents[m].key) >= 3}
+        fam |= {m for m in ms if any(self.ents[m].key.endswith(" " + k) for k in keys)}
+        org = {m for m in ms if m not in fam and self.etype(m) in ORGISH}
+        return fam, org
+
+    def org_like(self, root: str) -> bool:
+        """0164: a cluster that is an org (or person) and holds no family."""
+        fam, org = self.sides(self.cluster(root))
+        return bool(org) and not fam
+
+    def label(self, eid: Optional[str]) -> Optional[str]:
+        """0164: the name an entity's cluster is shown under (its root's shown name, else its name)."""
+        r = self.root(eid)
+        e = self.ents.get(r) if r else None
+        return None if e is None else (e.shown_name or e.name)
+
+    def shown_type(self, eid: Optional[str]) -> Optional[str]:
+        """0164: the type an entity's cluster is shown under (as read)."""
+        r = self.root(eid)
+        e = self.ents.get(r) if r else None
+        return None if e is None else schemas_type(e.shown_type or e.type)
 
 
 def load_book(cur: Any) -> Book:
     b = Book()
     cur.execute("""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
-                          size, build, status, first_seen FROM mx_entities""")
+                          size, build, status, first_seen, shown_name, shown_type FROM mx_entities""")
     for (eid, type_, name, key, level, parent, maker, fam, version, vkey, variant, size, build, status,
-         first) in cur.fetchall():
+         first, shown_name, shown_type) in cur.fetchall():
         b.ents[eid] = Ent(eid, type_, name, key, level, parent, maker, fam, version, N.from_json(vkey), variant, size,
                           build, status, first, haiku={"family": fam, "version": version, "variant": variant,
-                                                       "size": size, "build": build})
+                                                       "size": size, "build": build},
+                          shown_name=shown_name, shown_type=shown_type)
     cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases")
     b.alias = dict(cur.fetchall())
     cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
-    b.redirect = {f: (t, auto) for f, t, auto in cur.fetchall()}
+    b.redirect = Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
     cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
     b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
     cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
@@ -247,8 +359,10 @@ def load_book(cur: Any) -> Book:
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
-    cur.execute("SELECT DISTINCT entity_id::text FROM mx_mentions_now WHERE entity_id IS NOT NULL")
-    b.mentioned = {r[0] for r in cur.fetchall()} | set(b.pins.values())
+    cur.execute("SELECT entity_id::text, type, count(*) FROM mx_mentions_now WHERE entity_id IS NOT NULL GROUP BY 1, 2")
+    for eid, type_, n in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read, as the DISTINCT was)
+        b.types.setdefault(eid, Counter())[type_] += n
+    b.mentioned = set(b.types) | set(b.pins.values())
     return b
 
 
@@ -338,6 +452,10 @@ class Writer:
                                   first_seen, haiku=dict(fields))
         self.alias(key, eid, name)
         self.made.append(eid)
+        if parent and level in VERSION_LEVELS:
+            self.book.version_parents().add(parent)
+        if level == "family":
+            self.book.families().setdefault(key, []).append(eid)
         return eid
 
     def alias(self, key: str, eid: str, name: str, source: str = "rule", call_id: Any = None) -> None:
@@ -376,6 +494,10 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     parent = None
     if fam_key and fam_key != key:
         parent = w.book.root(w.book.by_key(fam_key))
+        if parent is not None and w.book.org_like(parent):
+            # 0164: an org (or person) is never a version's family: the family entity of that name under it
+            parent = family_under(w, parent, fam_key, m.type, maker, first,
+                                  (m.fields.get("family") or "").strip() if N.has_version(hk) else "")
         if parent is None:
             fam_name = (m.fields.get("family") or "").strip() if N.has_version(hk) else ""
             if not fam_name or N.key(fam_name) != fam_key:
@@ -386,6 +508,43 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     fields = dict(m.fields) if N.has_version(hk) else dict(N.parse(m.name, m.type, m.maker))
     return w.entity(type_=m.type, name=m.name, key=key, level=_level(hk, pk), parent=parent, maker=maker,
                     fields=fields, first_seen=first)
+
+
+def maker_root(book: Book, maker: Optional[str]) -> Optional[str]:
+    """0164: the cluster a stated maker's name aliases (None: no entity of that name)."""
+    k = N.key(maker)
+    return book.root(book.by_key(k)) if k else None
+
+
+def same_maker(book: Book, x: Optional[str], y: Optional[str]) -> bool:
+    """0164: two stated makers name one maker: the same key, or keys of one cluster ("Zentra AI" merged into Zentra)."""
+    kx, ky = N.key(x), N.key(y)
+    if kx == ky:
+        return True
+    rx, ry = maker_root(book, x), maker_root(book, y)
+    return rx is not None and rx == ry
+
+
+def family_under(w: Writer, org: str, fam_key: str, type_: Optional[str], maker: Optional[str],
+                 first: Optional[datetime], fam_name: str = "") -> str:
+    """0164: the family a version names when its family's name is an org's ("Zentra 5" by Zentra, the org Zentra):
+    a `family` entity of that key outside any org cluster, else one made under the org (parent the org; its key's
+    alias stays the org's, so the org's own mentions stay the org's)."""
+    book = w.book
+    for eid in book.families().get(fam_key, ()):
+        r = book.root(eid)
+        e = book.ents[eid]
+        if e.status == "not_entity" or book.org_like(r):
+            continue
+        if maker and e.maker and not same_maker(book, maker, e.maker):   # another maker's family of that name
+            continue
+        return r
+    o = book.ents[org]
+    if not fam_name or N.key(fam_name) != fam_key:
+        fam_name = next((book.ents[x].name for x in book.cluster(org) if book.ents[x].key == fam_key), fam_key)
+    t = type_ if schemas_type(type_) not in ORGISH else "model"
+    return w.entity(type_=t, name=fam_name, key=fam_key, level="family", parent=org, maker=maker or o.name,
+                    fields=dict(N.NONE), first_seen=first)
 
 
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:
@@ -890,7 +1049,27 @@ def rules_of(cur: Any, book: Book, p: Pooled, handle_extra: Dict[Tuple[str, str]
         auto.add("fields")
     elif fr == "queue":
         queue.add("fields_parser")
+    if family_version(book, a, b):
+        auto.add("family_version")
     return auto, queue
+
+
+def _vsig(e: Ent) -> Tuple:
+    return N.version_part(e.hk) if N.has_version(e.hk) else N.version_part(e.pk)
+
+
+def family_version(book: Book, a: Ent, b: Ent) -> bool:
+    """0164: two versions of one family (their families' clusters are one: "Vela 5" of the family Vela and "Zentra
+    Vela 5" of the family Zentra Vela once those merged) stating the same version, variant, size and build, in Haiku's
+    fields and the parser's, and the same maker or one side none."""
+    if a.level not in VERSION_LEVELS or b.level not in VERSION_LEVELS or not a.parent or not b.parent:
+        return False
+    if book.root(a.parent) != book.root(b.parent):
+        return False
+    if a.maker and b.maker and not same_maker(book, a.maker, b.maker):
+        return False
+    va, vb = _vsig(a), _vsig(b)
+    return any(x is not None for x in va) and va == vb and N.version_part(a.pk) == N.version_part(b.pk)
 
 
 def decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: Optional[Dict[str, Any]],
@@ -899,7 +1078,26 @@ def decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: O
     """0119 A1's merge rules for one pool pair, before the chain guard. tier 'ask': Haiku hasn't answered yet.
     0130 A2: a held-back `same` whose reasons all have a second opinion on (entity_bands.json) is asked again
     (`ask2`); two agreeing `same` at or above the second opinion's bar merge ('second'), a disagreement stays queued
-    with the second answer (`second`) for the queue to mark."""
+    with the second answer (`second`) for the queue to mark.
+    0164: an org (or person) and a product family are never merged automatically, read on their clusters
+    (`org_family`): such a merge goes to the queue ('type')."""
+    d = _decide_pair(book, p, auto, queue, judge, call_id, second, second_call)
+    if d.tier == "auto" and org_family(book, p.a, p.b):
+        d.tier, d.reason = "queue", "type"
+        d.reasons = tuple(dict.fromkeys(("type", "org_family") + tuple(d.reasons)))
+    return d
+
+
+def org_family(book: Book, a: str, b: str) -> bool:
+    """0164: one side's cluster holds a product family and the other's an org or person (Book.sides)."""
+    fa, oa = book.sides(book.cluster(book.root(a)))
+    fb, ob = book.sides(book.cluster(book.root(b)))
+    return bool((fa and ob) or (oa and fb))
+
+
+def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: Optional[Dict[str, Any]],
+                 call_id: Optional[str], second: Optional[Dict[str, Any]] = None,
+                 second_call: Optional[str] = None) -> Decision:
     a, b = book.ents[p.a], book.ents[p.b]
     k = (p.a, p.b)
     literal = bool({"squash", "maker_prefix"} & auto)

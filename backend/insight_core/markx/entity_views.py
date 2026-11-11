@@ -84,9 +84,15 @@ def _story_heads(cur: Any, sids: Iterable[str]) -> Dict[str, Optional[str]]:
 def _ent_view(book: I.Book, eid: str) -> Dict[str, Any]:
     from insight_core.markx import schemas
     e = book.ents[eid]
-    return {"id": e.id, "name": e.name, "type": schemas.entity_type(e.type), "maker": e.maker, "level": e.level,
-            "version": e.version, "variant": e.variant, "size": e.size, "build": e.build, "status": e.status,
-            "family": _family_of(book, eid)}
+    root = book.root(eid) == eid
+    # 0164: a cluster is shown under its root's shown name and type (by evidence), its maker as the maker's entity
+    # (the stated maker's name read through its alias: "Zentra AI" shows as the org Zentra when they are one)
+    mk = I.maker_root(book, e.maker) if e.maker else None
+    return {"id": e.id, "name": book.label(eid) if root else e.name,
+            "type": book.shown_type(eid) if root else schemas.entity_type(e.type),
+            "maker": book.label(mk) if mk in book.ents else e.maker, "maker_id": mk if mk in book.ents else None,
+            "level": e.level, "version": e.version, "variant": e.variant, "size": e.size, "build": e.build,
+            "status": e.status, "family": _family_of(book, eid)}
 
 
 def _family_of(book: I.Book, eid: str) -> Optional[Dict[str, str]]:
@@ -94,7 +100,7 @@ def _family_of(book: I.Book, eid: str) -> Optional[Dict[str, str]]:
     if e.level in ("version", "variant", "checkpoint") and e.parent:
         f = book.root(e.parent)
         if f in book.ents:
-            return {"id": f, "name": book.ents[f].name}
+            return {"id": f, "name": book.label(f)}
     return None
 
 
@@ -188,7 +194,7 @@ def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any
         root = book.root(book.pins.get((pid, g, n), eid)) if eid else None
         if all(x.get("id") != root or root is None for x in now[pid]):
             now[pid].append({"id": root if root in book.ents else None,
-                             "name": book.ents[root].name if root in book.ents else name, "type": schemas_type(type_)})
+                             "name": book.label(root) if root in book.ents else name, "type": schemas_type(type_)})
     posts = _posts(cur, pids)
     out = [{**{k: (posts.get(pid) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "url")},
             "id": pid, "guide": guide, "span": span, "now": now.get(pid, [])} for pid, guide, span in rows]
@@ -344,7 +350,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     if fam_root:
         kids = [x for x, ent in book.ents.items() if ent.parent and book.root(ent.parent) == fam_root
                 and book.root(x) == x and ent.status != "not_entity"]
-        versions = sorted(({"id": x, "name": book.ents[x].name, "version": book.ents[x].version,
+        versions = sorted(({"id": x, "name": book.label(x), "version": book.ents[x].version,
                             "variant": book.ents[x].variant, "level": book.ents[x].level} for x in kids),
                           key=lambda v: (tuple((0, x, "") if isinstance(x, int) else (1, 0, str(x))
                                                for x in (book.ents[v["id"]].version_key or ())), v["name"]),
@@ -357,8 +363,8 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
             **original(cur, book, root),   # 0138: its original first, and its other addresses
             "aliases": sorted(book.ents[m].name for m in members),
-            "maker": {"id": maker, "name": book.ents[maker].name} if maker in book.ents else None,
-            "family": ({"id": fam_root, "name": book.ents[fam_root].name} if fam_root and fam_root != root else None),
+            "maker": {"id": maker, "name": book.label(maker)} if maker in book.ents else None,
+            "family": ({"id": fam_root, "name": book.label(fam_root)} if fam_root and fam_root != root else None),
             "versions": versions, "posts": len(lines), "voices": len(sources),
             "stories": blocks, "loose": [line(p) for p in loose], "loose_counts": groups_n,   # 0144 B2-B4
             "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
@@ -402,7 +408,7 @@ def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str
 
 def _documents(cur: Any, book: I.Book, members: Set[str], lines: Dict[str, Dict[str, Any]], line: Any) -> Dict[str, Any]:
     by, works = published_edges(cur, book, members)
-    ref = lambda e: {"id": e, "name": book.ents[e].name, "type": schemas_type(book.ents[e].type)}
+    ref = lambda e: {"id": e, "name": book.label(e), "type": book.shown_type(e)}
     newest = lambda role: [line(p) for p in sorted((p for p, ln in lines.items() if role in ln["roles"]),
                                                    key=lambda p: (-lines[p]["at"].timestamp(), p))]
     return {"published_by": [ref(e) for e in by], "published": [ref(e) for e in works],
@@ -506,5 +512,5 @@ def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str,
     for eid, day, voices, pid in rows:
         root = book.root(eid) or eid
         if root in book.ents and not any(x["id"] == root for x in out[pid]):
-            out[pid].append({"id": root, "name": book.ents[root].name, "day": day.isoformat(), "voices": voices})
+            out[pid].append({"id": root, "name": book.label(root), "day": day.isoformat(), "voices": voices})
     return dict(out)

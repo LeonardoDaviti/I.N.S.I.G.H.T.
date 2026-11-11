@@ -90,7 +90,7 @@ def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]
     want: Dict[Tuple[str, date], Dict[str, Any]] = {}
     for (ent, day), row in acc.items():
         if len(row["voices"]) >= MIN_VOICES:
-            via = sorted(({"entity": c, "name": book.ents[c].name if c in book.ents else None, "posts": len(ps)}
+            via = sorted(({"entity": c, "name": book.label(c) if c in book.ents else None, "posts": len(ps)}
                           for c, ps in row["via"].items()), key=lambda v: (-v["posts"], v["name"] or ""))
             want[(ent, day)] = {"voices": len(row["voices"]), "posts": len(row["posts"]),
                                 "evidence": {"posts": sorted(row["posts"]), "via": via}}
