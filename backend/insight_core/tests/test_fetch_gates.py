@@ -13,7 +13,15 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.ingestion.gates import HOST_FLOORS, FetchGates, HostLimiter, StartSpacer, interleave_by_host
+from insight_core.ingestion.gates import (
+    HOST_FLOORS,
+    RUN_HOST_BUDGET_S,
+    FetchGates,
+    HostLimiter,
+    StartSpacer,
+    interleave_by_host,
+    over_host_budget,
+)
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
@@ -208,6 +216,33 @@ class InterleaveTests(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(interleave_by_host([]), [])
+
+
+class HostBudgetPerRunTests(unittest.TestCase):
+    """Every source at its own pace (2026-11-11): one run gives a host at most RUN_HOST_BUDGET_S of spacing."""
+
+    def _split(self, items, gaps, budget_s=RUN_HOST_BUDGET_S):
+        return over_host_budget(items, lambda item: item[0], lambda item, host: gaps.get(host, 0.0), budget_s)
+
+    def test_the_telegram_bridge_at_its_floor_fetches_all_its_channels_in_one_run(self):
+        channels = [("telegram.local", i) for i in range(60)]
+        kept, deferred = self._split(channels, {"telegram.local": 5.0})
+        self.assertEqual((len(kept), deferred), (60, []), "60 channels spaced 5 s: under 5 minutes")
+
+    def test_a_host_that_limited_us_gets_its_share_and_the_rest_wait_oldest_first(self):
+        tweets = [("nitter.local", i) for i in range(20)]
+        kept, deferred = self._split(tweets + [("a.test", 0)], {"nitter.local": 120.0})
+        # 15 minutes at a learned 120 s gap: the first source plus 7 more.
+        self.assertEqual([i for h, i in kept if h == "nitter.local"], list(range(8)))
+        self.assertEqual(deferred, tweets[8:])
+        self.assertIn(("a.test", 0), kept, "other hosts are not held back")
+
+    def test_a_host_with_no_spacing_is_never_capped(self):
+        many = [("github.com", i) for i in range(500)]
+        self.assertEqual(self._split(many, {}), (many, []))
+
+    def test_a_hosts_first_source_always_goes(self):
+        self.assertEqual(self._split([("slow.test", 0)], {"slow.test": 10_000.0}, budget_s=60), ([("slow.test", 0)], []))
 
 
 class SlotTests(unittest.IsolatedAsyncioTestCase):

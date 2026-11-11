@@ -119,7 +119,7 @@ def _error_text(error: Optional[str]) -> Optional[str]:
 # cadence_sample_size counts DISTINCT publication timestamps, not posts: a feed that stamps
 # a whole batch with one time (4 live sources did on 2026-10-09) has a mean gap of 0, and
 # the backlog guard would then poll it hourly. One distinct timestamp is no cadence signal,
-# so such a source stays `unknown` (24h probation) instead.
+# so such a source stays `unknown` (probation, schedule.PROBATION_INTERVAL) instead.
 _REFRESH_CADENCE_SQL = """
 WITH ranked AS (
     SELECT source_id, published_at,

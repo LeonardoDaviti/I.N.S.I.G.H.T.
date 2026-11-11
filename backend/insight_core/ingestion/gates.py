@@ -179,6 +179,43 @@ def interleave_by_host(sources: list[dict], host_key: Callable[[dict], str] = so
     return ordered
 
 
+# One run gives a host at most this much of its spacing (issue: every source at its own pace,
+# 2026-11-11): at a host's floor that is far more sources than any host has (the Telegram bridge
+# at 5 s: 180), so it only binds when the host has limited us and its learned gap grew (120 s: 7
+# a run). The rest wait for the next tick, oldest due first, instead of stretching one tick past
+# the next.
+RUN_HOST_BUDGET_S = env_float("INSIGHT_RUN_HOST_BUDGET_SECONDS", 15 * 60, minimum=0.0)
+
+
+def over_host_budget(
+    due: list,
+    host_key: Callable[[object], str],
+    spacing: Callable[[object, str], float],
+    budget_s: float = RUN_HOST_BUDGET_S,
+) -> tuple[list, list]:
+    """Split `due` (oldest due first) into what this run fetches and what waits for the next one.
+
+    A host's first source always goes; each further one costs its spacing (the seconds its slot
+    waits after the one before: the host's gap or the source's own delay), and goes while the host's
+    spacing this run stays within budget_s. Order within each part is kept.
+    """
+    spent: dict[str, float] = {}
+    kept, deferred = [], []
+    for item in due:
+        host = host_key(item)
+        if host not in spent:
+            spent[host] = 0.0
+            kept.append(item)
+            continue
+        cost = max(0.0, float(spacing(item, host) or 0.0))
+        if spent[host] + cost <= budget_s:
+            spent[host] += cost
+            kept.append(item)
+        else:
+            deferred.append(item)
+    return kept, deferred
+
+
 class FetchGates:
     """Process-wide fetch politeness: global budget, yt-dlp pool + spacer, per-host limiter."""
 
