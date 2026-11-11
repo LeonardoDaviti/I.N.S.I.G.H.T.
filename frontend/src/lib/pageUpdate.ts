@@ -8,9 +8,9 @@ import type { PageUpdate } from '../services/api';
 import { feedDateLabel, toDate } from './dates.ts';
 import { plural } from './format.ts';
 
-const DAY = 24 * 60 * 60_000;
-/** A post first seen this long after its date was new to you: the row says when it was published. */
-export const LATE_FIND_MS = 2 * DAY;
+/** A post sorted this long after its date (surfaced: first seen 2+ days late, or added to its feed after INSIGHT's
+ * previous read, v10.13.13): the row says when it was published. */
+export const LATE_FIND_MS = 60 * 60_000;
 
 /** "+2 sections, +1,400 words"; "−300 words" when the page mostly lost text. */
 export function updateChanges(update: PageUpdate): string {

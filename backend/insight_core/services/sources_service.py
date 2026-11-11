@@ -122,7 +122,8 @@ class SourcesService:
                 old = self.repo.get_source_by_id(cur, source_id)
                 if old is None or not self.repo.set_address(cur, source_id, handle, page_watch):
                     raise LookupError(f"Source {source_id} not found")
-                FetchStateRepository().clear_failures(cur, source_id)
+                FetchStateRepository().clear_failures(cur, source_id,
+                                                      new_address=old["handle_or_url"] != handle)
                 # The address it left is no source now: an import never adds it back (issue 0072).
                 if old["handle_or_url"] != handle:
                     self.repo.remember_removed(cur, old["platform"], old["handle_or_url"])

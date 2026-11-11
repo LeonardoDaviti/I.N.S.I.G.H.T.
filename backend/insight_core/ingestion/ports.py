@@ -328,7 +328,8 @@ class DbLiveFetchDue:
 
 
 class DbPostSaver:
-    """PostsRepository.save_batch on a fresh connection (save_batch owns the transaction)."""
+    """PostsRepository.save_batch on a fresh connection (save_batch owns the transaction). The
+    runner's saver: its drafts are a live read's (save_batch live)."""
 
     def __init__(self, db_url: str, repo: Optional[PostsRepository] = None) -> None:
         self.db_url = db_url
@@ -338,7 +339,7 @@ class DbPostSaver:
         if not drafts:
             return SaveBatchResult()
         with db.connection(self.db_url) as conn:
-            return self.repo.save_batch(conn, drafts)
+            return self.repo.save_batch(conn, drafts, live=True)
 
 
 # --------------------------------------------------------------------------- watched pages

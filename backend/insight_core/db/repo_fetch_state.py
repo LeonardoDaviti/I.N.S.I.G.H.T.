@@ -350,17 +350,21 @@ class FetchStateRepository:
         )
         return (cur.rowcount or 0) > 0
 
-    def clear_failures(self, cur: Cursor, source_id: str) -> None:
-        """A source switched to a new address starts clean: no failures, backoff or finding."""
+    def clear_failures(self, cur: Cursor, source_id: str, *, new_address: bool = False) -> None:
+        """A source switched to a new address starts clean: no failures, backoff or finding. At a new
+        address it has no successful read either (last_success_at cleared): the new address's first
+        read is a first fetch, its backlog never new to you (repo_posts ADDED_LATE_SLACK, issue 0039),
+        and it is due at once."""
         cur.execute(
             """
             UPDATE source_fetch_state
                SET consecutive_failures = 0, next_retry_at = NULL, last_outcome = NULL,
                    last_error = NULL, last_error_at = NULL, doctor_checked_at = NULL,
-                   doctor_finding = NULL, updated_at = now()
+                   doctor_finding = NULL, updated_at = now(),
+                   last_success_at = CASE WHEN %s THEN NULL ELSE last_success_at END
              WHERE source_id = %s
             """,
-            (str(source_id),),
+            (new_address, str(source_id)),
         )
 
     def load_validators(self, cur: Cursor, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]:
