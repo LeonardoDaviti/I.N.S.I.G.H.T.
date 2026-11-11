@@ -59,7 +59,7 @@ def of(cur: Any, book: I.Book, root: str, *, works: List[str], people: List[str]
         picked = R.pick((k, u, r, at) for k, u, r, at, _ in found.get(w, ()))
         orig = R.original_of(picked)
         urls += [v[0] for k, v in picked.items() if k in SITE_KINDS]
-        work_rows.append({"id": w, "name": book.ents[w].name, "url": orig[1] if orig else None,
+        work_rows.append({"id": w, "name": book.label(w), "url": orig[1] if orig else None,
                           "kind": orig[0] if orig else None})
     sites = _sites(urls)
     stored_urls = [w["url"] for w in work_rows if w["url"]] + sites
@@ -85,7 +85,7 @@ def of(cur: Any, book: I.Book, root: str, *, works: List[str], people: List[str]
             label = (tests.get(h) or tests.get(site_of(h)) or {}).get("label")
             state = "feed" if label == "feed" else "page" if label == "page" else "untested"
         site_rows.append({"url": front, "host": h, "state": state})
-    people_rows = [{"id": p, "name": book.ents[p].name} for p in people
+    people_rows = [{"id": p, "name": book.label(p)} for p in people
                    if p in book.ents and schemas.entity_type(book.ents[p].type) == "person"]
     left = {"sites": sum(1 for s in site_rows if s["state"] not in ("followed", "stored")),
             "works": sum(1 for w in work_rows if w["url"] and not w["stored"])}
@@ -123,7 +123,7 @@ def discover_rows(cur: Any, *, limit: int = 12) -> List[Dict[str, Any]]:
         hole = of(cur, book, r, works=sorted(works[r]), people=[], posts=0, followed=followed, follow_tests=tests)
         if not hole or not (hole["left"]["sites"] or hole["left"]["works"]):
             continue
-        out.append({"entity": {"id": r, "name": book.ents[r].name}, "sites": len(hole["sites"]),
+        out.append({"entity": {"id": r, "name": book.label(r)}, "sites": len(hole["sites"]),
                     "not_followed": hole["left"]["sites"], "works_not_stored": hole["left"]["works"]})
     out.sort(key=lambda x: (-(x["not_followed"] + x["works_not_stored"]), x["entity"]["name"]))
     return out[:limit]

@@ -270,7 +270,8 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
                JOIN posts p ON p.id = mm.post_id
               GROUP BY mb.root
         )
-        SELECT e.id::text, e.name, e.type, COALESCE(e.maker, pe.name), COALESCE(c.posts, 0), COALESCE(c.voices, 0),
+        SELECT e.id::text, COALESCE(e.shown_name, e.name), COALESCE(e.shown_type, e.type),   -- 0164: as shown
+               COALESCE(e.maker, pe.shown_name, pe.name), COALESCE(c.posts, 0), COALESCE(c.voices, 0),
                s.matched
           FROM scored s
           JOIN mx_entities e ON e.id = s.id
