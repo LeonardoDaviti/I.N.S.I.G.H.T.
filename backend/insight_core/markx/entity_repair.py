@@ -24,6 +24,10 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
      (or the other way round) in at least `min_posts` posts, merge (rule 'corp_suffix'); squashed-equal orgs (a maker
      made for the hierarchy alone is never pooled) merge as the squash rule does. Without the posts, nothing: the
      existing alias questions decide (a suffix alone is ambiguous: "Moon" / "Moon AI"). The full pass only.
+  1b. `product_accounts` (0164 B): a name typed an org that is a product account's ("Zentra Vela": its family Vela's
+     maker in front of the family's name; identity.Book.product_of) merges into its family (rule 'product_account'),
+     never left an org; its shown type is the family's. Step 1 has cut it out of the maker's cluster first (Book.sides
+     counts it on the family side).
   5. `shown`: the name and type each cluster is shown under, by evidence (mx_entities.shown_name, shown_type, on the
      root): the member name the most distinct sources write (then posts), counting no span written as a handle nor
      a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
@@ -48,6 +52,7 @@ from insight_core.markx import names as N
 log = logging.getLogger(__name__)
 
 UNDO_LIMIT = 200          # redirects a run undoes (org_family)
+PRODUCT_LIMIT = 500       # product accounts a run merges into their family (product_accounts)
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
 SUFFIX_LIMIT = 200        # suffix pairs a run checks against the posts
@@ -60,7 +65,8 @@ SHOWN_TYPE_MIN = 5
 
 def config() -> Dict[str, Any]:
     got = I.bands().get("repairs") or {}
-    return {"org_family": got.get("org_family", True), "reparent": got.get("reparent", True),
+    return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
+            "reparent": got.get("reparent", True),
             "families": got.get("families", True), "suffix": got.get("suffix", True),
             "suffix_min_posts": int(got.get("suffix_min_posts", 2)), "shown": got.get("shown", True)}
 
@@ -156,10 +162,7 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
     undone and made again between the owner's two names (by 'owner', its queue item, `repointed_from`), so the owner's
     answer holds exactly."""
     out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
-    cur.execute("""SELECT r.from_id::text, r.id::text, r.to_id::text, r.by, q.id::text, q.a::text, q.b::text
-                     FROM mx_entity_redirects r LEFT JOIN mx_entity_queue q ON q.id = r.queue_id
-                    WHERE r.undone_at IS NULL""")
-    rows = {f: (rid, t, by, qid, qa, qb) for f, rid, t, by, qid, qa, qb in cur.fetchall()}
+    rows = redirect_rows(cur)
     owner = _owner_same(cur)
     for root, ms in sorted(book.members().items()):
         if len(ms) < 2 or out["undone"] >= limit:
@@ -169,41 +172,131 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
             continue
         out["clusters"] += 1
         members = sorted(ms)
-        edges = []   # (one name, the other, the owner's, its redirect's from)
-        for f in members:
-            if f not in book.redirect or f not in rows:
-                continue
-            rid, to, by, qid, qa, qb = rows[f]
-            mine = by == "owner"
-            x, y = (qa, qb) if mine and qa in ms and qb in ms else (f, to)
-            edges.append((x, y, mine or I.pair(f, to) in owner, f))
+        edges = cluster_edges(book, members, rows, owner)
         cuts = _cuts(members, [(x, y, o) for x, y, o, _ in edges], fam, org)
         if cuts is None:
             out["held"] += 1
             continue
-        comp = _components(members, [(x, y) for k, (x, y, _, _) in enumerate(edges) if k not in cuts])
         why = {"why": "org_family", "run": str(run_id) if run_id else None,
                "family": sorted(book.ents[x].name for x in fam), "org": sorted(book.ents[x].name for x in org)}
-        again = []
-        for k, (x, y, mine, f) in enumerate(edges):
-            rid, to = rows[f][0], rows[f][1]
-            if comp.get(f) == comp.get(to):
-                continue                     # this redirect stays inside one side
-            note = dict(why, repoint=k not in cuts)
-            cur.execute("""UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'repair',
-                                  evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('undone', %s::jsonb)
-                            WHERE id = %s AND undone_at IS NULL""", (json.dumps(note), rid))
-            if cur.rowcount:
-                book.redirect.pop(f, None)
-                if k in cuts:
-                    out["undone"] += 1
-                else:
-                    again.append((x, y, rid, rows[f][3]))
-        for x, y, rid, qid in again:         # the owner's answers, made again between the owner's two names
-            if I.merge(cur, book, x, y, by="owner", automatic=False, queue_id=qid, run_id=run_id,
-                       evidence={"queue": qid, "repointed_from": rid, "why": "org_family"}):
-                out["repointed"] += 1
+        undone, repointed = apply_cuts(cur, book, members, edges, cuts, rows, why=why, undone_by="repair",
+                                       run_id=run_id)
+        out["undone"] += len(undone)
+        out["repointed"] += repointed
     return dict(out)
+
+
+def redirect_rows(cur: Any) -> Dict[str, Tuple[str, str, str, Optional[str], Optional[str], Optional[str]]]:
+    """{from: (redirect id, to, by, its queue item, the item's a, b)} of the current redirects."""
+    cur.execute("""SELECT r.from_id::text, r.id::text, r.to_id::text, r.by, q.id::text, q.a::text, q.b::text
+                     FROM mx_entity_redirects r LEFT JOIN mx_entity_queue q ON q.id = r.queue_id
+                    WHERE r.undone_at IS NULL""")
+    return {f: (rid, t, by, qid, qa, qb) for f, rid, t, by, qid, qa, qb in cur.fetchall()}
+
+
+def cluster_edges(book: I.Book, members: List[str], rows: Dict[str, Tuple], owner: Set[Tuple[str, str]]
+                  ) -> List[Tuple[str, str, bool, str]]:
+    """A cluster's merges as edges (one name, the other, the owner's, its redirect's from): a rule's or Haiku's
+    between the two roots it redirected, the owner's between the two names the owner answered."""
+    ms = set(members)
+    edges = []
+    for f in members:
+        if f not in book.redirect or f not in rows:
+            continue
+        rid, to, by, qid, qa, qb = rows[f]
+        mine = by == "owner"
+        x, y = (qa, qb) if mine and qa in ms and qb in ms else (f, to)
+        edges.append((x, y, mine or I.pair(f, to) in owner, f))
+    return edges
+
+
+def apply_cuts(cur: Any, book: I.Book, members: List[str], edges: List[Tuple[str, str, bool, str]], cuts: List[int],
+               rows: Dict[str, Tuple], *, why: Dict[str, Any], undone_by: str, run_id: Any = None
+               ) -> Tuple[List[str], int]:
+    """The cut edges' redirects undone (`undone_by`, the why in evidence.undone); an owner's redirect crossing the cut
+    only because it went root to root is re-pointed (undone, made again between the owner's two names). (The
+    redirects undone by the cut, how many re-pointed.)"""
+    comp = _components(members, [(x, y) for k, (x, y, _, _) in enumerate(edges) if k not in cuts])
+    undone: List[str] = []
+    again = []
+    for k, (x, y, mine, f) in enumerate(edges):
+        rid, to = rows[f][0], rows[f][1]
+        if comp.get(f) == comp.get(to):
+            continue                     # this redirect stays inside one side
+        note = dict(why, repoint=k not in cuts)
+        cur.execute("""UPDATE mx_entity_redirects SET undone_at = now(), undone_by = %s,
+                              evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('undone', %s::jsonb)
+                        WHERE id = %s AND undone_at IS NULL""", (undone_by, json.dumps(note, default=str), rid))
+        if cur.rowcount:
+            book.redirect.pop(f, None)
+            if k in cuts:
+                undone.append(rid)
+            else:
+                again.append((x, y, rid, rows[f][3]))
+    repointed = 0
+    for x, y, rid, qid in again:         # the owner's answers, made again between the owner's two names
+        if I.merge(cur, book, x, y, by="owner", automatic=False, queue_id=qid, run_id=run_id,
+                   evidence={"queue": qid, "repointed_from": rid, "why": why.get("why")}):
+            repointed += 1
+    return undone, repointed
+
+
+# ---- 1b. a product account made an org ---------------------------------------------------------------------------
+
+def product_accounts(cur: Any, book: I.Book, *, run_id: Any, limit: int = PRODUCT_LIMIT) -> Dict[str, int]:
+    """0164 B on the data already made: an entity typed an org whose name is a product account's (Book.product_of:
+    "Zentra Vela", the family Vela's maker in front of it) merges into its family (rule 'product_account'), when
+    neither cluster holds an org (step 1 cut the automatic links to one; an owner's link is left, `held`) and the
+    owner never kept them apart. Its shown type is the family's (`shown`). Idempotent: once one cluster, skipped."""
+    out = Counter({"accounts": 0, "merged": 0, "held": 0})
+    for e in sorted(book.ents.values(), key=lambda e: e.id):
+        if out["merged"] >= limit:
+            break
+        if " " not in e.key or e.status == "not_entity" or e.level in I.VERSION_LEVELS or book.etype(e.id) != "org":
+            continue
+        fam = book.product_of(e.key)
+        if fam is None:
+            continue
+        out["accounts"] += 1
+        ra, rf = book.root(e.id), book.root(fam)
+        if ra == rf:
+            continue
+        ca, cf = book.cluster(ra), book.cluster(rf)
+        if book.sides(ca)[1] or book.sides(cf)[1] or _never_between(book, ca, cf):
+            out["held"] += 1
+            continue
+        if I.merge(cur, book, ra, rf, by="rule:product_account", automatic=True, run_id=run_id,
+                   evidence={"rules": ["product_account"], "confidence": I.RULE_CONF, "family": book.ents[fam].name,
+                             "repair": True}):
+            out["merged"] += 1
+    return dict(out)
+
+
+# ---- the invariant -------------------------------------------------------------------------------------------------
+
+def family_org(book: I.Book, cur: Any = None, show: int = 10) -> Dict[str, Any]:
+    """0164 C: the clusters holding both a product family and an org or person (Book.sides): 0 once the repair has
+    run, but for the clusters the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by
+    name."""
+    mixed = []
+    for root, ms in book.members().items():
+        if len(ms) < 2 or root not in book.ents:
+            continue
+        fam, org = book.sides(ms)
+        if fam and org:
+            mixed.append((root, fam, org))
+    held = 0
+    if cur is not None and mixed:
+        rows = redirect_rows(cur)
+        owner = _owner_same(cur)
+        for root, fam, org in mixed:
+            members = sorted(book.cluster(root))
+            if _cuts(members, [(x, y, o) for x, y, o, _ in cluster_edges(book, members, rows, owner)], fam, org) is None:
+                held += 1
+    mixed.sort(key=lambda t: (-len(t[1]) - len(t[2]), t[0]))
+    return {"count": len(mixed), "held": held,
+            "clusters": [{"id": r, "name": book.label(r), "family": sorted(book.ents[x].name for x in fam)[:8],
+                          "org": sorted(book.ents[x].name for x in org)[:8]} for r, fam, org in mixed[:show]]}
 
 
 # ---- 2. a version whose family is an org --------------------------------------------------------------------
@@ -241,6 +334,7 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
                          json.dumps({"org": r, "family_key": fk, "org_name": book.ents[r].name}), run_id))
             v.parent = fam
             book.version_parents().add(fam)
+            book.kids()[fam].append(v.id)
             out["versions"] += 1
     out["families_made"] = len(w.made) - made_before
     return dict(out)
@@ -525,10 +619,18 @@ def _type(book: I.Book, root: str, members: List[str], ents: Iterable[I.Ent]) ->
         for t, n in book.types.get(m, {}).items():
             types[I.schemas_type(t)] += n
     base = I.schemas_type(book.ents[root].type)
+    fam, org = book.sides(members)
+    if base in I.ORGISH and root in fam:
+        # 0164 B: a product account at the root ("Zentra Vela" typed an org) is shown as its family's type
+        fams = [f for f in sorted(fam) if book.family_like(f)] or \
+            [f for f in [book.product_of(book.ents[root].key)] if f]
+        base = I.product_type(book, fams[0]) if fams else "model"
     total = sum(types.values())
     if not total:
         return base
     top, n = max(types.items(), key=lambda kv: (kv[1], str(kv[0])))
+    if top in I.ORGISH and fam and not org:
+        return base                      # 0164 B: a family whose org-typed names are its product accounts
     if top != base and n >= SHOWN_TYPE_SHARE * total and total >= SHOWN_TYPE_MIN:
         return top
     if base == "org" and types.get("person", 0) * 3 >= total and \
@@ -630,6 +732,7 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
     out: Dict[str, Any] = {}
     t0 = time.monotonic()
     steps = [("org_family", lambda: undo_org_family(cur, book, run_id=run_id)),
+             ("product_accounts", lambda: product_accounts(cur, book, run_id=run_id)),
              ("reparent", lambda: reparent(cur, book, w, run_id=run_id)),
              ("families", lambda: merge_families(cur, book, run_id=run_id))]
     if full:

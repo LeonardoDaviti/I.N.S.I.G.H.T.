@@ -49,6 +49,10 @@ once for the pages, which read through redirects and pins; the next run's snapsh
     `family_version` (the families "Vela" and "Zentra Vela" once one: "Vela 5" = "Zentra Vela 5");
   - the name and type a cluster is shown under are its root's shown_name / shown_type (Book.label, shown_type),
     chosen by evidence; `name` and `type` stay what it was made as and decide identity.
+  - a product account is not an org (`Book.product_of`): a name typed an org that is its family's maker (or a name of
+    the maker's cluster) in front of a known family ("Zentra Vela", the account of the family Vela by Zentra) is made
+    with the family's type and merged into the family (rule `product_account`), never the org; Book.sides counts it on
+    the family side wherever it is, so the org-family guard and the repair keep it out of the maker's cluster.
 """
 from __future__ import annotations
 
@@ -212,6 +216,11 @@ class Redirects(dict):
 
 VERSION_LEVELS = ("version", "variant", "checkpoint")
 ORGISH = ("org", "person")
+PRODUCT_TYPES = ("model", "product", "software")
+# the last words of an org's name, never a family's ("Zentra Labs" is an org, not the account of a family "Labs")
+CORP_WORDS = frozenset(("ai", "inc", "corporation", "corp", "labs", "lab", "technologies", "holdings", "group",
+                        "research", "foundation", "official", "team", "hq", "news", "dev", "devs", "developers",
+                        "company", "co", "ltd", "llc", "studio", "studios"))
 
 
 class Book:
@@ -227,6 +236,7 @@ class Book:
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
         self.mentioned: Set[str] = set()                     # the entities a mention names (a maker or family made
                                                              # for the hierarchy alone is never a candidate)
+        self.subject: Dict[str, int] = {}                    # 0164 B: entity -> its subject mentions typed a product
 
     def root(self, eid: Optional[str]) -> Optional[str]:
         seen = set()
@@ -293,6 +303,71 @@ class Book:
             self.__dict__["_version_parents"] = got
         return got
 
+    def kids(self) -> Dict[str, List[str]]:
+        """0164 B: {parent: the versions, variants and checkpoints naming it} (kept; the Writer adds)."""
+        got = self.__dict__.get("_kids")
+        if got is None:
+            got = defaultdict(list)
+            for e in self.ents.values():
+                if e.parent and e.level in VERSION_LEVELS:
+                    got[e.parent].append(e.id)
+            self.__dict__["_kids"] = got
+        return got
+
+    def family_like(self, eid: str) -> bool:
+        """0164 B: a product family: a `family` entity or one a version names as its parent, or a name its mentions
+        give as their subject typed a model, product or software; its mentions mostly not an org or person."""
+        e = self.ents.get(eid)
+        if e is None or e.status == "not_entity" or e.level in VERSION_LEVELS:
+            return False
+        t = self.etype(eid)
+        if t in ORGISH:
+            return False
+        return e.level == "family" or eid in self.version_parents() or \
+            (t in PRODUCT_TYPES and self.subject.get(eid, 0) > 0)
+
+    def maker_keys(self, root: str) -> Set[str]:
+        """0164 B: the names (keys) of a family cluster's maker: its members' and their versions' stated makers, its
+        members' parents' clusters, and each stated maker's cluster ("Zentra AI" stated, merged with Zentra: both)."""
+        out: Set[str] = set()
+        stated: Set[str] = set()
+        kids = self.kids()
+        for m in self.cluster(root):
+            e = self.ents[m]
+            if e.level in VERSION_LEVELS:
+                continue
+            for x in [e] + [self.ents[k] for k in kids.get(m, ()) if k in self.ents]:
+                if x.maker and N.key(x.maker):
+                    stated.add(N.key(x.maker))
+            if e.parent:
+                out |= {self.ents[y].key for y in self.cluster(self.root(e.parent))}
+        out |= stated
+        for k in stated:
+            r = self.root(self.by_key(k))
+            if r is not None:
+                out |= {self.ents[y].key for y in self.cluster(r)}
+        return {k for k in out if k}
+
+    def product_of(self, key: str) -> Optional[str]:
+        """0164 B: the family a product account's name names, "<maker> <family>" ("Zentra Vela": the maker Zentra in
+        front of the family Vela): <maker> one of the family's maker's names or the first words of one ("Zentra" of
+        "Zentra AI"), <family> a known product family (`family_like`). Its id, else None. A name ending in an org's
+        word ("Zentra Labs") is never one."""
+        words = (key or "").split()
+        if len(words) < 2 or words[-1] in CORP_WORDS:
+            return None
+        for i in range(1, len(words)):
+            prefix, rest = " ".join(words[:i]), " ".join(words[i:])
+            if len(N.squash(rest)) < 3:
+                continue
+            for c in dict.fromkeys([self.by_key(rest)] + list(self.families().get(rest, ()))):
+                if not c or not self.family_like(c):
+                    continue
+                makers = self.maker_keys(self.root(c))
+                if prefix in makers or any(k.startswith(prefix + " ") for k in makers):
+                    return c
+        return None
+
     def families(self) -> Dict[str, List[str]]:
         """0164: {key: the `family` entities made for it} (kept; the Writer adds)."""
         got = self.__dict__.get("_families")
@@ -314,6 +389,9 @@ class Book:
         fam = {m for m in ms if (self.ents[m].level == "family" or m in vp) and self.etype(m) not in ORGISH}
         keys = {self.ents[m].key for m in fam if len(self.ents[m].key) >= 3}
         fam |= {m for m in ms if any(self.ents[m].key.endswith(" " + k) for k in keys)}
+        # 0164 B: a product account ("Zentra Vela" typed an org) is on the family side wherever its family is
+        fam |= {m for m in ms if m not in fam and self.etype(m) == "org" and " " in self.ents[m].key
+                and self.product_of(self.ents[m].key)}
         org = {m for m in ms if m not in fam and self.etype(m) in ORGISH}
         return fam, org
 
@@ -359,9 +437,12 @@ def load_book(cur: Any) -> Book:
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
-    cur.execute("SELECT entity_id::text, type, count(*) FROM mx_mentions_now WHERE entity_id IS NOT NULL GROUP BY 1, 2")
-    for eid, type_, n in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read, as the DISTINCT was)
+    cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject') FROM mx_mentions_now
+                    WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
+    for eid, type_, n, subj in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read)
         b.types.setdefault(eid, Counter())[type_] += n
+        if subj and schemas_type(type_) in PRODUCT_TYPES:   # 0164 B: a product as the subject
+            b.subject[eid] = b.subject.get(eid, 0) + subj
     b.mentioned = set(b.types) | set(b.pins.values())
     return b
 
@@ -454,6 +535,7 @@ class Writer:
         self.made.append(eid)
         if parent and level in VERSION_LEVELS:
             self.book.version_parents().add(parent)
+            self.book.kids()[parent].append(eid)
         if level == "family":
             self.book.families().setdefault(key, []).append(eid)
         return eid
@@ -487,6 +569,9 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     versioned = m.type in TYPES_VERSIONED and (N.has_version(hk) or N.has_version(pk))
     maker = (m.maker or "").strip() or None
     if not versioned:
+        fam = w.book.product_of(key) if schemas_type(m.type) == "org" else None
+        if fam is not None:
+            return product_account(w, key, m, fam, first)
         parent = _maker_entity(w, maker, first) if maker and N.key(maker) != key else None
         return w.entity(type_=m.type, name=m.name, key=key, level="thing", parent=parent, maker=maker,
                         fields=dict(N.NONE), first_seen=first)
@@ -508,6 +593,29 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     fields = dict(m.fields) if N.has_version(hk) else dict(N.parse(m.name, m.type, m.maker))
     return w.entity(type_=m.type, name=m.name, key=key, level=_level(hk, pk), parent=parent, maker=maker,
                     fields=fields, first_seen=first)
+
+
+def product_type(book: Book, fam: str) -> str:
+    """0164 B: the type a product account takes: its family's (as its mentions give it), else a model."""
+    for t in (book.etype(fam), schemas_type(book.ents[fam].type)):
+        if t and t not in ORGISH:
+            return t
+    return "model"
+
+
+def product_account(w: Writer, key: str, m: Mention, fam: str, first: Optional[datetime]) -> str:
+    """0164 B: a product account's entity ("Zentra Vela" typed an org, the family Vela's account): made with its
+    family's type and merged into the family (rule `product_account`, a redirect like any other, undoable), unless
+    the family's cluster holds an org (the owner's to settle) or the owner kept them apart."""
+    eid = w.entity(type_=product_type(w.book, fam), name=m.name, key=key, level="thing", parent=None,
+                   maker=(m.maker or "").strip() or None, fields=dict(N.NONE), first_seen=first)
+    book = w.book
+    r = book.root(fam)
+    if not book.sides(book.cluster(r))[1] and pair(eid, r) not in book.never:
+        merge(w.cur, book, eid, r, by="rule:product_account", automatic=True, run_id=w.run_id,
+              evidence={"rules": ["product_account"], "confidence": RULE_CONF, "family": book.ents[fam].name,
+                        "typed": m.type})
+    return eid
 
 
 def maker_root(book: Book, maker: Optional[str]) -> Optional[str]:

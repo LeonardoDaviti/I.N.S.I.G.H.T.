@@ -10,7 +10,8 @@ an answer in the queue shows at once.
     ordered like News (voices, then the newest post), the posts in no story last; every source with its counts; the
     family and its versions as links (a family's page lists every version).
   - **The queue** (`queue`): the open items, each with both names, 2 posts each, the proposal and its evidence; and
-    the history: answered items and the merges (automatic ones can be undone).
+    the history: answered items and the merges (automatic ones can be undone). 0164 A: each side carries its group
+    (`group`: the cluster's shown name and type, names and sides) and an alias item what `same` would do (`join`).
 """
 from __future__ import annotations
 
@@ -428,7 +429,54 @@ def open_count(cur: Any) -> int:
 def _side(book: I.Book, eid: Optional[str], examples: Dict[str, List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
     if not eid or eid not in book.ents:
         return None
-    return {**_ent_view(book, eid), "root": book.root(eid), "posts": examples.get(eid, [])}
+    return {**_ent_view(book, eid), "root": book.root(eid), "posts": examples.get(eid, []), "group": group(book, eid)}
+
+
+GROUP_NAMES = 8
+
+
+def group(book: I.Book, eid: str) -> Dict[str, Any]:
+    """0164 A: the cluster an item's name is in, as the card shows it ("Zentra Vela is part of Zentra AI (Zentra,
+    Zentra AI, ...)"): its root's shown name and type, its names (up to GROUP_NAMES, versions last) and its sides
+    (Book.sides: the product family names, the org or person names)."""
+    r = book.root(eid)
+    cache = book.__dict__.setdefault("_groups", {})
+    key = (r, getattr(book.redirect, "rev", None))
+    if key in cache and key[1] is not None:
+        return cache[key]
+    ms = book.cluster(r)
+    fam, org = book.sides(ms)
+    order = sorted(ms, key=lambda m: (m != r, book.ents[m].level in I.VERSION_LEVELS, book.ents[m].name.lower()))
+    names = list(dict.fromkeys(book.ents[m].name for m in order))
+    cache[key] = {"root": r, "name": book.label(r), "type": book.shown_type(r), "size": len(ms),
+                  "names": names[:GROUP_NAMES], "more": max(0, len(names) - GROUP_NAMES),
+                  "sides": {"family": sorted({book.ents[m].name for m in fam})[:GROUP_NAMES],
+                            "org": sorted({book.ents[m].name for m in org})[:GROUP_NAMES]}}
+    return cache[key]
+
+
+def join(cur: Any, book: I.Book, a: Optional[str], b: Optional[str], cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """0164 A: what `same` would do to an alias item's two groups (entity_answers.join_plan): None when the roots
+    merge as ever; else {mixes, only_names (only the two names join), apart: [{name, from}] (who stays apart from
+    whom), needs_choice (the owner's own merge holds a name there, or the two names are of two kinds)}."""
+    from insight_core.markx import entity_answers as A, entity_repair as R
+    if not a or not b or a not in book.ents or b not in book.ents:
+        return None
+    plan = A.join_plan(book, a, b)
+    if not plan["mixes"]:
+        return None
+    if plan["kind"] is None:
+        return {"mixes": True, "only_names": False, "apart": [], "needs_choice": True}
+    if "rows" not in cache:
+        cache["rows"], cache["owner"] = R.redirect_rows(cur), R._owner_same(cur)
+    apart, held = [], False
+    for x, members, others in plan["detach"]:
+        edges = R.cluster_edges(book, members, cache["rows"], cache["owner"])
+        if R._cuts(members, [(p, q, o) for p, q, o, _ in edges], {x}, set(others)) is None:
+            held = True
+        other = b if x == a else a
+        apart.append({"name": A._group_name(book, others), "from": book.label(other) or book.ents[other].name})
+    return {"mixes": True, "only_names": not held, "apart": apart, "needs_choice": held}
 
 
 def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str, List[Dict[str, Any]]]:
@@ -460,11 +508,13 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
     open_rows = [r for r in rows if r[8] is None and all(book.root(x) in named for x in (r[2], r[3]) if x)]
     done_rows = [r for r in rows if r[8] is not None][:history]
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
+    joins: Dict[str, Any] = {}
 
     def item(r) -> Dict[str, Any]:
         qid, kind, a, b, proposal, reason, conf, ev, ans, at, created = r
         ev = ev or {}
         return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
+                "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
                 "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
                 "band": I.band_of(conf) if kind == "alias" else None,   # 0130 A1: the measured band it falls in
                 "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),

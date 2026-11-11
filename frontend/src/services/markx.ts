@@ -184,6 +184,16 @@ export interface MarkxOverview {
   story_window?: MarkxStoryWindow;
   /** 0133: the entities guide switch (absent from an older API). */
   entities_guide?: MarkxEntitiesGuide;
+  /** 0164 C: the last run's entity invariants (absent from an older API; null before a run counted them). */
+  entity_invariants?: MarkxEntityInvariants | null;
+}
+
+/** 0164 C: what must hold after every entities run. `family_org`: the groups holding a product family and an org
+ * (0 after the repair; `held`: those your own merges hold together), up to 10 listed. */
+export interface MarkxEntityInvariants {
+  at?: string | null;
+  family_org?: { count: number; held: number; clusters: { id: string; name: string | null; family: string[]; org: string[] }[] };
+  error?: string;
 }
 
 /** 0144 C: the labelled old stories' answers (first post older than 30 days when offered) and the recent ones'. */
@@ -468,9 +478,31 @@ export interface MarkxOlderPost {
 
 export type MarkxEntityAnswer = 'same' | 'other_version' | 'different' | 'not_entity';
 
+/** 0164 A: the group (cluster) a queue item's name is in: its shown name and type, its names, its sides. */
+export interface MarkxEntityGroup {
+  root: string;
+  name: string | null;
+  type: string | null;
+  size: number;
+  names: string[];
+  more: number;
+  sides: { family: string[]; org: string[] };
+}
+
 export interface MarkxQueueSide extends MarkxEntityRef {
   root: string;
   posts: { id: string; title: string | null; source: string | null; at: string | null; span: string; role: string | null }[];
+  group?: MarkxEntityGroup;
+}
+
+/** 0164 A: what `same` would do when it would put a product family and an org in one group: only the two names
+ * join (`only_names`), each `apart` group staying apart `from` the other side; `needs_choice`: it can't (your own
+ * earlier merge holds a name there, or the names are a family's and an org's). */
+export interface MarkxQueueJoin {
+  mixes: boolean;
+  only_names: boolean;
+  apart: { name: string; from: string }[];
+  needs_choice: boolean;
 }
 
 export interface MarkxQueueItem {
@@ -484,6 +516,7 @@ export interface MarkxQueueItem {
   answer: MarkxEntityAnswer | null;
   answered_at: string | null;
   created_at: string;
+  join?: MarkxQueueJoin | null;
   evidence: {
     judge?: { relation?: string; confidence?: number; evidence?: string } | null;
     rules?: string[] | null;

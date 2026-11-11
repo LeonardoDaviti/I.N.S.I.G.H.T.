@@ -124,6 +124,51 @@ measure on the 139k answered alias questions (mx_tasks kind alias + mx_calls rel
    re-read each run, which costs decisions, not questions).
 Measure each as a dry-run over the answered set; adopt only those losing no owner-confirmed merge.
 
+## Why it happened and the guards (A–C)
+
+How class 2 came about on the server (names invented):
+1. A product family's official X account has the display name "Zentra Vela" (maker Zentra, family Vela). Haiku types
+   an account an org, so its mentions made an entity "Zentra Vela" typed `org`.
+2. The `handle` / `maker_prefix` rules joined that org-typed name to the maker's cluster ("Zentra", "Zentra AI"):
+   the pair-level type guard saw org = org. (The cluster guard above now stops that for automatic merges.)
+3. The review card asked "Vela vs Zentra Vela" (proposal same, reason type, 0.97). The owner rightly answered `same`.
+   But the answer merged the two ROOTS, and b's root was the org's cluster, so the whole family (Vela and every
+   version) went into the maker org. The card showed neither side's cluster: nothing said "same" meant
+   "Vela = Zentra".
+4. The versions' family key "vela" then resolved to the org's cluster (the reparent repair above).
+
+The guards, so it cannot come back:
+- **A. The owner's `same` never joins a family to an org blindly** (`entity_answers.owner_same`, `join_plan`). When
+  merging the two roots would put a product family and an org in one cluster (`Book.sides`), the roots are not merged:
+  each answered name first leaves the members of the other kind its cluster holds (the automatic merges holding it
+  there undone, `undone_by` 'owner_answer', the why in `evidence.undone`, the 0164 repair's cut and re-point), then
+  the two names merge (the owner's redirect, `evidence.joined_only`). When only the owner's own earlier merge holds
+  the name there (never undone), or the two names are themselves a family's and an org's, nothing is written: the
+  answer returns `result: needs_choice` with a message and the item stays open. The queue API gives each side its
+  `group` (the cluster's shown name and type, up to 8 names, its family and org sides) and an alias item its `join`
+  (`only_names`, who stays `apart` from whom, `needs_choice`); the card shows "part of: Zentra AI (Zentra, Zentra
+  Vela)" when a name's group is not its own, the warning "Same joins only these two names; Zentra AI stays apart
+  from Vela", and the message when an answer was not applied. A `same` that mixes nothing merges the roots as ever.
+- **B. Product accounts are not orgs** (`Book.product_of`, `identity.product_account`, the repair's
+  `product_accounts`). A name typed an org that is "<maker> <family>" — <maker> one of the family's maker's names
+  (its members' or versions' stated maker, their parents' clusters, the stated maker's cluster) or the first words of
+  one, <family> a known product family (a `family` entity, a name versions give as parent, or a name given as a
+  subject typed model, product or software), the name not ending in an org's word (Labs, AI, Inc., ...) — is the
+  family's account: new ones are made with the family's type and merged into the family (`rule:product_account`, a
+  redirect, undoable); `Book.sides` counts one on the family side wherever it is, so the cluster guard keeps it from
+  the maker org and the org-family repair cuts it out of one; then the repair step `product_accounts` merges old ones
+  into their family (bounded 500 a run, idempotent, never over an owner's apart answer or into a cluster holding an
+  org), and `shown` gives such a cluster the family's type, never org. "Zentra Labs" stays an org; "Orbis Vela" (another
+  maker in front) is not Vela's account.
+- **C. The invariant, with an alarm.** Each entities run counts the clusters holding a family side and an org side
+  (`counts.entities.invariants.family_org`: count, `held` by the owner's own merges, up to 10 listed by name). It is
+  0 after the repair but for the owner-held ones. `/api/markx/overview` and `/api/markx/status` give the last run's
+  (`entity_invariants`); the Mark X worker card warns when the count is above 0 and links each group.
+
+Not measured: how many server clusters B's rule moves (read-only GETs showed the class; the server's own run will
+count `repair.product_accounts`). The `subject` reading of "known family" (one subject mention typed a product) is
+the weakest of its tests; the maker in front is what keeps it narrow.
+
 ## Tests
 `insight_core/tests/test_markx_entity_fixes.py` (invented names): the guards (no database: the org-family guard incl.
 Haiku `same` and two orgs sharing a word; the family_version rule incl. another version and another maker; the
@@ -134,3 +179,10 @@ named by its maker's name gets a family under the org, old data reparented and l
 prefixes joined with evidence, another maker never, two prefixes without a shared version never, another version
 never, a new version merged by the rule, the owner's undo of a family merge respected; (4) a suffix pair joined with
 posts, not without, an owner's apart answer respected, the maker shown as the org.
+
+`insight_core/tests/test_markx_entity_guards.py` (A–C, invented names): the join plan; `same` cutting the automatic
+link and joining only the two names; the owner's own earlier merge left, the item open (`needs_choice`); a `same` that
+mixes nothing as ever; a new product account typed and joined as its family, an org account ("Zentra Labs") left an
+org; an old one repaired into its family; the invariant 0 after the repair and counted (with `held`) on the owner-held
+shape. `frontend/src/components/markx/entityGuards.test.tsx`: the group line, the warning, the not-applied message,
+the overview alarm.

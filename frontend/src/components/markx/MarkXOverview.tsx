@@ -2,7 +2,9 @@ import { useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxEntitiesGuide, MarkxJob, MarkxOverview, MarkxSettings, MarkxStoryWindow } from '../../services/markx';
+import type {
+  MarkxEntitiesGuide, MarkxEntityInvariants, MarkxJob, MarkxOverview, MarkxSettings, MarkxStoryWindow,
+} from '../../services/markx';
 import { request } from '../../lib/request';   // 0133
 import { Button, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
@@ -299,6 +301,28 @@ function Precision({ got }: { got: NonNullable<MarkxEntitiesGuide['labels']> }) 
   );
 }
 
+/** 0164 C: the entity invariants the last run counted; a warning when a group holds a product family and an org. */
+export function EntityInvariants({ state }: { state: MarkxEntityInvariants | null | undefined }) {
+  const got = state?.family_org;
+  if (!got || got.count === 0) return null;
+  const held = got.held ? ` (${plural(got.held, 'group')} held together by your own merges)` : '';
+  return (
+    <div className="mt-3 text-[0.8125rem] text-fg" role="alert" aria-label="Entity invariant">
+      <p className="[overflow-wrap:anywhere]">
+        ⚠ {plural(got.count, 'entity group')} hold{got.count === 1 ? 's' : ''} both a product family and an org{held}; it should be none.
+      </p>
+      <ul className="mt-1 text-fg-2">
+        {got.clusters.map((c) => (
+          <li key={c.id} className="border-t border-line py-1 [overflow-wrap:anywhere]">
+            <TextLink to={`/markx/entities/${encodeURIComponent(c.id)}`}>{c.name ?? c.id}</TextLink>
+            {' · '}family {c.family.join(', ')} · org {c.org.join(', ')}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
 export function MarkXWorker() {
   const api = useApi();
@@ -312,7 +336,8 @@ export function MarkXWorker() {
   });
   return (
     <Loaded>
-      {({ worker, reading_window: readingWindow, story_window: storyWindow, entities_guide: entitiesGuide }) => {
+      {({ worker, reading_window: readingWindow, story_window: storyWindow, entities_guide: entitiesGuide,
+         entity_invariants: entityInvariants }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
@@ -397,6 +422,7 @@ export function MarkXWorker() {
                 ) : 'No decision run yet.'}
               </p>
               <DecisionJob job={worker.jobs?.decide} />
+              <EntityInvariants state={entityInvariants} />
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button size="sm" variant="secondary" onClick={() => run.mutate()} disabled={run.isPending} aria-busy={run.isPending || undefined}>
                   {run.isPending ? 'asking…' : 'run the decisions now'}

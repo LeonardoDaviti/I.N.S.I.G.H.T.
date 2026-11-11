@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
 from insight_core.markx import entity_answers, entity_repair as R, entity_views, identity as I
 from insight_core.tests import test_markx_entities as base
 
 T0, H, D = base.T0, base.H, base.D
+_CONFIG = R.config
 
 
 def v(family, version, variant=None):
@@ -125,11 +127,23 @@ class Fixes(base._Db):
 
     # ---- 2 ----------------------------------------------------------------------------------------------------
 
+    def legacy_owner_same(self, a, b):
+        """The owner's `same` as it was applied before 0164 A: the two roots merged, whatever their clusters."""
+        x, y = I.pair(a, b)
+        I.queue_item(self.cur, kind="alias", a=x, b=y, proposal="same", reason="test", conf=None, evidence={},
+                     call_id=None, run_id=None)
+        self.cur.execute("UPDATE mx_entity_queue SET answer = 'same', answered_at = now() WHERE a = %s AND b = %s "
+                         "RETURNING id::text", (x, y))
+        qid = self.cur.fetchone()[0]
+        return I.merge(self.cur, self.book(), a, b, by="owner", automatic=False, queue_id=qid, evidence={"queue": qid})
+
     def _org_and_family(self):
+        """The data as made before 0164 B: the account "Zentra Vela" linked (an org) before its family was known."""
         ps = [self.post(n, T0 + n * H) for n in range(4)]
         self.mentions(ps[0], ("Zentra", "org", "actor"))
-        self.mentions(ps[1], ("Vela 5", "model", "subject", "Zentra", v("Vela", "5")))
         self.mentions(ps[2], ("Zentra Vela", "org", "mention"))
+        self.stage()
+        self.mentions(ps[1], ("Vela 5", "model", "subject", "Zentra", v("Vela", "5")))
         self.mentions(ps[3], ("Vela", "model", "subject"))
         self.stage()
         return [self.ent_named(x) for x in ("Zentra", "Vela", "Zentra Vela", "Vela 5")]
@@ -138,7 +152,7 @@ class Fixes(base._Db):
         z, vela, zv, v5 = self._org_and_family()
         book = self.book()
         I.merge(self.cur, book, zv, z, by="rule:handle", automatic=True)     # how the wrong merge came
-        self.owner_same(vela, zv)                                             # the owner: the same family
+        self.legacy_owner_same(vela, zv)                                      # the owner: the same family
         book = self.book()
         self.assertEqual(book.root(vela), book.root(z))
         self.assertEqual(entity_views.entity_page(self.cur, v5)["entity"]["family"]["id"], book.root(z))
@@ -163,7 +177,7 @@ class Fixes(base._Db):
 
     def test_2_a_cluster_the_owner_holds_together_is_left_as_it_is(self):
         z, vela, zv, v5 = self._org_and_family()
-        self.owner_same(vela, z)
+        self.legacy_owner_same(vela, z)
         out = self.stage(since=self.since)
         self.assertEqual((out["repair"]["org_family"]["undone"], out["repair"]["org_family"]["held"]), (0, 1))
         self.assertEqual(self.book().root(vela), self.book().root(z))
@@ -253,6 +267,7 @@ class Fixes(base._Db):
 
     # ---- 4 ----------------------------------------------------------------------------------------------------
 
+    @mock.patch.object(R, "config", lambda: dict(_CONFIG(), suffix=True))   # shipped off until measured: the rule
     def test_4_an_org_and_its_suffixed_name_join_only_when_posts_say_so(self):
         for n in range(2):     # posts naming Zentra beside the thing "Zentra AI" makes
             self.mentions(self.post(n, T0 + n * H), ("Vela 5", "model", "subject", "Zentra AI", v("Vela", "5")),

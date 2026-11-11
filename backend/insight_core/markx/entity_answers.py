@@ -2,7 +2,8 @@
 transaction, writing mx_entity* rows and mx_labels only (never mx_mentions: a split is a pin the next run applies, and
 every page reads through redirects and pins, so the answer shows at once).
 
-  - an alias pair: `same` merges (a redirect by the owner); `other_version`, `different` and `not_entity` keep the two
+  - an alias pair: `same` merges (a redirect by the owner; 0164 A: when the two clusters would put a product family
+    and an org together, only the two names join, `owner_same`); `other_version`, `different` and `not_entity` keep the two
     apart, undoing any merge that joined them; they are never merged by a rule or Haiku again;
   - a collision: `different` or `other_version` splits it as proposed (each sense but the largest an entity of its
     own, the mentions the question showed pinned there); `same` keeps one page; `not_entity` marks the entity;
@@ -116,6 +117,92 @@ def queue_get(cur: Any, item_id: str) -> Optional[Dict[str, Any]]:
     return None if row is None else dict(zip(keys, row))
 
 
+# ---- 0164 A: the owner's `same` never joins a family to an org blindly ------------------------------------------
+
+def join_plan(book: I.Book, a: str, b: str) -> Dict[str, Any]:
+    """What `same` on a and b does to their clusters. {mixes: False}: merging the two roots puts no product family
+    and org (or person) in one cluster (Book.sides): the roots merge as ever. Else {mixes: True, kind: the side the
+    two names are on ('family' / 'org'), detach: [(an answered name, its cluster, the members of the other kind it
+    must leave)]}; kind None when the names are of two kinds or neither (the owner chooses: `needs_choice`)."""
+    ra, rb = book.root(a), book.root(b)
+    if ra is None or rb is None or ra == rb or ra not in book.ents or rb not in book.ents:
+        return {"mixes": False}
+    ca, cb = book.cluster(ra), book.cluster(rb)
+    fam, org = book.sides(ca + cb)
+    if not (fam and org):
+        return {"mixes": False}
+    kinds = {x: "family" if x in fam else "org" if x in org else None for x in (a, b)}
+    got = {k for k in kinds.values() if k}
+    if len(got) != 1:
+        return {"mixes": True, "kind": None, "detach": []}
+    kind = got.pop()
+    other = org if kind == "family" else fam
+    detach = [(x, sorted(c), sorted(set(c) & other)) for x, c in ((a, ca), (b, cb)) if set(c) & other]
+    return {"mixes": True, "kind": kind, "detach": detach}
+
+
+def _group_name(book: I.Book, members: List[str]) -> str:
+    """The name a set of a cluster's members goes by: its root's shown name when the root is in it, else its names."""
+    roots = {book.root(m) for m in members}
+    r = next(iter(roots)) if len(roots) == 1 else None
+    if r in members:
+        return book.label(r) or book.ents[r].name
+    names = sorted({book.ents[m].name for m in members})
+    return ", ".join(names[:3]) + (" …" if len(names) > 3 else "")
+
+
+def _held_message(book: I.Book, x: str, others: List[str]) -> str:
+    return (f"“{book.ents[x].name}” is held with {_group_name(book, others)} by your own earlier merge, so “same” "
+            f"would join a product family and an org. Undo that merge in the history first, or answer another way.")
+
+
+def owner_same(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
+    """The owner's `same` on an alias item (0164 A). When merging the two roots would put a product family and an org
+    in one cluster, only the two names join: each answered name first leaves the members of the other kind its
+    cluster holds (the automatic merges that hold it there undone, undone_by 'owner_answer', the why in their
+    evidence, as the repair's cut), then the two names merge (the owner's redirect). When only the owner's own earlier
+    merge holds it there, or the names are of two kinds, nothing is written: {result: 'needs_choice', message}."""
+    from insight_core.markx import entity_repair as R
+    a, b, qid = item["a"], item["b"], item["id"]
+    plan = join_plan(book, a, b)
+    ev: Dict[str, Any] = {"queue": qid}
+    out: Dict[str, Any] = {}
+    if plan["mixes"]:
+        if plan["kind"] is None:
+            return {"result": "needs_choice", "message": (
+                f"“{book.ents[a].name}” and “{book.ents[b].name}” are a product family’s name and an org’s: “same” "
+                "would join a family and an org. Answer another way, or undo the merge that put one of them there.")}
+        rows, owner = R.redirect_rows(cur), R._owner_same(cur)
+        detached: List[str] = []
+        kept_apart: List[str] = []
+        cur.execute("SAVEPOINT owner_same")
+        for x, members, others in plan["detach"]:
+            edges = R.cluster_edges(book, members, rows, owner)
+            cuts = R._cuts(members, [(p, q, o) for p, q, o, _ in edges], {x}, set(others))
+            if cuts is None:
+                cur.execute("ROLLBACK TO SAVEPOINT owner_same")
+                return {"result": "needs_choice", "message": _held_message(book, x, others)}
+            kept_apart.append(_group_name(book, others))
+            why = {"why": "owner_answer", "queue": qid, "name": book.ents[x].name,
+                   "kept_apart": sorted(book.ents[o].name for o in others)[:8],
+                   "joined": [book.ents[a].name, book.ents[b].name]}
+            undone, _ = R.apply_cuts(cur, book, members, edges, cuts, rows, why=why, undone_by="owner_answer")
+            detached += undone
+            rows = R.redirect_rows(cur)
+        fam, org = book.sides(book.cluster(book.root(a)) + book.cluster(book.root(b)))
+        if fam and org:
+            cur.execute("ROLLBACK TO SAVEPOINT owner_same")
+            return {"result": "needs_choice", "message": (
+                f"“same” would still join a product family ({_group_name(book, sorted(fam))}) and an org "
+                f"({_group_name(book, sorted(org))}). Undo the merge that holds them in the history, or answer another way.")}
+        cur.execute("RELEASE SAVEPOINT owner_same")
+        ev.update(joined_only=True, detached=detached)
+        out.update(result="joined_names", detached=detached, kept_apart=kept_apart)
+    out["redirect"] = I.merge(cur, book, a, b, by="owner", automatic=False, call_id=item["call_id"], queue_id=qid,
+                              evidence=ev)
+    return out
+
+
 def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict[str, Any]:
     """The owner's answer to one review item, applied at once and labelled."""
     if ans not in ANSWERS:
@@ -128,8 +215,10 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     applied: Dict[str, Any] = {"answer": ans}
     if item["kind"] == "alias":
         if ans == "same":
-            applied["redirect"] = I.merge(cur, book, a, b, by="owner", automatic=False, call_id=item["call_id"],
-                                          queue_id=item_id, evidence={"queue": item_id})
+            got = owner_same(cur, book, item)
+            if got.get("result") == "needs_choice":
+                return {**applied, **got}       # nothing written: the item stays open, the message says why
+            applied.update(got)
             _confirm(cur, a, b)
         else:
             applied["undone"] = separate(cur, book, a, b)

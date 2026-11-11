@@ -117,11 +117,33 @@ export function SecondOpinion({ item }: { item: Item }) {
   return item.evidence.second_asked ? <p className="mt-1 text-[0.75rem] text-fg-3">Second opinion asked; the next worker run answers it.</p> : null;
 }
 
+/** 0164 A: the group a name is in, when it is not the name's own: "part of: Zentra AI (Zentra, Zentra Vela, …)". */
+export function groupLine(side: MarkxQueueSide): string | null {
+  const g = side.group;
+  if (!g || g.root === side.id) return null;
+  const names = g.names.filter((n) => n !== g.name);
+  const more = g.more ? `, +${g.more}` : '';
+  return `part of: ${g.name ?? '—'}${names.length ? ` (${names.join(', ')}${more})` : ''}`;
+}
+
+/** 0164 A: what `same` does when it would put a product family and an org in one group. */
+export function joinLine(item: MarkxQueueItem): string | null {
+  const join = item.join;
+  if (!join?.mixes) return null;
+  if (join.needs_choice) {
+    return 'Same would join a product family and an org, and your own earlier merge (or the two names themselves) holds them there: undo that merge first, or answer another way.';
+  }
+  const apart = join.apart.map((x) => `${x.name} stays apart from ${x.from}`).join('; ');
+  return `Same joins only these two names${apart ? `; ${apart}` : ''}.`;
+}
+
 function Side({ side }: { side: MarkxQueueSide }) {
+  const group = groupLine(side);
   return (
     <div className="min-w-0">
       <TextLink to={entityHref(side.root)} className="font-semibold text-fg [overflow-wrap:anywhere]">{side.name}</TextLink>
       <span className="block text-[0.75rem] text-fg-3">{entityMeta(side)}</span>
+      {group ? <span className="block text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]" data-group="">{group}</span> : null}
       <ul className="mt-1 space-y-0.5">
         {side.posts.map((p) => (
           <li key={p.id} className="min-w-0 truncate text-[0.8125rem] text-fg-2">
@@ -148,6 +170,10 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
   });
   const chosen = answer.isPending ? answer.variables : item.answer;
   const judge = item.evidence.judge;
+  // 0164 A: what `same` would do to the two groups; an answer the API could not apply says why (the item stays open)
+  const warning = item.kind === 'alias' ? joinLine(item) : null;
+  const result = answer.data as { result?: string; message?: string } | undefined;
+  const choice = result?.result === 'needs_choice' ? (result.message ?? 'it needs your choice') : null;
   return (
     <li className="border-b border-line py-3" data-queue-item={item.id}>
       <p className="text-[0.75rem] text-fg-3">
@@ -181,6 +207,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
       )}
       {judge?.evidence ? <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Haiku: {judge.evidence}</p> : null}
       <SecondOpinion item={item} />
+      {warning ? <p className="mt-1 text-[0.8125rem] text-fg [overflow-wrap:anywhere]" role="note">{warning}</p> : null}
       <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Your answer">
         {ANSWERS.map((a) => (
           <Button key={a.answer} size="sm" variant={chosen === a.answer ? 'primary' : 'secondary'}
@@ -190,6 +217,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
         ))}
         {answer.isError ? <span className="text-[0.8125rem] text-fg">× {errorMessage(answer.error)}</span> : null}
       </div>
+      {choice ? <p className="mt-1 text-[0.8125rem] text-fg [overflow-wrap:anywhere]" role="status">Not applied: {choice}</p> : null}
     </li>
   );
 }
