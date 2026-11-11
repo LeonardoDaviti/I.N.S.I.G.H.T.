@@ -33,6 +33,11 @@ one or two words apart, in both layers (search_pair_versions). Best match while 
 whose current mentions hold the entity the whole query names (that version, with one) as subject or actor
 (markx/search.entity_first_posts; a story or News story with such a post counts at its shown post), then the rest;
 best match within each.
+
+v10.13.13: the pairs decide what matches; a post ranks by the query's words unpaired, as before v10.13.1 (RANK). In
+best order a title naming the name and its version together, as the index reads them ("Kimi K3.1 Pro" for "kimi
+3.1"), holds the query as v10.13.6's phrase does. Entity first names that version of the family however its
+entities are spelled (markx/search._VERSIONS).
 """
 from __future__ import annotations
 
@@ -72,8 +77,12 @@ TSQUERY = "search_query(%s)"
 FILL_BATCH = 500
 # Best match ranks the newest this many matches (a word in most posts ranks no better).
 RANKED_MATCHES = 5000
-# Rank, normalised by 1 + log(length): a long text does not win by length.
-RANK = "ts_rank({v}, " + TSQUERY + ", 1)"
+# Rank, normalised by 1 + log(length): a long text does not win by length. v10.13.13: ranked by the query's words
+# unpaired (search_query_words), as before v10.13.1; the pairs (0095) decide only what matches. ts_rank reads a query
+# whose top is `|` (a lone pair, 'kimi' <-> '3.1' | 'kimi' <2> '3.1') word by word, any of them, with no nearness:
+# a post saying the name six times outranked one saying the name and its version once, side by side.
+RANK_TSQUERY = "search_query_words(%s)"
+RANK = "ts_rank({v}, " + RANK_TSQUERY + ", 1)"
 # Mark X's English layer (issue 0139, mx_post_search): the query read as English words, a name and its version
 # together (v10.13.1, migration 0095), as search_query reads them.
 MX_TSQUERY = "search_query_english(%s)"
@@ -109,13 +118,14 @@ def _rank_sql(vector: str, post_id: str, markx: bool, split: bool = True) -> str
     if not markx:
         return RANK.format(v=vector)
     if not split:
-        return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT ts_rank(mx.vector, {MX_TSQUERY}, 1)"
+        return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT ts_rank(mx.vector, {MX_WORDS}, 1)"
                 f" FROM mx_post_search mx WHERE mx.post_id = {post_id} AND mx.vector @@ {MX_TSQUERY}), 0))")
     # One read of the layer's row; the two together are ranked only when the post's own words don't match alone.
+    # Each matches by its paired reading and ranks by its words unpaired (v10.13.13, RANK).
     return (f"GREATEST({RANK.format(v=vector)}, COALESCE((SELECT GREATEST("
-            f"CASE WHEN mx.vector @@ {MX_TSQUERY} THEN ts_rank(mx.vector, {MX_TSQUERY}, 1) ELSE 0 END,"
+            f"CASE WHEN mx.vector @@ {MX_TSQUERY} THEN ts_rank(mx.vector, {MX_WORDS}, 1) ELSE 0 END,"
             f" CASE WHEN NOT {vector} @@ {TSQUERY} AND ({vector} || mx.vector_ix) @@ {TSQUERY}"
-            f" THEN ts_rank({vector} || mx.vector_ix, {TSQUERY}, 1) ELSE 0 END)"
+            f" THEN ts_rank({vector} || mx.vector_ix, {RANK_TSQUERY}, 1) ELSE 0 END)"
             f" FROM mx_post_search mx WHERE mx.post_id = {post_id}), 0))")
 
 
@@ -272,8 +282,10 @@ class SearchRepository:
             found = self._by_address(cur, query)
             if found is not None:
                 return found, None
-        cur.execute(f"SELECT numnode({TSQUERY})", (query.q,))
-        if not cur.fetchone()[0]:
+        # Whether the query pairs a name and its version (0095: its reading differs from its words unpaired).
+        cur.execute(f"SELECT numnode({TSQUERY}), {TSQUERY}::text <> {WORDS}::text", (query.q, query.q, query.q))
+        nodes, paired = cur.fetchone()
+        if not nodes:
             return [], None   # only stop words or punctuation: nothing can match
         if query.filter == "classics":
             return self._classics(cur, query, now=now)
@@ -351,6 +363,12 @@ class SearchRepository:
             else:
                 exact, exact_params = "false", []
             titled_params = [phrase]
+            if paired:
+                # v10.13.13: a name and its version standing together in the title as the index reads them ("Kimi
+                # K3.1 Pro", "Kimi3.1" for "kimi 3.1"; its other words anywhere in it) hold the query too. The title
+                # is the vector's weight A (post_search_vector).
+                titled = f"({titled} OR ts_filter(m.search_vector, '{{a}}') @@ {TSQUERY})"
+                titled_params.append(query.q)
         else:
             titled, titled_params, exact, exact_params = "false", [], "false", []
         # A word in a third of the posts looks cheap to find by reading the whole table, but
@@ -598,7 +616,7 @@ class SearchRepository:
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             CROSS JOIN LATERAL (SELECT {CLASSIC_VECTOR} AS vector) w
-            CROSS JOIN LATERAL (SELECT ts_rank(w.vector, {TSQUERY}, 1) AS rank) v
+            CROSS JOIN LATERAL (SELECT ts_rank(w.vector, {RANK_TSQUERY}, 1) AS rank) v
             WHERE w.vector @@ {TSQUERY}
               AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
               AND {' AND '.join(where) or 'TRUE'}
