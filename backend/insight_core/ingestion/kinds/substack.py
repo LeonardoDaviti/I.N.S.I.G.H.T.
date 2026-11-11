@@ -107,13 +107,29 @@ def _refused(exc: BaseException) -> bool:
             and not (isinstance(exc, HttpError) and exc.limiting))
 
 
+# Substack's own hosts (v10.13.10): the platform, never a publication. substack.com/@<handle> is a person's
+# profile (the feed finder turns it into their publications), open.substack.com/pub/<name>/... the app's link
+# to one; their /feed is no publication's feed.
+PLATFORM_HOSTS = frozenset({"substack.com", "www.substack.com", "open.substack.com"})
+
+
+def is_platform_host(host: str) -> bool:
+    """Substack's own host (substack.com, www., open.), which no publication lives at."""
+    return (host or "").lower().rstrip(".") in PLATFORM_HOSTS
+
+
 def is_substack_host(host: str) -> bool:
-    host = (host or "").lower()
-    return host == "substack.com" or host.endswith(".substack.com")
+    """A publication's host on Substack (<name>.substack.com); never the platform's own (PLATFORM_HOSTS)."""
+    host = (host or "").lower().rstrip(".")
+    return host.endswith(".substack.com") and not is_platform_host(host)
 
 
 def publication_base(source: Source) -> str:
+    """The publication's origin. Raises ValueError for Substack's own host: reading it would read the
+    platform (its /feed is a 404), never a publication (v10.13.10)."""
     parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
+    if is_platform_host(parsed.hostname or ""):
+        raise ValueError(f"{parsed.netloc} is Substack itself, not a publication: add the publication's address")
     return f"{parsed.scheme or 'https'}://{parsed.netloc}"
 
 
@@ -256,9 +272,12 @@ class SubstackKind(BaseKind):
         return FULL if _bare_host(publication_base(source)) in subscriptions.paid_hosts else PREVIEW
 
     def matches(self, source: Source) -> bool:
+        host = host_of(str(source.get("handle_or_url") or ""))
+        if is_platform_host(host):
+            return False   # Substack itself (a profile, the app's links): no publication to read (v10.13.10)
         if (source.get("settings") or {}).get("substack") is True:
             return True
-        return is_substack_host(host_of(str(source.get("handle_or_url") or "")))
+        return is_substack_host(host)
 
     def host_key(self, source: Source) -> str:
         return SUBSTACK_HOST_KEY
