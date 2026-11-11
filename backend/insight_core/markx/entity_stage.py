@@ -21,6 +21,7 @@ once a run, for both.
 
 0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
 names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
+0164 C: then the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
 """
 from __future__ import annotations
 
@@ -121,6 +122,7 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
         out["full"]["started"] = now.isoformat()
     linked = out.pop("posts_linked", [])
     out["shown"] = shown(cur, book, whole=whole, since=since, posts=linked, deadline=deadline)
+    out["invariants"] = invariants(cur, book)
     sweep = whole and not left
     out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
                                  deadline=deadline, also=linked, book=book)
@@ -148,6 +150,32 @@ def repairs(cur: Any, book: Any, *, run_id: Any, full: bool, deadline: Optional[
         return {"error": str(error)[:200]}, identity.load_book(cur)
     cur.execute("RELEASE SAVEPOINT entity_repair")
     return got, book
+
+
+def last_invariants(cur: Any) -> Optional[Dict[str, Any]]:
+    """0164 C: the last finished run's invariants ({family_org: {count, held, clusters}}), for /markx's alarm."""
+    cur.execute("""SELECT counts->'entities'->'invariants', finished_at FROM mx_runs
+                    WHERE finished_at IS NOT NULL AND counts->'entities' ? 'invariants'
+                    ORDER BY finished_at DESC, started_at DESC LIMIT 1""")
+    row = cur.fetchone()
+    return None if row is None else {**(row[0] or {}), "at": row[1]}
+
+
+def invariants(cur: Any, book: Any) -> Dict[str, Any]:
+    """0164 C: what must hold after every run, counted, with an alarm on /markx when it doesn't: `family_org`, the
+    clusters holding a product family and an org or person (0 after the repair; the owner's own merges are `held`).
+    Read only; a failure is logged in the counts, never the run's."""
+    import logging
+    from insight_core.markx import entity_repair
+    cur.execute("SAVEPOINT entity_invariants")
+    try:
+        got = {"family_org": entity_repair.family_org(book, cur)}
+    except Exception as error:  # noqa: BLE001 - a check never stops the run
+        cur.execute("ROLLBACK TO SAVEPOINT entity_invariants")
+        logging.getLogger(__name__).exception("Mark X: the entity invariants failed")
+        return {"error": str(error)[:200]}
+    cur.execute("RELEASE SAVEPOINT entity_invariants")
+    return got
 
 
 def shown(cur: Any, book: Any, *, whole: bool, since: Optional[datetime], posts: Any,

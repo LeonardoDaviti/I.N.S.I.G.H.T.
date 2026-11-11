@@ -393,6 +393,7 @@ def status():
         run = repo.last_run(cur)
         guide_hashes = {gid: g["sha256"] for gid, g in repo.guides(cur).items()}
         job_view = jobs.view(cur)
+        invariants = _entity_invariants(cur)   # 0164 C
     workers = []
     for w in sorted(set(seen_at) | set(leased)):
         seen = seen_at.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
@@ -402,7 +403,8 @@ def status():
             "workers": workers,
             "last_run": None if run is None else {k: (_iso(v) if isinstance(v, datetime) else str(v) if isinstance(v, UUID) else v)
                                                   for k, v in run.items()},
-            "guides": guide_hashes, "jobs": job_view}
+            "guides": guide_hashes, "jobs": job_view,
+            "entity_invariants": None if invariants is None else {**invariants, "at": _iso(invariants.get("at"))}}
 
 
 class Vectors(BaseModel):
@@ -594,7 +596,13 @@ def mx_overview():
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS},
                 "story_window": _story_window_view(cur),   # 0144
-                "entities_guide": _entities_guide(cur)}   # 0133
+                "entities_guide": _entities_guide(cur),   # 0133
+                "entity_invariants": _entity_invariants(cur)}   # 0164 C
+
+
+def _entity_invariants(cur) -> Optional[Dict[str, Any]]:
+    from insight_core.markx import entity_stage
+    return entity_stage.last_invariants(cur)
 
 
 def _story_window_view(cur) -> Dict[str, Any]:
