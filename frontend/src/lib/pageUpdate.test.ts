@@ -14,7 +14,8 @@ test('an update in words', () => {
 
 test('a late find is a row sorted days after its date, never an update', () => {
   assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: '2025-09-14T00:00:00Z' }), true);
-  assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: '2026-10-27T10:00:00Z' }), false);
+  assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: '2026-10-27T10:00:00Z' }), true);
+  assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: '2026-10-28T09:30:00Z' }), false);
   assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: '2025-09-14T00:00:00Z', update }), false);
   assert.equal(lateFind({ sort_at: '2026-10-28T10:00:00Z', published_at: null }), false);
 });
