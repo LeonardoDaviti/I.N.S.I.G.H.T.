@@ -380,6 +380,47 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(h.gates.slots), [("host-lock", "a.test"), ("ytdlp", "youtube.com")])
 
 
+class IngestionRunnerHostShareTests(unittest.IsolatedAsyncioTestCase):
+    """Every source at its own pace (2026-11-11): many due sources of one host never stretch one run."""
+
+    def _harness(self, sources, rows, floors):
+        self.clock = SleepClock()
+        gates = SpyFetchGates(host_floors=floors, clock=self.clock, sleep=self.clock.sleep)
+        return _Harness(sources, [_rss_kind()], rows=rows, gates=gates)
+
+    def _channels(self, count):
+        sources = [_source(f"https://telegram.local/rss/c{i:02d}") for i in range(count)]
+        # c00 has waited longest: last fetched 30h ago, c01 29.9h, ...
+        rows = {s["id"]: _ok_row(s, 30 - i / 10) for i, s in enumerate(sources)}
+        return sources, rows
+
+    async def test_fifty_channels_of_the_bridge_are_spaced_at_its_floor_in_one_run(self):
+        sources, rows = self._channels(50)
+        h = self._harness(sources, rows, {"telegram.local": 5.0})
+        report = await h.run()
+        self.assertEqual(report.sources_fetched, 50)
+        self.assertEqual(self.clock.sleeps, [5.0] * 49, "one request every 5 s, never a burst")
+
+    async def test_a_limited_host_fetches_its_share_and_the_oldest_due_go_first(self):
+        sources, rows = self._channels(20)
+        h = self._harness(sources, rows, {"telegram.local": 5.0})
+        h.gates.host_limiter._gaps["telegram.local"] = 120.0   # it limited us earlier in this process
+        report = await h.run()
+        fetched = [c[0] for c in h.registry.kinds[0].fetch_calls]
+        self.assertEqual(sorted(fetched), [s["handle_or_url"] for s in sources[:8]], "15 min at 120 s: 8, oldest due")
+        self.assertEqual(report.decisions, {"fetch_due": 8, "skip_host_busy": 12})
+        waiting = h.state.rows[sources[-1]["id"]]
+        self.assertEqual(waiting.last_decision_kind, "skip_host_busy")
+        self.assertLessEqual(waiting.next_due_at, NOW, "it stays due for the next run")
+
+    async def test_a_forced_run_is_not_capped(self):
+        sources, rows = self._channels(20)
+        h = self._harness(sources, rows, {"telegram.local": 5.0})
+        h.gates.host_limiter._gaps["telegram.local"] = 120.0
+        report = await h.run(force=True)
+        self.assertEqual(report.sources_fetched, 20)
+
+
 def _limited_once(*handles: str, error: HttpError | None = None):
     """Posts for every source; each of `handles` first fails with `error` (a 429 by default)."""
     failed: set[str] = set()

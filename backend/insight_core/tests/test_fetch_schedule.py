@@ -87,20 +87,38 @@ class DecideFetchTests(unittest.TestCase):
         self.assertEqual(d.kind, DecisionKind.FETCH_NEW_SOURCE)
         self.assertTrue(d.fetch)
 
-    def test_unknown_tier_is_on_24h_probation(self):
+    def test_unknown_tier_is_on_6h_probation(self):
         unknown = dict(tier=CadenceTier.UNKNOWN, mean_gap=None, sample_size=2)
-        not_yet = decide(stats(**unknown, last_success_at=NOW - 23 * H))
+        not_yet = decide(stats(**unknown, last_success_at=NOW - 5 * H))
         self.assertEqual(not_yet.kind, DecisionKind.SKIP_NOT_DUE)
         self.assertFalse(not_yet.fetch)
-        self.assertEqual(not_yet.interval_basis, "probation")
+        self.assertEqual((not_yet.interval, not_yet.interval_basis), (6 * H, "probation"))
 
-        due = decide(stats(**unknown, last_success_at=NOW - 24 * H))
+        due = decide(stats(**unknown, last_success_at=NOW - 6 * H))
         self.assertEqual(due.kind, DecisionKind.FETCH_DUE)
         self.assertTrue(due.fetch)
 
-    def test_fast_source_gets_the_24h_floor(self):
-        # 6h x 20 posts = a 120h window: a quarter of it (30h) is past the floor.
-        self.assertEqual(fetch_interval(stats(mean_gap=6 * H), RSS), (24 * H, "tier"))
+    def test_a_source_is_fetched_at_its_own_pace(self):
+        """Owner 2026-11-11: a source posting every 6h is fetched every 6h, not once a day; a slower
+        one keeps half its gap (at least daily), so none is fetched less often than before."""
+        cases = [
+            (timedelta(minutes=30), CadenceTier.FAST, 1 * H),       # every 30 min: every tick
+            (6 * H, CadenceTier.FAST, 6 * H),                        # its own gap
+            (2 * D, CadenceTier.MEDIUM, 24 * H),                     # half of 2d, at least a day
+            (30 * D, CadenceTier.SLOW, 15 * D),                      # half its gap
+            (365 * D, CadenceTier.SLOW, 21 * D),                     # at most 21 days
+        ]
+        for gap, tier, interval in cases:
+            with self.subTest(gap=gap):
+                s = stats(mean_gap=gap, tier=tier, max_posts_per_fetch=100)   # a window the guard never binds
+                self.assertEqual(fetch_interval(s, RSS), (interval, "tier"))
+
+    def test_a_source_posting_daily_or_slower_is_never_fetched_less_often_than_before(self):
+        for gap in (20 * H, 24 * H, 36 * H, 48 * H, 3 * D, 10 * D, 60 * D):
+            with self.subTest(gap=gap):
+                before = min(max(gap * 0.5, 24 * H), 21 * D)
+                interval, _ = fetch_interval(stats(mean_gap=gap, tier=tier_for(gap, 20), max_posts_per_fetch=100), RSS)
+                self.assertLessEqual(interval, before)
 
     def test_medium_source_is_half_its_gap(self):
         s = stats(mean_gap=3 * D, tier=CadenceTier.MEDIUM)
@@ -110,20 +128,21 @@ class DecideFetchTests(unittest.TestCase):
         s = stats(mean_gap=60 * D, tier=CadenceTier.SLOW)
         self.assertEqual(fetch_interval(s, RSS), (21 * D, "tier"))
 
-    def test_backlog_guard_binds_for_very_fast_sources(self):
-        # 30m gap x 20 posts per fetch = the feed rolls over in 10h; polled at a quarter of that.
+    def test_a_very_fast_source_is_fetched_every_tick(self):
+        # 30m gap x 20 posts per fetch = the feed rolls over in 10h; its own pace (the tick) is sooner.
         s = stats(mean_gap=timedelta(minutes=30), max_posts_per_fetch=20)
-        self.assertEqual(fetch_interval(s, RSS), (2.5 * H, "backlog_guard"))
-
-    def test_a_busy_subreddit_is_polled_before_its_window_is_a_quarter_full(self):
-        # r/LocalLLaMA: a post every ~10 minutes, 25 in the feed = a 4.25h window.
+        self.assertEqual(fetch_interval(s, RSS), (1 * H, "tier"))
+        # r/LocalLLaMA: a post every ~10 minutes, 25 in the feed = a 4.25h window: hourly.
         s = stats(mean_gap=timedelta(minutes=10.2), max_posts_per_fetch=25)
-        self.assertEqual(fetch_interval(s, RSS), (timedelta(minutes=63.75), "backlog_guard"))
+        self.assertEqual(fetch_interval(s, RSS), (1 * H, "tier"))
 
     def test_backlog_guard_binds_once_a_quarter_of_the_window_is_under_the_interval(self):
-        # 4h gap x 20 = an 80h window: the 24h floor would let it fill past a quarter (20h).
+        # 4d gap x 1 post listed = a 4d window: half its gap (2d) would let it fill past a quarter (1d)...
+        s = stats(mean_gap=4 * D, tier=CadenceTier.MEDIUM, max_posts_per_fetch=1)
+        self.assertEqual(fetch_interval(s, RSS), (1 * D, "backlog_guard"))
+        # ...it can only make a source sooner: a guard past the interval changes nothing.
         s = stats(mean_gap=4 * H, max_posts_per_fetch=20)
-        self.assertEqual(fetch_interval(s, RSS), (20 * H, "backlog_guard"))
+        self.assertEqual(fetch_interval(s, RSS), (4 * H, "tier"))
 
     def test_backlog_guard_beats_the_youtube_floor(self):
         # 2h gap x max(5, 15) = a 30h window, a quarter of it well under the 168h yt-dlp floor.
@@ -134,7 +153,7 @@ class DecideFetchTests(unittest.TestCase):
         for gap in (timedelta(minutes=1), timedelta(minutes=8)):  # windows of 20m and 2.7h
             with self.subTest(gap=gap):
                 s = stats(mean_gap=gap, max_posts_per_fetch=20)
-                self.assertEqual(fetch_interval(s, RSS), (1 * H, "backlog_guard"))
+                self.assertEqual(fetch_interval(s, YOUTUBE), (1 * H, "backlog_guard"))
 
     def test_override_beats_tier_guard_and_floor(self):
         for profile, s in (
@@ -222,11 +241,11 @@ class DecideFetchTests(unittest.TestCase):
 
     def test_next_due_is_last_success_plus_interval_when_not_due(self):
         cases = [
-            (stats(last_success_at=NOW - H), RSS, 24 * H),
+            (stats(last_success_at=NOW - H), RSS, 6 * H),
             (stats(mean_gap=3 * D, tier=CadenceTier.MEDIUM, last_success_at=NOW - 10 * H), RSS, 36 * H),
             (stats(mean_gap=3 * D, tier=CadenceTier.MEDIUM, last_success_at=NOW - 2 * D), YOUTUBE, 168 * H),
             (stats(tier=CadenceTier.UNKNOWN, mean_gap=None, sample_size=1,
-                   last_success_at=NOW - 3 * H), RSS, 24 * H),
+                   last_success_at=NOW - 3 * H), RSS, 6 * H),
         ]
         for s, profile, interval in cases:
             with self.subTest(interval=interval):

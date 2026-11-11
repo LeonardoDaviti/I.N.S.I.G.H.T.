@@ -34,9 +34,18 @@ BACKOFF_DORMANT_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_DORMANT_MAX_HOU
 # however many failures in a row, so such a source is never dormant.
 BACKOFF_SERVER_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_SERVER_MAX_HOURS", 12))
 
-PROBATION_INTERVAL = timedelta(hours=24)
-TIER_INTERVAL_MIN = timedelta(hours=24)
+# A source is fetched at its own pace (owner 2026-11-11: "if someone needs 6 hours give them 6
+# hours"): a source posting at least daily is fetched every mean gap, never more often than the
+# tick; a slower one keeps the half-gap it had before (at least a day, at most 21 days), so no
+# source is fetched less often than under the old 24h minimum.
+#   interval = clamp(min(mean_gap, max(mean_gap * HALF_GAP_SHARE, HALF_GAP_FROM)), TIER_INTERVAL_MIN, TIER_INTERVAL_MAX)
+# Probation is 6h: a new source's first fetches are what learn its cadence (refresh_cadence runs
+# daily), and a fast source found on probation then waits 6h, not a day, for its first posts.
+PROBATION_INTERVAL = timedelta(hours=6)
+TIER_INTERVAL_MIN = timedelta(hours=1)     # the ingestion tick (run_scheduler: 60 minutes)
 TIER_INTERVAL_MAX = timedelta(days=21)
+HALF_GAP_FROM = timedelta(hours=24)        # a source slower than this is fetched every half gap...
+HALF_GAP_SHARE = 0.5                       # ...as before 2026-11-11, never less often
 BACKLOG_GUARD_MIN = timedelta(hours=1)
 # A busy feed is polled before its window (mean_gap x the posts it exposes) is a quarter full.
 BACKLOG_GUARD_SHARE = 4
@@ -65,6 +74,7 @@ class DecisionKind(str, Enum):
     SKIP_BACKOFF = "skip_backoff"
     SKIP_UNAVAILABLE = "skip_unavailable"    # yt-dlp off / no Telegram credentials or session
     SKIP_DISABLED = "skip_disabled"          # only reachable for selector 'all'/'folder' defensive path
+    SKIP_HOST_BUSY = "skip_host_busy"        # due, but its host's share of this run is spent (runner only)
 
     @property
     def fetches(self) -> bool:
@@ -235,7 +245,8 @@ def fetch_interval(stats: CadenceStats, profile: PolitenessProfile) -> tuple[tim
     if stats.tier == CadenceTier.UNKNOWN or stats.mean_gap is None:
         base, basis = PROBATION_INTERVAL, "probation"
     else:
-        base = min(max(stats.mean_gap * 0.5, TIER_INTERVAL_MIN), TIER_INTERVAL_MAX)
+        own = min(stats.mean_gap, max(stats.mean_gap * HALF_GAP_SHARE, HALF_GAP_FROM))
+        base = min(max(own, TIER_INTERVAL_MIN), TIER_INTERVAL_MAX)
         basis = "tier"
 
     # The profile floor applies to probation too: an unknown YouTube channel is still

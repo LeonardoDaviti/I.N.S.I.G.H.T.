@@ -51,7 +51,7 @@ COLLECT_SETTING = "collect_originals"   # read by originals_rules.collect_settin
 BUDGET_KEY = "originals_budget"   # the shared credit (originals_rules.credit_after): {credit, counted_at}
 CITED_KEY = "longread_citations"   # 0138 F3: {key: {n, posts}}: the sites the long-reads you opened cite
 SUPPLIERS_KEY = "originals_suppliers"   # 0138 D2: {at, current: {key: {n, urls, since}}, suggested: {key: first at}}
-EARLY_INTERVAL = timedelta(hours=24)   # schedule.TIER_INTERVAL_MIN: every tier's interval is at least this
+EARLY_INTERVAL = timedelta(hours=24)   # at most one early fetch a day per source (was schedule.TIER_INTERVAL_MIN until 2026-11-11)
 
 
 def collect_on(cur: Any) -> bool:

@@ -73,7 +73,7 @@ Supersedes: the adaptive fetch cadence plan (deleted in issue 0005; it is in git
 | **Cadence tier** | A label derived from a source's mean gap between posts: `fast` < 12h, `medium` 12h–7d, `slow` > 7d, `unknown` < 3 dated posts. | `CadenceTier` enum, `sources.cadence_tier` |
 | **Mean gap** | The mean time between a source's latest 20 dated posts. Recomputed at most once a day. | `sources.mean_gap_seconds` |
 | **Fetch interval** | How long a successfully fetched source waits before it is due again. | `FetchDecision.interval` |
-| **Probation** | The 24h interval used for `unknown` sources until they have at least 3 dated posts. | `DecisionKind`/tier `unknown` |
+| **Probation** | The 6h interval used for `unknown` sources until they have at least 3 dated posts (24h until 2026-11-11). | `DecisionKind`/tier `unknown` |
 | **Backlog guard** | A cap so that `interval ≤ mean_gap × max_posts_per_fetch / 4` (issue 0012). A feed that exposes N items is polled before it can push out unseen posts. | `_apply_backlog_guard` |
 | **Override** | `sources.fetch_interval_hours_override`. When set, it replaces the tier interval entirely. | — |
 | **Backoff** | The extra wait after consecutive *error* outcomes: 1h · 2^(n−1), capped at 24h (dormant cap 7d), jittered. It resets on the first non-error outcome. | `backoff_delay()` |
@@ -546,12 +546,14 @@ def backoff_delay(consecutive_failures: int, *, rand: Callable[[], float] = rand
 
 **`fetch_interval`:**
 1. If an override is set → `override_hours`, with basis `"override"`. The override skips everything below, including the guard ("manual override wins").
-2. If the tier is `unknown` → 24h, basis `"probation"`.
-3. Otherwise: `base = clamp(mean_gap * 0.5, 24h, 21d)`, basis `"tier"`.
+2. If the tier is `unknown` → 6h, basis `"probation"`: a new source's first fetches are what learn its cadence, so a fast one is not held to a day meanwhile.
+3. Otherwise each source at its own pace (owner 2026-11-11: "if someone needs 6 hours give them 6 hours"): `base = clamp(min(mean_gap, max(mean_gap * 0.5, 24h)), 1h, 21d)`, basis `"tier"`. A source posting at least daily is fetched every mean gap, never more often than the hourly tick; a slower one keeps the half gap it had before (at least a day), so no source is fetched less often than under the old rule. Until 2026-11-11 this was `clamp(mean_gap * 0.5, 24h, 21d)`: every source at most once a day, and a post on a 6-hourly feed reached INSIGHT up to a day late.
 4. Profile floor: `base = max(base, profile.cadence_floor)`, basis `"profile_floor"` if it raised the value. For yt-dlp, `cadence_floor` = 168h. This keeps the Mark VIII weekly YouTube cadence, because yt-dlp is the expensive kind.
 5. **Backlog guard (applied last, may go below the floor):** `cap = mean_gap * max(stats.max_posts_per_fetch, profile.min_posts_per_fetch) / 4` (a quarter of the feed's window, issue 0012). If `base > cap`, then `base = max(cap, 1h)` with basis `"backlog_guard"`.
 
-   The guard only binds for fast sources, where the 24h floor or a yt-dlp week would let the feed overflow. Example: a mean gap of 30 minutes with `max_posts=20` caps the interval at 2.5h.
+   Since every source posting at least daily is fetched at its own gap, the guard binds where a half gap or a yt-dlp week would let a short feed overflow. Example: a YouTube channel with a mean gap of 2h and `min_posts=15` caps the week at 7.5h.
+
+**Each host's share of a run** (2026-11-11, `gates.over_host_budget`): with more fetches a tick, a scheduled run gives one host at most 15 minutes of its spacing (`INSIGHT_RUN_HOST_BUDGET_SECONDS`): its first due source, then one more per gap (the host's learned gap or the source's `fetch_delay_seconds`) while the sum stays within it, oldest due first. At the floors (Telegram bridge 5s, nitter 10s, reddit 8s) that is 180, 90 and 112 sources, more than any host has; it binds once a host limited us and its learned gap grew (120s: 8 a run). The rest are decided `skip_host_busy` and stay due for the next tick. Forced runs and one source's "Fetch now" are not capped; the yt-dlp pool has its own budget and spacer.
 
 **Tier boundaries** (`tier_for`):
 - `unknown` if `sample_size < 3`
@@ -1129,11 +1131,11 @@ Everything goes through `decide_fetch`, `fetch_interval`, `tier_for` and `backof
 
 `decide_fetch` cases:
 - New source (no success, 0 posts) → `FETCH_NEW_SOURCE`.
-- Unknown tier, success 23h ago → `SKIP_NOT_DUE`; success 24h ago → `FETCH_DUE` (probation 24h).
-- Fast source (gap 2h) → interval 24h (floor).
+- Unknown tier, success 5h ago → `SKIP_NOT_DUE`; success 6h ago → `FETCH_DUE` (probation 6h).
+- Its own pace: gap 30m → 1h (the tick), 6h → 6h, 2d → 24h, 30d → 15d, 1y → 21d.
 - Medium (gap 3d) → 36h.
 - Slow (gap 60d) → 21d (ceiling).
-- Backlog guard: gap 30m, max_posts 20 → 10h with basis `backlog_guard`. Also with a YouTube profile: gap 2h, max 15 → 30h, which beats the 168h floor.
+- Backlog guard: gap 4d, a feed listing 1 post → 1d with basis `backlog_guard`. Also with a YouTube profile: gap 2h, max 15 → 7.5h, which beats the 168h floor.
 - Override 6h beats tier, guard and floor.
 - YouTube profile with gap 3d → 168h (`profile_floor`).
 - Error state: `next_retry_at` in the future → `SKIP_BACKOFF`; in the past → `FETCH_RETRY`, even when the tier interval has not elapsed.
@@ -1364,7 +1366,7 @@ Rules:
 **As built (2026-10-09) — deviations from the text above, all keeping its intent:**
 - **Created early:** `ingestion/kinds/base.py` holds only `PolitenessProfile` (fields as in §D.1, no `rate_limit`/`estimate_seconds` yet), because `decide_fetch` takes a profile; B3 adds the rest. `ingestion/ports.py` holds only `DbFetchStateStore` (one connection per call, clock + `backoff_delay` injected), which `safe_ingest.py`, `ingest.py` and the bridge share; B4 adds the protocols and other adapters. The interim profiles are `YTDLP_PROFILE` / `HOST_LOCK_PROFILE` in `safe_ingest.py`, picked by `interim_profile()` (`classify_source(...) == "youtube_channel"`).
 - **Profile floor applies to probation too.** `fetch_interval` step 4 runs after step 2, so an `unknown` YouTube channel waits 168h, not 24h (yt-dlp is the expensive kind either way). The backlog guard needs a mean gap, so it never applies to probation.
-- **`cadence_sample_size` counts distinct publication timestamps** in the 20-post window, not posts. On 2026-10-09, 4 live sources stamped whole batches with one time; their mean gap was 0, and the guard would have polled them hourly. With one distinct timestamp they stay `unknown` (24h probation). `tier_for` is unchanged; the SQL tier CASE is pinned to it by a parity test.
+- **`cadence_sample_size` counts distinct publication timestamps** in the 20-post window, not posts. On 2026-10-09, 4 live sources stamped whole batches with one time; their mean gap was 0, and the guard would have polled them hourly. With one distinct timestamp they stay `unknown` (probation: 24h then, 6h since 2026-11-11). `tier_for` is unchanged; the SQL tier CASE is pinned to it by a parity test.
 - **`refresh_cadence(..., source_ids=None)`** gained an optional scope so the rollback-pattern tests touch only their scratch rows.
 - **The bridge also called `record_source_status`** (`fetch_source_now` and `run_archive`, via `_record_source_status_safe`); the spec listed only the ingest scripts. `fetch_source_now` now records a normal outcome (`_record_fetch_outcome_safe`). An archive run no longer writes fetch state at all: paging old posts must neither delay the next live fetch nor reset its backoff, and the archive keeps its own status in `settings.archive`.
 - **A connector outage** (`_record_connector_outage`, telegram) is recorded as `unavailable`, which keeps the Mark VIII rule that a shared connector fault does not advance any source's backoff.

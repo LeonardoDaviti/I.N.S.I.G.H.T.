@@ -44,7 +44,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion import full_text, page_changes
-from insight_core.ingestion.gates import FetchGates, interleave_by_host
+from insight_core.ingestion.gates import FetchGates, interleave_by_host, over_host_budget
 from insight_core.ingestion.http import AddressMemory, HttpError, Validators
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import EmptyFetch, KindSession, KindUnavailable, SourceKind
@@ -222,6 +222,9 @@ class IngestionRunner:
             if decision.fetch:
                 due.append((source, kind, decision))
 
+        if due and not request.force and request.selector.kind != "source":
+            due = self._within_host_budgets(due, decisions, counts)
+
         await self._safely("record decisions", self.state.record_decisions, decisions, now=now)
         await self._safely("record progress", progress.event, "decided",
                            {"sources_considered": len(sources), "decisions": dict(counts)})
@@ -240,6 +243,44 @@ class IngestionRunner:
                                                  sessions, validators or {}, fetched_before)
         finally:
             await sessions.close_all()
+
+    def _within_host_budgets(self, due: List[tuple[Dict[str, Any], SourceKind, FetchDecision]],
+                             decisions: List[tuple[str, FetchDecision]],
+                             counts: Dict[str, int]) -> List[tuple[Dict[str, Any], SourceKind, FetchDecision]]:
+        """Each host's share of this run (gates.over_host_budget), oldest due first; the rest are
+        recorded as skip_host_busy and stay due for the next tick. The yt-dlp pool has no host lock
+        (its own spacer and budget pace it), so it is not counted here."""
+        oldest_first = sorted(due, key=lambda d: d[2].next_due_at or self.clock())
+        limiter = self.gates.host_limiter
+
+        def host(item: tuple) -> str:
+            source, kind, _ = item
+            return "ytdlp:" + str(source["id"]) if kind.profile.concurrency_pool == "ytdlp" else kind.host_key(source)
+
+        def spacing(item: tuple, host_key: str) -> float:
+            delay = (item[0].get("settings") or {}).get("fetch_delay_seconds") or 0
+            try:
+                delay = float(delay)
+            except (TypeError, ValueError):
+                delay = 0.0
+            return max(delay, limiter.gap(host_key))
+
+        kept, deferred = over_host_budget(oldest_first, host, spacing)
+        if not deferred:
+            return due
+        waiting = {item[0]["id"]: host(item) for item in deferred}
+        for i, (source_id, decision) in enumerate(decisions):
+            if source_id in waiting:
+                counts[decision.kind.value] -= 1
+                if not counts[decision.kind.value]:
+                    del counts[decision.kind.value]
+                counts[DecisionKind.SKIP_HOST_BUSY.value] = counts.get(DecisionKind.SKIP_HOST_BUSY.value, 0) + 1
+                decisions[i] = (source_id, dataclasses.replace(
+                    decision, kind=DecisionKind.SKIP_HOST_BUSY, fetch=False,
+                    detail=f"{decision.detail}; waits for the next run: {waiting[source_id]} has its share of this one"))
+        logger.info("%s due sources wait for the next run (their host's share of this one is spent)", len(deferred))
+        kept_ids = {item[0]["id"] for item in kept}
+        return [item for item in due if item[0]["id"] in kept_ids]
 
     async def _fetch_and_save(self, request: FetchRequest, progress: ProgressSink, started: datetime,
                                  run_id: str, sources: List[Dict[str, Any]],
