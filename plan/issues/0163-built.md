@@ -74,3 +74,68 @@ posts, 1M mentions, 50k entities (2k merges, 5.6k addresses), 10k Mark IX storie
 ## Open
 - The spec's measure (held-out mining, the weight-space gold, cost per day) before any News row.
 - The owner's open questions 1–2 (a "Watch this story" notification; more long-lived types).
+
+## v10.13.12: what production showed and the tightened rule
+**Migration 0103.** Built 2026-11-11 on its own branch.
+
+### What production showed (the first run after the v10.13.11 deploy)
+From its first 5,000 posts (the backfill's oldest) the stage found 8,939 rows; the 40 most-named entities alone had
+1,496 rows over 52 stories. Of 40 random rows the owner read, about 4–5 were real developments (10–12%). The classes:
+1. **The story isn't about the subject.** back's subject rule (named the subject by 2+ members) made a benchmark
+   story, a jailbreak story and a genetics result each "the story" of a popular model or assistant they mention.
+2. **One post under many stories:** 326 of 434 posts were under more than one story (an "<A> vs <B>" comparison under
+   three stories of the same models).
+3. **Generic entities:** an unversioned assistant name, a family name, a programming language kept a story
+   listening; one 2023 launch story got a post 1,316 days later.
+4. **Popular subjects:** a model named by dozens of posts a week made every one of them a follow-up (Q&A, benchmark
+   chatter, comparison spam).
+5. **Later versions:** posts about version 5.5 were follow-ups of the version 5 story (the family rule).
+
+### The tightened rule (rule 2; `markx/later.py`, every threshold a named, provisional constant)
+- **Main subject (A):** one entity (its root) is the subject of at least `MAIN_SHARE` = ½ of the story's read
+  members, of 2+ when 2+ were read, and no other subject of the story (any type; an unlinked name by its name key)
+  is the subject of more members. Ties among specific entities: a paper/document/dataset first, then the id.
+- **Specific only (`specific`):** paper, document, dataset (method once it exists) always; model and software only
+  as one release (level version, variant or checkpoint, or a version, variant or build named); a family, an
+  unversioned name and any `product`, org, person or event never.
+- **Same version only (E'):** the post's subject is the story's subject entity (through merges and pins), or the
+  same name key at the same version (an unlinked mention, or an unmerged duplicate whose version, variant and build
+  agree). The family match is gone: a later version is its own story.
+- **Quiet subject:** at most `QUIET_MAX` = 2 distinct sources named the subject as their subject in the
+  `QUIET_DAYS` = 14 days before the post (the story's members and the post itself not counted). One grouped read of
+  the subjects' mentions over the run's window (`_namings`), then a bisect per pair. `QUIET_FOR_LINKS` = on: L
+  hits must be quiet too (a popular release's page is linked about as often as it is named).
+- **One story per post and subject:** kept under the best story only (highest main-subject share, then the latest
+  last post, then the id); a post that is itself a member of a long-lived story of the subject is not a follow-up of
+  another story of it. A post naming two subjects ("<A> vs <B>") can still be under one story of each.
+- **L'** (the story's pages, the subject's addresses, hubs out) stays, under all of the above.
+
+### Old rows (rule 1): kept, not used
+- `mx_later.rule` (0103): every row that existed is rule 1 (the column's default); the code writes `RULE` = 2.
+- The unique key is now (story, post, rule): the new rule's re-read adds its own row beside an old one, so each row
+  keeps what its own rule found (members, entity, triggers, its task, verdict and the owner's labels). Updating the
+  old row's rule in place would have carried a loose rule's provenance, task and labels onto the new rule's row.
+- Rule 1 rows are never planned (`plan` reads `rule = RULE`), not counted and not in the precision, and not shown;
+  `GET /api/markx/later?story=<id>&all=1` and `GET /api/markx/entities/<id>/later?all=1` show every rule's rows.
+  Old rows already asked keep being settled (their answers are stored, nothing more).
+- The clock (`later_since`) names its rule; a clock of another rule (v10.13.11's has none) is a first run, so the
+  first rule-2 run re-reads the 30-day backfill, 5,000 posts a run.
+- Old rows' back tasks still open stay in `mx_tasks` (never deleted) and hold part of back's shared cap until answered.
+
+### Tests
+- `test_markx_later` (33): the five classes as negatives (a benchmark story mentioning a model; a subject of 2 of 5
+  read members; one story per post and subject with a comparison post under one story of each subject; an
+  unversioned model name, a family, a language, a product at 1,316 days; a subject named by five sources a week, only
+  its first posts before the chatter grew; a later version, linked and unlinked); the gold case (a document story of
+  15 posts by 5 sources in 8 days, a link to its pdf form 65 days later and a lone post naming it 77 days after its
+  first post); quiet not counting the story's members; L' under one story and a hub; the rule column, old rows kept
+  but not planned, counted or shown (and shown with `all=1`); a v10.13.11 clock restarting the backfill.
+
+### Measured time (synthetic, production size; rule 2)
+The fixture as v10.13.11's: 100k posts, 1M mentions (2 subjects a post, entities skewed so a few are very popular),
+50k entities (2k merges, 5.6k addresses), 10k Mark IX stories of 3 sources, 120k links.
+- `long_lived` with pages and addresses: 0.97 s (4,592 stories long-lived of 10k; the fixture's entity mix is far
+  more specific than real data's).
+- The rule-2 backfill (30 days, 5,000 posts a run): five runs of 1.88–1.98 s each, 341–693 rows a run (v10.13.11 on
+  the same shape found 4–7k a run).
+- A steady run (2 h of posts): 1.84 s.

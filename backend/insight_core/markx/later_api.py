@@ -2,9 +2,11 @@
 app's own; 404 when Mark X is off, as every /api/markx path). Included into markx/api.py's router.
 
 GET  /api/markx/later?story=<id>       a story page's "Later" (markx/later.of_story): {stories [{story, headline,
-                                       long_lived, following, subjects}], items, counts, precision, news}; the id
-                                       is a Mark IX story's or a Mark X story's
-GET  /api/markx/entities/{id}/later    an entity page's "Later developments" (later.of_entity): {entity, items, counts}
+                                       long_lived, following, subjects}], items, counts, precision, news, rule}; the
+                                       id is a Mark IX story's or a Mark X story's
+GET  /api/markx/entities/{id}/later    an entity page's "Later developments" (later.of_entity): {entity, items, counts,
+                                       rule}
+     both: the current rule's rows (v10.13.12); `&all=1` every rule's, the older loose rule's rows as well
 POST /api/markx/labels/later           {row, answer: development | retold | related | unrelated | undo} -> {id, answer,
                                        label, precision}
 POST /api/markx/later/follow           {story, following: false (Stop following this story) | true (Follow again)}
@@ -34,23 +36,23 @@ class FollowIn(BaseModel):
 
 
 @router.get("/later")
-def mx_later_story(story: str):
+def mx_later_story(story: str, all: bool = False):
     from insight_core.markx.api import _uuid, transaction
     found = _uuid(story)
     if found is None:
         raise HTTPException(status_code=404, detail="No such story")
     with transaction() as cur:
-        return later.of_story(cur, str(found))
+        return later.of_story(cur, str(found), all=all)
 
 
 @router.get("/entities/{entity_id}/later")
-def mx_later_entity(entity_id: str):
+def mx_later_entity(entity_id: str, all: bool = False):
     from insight_core.markx.api import _uuid, transaction
     found = _uuid(entity_id)
     if found is None:
         raise HTTPException(status_code=404, detail="No such entity")
     with transaction() as cur:
-        return later.of_entity(cur, str(found))
+        return later.of_entity(cur, str(found), all=all)
 
 
 @router.post("/labels/later")
