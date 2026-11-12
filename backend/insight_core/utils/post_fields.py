@@ -38,6 +38,13 @@ COLLECTED_KEY = "collected_original"
 # stored is its story's root and has its post page, but no row of a feed and no unread count. Saved by hand, or
 # brought by a followed source's feed, it loses the mark.
 STORY_ONLY_KEY = "story_only"
+# Issue 0167: a page its own source took back from another source that stored it first (an aggregator, a link
+# blog): {source_id (the one that held it), at, citation (that source's post citing it now)}. Kept by every update.
+TAKEN_KEY = "taken_from"
+# Issue 0167: a source's post that cites a page another source owns (an aggregator's item of a company's page):
+# {url, normalized_url, post_id}. Its address is the page's with CITATION_FRAGMENT and the source's id.
+CITES_KEY = "cites"
+CITATION_FRAGMENT = "#!/cited-by/"
 REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more

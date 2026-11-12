@@ -15,7 +15,10 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
-from insight_core.utils.post_fields import COLLECTED_KEY, MOVED_KEY, SAVED_KEY, STORY_ONLY_KEY, build_post_fields
+from insight_core.utils.post_fields import (CITES_KEY, COLLECTED_KEY, MOVED_KEY, SAVED_KEY, STORY_ONLY_KEY, TAKEN_KEY,
+                                           build_post_fields)
+from insight_core.utils import own_pages
+from insight_core.utils.url_normalization import canonicalize_url, extract_url_host, normalize_url
 from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
@@ -421,6 +424,8 @@ class PostsRepository:
                 # never reached and every post gathered that cycle is rolled back.
                 with self._savepoint(cur, "insight_upsert_post"):
                     row = self._saved_copy(cur, params)
+                    if row is None:
+                        row = self._own_page(cur, params)   # issue 0167: a page's own source takes it back
                     other_form = row is None and self._other_form(cur, params)
                     row = row if row is not None or other_form else self._same_post_elsewhere(cur, params)
                     if not other_form and row is None:
@@ -516,6 +521,117 @@ class PostsRepository:
             assignments=self._post_update_assignments(set_url=True)), dict(params, target_id=target))
         self.logger.info("A saved page is the post of source %s now: %s", params["source_id"], params["url"][:80])
         return (cur.fetchone()[0], False)
+
+    # Issue 0167: the row another source holds at this address (exact, or the same address normalised when the held
+    # one names no fragment: a link blog's #fn1 or #:~:text= rows are other posts), with both sources.
+    _HELD_SQL = """
+        SELECT p.id, p.url, hs.id::text, hs.platform, hs.handle_or_url, ins.platform, ins.handle_or_url
+          FROM posts p JOIN sources hs ON hs.id = p.source_id, sources ins
+         WHERE ins.id = %(source_id)s::uuid AND p.source_id <> %(source_id)s::uuid AND p.album_of IS NULL
+           AND (p.url = %(url)s OR (p.normalized_url = %(normalized_url)s::text AND strpos(p.url, '#') = 0))
+           AND NOT platform_post_address(%(normalized_url)s::text)
+         ORDER BY p.url = %(url)s DESC, p.fetched_at, p.id
+         LIMIT 1
+    """
+
+    def _own_page(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
+        """A page another source holds (issue 0167, utils/own_pages): when this source owns it and the holder doesn't,
+        the row moves to this source (hand_over) and is updated with this post, as (id, False). When the holder owns
+        it and this source doesn't (an aggregator's later fetch), this post becomes this source's citation of it:
+        `params` is pointed at the citation's address (the INSERT's ON CONFLICT then updates the citation) and None
+        is returned. Else None (as before: the holder's row is updated, its source kept)."""
+        if params.get("normalized_url") is None or own_pages.is_citation_address(params.get("url")):
+            return None
+        cur.execute(self._HELD_SQL, params)
+        found = cur.fetchone()
+        if found is None:
+            return None
+        row_id, held_url, holder, holder_platform, holder_handle, platform, handle = found
+        if (holder_platform or "").lower() == "saved":
+            return None   # a saved page: issue 0122's (_saved_copy)
+        incoming_owns = own_pages.owns(platform, handle, params["url"])
+        holder_owns = own_pages.owns(holder_platform, holder_handle, params["url"])
+        if incoming_owns and not holder_owns:
+            if held_url != params["url"]:
+                cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE url = %(url)s)", params)
+                if cur.fetchone()[0]:
+                    return None   # this address is stored too (this source's own row): the other paths decide
+            if not self.hand_over(cur, str(row_id), str(params["source_id"]), external_id=params.get("external_id")):
+                return None
+            cur.execute("UPDATE posts SET {assignments} WHERE id = %(target_id)s::uuid RETURNING id".format(
+                assignments=self._post_update_assignments(set_url=held_url != params["url"])),
+                dict(params, target_id=row_id))
+            return (cur.fetchone()[0], False)
+        if holder_owns and not incoming_owns:
+            self._as_citation(params, str(row_id))
+        return None
+
+    def _as_citation(self, params: Dict[str, Any], page_id: str) -> None:
+        """Point an incoming post of a source that doesn't own its page at that source's citation of it (0167)."""
+        page = params["normalized_url"]
+        cite = own_pages.citation_address(page, str(params["source_id"]))
+        metadata = json.loads(params.get("metadata") or "{}")
+        metadata[CITES_KEY] = {"url": params["url"], "normalized_url": page, "post_id": page_id}
+        params.update(url=cite, normalized_url=normalize_url(cite), canonical_url=canonicalize_url(cite),
+                      url_host=extract_url_host(cite), metadata=self._json_dumps(metadata))
+
+    def hand_over(self, cur: Cursor, post_id: str, owner_id: str, *, external_id: Optional[str] = None) -> bool:
+        """Move a stored post to the source that owns its page (issue 0167); the source that held it keeps a post
+        citing it. One row, its id kept: its stories, readings, labels, News rows, notes and reader state stay
+        with it; nothing is deleted. The citation (`own_pages.citation_address`) takes the held post's title, text,
+        dates and read state as they were, and metadata.cites; the moved row records metadata.taken_from. Its
+        external id goes when it would clash with one of the owner's (the owner's fetch brings its own). False when
+        the post is gone, already the owner's, or the owner's `external_id` is another of its rows'."""
+        cur.execute("SELECT source_id::text, url, COALESCE(normalized_url, url) FROM posts WHERE id = %s::uuid FOR UPDATE",
+                    (post_id,))
+        found = cur.fetchone()
+        if found is None or found[0] == owner_id:
+            return False
+        holder, url, normalized = found
+        cur.execute(self._ADDRESS_LOCK_SQL, {"normalized_url": normalized})
+        if external_id is not None:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE source_id = %s::uuid AND external_id = %s AND id <> %s::uuid)",
+                        (owner_id, external_id, post_id))
+            if cur.fetchone()[0]:
+                return False
+        cite = own_pages.citation_address(normalized, holder)
+        cited = {"url": url, "normalized_url": normalized, "post_id": post_id}
+        cur.execute(
+            f"""INSERT INTO posts (source_id, url, published_at, published_precision, fetched_at, surfaced_at, title,
+                                   content, content_html, lang, content_hash, language_code, language_confidence,
+                                   normalized_url, canonical_url, url_host, author, reposted_by, metadata, media_urls,
+                                   categories)
+                SELECT source_id, %(cite)s, published_at, published_precision, fetched_at, surfaced_at, title, content,
+                       content_html, lang, content_hash, language_code, language_confidence, %(cite_normalized)s,
+                       %(cite_canonical)s, url_host, author, reposted_by,
+                       (metadata - '{TAKEN_KEY}' - '{SAVED_KEY}') || jsonb_build_object('{CITES_KEY}', %(cited)s::jsonb),
+                       media_urls, categories
+                  FROM posts WHERE id = %(id)s::uuid
+                ON CONFLICT (url) DO NOTHING
+                RETURNING id""",
+            {"cite": cite, "cite_normalized": normalize_url(cite), "cite_canonical": canonicalize_url(cite),
+             "cited": json.dumps(cited), "id": post_id})
+        made = cur.fetchone()
+        if made is None:
+            cur.execute("SELECT id FROM posts WHERE url = %s AND source_id = %s::uuid", (cite, holder))
+            made = cur.fetchone()
+            if made is None:
+                return False   # another source's row at the citation's address: left as it was
+        citation = str(made[0])
+        cur.execute("""INSERT INTO post_reader_state (post_id, read_at, updated_at)
+                       SELECT %s::uuid, read_at, now() FROM post_reader_state WHERE post_id = %s::uuid AND read_at IS NOT NULL
+                       ON CONFLICT (post_id) DO NOTHING""", (citation, post_id))
+        taken = {"source_id": holder, "at": datetime.now().astimezone().isoformat(), "citation": citation}
+        cur.execute(f"""UPDATE posts SET source_id = %(owner)s::uuid,
+                               external_id = CASE WHEN EXISTS (SELECT 1 FROM posts o WHERE o.source_id = %(owner)s::uuid
+                                                                 AND o.external_id = posts.external_id AND o.id <> posts.id)
+                                                  THEN NULL ELSE external_id END,
+                               metadata = metadata || jsonb_build_object('{TAKEN_KEY}', %(taken)s::jsonb)
+                         WHERE id = %(id)s::uuid""",
+                    {"owner": owner_id, "taken": json.dumps(taken), "id": post_id})
+        self.logger.info("Issue 0167: %s is the post of its own source %s now (was %s's, which cites it)",
+                         url[:80], owner_id, holder)
+        return True
 
     def _same_post_elsewhere(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
         """This post stored by its source under another address (_ELSEWHERE_SQL): that row, moved to
@@ -698,6 +814,8 @@ class PostsRepository:
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}',"
                     # A page you saved stays one you saved (issue 0122), whatever the feed brings.
                     f" '{SAVED_KEY}', {row}metadata -> '{SAVED_KEY}',"
+                    # A page its own source took back, and a holder's citation of it (issue 0167).
+                    f" '{TAKEN_KEY}', {row}metadata -> '{TAKEN_KEY}', '{CITES_KEY}', {row}metadata -> '{CITES_KEY}',"
                     # And a page INSIGHT collected stays collected (issue 0123).
                     f" '{COLLECTED_KEY}', {row}metadata -> '{COLLECTED_KEY}'))")
         assignments: List[str] = []
@@ -1007,6 +1125,7 @@ class PostsRepository:
                   FROM posts
                  WHERE source_id = %(source)s::uuid
                    AND NOT metadata ? '{FULL_TEXT_FLAG}'
+                   AND NOT metadata ? '{CITES_KEY}'
                    AND metadata -> '{PAGE_TRIES_KEY}' @> '{{"failed": true}}'
                    AND (metadata -> '{PAGE_TRIES_KEY}' ->> 'count')::int < %(max_tries)s
                    AND (metadata -> '{PAGE_TRIES_KEY}' ->> 'last_at')::timestamptz <= %(before)s
@@ -1040,6 +1159,7 @@ class PostsRepository:
                        s.id, s.platform, s.handle_or_url, s.settings
                 FROM posts p JOIN sources s ON s.id = p.source_id
                 WHERE NOT p.metadata ? '{FULL_TEXT_FLAG}'
+                  AND NOT p.metadata ? '{CITES_KEY}'
                   AND NOT p.metadata @> '{{"paywalled": true}}'
                   AND COALESCE((p.metadata ->> '{FULL_TEXT_RULE_KEY}')::int, 0) < %(rule)s
                   AND (NOT p.metadata ? '{PAGE_OUTCOME_KEY}'
@@ -1063,6 +1183,7 @@ class PostsRepository:
                 FROM posts p JOIN sources s ON s.id = p.source_id
                 WHERE (length(coalesce(p.content, '')) < %(short)s OR p.metadata @> '{{"paywalled": true}}')
                   AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
+                  AND NOT p.metadata ? '{CITES_KEY}'
                   AND (%(retry)s OR NOT p.metadata ? '{FULL_TEXT_CHECKED}')
                   AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)
                 ORDER BY p.published_at DESC NULLS LAST, p.id
