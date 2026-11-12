@@ -223,6 +223,49 @@ class ServedTests(unittest.TestCase):
         self.cur.execute("UPDATE sources SET enabled = NOT enabled WHERE id = %s", (source,))
         self.assertNotEqual(self.inputs(), renamed, "enabled or not")
 
+    def test_reading_discover_never_writes(self):
+        """v10.16: the checks read Discover in a read-only transaction; with its counts to make again (another
+        story run's stamp) the read kept them and the list, and failed: "cannot execute INSERT in a read-only
+        transaction". A read makes them without writing; the background build keeps them."""
+        from insight_core.db import database
+
+        voices = [insert_source(self.cur, f"Voice {n} {self.mark}") for n in range(3)]
+        for n, source in enumerate(voices):
+            for k in range(2):
+                url = f"https://voice{n}-{self.mark}.example/p/{k}"
+                self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, published_at, links_scanned_at)"
+                                 " VALUES (%s, %s, %s, %s, now(), now()) RETURNING id", (source, url, url, url.split("/")[2]))
+                post = self.cur.fetchone()[0]
+                self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, '', 0)",
+                                 (post, f"https://linked-{self.mark}.example/2026/10/story-{k}"))
+        self.cur.execute("SELECT key, value FROM system_settings WHERE key IN ('discover_counts', 'discover_list')")
+        before = dict(self.cur.fetchall())
+        self.cur.execute("DELETE FROM system_settings WHERE key IN ('discover_counts', 'discover_list')")
+        self.conn.commit()
+
+        def restore():
+            for key, value in before.items():
+                self.cur.execute("INSERT INTO system_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE "
+                                 "SET value = EXCLUDED.value", (key, psycopg.types.json.Jsonb(value)))
+            self.conn.commit()
+        self.addCleanup(restore)
+        plain = database.Database._connect_kwargs
+
+        def read_only(db):
+            return {**plain(db), "options": (plain(db).get("options", "") + " -c default_transaction_read_only=on").strip()}
+        database.close_all()
+        try:
+            with mock.patch.object(database.Database, "_connect_kwargs", read_only):
+                got = StoriesService(db_url()).discover()
+        finally:
+            database.close_all()
+        self.assertIn("success", got)
+        self.cur.execute("SELECT count(*) FROM system_settings WHERE key IN ('discover_counts', 'discover_list')")
+        self.assertEqual(self.cur.fetchone()[0], 0, "a read keeps nothing")
+        StoriesService(db_url()).refresh()
+        self.cur.execute("SELECT count(*) FROM system_settings WHERE key IN ('discover_counts', 'discover_list', 'discover_served')")
+        self.assertEqual(self.cur.fetchone()[0], 3, "the background build keeps them")
+
     def test_an_open_serves_the_last_answer_and_says_when_it_is_due(self):
         built = []
         clock = [NOW]
