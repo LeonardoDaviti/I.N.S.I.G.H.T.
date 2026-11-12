@@ -656,7 +656,7 @@ class StoriesService:
             logger.exception("Stories: Discover's counts were not updated")
 
     @staticmethod
-    def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None, *, keep: bool = True) -> Dict[str, Any]:
         """Discover's counts by links (issue 0062), grouped and counted in the database: the kept ones
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules, the
@@ -664,7 +664,10 @@ class StoriesService:
         facts change has its posts queued, so the addresses they link are a run's too), by the kept
         platforms; a full count finds the platforms the data finds again (issue 0080: 2.3 s on the lab, and a
         story run's few links don't move them).
-        {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}."""
+        {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}.
+        Without `keep` (a read of Discover, v10.16: the checks read it in a read-only transaction) nothing is
+        written: counts made now are not kept, and addresses no story run has worked out are not filled (counted
+        as the job left them; the next story run fills them)."""
         accounts = sources.platform_accounts()
         own_sites = {i: sources.publication(i) for i in sources.kind}
         selves = {i: sorted(sources.selves(i)) for i in sources.kind}
@@ -687,14 +690,17 @@ class StoriesService:
         else:
             platforms = DiscoverRepository.platforms(cur, kinds=sources.kind, own_sites=own_sites, selves=selves)
             found, unknown = DiscoverRepository.counts(cur, mirrors=mirrors, platforms=platforms, **ask)
-            if unknown:   # addresses no story run has worked out yet (the job does it after reading links)
+            if unknown and keep:   # addresses no story run has worked out yet (the job does it after reading links)
                 DiscoverRepository.fill_addresses(cur, accounts, platforms=platforms)
                 found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, platforms=platforms, **ask)
+            elif unknown:
+                logger.info("Discover: %d linked addresses not worked out yet, read as the story job left them", unknown)
             StoriesService._title_articles(cur, sources, found)
         found.sort(key=lambda s: s["key"])
         kept = {"stamp": stamp, "base": base, "found": found, "mirrors": mirrors, "scanned_to": scanned_to,
                 "platforms": {host: list(prefix) for host, prefix in sorted(platforms.items())}}
-        DiscoverRepository.keep(cur, kept)
+        if keep:
+            DiscoverRepository.keep(cur, kept)
         return kept
 
     @staticmethod
@@ -717,8 +723,17 @@ class StoriesService:
         (issue 0080: discover_rules.score; issue 0109: discover_rules.order, the tested followable first, then
         the ones that can't be followed as a feed, `section: "unfollowable"`, then the untested); the
         references they use and the stories the sources you follow miss beside them. `offset` and
-        `limit`: the page asked for (the first holds FIRST_PAGE); `q`: only those whose words match."""
-        return self._page(self._fresh(), offset=offset, limit=limit, q=q)
+        `limit`: the page asked for (the first holds FIRST_PAGE); `q`: only those whose words match.
+        On a read-only connection it writes nothing (v10.16: the checks read Discover in a read-only transaction and
+        it failed keeping its counts: "cannot execute INSERT"); the API's GET never calls it (`discover_served`
+        reads the kept answer, `refresh` builds and keeps it in the background)."""
+        return self._page(self._fresh(persist=self._writable()), offset=offset, limit=limit, q=q)
+
+    def _writable(self) -> bool:
+        """Whether this service's connections may write (the checks open every one read-only)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SHOW transaction_read_only")
+            return cur.fetchone()[0] != "on"
 
     def discover_served(self, *, offset: int = 0, limit: Optional[int] = None,
                         q: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
@@ -765,10 +780,10 @@ class StoriesService:
             logger.exception("Discover: the answer was not kept")
         return answer
 
-    def _fresh(self) -> Dict[str, Any]:
+    def _fresh(self, *, persist: bool = True) -> Dict[str, Any]:
         """The list (`_discover_all`) with the rows read now: Mark X's originals (0138 D). Archive rows are read
-        on each page (`_page`)."""
-        result = self._discover_all()
+        on each page (`_page`). Without `persist`, nothing is written (`_discover_all`)."""
+        result = self._discover_all(persist=persist)
         return self._from_originals(result)   # 0138 D: never kept with the list
 
     def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
@@ -872,9 +887,10 @@ class StoriesService:
             s["cited_by_longreads"] = got["n"]
         return {**result, "suggestions": order(ranked), "pages": pages, "supplied": supplied, "worlds": worlds}
 
-    def _discover_all(self) -> Dict[str, Any]:
+    def _discover_all(self, *, persist: bool = True) -> Dict[str, Any]:
         """The whole list: this process's last when its inputs and code are unchanged, else the one the
-        database keeps for them (a story run's, another process's), else made now and kept."""
+        database keeps for them (a story run's, another process's), else made now and kept. Without `persist` (a
+        read, v10.16) it is made without writing: its counts and the list are not kept, no address is filled."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
             if self._discovered[0] == inputs and self._discovered[1] is not None:
@@ -885,7 +901,7 @@ class StoriesService:
                 return kept
             # Grouped and counted in the database (issue 0062): the kept links never come to Python.
             sources = SourceFacts(cur)
-            counted = self._counted(cur, sources)
+            counted = self._counted(cur, sources, keep=persist)
             platforms = _platforms(counted)
             followed, hidden, classics = sources.followed(), self.repo.hidden(cur), set(self.news.classic_urls(cur))
             roots = DiscoverRepository.story_origins(cur, kinds=sources.kind,
@@ -1044,11 +1060,12 @@ class StoriesService:
                   "pages": page_rows,
                   "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],
                   "first_page": FIRST_PAGE}
-        try:
-            with db.transaction(self.db_url) as cur:
-                DiscoverRepository.keep_list(cur, inputs, result)
-        except Exception:  # noqa: BLE001 - derived; the next open makes it again
-            logger.exception("Discover: the list was not kept")
+        if persist:
+            try:
+                with db.transaction(self.db_url) as cur:
+                    DiscoverRepository.keep_list(cur, inputs, result)
+            except Exception:  # noqa: BLE001 - derived; the next open makes it again
+                logger.exception("Discover: the list was not kept")
         self._discovered = (inputs, result)
         return result
 
