@@ -28,7 +28,7 @@ export TEST_IMAGE="${TEST_IMAGE:-insight-backend:test-${branch}}"
 # run-tests.sh reads .env next to it; link one in for this run when the checkout has none (removed after)
 linked=0
 if [ ! -e .env ]; then ln -s "$(realpath "$ENV_FILE")" .env; linked=1; fi
-cleanup() { [ "$linked" = 1 ] && rm -f .env; }
+cleanup() { if [ "$linked" = 1 ]; then rm -f .env; fi; }   # an if, never a failing && as the trap's last status
 trap cleanup EXIT
 
 echo "==> building ${TEST_IMAGE}"
