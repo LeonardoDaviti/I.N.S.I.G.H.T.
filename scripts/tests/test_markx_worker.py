@@ -831,5 +831,29 @@ class TestProbes(Base):
         self.assertEqual(sizes["track"], [4])
 
 
+class TestRename(Base):
+    """0165 B: the rename judge (rename-v1) is a default kind, after the collision judge, five items a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["rename"] = "rename-v1"
+        self.addCleanup(KIND_GUIDE.pop, "rename")
+        self.stub.guides["rename-v1"] = guide("rename-v1", "GUIDE rename-v1")
+
+    def test_rename_is_a_default_kind_five_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertIn("rename", kinds)
+        self.assertEqual(kinds.index("rename"), kinds.index("collide") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["rename"], 5)
+
+    def test_renames_asked_five_a_call(self):
+        self.stub.add("rename", 7, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sorted(sizes), [2, 5])
+
+
 if __name__ == "__main__":
     unittest.main()

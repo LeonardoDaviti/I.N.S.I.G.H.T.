@@ -89,7 +89,14 @@ const REASONS: Record<string, string> = {
   type: 'their types differ', chain: 'it would join two groups of names', handle_extra_word: 'a handle with an extra word',
   paren: '“X (Y)” written in one post', fields_parser: 'Haiku’s version fields agree, the parser’s don’t',
   maker_unstated: 'the maker in front is only guessed', collision: 'one name, maybe several things',
+  rename: 'one maker, the older name gone quiet as the newer came',   // 0165 B
 };
+
+/** 0165 B: a rename item's answers: `same` is "same thing, renamed" (the older name becomes the newer's earlier name). */
+const RENAME_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
+  { answer: 'same', label: 'same thing, renamed' }, { answer: 'different', label: 'different' },
+  { answer: 'not_entity', label: 'not an entity' },
+];
 
 /** 0130 A1-A2: what the queue item carries beyond 0119's: its band, every reason, the second opinion. */
 type Opinion = { relation?: string; confidence?: number; evidence?: string } | null;
@@ -179,7 +186,8 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
       <p className="text-[0.75rem] text-fg-3">
         {item.kind === 'collision'
           ? `Split proposed (${item.evidence.split_runs ?? 2} of ${item.evidence.runs ?? 3} runs)`
-          : `Proposed: ${item.proposal.replace('_', ' ')}`}
+          : item.kind === 'rename' ? `Renamed? ${item.a.name} (older) → ${item.b?.name ?? '—'} (newer)`
+            : `Proposed: ${item.proposal.replace('_', ' ')}`}
         {' · '}{REASONS[item.reason] ?? item.reason}
         {(item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
         {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
@@ -205,11 +213,14 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
           {item.b ? <Side side={item.b} /> : null}
         </div>
       )}
+      {item.kind === 'rename' && item.evidence.asked_because ? (
+        <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Asked because {item.evidence.asked_because}</p>
+      ) : null}
       {judge?.evidence ? <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Haiku: {judge.evidence}</p> : null}
       <SecondOpinion item={item} />
       {warning ? <p className="mt-1 text-[0.8125rem] text-fg [overflow-wrap:anywhere]" role="note">{warning}</p> : null}
       <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Your answer">
-        {ANSWERS.map((a) => (
+        {(item.kind === 'rename' ? RENAME_ANSWERS : ANSWERS).map((a) => (
           <Button key={a.answer} size="sm" variant={chosen === a.answer ? 'primary' : 'secondary'}
                   aria-pressed={chosen === a.answer} disabled={answer.isPending} onClick={() => answer.mutate(a.answer)}>
             {a.label}
@@ -243,7 +254,7 @@ function Merges({ queue }: { queue: MarkxEntityQueue }) {
         {queue.merges.map((m) => (
           <li key={m.id} className="flex flex-wrap items-baseline gap-2 border-t border-line py-1.5">
             <span className={m.undone_at ? 'text-fg-3 line-through' : 'text-fg'}>{m.from.name} → {m.to.name}</span>
-            <span className="text-fg-3">{m.automatic ? m.by : 'by you'}</span>
+            <span className="text-fg-3">{m.automatic ? m.by : 'by you'}{m.kind === 'rename' ? ' · renamed' : ''}</span>
             {!m.undone_at ? (
               <Button size="sm" variant="secondary" disabled={undo.isPending} onClick={() => undo.mutate(m.id)}>undo</Button>
             ) : <span className="text-fg-3">undone</span>}

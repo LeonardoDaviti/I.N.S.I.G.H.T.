@@ -195,6 +195,15 @@ ALIAS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
+# 0165 B: two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
+RENAME_RELATIONS = ["renamed", "successor", "part", "different", "cant_tell"]
+RENAME_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence"],
+    "properties": {"evidence": _STR, "relation": {"enum": RENAME_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
 COLLIDE_MENTIONS = 8          # mentions a collision question shows (the lab's MAXM)
 COLLIDE_RUNS = 3              # asked three times; a split two runs make goes to the queue (never applied by itself)
 COLLIDE_SCHEMA = {
@@ -349,6 +358,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
+    Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged

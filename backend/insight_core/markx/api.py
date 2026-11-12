@@ -586,6 +586,9 @@ def mx_post(post_id: str):
         from insight_core.markx import graph
         got = graph.before(cur, str(found))
         panel["before"], panel["before_more"] = got["items"], got["more"]
+        # 0165 D: the post's subjects' previous events (birth, last release, first outside mention), from their timeline
+        from insight_core.markx import timeline
+        panel["before_timeline"] = timeline.before_post(cur, str(found), skip=[r["post_id"] for r in got["items"]])
         return panel
 
 
