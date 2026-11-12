@@ -24,6 +24,7 @@ import { sourceReadPath } from '../lib/feedContext';
 import ArchiveSection from './sources/ArchiveSection';
 import SourceDiscoveries from './sources/SourceDiscoveries';
 import ReplacementNotice from './sources/ReplacementNotice';
+import SilentNotice from './sources/SilentNotice';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
 function SourceAddress({ value }: { value: string }) {
@@ -259,6 +260,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             {healthRow ? <ReplacementNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
+            {healthRow?.silent ? <SilentNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
             {/* A quiet note, after the replacement (an action): the reader keeps less of this
                 source's pages than they show (issue 0032). */}
             {healthRow?.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{healthRow.reading_notice}</p> : null}

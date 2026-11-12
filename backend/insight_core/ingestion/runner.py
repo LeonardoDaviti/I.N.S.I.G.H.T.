@@ -14,7 +14,8 @@ gate slot of a kind's first due source and closed in a finally at the end of the
 session that cannot open makes that kind's sources unavailable. A fetch never raises out of
 the runner; a failing store write is logged and the run carries on. A source whose fetch
 failed is shown to the source doctor (issue 0036), outside the save lock: it may look for the
-source's replacement and switch it.
+source's replacement and switch it. One whose fetch worked is shown to it too (issue 0178): a source
+silent far beyond its own rhythm has where it went looked for, never switched.
 
 A kind that fetches conditionally (kind.conditional, issue 0044: generic RSS, page watch) gets
 an AddressMemory holding its source's stored validators; "Fetch now" on one source reads in
@@ -96,6 +97,7 @@ class _Fetched:
     watching: bool = False
     failure: Optional[EmptyFetch] = None     # its posts saved, the fetch failing: why (issue 0137 A1)
     recognised: Optional[Dict[str, Any]] = None   # settings the fetch learned (issue 0167: a Substack on its domain)
+    title: Optional[str] = None   # what the feed read calls itself (issue 0178: an unnamed source's name)
 
 
 class _RunSessions:
@@ -357,7 +359,10 @@ class IngestionRunner:
                     await self.inspections.refresh(source, f.kind, outcome.fetched)
                 if f.recognised and outcome.status.is_success and hasattr(self.inspections, "recognised"):
                     await self.inspections.recognised(source, f.recognised)   # issue 0167
+                if f.title and outcome.status.is_success and hasattr(self.inspections, "named"):
+                    await self.inspections.named(source, f.title)   # issue 0178: an unnamed source's own name
                 done += 1
+                new_count = saved.inserted - inserted_before
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
                     "status": outcome.status.value, "error": outcome.error, "warning": outcome.warning,
@@ -369,6 +374,9 @@ class IngestionRunner:
                 })
             if self.doctor is not None and f.outcome.status == OutcomeStatus.ERROR and rows:
                 await self.doctor.after_failure(source, f.kind, rows[0], f.error, progress)
+            elif self.doctor is not None and f.outcome.status.is_success and rows and hasattr(self.doctor, "after_success"):
+                # A source silent far beyond its rhythm (issue 0178): where it went is looked for, never switched.
+                await self.doctor.after_success(source, f.kind, rows[0], new_count)
             return f
 
         fetched: List[_Fetched] = list(await asyncio.gather(*(fetch_and_save(s) for s in ordered)))
@@ -441,9 +449,10 @@ class IngestionRunner:
         warning: Optional[str] = None
         failure: Optional[str] = None
         recognised: Optional[Dict[str, Any]] = None
+        title: Optional[str] = None
 
         async def fetch_latest() -> List[dict]:
-            nonlocal memory, warning, failure, recognised
+            nonlocal memory, warning, failure, recognised, title
             if not getattr(kind, "conditional", False):
                 got = await kind.fetch_latest(source, decision.post_limit)
             else:
@@ -454,6 +463,7 @@ class IngestionRunner:
             # Items stored as fewer posts than they are (issue 0137 A1): saved, and the fetch fails.
             failure = getattr(got, "failure", None)
             recognised = getattr(got, "recognised", None)
+            title = getattr(got, "title", None)
             return list(got or [])
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
@@ -500,6 +510,7 @@ class IngestionRunner:
         if failure:
             fetched.failure = EmptyFetch(failure)
         fetched.recognised = recognised
+        fetched.title = title if isinstance(title, str) else None
         return fetched
 
     async def _check_pages(self, source: Dict[str, Any], kind: SourceKind, full: bool) -> List[page_changes.PageCheck]:

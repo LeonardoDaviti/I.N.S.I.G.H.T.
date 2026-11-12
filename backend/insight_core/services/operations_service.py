@@ -85,7 +85,8 @@ OVERVIEW_HEALTH_ROWS = 8
 
 
 def empty_health_summary() -> Dict[str, int]:
-    return {key: 0 for key in HEALTH_SUMMARY_KEYS.values()}
+    """Each status's count, and `silent` (issue 0178): sources silent far beyond their rhythm, not a status."""
+    return {**{key: 0 for key in HEALTH_SUMMARY_KEYS.values()}, "silent": 0}
 
 
 EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
@@ -282,7 +283,49 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # Where its posts now live (issue 0108): {host, followed}; the owner chooses, nothing is switched off.
         "moved_to": source.get("moved_to"),
         **_doctor_fields(state, source.get("handle_or_url")),
+        # Silent far beyond its own rhythm (issue 0178), and where the doctor found it went; None otherwise.
+        "silent": silent_fields(source, state, status, now),
     }
+
+
+def silent_fields(source: Dict[str, Any], state: Optional[FetchStateRow], status: str,
+                  now: datetime) -> Optional[Dict[str, Any]]:
+    """A source silent far beyond its own rhythm (issue 0178, source_doctor.silent_beyond_rhythm): {days,
+    usual_gap_hours, last_post_at, looked_at, moved, replacement}, the doctor's look (looked_at None: not yet, or
+    its kind has no address to move) when it was made since the source's newest post. None when it is not
+    silent, is off, failing (the failure doctor speaks then) or the owner's saved pages, or the owner said it
+    stopped and nothing came since."""
+    from insight_core.ingestion.source_doctor import silent_beyond_rhythm
+
+    if (status in (HealthStatus.ERROR.value, HealthStatus.BACKOFF.value, HealthStatus.DISABLED.value)
+            or source.get("platform") == SAVED_PLATFORM):
+        return None
+    last = source.get("last_post_at")
+    silence = silent_beyond_rhythm(last, source.get("mean_gap_seconds"), source.get("cadence_tier"), now)
+    if silence is None:
+        return None
+    finding = (state.silent_finding if state else None) or {}
+    current = bool(finding) and _same_instant(finding.get("last_post_at"), last)
+    if current and finding.get("stopped"):
+        return None
+    looked = current and finding.get("looked")
+    return {
+        "days": int(silence.total_seconds() // 86400),
+        "usual_gap_hours": float(source["mean_gap_seconds"]) / 3600,
+        "last_post_at": iso(last),
+        "looked_at": iso(state.silent_checked_at) if looked and state else None,
+        "moved": list(finding.get("moved") or []) if looked else [],
+        "replacement": finding.get("replacement") if looked else None,
+    }
+
+
+def _same_instant(stored: Any, value: Optional[datetime]) -> bool:
+    if not stored or value is None:
+        return False
+    try:
+        return datetime.fromisoformat(str(stored)) == value
+    except ValueError:
+        return False
 
 
 def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
@@ -338,6 +381,8 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
             summary[key] += 1
         if status == HealthStatus.BACKOFF:
             summary[HEALTH_SUMMARY_KEYS[HealthStatus.ERROR]] += 1
+        if row.get("silent"):
+            summary["silent"] += 1   # silent far beyond its rhythm (issue 0178), whatever its status
     return summary
 
 
@@ -991,6 +1036,21 @@ class OperationsService:
         row = self.get_source_health_row(source_id) if dismissed else None
         if row is None:
             raise LookupError(f"Source {source_id} has no replacement to dismiss")
+        return row
+
+    def source_stopped(self, source_id: str) -> Dict[str, Any]:
+        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts.
+        Nothing is switched off or deleted. The fresh row; LookupError for no such source."""
+        marked = False
+        if self._valid_id(source_id):
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                repo = FetchStateRepository()
+                marked = repo.mark_stopped(cur, source_id, last_post_at=repo.last_post_at(cur, source_id),
+                                           at=self.clock())
+                conn.commit()
+        row = self.get_source_health_row(source_id) if marked else None
+        if row is None:
+            raise LookupError(f"Source {source_id} not found")
         return row
 
     def keep_source(self, source_id: str) -> Dict[str, Any]:

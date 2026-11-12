@@ -149,6 +149,8 @@ class GenericRssKind(BaseKind):
 
             if substack.feed_signal(feed_text) == "generator" and not substack.is_platform_host(host_of(url)):
                 result.recognised = {"substack": True}   # issue 0167: a Substack publication on its own domain
+            if not str((source.get("settings") or {}).get("display_name") or "").strip():
+                result.title = parsing.feed_channel_title(feed_text)   # issue 0178: an unnamed source's own name
         return result
 
     # ------------------------------------------------------------------ the archive (issues 0108, 0143)

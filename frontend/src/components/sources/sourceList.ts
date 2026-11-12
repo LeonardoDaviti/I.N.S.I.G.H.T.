@@ -17,6 +17,7 @@ import type { Status } from '../ui/styles';
 import { HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, statusRank } from '../../lib/sourceSchedule';
 import { feedDateLabel, formatRelativeTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
+import { formatHours } from '../../lib/duration';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
 
@@ -53,10 +54,10 @@ export const DEFAULT_DIR: Record<SortBy, SortDir> = {
   status: 'desc',
 };
 
-/** A status chip: one health status, `enabled` (every source that is on) or `tidy` (Tidy up:
- *  the sources marked quiet or never opened, issue 0046). */
-export type StatusFilter = HealthStatus | 'enabled' | 'tidy';
-const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', ...HEALTH_STATUS_ORDER];
+/** A status chip: one health status, `enabled` (every source that is on), `tidy` (Tidy up:
+ *  the sources marked quiet or never opened, issue 0046) or `silent` (silent far beyond its rhythm, issue 0178). */
+export type StatusFilter = HealthStatus | 'enabled' | 'tidy' | 'silent';
+const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', 'silent', ...HEALTH_STATUS_ORDER];
 
 export interface SourcesView {
   q: string;
@@ -131,6 +132,7 @@ export function isTidy(row: Pick<SourceHealthRow, 'quiet' | 'never_opened'>): bo
 export function filterByStatus(rows: readonly SourceHealthRow[], status: StatusFilter | null): SourceHealthRow[] {
   if (status === 'enabled') return rows.filter((row) => row.enabled);
   if (status === 'tidy') return rows.filter(isTidy);
+  if (status === 'silent') return rows.filter((row) => Boolean(row.silent));
   return filterHealthRows(rows, status);
 }
 
@@ -272,6 +274,25 @@ export function movedNote(row: Pick<SourceHealthRow, 'moved_to'>): string | null
     : `Its posts now live at ${moved.host}: follow that instead?`;
 }
 
+/** Silent far beyond its own rhythm (issue 0178): "Silent 64 days (usually every 1.4d)", "…: moved to example.org"
+ *  when its address now lands elsewhere, "…: new feed found" when the doctor found a live one. */
+export function silentNote(row: Pick<SourceHealthRow, 'silent'>): string | null {
+  const silent = row.silent;
+  if (!silent) return null;
+  const base = `Silent ${plural(silent.days, 'day')} (usually every ${formatHours(silent.usual_gap_hours)})`;
+  if (silent.replacement) return `${base}: new feed found`;
+  const moved = silent.moved[0];
+  return moved ? `${base}: moved to ${hostOf(moved.to)}` : base;
+}
+
+function hostOf(address: string): string {
+  try {
+    return new URL(address).hostname.replace(/^www\./, '');
+  } catch {
+    return address;
+  }
+}
+
 /**
  * Source hygiene's notes (issue 0046), quiet first: "Quiet: last post Mar 4" (or "Quiet: no
  * posts yet"), "Never opened: 214 posts". Empty for a source with neither mark.
@@ -290,6 +311,9 @@ export function rowFact(row: SourceHealthRow, now: Date): string {
   // A source whose posts moved says so first (issue 0108): it also reads as quiet.
   const moved = movedNote(row);
   if (moved) return moved;
+  // Silent far beyond its rhythm (issue 0178): before quiet, which it also is.
+  const silent = silentNote(row);
+  if (silent) return silent;
   // Never on a broken source (the doctor's note stays), so it may come before the status.
   const [tidy] = tidyNotes(row, now);
   if (tidy) return tidy;
@@ -316,6 +340,7 @@ export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: b
   { value: 'due', label: 'Due', secondary: true },
   { value: 'deferred', label: 'Scheduled', secondary: true },
   { value: 'tidy', label: 'Tidy up', secondary: true },
+  { value: 'silent', label: 'Silent', secondary: true },
 ];
 
 /** Readable names for the backend's source kinds; an unknown kind falls back to the platform. */

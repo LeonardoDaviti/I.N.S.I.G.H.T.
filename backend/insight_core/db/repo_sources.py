@@ -310,6 +310,20 @@ class SourcesRepository:
 
         return self._deep_merge_dicts(defaults, source_settings)
 
+    def name_if_unnamed(self, cur: Cursor, source_id: str, name: str) -> bool:
+        """Its own name (issue 0178) for a source that has none: one UPDATE whose WHERE is the guard, so a name the
+        owner set (now or meanwhile) is never written over. True when it was named."""
+        cur.execute(
+            """
+            UPDATE sources
+               SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object('display_name', %s::text),
+                   updated_at = now()
+             WHERE id = %s::uuid AND COALESCE(btrim(settings->>'display_name'), '') = ''
+            """,
+            (name, str(source_id)),
+        )
+        return (cur.rowcount or 0) > 0
+
     def merge_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Merge new settings into the existing JSONB payload and persist the result.
