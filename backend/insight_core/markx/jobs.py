@@ -160,6 +160,18 @@ def waiting_posts(cur: Any, limit: Optional[int] = None) -> List[str]:
     return [r[0] for r in cur.fetchall()]
 
 
+def _happenings_step(cur: Any) -> Dict[str, Any]:
+    """0175: one step of the stored happening keys' backfill (happening.backfill) in a savepoint of the candidates
+    run: a failure is logged and leaves the candidates run standing (the next run tries again)."""
+    from insight_core.markx import happening
+    try:
+        with cur.connection.transaction():
+            return happening.backfill(cur)
+    except Exception as exc:
+        log.exception("Mark X candidates: the happenings backfill step failed")
+        return {"error": str(exc)[:300]}
+
+
 def _json(value: Any) -> str:
     import json
     return json.dumps(value, default=str)
@@ -218,6 +230,7 @@ class Jobs:
                 counts = candidates.run(cur, ids, since=since)
                 cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
                 backfill = candidates.backfill(cur, started)   # 0144 A2: the story window's next step, newest first
+                keyed = _happenings_step(cur)                   # 0175: stored happening keys, a resumable step
         except Exception as exc:   # the posts wait for the next run
             log.exception("Mark X candidates: the run failed; the posts wait for the next")
             self._finish("candidates", {"ok": False, "error": str(exc)[:500], "mentions_since": since_text,
@@ -228,7 +241,8 @@ class Jobs:
         self._finish("candidates", {"ok": True, "posts": len(ids), "counts": dict(counts), "seconds": seconds,
                                     "mentions_since": (started - MENTIONS_MARGIN).isoformat(),
                                     **({"more": True} if more else {}),
-                                    **({"backfill": backfill} if backfill else {})}, again=more)
+                                    **({"backfill": backfill} if backfill else {}),
+                                    **({"happenings": keyed} if keyed else {})}, again=more)
         return counts
 
     def plan(self) -> Dict[str, Any]:

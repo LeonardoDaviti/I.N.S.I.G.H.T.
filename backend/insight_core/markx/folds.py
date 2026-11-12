@@ -223,14 +223,16 @@ def story_folds(cur: Any, story_ids: Iterable[str]) -> Dict[str, Group]:
     story_ids = sorted({str(s) for s in story_ids if s})
     if not story_ids:
         return {}
-    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, COALESCE(p.published_at, p.surfaced_at, p.fetched_at),
-                          r.reading->>'event_type', r.reading->>'origin'
+    from insight_core.markx import event_types   # 0175: a post's type through the seam, whichever guide gave it
+    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, COALESCE(p.published_at, p.surfaced_at, p.fetched_at)
                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
-                     LEFT JOIN mx_readings r ON r.post_id = sp.post_id AND r.guide = %s
                     WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
-                (GUIDE, story_ids))
+                (story_ids,))
+    rows = cur.fetchall()
+    types = event_types.types_of(cur, [pid for _s, pid, _at in rows])
     members: Dict[str, List[Member]] = {}
-    for sid, pid, at, et, origin in cur.fetchall():
+    for sid, pid, at in rows:
+        et, origin = types[pid]
         members.setdefault(sid, []).append(Member(id=pid, at=at, event_type=et, origin=origin))
     answers = owner_answers(cur, [(s, x.id) for s, ms in members.items() for x in ms])
     return {s: group(ms, {p: a for (st, p), a in answers.items() if st == s}) for s, ms in members.items()}

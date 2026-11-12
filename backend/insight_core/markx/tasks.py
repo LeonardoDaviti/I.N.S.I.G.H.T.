@@ -751,6 +751,14 @@ def name_key(name: Optional[str]) -> str:
 SEARCHED_KINDS = ("read", "read3", "entities", "cite")   # 0139: the answers mx_post_search is made of
 
 
+def _note_happening(cur: Cursor, task: Dict[str, Any]) -> None:
+    """0175: a read-v2 reading, a mention set or a cite answer's mentions landed: the post's happening key stored
+    now (happening.note)."""
+    from insight_core.markx import happening
+    if task["kind"] in ("entities", "cite") or task["guide"] == happening.READING_GUIDE:
+        happening.note(cur, [str(task["a"])])
+
+
 def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> None:
     """The rows a task's first valid answer adds: a post's reading (mx_readings) or its entities (mx_mentions)."""
     if task["a"] is None:
@@ -760,6 +768,7 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         repo.add_reading(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, kind=answer.get("kind"),
                          events=answer.get("events"), lang=answer.get("lang"), headline=main.get("headline_en"),
                          reading=answer)
+        _note_happening(cur, task)
     elif task["kind"] == "relate":                 # 0131: asked until it has graph.RELATE_RUNS valid answers
         from insight_core.markx import graph
         graph.after_answer(cur, task)
@@ -778,9 +787,11 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
             from insight_core.markx import ent42
             mentions = ent42.main_mentions(cur, task["a"], answer.get("entities") or [])
         repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions)
+        _note_happening(cur, task)
     elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
+        _note_happening(cur, task)
     elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
         from insight_core.markx import tracks
         tracks.after_answer(cur, task, call_id, answer)

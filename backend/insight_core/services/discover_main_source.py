@@ -344,15 +344,17 @@ def _with_sections(cur: Any, sources: Dict[str, Src], sites: Set[str]) -> Dict[s
 
 
 def _stories(cur: Any, since: datetime) -> Dict[str, Dict[str, Any]]:
-    from insight_core.markx import built, folds
+    from insight_core.markx import built, event_types
     cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {built.PUBLISHED}, s.headline,
-                           s.first_at, r.reading->>'event_type', r.reading->>'origin'
+                           s.first_at
                       FROM mx_story_posts sp JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                       JOIN posts p ON p.id = sp.post_id
-                      LEFT JOIN mx_readings r ON r.post_id = sp.post_id AND r.guide = %s
-                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s""", (folds.GUIDE, since))
+                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s""", (since,))
+    rows = cur.fetchall()
+    types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, Dict[str, Any]] = {}
-    for sid, pid, src, at, headline, first_at, et, origin in cur.fetchall():
+    for sid, pid, src, at, headline, first_at in rows:
+        et, origin = types[pid]
         s = out.setdefault(sid, {"headline": headline or "", "first_at": first_at, "posts": {}})
         if pid not in s["posts"] or et is not None:
             s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin)

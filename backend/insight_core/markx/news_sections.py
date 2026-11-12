@@ -4,7 +4,7 @@ every row shows a Haiku headline.
 **The question** (kind `news_sections`, guide news-sections-v1, one a call): the current News rows (the newest written
 run's, inside News' window, in News' own order: `news.rank_key`), each keyed r1..rN with its headline (`news.headlines`),
 its main entities and their types (the current entities of its posts, subjects before actors, most posts first), its
-kind of happening when read-v3 has one (`folds.story_type` over its posts' read-v3 readings) and its voices; and the
+kind of happening when one is read (`event_types.of_stories`, the event-type seam) and its voices; and the
 section titles of the last valid answer, each row saying the section it was in. Sphere-agnostic: no list of sections in
 code, the titles are Haiku's. The keys map back to rows through the ask (mx_news_section_asks: the row ids in key order).
 
@@ -78,18 +78,11 @@ def _entities(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Tuple[
 
 
 def _types(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Optional[str]]:
-    """{row id: its kind of happening}: folds.story_type over its posts' read-v3 readings (None: none read)."""
-    from insight_core.markx import folds
-    ids = sorted({p["post_id"] for r in rows for p in r.get("posts") or []})
-    if not ids:
+    """{row id: its kind of happening}: the event-type seam's story type over its posts (None: none has a type)."""
+    from insight_core.markx import event_types   # 0175: whichever guide gave the posts' types
+    if not any(r.get("posts") for r in rows):
         return {}
-    cur.execute("""SELECT r.post_id::text, COALESCE(p.published_at, p.surfaced_at, p.fetched_at),
-                          r.reading->>'event_type', r.reading->>'origin'
-                     FROM mx_readings r JOIN posts p ON p.id = r.post_id
-                    WHERE r.guide = %s AND r.post_id = ANY(%s::uuid[])""", (folds.GUIDE, ids))
-    got = {pid: folds.Member(id=pid, at=at, event_type=et, origin=o) for pid, at, et, o in cur.fetchall() if et}
-    return {str(r["id"]): folds.story_type([got[p["post_id"]] for p in r.get("posts") or [] if p["post_id"] in got])
-            for r in rows}
+    return event_types.of_stories(cur, {str(r["id"]): [p["post_id"] for p in r.get("posts") or []] for r in rows})
 
 
 def last_sectioning(cur: Any) -> Optional[Dict[str, Any]]:
