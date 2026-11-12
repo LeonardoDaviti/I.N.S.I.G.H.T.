@@ -133,7 +133,9 @@ subject rule add noise the judge must remove; the happening path can only be jud
   leaves the old rows and its clock; a concurrent update defers the stage; off), the migration (old rows read as
   ix_story, one row an engine, the kind check).
 - test_markx_back, test_markx_later, test_markx_pairing, test_markx_incremental, test_markx_timeline unchanged and
-  passing; the full suite via scripts/test-backend.sh.
+  passing; the full suite via scripts/test-backend.sh: 3,222 tests OK (2 skipped), exit 0. On the v1016 base
+  test_markx_happenings_stored failed (14): its helper recorded an entities answer without the task's input, which
+  0176's record now reads; the helper passes `"input": ""` now.
 - No frontend change: the Back and Later panels read the same shapes (one more field, `engine`).
 
 ## Not done
