@@ -73,7 +73,8 @@ class MigrationTests(_Rollback):
                          | {"mx_tracks", "mx_track_items", "mx_track_subtopics"}       # 0093 (0145)
                          | {"mx_track_probes", "mx_track_models"}                       # 0094 (0147)
                          | {"mx_later", "mx_later_stops"}                               # 0102 (0163)
-                         | {"mx_entity_fixes"})                                         # 0104 (0164)
+                         | {"mx_entity_fixes"}                                          # 0104 (0164)
+                         | {"mx_plan_marks"})                                           # 0108 (v10.14)
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -97,7 +98,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 42)       # 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one
+        self.assertEqual(self.cur.fetchone()[0], 43)       # 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0108 one
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")
