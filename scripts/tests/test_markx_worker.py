@@ -919,6 +919,31 @@ class TestIdentity(Base):
         self.assertEqual(sorted(sizes), [2, 5])
 
 
+class TestSourceJudge(Base):
+    """0173: "Is this worth it?" (source-judge-v1) is a default kind leased first (the owner waits), one candidate a
+    call, with no tool."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["source_judge"] = "source-judge-v1"
+        self.addCleanup(KIND_GUIDE.pop, "source_judge")
+        self.stub.guides["source-judge-v1"] = guide("source-judge-v1", "GUIDE source-judge-v1")
+
+    def test_source_judge_is_the_first_default_kind_one_a_call(self):
+        self.assertEqual(W.DEFAULT_KINDS.split(",")[0], "source_judge")
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["source_judge"], 1)
+        argv = W.claude_argv("claude", "haiku", "S", "source_judge")
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+
+    def test_candidates_asked_one_a_call(self):
+        self.stub.add("source_judge", 3, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 3)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sizes, [1, 1, 1])
+
+
 
 WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
               "properties": {"candidates": {"type": "array", "maxItems": 15, "items": {

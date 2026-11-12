@@ -476,7 +476,31 @@ def _websearch(a: Dict[str, Any], _input: str) -> Optional[str]:
     return None
 
 
-_EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
+_ITEM_ID = re.compile(r"^\[(i\d{1,2})\] ", re.M)
+
+
+def _source_judge(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0173: each reason one line, said once; each example an item the question shows ("[i<n>] ..."), named once."""
+    seen: set = set()
+    for r in a["reasons"]:
+        text = r.strip()
+        if not text or "\n" in text:
+            return "a reason: one line, not empty"
+        if fold(text) in seen:
+            return "a reason said twice"
+        seen.add(fold(text))
+    shown = set(_ITEM_ID.findall(input or ""))
+    named: set = set()
+    for e in a["examples"]:
+        if e not in shown:
+            return f"an example names an item the question does not show: {e}"
+        if e in named:
+            return "an example named twice"
+        named.add(e)
+    return None
+
+
+_EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
@@ -487,6 +511,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "scout": _scout,                            # 0148
           "identity": _identity,                      # 0162
           "websearch": _websearch,                    # 0171
+          "source_judge": _source_judge,              # 0173
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 
