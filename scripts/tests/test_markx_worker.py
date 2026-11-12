@@ -944,6 +944,31 @@ class TestSourceJudge(Base):
         self.assertEqual(sizes, [1, 1, 1])
 
 
+class TestNewsSections(Base):
+    """0174: News' sections (news-sections-v1) is a default kind, after the headlines, one question a call (each holds
+    every row of the page), with no tool."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["news_sections"] = "news-sections-v1"
+        self.addCleanup(KIND_GUIDE.pop, "news_sections")
+        self.stub.guides["news-sections-v1"] = guide("news-sections-v1", "GUIDE news-sections-v1")
+
+    def test_news_sections_is_a_default_kind_after_the_headlines_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds.index("news_sections"), kinds.index("headline") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["news_sections"], 1)
+        argv = W.claude_argv("claude", "haiku", "S", "news_sections")
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+
+    def test_questions_asked_one_a_call(self):
+        self.stub.add("news_sections", 2, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 2)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sizes, [1, 1])
+
 
 WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
               "properties": {"candidates": {"type": "array", "maxItems": 15, "items": {

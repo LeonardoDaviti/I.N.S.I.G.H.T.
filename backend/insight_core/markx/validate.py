@@ -500,6 +500,43 @@ def _source_judge(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_ROW_KEY = re.compile(r"^\[(r\d{1,4})\] ", re.M)
+VAGUE_TITLES = {"other", "others", "other news", "misc", "miscellaneous", "various", "everything else", "the rest",
+                "more", "more news", "rest"}   # 0174: allowed for OTHER_ROWS rows or fewer only
+OTHER_ROWS = 2
+
+
+def _news_sections(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0174: every row the question shows (its "[r<n>] ..." lines) in exactly one section, no other key; titles of at
+    most NEWS_SECTION_TITLE_WORDS words, one line, none twice; "Other" (and its like) for OTHER_ROWS rows or fewer."""
+    shown = _ROW_KEY.findall(input or "")
+    keys = set(shown)
+    seen: Dict[str, str] = {}
+    titles: set = set()
+    for n, s in enumerate(a["sections"]):
+        title = s["title"].strip()
+        if not title or "\n" in title:
+            return f"sections[{n}]: a title is one line, not empty"
+        if len(title.split()) > schemas.NEWS_SECTION_TITLE_WORDS:
+            return f"sections[{n}]: the title {title!r} has more than {schemas.NEWS_SECTION_TITLE_WORDS} words"
+        if fold(title) in titles:
+            return f"the title {title!r} is used twice"
+        titles.add(fold(title))
+        if fold(title).strip(" .") in VAGUE_TITLES and len(s["row_ids"]) > OTHER_ROWS:
+            return f"sections[{n}]: {title!r} holds {len(s['row_ids'])} rows (at most {OTHER_ROWS}): give them a real section"
+        for k in s["row_ids"]:
+            if k not in keys:
+                return f"sections[{n}] names {k}, not a row of the question"
+            if k in seen:
+                return f"{k} is in two sections ({seen[k]!r} and {title!r})"
+            seen[k] = title
+    missing = [k for k in shown if k not in seen]
+    if missing:
+        more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        return f"{', '.join(missing[:3])}{more} in no section: every row in exactly one"
+    return None
+
+
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -512,6 +549,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "identity": _identity,                      # 0162
           "websearch": _websearch,                    # 0171
           "source_judge": _source_judge,              # 0173
+          "news_sections": _news_sections,            # 0174
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

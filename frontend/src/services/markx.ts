@@ -97,11 +97,21 @@ export interface MarkxRow {
 
 export interface MarkxNews {
   run: { id: string; started_at: string; finished_at: string | null; code_version: string | null } | null;
-  counts: Partial<Record<MarkxTag, number>> & { rows?: number; ix_rows?: number; gone?: number };
+  counts: Partial<Record<MarkxTag, number>> & { rows?: number; ix_rows?: number; gone?: number; untitled?: number };
   items: MarkxRow[];
   gone: { id: string; title: string | null; voices?: number; first_at?: string; posts: MarkxLeftOut[] }[];
   /** 0127: the fold's count (the lab's F1 and the owner's labels). */
   folds?: MarkxFoldScore;
+  /** 0174: Haiku's titled sections over the rows shown (null: no run yet). */
+  sections?: MarkxNewsSections | null;
+}
+
+/** 0174: the newest valid sectioning over the page's rows: groups in the page's order, `new` the rows added since. */
+export interface MarkxNewsSections {
+  at: string | null;
+  pending: boolean;
+  groups: { title: string; rows: string[] }[];
+  new: string[];
 }
 
 export interface MarkxPostPanel {

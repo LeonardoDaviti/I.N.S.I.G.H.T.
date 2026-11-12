@@ -802,6 +802,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "source_judge":            # 0173: "Is this worth it?" for a candidate source
         from insight_core.markx import source_judge
         source_judge.after_answer(cur, task, answer)
+    elif task["kind"] == "news_sections":           # 0174: Mark X News' titled sections
+        from insight_core.markx import news_sections
+        news_sections.after_answer(cur, task, call_id, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])
@@ -967,3 +970,11 @@ PLANNERS["track"] = _plan_tracks                                           # 014
 PLANNERS["subtopics"] = _plan_subtopics                                    # 0145
 PLANNERS["probes"] = _plan_probes                                          # 0147
 PLANNERS["embed"] = _with_track_vectors(PLANNERS["embed"])                 # 0145
+
+
+def _plan_news_sections(cur: Cursor, **kw: Any) -> int:   # 0174: News' sections, when its rows changed (news_sections.plan)
+    from insight_core.markx import news_sections   # news_sections imports this module
+    return news_sections.plan(cur, **kw)
+
+
+PLANNERS["news_sections"] = _plan_news_sections                            # 0174

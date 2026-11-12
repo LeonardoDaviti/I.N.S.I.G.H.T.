@@ -3,10 +3,12 @@ import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import type { MarkxFlag, MarkxLeftOut, MarkxLine, MarkxNews as News, MarkxRow, MarkxTag } from '../../services/markx';
+import type {
+  MarkxFlag, MarkxLeftOut, MarkxLine, MarkxNews as News, MarkxNewsSections, MarkxRow, MarkxTag,
+} from '../../services/markx';
 import { Button, Chip, Switch, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
-import { feedFullTime, postBylineTime } from '../../lib/dates';
+import { feedFullTime, formatRelativeTime, postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { newsPart } from '../../lib/news';
 import { errorMessage } from '../../lib/apiError';
@@ -170,14 +172,44 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
   );
 }
 
+type Block = { label: string; rows: MarkxRow[]; count?: boolean };
+
+/** News' own parts (the last 48 hours, then earlier), in the server's order inside each. */
+function inParts(items: MarkxRow[], now: Date): Block[] {
+  const parts: Block[] = [];
+  for (const row of [...items].sort((a, b) => part(a, now).rank - part(b, now).rank)) {
+    const label = part(row, now).label;
+    if (parts.at(-1)?.label !== label) parts.push({ label, rows: [] });
+    parts.at(-1)!.rows.push(row);
+  }
+  return parts;
+}
+
+/** 0174: Haiku's sections in the server's order (each by its most important row), the rows no answer covered yet
+ * first under "New since"; inside each, News' order. */
+function inSections(items: MarkxRow[], sections: MarkxNewsSections): Block[] {
+  const byId = new Map(items.map((row) => [row.id, row]));
+  const placed = new Set([...sections.new, ...sections.groups.flatMap((g) => g.rows)]);
+  const fresh = [...sections.new, ...items.filter((row) => !placed.has(row.id)).map((row) => row.id)];
+  const pick = (ids: string[]) => ids.map((id) => byId.get(id)).filter((row): row is MarkxRow => Boolean(row));
+  const blocks: Block[] = fresh.length ? [{ label: 'New since', rows: pick(fresh), count: true }] : [];
+  for (const g of sections.groups) {
+    const rows = pick(g.rows);
+    if (rows.length) blocks.push({ label: g.title, rows, count: true });
+  }
+  return blocks;
+}
+
 /**
  * Mark X's News beside Mark IX's (issue 0086 E): every row with its tag and headline; opened, each post with why it is
  * there (Mark IX's rule, or Haiku's relation, p and words) and what Mark IX did with it, and the Mark IX posts it left
- * out. "Only differences" is on by default; the rows Mark X no longer counts as News close the list.
+ * out. "Only differences" is on by default; the rows Mark X no longer counts as News close the list. 0174: the rows
+ * under Haiku's titled sections (and how old they are), or the plain list.
  */
 export default function MarkXNews() {
   const api = useApi();
   const [all, setAll] = useState(false);
+  const [plain, setPlain] = useState(false);   // 0174: the plain list instead of Haiku's sections
   const query = useQuery({ queryKey: ['markx-news', all], queryFn: () => api.getMarkxNews(all), staleTime: 60_000 });
   const now = useMemo(() => new Date(), [query.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -185,12 +217,9 @@ export default function MarkXNews() {
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} title="Mark X News did not load" />;
   const news: News = query.data;
   const rows = new Map(news.items.map((row) => [row.id, row]));
-  const parts: { label: string; rows: MarkxRow[] }[] = [];
-  for (const row of [...news.items].sort((a, b) => part(a, now).rank - part(b, now).rank)) {
-    const label = part(row, now).label;
-    if (parts.at(-1)?.label !== label) parts.push({ label, rows: [] });
-    parts.at(-1)!.rows.push(row);
-  }
+  const sections = news.sections;
+  const sectioned = Boolean(sections?.at && sections.groups.length);
+  const blocks = sectioned && !plain ? inSections(news.items, sections!) : inParts(news.items, now);
   const counts = TAG_ORDER.filter((tag) => news.counts[tag]).map((tag) => `${news.counts[tag]} ${tag.toLowerCase()}`);
 
   return (
@@ -205,11 +234,26 @@ export default function MarkXNews() {
             </>
           ) : 'No decision run yet'}
         </p>
-        <label className="inline-flex items-center gap-2 text-[0.8125rem] text-fg-2">
-          <Switch checked={!all} onCheckedChange={(only) => setAll(!only)} aria-label="Only differences" />
-          only differences
-        </label>
+        <span className="inline-flex flex-wrap items-center gap-x-5 gap-y-2">
+          {sectioned ? (
+            <label className="inline-flex items-center gap-2 text-[0.8125rem] text-fg-2">
+              <Switch checked={!plain} onCheckedChange={(on) => setPlain(!on)} aria-label="In sections" />
+              in sections
+            </label>
+          ) : null}
+          <label className="inline-flex items-center gap-2 text-[0.8125rem] text-fg-2">
+            <Switch checked={!all} onCheckedChange={(only) => setAll(!only)} aria-label="Only differences" />
+            only differences
+          </label>
+        </span>
       </div>
+      {sections && (sections.at || sections.pending) ? (
+        <p className="mt-1 text-[0.75rem] tabular-nums leading-5 text-fg-3" data-sections-age>
+          {sections.at ? `Sections updated ${formatRelativeTime(sections.at, now)}` : 'Sections asked, waiting for the worker'}
+          {sections.at && sections.pending ? ' · new sections asked' : ''}
+          {news.counts.untitled ? ` · ${plural(news.counts.untitled, 'row')} not titled by Haiku yet` : ''}
+        </p>
+      ) : null}
       {news.folds ? <FoldHeader score={news.folds} /> : null}
       {!news.run ? (
         <EmptyState className="mt-6" title="No Mark X News yet"
@@ -218,9 +262,12 @@ export default function MarkXNews() {
         <EmptyState className="mt-6" title={all ? 'No Mark X News in the last 30 days' : 'No differences from Mark IX'}
           description={all ? undefined : 'Every Mark X row has the same posts as Mark IX’s. Turn off “only differences” to read them.'} />
       ) : (
-        parts.map((p) => (
+        blocks.map((p) => (
           <section key={p.label} aria-label={p.label} className="mt-6">
-            <h2 className="border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2">{p.label}</h2>
+            <h2 className="border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2">
+              {p.label}
+              {p.count ? <span className="font-normal tabular-nums text-fg-3"> · {p.rows.length}</span> : null}
+            </h2>
             <ul>{p.rows.map((row) => <Row key={row.id} row={row} now={now} rows={rows} />)}</ul>
           </section>
         ))
