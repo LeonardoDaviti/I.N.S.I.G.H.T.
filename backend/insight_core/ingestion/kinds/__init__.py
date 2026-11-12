@@ -64,7 +64,7 @@ class KindRegistry:
         stored_urls = posts.stored_urls if posts else None
         return KindRegistry([
             SavedKind(),
-            PageWatchKind(http, stored_urls=stored_urls),
+            PageWatchKind(http, stored_urls=stored_urls, kept_urls=posts.kept_urls if posts else None),
             *(adapter_class(http) for adapter_class in ADAPTER_CLASSES),
             SubstackKind(http, stored_urls=stored_urls),
             RedditKind(http),

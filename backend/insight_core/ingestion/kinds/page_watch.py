@@ -59,6 +59,7 @@ from insight_core.ingestion.kinds.base import UNREADABLE, Inspection, RateLimit,
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
+from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.page_watch")
 
@@ -135,14 +136,140 @@ def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
 
 def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
     """The listing page's path; for a home page, the most common first segment of its
-    same-host links two or more segments deep ("/" when it has none)."""
+    same-host links two or more segments deep ("/" when it has none). Never a date (v10.15 c5): a path
+    stops above its first year segment (/blog/2026/11 -> "/blog/"), and links dated at the site's root
+    (/2026/<slug>) count for "/"."""
     path = urllib.parse.urlparse(listing_url).path.strip("/")
     if path:
-        return f"/{path}/"
+        return stable_prefix(f"/{path}/")
     site = publication_of(host_of(listing_url))
-    firsts = Counter(segments[0] for link in links
+    firsts = Counter("" if YEAR_RE.match(segments[0]) else segments[0] for link in links
                      if publication_of(host_of(link)) == site and len(segments := parsing.path_segments(link)) >= 2)
-    return f"/{firsts.most_common(1)[0][0]}/" if firsts else "/"
+    first = firsts.most_common(1)[0][0] if firsts else ""
+    return f"/{first}/" if first else "/"
+
+
+# v10.15 c5: a year segment (/2026/) and what follows it (the month, the day) date a page, so a prefix ending in one
+# stops matching when the year turns: a prefix is the stable section above them.
+YEAR_RE = re.compile(r"^(?:19|20)\d\d$")
+
+
+def stable_prefix(prefix: str) -> str:
+    """The prefix less its first year segment and what follows it: "/2026/" -> "/", "/blog/2026/11/" -> "/blog/"."""
+    segments = [segment for segment in prefix.split("/") if segment]
+    for n, segment in enumerate(segments):
+        if YEAR_RE.match(segment):
+            segments = segments[:n]
+            break
+    return f"/{'/'.join(segments)}/" if segments else "/"
+
+
+# v10.15 c7: a page whose address names an action (apply, sign up, subscribe, contact) is a form or a door, never a
+# post, wherever it sits (/news/<grant>/apply under a news section): its last path segment, as a whole word. The
+# actions of linked_rules.NOT_POST (the pages no source's post is) and the form actions it lacks.
+ACTION_WORDS = frozenset({
+    "apply", "application", "applications", "login", "log-in", "signin", "sign-in", "signup", "sign-up", "register",
+    "registration", "subscribe", "unsubscribe", "contact", "contact-us", "form", "forms", "rsvp", "waitlist",
+    "account", "checkout", "cart", "join", "enroll", "enrol"})
+
+
+def action_page(url: str) -> bool:
+    """Whether the address's last path segment is an action word (ACTION_WORDS): a form, never a post."""
+    segments = parsing.path_segments(url)
+    return bool(segments) and segments[-1].lower().rsplit(".", 1)[0] in ACTION_WORDS
+
+
+FORM_RE = re.compile(r"(?is)<form\b([^>]*)>(.*?)</form\s*>")
+FIELD_RE = re.compile(r"(?is)<(textarea|select)\b|<input\b([^>]*)>")
+INPUT_TYPE_RE = re.compile(r"""(?i)\btype\s*=\s*["']?([a-z-]+)""")
+NO_FIELD_TYPES = frozenset({"hidden", "submit", "button", "image", "reset", "search"})
+FORM_FIELDS = 4           # a form of this many fields to fill is the page's purpose (an application, a sign-up)
+FORM_TEXT_MAX = 1500      # ... when the page's article text around it is shorter than this
+
+
+def form_page(page: str, text: str) -> bool:
+    """Whether a page's body is a form (v10.15 c7): one of FORM_FIELDS fields or more to fill (never a comment or
+    a search form: an article's own) on a page of little article text (FORM_TEXT_MAX)."""
+    if len(text) >= FORM_TEXT_MAX:
+        return False
+    for attrs, inner in FORM_RE.findall(page):
+        if re.search(r"(?i)comment|search", attrs):
+            continue
+        fields = 0
+        for tag, input_attrs in FIELD_RE.findall(inner):
+            kind = INPUT_TYPE_RE.search(input_attrs or "")
+            if tag or (kind.group(1).lower() if kind else "text") not in NO_FIELD_TYPES:
+                fields += 1
+        if fields >= FORM_FIELDS:
+            return True
+    return False
+
+
+# v10.15 c10: a listing's later pages (/news/page/7, /blog/p/3, ?page=7, "News (Page 7)") are the listing again,
+# never an article to read or a section to offer.
+PAGINATION_SEGMENTS = frozenset({"page", "pages", "p"})
+PAGINATION_KEYS = frozenset({"page", "paged", "pg"})
+PAGINATION_TITLE_RE = re.compile(r"(?i)(?:\(\s*page\s+\d+\s*\)|\bpage\s+\d+\s+of\s+\d+\b)")
+
+
+def pagination_page(url: str, title: str = "") -> bool:
+    """Whether the address (or the page's title) is a listing's numbered page: /page/<n> or /p/<n> at its end,
+    ?page=<n>, a title "News (Page 7)" or "Page 7 of 12"."""
+    segments = parsing.path_segments(url)
+    if len(segments) >= 2 and segments[-1].isdigit() and segments[-2].lower() in PAGINATION_SEGMENTS:
+        return True
+    query = urllib.parse.parse_qsl(urllib.parse.urlparse(url).query)
+    if any(key.lower() in PAGINATION_KEYS and value.isdigit() for key, value in query):
+        return True
+    return bool(title and PAGINATION_TITLE_RE.search(title))
+
+
+def page_key(url: str) -> str:
+    """One key for one page's addresses (v10.15 c6): www. and the bare host are one, as ingestion normalises them."""
+    return normalize_url(url) or url
+
+
+def twin(url: str) -> str:
+    """The address at the other form of its host: www.<host> <-> <host>."""
+    parsed = urllib.parse.urlparse(url)
+    other = parsed.netloc[4:] if parsed.netloc.lower().startswith("www.") else f"www.{parsed.netloc}"
+    return urllib.parse.urlunparse(parsed._replace(netloc=other))
+
+
+# v10.15 c8: a site's name after its titles ("Title | Blog", "Title - Acme Blog", "Title — Acme", "Title / Blog"),
+# learned across a section's titles: the trailing segment after a separator that most of them share.
+# The separator is spaced after it, before it too or not ("experiences- Acme Developers Blog").
+TITLE_SUFFIX_RE = re.compile(r"^(.*\S)\s*[|\\/·•–—-]\s+([^|\\/·•–—]{1,40}?)\s*$")
+
+
+def title_suffix(title: str) -> Optional[Tuple[str, str]]:
+    """(the title before its last " <separator> " segment, that segment), or None."""
+    match = TITLE_SUFFIX_RE.match(title or "")
+    return (match.group(1), match.group(2).strip()) if match else None
+
+
+def site_suffixes(titles: Sequence[str]) -> set:
+    """The trailing segments (casefolded) that name the site: on two of these titles at least, and on half of them
+    or more. One title alone teaches nothing (its own og:site_name is page_title's)."""
+    found = Counter(split[1].casefold() for title in titles if (split := title_suffix(title)))
+    return {suffix for suffix, n in found.items() if n >= 2 and n * 2 >= len(titles)}
+
+
+def strip_site_suffix(title: str, suffixes: set) -> str:
+    """The title less its trailing segment when that names the site (site_suffixes)."""
+    split = title_suffix(title)
+    return split[0] if split and split[1].casefold() in suffixes else title
+
+
+def name_titles(posts: Sequence[Dict[str, Any]], known: Sequence[str] = ()) -> None:
+    """Strip the site's name off the posts' titles, learned across them and the `known` titles of their section
+    (its listing page's), in place."""
+    titles = [str(post["title"]) for post in posts if post.get("title") and post["title"] != post.get("url")]
+    suffixes = site_suffixes([*titles, *(title for title in known if title)])
+    if suffixes:
+        for post in posts:
+            if post.get("title"):
+                post["title"] = strip_site_suffix(str(post["title"]), suffixes)
 
 
 # v10.13.10: a listing page whose own path holds fewer than SECTION_MIN articles (its links and the sitemap's)
@@ -173,7 +300,8 @@ def section_prefix(listing_url: str, content_links: Sequence[str]) -> Optional[s
     site, listing = publication_of(host_of(listing_url)), listing_url.rstrip("/")
     firsts = Counter(parsing.path_segments(link)[0] for link in dict.fromkeys(content_links)
                      if publication_of(host_of(link)) == site and link.rstrip("/") != listing and article_shaped(link)
-                     and parsing.path_segments(link)[0].lower() not in MENU_SECTIONS)
+                     and parsing.path_segments(link)[0].lower() not in MENU_SECTIONS
+                     and not YEAR_RE.match(parsing.path_segments(link)[0]))   # never a year (v10.15 c5)
     if not firsts:
         return None
     first, count = firsts.most_common(1)[0]
@@ -185,6 +313,7 @@ class Discovery:
     prefix: str
     listed: Tuple[str, ...]                          # the listing page's article links, page order
     sitemap: Dict[str, Optional[datetime]]           # the sitemap's article URLs -> lastmod
+    title: str = ""                                  # the listing page's own title (v10.15 c8: the site's suffix)
 
     def candidates(self) -> List[str]:
         """Listing links first (page order), then the sitemap's others by lastmod, newest first."""
@@ -197,6 +326,10 @@ class Discovery:
 # One run's reads of a site's robots.txt and sitemaps, by address: the previews of one offer
 # share them, so a site's sitemap is read once, not once per page previewed (issue 0047).
 SiteReads = Dict[str, "asyncio.Future[Tuple[Any, str]]"]
+
+# Which of these urls a source's fetch leaves unread (blocking; run in a thread): PostsRepository.kept_urls(urls,
+# source_id), v10.15 item 5.
+KeptUrls = Callable[[Sequence[str], str], set]
 
 # GET an address, at most max_bytes of it: (the body, the final URL after redirects).
 Reader = Callable[[str, int], Awaitable[Tuple[bytes, str]]]
@@ -264,23 +397,35 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
     site = publication_of(host_of(listing))
     reads = {} if reads is None else reads    # a sitemap file read for one prefix is not read again for another
 
+    listing_key = page_key(listing)
+    tag = TITLE_RE.search(page)
+    title = html.unescape(parsing.meta_content(page, "og:title")).strip() or (parsing.strip_html(tag.group(1)) if tag else "")
+
     def under(url: str, prefix: str) -> bool:
+        # Never a form (c7) or a numbered page of a listing (c10, v10.15).
         path = urllib.parse.urlparse(url).path
-        return publication_of(host_of(url)) == site and url != listing and path.startswith(prefix) and path + "/" != prefix
+        return (publication_of(host_of(url)) == site and url != listing and path.startswith(prefix)
+                and path + "/" != prefix and page_key(url) != listing_key
+                and not action_page(url) and not pagination_page(url))
 
     async def found_under(prefix: str) -> Discovery:
-        listed = tuple(dict.fromkeys(url for url in links if under(url, prefix)))
+        # One page at www. and at the bare host is one candidate (v10.15 c6): its first address kept.
+        first: Dict[str, str] = {}    # page key -> the address kept
+        for url in links:
+            if under(url, prefix):
+                first.setdefault(page_key(url), url)
+        listed = tuple(dict.fromkeys(first.values()))
         sitemap: Dict[str, Optional[datetime]] = {}
         for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads, max_files=max_sitemaps):
             url = _clean(loc)
             if url and under(url, prefix):
-                sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
-        return Discovery(prefix, listed, sitemap)
+                sitemap.setdefault(first.setdefault(page_key(url), url), parsing.parse_datetime_value(lastmod))
+        return Discovery(prefix, listed, sitemap, title)
 
-    if prefix:   # the owner's prefix always wins
-        return await found_under(normalise_prefix(prefix))
+    if prefix:   # the owner's prefix always wins, less any date it ends in (v10.15 c5)
+        return await found_under(stable_prefix(normalise_prefix(prefix)))
     inferred = infer_prefix(listing, links)
-    if not parsing.path_segments(listing) or sum(under(url, inferred) for url in set(links)) >= SECTION_MIN:
+    if not parsing.path_segments(listing) or len({page_key(url) for url in links if under(url, inferred)}) >= SECTION_MIN:
         return await found_under(inferred)
     # The listing's own path holds few of its links: unless the sitemap fills it, the section its article links
     # share, when that finds more (v10.13.10).
@@ -411,9 +556,27 @@ def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
         from insight_core.utils.originals_rules import address_day
         if (date := address_day(url)) is not None and date <= latest:
             return date
-    written = set(TEXT_DATE_RE.findall(parsing.strip_html(SCRIPT_STYLE_RE.sub(" ", page))))
+    visible = SCRIPT_STYLE_RE.sub(" ", page)
+    if (date := byline_date(visible)) is not None and date <= latest:
+        return date
+    written = set(TEXT_DATE_RE.findall(parsing.strip_html(visible)))
     date = _written_date(written.pop()) if len(written) == 1 else None
     return date if date is not None and date <= latest else None
+
+
+BYLINE_CHARS = 80   # v10.15 item 5: how near its one <h1> a page's byline date is written
+
+
+def byline_date(page: str) -> Optional[datetime]:
+    """The date written right under the page's title (v10.15 item 5): its one <h1>, then within BYLINE_CHARS of
+    text ("Title / July 7, 2026 • 15 minute read"). A page that cards other dated posts below its own (related
+    posts) has several written dates; its byline is the one by its title. `page` without scripts and styles."""
+    if len(H1_RE.findall(page)) != 1:
+        return None
+    after = page[page.lower().index("</h1") :] if "</h1" in page.lower() else ""
+    text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", after[:4000])).split())[:BYLINE_CHARS]
+    match = TEXT_DATE_RE.search(text)
+    return _written_date(match.group(0)) if match else None
 
 
 def scholarly_date(value: str) -> Optional[datetime]:
@@ -485,7 +648,11 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime],
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
     date = date or (None if new else older_date(url)) or lastmod or (datetime.now(timezone.utc) if new else None)
-    return article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
+    post = article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
+    # v10.15: a form (c7) or a listing's numbered page (c10) is no post, whatever its address says.
+    if post is not None and (action_page(url) or pagination_page(url, post["title"]) or form_page(page, post["content"])):
+        return None
+    return post
 
 
 def older_date(url: str) -> Optional[datetime]:
@@ -570,6 +737,7 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None,
                 return None
 
     posts = [post for post in await asyncio.gather(*map(one, candidates[:PREVIEW_READS])) if post]
+    name_titles(posts, [found.title])   # the site's name off the titles (v10.15 c8)
     return {
         "prefix": found.prefix,
         "found": len(candidates),
@@ -592,6 +760,9 @@ async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ())
     is left of the budget, and only an article list is offered (see _article_list)."""
     deadline = asyncio.get_running_loop().time() + OFFER_BUDGET_S
     reads: SiteReads = {}
+    # A listing's numbered page (/news/page/7) is never a section to offer (v10.15 c10).
+    pages = [page for page in pages if not pagination_page(page)]
+    menu = [page for page in menu if not pagination_page(page)]
     found = [offer for offer in await _previews(http, pages, deadline, reads) if offer["items"]]
     if not found:
         started = datetime.now(timezone.utc)
@@ -642,9 +813,25 @@ class PageWatchKind(BaseSourceAdapter):
     PAGE_SIZE = 1                       # one article page per archive page: the host gate spaces them
     PAGE_DELAY_SECONDS = 2
 
-    def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None) -> None:
+    def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None,
+                 kept_urls: Optional[KeptUrls] = None) -> None:
         super().__init__(http)
         self.stored_urls = stored_urls
+        self.kept_urls = kept_urls
+
+    async def _stored(self, source: Source, candidates: Sequence[str]) -> set:
+        """The candidates a fetch leaves unread: stored already, at their address or at its www./bare twin (v10.15
+        c6). With kept_urls (PostsRepository.kept_urls), one another source holds counts only when this source
+        would not take it back (v10.15 item 5: a page in Saved, an aggregator's): reading it is what moves it."""
+        if not candidates or not (self.kept_urls or self.stored_urls):
+            return set()
+        forms = {url: (url, twin(url)) for url in candidates}
+        asked = [form for pair in forms.values() for form in pair]
+        if self.kept_urls is not None and source.get("id"):
+            held = await asyncio.to_thread(self.kept_urls, asked, str(source["id"]))
+        else:
+            held = await asyncio.to_thread(self.stored_urls, asked)
+        return {url for url, pair in forms.items() if held & set(pair)}
 
     def matches(self, source: Source) -> bool:
         return isinstance((source.get("settings") or {}).get("page_watch"), dict)
@@ -682,8 +869,7 @@ class PageWatchKind(BaseSourceAdapter):
             return []
         now = time.monotonic()
         candidates = [url for url in found.candidates() if SKIPPED.get(url, now) <= now]
-        stored = (await asyncio.to_thread(self.stored_urls, candidates)
-                  if self.stored_urls and candidates else set())
+        stored = await self._stored(source, candidates)
         posts: List[Dict[str, Any]] = []
         reads = skips = 0
         listed = set(found.listed)
@@ -705,6 +891,7 @@ class PageWatchKind(BaseSourceAdapter):
                 if url not in listed:
                     post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
                 posts.append(post)
+        name_titles(posts, [found.title])   # the site's name off the titles (v10.15 c8)
         return posts
 
     def page_post(self, source: Source, url: str, page: str) -> Optional[Dict[str, Any]]:
@@ -722,8 +909,7 @@ class PageWatchKind(BaseSourceAdapter):
         candidate added nothing (issue 0130 B4: stored, no post, unreadable)."""
         found = await self._archive_discovery(source)
         candidates = found.candidates()
-        stored = (await asyncio.to_thread(self.stored_urls, candidates)
-                  if self.stored_urls and candidates else set())
+        stored = await self._stored(source, candidates)
 
         async def fetch_one(src: Source, url: str) -> Any:
             page = await self._page(url)
@@ -732,12 +918,14 @@ class PageWatchKind(BaseSourceAdapter):
             post = post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url))
             if post is not None:
                 post[BACKLOG_KEY] = True   # an archive's page: never new to you, undated sorts before the oldest
+                name_titles([post], [found.title])   # v10.15 c8
             return post
 
         async for page in self.index_pages(source, candidates, target, checkpoint, fetch_one, stored=stored):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "article_post", "article_shaped", "discover", "discover_changed",
+__all__ = ["Discovery", "PageWatchKind", "action_page", "article_post", "article_shaped", "discover", "discover_changed",
+           "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
            "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_title", "preview",
            "read_page_post", "section_prefix", "sitemap_entries"]
