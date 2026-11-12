@@ -100,7 +100,10 @@ element, id-only, own channel, generic feed not stored, titleless, the kind's me
 voice rule matching the followed channel and not a stranger); names (clean_name, own_name by feed / site / page /
 subreddit / unanswered / not asked, the fetch's title only for an unnamed source, the refresher's guard, the repo guard,
 the repair's dry run, `--apply`, `--no-fetch`, same account, never over the owner's name, the add route).
-Frontend: `silentNotice.test.tsx` (8). Summary tests updated for `silent`.
+Frontend: `silentNotice.test.tsx` (8). Summary tests updated for `silent` (an additive wire key).
+**Results** (head 32cc150): `scripts/test-backend.sh` **3,161 tests OK** (2 skipped), exit 0; vitest **944 passed**, `node --test`
+247 passed; `npm run build` within the bundle gate (feed route 0.08% over its baseline, within). The real-data check was
+not run (the release's one run on main).
 
 ## Left open
 - The rule flags long-stopped personal blogs too (correctly silent); It stopped is the owner's answer. Measure on the
