@@ -413,6 +413,19 @@ export interface MarkxEntityBy {
   posts: number;
 }
 
+/** 0168: the platforms a handle is keyed by (the same handle on two platforms is two accounts). */
+export type MarkxHandlePlatform = 'x' | 'github' | 'telegram' | 'bluesky' | 'hf';
+
+/** 0168: an entity's known handles (the owner's yes, its own sources' accounts) and the posts citing them. */
+export interface MarkxEntityHandles {
+  known: { platform: MarkxHandlePlatform; handle: string; via: 'owner' | 'source'; display_name: string | null;
+    first_seen: string | null; last_seen: string | null }[];
+  posts: number;
+  /** Replies to them, hidden unless asked (`replies_shown`). */
+  replies: number;
+  replies_shown: boolean;
+}
+
 export type MarkxSampleAnswer = 'right' | 'wrong' | 'missed';
 
 export interface MarkxEntityRow extends MarkxEntityRef {
@@ -453,6 +466,8 @@ export interface MarkxEntityPage {
   loose_counts?: Record<'report' | 'by' | 'other' | 'mention', number>;
   /** 0144 B1 (absent from an older API). */
   by?: MarkxEntityBy;
+  /** 0168 (absent from an older API). */
+  handles?: MarkxEntityHandles;
   /** 0144 C: old stories offered to label here (10 a page, 30 a day). */
   sample?: { story: string; first_at: string | null; answer: MarkxSampleAnswer | null }[];
   sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number; by?: boolean }[];
@@ -539,7 +554,7 @@ export interface MarkxQueueJoin {
 
 export interface MarkxQueueItem {
   id: string;
-  kind: 'alias' | 'collision' | 'rename';   // 0165 B: rename (a: the older name, b: the newer)
+  kind: 'alias' | 'collision' | 'rename' | 'handle';   // 0165 B: rename (a: the older name, b: the newer); 0168: handle (a only)
   a: MarkxQueueSide;
   b: MarkxQueueSide | null;
   proposal: 'same' | 'other_version' | 'different' | 'split';
@@ -558,6 +573,16 @@ export interface MarkxQueueItem {
     runs?: number | null;
     /** 0165 B: why a rename was asked (a shared address, the new post naming the old one). */
     asked_because?: string | null;
+    /** 0168: a handle question's (or a handle-named alias's) "Name (@handle)" pairs. */
+    platform?: MarkxHandlePlatform;
+    handle?: string;
+    display?: string | null;
+    pairs?: number;
+    total?: number;
+    first?: string | null;
+    last?: string | null;
+    alias_of?: string[] | null;
+    named_by_handle?: boolean | null;
   };
 }
 

@@ -8,6 +8,8 @@ every page reads through redirects and pins, so the answer shows at once).
   - a collision: `different` or `other_version` splits it as proposed (each sense but the largest an entity of its
     own, the mentions the question showed pinned there); `same` keeps one page; `not_entity` marks the entity;
   - an automatic merge from the history: `undo` closes its redirect;
+  - a handle (0168 C): `same` records the handle as the entity's (with the display name and time range its pairs
+    gave); any other answer records a no, never asked again;
   - a rename (0165 B): `same` redirects the older name's cluster into the newer's (kind 'rename': the older names are
     shown as earlier names); the other answers keep them apart, undoing any merge that joined them.
 Each answer is also a label: mx_labels item kind `entity`, a and b the two entities, split `test`, the queue item in
@@ -229,7 +231,12 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     book = I.load_book(cur)
     a, b = item["a"], item["b"]
     applied: Dict[str, Any] = {"answer": ans}
-    if item["kind"] == "rename":    # 0165 B: `same` = one thing, renamed: the older name becomes the newer's earlier name
+    if item["kind"] == "handle":    # 0168 C: `same` = yes, this is their handle; any other answer = no
+        from insight_core.markx import handles
+        applied.update(handles.answer_item(cur, book, item, ans))
+        if ans == "same":
+            _confirm(cur, a)
+    elif item["kind"] == "rename":    # 0165 B: `same` = one thing, renamed: the older name becomes the newer's earlier name
         if ans == "same":
             got = owner_rename(cur, book, item)
             if got.get("result") == "needs_choice":
@@ -247,6 +254,9 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
                 return {**applied, **got}       # nothing written: the item stays open, the message says why
             applied.update(got)
             _confirm(cur, a, b)
+            if item.get("reason") == "handle_name" and (item.get("evidence") or {}).get("handle"):
+                from insight_core.markx import handles   # 0168 D: the handle is the display name's entity's
+                applied.update(handles.answer_item(cur, book, {**item, "a": b}, "same"))
         else:
             applied["undone"] = separate(cur, book, a, b)
             if ans != "not_entity":

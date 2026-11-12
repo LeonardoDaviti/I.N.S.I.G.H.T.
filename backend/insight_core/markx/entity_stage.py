@@ -21,7 +21,8 @@ once a run, for both.
 
 0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
 names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
-0164 C: then the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
+0168: then the handle rule over the posts it has not read (markx/handles.py; `handles`), and the questions its pairs
+raise. 0164 C: then the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
 """
 from __future__ import annotations
 
@@ -129,6 +130,8 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     # 0165 B: every thing once a night (the run that finishes the full pass, within the budget), else the run's posts
     every = whole and bool((out.get("full") or {}).get("done")) and (deadline is None or time.monotonic() < deadline)
     out["renames"] = renames(cur, book, ask=ask, run_id=run_id, full=every, since=since, posts=linked)
+    # 0168: the handle rule over the posts not read by it yet (newest first), then the questions the pairs raise
+    out["handles"] = handles(cur, book, run_id=run_id, deadline=deadline)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
     out["days_linked"] = len(days)
     if whole or since is None:
@@ -231,6 +234,22 @@ def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool,
         logging.getLogger(__name__).exception("Mark X: the entity addresses stage failed")
         return {"error": str(error)[:200]}
     cur.execute("RELEASE SAVEPOINT entity_addresses")
+    return got
+
+
+def handles(cur: Any, book: Any, *, run_id: Any, deadline: Optional[float]) -> Dict[str, Any]:
+    """0168: markx/handles.stage (the deterministic handle rule over pending posts' full text, then the owner questions
+    the "Name (@handle)" pairs raise). In a savepoint: a failure is logged in the counts, never the run's."""
+    import logging
+    from insight_core.markx import handles as H
+    cur.execute("SAVEPOINT entity_handles")
+    try:
+        got = H.stage(cur, book, run_id=run_id, deadline=deadline)
+    except Exception as error:  # noqa: BLE001 - a derived step never stops the run
+        cur.execute("ROLLBACK TO SAVEPOINT entity_handles")
+        logging.getLogger(__name__).exception("Mark X: the handle step failed")
+        return {"error": str(error)[:200]}
+    cur.execute("RELEASE SAVEPOINT entity_handles")
     return got
 
 

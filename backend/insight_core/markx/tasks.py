@@ -24,6 +24,12 @@ exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits
   - briefing: the day's top stories, keyed s1..sN, with a few posts each;
   - translate: the post's title and text.
 
+0168 E: a repost (an X row its feed carried but another account wrote; a Telegram forward) says so wherever a reading,
+a card, a headline or a briefing reads it: "Author: @acme (a post by @acme shared by <feed>)", members as
+"[a post by @acme shared by <feed>, x, ...]", and it counts as its author's voice (`voices`), so a story never reads
+"<feed> announces" for another account's post. The sameness questions (check, join, pair, merge, connect) are
+unchanged: they ask whether two posts tell one story, not who said it (and are not asked again).
+
 Who creates which tasks: `plan_posts` (read, entities: the newest posts of the last 30 days first,
 corrections 8) and `plan_checks` (check: Mark IX's uncertain members) here, called when the worker asks
 for work (markx/api.py). Joins, pairs, merges and connections come from S2's candidates, and cards,
@@ -108,10 +114,21 @@ class Post:
     links: List[Tuple[str, Optional[str]]] = field(default_factory=list)
     quote: Optional[str] = None
     lang: Optional[str] = None
+    by: Optional[str] = None  # 0168 E: a repost's (or a Telegram forward's) original author ("@acme"), not the feed's
 
     @property
     def iso(self) -> str:
         return self.at.astimezone(timezone.utc).isoformat()
+
+    @property
+    def who(self) -> str:
+        """0168 E: who a render says wrote it: the source, or "a post by @X shared by <source>" for a repost."""
+        return f"a post by {self.by} shared by {self.source}" if self.by else self.source
+
+    @property
+    def voice(self) -> str:
+        """0168 E: the voice it counts as: a repost's original author, else its source."""
+        return f"author:{self.by.casefold()}" if self.by else self.source_id
 
 
 def _squash(s: Optional[str]) -> str:
@@ -129,21 +146,42 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
                            s.handle_or_url),
                   p.source_id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), COALESCE(pp.title, p.title),
                   p.content, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.quoted,
-                  p.language_code
+                  p.language_code, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), '')
              FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE p.id = ANY(%s::uuid[])""", (ids,))
     out: Dict[str, Post] = {}
+    owns: Dict[Tuple[Any, Any], str] = {}
     for (pid, platform, handle, name, source_id, at, title, content, cut, decode, brk, copy, quoted,
-         lang) in cur.fetchall():
+         lang, author, forwarded) in cur.fetchall():
         text = shown(content, Body(cut=cut, decode_entities=bool(decode), cut_leaves_break=bool(brk), copy=copy))
-        out[str(pid)] = Post(id=str(pid), kind=source_kind(platform, handle), source=name or "", source_id=str(source_id),
-                             at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang)
+        kind = source_kind(platform, handle)
+        out[str(pid)] = Post(id=str(pid), kind=kind, source=name or "", source_id=str(source_id),
+                             at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang,
+                             by=original_author(kind, platform, handle, author, forwarded, owns))
     cur.execute("""SELECT post_id, target_url, link_text FROM post_links
                     WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (ids,))
     for pid, url, anchor in cur.fetchall():
         if str(pid) in out:
             out[str(pid)].links.append((url, anchor))
     return out
+
+
+def original_author(kind: str, platform: Optional[str], handle: Optional[str], author: Optional[str],
+                    forwarded: Optional[str], owns: Optional[Dict[Tuple[Any, Any], str]] = None) -> Optional[str]:
+    """0168 E: the original author of a post its feed carries but did not write: on X a row whose author is not the
+    feed's own account ("@acme", a repost); a Telegram forward's channel as its header names it. None: the feed's
+    own post (or unknown)."""
+    if kind == "x" and author:
+        from insight_core.db.repo_reader import _own_account
+        key = (platform, handle)
+        own = owns.get(key) if owns is not None and key in owns else _own_account(platform, handle)
+        if owns is not None:
+            owns[key] = own
+        a = author.strip().lstrip("@")
+        return "@" + a if own and a and a.casefold() != own.casefold() else None
+    if kind == "telegram" and forwarded:
+        return forwarded.strip()
+    return None
 
 
 def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:
@@ -192,7 +230,8 @@ def near_copies(members: Sequence[Post]) -> set:
 
 
 def voices(posts: Iterable[Post]) -> int:
-    return pairing.voices((p.source_id, p.kind) for p in posts)
+    """0168 E: a repost counts as its original author's voice, not the feed's."""
+    return pairing.voices((p.voice, p.kind) for p in posts)
 
 
 def _cut(text: str, n: int) -> str:
@@ -204,6 +243,8 @@ def _cut(text: str, n: int) -> str:
 def post_block(p: Post, nlinks: int, chars: int = TEXT_CHARS) -> str:
     """read.block: the post as every reader sees it: platform, source, title, text, links in order, the quote."""
     lines = [f"Platform: {p.kind} | Source: {p.source}", f"Title: {p.title}"]
+    if p.by:   # 0168 E: a repost: its author is the original one, never the feed that carried it
+        lines.insert(1, f"Author: {p.by} (a post by {p.by} shared by {p.source}; not {p.source}'s own words)")
     if p.text:
         lines.append("Text: " + _cut(p.text, chars))
     if p.links:
@@ -274,8 +315,9 @@ def _earliest(posts: Iterable[Post]) -> List[Post]:
     return sorted(posts, key=lambda p: (p.at, p.id))
 
 
-def _member_line(p: Post, chars: int, when: str) -> str:
-    return f"- [{p.source}, {p.kind}, {when}] {p.title[:160]} — {p.text[:chars]}"
+def _member_line(p: Post, chars: int, when: str, shared: bool = False) -> str:
+    """`shared` (0168 E: the headline's and the card's members): a repost says whose post it is."""
+    return f"- [{p.who if shared else p.source}, {p.kind}, {when}] {p.title[:160]} — {p.text[:chars]}"
 
 
 # ---- the inputs, one function a kind --------------------------------------------------------------
@@ -330,7 +372,8 @@ def connect_input(members_a: Sequence[Post], members_b: Sequence[Post]) -> str:
     prototype showed the members nearest the story's centroid; until S2's vectors, the earliest."""
     def one(tag: str, ps: Sequence[Post]) -> str:
         ps = _earliest(ps)
-        lines = [f"STORY {tag} — first seen {ps[0].iso[:10]}; {voices(ps)} sources", "Members (earliest first):"]
+        n = pairing.voices((p.source_id, p.kind) for p in ps)   # by source, as before 0168 (not asked again)
+        lines = [f"STORY {tag} — first seen {ps[0].iso[:10]}; {n} sources", "Members (earliest first):"]
         lines += [_member_line(p, 300, p.iso[:10]) for p in ps[:CONNECT_MEMBERS]]
         return "\n".join(lines)
     return one("A", members_a) + "\n\n" + one("B", members_b)
@@ -342,14 +385,14 @@ def card_input(members: Sequence[Post], rd: Dict[str, dict]) -> str:
     for m in _earliest(members)[:CARD_MEMBERS]:
         r = rd.get(m.id) or {}
         main = (r.get("main") or {}).get("headline_en", "")
-        lines.append(f"- id {m.id[:8]} [{m.source}, {m.kind}, {m.iso[:16]}] {m.title[:160]} | {m.text[:300]} | "
+        lines.append(f"- id {m.id[:8]} [{m.who}, {m.kind}, {m.iso[:16]}] {m.title[:160]} | {m.text[:300]} | "
                      f"reading: {r.get('kind')}, {main}")
     return "MEMBERS:\n" + "\n".join(lines)
 
 
 def headline_input(members: Sequence[Post]) -> str:
     """exp_f4.story_text: up to 6 members, earliest first (the prototype took the 6 nearest the centroid)."""
-    return "Members (earliest first):\n" + "\n".join(_member_line(p, 400, p.iso[:10])
+    return "Members (earliest first):\n" + "\n".join(_member_line(p, 400, p.iso[:10], shared=True)
                                                      for p in _earliest(members)[:HEADLINE_MEMBERS])
 
 
@@ -359,9 +402,9 @@ def briefing_input(day: date, stories: Sequence[Tuple[str, Sequence[Post]]]) -> 
     parts = [f"DAY {day.isoformat()}: {len(stories[:10])} stories"]
     for n, (headline, posts) in enumerate(stories[:10], 1):
         ps = _earliest(posts)
-        sources = list(dict.fromkeys(p.source for p in ps))
+        sources = list(dict.fromkeys(p.by or p.source for p in ps))   # 0168 E: a repost by its author
         parts.append(f"\n[s{n}] {headline} — {voices(ps)} sources: {', '.join(sources[:8])}")
-        parts += [f"  - [{p.source}, {p.kind}, {p.iso[11:16]}] {p.title[:160]} — {p.text[:250]}"
+        parts += [f"  - [{p.who}, {p.kind}, {p.iso[11:16]}] {p.title[:160]} — {p.text[:250]}"
                   for p in ps[:BRIEFING_POSTS]]
     return "\n".join(parts)
 

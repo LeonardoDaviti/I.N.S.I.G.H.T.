@@ -756,13 +756,14 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000)):
+def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False):
     """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
-    old stories to label (10 a page, 30 a day)."""
+    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:
-        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True) if found else None
+        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True,
+                                       replies=replies) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got
@@ -790,6 +791,30 @@ def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"answered": n, "answer": body.answer}
+
+
+class EntityHandleIn(BaseModel):   # 0168
+    platform: str
+    handle: str
+    answer: str = "yes"
+
+
+@router.post("/entities/{entity_id}/handles")
+def mx_entity_handle(entity_id: str, body: EntityHandleIn):
+    """0168: the owner says (yes) or denies (no) a handle of this person or org on a platform (x, github, telegram,
+    bluesky, hf). Never inferred from a name: this, a confirmed pair question, or the entity's own sources."""
+    from insight_core.markx import handles, identity
+    found = _uuid(entity_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such entity")
+    with transaction() as cur:
+        book = identity.load_book(cur, counts=False)
+        if str(found) not in book.ents:
+            raise HTTPException(status_code=404, detail="No such entity")
+        try:
+            return handles.add_handle(cur, book, str(found), body.platform, body.handle, body.answer)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 class SampleLabelIn(BaseModel):   # 0144 C
