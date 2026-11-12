@@ -30,3 +30,15 @@ class DbInspectionRefresher:
             await asyncio.to_thread(self.writer.record, str(source.get("id")), kind, data, "live")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Archive metadata write failed for %s: %s", source.get("handle_or_url"), exc)
+
+    async def recognised(self, source: Mapping[str, Any], settings: Mapping[str, Any]) -> None:
+        """What a fetch learned the source is (issue 0167: {"substack": True}), merged into its settings when they
+        don't say so already: its next fetch reads it by that kind. Never raises."""
+        current = source.get("settings") or {}
+        if all(current.get(key) == value for key, value in settings.items()):
+            return
+        try:
+            await asyncio.to_thread(self.writer.sources.merge_source_settings, str(source.get("id")), dict(settings))
+            logger.info("%s is %s: its settings say so now", source.get("handle_or_url"), dict(settings))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not record what %s is: %s", source.get("handle_or_url"), exc)
