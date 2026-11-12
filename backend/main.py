@@ -1819,3 +1819,5 @@ from insight_core.routers.voices import router as voices_router  # noqa: E402  (
 app.include_router(voices_router)
 from insight_core.routers.source_discoveries import router as source_discoveries_router  # noqa: E402  (issue 0143)
 app.include_router(source_discoveries_router)
+from insight_core.routers.discover_main_source import router as discover_main_source_router  # noqa: E402  (issue 0170)
+app.include_router(discover_main_source_router)
