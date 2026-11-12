@@ -9,6 +9,7 @@ import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResp
 import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import DiscoverPages from './DiscoverPages';
 import MainSourceMissing from './MainSourceMissing';
+import SourceJudge from './SourceJudge';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatCount, plural } from '../../lib/format';
@@ -91,12 +92,15 @@ function OtherChannels({ also, onFollow }: { also: NonNullable<SuggestedSourcesR
       {open ? (
         <ul id="discover-also" className="mt-1 flex flex-col gap-0.5 border-l border-line pl-3">
           {also.map((a) => (
-            <li key={a.key} className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
-              <ExternalLink href={a.url} className="min-w-0 truncate text-fg">{a.key}</ExternalLink>
-              <span className="min-w-0 shrink truncate">· also {sourceLabel(a.of)}&rsquo;s</span>
-              <Button size="sm" variant="ghost" className="ml-auto shrink-0" aria-label={`Follow ${a.key}…`} onClick={() => onFollow(a.url)}>
-                Follow…
-              </Button>
+            <li key={a.key} className="text-[0.8125rem] leading-5 text-fg-3">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <ExternalLink href={a.url} className="min-w-0 truncate text-fg">{a.key}</ExternalLink>
+                <span className="min-w-0 shrink truncate">· also {sourceLabel(a.of)}&rsquo;s</span>
+                <Button size="sm" variant="ghost" className="ml-auto shrink-0" aria-label={`Follow ${a.key}…`} onClick={() => onFollow(a.url)}>
+                  Follow…
+                </Button>
+              </div>
+              <SourceJudge address={a.url} compact />
             </li>
           ))}
         </ul>
@@ -149,6 +153,7 @@ function Suggestion({ suggestion, onFollow, onHide }: {
             {open ? <ChevronDown aria-hidden="true" className="mt-1 h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="mt-1 h-3 w-3 shrink-0" />}
             <span>{suggestionReason(suggestion)}</span>
           </button>
+          <SourceJudge address={suggestion.url} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" variant="secondary" onClick={() => onFollow(suggestion.url)}>Follow…</Button>

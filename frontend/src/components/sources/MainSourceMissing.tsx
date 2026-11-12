@@ -12,6 +12,7 @@ import { plural } from '../../lib/format';
 import { eventTypeLabel, followLabel, ownPageLine, rowReason, rowTitle, testLine } from '../../lib/mainSource';
 import { untitledLine } from '../../lib/discover';
 import { sourceLabel } from '../../lib/sourceLabel';
+import SourceJudge from './SourceJudge';
 
 export const MAIN_SOURCE_KEY = ['main-source-missing'] as const;
 
@@ -44,6 +45,7 @@ function Row({ row, onFollow, onHide, onTurnOn }: {
             {open ? <ChevronDown aria-hidden="true" className="mt-1 h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="mt-1 h-3 w-3 shrink-0" />}
             <span>The {plural(row.events.length, 'event')}</span>
           </button>
+          {follow ? <SourceJudge address={row.channel.url} /> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {follow ? <Button size="sm" variant="secondary" onClick={() => onFollow(row.channel.url)}>{follow}</Button> : null}

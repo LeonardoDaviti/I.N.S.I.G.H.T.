@@ -9,6 +9,7 @@ import { errorMessage } from '../../lib/apiError';
 import { formatLocalDateTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { pageFollow, untitledLine } from '../../lib/discover';
+import SourceJudge from './SourceJudge';
 
 /** What one row says under its title: its site, when a story first linked it, and whether it can be read. */
 export function pageLine(page: DiscoverPage): string {
@@ -70,6 +71,7 @@ function PageRow({ page, onFollow, onDone }: {
               </li>
             ))}
           </ul>
+          {follow ? <SourceJudge address={follow.url} /> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {page.video || page.tweet ? null : (

@@ -365,6 +365,24 @@ WEBSEARCH_SCHEMA = {
                            "why": {"type": "string", "minLength": 1}}}},
         "queries": {"type": "array", "maxItems": WEBSEARCH_QUERIES, "items": {"type": "string", "minLength": 1}}},
 }
+# 0173 (source judge): "Is this worth it?" on the owner's tap (source-judge-v1): one candidate source, its newest items and
+# what INSIGHT measured; a verdict with its reasons and the items it relied on. How it reads (full, teasers, a paywall)
+# is measured by code and never asked (0149 E8: the model fails at it).
+SOURCE_VERDICTS = ["follow", "maybe", "skip"]
+SOURCE_ORIGINAL = ["low", "medium", "high"]
+SOURCE_REASONS_MAX, SOURCE_REASON_CHARS, SOURCE_EXAMPLES_MAX = 4, 240, 4
+SOURCE_JUDGE_SCHEMA = {
+    "type": "object",
+    "required": ["verdict", "reasons", "examples", "fits", "original"],
+    "properties": {
+        "verdict": {"enum": SOURCE_VERDICTS},
+        "reasons": {"type": "array", "minItems": 1, "maxItems": SOURCE_REASONS_MAX,
+                    "items": {"type": "string", "minLength": 1, "maxLength": SOURCE_REASON_CHARS}},
+        "examples": {"type": "array", "minItems": 1, "maxItems": SOURCE_EXAMPLES_MAX,
+                     "items": {"type": "string", "pattern": "^i[0-9]{1,2}$"}},
+        "fits": {"type": "boolean"},
+        "original": {"enum": SOURCE_ORIGINAL}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -409,6 +427,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
     Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
+    Kind("source_judge", "source-judge-v1", "source_candidate", SOURCE_JUDGE_SCHEMA),   # 0173: a candidate worth it?
 )}
 
 

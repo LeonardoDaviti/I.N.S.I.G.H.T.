@@ -10,6 +10,7 @@ import BookmarkletHint from './BookmarkletHint';
 import AddSeveralSources, { type AddedSource } from './AddSeveralSources';
 import { HOMEPAGE_WARNING, sameAddress, shortAddress, siteName, withScheme } from '../lib/addresses';
 import { platformAccount, type AccountPlatform } from '../lib/platformAccount';
+import SourceJudge from './sources/SourceJudge';
 
 interface Template {
   id: string;
@@ -416,6 +417,12 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
           : `Found ${pagePreview?.found} article${pagePreview?.found === 1 ? '' : 's'} under ${pagePreview?.prefix}${pagePreview?.sitemap ? ' (from the sitemap)' : ''}`;
   const canFollow = following && previewed && pageItems.length > 0;
 
+  // "Is this worth it?" (issue 0173): once the finder found a feed, or page watching found the page's articles.
+  const judgeAddress = alreadyAdded || !findsFeed ? null
+    : canFollow ? withScheme(followed)
+      : settled && (finding?.status === 'found' || finding?.status === 'feed' || finding?.status === 'direct') ? address
+        : null;
+
   const canAdd = !!address && !saveSid.isPending && !looking && !alreadyAdded
     && !(findsFeed && finding?.status === 'none' && !canFollow);
 
@@ -652,6 +659,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                 </div>
               </fieldset>
             ) : null}
+            {judgeAddress ? <SourceJudge key={judgeAddress} address={judgeAddress} /> : null}
           </div>
 
           {substack ? (
