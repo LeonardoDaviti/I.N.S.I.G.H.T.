@@ -285,16 +285,18 @@ def source_set(pos_by_source: Dict[str, int], judged_by_source: Dict[str, int]) 
                   if k >= SOURCE_MIN and k >= SOURCE_SHARE * max(k, judged_by_source.get(s, 0)))
 
 
-def _df(cur: Cursor, cache: Dict[Any, int], kind: str, cand: Sequence[str], sql: str, params: Sequence[Any]
+def _df(cur: Cursor, cache: Dict[Any, int], kind: str, cand: Sequence[str], sql: Any, params: Sequence[Any]
         ) -> Dict[str, int]:
-    """Document counts of `cand` (the posts of the window holding each), read once per key into `cache`."""
-    missing = [c for c in cand if (kind, c) not in cache]
+    """Document counts of `cand` (the posts of the window holding each), read once per key and window into `cache`
+    (v10.16: the window is in the key, so one cache serves every track of a plan pass)."""
+    win = tuple(params)
+    missing = [c for c in cand if (kind, win, c) not in cache]
     if missing:
         cur.execute(sql, (*params, missing))
         got = dict(cur.fetchall())
         for c in missing:
-            cache[(kind, c)] = int(got.get(c, 0))
-    return {c: cache[(kind, c)] for c in cand}
+            cache[(kind, win, c)] = int(got.get(c, 0))
+    return {c: cache[(kind, win, c)] for c in cand}
 
 
 def _words_of(cur: Cursor, ids: Sequence[str]) -> List[List[str]]:
@@ -304,6 +306,93 @@ def _words_of(cur: Cursor, ids: Sequence[str]) -> List[List[str]]:
                      FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id WHERE p.id = ANY(%s::uuid[])""",
                 (list(ids),))
     return [ws for _, ws in cur.fetchall()]
+
+
+def _window(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime]) -> Tuple[int, int]:
+    """(posts, terms) of the window, each post's distinct terms counted, read once per window into `cache`."""
+    if ("n", win) not in cache:
+        cur.execute(f"""SELECT count(*), COALESCE(sum(length(COALESCE(p.search_vector, ''::tsvector))
+                                                  + length(COALESCE(s.vector, ''::tsvector))), 0)
+                          FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id
+                         WHERE {DATE} >= %s AND {DATE} <= %s""", win)
+        cache[("n", win)], cache[("terms", win)] = cur.fetchone()
+    return int(cache[("n", win)] or 1), int(cache[("terms", win)] or 1)
+
+
+def _pos_keys(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
+    """{✓ post: its subject / actor entity keys}."""
+    cur.execute("""SELECT post_id::text, array_agg(DISTINCT COALESCE(entity_id::text, 'n:' || name_key))
+                     FROM mx_mentions_now WHERE post_id = ANY(%s::uuid[]) AND role = ANY(%s) AND name_key IS NOT NULL
+                    GROUP BY post_id""", (list(pos), list(ROLES)))
+    return dict(cur.fetchall())
+
+
+def _pos_domains(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
+    """{✓ post: the sites its kept links (not a home page) point at}."""
+    cur.execute("""SELECT post_id::text, array_agg(DISTINCT target_site) FROM post_links
+                    WHERE post_id = ANY(%s::uuid[]) AND NOT boilerplate AND target_url !~ %s GROUP BY post_id""",
+                (list(pos), HOME_RE))
+    return dict(cur.fetchall())
+
+
+# v10.16: each document count reads the window's posts first (the posts' date index), then their rows; a count of a
+# frequent site or name read every link or mention and probed its post, 1.4 s a track on the scale copy. The words'
+# counts are Postgres' own document counts (ts_stat) of each post's terms, its index and English layer together: the
+# same count as the distinct posts holding the term, without a row per term.
+_DF_ENT = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
+              SELECT x.k, count(DISTINCT m.post_id) FROM w JOIN mx_mentions_now m ON m.post_id = w.id,
+                     LATERAL (SELECT COALESCE(m.entity_id::text, 'n:' || m.name_key) AS k) x
+               WHERE x.k IN (SELECT unnest(%s::text[])) GROUP BY 1"""
+_DF_DOM = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
+              SELECT l.target_site, count(DISTINCT l.post_id) FROM w JOIN post_links l ON l.post_id = w.id
+               WHERE NOT l.boilerplate AND l.target_site IN (SELECT unnest(%s::text[])) GROUP BY 1"""
+
+
+def _df_words(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime], cand: Sequence[str]
+              ) -> Dict[str, int]:
+    from psycopg import sql
+    docs = sql.SQL("""SELECT COALESCE(p.search_vector, ''::tsvector) || COALESCE(s.vector, ''::tsvector)
+                        FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id
+                       WHERE {date} >= {since} AND {date} <= {until}""").format(
+        date=sql.SQL(DATE), since=sql.Literal(win[0]), until=sql.Literal(win[1])).as_string(cur)
+    query = sql.SQL("SELECT word, ndoc FROM ts_stat({docs}) WHERE word IN (SELECT unnest(%s::text[]))").format(
+        docs=sql.Literal(docs))
+    missing = [c for c in cand if ("word", win, c) not in cache]
+    if missing:
+        cur.execute(query, (missing,))
+        got = dict(cur.fetchall())
+        for c in missing:
+            cache[("word", win, c)] = int(got.get(c, 0))
+    return {c: cache[("word", win, c)] for c in cand}
+
+
+def _judged(cur: Cursor, cache: Dict[Any, Any], folder: str) -> Dict[str, str]:
+    """{post: its source} of the track's judged posts (the owner's labels, the items with a verdict), read once per
+    track into `cache` (v10.16: was read again for each ✓ item the classifier leaves out, every post of the ✓ items'
+    sources probing the items: 28 s of a pass on the scale copy)."""
+    from insight_core.markx import tracks
+    key = ("judged", folder)
+    if key not in cache:
+        cur.execute("""SELECT p.id::text, p.source_id::text FROM posts p
+                        WHERE p.id IN (SELECT unnest(%s::uuid[])
+                                       UNION SELECT i.post_id FROM mx_track_items i
+                                              WHERE i.track_id = %s AND i.verdict IS NOT NULL)""",
+                    (list(tracks.labels(cur, folder)), folder))
+        cache[key] = dict(cur.fetchall())
+    return cache[key]
+
+
+def prefetch(cur: Cursor, pos: Iterable[str], *, now: datetime, days: int = 30, cache: Dict[Any, int]) -> None:
+    """v10.16: the window's counts every ✓ item of a plan pass needs (every track's, `pos`), read in one query each
+    into `cache`, so `learn` of each track (and the classifier's leave-one-out) reads none of the window again."""
+    pos = sorted(set(pos))
+    win = (_since(now, days), now)
+    _window(cur, cache, win)
+    if not pos:
+        return
+    _df(cur, cache, "ent", sorted({k for ks in _pos_keys(cur, pos).values() for k in ks}), _DF_ENT, win)
+    _df(cur, cache, "dom", sorted({d for ds in _pos_domains(cur, pos).values() for d in ds}), _DF_DOM, win)
+    _df_words(cur, cache, win, sorted({w for ws in _words_of(cur, pos) for w in ws}))
 
 
 def learn(cur: Cursor, track: Dict[str, Any], pos: Sequence[str], *, now: Optional[datetime] = None,
@@ -316,43 +405,21 @@ def learn(cur: Cursor, track: Dict[str, Any], pos: Sequence[str], *, now: Option
     cache = {} if cache is None else cache
     folder = str(track["folder_id"])
     win = (since, now)
-    if ("n", win) not in cache:
-        cur.execute(f"""SELECT count(*), COALESCE(sum(length(COALESCE(p.search_vector, ''::tsvector))
-                                                  + length(COALESCE(s.vector, ''::tsvector))), 0)
-                          FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id
-                         WHERE {DATE} >= %s AND {DATE} <= %s""", win)
-        cache[("n", win)], cache[("terms", win)] = cur.fetchone()
-    n_posts, n_terms = int(cache[("n", win)] or 1), int(cache[("terms", win)] or 1)
+    n_posts, n_terms = _window(cur, cache, win)
     pos = list(dict.fromkeys(pos))
     out: Dict[str, Any] = {"pos": pos, "entities": [], "domains": [], "words": [], "units": [], "sources": [],
                            "stories": [], "n_posts": n_posts}
     # entities
-    cur.execute("""SELECT post_id::text, array_agg(DISTINCT COALESCE(entity_id::text, 'n:' || name_key))
-                     FROM mx_mentions_now WHERE post_id = ANY(%s::uuid[]) AND role = ANY(%s) AND name_key IS NOT NULL
-                    GROUP BY post_id""", (pos, list(ROLES)))
-    pos_keys = [ks for _, ks in cur.fetchall()]
-    df = _df(cur, cache, "ent", sorted({k for ks in pos_keys for k in ks}),
-             f"""SELECT x.k, count(DISTINCT m.post_id) FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id,
-                        LATERAL (SELECT COALESCE(m.entity_id::text, 'n:' || m.name_key) AS k) x
-                  WHERE {DATE} >= %s AND {DATE} <= %s AND x.k IN (SELECT unnest(%s::text[])) GROUP BY 1""", win)
+    pos_keys = list(_pos_keys(cur, pos).values())
+    df = _df(cur, cache, "ent", sorted({k for ks in pos_keys for k in ks}), _DF_ENT, win)
     out["entities"] = entity_set(pos_keys, df, n_posts)
     # domains
-    cur.execute("""SELECT post_id::text, array_agg(DISTINCT target_site) FROM post_links
-                    WHERE post_id = ANY(%s::uuid[]) AND NOT boilerplate AND target_url !~ %s GROUP BY post_id""",
-                (pos, HOME_RE))
-    pos_domains = [ds for _, ds in cur.fetchall()]
-    df = _df(cur, cache, "dom", sorted({d for ds in pos_domains for d in ds}),
-             f"""SELECT l.target_site, count(DISTINCT l.post_id) FROM post_links l JOIN posts p ON p.id = l.post_id
-                  WHERE {DATE} >= %s AND {DATE} <= %s AND NOT l.boilerplate
-                    AND l.target_site IN (SELECT unnest(%s::text[])) GROUP BY 1""", win)
+    pos_domains = list(_pos_domains(cur, pos).values())
+    df = _df(cur, cache, "dom", sorted({d for ds in pos_domains for d in ds}), _DF_DOM, win)
     out["domains"] = domain_set(pos_domains, df, n_posts, (track.get("name") or "") + " " + (track.get("description") or ""))
     # words (the post's index and the English layer)
     pos_docs = _words_of(cur, pos)
-    df = _df(cur, cache, "word", sorted({w for ws in pos_docs for w in ws}),
-             f"""SELECT x.w, count(DISTINCT p.id) FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id,
-                        unnest(tsvector_to_array(COALESCE(p.search_vector, ''::tsvector))
-                               || tsvector_to_array(COALESCE(s.vector, ''::tsvector))) x(w)
-                  WHERE {DATE} >= %s AND {DATE} <= %s AND x.w IN (SELECT unnest(%s::text[])) GROUP BY 1""", win)
+    df = _df_words(cur, cache, win, sorted({w for ws in pos_docs for w in ws}))
     out["words"] = lexicon(pos_docs, df, n_terms)
     # units of the readings' numbers
     cur.execute("""SELECT r.post_id::text, r.reading->'main'->'numbers' FROM mx_readings r
@@ -362,17 +429,13 @@ def learn(cur: Cursor, track: Dict[str, Any], pos: Sequence[str], *, now: Option
         by_post.setdefault(pid, []).extend(str(x) for x in ns or [])
     out["units"] = unit_set(list(by_post.values()))
     # source prior: ✓ per source against the source's judged items (a verdict or a label) for this track
-    cur.execute("SELECT source_id::text, count(*) FROM posts WHERE id = ANY(%s::uuid[]) GROUP BY 1", (pos,))
-    pos_by_source = dict(cur.fetchall())
+    cur.execute("SELECT id::text, source_id::text FROM posts WHERE id = ANY(%s::uuid[])", (pos,))
+    pos_src = dict(cur.fetchall())
+    pos_by_source = dict(Counter(pos_src.values()))
     judged: Dict[str, int] = {}
     if pos_by_source:
-        lab = list(tracks.labels(cur, folder))
-        cur.execute("""SELECT p.source_id::text, count(DISTINCT p.id) FROM posts p
-                        WHERE p.source_id = ANY(%s::uuid[])
-                          AND (p.id = ANY(%s::uuid[]) OR EXISTS (SELECT 1 FROM mx_track_items i WHERE i.track_id = %s
-                                                                  AND i.post_id = p.id AND i.verdict IS NOT NULL))
-                        GROUP BY 1""", (list(pos_by_source), lab + pos, folder))
-        judged = dict(cur.fetchall())
+        seen = {**_judged(cur, cache, folder), **pos_src}
+        judged = dict(Counter(s for s in seen.values() if s is not None and s in pos_by_source))
     out["sources"] = source_set(pos_by_source, judged)
     # stories holding a ✓ item
     cur.execute("""SELECT DISTINCT story_id::text FROM mx_story_posts WHERE valid_to IS NULL AND post_id = ANY(%s::uuid[])""",
@@ -628,6 +691,14 @@ def maybe_train(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos: S
         return None
     if have is not None and n < have["labels"] + CLF_RETRAIN and have.get("version") == track["version"]:
         return have
+    # v10.16: a labelled post is a training row exactly when it has a vector (`score` reads only those), so a training
+    # that would end below CLF_MIN_EACH of each is known before it runs: it stored no model and ran again every pass
+    # (a leave-one-out learn and score per label, ~4 s a track on the scale copy)
+    cur.execute("""SELECT p.id::text FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %s
+                    WHERE p.id = ANY(%s::uuid[])""", (MODEL, list(pos) + list(neg)))
+    vectored = {r[0] for r in cur.fetchall()}
+    if sum(p in vectored for p in pos) < CLF_MIN_EACH or sum(p in vectored for p in neg) < CLF_MIN_EACH:
+        return have
     xs, ys = training_rows(cur, track, prep, pos, neg)
     if sum(ys) < CLF_MIN_EACH or len(ys) - sum(ys) < CLF_MIN_EACH:
         return have
@@ -669,7 +740,7 @@ def example_scores(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos
 
 def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now: Optional[datetime] = None,
             share: Optional[float] = None, cap: Optional[float] = None, train_model: bool = True,
-            on: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+            on: Optional[Sequence[str]] = None, cache: Optional[Dict[Any, int]] = None) -> Dict[str, Any]:
     """Everything a plan needs to find a track's posts: {vectors, learned, model, bar, ready, neg, now, on (the finders
     that fire: `active()` unless given)}. `ready` is False with no vector to score by (no description vector, no probe,
     no profile)."""
@@ -680,7 +751,7 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     pos, neg = list(ex.get("in") or []), list(ex.get("out") or [])
     prof = tracks.profile(cur, track, ex) if (pos or neg) else None
     vectors = probe_vectors(cur, track, profile=prof["vector"] if prof and (pos or neg) else None)
-    cache: Dict[Any, int] = {}
+    cache = {} if cache is None else cache   # v10.16: a plan pass's tracks share it (the window's counts, `prefetch`)
     learned = learn(cur, track, pos, now=now, cache=cache) if pos else {"pos": [], "entities": [], "domains": [], "words": [],
                                                            "units": [], "sources": [], "stories": []}
     if not pos:   # the description's domain classes need no ✓ item
