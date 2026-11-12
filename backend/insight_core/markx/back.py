@@ -27,6 +27,7 @@ Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (the lab
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import time
@@ -71,7 +72,9 @@ def _date(p: str = "p") -> str:
 
 # ---- pages (the lab's norm) -------------------------------------------------------------------------------
 
-norm = pairing.page_address    # a page's compared form: Pairing's page address (0166)
+# a page's compared form: Pairing's page address (0166). v10.16: kept per address (a pure function of the string; the
+# hubs read every link to the stories' hosts, the same addresses many times over, in back's stage and later's)
+norm = functools.lru_cache(maxsize=1 << 17)(pairing.page_address)
 
 
 def _week(t: datetime) -> Tuple[int, int]:
@@ -266,7 +269,8 @@ def find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any]]:
     links = _links(cur, ids)
     pages = {i: _pages(p, links) for i, p in recent.items()}
     hub = hubs(cur, set().union(*(s.pages for s in st.values())) & set().union(*pages.values()))
-    vec = near(cur, list(st.values()), [i for i in ids if recent[i].at >= min(s.t0() for s in st.values())])
+    first = min(s.t0() for s in st.values())   # v10.16: once (was once a post: 3.5M t0 calls, 3.5 s on the scale copy)
+    vec = near(cur, list(st.values()), [i for i in ids if recent[i].at >= first])
     src = {i: p.src for i, p in recent.items()}
     out = []
     for s in st.values():
