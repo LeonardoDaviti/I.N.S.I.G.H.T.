@@ -45,10 +45,11 @@ from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
 from insight_core.utils.addresses import host_of, is_tweet, site_of, x_account
 from insight_core.utils.post_links import PLATFORM_KINDS
-from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, PAGES_WITHIN_DAYS, Origin,
-                                              REFERENCE_KINDS, discover_address, discover_open, discover_place, federation,
-                                              one_card_per_domain, order, origins, owner_domain, own_names,
-                                              place_kind, same_owner, score)
+from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, FOLLOWABLE,
+                                              PAGES_WITHIN_DAYS, UNFOLLOWABLE, Origin,
+                                              REFERENCE_KINDS, channel_names, discover_address, discover_open, discover_place,
+                                              federation, follow_url, not_channel, one_card_per_domain, order, origins,
+                                              other_channel, owner_domain, place_kind, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, reposter_voice, threads)
 from insight_core.utils.discover_rules import page_key_of, pages as pages_of
@@ -80,6 +81,9 @@ DISCOVER_ARTICLES_SHOWN = 20
 CITED_MIN, CITED_POSTS = 3, 2   # 0138 F3: a site cited this often, by this many long-reads you read, is suggested
 ORIGIN_STORIES_SHOWN = 3      # the stories a suggestion started, shown on its card (issue 0065)
 STOPPED_DAYS = 183            # an archive row's source whose newest post is this old: its feed stopped (issue 0109)
+# Discover's served answer is rebuilt in the background when an open finds it this old (issue 0172 c1): its list's
+# inputs hold between story runs, but Mark X's originals rows (0138 D) are read off entities that move meanwhile.
+REFRESH_AFTER = timedelta(minutes=30)
 
 
 class StoriesService:
@@ -94,6 +98,7 @@ class StoriesService:
         # with a story run, a source or a hidden suggestion: the last list is kept until they do, here and in the
         # database (issue 0080 cold open: a fresh process reads it, the story job makes it).
         self._discovered: tuple = ("", None)
+        self._served: tuple = (None, None)   # ((made_from, built_at), the answer served), issue 0172 c1
         code_stamp()   # read at start, not on an open
 
     # ---- the job ------------------------------------------------------------------------
@@ -614,7 +619,7 @@ class StoriesService:
         first open after it reads one row (issue 0080 cold open: making it reads ~16k pages of posts and links,
         13.6 s on the lab when they had left the cache and the disk was busy). Never raises."""
         try:
-            self._discover_all()
+            self.refresh()   # the answer Discover's page serves (issue 0172 c1), built here, not on an open
         except Exception:  # noqa: BLE001 - derived; Discover makes it on its next open
             logger.exception("Stories: Discover's list was not kept")
 
@@ -713,12 +718,65 @@ class StoriesService:
         the ones that can't be followed as a feed, `section: "unfollowable"`, then the untested); the
         references they use and the stories the sources you follow miss beside them. `offset` and
         `limit`: the page asked for (the first holds FIRST_PAGE); `q`: only those whose words match."""
+        return self._page(self._fresh(), offset=offset, limit=limit, q=q)
+
+    def discover_served(self, *, offset: int = 0, limit: Optional[int] = None,
+                        q: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+        """Discover's page as the API serves it (issue 0172 c1: an open that made the list took 255-300 s on the
+        server and the proxy gave up at 300): the last answer built (`refresh`), never made on the request, with
+        `built_at`; and whether it is due again (its inputs or code changed, or it is REFRESH_AFTER old: Mark X's
+        originals rows change between story runs), for the caller to rebuild it in the background. Before the first
+        build (a deploy of this version), the list an older version kept, else an empty one, both due."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
+            stamp = DiscoverRepository.served_stamp(cur)
+            if stamp is not None and self._served[0] != stamp:
+                kept = DiscoverRepository.served(cur)
+                self._served = (stamp, kept["answer"] if kept else None)
+            answer = self._served[1]
+            if stamp is None or answer is None:
+                answer = DiscoverRepository.any_list(cur) or {}
+        if stamp is None or answer is None or "built_at" not in answer:
+            empty = {"success": True, "suggestions": [], "also": [], "archives": [], "unnamed": [], "pages": [],
+                     "references": [], "first_page": FIRST_PAGE}
+            return self._page({**empty, **answer, "built_at": None}, offset=offset, limit=limit, q=q), True
+        else:
+            try:
+                age = self.clock() - datetime.fromisoformat(stamp[1])
+            except ValueError:
+                age = REFRESH_AFTER
+            stale = stamp[0] != inputs or age >= REFRESH_AFTER or age < timedelta(0)
+        return self._page(answer, offset=offset, limit=limit, q=q), stale
+
+    def refresh(self) -> Dict[str, Any]:
+        """Build Discover's answer now (the list, Mark X's originals rows) and keep it as the one served, with when
+        it was built. Returns it. In the background (after a story run, after Discover's reads, when an open finds it
+        due), never on an open."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
+        answer = self._fresh()
+        built_at = self.clock().isoformat()
+        answer = {**answer, "built_at": built_at}
+        try:
+            with db.transaction(self.db_url) as cur:
+                DiscoverRepository.keep_served(cur, inputs, built_at, answer)
+            self._served = ((inputs, built_at), answer)
+        except Exception:  # noqa: BLE001 - derived; the next refresh keeps it
+            logger.exception("Discover: the answer was not kept")
+        return answer
+
+    def _fresh(self) -> Dict[str, Any]:
+        """The list (`_discover_all`) with the rows read now: Mark X's originals (0138 D). Archive rows are read
+        on each page (`_page`)."""
         result = self._discover_all()
+        return self._from_originals(result)   # 0138 D: never kept with the list
+
+    def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
+              q: Optional[str] = None) -> Dict[str, Any]:
         if result["archives"]:   # each archive row follows its source's archive, read now (it runs on its own)
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
             result = {**result, "archives": _archive_rows(result["archives"], states, self.clock())}
-        result = self._from_originals(result)   # 0138 D: read now, never kept with the list
         ranked, also = result["suggestions"], result.get("also", [])
         if q:
             words = q.casefold().split()
@@ -758,11 +816,35 @@ class StoriesService:
         followed = sources.followed() | sources.followed_accounts()
         ranked = [dict(s) for s in result["suggestions"]]
         by_key = {s["key"]: s for s in ranked}
-        for key, got in (kept.get("current") or {}).items():
+        # Issue 0172 b9: a host of a domain already on a card (a section host, the bare host) is one of its places,
+        # never a card of its own; a followed source's other channel stays there.
+        cards: Dict[str, Dict[str, Any]] = {}
+        for s in ranked:
+            for place in s.get("places") or [s["key"]]:
+                domain = owner_domain(place, sources.shared_sites)
+                if domain:
+                    cards.setdefault(domain, s)
+        elsewhere = {a["key"] for a in result.get("also", ())}
+
+        def closed(key: str) -> bool:
             site = key.split("/", 1)[0]
-            if key in followed or site in followed or key.lower() in hidden or site in hidden:
-                continue
+            return (key in followed or site in followed or site_of(site) in followed or key.lower() in hidden
+                    or site in hidden or site_of(site) in hidden or key in elsewhere)
+
+        def card_of(key: str) -> Optional[Dict[str, Any]]:
             s = by_key.get(key)
+            domain = owner_domain(key, sources.shared_sites) if s is None else None
+            if s is None and domain in cards:
+                s = by_key[key] = cards[domain]
+                s["places"] = list(dict.fromkeys([*(s.get("places") or [s["key"]]), key]))
+            return s
+
+        for key, got in (kept.get("current") or {}).items():
+            if closed(key):
+                continue
+            s = card_of(key)
+            if s is None and (place_kind(key, got["urls"]) is not None or not_channel(key, None)):
+                continue   # b3: no channel by its pages' shape
             if s is None:
                 s = by_key[key] = {"key": key, "url": "https://" + key, "voices": 0, "voice_names": [],
                                    "article_count": got["n"], "link_count": got["n"], "classics": 0, "opened": 0,
@@ -770,13 +852,13 @@ class StoriesService:
                                                               for u in got["urls"][:DISCOVER_ARTICLES_SHOWN]],
                                    "score": round(score(origins=got["n"], classics=0, opened=0, voices=0, days=None), 3)}
                 ranked.append(s)
+                cards.setdefault(owner_domain(key, sources.shared_sites) or key, s)
             s["originals"] = got["n"]
             s["originals_reason"] = supplier_reason(got["n"])
         for key, got in cited.items():   # 0138 F3: the sites the long-reads you opened cite
-            site = key.split("/", 1)[0]
-            if key in followed or site in followed or key.lower() in hidden or site in hidden:
+            if closed(key):
                 continue
-            s = by_key.get(key)
+            s = card_of(key)
             if s is None:
                 if got["n"] < CITED_MIN or got["posts"] < CITED_POSTS:
                     continue   # below today's bar it takes 3+ citations from 2+ long-reads
@@ -786,6 +868,7 @@ class StoriesService:
                                    "score": round(score(origins=0, classics=0, opened=got["n"], voices=got["posts"],
                                                         days=None), 3)}
                 ranked.append(s)
+                cards.setdefault(owner_domain(key, sources.shared_sites) or key, s)
             s["cited_by_longreads"] = got["n"]
         return {**result, "suggestions": order(ranked), "pages": pages, "supplied": supplied, "worlds": worlds}
 
@@ -884,8 +967,28 @@ class StoriesService:
             test = follow.get(s["key"])
             if test:
                 s["follow_test"] = {"label": test["label"], "at": test["at"]}
+                if test.get("url") and test["label"] in FOLLOWABLE:   # b7: the section its own pages sit in
+                    s["url"] = test["url"]
+                if test.get("account") and test["label"] in UNFOLLOWABLE:   # b5: the account it declares
+                    s["account"] = test["account"]
             for a in s["articles"]:   # one title per page in the answer (issue 0106)
                 a["title"] = title_of(a["url"])
+        # Issue 0172 b1, b3: a followed site's old or moved address (its follow test landed on a site you follow) is
+        # that source's, never new; a platform's owner no source kind reads and whose test can't follow it (a code
+        # host's org without a feed, a network without a reader) and a model hub's owner are no channel.
+        moved: List[Dict[str, Any]] = []
+        kept_out = []
+        for s in out:
+            test = follow.get(s["key"]) or {}
+            landed = test.get("moved_to")
+            if landed and (site_of(landed) in followed or landed in followed):
+                moved.append({**s, "of": sources.name.get(_site_source(sources, landed), "") or landed,
+                              "source_id": _site_source(sources, landed), "moved_to": landed})
+            elif not_channel(s["key"], test.get("label")):
+                continue
+            else:
+                kept_out.append(s)
+        out = kept_out
         # One card per owner domain (issue 0109): its hosts its places, outside a domain of many owners.
         multi = Counter(owner_domain(s["key"]) for s in out)
         candidates = {site for site, n in multi.items() if site and n > 1}
@@ -900,10 +1003,15 @@ class StoriesService:
                     linkers[s["key"]] |= linkers.get(place, set())
             s.pop("days", None)
         out, also = self._other_channels(sources, out, linkers)
+        also = sorted(also + moved, key=lambda s: (-s["score"], s["key"]))
         # The most stories started there, classics, posts you opened, sources and the newest links first
         # (discover_rules.score): those tested followable first, then those their follow test can't follow
         # (headlines only, blocks readers) as a section of their own, then the untested (issue 0109).
         out = order(out)
+        # A source's archive row holds its own pages only (issue 0172 b8): a link blog's posts are at the pages it
+        # links (another site's), which its archive can never hold.
+        missing = {source_id: [root for root in stories if _own_page(sources, source_id, root.url, platforms)]
+                   for source_id, stories in started.missing.items()}
         archives = [{
             "source_id": source_id, "name": sources.name.get(source_id, ""),
             "places": sorted({discover_place(root.url, platforms) for root in stories}),
@@ -913,7 +1021,7 @@ class StoriesService:
             "origin_stories": [_story(root, title_of) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]],
             "pages": sorted({root.url for root in stories}),
             "page_dates": {root.url: min(r.first_at for r in stories if r.url == root.url).isoformat() for root in stories},
-        } for source_id, stories in started.missing.items() if len(stories) >= DISCOVER_MIN_ARTICLES]
+        } for source_id, stories in missing.items() if len(stories) >= DISCOVER_MIN_ARTICLES]
         archives.sort(key=lambda a: (-a["origins"], a["name"].lower()))
         unnamed = sorted(({"place": place, "origins": len(stories)} for place, stories in started.unnamed.items()
                           if len(stories) >= DISCOVER_MIN_ARTICLES), key=lambda u: (-u["origins"], u["place"]))
@@ -926,6 +1034,7 @@ class StoriesService:
             gifted = DiscoverRepository.gifted(cur, [url for url, _, _ in page_list])
         page_rows = [{
             "url": strip_access_tokens(url), "title": title_of(url), "site": site_of(host_of(url)), "hide_key": page_key_of(url),
+            "follow_url": follow_url(url, platforms),   # issue 0172 c3: its section or account, never the bare domain
             "video": video, "tweet": is_tweet(url), "first_linked_at": min(r.first_at for r in roots).isoformat(),
             "voices": len({v for root in roots for v in root.voices}),
             "readable": not (tokened(url) or url in gifted or walls.get(site_of(host_of(url)), SiteReads()).walled),
@@ -947,15 +1056,16 @@ class StoriesService:
     def _other_channels(sources: SourceFacts, found: List[Dict[str, Any]],
                         linkers: Dict[str, Set[str]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """(the suggestions, a followed source's other channels) (issue 0109 W3 A): a suggestion one of its
-        linking sources holds a name of (discover_rules.own_names, same_owner) is that source's, shown as
+        linking sources holds a name of (discover_rules.channel_names, other_channel: issue 0172 b2) is that source's, shown as
         "also <source>'s" (`of`, `source_id`, the first such source by name), never as a suggestion.
         Aggregators and Saved own nothing they link (NOT_PUBLISHERS)."""
-        names: Dict[str, Set[str]] = {}
+        names: Dict[str, Tuple[Set[str], Set[str], Set[str]]] = {}
 
-        def of(source_id: str) -> Set[str]:
+        def of(source_id: str) -> Tuple[Set[str], Set[str], Set[str]]:
+            # Issue 0172 b2: by the source's own addresses' names and its whole name, a word of its name only for an account.
             if source_id not in names:
                 kind = sources.kind.get(source_id)
-                names[source_id] = set() if kind in NOT_PUBLISHERS or kind is None else own_names(
+                names[source_id] = (set(), set(), set()) if kind in NOT_PUBLISHERS or kind is None else channel_names(
                     sources.name.get(source_id, ""), account="" if kind == "site" else sources.account.get(source_id) or "",
                     publication=sources.publication(source_id) if kind == "site" else "",
                     shared_sites=sources.shared_sites)
@@ -963,7 +1073,7 @@ class StoriesService:
 
         out, also = [], []
         for s in found:
-            owners = sorted((sources.name.get(i, ""), i) for i in linkers.get(s["key"], ()) if same_owner(s["key"], of(i)))
+            owners = sorted((sources.name.get(i, ""), i) for i in linkers.get(s["key"], ()) if other_channel(s["key"], *of(i)))
             if owners:
                 also.append({**s, "of": owners[0][0], "source_id": owners[0][1]})
             else:
@@ -1167,6 +1277,26 @@ def _archive_rows(rows: List[Dict[str, Any]], states: Dict[str, Dict[str, Any]],
         out.append(row)
     out.sort(key=lambda a: (-a["origins"], a["name"].lower()))
     return out
+
+
+def _site_source(sources: SourceFacts, host: str) -> Optional[str]:
+    """The source that follows a site (by its own site or its address's), the first by id; None when none."""
+    site = site_of(host)
+    for source_id in sorted(sources.kind):
+        if sources.kind.get(source_id) in NOT_PUBLISHERS:
+            continue
+        if site in (sources.own_site(source_id), sources.handle_site.get(source_id)):
+            return source_id
+    return None
+
+
+def _own_page(sources: SourceFacts, source_id: str, url: str, platforms: Dict[str, Tuple[str, ...]]) -> bool:
+    """Whether a page is a source's own (issue 0172 b8): on a platform, its account's; else on its site (its posts'
+    or its address's). A link blog's posts are at the pages it links: those are never its own."""
+    key, site, platform = discover_address(url, platforms)
+    if platform:
+        return key is not None and key == sources.account.get(source_id)
+    return bool(site) and site in (sources.own_site(source_id), sources.handle_site.get(source_id))
 
 
 def _prefix(value: Optional[str]) -> Optional[str]:

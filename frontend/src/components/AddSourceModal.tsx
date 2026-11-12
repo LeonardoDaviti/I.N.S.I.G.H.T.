@@ -31,6 +31,9 @@ interface Template {
   platform?: string;
 }
 
+/** An X account's feed is the bridge's: fetched at the Nitter template's pace, however it was found (v10.15 c4). */
+const X_FETCH_DELAY = 10;
+
 // Hardcoded templates
 const TEMPLATES: Template[] = [
   {
@@ -42,7 +45,7 @@ const TEMPLATES: Template[] = [
     helperText: 'Creates a source like https://nitter.local/{username}/rss',
     buildHandle: (value) => `https://nitter.local/${value.replace(/^@/, '').trim()}/rss`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
-    fetchDelay: 10,
+    fetchDelay: X_FETCH_DELAY,
   },
   {
     id: 'telegram-rss',
@@ -190,16 +193,19 @@ function onBridge(template: Template, bridge: string | null | undefined): Templa
   };
 }
 
-/** What a finding holds of the site's articles your sources linked (issue 0060). */
-// The template a platform account is followed by (issue 0109 B2: Follow… on a Discover suggestion).
-const ACCOUNT_TEMPLATES: Record<AccountPlatform, string> = { x: 'nitter', telegram: 'telegram-rss', youtube: 'youtube', reddit: 'reddit' };
+// The template a platform account is followed by (issue 0109 B2: Follow… on a Discover suggestion). An X account has
+// none (v10.15 c4): the feed finder answers with the server's own Nitter bridge, as for any address, so no bridge host is
+// built here.
+const ACCOUNT_TEMPLATES: Partial<Record<AccountPlatform, string>> = { telegram: 'telegram-rss', youtube: 'youtube', reddit: 'reddit' };
 
 /** The template and its value an address starts from, when it names a platform account. */
 function startingTemplate(address: string | undefined): { template: Template; value: string } | null {
   const account = address ? platformAccount(address) : null;
-  const template = account ? TEMPLATES.find((t) => t.id === ACCOUNT_TEMPLATES[account.platform]) : undefined;
+  const id = account ? ACCOUNT_TEMPLATES[account.platform] : undefined;
+  const template = id ? TEMPLATES.find((t) => t.id === id) : undefined;
   return account && template ? { template, value: account.value } : null;
 }
+const isXAccount = (address: string) => platformAccount(address)?.platform === 'x';
 
 // Issue 0137: why the finder found no feed, and why a feed found is the site's rather than this page's.
 const NO_FEED_BECAUSE: Record<string, string> = {
@@ -240,7 +246,8 @@ interface AddSourceModalProps {
   /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
   onAddMany?: (added: AddedSource[], close: boolean) => void;
   /** An address to start from (Follow… on a suggested source, issue 0050): looked up as if typed; a
-   * platform account's opens its platform's template with the account filled in (issue 0109 B2). */
+   * platform account's opens its platform's template with the account filled in (issue 0109 B2); an X account is looked up
+   * by the finder like any address (v10.15 c4). */
   initialAddress?: string;
 }
 
@@ -326,6 +333,8 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
         setHandleOrUrl(first.url);
         if (!displayNameManuallyEdited && first.title) setDisplayName(first.title);
       }
+      // An X account comes back as the server's bridge feed (v10.15 c4): read at the bridge's pace.
+      setFetchDelay(first && isXAccount(lookup) ? X_FETCH_DELAY : undefined);
       // Your sources linked the site (issue 0060): the page holding the most of those links is
       // chosen already, with its preview; the others are listed with theirs.
       const best = result.status === 'none' && result.linked ? result.pages?.[0] : undefined;

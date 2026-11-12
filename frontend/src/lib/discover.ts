@@ -5,6 +5,7 @@
 import type { FollowLabel, MissingOrigins, SuggestedSource } from '../services/api';
 import { feedDateLabel } from './dates.ts';
 import { formatCount } from './format.ts';
+import { isPlatformHost, pageAccount } from './platformAccount.ts';
 
 /** "Started 7 of your stories"; on a site you follow, "You follow anthropic.com/research; /news started 14 of your stories". */
 export function originReason(s: SuggestedSource): string {
@@ -59,6 +60,37 @@ export const FOLLOW_LABELS: Record<FollowLabel, string> = {
   other_feed: 'A feed, but not of these pages',
 };
 export const UNFOLLOWABLE: ReadonlySet<FollowLabel> = new Set<FollowLabel>(['headlines', 'blocked', 'other_feed']);
+
+/** What a Pages row's Follow… follows (v10.15 c3): the server's `follow_url` when it sends one, else the account a platform's
+ *  page sits under (a tweet: its user), else the section the page sits in (https://host/a/b/slug → https://host/a/b/); the
+ *  site only for a page at its root. Never a platform's host; null when a platform's page names no account (a video). The
+ *  label names what it follows: "Follow @user…", "Follow section…", "Follow site…". */
+export function pageFollow(page: { url: string; follow_url?: string | null }): { url: string; label: string } | null {
+  let address = page.follow_url || null;
+  if (!address) {
+    const account = pageAccount(page.url);
+    if (account) address = account.url;
+    else if (isPlatformHost(page.url)) return null;
+    else {
+      try {
+        const parsed = new URL(page.url);
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        address = `${parsed.origin}/${parts.slice(0, -1).map((part) => `${part}/`).join('')}`;
+      } catch {
+        return null;
+      }
+    }
+  }
+  const account = pageAccount(address);
+  if (account) return { url: address, label: `Follow ${account.label}…` };
+  let root = false;
+  try {
+    root = new URL(address).pathname.replace(/\/+$/, '') === '';
+  } catch {
+    // Not a URL the server sent: followed as it is, the finder reads it.
+  }
+  return { url: address, label: root ? 'Follow site…' : 'Follow section…' };
+}
 
 const NUMBERISH = /^\d[\d_.-]*$/;
 const LANGUAGE = /^[a-z]{2}(?:[-_](?:[a-z]{2}|[a-z]{4}|\d{3}))?$/i;

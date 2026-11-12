@@ -1095,11 +1095,16 @@ async def get_suggested_sources(offset: int = Query(0, ge=0), limit: int = Query
     older, origin_stories}]: followed sources whose own pages started stories they don't hold
     (sections of a site you follow too); unnamed [{place, origins}]; references [{key, voices}]: help
     and docs sites your sources link. Opening the first page tests its suggestions and reads its
-    untitled articles' titles in the background, at most once in 30 days (services/discover_reads.py)."""
-    page = await asyncio.to_thread(services().stories.discover, offset=offset, limit=limit, q=q)
-    if offset == 0 and not q:
-        discover_reads.start(services().stories, FEED_FINDER_HTTP, services().source_fetch.kinds)
-    return page
+    untitled articles' titles in the background, at most once in 30 days (services/discover_reads.py).
+    built_at: when the answer served was built (issue 0172: built in the background, never on the request but the
+    first); refreshing: a newer one is being built."""
+    # Issue 0172 c1: the last answer built, never made on the request (an open that made it took 255-300 s on the
+    # server); one due again (its inputs changed, or it is old) is rebuilt in the background, `refreshing` says so.
+    page, stale = await asyncio.to_thread(services().stories.discover_served, offset=offset, limit=limit, q=q)
+    first = offset == 0 and not q
+    if stale or first:
+        discover_reads.start(services().stories, FEED_FINDER_HTTP, services().source_fetch.kinds, refresh=stale, read=first)
+    return {**page, "refreshing": discover_reads.running()}
 
 
 @app.post("/api/sources/suggested/hide")

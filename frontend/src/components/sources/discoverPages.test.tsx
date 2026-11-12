@@ -31,7 +31,7 @@ describe('DiscoverPages (issue 0113)', () => {
     setup([essay]);
     expect(screen.getByText('An essay about the release')).toBeInTheDocument();
     expect(screen.getByText('A story of 3 sources starts here')).toBeInTheDocument();
-    for (const name of ['Save page', 'Follow site…', 'Hide']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    for (const name of ['Save page', 'Follow section…', 'Hide']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
   });
 
   it('says a walled page probably can’t be read, and a video has nothing to save', () => {
@@ -49,11 +49,28 @@ describe('DiscoverPages (issue 0113)', () => {
     expect(savePage).toHaveBeenCalledWith(essay.url, essay.title, expect.anything());
   });
 
-  it('Hide hides that page by its key, Follow site… follows its site', async () => {
+  it('Follow… follows the server\'s address for the page, its section or its account, never the bare domain (v10.15 c3)', () => {
+    const tweet: DiscoverPage = { ...essay, url: 'https://x.com/acme_lab/status/1900000000000000101', site: 'x.com', tweet: true,
+      hide_key: 'page:x.com/acme_lab/status/1900000000000000101', title: 'A tweet' };
+    const { onFollow } = setup([{ ...essay, follow_url: 'https://essays.example.com/blog/' }, tweet]);
+    fireEvent.click(screen.getByRole('button', { name: 'Follow section…' }));
+    expect(onFollow).toHaveBeenLastCalledWith('https://essays.example.com/blog/');
+    // No follow_url (an older server): the tweet's account, worked out from its address.
+    fireEvent.click(screen.getByRole('button', { name: 'Follow @acme_lab…' }));
+    expect(onFollow).toHaveBeenLastCalledWith('https://x.com/acme_lab');
+    expect(onFollow).not.toHaveBeenCalledWith('https://x.com');
+  });
+
+  it('a platform page naming no account offers no Follow', () => {
+    setup([{ ...essay, url: 'https://www.youtube.com/watch?v=abcdefghijk', site: 'youtube.com', video: true, hide_key: 'page:yt' }]);
+    expect(screen.queryByRole('button', { name: /^Follow/ })).not.toBeInTheDocument();
+  });
+
+  it('Hide hides that page by its key, Follow… follows its section', async () => {
     const hideSuggestedSource = vi.fn().mockResolvedValue({ success: true });
     const { onFollow } = setup([essay], { hideSuggestedSource });
-    fireEvent.click(screen.getByRole('button', { name: 'Follow site…' }));
-    expect(onFollow).toHaveBeenCalledWith('https://essays.example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Follow section…' }));
+    expect(onFollow).toHaveBeenCalledWith('https://essays.example.com/2026/10/');
     fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
     await waitFor(() => expect(hideSuggestedSource).toHaveBeenCalledWith(essay.hide_key));
   });

@@ -307,7 +307,8 @@ class FindFeedRouteTests(unittest.TestCase):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": "x.example"})
         self.assertEqual(status, 200)
         self.assertEqual(body, {"success": True, "status": "found", "feeds": [{"url": "https://x.example/feed", "title": "X"}],
-                                "homepage": False, "pages": [], "linked": 0, "start": None})
+                                "homepage": False, "pages": [], "linked": 0, "start": None,
+                                "landed": "https://x.example/"})   # where the address landed (issue 0172 b1)
 
     def test_an_empty_address_is_a_400(self):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": " "})

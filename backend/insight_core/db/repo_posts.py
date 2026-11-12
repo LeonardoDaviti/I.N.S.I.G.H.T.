@@ -481,6 +481,13 @@ class PostsRepository:
         cur.execute(self._OTHER_FORM_SQL, params)
         return bool(cur.fetchone()[0])
 
+    @staticmethod
+    def _owns_page(cur: Cursor, params: Dict[str, Any]) -> bool:
+        """Whether the incoming post's source owns its page by issue 0167's rule (own_pages.owns)."""
+        cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = %(source_id)s::uuid", params)
+        found = cur.fetchone()
+        return found is not None and own_pages.owns(found[0], found[1], params["url"])
+
     def _saved_copy(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
         """A page you saved that this post is (issue 0122): that row, updated with this post at its
         address, as (id, False); None when there is none (the other paths go on).
@@ -504,7 +511,14 @@ class PostsRepository:
             return None   # the same row by ON CONFLICT (url), or the Saved source's own save
         if not here:
             from insight_core.db.repo_linked import page_source   # repo_linked reads the sources' facts
-            if not in_saved or page_source(cur, params["url"]) != str(params["source_id"]):
+            if not in_saved:
+                return None
+            owner = page_source(cur, params["url"])
+            # v10.15 item 5: a source with no post of the page's shape yet (a page watch's first fetch, newest page
+            # first) teaches page_source nothing; issue 0167's rule decides then: a website source on the page's site.
+            if owner is None and not self._owns_page(cur, params):
+                return None
+            if owner is not None and owner != str(params["source_id"]):
                 return None
         cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE id <> %(target)s::uuid AND (url = %(url)s"
                     " OR (%(external_id)s::text IS NOT NULL AND source_id = %(source_id)s::uuid"
@@ -1094,6 +1108,25 @@ class PostsRepository:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("SELECT url FROM posts WHERE url = ANY(%s)", (list(urls),))
             return {row[0] for row in cur.fetchall()}
+
+    def kept_urls(self, urls: Sequence[str], source_id: str) -> set:
+        """Which of these urls a fetch of this source leaves unread (page watch, v10.15 item 5): the ones stored as its
+        post, or held by another source it would not take them from. One held where its save takes it back (a page in
+        Saved: one INSIGHT collected, or you saved; an aggregator's, issue 0167) is read: the save is what moves it."""
+        if not urls:
+            return set()
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = %s::uuid", (source_id,))
+            found = cur.fetchone()
+            cur.execute("""SELECT p.url, p.source_id::text, s.platform, s.handle_or_url
+                             FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.url = ANY(%s)""", (list(urls),))
+            rows = cur.fetchall()
+        if found is None:
+            return {row[0] for row in rows}
+        platform, handle = found
+        return {url for url, holder, holder_platform, holder_handle in rows
+                if holder == source_id or not own_pages.owns(platform, handle, url)
+                or own_pages.owns(holder_platform, holder_handle, url)}
 
     def stored_x_articles(self, urls: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """Which of these urls are stored with their X Article read (metadata.x_article), each as stored:

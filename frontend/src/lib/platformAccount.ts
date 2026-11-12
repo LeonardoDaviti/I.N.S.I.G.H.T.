@@ -38,3 +38,39 @@ export function platformAccount(address: string): { platform: AccountPlatform; v
   }
   return null;
 }
+
+const PLATFORM_HOSTS = new Set(['x.com', 'twitter.com', 't.me', 'telegram.me', 'youtube.com', 'reddit.com']);
+
+/** A page on a platform INSIGHT follows by account (x.com, t.me, youtube.com, reddit.com): followed by its account,
+ *  never by its host. */
+export function isPlatformHost(address: string): boolean {
+  try {
+    return PLATFORM_HOSTS.has(new URL(withScheme(address.trim())).hostname.toLowerCase().replace(/^(www|m|mobile|old|np)\./, ''));
+  } catch {
+    return false;
+  }
+}
+
+/** The account a platform's page sits under (v10.15 c3), its address and its name: a tweet (x.com/<user>/status/<id>)
+ *  is https://x.com/<user> "@user", a Telegram post (t.me/<channel>/<n>) its channel's, a page under
+ *  youtube.com/@<channel>/… its channel's, a thread under reddit.com/r/<sub>/… "r/sub". Null when it names none. */
+export function pageAccount(address: string): { url: string; label: string } | null {
+  let url: URL;
+  try {
+    url = new URL(withScheme(address.trim()));
+  } catch {
+    return null;
+  }
+  const parts = url.pathname.split('/').filter(Boolean);
+  for (const n of [1, 2]) {
+    if (parts.length < n) break;
+    const account = platformAccount(`https://${url.hostname}/${parts.slice(0, n).join('/')}`);
+    if (!account) continue;
+    const { platform, value } = account;
+    if (platform === 'x') return { url: `https://x.com/${value}`, label: `@${value}` };
+    if (platform === 'telegram') return { url: `https://t.me/${value}`, label: `@${value}` };
+    if (platform === 'reddit') return { url: `https://www.reddit.com/r/${value}`, label: `r/${value}` };
+    return { url: `https://www.youtube.com/${value}`, label: value.startsWith('@') ? value : value.split('/').pop() ?? value };
+  }
+  return null;
+}
