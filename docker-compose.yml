@@ -3,6 +3,9 @@ services:
     image: pgvector/pgvector:pg15
     container_name: insight-db
     restart: unless-stopped
+    # v10.15.1: parallel queries keep their hash tables in /dev/shm; Docker's default 64 MB made a decision run fail
+    # with 'could not resize shared memory segment ... to 16777216 bytes' (server, 2026-11-12). Used only on demand.
+    shm_size: "1gb"
     environment:
       POSTGRES_USER: ${DB_USER:-insight}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-insight}
