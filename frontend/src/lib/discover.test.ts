@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, canArchive, missingReason, originReason, rowNotes, untitledLine } from './discover.ts';
+import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, canArchive, missingReason, originReason, pageFollow, rowNotes, untitledLine } from './discover.ts';
 import type { MissingOrigins, SuggestedSource } from '../services/api';
 
 const NOW = new Date('2026-10-31T12:00:00Z');
@@ -64,4 +64,21 @@ test('the follow test labels, and the two that sink', () => {
   assert.deepEqual(Object.values(FOLLOW_LABELS),
     ['Feed found', 'Page watching', 'Headlines only', 'Blocks readers', 'A feed, but not of these pages']);
   assert.deepEqual([...UNFOLLOWABLE], ['headlines', 'blocked', 'other_feed']);
+});
+
+test('a Pages row follows its section or its account, never the bare domain (v10.15 c3)', () => {
+  // The server's address first.
+  assert.deepEqual(pageFollow({ url: 'https://acme.example.org/blog/2026/a-post', follow_url: 'https://acme.example.org/blog/' }),
+    { url: 'https://acme.example.org/blog/', label: 'Follow section…' });
+  assert.deepEqual(pageFollow({ url: 'https://x.com/acme_lab/status/1900000000000000101', follow_url: 'https://x.com/acme_lab' }),
+    { url: 'https://x.com/acme_lab', label: 'Follow @acme_lab…' });
+  // An older server: worked out here.
+  assert.deepEqual(pageFollow({ url: 'https://x.com/acme_lab/status/1900000000000000101' }),
+    { url: 'https://x.com/acme_lab', label: 'Follow @acme_lab…' });
+  assert.deepEqual(pageFollow({ url: 'https://t.me/acme_channel/42' }), { url: 'https://t.me/acme_channel', label: 'Follow @acme_channel…' });
+  assert.deepEqual(pageFollow({ url: 'https://example.org/news/research/an-essay?ref=x', follow_url: null }),
+    { url: 'https://example.org/news/research/', label: 'Follow section…' });
+  assert.deepEqual(pageFollow({ url: 'https://example.org/an-essay' }), { url: 'https://example.org/', label: 'Follow site…' });
+  // A platform's page that names no account: nothing to follow, never the platform's home.
+  assert.equal(pageFollow({ url: 'https://www.youtube.com/watch?v=abcdefghijk' }), null);
 });

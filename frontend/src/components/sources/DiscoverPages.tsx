@@ -8,7 +8,7 @@ import { EmptyState } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatLocalDateTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
-import { untitledLine } from '../../lib/discover';
+import { pageFollow, untitledLine } from '../../lib/discover';
 
 /** What one row says under its title: its site, when a story first linked it, and whether it can be read. */
 export function pageLine(page: DiscoverPage): string {
@@ -25,6 +25,8 @@ function PageRow({ page, onFollow, onDone }: {
   const api = useApi();
   const [busy, setBusy] = useState<string | null>(null);
   const title = page.title || untitledLine(page.url);
+  // Its section or its account (v10.15 c3), never its bare domain.
+  const follow = pageFollow(page);
   const save = async () => {
     setBusy('Saving…');
     try {
@@ -73,7 +75,9 @@ function PageRow({ page, onFollow, onDone }: {
           {page.video || page.tweet ? null : (
             <Button size="sm" variant="secondary" disabled={busy !== null} onClick={() => void save()}>{busy ?? 'Save page'}</Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => onFollow(`https://${page.site}`)}>Follow site…</Button>
+          {follow ? (
+            <Button size="sm" variant="ghost" title={follow.url} onClick={() => onFollow(follow.url)}>{follow.label}</Button>
+          ) : null}
           <Button size="sm" variant="ghost" onClick={hide}>Hide</Button>
         </div>
       </div>
@@ -84,8 +88,8 @@ function PageRow({ page, onFollow, onDone }: {
 /**
  * Discover → Pages (issue 0113): each story's root that no source of yours publishes and INSIGHT doesn't store, one page
  * a row, the biggest stories first. Save page keeps it as one post (the save path: a followed source's page is fetched
- * there first, issue 0122), so its story has its original; Follow site… is Discover's follow (the feed finder and page
- * watching); Hide hides that page, never its site. 0138 D1: then the originals of things (Mark X's entities) two of your
+ * there first, issue 0122), so its story has its original; Follow… is Discover's follow (the feed finder and page
+ * watching) on the page's section or account, never its bare domain (v10.15 c3); Hide hides that page, never its site. 0138 D1: then the originals of things (Mark X's entities) two of your
  * sources wrote about, or one in a News lead, that INSIGHT doesn't have: "The original of <thing>".
  */
 export default function DiscoverPages({ pages, onFollow }: { pages: DiscoverPage[]; onFollow: (url: string) => void }) {

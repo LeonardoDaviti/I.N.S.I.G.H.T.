@@ -1016,10 +1016,9 @@ describe('SourcesConfig deep links', () => {
   });
 
   // Issue 0109 B2: a platform account is followed through its platform's template, filled in, not as an
-  // address the feed finder reads (x.com/<user> found nothing: "Headlines only").
+  // address the feed finder reads (x.com/<user> found nothing: "Headlines only"). An X account is the exception since
+  // v10.15 c4: the finder answers with the server's bridge feed (below).
   it.each([
-    ['x.com/writer_x', 'Nitter', 'Username', 'writer_x',
-      { platform: 'rss', handle_or_url: 'https://nitter.local/writer_x/rss', display_name: 'writer_x', fetch_delay_seconds: 10 }],
     ['t.me/sample_channel', 'Telegram RSS', 'Channel Username', 'sample_channel',
       { platform: 'rss', handle_or_url: 'https://telegram.local/rss/sample_channel?limit=50', display_name: 'sample_channel', fetch_delay_seconds: 5 }],
     ['youtube.com/@SampleChannel', 'YouTube', 'Channel', '@SampleChannel',
@@ -1045,6 +1044,49 @@ describe('SourcesConfig deep links', () => {
     await waitFor(() => expect(addSource).toHaveBeenCalledTimes(1));
     expect(addSource.mock.calls[0][0]).toEqual(added);
     expect(findFeed).not.toHaveBeenCalled();
+  });
+
+  it('Follow… on an X account asks the feed finder and adds the bridge feed it answers, at the bridge\'s pace (v10.15 c4)', async () => {
+    const suggestion = { key: 'x.com/writer_x', url: 'https://x.com/writer_x', voices: 2, article_count: 1, link_count: 3,
+      voice_names: ['Voice A'], articles: [] };
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found',
+      feeds: [{ url: 'https://bridge.example.org/writer_x/rss', title: 'Writer X / @writer_x' }] });
+    const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
+    setup('/settings/sources?tab=suggested', {
+      getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [suggestion] }), findFeed, addSource,
+      fetchSourceNow: vi.fn().mockResolvedValue(runReport()),
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Follow…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: 'Nitter' })).toHaveAttribute('aria-pressed', 'false');
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://x.com/writer_x'));
+    await waitFor(() => expect(within(dialog).getByLabelText('Feed URL or handle')).toHaveValue('https://bridge.example.org/writer_x/rss'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+    await waitFor(() => expect(addSource).toHaveBeenCalledTimes(1));
+    expect(addSource.mock.calls[0][0]).toEqual(expect.objectContaining({
+      handle_or_url: 'https://bridge.example.org/writer_x/rss', display_name: 'Writer X / @writer_x', fetch_delay_seconds: 10 }));
+  });
+
+  it('Discover\'s other channels and a site\'s own account each have Follow…, through the finder (v10.15 c2, b5)', async () => {
+    const site = { key: 'acme.example.org', url: 'https://acme.example.org', voices: 3, article_count: 2, link_count: 4,
+      voice_names: ['Voice A'], articles: [], follow_test: { label: 'headlines', at: '2026-11-10T00:00:00Z' },
+      account: { url: 'https://x.com/acme_lab', label: '@acme_lab' } };
+    const channel = { key: 'x.com/acme_news', url: 'https://x.com/acme_news', voices: 1, article_count: 1, link_count: 1,
+      voice_names: ['Acme'], articles: [], of: 'Acme', source_id: 's-acme' };
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'none', feeds: [] });
+    setup('/settings/sources?tab=suggested', {
+      getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [site], also: [channel] }), findFeed,
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Follow @acme_lab…' }));
+    let dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://x.com/acme_lab'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    await userEvent.click(screen.getByRole('button', { name: /Other channels of sources you follow/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Follow x.com/acme_news…' }));
+    dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://x.com/acme_news'));
   });
 
   it('Follow… on a site still opens Add source on its address, through the feed finder', async () => {

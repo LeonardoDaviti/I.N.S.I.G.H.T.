@@ -894,6 +894,9 @@ export interface SuggestedSource {
   originals_reason?: string;
   /** 0138 F3: how often the long-reads you opened cite it (3+ from 2+ long-reads suggest it below the voices bar). */
   cited_by_longreads?: number;
+  /** v10.15 b5: the site's own account on a platform (its X account), offered when the site itself can't be followed
+   *  (follow test headlines, blocked, other_feed). Follow… on it goes through the feed finder like any address. */
+  account?: { url: string; label: string } | null;
 }
 /** A story's origin (issue 0064) as Discover shows it: its page, its title when known, its voices. */
 export interface OriginStory { url: string; title: string | null; voices: number; stored: boolean; }
@@ -939,6 +942,10 @@ export interface SuggestedSourcesResponse {
   supplied?: { key: string; source_id: string; name: string; followed_at: string; originals_first: number }[];
   /** 0138 E4: entities whose world has sites you don't follow or works you don't have. */
   worlds?: { entity: { id: string; name: string }; sites: number; not_followed: number; works_not_stored: number }[];
+  /** v10.15: Discover is served from its last background build: when that build was made (ISO), and whether a newer one
+   *  is being made now (the list is asked again once, a minute later). Older servers send neither. */
+  built_at?: string | null;
+  refreshing?: boolean;
 }
 
 /** Issue 0170: why a row is in "main source missing". */
@@ -1005,6 +1012,9 @@ export interface DiscoverPage {
   /** 0138 D1: the original of a thing (a Mark X entity) your sources talked about, not a story's root. */
   entity?: { id: string; name: string };
   voice_names?: string[];
+  /** v10.15 c3: the address Follow… opens for this page: a tweet's account (x.com/<handle>), a platform page's account,
+   *  a site page's section (https://host/blog/). Older servers send none: the client works it out (lib/discover pageFollow). */
+  follow_url?: string | null;
 }
 
 /** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it

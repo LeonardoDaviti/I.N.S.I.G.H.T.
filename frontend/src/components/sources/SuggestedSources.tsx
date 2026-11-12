@@ -12,12 +12,22 @@ import MainSourceMissing from './MainSourceMissing';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatCount, plural } from '../../lib/format';
+import { formatRelativeTime } from '../../lib/dates';
 import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, canArchive, missingReason, originReason, rowNotes, untitledLine } from '../../lib/discover';
 import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { suggestionReason } from '../../lib/story';
 
 export const SUGGESTED_SOURCES_KEY = ['suggested-sources'] as const;
 type Pages = InfiniteData<SuggestedSourcesResponse, number>;
+/** How long after a "refreshing" answer Discover asks for its list again (v10.15): the background build's usual time. */
+const REFRESH_AFTER_MS = 60_000;
+
+/** "Updated 12m ago · updating…": when the list served was built, and whether a newer build is under way (v10.15). */
+function BuiltLine({ builtAt, refreshing }: { builtAt: string | null; refreshing: boolean }) {
+  if (!builtAt && !refreshing) return null;
+  const parts = [builtAt ? `Updated ${formatRelativeTime(builtAt)}` : null, refreshing ? 'updating…' : null].filter(Boolean);
+  return <p className="text-[0.75rem] text-fg-3" aria-live="polite">{parts.join(' · ')}</p>;
+}
 
 /** The stories a place started: each origin page with how many of your sources covered it. */
 function OriginStories({ stories }: { stories: OriginStory[] }) {
@@ -62,8 +72,9 @@ function Missing({ missing }: { missing: MissingOrigins }) {
 }
 
 /** A followed source's other channels (issue 0109): the X account or old site its own posts link under its name.
- *  Folded, one line each; never suggestions. */
-function OtherChannels({ also }: { also: NonNullable<SuggestedSourcesResponse['also']> }) {
+ *  Folded, one line each; never suggestions. Each has Follow… as a suggestion has (v10.15 c2): Add source on its address,
+ *  where the feed finder decides. */
+function OtherChannels({ also, onFollow }: { also: NonNullable<SuggestedSourcesResponse['also']>; onFollow: (url: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
     <section aria-label="Your sources' other channels" className="mt-3">
@@ -80,9 +91,12 @@ function OtherChannels({ also }: { also: NonNullable<SuggestedSourcesResponse['a
       {open ? (
         <ul id="discover-also" className="mt-1 flex flex-col gap-0.5 border-l border-line pl-3">
           {also.map((a) => (
-            <li key={a.key} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
+            <li key={a.key} className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
               <ExternalLink href={a.url} className="min-w-0 truncate text-fg">{a.key}</ExternalLink>
-              <span className="shrink-0 truncate">· also {sourceLabel(a.of)}&rsquo;s</span>
+              <span className="min-w-0 shrink truncate">· also {sourceLabel(a.of)}&rsquo;s</span>
+              <Button size="sm" variant="ghost" className="ml-auto shrink-0" aria-label={`Follow ${a.key}…`} onClick={() => onFollow(a.url)}>
+                Follow…
+              </Button>
             </li>
           ))}
         </ul>
@@ -97,6 +111,7 @@ function Suggestion({ suggestion, onFollow, onHide }: {
   const [open, setOpen] = useState(false);
   const listId = `suggested-${suggestion.key.replace(/[^a-z0-9]+/gi, '-')}`;
   const test = suggestion.follow_test;
+  const account = suggestion.account;
   return (
     <li className="border-b border-line py-3 last:border-b-0">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
@@ -137,6 +152,12 @@ function Suggestion({ suggestion, onFollow, onHide }: {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" variant="secondary" onClick={() => onFollow(suggestion.url)}>Follow…</Button>
+          {/* v10.15 b5: the site can't be followed, its own account can (through the finder, like any address). */}
+          {account ? (
+            <Button size="sm" variant="secondary" title={account.url} onClick={() => onFollow(account.url)}>
+              Follow {account.label}…
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" onClick={() => onHide(suggestion)}>Not interested</Button>
         </div>
       </div>
@@ -187,6 +208,16 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
     placeholderData: (previous) => previous,
     staleTime: 60_000,
   });
+  // v10.15: the list is the last background build; while a newer one is made, it is asked again each minute.
+  const served = query.data?.pages[0];
+  const refreshing = !!served?.refreshing;
+  const builtAt = served?.built_at ?? null;
+  const { refetch } = query;
+  useEffect(() => {
+    if (!refreshing) return;
+    const timer = setTimeout(() => void refetch(), REFRESH_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [refreshing, builtAt, refetch, query.dataUpdatedAt]);
 
   const hide = (suggestion: SuggestedSource) => {
     queryClient.setQueriesData<Pages>({ queryKey: [...SUGGESTED_SOURCES_KEY] }, (current) => (
@@ -238,10 +269,13 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
   const pages = first.pages ?? [];
   return (
     <Tabs value={view} onValueChange={setView}>
-      <TabsList aria-label="Discover's lists" className="mb-1">
-        <TabsTrigger value="sources">Sources</TabsTrigger>
-        <TabsTrigger value="pages">Pages{pages.length ? ` (${formatCount(pages.length)})` : ''}</TabsTrigger>
-      </TabsList>
+      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TabsList aria-label="Discover's lists">
+          <TabsTrigger value="sources">Sources</TabsTrigger>
+          <TabsTrigger value="pages">Pages{pages.length ? ` (${formatCount(pages.length)})` : ''}</TabsTrigger>
+        </TabsList>
+        <BuiltLine builtAt={builtAt} refreshing={refreshing} />
+      </div>
       <TabsContent value="pages" className="pt-3">
         <DiscoverPages pages={pages} onFollow={onFollow} />
       </TabsContent>
@@ -322,7 +356,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
               {first.supplied.map((s) => `${s.name || s.key} brought ${s.originals_first} first`).join(' · ')}.
             </p>
           ) : null}
-          {also.length && !words.length ? <OtherChannels also={also} /> : null}
+          {also.length && !words.length ? <OtherChannels also={also} onFollow={onFollow} /> : null}
           {references.length && !words.length ? (
             <p className="pt-3 text-[0.75rem] text-fg-3">
               References your sources use:{' '}
