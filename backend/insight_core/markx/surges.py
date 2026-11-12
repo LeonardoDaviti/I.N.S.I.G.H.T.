@@ -80,11 +80,13 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
     return acc
 
 
-def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30) -> Dict[str, Any]:
-    """Recount the days (None: every day of the window) and write what changed."""
+def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30,
+          book: Optional[I.Book] = None) -> Dict[str, Any]:
+    """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now
+    (its entities, names, merges and pins; no mention count is read), else read here."""
     from insight_core.markx import schemas
     guide = schemas.mention_guides()   # 0133: the current set
-    book = I.load_book(cur)
+    book = I.load_book(cur, counts=False) if book is None else book   # v10.16: the counts were never read here
     since = (now.astimezone(timezone.utc) - timedelta(days=window_days)).date()
     acc = count(cur, book, days, since, guide)
     want: Dict[Tuple[str, date], Dict[str, Any]] = {}
