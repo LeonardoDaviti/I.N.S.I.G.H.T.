@@ -867,5 +867,57 @@ class TestRename(Base):
         self.assertEqual(sorted(sizes), [2, 5])
 
 
+class TestScout(Base):
+    """0148: a track's scout question (scout-v1) is a default kind, asked one track a call, before the track judge."""
+
+    def setUp(self):
+        super().setUp()
+        for kind, gid in (("scout", "scout-v1"), ("track", "track-v1")):
+            KIND_GUIDE[kind] = gid
+            self.addCleanup(KIND_GUIDE.pop, kind)
+            self.stub.guides[gid] = guide(gid, f"GUIDE {gid}")
+
+    def test_scout_is_a_default_kind_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertIn("scout", kinds)
+        self.assertLess(kinds.index("scout"), kinds.index("track"))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["scout"], 1)
+
+    def test_scout_asked_one_track_a_call(self):
+        self.stub.add("scout", 2, start=1)
+        self.stub.add("track", 3, start=101)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 5)
+        sizes = {}
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            sizes.setdefault(self.stub.tasks[str(ids[0])]["kind"], []).append(len(ids))
+        self.assertEqual(sizes["scout"], [1, 1])
+        self.assertEqual(sizes["track"], [3])
+
+
+class TestIdentity(Base):
+    """0162: research's same-maker question (identity-v1) is a default kind, five pairs a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["identity"] = "identity-v1"
+        self.addCleanup(KIND_GUIDE.pop, "identity")
+        self.stub.guides["identity-v1"] = guide("identity-v1", "GUIDE identity-v1")
+
+    def test_identity_is_a_default_kind_five_a_call(self):
+        self.assertIn("identity", W.DEFAULT_KINDS.split(","))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["identity"], 5)
+
+    def test_identity_pairs_asked_five_a_call(self):
+        self.stub.add("identity", 7, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sorted(sizes), [2, 5])
+
+
 if __name__ == "__main__":
     unittest.main()

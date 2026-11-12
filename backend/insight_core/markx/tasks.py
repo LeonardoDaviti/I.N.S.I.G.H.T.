@@ -711,9 +711,18 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
         from insight_core.markx import tracks
         tracks.after_answer(cur, task, call_id, answer)
+        if task["kind"] == "track":                 # 0148: a scout's test-read item shares the judge (scratch rows)
+            from insight_core.markx import scout
+            scout.after_judge(cur, task, answer)
     elif task["kind"] == "probes":                  # 0147: a track's example posts
         from insight_core.markx import finders
         finders.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "scout":                   # 0148: the sources Haiku names for a track's sphere
+        from insight_core.markx import scout
+        scout.after_answer(cur, task, answer)
+    elif task["kind"] == "identity":                # 0162: two accounts, one maker?
+        from insight_core.markx import research
+        research.after_identity(cur, task, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])

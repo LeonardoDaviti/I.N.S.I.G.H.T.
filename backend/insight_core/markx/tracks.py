@@ -434,7 +434,9 @@ def _ask(cur: Cursor, track: Dict[str, Any], head: str, p: tasks.Post, *, origin
 
 
 def open_tasks(cur: Cursor) -> int:
-    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased')", (KIND,))
+    # 0148: a scout's test-read items (subject 'scout_item') have their own budget, never this cap's
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased') AND subject_kind = 'post_track'",
+                (KIND,))
     return cur.fetchone()[0]
 
 
