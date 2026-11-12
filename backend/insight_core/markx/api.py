@@ -248,6 +248,11 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 # ---- the worker's routes -------------------------------------------------------------------------
 
+# v10.14: kinds the decision run plans too (graph.stage, back.stage), in its one long transaction. A lease planning one
+# meanwhile picks the same newest pairs, and its insert of the same input waits on the run's uncommitted row until the
+# run ends (the server's relate leases: 6 to 57 s, every 5 minutes, the runs' gap). The run plans them; the lease leases.
+PLANNED_BY_RUNS = ("relate", "back")
+
 PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests this long before a lease runs it again
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
 
@@ -283,6 +288,8 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
                 continue
             if tasks.planned_in_background(cur, kind):
                 continue                                          # v10.13.2/4: the decision job plans them
+            if kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
+                continue                                          # v10.14: never wait on a running decision run
             if window is not tasks.SETTING and kind in tasks.WINDOWED:
                 tasks.PLANNERS[kind](cur, days=window)
             elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
@@ -381,7 +388,8 @@ def status():
         queue = repo.queue_counts(cur)
         cur.execute("""SELECT created_at::date, count(*), count(*) FILTER (WHERE valid), count(*) FILTER (WHERE NOT valid),
                               COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), COALESCE(sum(cost_usd), 0)
-                         FROM mx_calls GROUP BY 1 ORDER BY 1 DESC LIMIT 60""")
+                         FROM mx_calls WHERE created_at >= COALESCE(%s, '-infinity'::timestamptz)
+                        GROUP BY 1 ORDER BY 1 DESC LIMIT 60""", (repo.calls_days_floor(cur, 60),))   # v10.14
         days = [{"day": d.isoformat(), "calls": n, "valid": v, "invalid": i, "tokens_in": int(ti), "tokens_out": int(to),
                  "cost_usd": round(float(c), 6)} for d, n, v, i, ti, to, c in cur.fetchall()]
         cur.execute("SELECT count(*), COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), "
