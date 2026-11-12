@@ -313,7 +313,29 @@ function discoverOrigins(): FixtureRoute[] {
       }],
       unnamed: [{ place: 'youtube.com/watch', origins: 9 }],
     }),
-  }];
+  }, mainSourceMissing()];
+}
+
+/** Discover's "main source missing" (issue 0170): a section to follow, with its event and what its test found. */
+function mainSourceMissing(rows = true): FixtureRoute {
+  const event = {
+    story: 'story-widget-5', headline: 'Acme ships Widget 5 with a longer context', event_type: 'model_release', voices: 4,
+    first_at: '2026-10-27T10:00:00Z',
+    own_page: { url: 'https://acme.example/blog/widget-5', how: 'held', held_by: ['Link Aggregator'] },
+    posts: [{ id: 'p-1', title: 'Widget 5 is out', source: 'Channel A', source_id: 's-a', url: 'https://t.me/channel_a/101', at: null }],
+  };
+  return {
+    path: '/api/discover/main-source',
+    respond: () => ({
+      success: true, checked: 141, events: rows ? 1 : 0, within_days: 30, total: rows ? 1 : 0,
+      rows: rows ? [{
+        key: 'main:acme.example/blog/', kind: 'missing', actor: { id: 'e-acme', name: 'Acme' }, source: null,
+        channel: { key: 'acme.example/blog/', kind: 'site', platform: 'site', url: 'https://acme.example/blog', prefix: '/blog/' },
+        events: [event], latest: event.first_at,
+        test: { label: 'page', holds: 1, of: 1, feeds: [], pages: [], preview: { prefix: '/blog/', found: 12, items: [] }, at: '2026-10-28T09:00:00Z' },
+      }] : [],
+    }),
+  };
 }
 
 /** Discover suggesting claude.com, and what Follow… finds there (issue 0060). */
@@ -326,6 +348,7 @@ function followWhereLinked(now: Date): FixtureRoute[] {
   }));
   const page = (path: string, found: number) => ({ url: `${site}${path.replace(/\/$/, '')}`, prefix: path, found, sitemap: true, items: items(path), holds: 21 });
   return [
+    mainSourceMissing(false),
     {
       path: '/api/sources/suggested',
       respond: () => ({

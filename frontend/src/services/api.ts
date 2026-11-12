@@ -941,6 +941,51 @@ export interface SuggestedSourcesResponse {
   worlds?: { entity: { id: string; name: string }; sites: number; not_followed: number; works_not_stored: number }[];
 }
 
+/** Issue 0170: why a row is in "main source missing". */
+export type MainSourceKind = 'missing' | 'wrong_section' | 'disabled';
+/** A channel's follow test (0170): the feed finder on the section, then page watching's preview of it. */
+export interface MainSourceTest {
+  label: FollowLabel;
+  /** Of `of` own pages of the events, the most a feed or page found keeps; null when unknown. */
+  holds?: number | null;
+  of?: number;
+  feeds?: { url: string; title?: string | null; holds?: number | null }[];
+  pages?: { url: string; prefix?: string | null; found?: number | null; holds?: number | null }[];
+  preview?: { prefix?: string | null; found?: number | null; items: { url: string; title?: string | null }[] };
+  at: string;
+}
+export interface MainSourceEvent {
+  story: string;
+  headline: string;
+  event_type: string;
+  voices: number;
+  first_at: string | null;
+  /** The actor's own page the event's posts carry: held (a member's own address), linked (2+ members, or a post on X),
+   *  main_link (a short link post's), source_page (the page members link when none is the original). */
+  own_page: { url: string; how: 'held' | 'linked' | 'main_link' | 'source_page'; held_by: string[] } | null;
+  posts: { id: string; title: string; source: string; source_id: string; url: string | null; at: string | null }[];
+}
+export interface MainSourceRow {
+  /** `main:<channel key>`: Not interested hides it (POST /api/sources/suggested/hide). */
+  key: string;
+  kind: MainSourceKind;
+  channel: { key: string; kind: 'account' | 'site' | 'source'; platform: string; url: string; prefix: string | null };
+  actor: { id: string; name: string };
+  /** The followed source it is about: a site's other section (wrong_section), a turned-off source (disabled). */
+  source: { id: string; name: string; enabled: boolean; watch: string | null } | null;
+  events: MainSourceEvent[];
+  latest: string | null;
+  test: MainSourceTest | null;
+}
+export interface MainSourceResponse {
+  success: true;
+  rows: MainSourceRow[];
+  total: number;
+  checked: number;
+  events: number;
+  within_days: number;
+}
+
 /** One Pages row (issue 0113): a page your stories start at, savable as one post. */
 export interface DiscoverPage {
   url: string;
@@ -1232,6 +1277,10 @@ export function createApi() {
     /** One page (issue 0080): `page` is its query, `?offset=30&q=…` (Discover builds it, out of the reader's chunk). */
     getSuggestedSources: (page = '', signal?: AbortSignal) =>
       request<SuggestedSourcesResponse>(`/api/sources/suggested${page}`, { signal }),
+    /** Discover's "main source missing" (issue 0170): events whose actor's own channel you don't hold. Opening it tests
+     *  the shown channels in the background; nothing is followed here. */
+    getMainSourceMissing: (signal?: AbortSignal) =>
+      request<MainSourceResponse>('/api/discover/main-source', { signal }),
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
