@@ -19,6 +19,8 @@ A cycle
 3. Each batch is one call (a merge: one task a call, --per-call; 0112 Decided 8):
        claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
               --no-session-persistence --strict-mcp-config
+   (0171: a `websearch` call, research's web search, has --tools WebSearch and, last, --allowedTools WebSearch
+   --max-turns 8: the web search tool only, no fetch, no other tool; one question a call)
    with the prompt on stdin: an instruction, then each task as "### ITEM id: <task id>\\n<input>". Haiku
    answers one JSON line per task, `{"id": <task id>, <the guide's answer fields>}` (the prototype's measured
    form; `{"task_id": .., "answer": {..}}` lines are accepted too).
@@ -141,10 +143,10 @@ from pathlib import Path
 
 EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing.
-DEFAULT_KINDS = "read,read3,entities,cite,alias,alias2,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,briefing,translate,stance,probes,scout,identity,track,subtopics"
+DEFAULT_KINDS = "read,read3,entities,cite,alias,alias2,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
 # a lease takes --lease of them (v10.13.3), at most --parallel calls' worth. --per-call overrides it.
-PER_CALL = "merge=1,collide=6,rename=5,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1,scout=1,identity=5"   # 0148: a track scout one a call; 0162: 5 identity pairs a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
+PER_CALL = "merge=1,collide=6,rename=5,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1,scout=1,identity=5,websearch=1"   # 0148: a track scout one a call; 0162: 5 identity pairs a call; 0171: one web search question a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
 # perspectives (one group of at most 5 members a task) and its sheet one a call (0119 B3-B4); 0127: read-v3 5 a call (rv3d);
 # 0165 B: the rename judge 5 a call (each item shows two names with two posts each)
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
@@ -158,6 +160,10 @@ EXIT_BUG = 1
 REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal (2026-11-08)
 EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
 EMBED_KINDS = (EMBED_KIND, "embed_name")   # 0119 A1: a name's vector is embedded as a post's is
+# 0171: research's web search is asked of this worker: its kind's calls get Claude Code's web search tool, and only
+# it (no fetch: the server reads every page itself), allowed without a prompt; at most WEB_MAX_TURNS turns (the
+# guide's 5 searches, one answer, slack). Every other kind keeps --tools "".
+WEB_KINDS, WEB_TOOL, WEB_MAX_TURNS = ("websearch",), "WebSearch", 8
 
 USAGE_RE = re.compile(r"usage limit|limit reached|hit your limit|rate.?limit|out of extra usage|credit balance|"
                       r"quota|limit will reset|resets? at|resets \d", re.I)
@@ -390,7 +396,13 @@ def system_for(guide):
             "exactly these field names:\n" + json.dumps(schema, ensure_ascii=False, separators=(",", ":")))
 
 
-def claude_argv(claude, model, system):
+def claude_argv(claude, model, system, kind=None):
+    """No tools, except for a kind in WEB_KINDS (0171): Claude Code's web search tool only (allowed without a prompt,
+    no fetch, no other tool), at most WEB_MAX_TURNS turns."""
+    if kind in WEB_KINDS:
+        return [claude, "-p", "--model", model, "--tools", WEB_TOOL, "--system-prompt", system,
+                "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
+                "--allowedTools", WEB_TOOL, "--max-turns", str(WEB_MAX_TURNS)]
     return [claude, "-p", "--model", model, "--tools", "", "--system-prompt", system,
             "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"]
 
@@ -404,11 +416,11 @@ def classify(text):
     return None
 
 
-def call(claude, model, system, prompt, timeout):
+def call(claude, model, system, prompt, timeout, kind=None):
     """One `claude -p` call. Returns {text, ms, cost, tin, tout, model} or {error, fatal, ms}."""
     t0 = time.time()
     try:
-        p = subprocess.run(claude_argv(claude, model, system), input=prompt, capture_output=True, text=True,
+        p = subprocess.run(claude_argv(claude, model, system, kind), input=prompt, capture_output=True, text=True,
                            timeout=max(1, timeout), cwd=tempfile.gettempdir())
     except subprocess.TimeoutExpired:
         return {"error": "timeout", "fatal": None, "ms": int((time.time() - t0) * 1000)}
@@ -694,7 +706,7 @@ class Worker:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
             return None
         res = call(self.a.claude, self.a.model, system_for(batch.guide), prompt_for(tasks),
-                   timeout=self.a.timeout)
+                   timeout=self.a.timeout, kind=batch.kind)
         late = datetime.now(timezone.utc) > batch.lease_until
         ok, invalid, missing = [], [], []
         if "text" in res:

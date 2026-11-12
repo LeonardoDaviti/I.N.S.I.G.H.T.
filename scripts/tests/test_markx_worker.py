@@ -919,5 +919,74 @@ class TestIdentity(Base):
         self.assertEqual(sorted(sizes), [2, 5])
 
 
+
+WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
+              "properties": {"candidates": {"type": "array", "maxItems": 15, "items": {
+                  "type": "object", "required": ["url", "why"],
+                  "properties": {"url": {"type": "string", "minLength": 8}, "title": {"type": ["string", "null"]},
+                                 "why": {"type": "string", "minLength": 1}}}},
+                  "queries": {"type": "array", "maxItems": 5, "items": {"type": "string", "minLength": 1}}}}
+
+
+class TestWebSearch(Base):
+    """0171: research's web search (websearch-v1) is asked of this worker: its calls, and only its, get Claude Code's
+    web search tool (no fetch, no other tool), allowed without a prompt and their turns capped; one question a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["websearch"] = "websearch-v1"
+        self.addCleanup(KIND_GUIDE.pop, "websearch")
+        self.stub.guides["websearch-v1"] = {**guide("websearch-v1", "GUIDE websearch-v1"), "schema": WEB_SCHEMA}
+        plain = self.stub.check
+        self.stub.check = lambda a: (W.schema_error(WEB_SCHEMA, a) if isinstance(a, dict) and "candidates" in a
+                                     else plain(a))
+
+    def test_websearch_is_a_default_kind_one_a_call(self):
+        self.assertIn("websearch", W.DEFAULT_KINDS.split(","))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["websearch"], 1)
+
+    def test_only_the_websearch_kind_gets_the_web_search_tool(self):
+        web = W.claude_argv("claude", "haiku", "S", "websearch")
+        self.assertEqual(web[web.index("--tools") + 1], "WebSearch")
+        self.assertEqual(web[web.index("--allowedTools") + 1], "WebSearch")
+        self.assertEqual(web[web.index("--max-turns") + 1], str(W.WEB_MAX_TURNS))
+        self.assertNotIn("WebFetch", " ".join(web))
+        for kind in [k for k in W.DEFAULT_KINDS.split(",") if k != "websearch"] + [None]:
+            with self.subTest(kind=kind):
+                argv = W.claude_argv("claude", "haiku", "S", kind)
+                self.assertEqual(argv[argv.index("--tools") + 1], "")
+                self.assertNotIn("--allowedTools", argv)
+                self.assertNotIn("WebSearch", argv)
+
+    def test_a_websearch_cycle_answers_with_candidates_and_the_tool_only_there(self):
+        self.stub.add("websearch", 2, start=1)
+        self.stub.add("read", 3, start=10)
+        p = self.run_worker("--kinds", "websearch,read", "--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 5)
+        calls = self.fake_calls()
+        web = [c for c in calls if "GUIDE websearch-v1" in c["system"]]
+        other = [c for c in calls if "GUIDE websearch-v1" not in c["system"]]
+        self.assertEqual(len(web), 2)                                       # one question a call
+        for c in web:
+            self.assertEqual(c["stdin"].count("### ITEM id:"), 1)
+            self.assertEqual(c["argv"][3:5], ["--tools", "WebSearch"])
+            self.assertEqual(c["argv"][-4:], ["--allowedTools", "WebSearch", "--max-turns", "8"])
+        self.assertTrue(other)
+        for c in other:
+            self.assertEqual(c["argv"][3:5], ["--tools", ""])
+            self.assertNotIn("--allowedTools", c["argv"])
+        posted = [a for a in self.stub.calls if str(a["task_id"]) in ("1", "2")]
+        self.assertTrue(all(a["valid"] for a in posted))
+        self.assertEqual(posted[0]["answer"]["candidates"][0]["why"], "the result names the product")
+
+    def test_an_answer_the_schema_refuses_is_asked_once_more(self):
+        self.stub.add("websearch", 1, start=1)
+        p = self.run_worker("--kinds", "websearch", plan="invalid:1,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.stub.by_status("answered"), [1])
+        self.assertEqual(len(self.fake_calls()), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -730,6 +730,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "identity":                # 0162: two accounts, one maker?
         from insight_core.markx import research
         research.after_identity(cur, task, answer)
+    elif task["kind"] == "websearch":               # 0171: the worker's web search for a research run
+        from insight_core.markx import research
+        research.after_websearch(cur, task, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])

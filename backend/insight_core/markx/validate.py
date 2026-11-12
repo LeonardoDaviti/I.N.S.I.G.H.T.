@@ -449,6 +449,33 @@ def _identity(a: Dict[str, Any], input: str) -> Optional[str]:
     return _track(a, input)
 
 
+def _websearch(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0171: each candidate one web address (http or https, no spaces, at most WEBSEARCH_URL_CHARS), named once; its
+    title and why one line each; each query one line. Whether a candidate is an identity is research's to judge (its
+    rules or the `identity` question), never this answer's."""
+    seen: set = set()
+    for c in a["candidates"]:
+        url = (c.get("url") or "").strip()
+        if not url.lower().startswith(("http://", "https://")) or any(ch.isspace() for ch in url):
+            return "a candidate's url: one http(s) address, no spaces"
+        if len(url) > schemas.WEBSEARCH_URL_CHARS:
+            return f"a candidate's url over {schemas.WEBSEARCH_URL_CHARS} characters"
+        key = url.lower().split("://", 1)[-1].removeprefix("www.").rstrip("/")
+        if key in seen:
+            return "a candidate named twice"
+        seen.add(key)
+        for field, most in (("title", schemas.WEBSEARCH_TITLE_CHARS), ("why", schemas.WEBSEARCH_WHY_CHARS)):
+            text = (c.get(field) or "").strip()
+            if field == "why" and not text:
+                return "a candidate's why: empty"
+            if "\n" in text or len(text) > most:
+                return f"a candidate's {field}: one line, at most {most} characters"
+    for q in a["queries"]:
+        if "\n" in q.strip() or len(q) > schemas.WEBSEARCH_QUERY_CHARS:
+            return f"a query: one line, at most {schemas.WEBSEARCH_QUERY_CHARS} characters"
+    return None
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -459,6 +486,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "probes": _probes,                          # 0147
           "scout": _scout,                            # 0148
           "identity": _identity,                      # 0162
+          "websearch": _websearch,                    # 0171
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

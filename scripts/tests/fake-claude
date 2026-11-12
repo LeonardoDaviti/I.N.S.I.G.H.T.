@@ -20,6 +20,8 @@ Environment:
                        error          a non-fatal API error result (is_error, exit 1)
                        refuse:WORD    the usage-policy refusal (is_error, exit 1) when any item's text has WORD
                        garbage        output that is not JSON, exit 0
+                     A call with the web search tool (0171) answers as websearch-v1 does ({"id", "candidates": [..],
+                     "queries": [..]}; invalid:N gives the first N a candidates list that is not a list).
   FAKE_CLAUDE_STATE  a directory for the call counter (calls run in parallel; the counter is locked)
   FAKE_CLAUDE_LOG    a JSON-lines file: one record per call {n, argv, system, stdin, plan}
 
@@ -34,6 +36,9 @@ import time
 
 EXPECTED = ["-p", "--model", "haiku", "--tools", "", "--system-prompt", None, "--output-format", "json",
             "--no-session-persistence", "--strict-mcp-config"]
+# 0171: a websearch call: the web search tool only, allowed without a prompt, its turns capped
+EXPECTED_WEB = ["-p", "--model", "haiku", "--tools", "WebSearch", "--system-prompt", None, "--output-format", "json",
+                "--no-session-persistence", "--strict-mcp-config", "--allowedTools", "WebSearch", "--max-turns", "8"]
 
 
 def fail(msg, code=64):
@@ -65,7 +70,7 @@ def result(text, n_items, is_error=False):
 
 def main():
     argv = sys.argv[1:]
-    if len(argv) != len(EXPECTED) or any(e is not None and a != e for a, e in zip(argv, EXPECTED)):
+    if not any(len(argv) == len(x) and all(e is None or a == e for a, e in zip(argv, x)) for x in (EXPECTED, EXPECTED_WEB)):
         fail(f"fake-claude: unexpected arguments {argv!r}")
     system = argv[6]
     stdin = sys.stdin.read()
@@ -108,6 +113,10 @@ def main():
         if k >= len(ids) - miss:
             continue
         ans = {"kind": "bogus" if k < bad else "news", "headline": "SERVER-BAD" if k < sbad else f"Item {i}"}
+        if argv[4] == "WebSearch":   # 0171: a websearch call answers as websearch-v1 (candidates, the queries run)
+            ans = {"candidates": [{"url": f"https://example.org/maker-{i}", "title": f"Maker {i}",
+                                   "why": "the result names the product"}],
+                   "queries": [f"maker {i}"]} if k >= bad else {"candidates": "bogus", "queries": []}
         raw_id = int(i) if i.isdigit() else i
         lines.append(json.dumps({"task_id": raw_id, "answer": ans} if "nested" in feats else {"id": raw_id, **ans}))
     text = "\n".join(lines)

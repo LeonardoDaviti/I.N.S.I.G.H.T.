@@ -349,6 +349,22 @@ IDENTITY_SCHEMA = {
     "properties": {"same": {"enum": IDENTITY_ANSWERS}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                    "why": {"type": "string", "minLength": 1}},
 }
+# 0171 (research's web search by the worker): the accounts and sites a maker has on the web, found by Claude's web search
+# on the owner's device (websearch-v1, its web search tool only). Candidates only: each is read and judged by research's
+# same-identity rules or the `identity` question; a name alone never counts. `queries`: what was searched (at most
+# WEBSEARCH_QUERIES, research's per-run cap of web searches).
+WEBSEARCH_QUERIES, WEBSEARCH_MAX = 5, 15
+WEBSEARCH_URL_CHARS, WEBSEARCH_TITLE_CHARS, WEBSEARCH_WHY_CHARS, WEBSEARCH_QUERY_CHARS = 500, 300, 300, 200
+WEBSEARCH_SCHEMA = {
+    "type": "object",
+    "required": ["candidates", "queries"],
+    "properties": {
+        "candidates": {"type": "array", "maxItems": WEBSEARCH_MAX, "items": {
+            "type": "object", "required": ["url", "why"],
+            "properties": {"url": {"type": "string", "minLength": 8}, "title": _STR_OR_NULL,
+                           "why": {"type": "string", "minLength": 1}}}},
+        "queries": {"type": "array", "maxItems": WEBSEARCH_QUERIES, "items": {"type": "string", "minLength": 1}}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -392,6 +408,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # 0147: a track's example posts (track recall)
     Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
+    Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
 )}
 
 

@@ -62,6 +62,11 @@ def identity_answer(same="yes", conf=0.9):
     return {"id": "x", "same": same, "confidence": conf, "why": "B's profile links A's site."}
 
 
+def websearch_answer(*urls, queries=('"acmeai"', '"acmeai" site:reddit.com')):
+    return {"candidates": [{"url": u, "title": "Acme AI", "why": "the result names the widget model"} for u in urls],
+            "queries": list(queries)}
+
+
 class FakeIndex:
     """A paper index stand-in: the seed's record, its references (one held), a citing paper, a newer one."""
     name = "fake"
@@ -111,6 +116,33 @@ class Pure(unittest.TestCase):
         self.assertIsNotNone(validate.check("identity", dict(identity_answer(), confidence=3), "q")[1])
         self.assertIn("one line", validate.check("identity", dict(identity_answer(), why="a\nb"), "q")[1])
         self.assertIsNotNone(validate.check("identity", {"same": "yes"}, "q")[1])
+
+    def test_the_websearch_kind(self):
+        """0171: the worker's web search: its guide (a name alone is not enough, no fetching), schema and checks."""
+        self.assertEqual((schemas.KINDS["websearch"].guide, schemas.KINDS["websearch"].subject),
+                         ("websearch-v1", "research_run"))
+        body = schemas.guide_body("websearch-v1")
+        self.assertIn("A shared name alone is NOT enough", body)
+        self.assertIn("Never open or fetch pages", body)
+        ok = websearch_answer("https://x.com/acmeai_team")
+        self.assertIsNone(validate.check("websearch", ok, "q")[1])
+        self.assertIsNone(validate.check("websearch", {"candidates": [], "queries": []}, "q")[1])   # nothing found
+        bad = [({"candidates": []}, "queries"),
+               (dict(ok, queries=["a", "b", "c", "d", "e", "f"]), "more than 5"),             # the run's cap
+               (dict(ok, candidates=[{"url": "ftp://x.example/a", "why": "w"}]), "http(s)"),
+               (dict(ok, candidates=[{"url": "https://a.example/ b", "why": "w"}]), "no spaces"),
+               (dict(ok, candidates=[{"url": "https://a.example/", "why": "w"},
+                                     {"url": "https://www.a.example", "why": "w"}]), "twice"),
+               (dict(ok, candidates=[{"url": "https://a.example/", "why": "a\nb"}]), "one line"),
+               (dict(ok, candidates=[{"url": "https://a.example/", "why": "  "}]), "why"),
+               (dict(ok, candidates=[{"url": "https://a.example/"}]), "why"),
+               (dict(ok, candidates=[{"url": "https://a.example/" + "a" * 600, "why": "w"}]), "500"),
+               (dict(ok, queries=["a\nb"]), "one line")]
+        for answer, says in bad:
+            with self.subTest(answer=answer):
+                err = validate.check("websearch", answer, "q")[1]
+                self.assertIsNotNone(err)
+                self.assertIn(says, err)
 
     def test_classify_by_platform_class(self):
         c = W.classify
@@ -217,12 +249,20 @@ class Pure(unittest.TestCase):
         with mock.patch("insight_core.markx.repo.get_setting", return_value="off"):
             self.assertIsNone(W.paper_index(cur))
 
-    def test_web_search_is_off_until_configured_and_pluggable(self):
+    def test_web_search_is_the_workers_until_configured_and_pluggable(self):
         with mock.patch.dict("os.environ", {W.WEB_SEARCH_URL_ENV: "", W.WEB_SEARCH_KEY_ENV: ""}):
             with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: ""}):
-                self.assertIsNone(W.web_search())
+                self.assertIsInstance(W.web_search(), W.WorkerSearch)          # 0171: the worker's by default
+                self.assertEqual(W.web_search().name, "worker")
+            with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "worker"}):
+                self.assertIsInstance(W.web_search(), W.WorkerSearch)
+            for off in ("off", "none", "OFF"):
+                with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: off}):
+                    self.assertIsNone(W.web_search())                          # the owner turned it off
             with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "searxng", W.WEB_SEARCH_URL_ENV: ""}):
-                self.assertIsNone(W.web_search())                              # named but not configured: off
+                self.assertIsInstance(W.web_search(), W.WorkerSearch)          # named but not configured: the worker's
+            with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "brave", W.WEB_SEARCH_KEY_ENV: "k"}):
+                self.assertIsInstance(W.web_search(), W.BraveSearch)
             with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "searxng", W.WEB_SEARCH_URL_ENV: "https://sx.example"}):
                 provider = W.web_search()
         http = FakeHttp(lambda u: json.dumps({"results": [{"url": "https://x.com/acmeai_lab", "title": "Acme", "content": "c"}]}))
@@ -549,6 +589,151 @@ class Papers(_Research):
         self.assertEqual(body["run"]["previous_id"], run["id"])
         self.assertEqual(call("POST", f"/api/markx/research/{run['id']}/rerun")[0], 200)
         self.assertEqual(call("POST", f"/api/markx/research/{uuid.uuid4()}/rerun")[0], 404)
+
+
+class WebByWorker(_Research):
+    """0171: the web search asked of the worker (Claude Code's web search tool on the owner's device): one `websearch`
+    task a run, the run waiting until it is answered, its candidates read and judged like any other (a name alone never
+    counts), the run's 5 searches spent when it is asked, the same question one task."""
+    SEED = "https://huggingface.co/acmeai/widget-1"
+    WEB_WORLD = dict(WORLD, **{
+        "https://www.reddit.com/user/acmeai_team": page("acmeai_team", "https://acme.example/"),   # links the site
+        "https://x.com/acme_other": page("Acme AI", text="Acme AI: amplitudes and physics"),       # a namesake
+    })
+
+    def setUp(self):
+        super().setUp()
+        async def no_discussion(*_a, **_k):        # the run's searches here are the web's only
+            return {"searches": 0}
+        p = mock.patch.object(research, "discussion", no_discussion)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def tools(self, world=None, reader=None, index=None, search="worker"):
+        return super().tools(world=world if world is not None else self.WEB_WORLD, reader=reader, index=index,
+                             search=W.WorkerSearch() if search == "worker" else search)
+
+    def web_task(self, rid):
+        self.cur.execute("SELECT web_task_id FROM mx_research_runs WHERE id = %s", (rid,))
+        tid = self.cur.fetchone()[0]
+        return tid and self.row(tid)
+
+    def run_row(self, rid):
+        self.cur.execute("SELECT status, steps, search_calls, stats FROM mx_research_runs WHERE id = %s", (rid,))
+        return dict(zip(("status", "steps", "search_calls", "stats"), self.cur.fetchone()))
+
+    def test_asked_waits_then_goes_on_with_the_candidates_judged(self):
+        run = self.start(self.SEED)
+        self.advance(run["id"], self.tools())
+        task = self.web_task(run["id"])
+        self.assertEqual((task["kind"], task["guide"], task["subject_kind"], str(task["a"]), task["status"]),
+                         ("websearch", "websearch-v1", "research_run", run["id"], "open"))
+        self.assertIn("Maker: acmeai", task["input"])
+        self.assertIn("Confirmed as its own: ", task["input"])
+        self.assertIn("https://acme.example/", task["input"])                 # tied to, and left out
+        self.assertIn(f"Searches allowed: at most {research.WEB_QUERIES}", task["input"])
+        row = self.run_row(run["id"])
+        self.assertNotIn("web", row["steps"])                                 # waits for the worker
+        self.assertEqual(row["search_calls"], research.WEB_QUERIES)          # the run's 5 searches spent when asked
+        self.assertEqual(row["status"], "waiting")
+        view = self.view(run["id"])
+        self.assertEqual((view["run"]["web_search"]["by"], view["run"]["web_search"]["waiting"]), ("worker", True))
+        # advancing again before the answer asks nothing more
+        self.advance(run["id"], self.tools())
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'websearch'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.assertEqual(self.run_row(run["id"])["search_calls"], row["search_calls"])
+        # the worker's answer: an account that links the site, an article, a namesake, and one already confirmed
+        status, body = self.answer((task["id"], websearch_answer(
+            "https://www.reddit.com/user/acmeai_team", "https://news.example/2026/10/acme-raises-money",
+            "https://x.com/acme_other", "https://acme.example/")))
+        self.assertEqual((status, body["valid"]), (200, 1), body)
+        self.assertEqual(self.run_row(run["id"])["status"], "running")      # it may go on
+        self.advance(run["id"], self.tools())
+        row = self.run_row(run["id"])
+        self.assertIn("web", row["steps"])
+        self.assertEqual((row["stats"]["web"]["by"], row["stats"]["web"]["queries"], row["stats"]["web"]["found"]),
+                         ("worker", 2, 2))
+        acc = self.accounts(run["id"])
+        team = acc["reddit.com/user/acmeai_team"]
+        self.assertTrue(team["how"].startswith("web search"))
+        self.assertEqual((team["same"], team["rule"]), ("yes", "its profile names the other (links it as its own)"))
+        self.assertEqual(team["found_why"], "the result names the widget model")
+        other = acc["x.com/acme_other"]
+        self.assertEqual(other["same"], "pending")                           # asked, never yes by its name
+        self.assertFalse(any("news.example" in k for k in acc))             # an article is no identity
+        self.assertEqual(acc["acme.example"]["how"].startswith("web search"), False)   # the confirmed one untouched
+        self.answer_pairs(lambda b: "no" if b == "x.com/acme_other" else "yes")
+        view = self.view(run["id"])
+        self.assertIn("x.com/acme_other", {a["key"] for a in view["maker"]["not_same"]})
+        self.assertIn("reddit.com/user/acmeai_team", {a["key"] for a in view["maker"]["accounts"]})
+        self.assertEqual(view["run"]["web_search"], {"by": "worker", "waiting": False,
+                                                     "asked": ['"acmeai"', '"acmeai" site:reddit.com']})
+
+    def test_the_same_question_is_one_task_and_its_answer_reused(self):
+        first = self.start(self.SEED)
+        self.advance(first["id"], self.tools())
+        task = self.web_task(first["id"])
+        self.answer((task["id"], websearch_answer("https://www.reddit.com/user/acmeai_team")))
+        second = self.start(self.SEED)
+        self.advance(second["id"], self.tools())
+        self.assertEqual(self.web_task(second["id"])["id"], task["id"])
+        row = self.run_row(second["id"])
+        self.assertIn("web", row["steps"])                                    # answered already: no wait
+        self.assertEqual(row["search_calls"], 0)                              # and nothing spent on it
+        self.assertEqual(self.accounts(second["id"])["reddit.com/user/acmeai_team"]["same"], "yes")
+
+    def test_the_cap_a_run_with_its_searches_spent_asks_less_or_nothing(self):
+        run = self.start(self.SEED)
+        with self.conn.transaction():
+            self.cur.execute("UPDATE mx_research_runs SET search_calls = %s WHERE id = %s",
+                             (research.WEB_QUERIES + research.DISCUSSION_SEARCHES - 2, run["id"]))
+        self.advance(run["id"], self.tools())
+        task = self.web_task(run["id"])
+        self.assertIn("Searches allowed: at most 2", task["input"])
+        self.assertEqual(self.run_row(run["id"])["search_calls"], research.WEB_QUERIES + research.DISCUSSION_SEARCHES)
+        spent = self.start(self.SEED + "?again")
+        with self.conn.transaction():
+            self.cur.execute("UPDATE mx_research_runs SET search_calls = %s WHERE id = %s",
+                             (research.WEB_QUERIES + research.DISCUSSION_SEARCHES, spent["id"]))
+        self.advance(spent["id"], self.tools())
+        self.assertIsNone(self.web_task(spent["id"]))
+        row = self.run_row(spent["id"])
+        self.assertEqual(row["stats"]["web"]["why"], "the run's searches are spent")
+        self.assertEqual(row["search_calls"], research.WEB_QUERIES + research.DISCUSSION_SEARCHES)
+
+    def test_a_failed_question_is_said_and_the_run_goes_on(self):
+        run = self.start(self.SEED)
+        self.advance(run["id"], self.tools())
+        task = self.web_task(run["id"])
+        for _ in range(3):
+            self.answer((task["id"], {"candidates": "none", "queries": []}))
+        self.assertEqual(self.row(task["id"])["status"], "failed")
+        self.advance(run["id"], self.tools())
+        row = self.run_row(run["id"])
+        self.assertEqual(row["stats"]["web"]["failed"], "failed")
+        self.assertTrue(any("web search gave no valid answer" in (u.get("why") or "") for u in self.view(run["id"])["unread"]))
+
+    def test_searxng_or_brave_configured_never_asks_the_worker(self):
+        class Search:
+            name = "stub"
+
+            async def search(self, http, q):
+                return []
+        run = self.start(self.SEED)
+        self.advance(run["id"], self.tools(search=Search()))
+        self.assertIsNone(self.web_task(run["id"]))
+        self.assertIn("web", self.run_row(run["id"])["steps"])
+        off = self.start(self.SEED)
+        self.advance(off["id"], self.tools(search=None))                    # INSIGHT_WEB_SEARCH=off
+        self.assertEqual(self.run_row(off["id"])["stats"]["web"], {"off": "no web search is configured"})
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'websearch'")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
+    def test_the_settings_say_the_worker_by_default(self):
+        with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "", W.WEB_SEARCH_URL_ENV: "", W.WEB_SEARCH_KEY_ENV: ""}):
+            status, body = call("GET", "/api/markx/research/settings")
+        self.assertEqual((status, body["web_search"]), (200, "worker"), body)
 
 
 if __name__ == "__main__":
