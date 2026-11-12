@@ -4,7 +4,7 @@ A: the deterministic handle rule over a post's full text (its forms, what it nev
 boilerplate lines); B: the role a form gives; C: handles learned from "Name (@handle)" pairs (2+ agreeing posts, the
 owner confirms once, a second handle with its time range, never by a name alone); D: an entity named by its handle shown
 by the pairs' display name; E: a repost credited to its author in the reading, card, headline and briefing inputs, and
-counted as its author's voice.
+counted as its author's voice when a source follows that author (v10.15, Mark IX's rule; a stranger's stays the feed's).
 
 Invented names and example hosts only. Every database test rolls back (a database whose name ends in _test)."""
 from __future__ import annotations
@@ -412,8 +412,14 @@ class Reposts(_H):
         self.assertIn("[a post by @acmehq shared by Ivo Kestrel, x,", head)
         self.assertIn("[Ivo Kestrel, x,", head)
         self.assertIn("[a post by @acmehq shared by Ivo Kestrel, x,", tasks.card_input([ps[repost]], {}))
-        self.assertEqual(tasks.voices([ps[repost], ps[again]]), 1, "one author, two feeds: one voice")
+        # v10.15: the author is no source here: a stranger's post counts as the feed that carries it (Mark IX's rule)
+        self.assertEqual(tasks.voices([ps[repost], ps[again]]), 2, "a stranger reposted by two feeds: the two feeds")
+        self.assertEqual(tasks.voices([ps[repost], ps[own]]), 1, "a stranger's post and the feed's own: the feed")
+        followed = self.x_feed("acmehq", "Acme")                      # once a source follows the author ...
+        ps = tasks.load_posts(self.cur, [repost, again, own])
+        self.assertEqual(tasks.voices([ps[repost], ps[again]]), 1, "... one author, two feeds: one voice")
         self.assertEqual(tasks.voices([ps[repost], ps[own]]), 2, "the author's and the feed owner's")
+        self.assertEqual(ps[repost].voice, self.sources[followed])
         brief = tasks.briefing_input(T0.date(), [("Acme ships", [ps[repost], ps[own]])])
         self.assertIn("sources: @acmehq, Ivo Kestrel", brief)
 

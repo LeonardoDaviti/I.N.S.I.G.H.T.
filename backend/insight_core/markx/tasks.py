@@ -26,9 +26,11 @@ exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits
 
 0168 E: a repost (an X row its feed carried but another account wrote; a Telegram forward) says so wherever a reading,
 a card, a headline or a briefing reads it: "Author: @acme (a post by @acme shared by <feed>)", members as
-"[a post by @acme shared by <feed>, x, ...]", and it counts as its author's voice (`voices`), so a story never reads
-"<feed> announces" for another account's post. The sameness questions (check, join, pair, merge, connect) are
-unchanged: they ask whether two posts tell one story, not who said it (and are not asked again).
+"[a post by @acme shared by <feed>, x, ...]", so a story never reads "<feed> announces" for another account's post.
+It counts as its author's voice (`voices`) only when one of the sources follows that author, as Mark IX counts it
+(pairing.counted_voice); a stranger's post its feed carries stays the feed's voice. The sameness questions
+(check, join, pair, merge, connect) are unchanged: they ask whether two posts tell one story, not who said it (and are
+not asked again).
 
 Who creates which tasks: `plan_posts` (read, entities: the newest posts of the last 30 days first,
 corrections 8) and `plan_checks` (check: Mark IX's uncertain members) here, called when the worker asks
@@ -115,6 +117,7 @@ class Post:
     quote: Optional[str] = None
     lang: Optional[str] = None
     by: Optional[str] = None  # 0168 E: a repost's (or a Telegram forward's) original author ("@acme"), not the feed's
+    counts_as: Optional[str] = None   # v10.15: the source its author is, when one of the sources follows the author
 
     @property
     def iso(self) -> str:
@@ -127,8 +130,9 @@ class Post:
 
     @property
     def voice(self) -> str:
-        """0168 E: the voice it counts as: a repost's original author, else its source."""
-        return f"author:{self.by.casefold()}" if self.by else self.source_id
+        """The voice it counts as (pairing.counted_voice, Mark IX's rule): a repost's original author when one of the
+        sources follows that author, else its own source. `by` is the credit a render shows, whoever the author."""
+        return self.counts_as or self.source_id
 
 
 def _squash(s: Optional[str]) -> str:
@@ -146,24 +150,43 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
                            s.handle_or_url),
                   p.source_id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), COALESCE(pp.title, p.title),
                   p.content, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.quoted,
-                  p.language_code, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), '')
+                  p.language_code, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''),
+                  NULLIF(btrim(p.metadata->'forwarded_from'->>'username'), '')
              FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE p.id = ANY(%s::uuid[])""", (ids,))
     out: Dict[str, Post] = {}
     owns: Dict[Tuple[Any, Any], str] = {}
+    followed: Optional[Dict[str, str]] = None
     for (pid, platform, handle, name, source_id, at, title, content, cut, decode, brk, copy, quoted,
-         lang, author, forwarded) in cur.fetchall():
+         lang, author, forwarded, forwarded_user) in cur.fetchall():
         text = shown(content, Body(cut=cut, decode_entities=bool(decode), cut_leaves_break=bool(brk), copy=copy))
         kind = source_kind(platform, handle)
+        by = original_author(kind, platform, handle, author, forwarded, owns)
+        account = author_account(kind, by, forwarded_user)
+        if account and followed is None:
+            followed = pairing.followed_accounts(cur)
+        counts = pairing.counted_voice(str(source_id), account, followed or {}) if account else None
         out[str(pid)] = Post(id=str(pid), kind=kind, source=name or "", source_id=str(source_id),
                              at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang,
-                             by=original_author(kind, platform, handle, author, forwarded, owns))
+                             by=by, counts_as=counts if counts != str(source_id) else None)
     cur.execute("""SELECT post_id, target_url, link_text FROM post_links
                     WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (ids,))
     for pid, url, anchor in cur.fetchall():
         if str(pid) in out:
             out[str(pid)].links.append((url, anchor))
     return out
+
+
+def author_account(kind: str, by: Optional[str], forwarded_user: Optional[str] = None) -> Optional[str]:
+    """The account (Mark IX's form, repo_stories.source_account's) of a repost's original author: x.com/<user> for an
+    X repost, t.me/<channel> for a Telegram forward whose header names the channel; None otherwise (a forward by name
+    alone names no account)."""
+    from insight_core.utils.addresses import x_account
+    if kind == "x" and by:
+        return x_account(by.lstrip("@"))
+    if kind == "telegram" and by and forwarded_user:
+        return "t.me/" + forwarded_user.lstrip("@").lower()
+    return None
 
 
 def original_author(kind: str, platform: Optional[str], handle: Optional[str], author: Optional[str],
@@ -230,7 +253,7 @@ def near_copies(members: Sequence[Post]) -> set:
 
 
 def voices(posts: Iterable[Post]) -> int:
-    """0168 E: a repost counts as its original author's voice, not the feed's."""
+    """Distinct voices (Post.voice: a repost counts as its author only when a source follows the author)."""
     return pairing.voices((p.voice, p.kind) for p in posts)
 
 

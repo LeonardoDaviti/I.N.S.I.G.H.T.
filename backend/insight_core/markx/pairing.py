@@ -80,6 +80,24 @@ def voices(items: Iterable[Tuple[Any, Optional[str]]]) -> int:
     return len({source for source, kind in items if is_voice(kind)})
 
 
+def counted_voice(source_id: str, author_account: Optional[str], of_account: Mapping[str, str]) -> str:
+    """The voice a post counts as, Mark IX's rule (StoryPost.author_source, issue 0068): a post its feed carries but
+    another account wrote (an X repost; a Telegram forward naming its channel) counts as that account's source when
+    one of the sources follows that account (`of_account`: SourceFacts.of_account, account -> the first source by id
+    following it, `followed_accounts`); a stranger's post stays the feed's own voice. A quote or a reply is the feed's
+    own post: its quoted or replied-to account never adds a voice."""
+    return (of_account.get(author_account) if author_account else None) or source_id
+
+
+def followed_accounts(cur: Any) -> Dict[str, str]:
+    """Every source's account -> the source following it, as Mark IX reads it (SourceFacts.of_account: its own rule
+    over every source's platform and handle, the first by id; issue 0068)."""
+    from insight_core.db.repo_stories import SourceFacts
+    cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), "
+                "handle_or_url) FROM sources")
+    return dict(SourceFacts.of(cur.fetchall(), []).of_account)
+
+
 def independent(source_a: Any, kind_a: Optional[str], source_b: Any, kind_b: Optional[str]) -> bool:
     """Two posts are independent voices: both voices, of different sources."""
     return is_voice(kind_a) and is_voice(kind_b) and source_a != source_b

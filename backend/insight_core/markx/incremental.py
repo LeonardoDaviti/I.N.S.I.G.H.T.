@@ -5,7 +5,8 @@
 server 137 s, 28,902 texts read, 2.8 GiB in "questions and decisions". 0169 keeps the state in tables instead
 (migration 0113), so a run in a fresh process reads only what changed since the last run:
 
-  - **What a run needs of a post is small.** The rules read a post's source, kind, time and word count (decide.Post);
+  - **What a run needs of a post is small.** The rules read a post's voice (a repost's author when a source follows
+    that author, else its source), kind, time and word count (decide.Post);
     the reading's kind and events; whether it was read. Those come from `mx_inc_posts` (kept by the post's **stamp**,
     plan_marks.STAMP: the row versions of what tasks.load_posts reads) and from mx_readings' own columns. A post's
     text is read only when its stamp changed (or it is new), and when a render that misses needs it (below).
@@ -64,6 +65,10 @@ CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "
                 "insight_core.utils.story_rules", "insight_core.services.news_service",
                 "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news")
 
+# The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
+# as that author), so the first run after it is full and writes every post again.
+STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (pairing.counted_voice)
+
 _code: Optional[str] = None
 
 
@@ -72,12 +77,19 @@ def code_stamp() -> str:
     global _code
     if _code is None:
         import importlib
-        h = hashlib.sha256()
+        h = hashlib.sha256(STATE_VERSION.encode())
         for name in CODE_MODULES:
             with open(importlib.import_module(name).__file__, "rb") as f:
                 h.update(name.encode() + b"\0" + f.read() + b"\0")
         _code = h.hexdigest()
     return _code
+
+
+def accounts_stamp(cur: Any) -> str:
+    """The sha256 of which source follows which account (pairing.followed_accounts): a repost's voice depends on it
+    and no post's stamp says so, so it is in the state's key (a change makes the next run full)."""
+    from insight_core.markx import pairing
+    return _sha(json.dumps(sorted(pairing.followed_accounts(cur).items())))
 
 
 def _sha(text: str) -> str:
@@ -329,13 +341,13 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
     if state.kept:
         quiet = not set(state.report.get("ix_changed") or ()) & set(TEXT_TABLES)
         if quiet:   # no row of Mark IX's text tables changed: the kept stamps are the stamps
-            cur.execute("""SELECT post_id::text, stamp, source_id, kind, at, words FROM mx_inc_posts
+            cur.execute("""SELECT post_id::text, stamp, voice, kind, at, words FROM mx_inc_posts
                             WHERE post_id = ANY(%s::uuid[])""", (ids,))
             rows = {r[0]: r for r in cur.fetchall()}
             stamps_of(cur, state, [i for i in ids if i not in rows])
         else:
             rows = {r[0]: r for r in execute(cur, f"""
-                SELECT p.id::text, ip.stamp, ip.source_id, ip.kind, ip.at, ip.words, {_stamp_expr()}
+                SELECT p.id::text, ip.stamp, ip.voice, ip.kind, ip.at, ip.words, {_stamp_expr()}
                   FROM posts p LEFT JOIN mx_inc_posts ip ON ip.post_id = p.id
                  WHERE p.id = ANY(%(ids)s::uuid[])""", {"ids": ids})}
             for pid, r in rows.items():
@@ -344,7 +356,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
             r = rows.get(pid)
             if r is not None and pid not in state.stamp:
                 state.stamp[pid] = r[1]
-            if r is not None and r[1] is not None and r[1] == state.stamp.get(pid):
+            if r is not None and r[1] is not None and r[2] is not None and r[1] == state.stamp.get(pid):
                 rules[pid] = decide.Post(pid, r[2], r[3], r[4], r[5])
             elif pid in state.stamp:
                 stale.append(pid)
@@ -356,8 +368,8 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
         p = got.get(pid)
         if p is None:
             continue
-        rules[pid] = decide.Post(pid, p.source_id, p.kind, p.at, tasks.words(p))
-        state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.kind, p.at, rules[pid].words)
+        rules[pid] = decide.Post(pid, p.voice, p.kind, p.at, tasks.words(p))   # 0168 E: the voice it counts as
+        state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
         state.texts[pid] = p
     state.report["texts_read"] = len(stale)
     state.report["texts_loaded"] += len(got)
@@ -560,9 +572,11 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
     out["posts_dropped"] = cur.rowcount
     rows = [(pid, *r) for pid, r in state.fresh_posts.items() if pid in state.rules]
     if rows:
-        cur.execute("""INSERT INTO mx_inc_posts (post_id, stamp, source_id, kind, at, words)
-                       SELECT * FROM unnest(%s::uuid[], %s::text[], %s::text[], %s::text[], %s::timestamptz[], %s::int[])
+        cur.execute("""INSERT INTO mx_inc_posts (post_id, stamp, source_id, voice, kind, at, words)
+                       SELECT * FROM unnest(%s::uuid[], %s::text[], %s::text[], %s::text[], %s::text[],
+                                            %s::timestamptz[], %s::int[])
                        ON CONFLICT (post_id) DO UPDATE SET stamp = EXCLUDED.stamp, source_id = EXCLUDED.source_id,
+                              voice = EXCLUDED.voice,
                               kind = EXCLUDED.kind, at = EXCLUDED.at, words = EXCLUDED.words""",
                     tuple(list(col) for col in zip(*rows)))
     out["posts_written"] = len(rows)

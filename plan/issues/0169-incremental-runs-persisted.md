@@ -178,33 +178,42 @@ step for that branch: read the book once a run and hand it to surges and perspec
 - `scripts/realdata-check.sh` was not run (as asked); the real-data equivalence above was run by hand on scratch
   copies, dropped after.
 
-## Follow-up (branch `v1015-voices` from `v1015`): the rules count a repost as its original author
+## Follow-up: a repost counts as its author only when a source follows the author
 
-0168 E made `tasks.voices` count a repost (an X repost or quote of another account, a Telegram forward) as its
-original author's voice (`tasks.Post.voice`); the decision rules still counted the feed. Now `decide.Post.source` is
-the voice in the full path and in the kept state: `mx_inc_posts.voice` (migration 0114), and `STATE_VERSION`
-(`inc-v2-voices`) in the code stamp, so the first run after it is full and writes every post again. The stamp
-already covers what the voice is read from (the post's author and metadata, the source's platform and handle).
-Test: two feeds forwarding one channel are one voice (their story is never checked), the state keeps the voice, a
-member that becomes a forward is read again, incremental equals full.
+0168 E counted every repost (an X repost, a Telegram forward) as its original author's voice in `tasks.voices`, while
+the decision rules counted the feed. Counting every reposted account (tried on branch `v1015-voices`, not merged)
+turned 218 of 1,886 stories on the server's copy from 1 voice into 2+, all from one feed and most of them one
+account's conversation with strangers. Now one rule, Mark IX's (StoryPost.author_source, issue 0068), in Pairing's
+voice basics:
+- `pairing.counted_voice(source_id, author_account, of_account)`: a post its feed carries but another account wrote
+  counts as that account's source when one of the sources follows that account (`pairing.followed_accounts`: Mark
+  IX's `SourceFacts.of_account` over every source, the first source by id), else it stays the feed's own voice. A
+  quote or a reply is the feed's own post (its author is the feed), so the quoted or replied-to account never adds a
+  voice. Accounts are Mark IX's form (`source_account`): x.com/<user> for an X repost, t.me/<channel> for a Telegram
+  forward whose header names the channel (`forwarded_from.username`; a forward by name alone names no account).
+- `tasks.Post.voice` is that voice (`tasks.voices`, decide's rule Posts in the full path and in the kept state:
+  `mx_inc_posts.voice`, migration 0114). The credit renders keep (`by`, "a post by @acme shared by <feed>") is
+  unchanged.
+- The kept state: `STATE_VERSION` in the code stamp makes the first run after it full; which source follows which
+  account is not in any post's stamp, so its digest (`incremental.accounts_stamp`) is in the state's key: a source
+  added or changed makes the next run full.
+- Tests: two feeds forwarding one followed channel are one voice (never checked); a stranger's forwards stay the two
+  feeds' voices; a feed quoting a stranger is one voice; the state keeps the voice; a member that becomes a forward is
+  read again; a source that starts following the stranger makes the next run full and the two forwards one voice;
+  incremental equals full throughout. 0168's own test now says a stranger's repost counts as the feed.
 
-**Measured** on a scratch copy of `insight_server_1105_mxreal` (migrated, story window everything; main of v1015
-settled first, then two copies: v1015 against this branch, one run each):
-- 3,819 of 10,815 X posts carry another author; no Telegram post of this copy has a forward header.
-- Of 1,886 current Mark X stories, 252 count other voices: 218 go from 1 voice to 2+ (all from one feed: 161 the
-  feed's own post with a repost or quote of another account, 57 only reposts of two or more accounts), 34 already 2+
-  count more. None go down (no forwards here).
-- The run's decisions now: no membership, connection or News row changed yet (Mark X News counts voices with Mark
-  IX's own code); the new 2-voice stories are asked what such stories are asked: 218 headlines, 11 cards, 6 joins,
-  4 checks. Memberships change once those are answered.
-- Incremental equals full after it (a full run of the next snapshot wrote nothing, its check the same).
-- **Read of 10 changed stories, at random:** 7 are one account quoting or replying to a stranger's post ("will do",
-  "spot on", a joke on another's tweet): one person's conversation, now counted as two voices, wrong for a story's
-  voices. 3 are closer to right: one feed reposting four different people on one incident, one reposting two
-  accounts on one livestream, one an author's release reposted beside his own post on it (the same party). Mark IX
-  counts a repost as its author's voice only when the author is one of the owner's sources; counting every reposted
-  account makes a single account's quote-tweet threads look like 2-voice stories. Left as the coordinator asked;
-  the owner should decide whether an author who is not one of the sources counts (see the report).
+**Measured** on a scratch copy of `insight_server_1105_mxreal` (migrated, story window everything; v1015 settled
+first, then two copies, v1015 against this rule, one run each, then the copies diffed):
+- 56 of the 9,668 world posts count as another source (of 3,819 X reposts in the copy; no Telegram forward here).
+- 5 of 1,886 stories count other voices (4 from 1 to 2, 1 from 3 to 4). Memberships, connections and News rows: the
+  same; 4 headline questions more (for the stories now of 2 voices). Incremental equals full after it.
+- The 5 (all of them): two followed accounts on one event, one reposted beside the other (a pricing change and an
+  employee's note on it): right. A followed account's post reposted beside the feed owner's own reply to it: right by
+  the rule (two followed people), a thin story. A 3-feed story that already mixed unrelated posts gains a fourth
+  followed voice: the count is right, the story was wrong before (its checks can now take the stray posts out). Two
+  stories of one feed's own aside and a followed account's quip, or two unrelated reposts of followed accounts: the
+  count follows the rule, the stories are chatter Mark IX put together; as 2-voice stories their members are now
+  checked.
 
 ## Follow-up 2: a concurrent update never loses the run
 
