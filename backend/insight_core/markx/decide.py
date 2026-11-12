@@ -616,7 +616,7 @@ class Ask:
         self.old_cap = old_cap                # older than this many days is one of a page (old_cap a kind a run) ...
         self.old_added: Counter = Counter()
         self.waiting_old: Counter = Counter()
-        self.memo = memo                      # 0116: the tasks and calls of this snapshot, read once (incremental.refresh)
+        self.memo = memo                      # 0116/0169: the tasks and calls of this snapshot (incremental.refresh)
         self.dry = dry                        # nothing added, nothing reopened (the check's incremental reading)
         self.added: Counter = Counter()
         self.raced: Counter = Counter()
@@ -624,21 +624,22 @@ class Ask:
         self.answered: Counter = Counter()
         self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind (0112 D8)
 
-    def answer(self, kind: str, text: str, *, a: Any = None, b: Any = None, day: Any = None,
+    def answer(self, kind: str, text: Any, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0) -> Optional[Tuple[Dict[str, Any], str]]:
         """(the valid answer, its call id), or None: the task is added when it is new (up to the kind's cap a run:
         `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
         seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
-        answered in this snapshot, so the run goes on (`raced` counts them)."""
+        answered in this snapshot, so the run goes on (`raced` counts them). `text`: the input, or an
+        incremental.Input (0169: its hash kept, rendered only when the task is added)."""
         from insight_core.markx import incremental, repo, schemas, tasks
         spec = schemas.KINDS[kind]
         memo = self.memo if kind in incremental.KINDS else None
         if memo is not None:
-            h = repo.sha256_hex(text)
+            h = incremental.hash_of(text)
             got = memo.tasks.get((kind, h))
             task = None if got is None else {"id": got[0], "status": got[1]}
         else:
-            task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=text)
+            task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=incremental.text_of(text))
         if task is None:
             old = self.old_after is not None and priority > self.old_after
             if old:                           # ... at the backfill's priority, beside today's (story_window)
@@ -653,7 +654,8 @@ class Ask:
                 return None
             try:
                 with self.cur.connection.transaction():
-                    tid, _new = tasks.add(self.cur, kind, text, a=a, b=b, day=day, priority=priority)
+                    tid, _new = tasks.add(self.cur, kind, incremental.text_of(text), a=a, b=b, day=day,
+                                          priority=priority)
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
                 return None
@@ -665,7 +667,7 @@ class Ask:
         if task["status"] != "answered":
             return None
         if memo is not None:
-            calls = memo.calls.get(task["id"]) or []
+            calls = incremental.calls_of(self.cur, memo, task["id"])
             call = {"id": calls[0][1], "answer": calls[0][0]} if calls else None
         else:
             call = repo.valid_call(self.cur, task["id"])
@@ -723,13 +725,21 @@ class World:
     readings: Dict[str, dict]
     candidates: List[Tuple[str, str, Optional[float]]]
     ix_mentions: Dict[str, Set[str]] = field(default_factory=dict)   # Mark IX story -> the roundups mentioning it
-    memo: Any = None                           # 0116: what the last run read (incremental.Memo), when kept
+    memo: Any = None                           # 0116/0169: the reading's state (incremental.State), when kept
 
     def kinds(self) -> Dict[str, Optional[str]]:
+        if self.memo is not None:              # 0169: from mx_readings, without reading every reading
+            return dict(self.memo.kinds)
         return {k: r.get("kind") for k, r in self.readings.items()}
 
     def events(self) -> Dict[str, Optional[str]]:
+        if self.memo is not None:
+            return dict(self.memo.events)
         return {k: r.get("events") for k, r in self.readings.items()}
+
+    def earliest(self, ids: Iterable[str]) -> List[str]:
+        """The known posts of `ids`, earliest first (tasks._earliest's order: time, then id)."""
+        return sorted((i for i in ids if i in self.posts), key=lambda i: (self.posts[i].at, i))
 
     def copies(self) -> Dict[str, Set[str]]:
         """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
@@ -737,8 +747,9 @@ class World:
         from insight_core.markx import incremental
         out = {}
         for key, ms in self.stories.items():
-            members = [self.text[m.post] for m in ms if m.post in self.text]
-            found = incremental.copies(self.memo, members) if self.memo is not None else tasks.near_copies(members)
+            ids = [m.post for m in ms if m.post in self.text]
+            found = (incremental.copies(self.memo, ids, self.text) if self.memo is not None
+                     else tasks.near_copies([self.text[i] for i in ids]))
             if found:
                 out[key] = found
         return out
@@ -746,7 +757,8 @@ class World:
 
 def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
-    candidate pairs, and their readings. With `memo` (0116), the texts are read again only where a row changed."""
+    candidate pairs, and their readings. With `memo` (0116, 0169: incremental.State), the rules' posts are kept by
+    their stamps and a text or reading is read only when used (incremental.world)."""
     from insight_core.markx import embed, incremental, tasks
     since = now - timedelta(days=config.days)
     cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
@@ -763,13 +775,12 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
         elif cos is not None and (pairs[(a, b)] is None or cos > pairs[(a, b)]):
             pairs[(a, b)] = cos
     ids = {r[1] for r in rows} | {p for ab in pairs for p in ab}
-    text = incremental.texts(cur, memo, ids) if memo is not None else tasks.load_posts(cur, ids)
-    rules = memo.rules if memo is not None else {}
-    posts = {}
-    for pid, p in text.items():
-        if pid not in rules:
-            rules[pid] = Post(pid, p.source_id, p.kind, p.at, tasks.words(p))
-        posts[pid] = rules[pid]
+    if memo is not None:       # 0169: the rules' posts kept by their stamps; texts and readings read on use
+        text, posts, readings = incremental.world(cur, memo, ids)
+    else:
+        text = tasks.load_posts(cur, ids)
+        posts = {pid: Post(pid, p.source_id, p.kind, p.at, tasks.words(p)) for pid, p in text.items()}
+        readings = tasks.readings(cur, ids)
     stories: Dict[str, List[Member]] = defaultdict(list)
     for sid, pid, role, why in rows:
         if pid in posts:
@@ -782,8 +793,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     ix_mentions: Dict[str, Set[str]] = defaultdict(set)
     for sid, pid in cur.fetchall():
         ix_mentions[sid].add(pid)
-    return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts,
-                 readings=incremental.readings(cur, memo, ids) if memo is not None else tasks.readings(cur, ids),
+    return World(since=since, stories=dict(sorted(stories.items())), text=text, posts=posts, readings=readings,
                  candidates=window, ix_mentions=dict(ix_mentions), memo=memo)
 
 
@@ -816,21 +826,28 @@ class Questions:
         """A story's model card (card-v1) from its first 8 members, earliest first; asked once they are read."""
         from insight_core.markx import tasks
         if key not in self.cards:
-            ps = tasks._earliest(self._p(posts))
-            shown = [p.id for p in ps[:tasks.CARD_MEMBERS]]
+            ps = self.w.earliest(posts)
+            shown = ps[:tasks.CARD_MEMBERS]   # all card_input shows (tasks._earliest(...)[:CARD_MEMBERS])
             got = None
             if ps and self._read(shown):
-                got = self.ask.answer("card", tasks.card_input(ps, self.w.readings), a=ps[0].id,
-                                      priority=self._priority(ps[0].id))
+                text = self._render("card", shown, lambda: tasks.card_input(self._p(shown), self.w.readings), reads=True)
+                got = self.ask.answer("card", text, a=ps[0], priority=self._priority(ps[0]))
             self.cards[key] = got[0] if got else None
         return self.cards[key]
+
+    def _render(self, kind: str, ids: Sequence[str], render: Callable[[], str], **kw) -> Any:
+        """0169: the input, kept by what it shows (incremental.rendered); a str without the run's state."""
+        from insight_core.markx import incremental
+        m = self.w.memo
+        return incremental.rendered(m, kind, ids, render, texts=self.w.text if m is not None else None,
+                                    readings=self.w.readings if m is not None else None, **kw)
 
     def story_posts(self, key: str, outcome: Optional[Outcome] = None) -> List[str]:
         if key in self.members:
             return [m.post for m in self.members[key]]
         return sorted((outcome.about.get(key, {}) if outcome else {}), key=lambda p: _at_key(self.w.posts, p))
 
-    def settled(self, q: Question, text: str, **kw) -> Optional[Verdict]:
+    def settled(self, q: Question, text: Any, **kw) -> Optional[Verdict]:
         """A join's, pair's or merge's verdict as it counts (`settle`): asked again when it would change a story and
         no second answer agrees yet (the run reopens it: `Ask.reopen`)."""
         got = self.ask.answer(q.type, text, **kw)
@@ -851,8 +868,8 @@ class Questions:
         if q.type == "check":
             if q.post not in t:
                 return None
-            got = self.ask.answer("check", tasks.check_input(t[q.post], self._p(q.side)), a=q.post,
-                                  priority=self._priority(q.post))
+            text = self._render("check", (q.post, "|", *q.side), lambda: tasks.check_input(t[q.post], self._p(q.side)))
+            got = self.ask.answer("check", text, a=q.post, priority=self._priority(q.post))
             if got is None:
                 return None
             first = Verdict.of(got[0], got[1])
@@ -867,21 +884,27 @@ class Questions:
             ms = [p for p in self.story_posts(q.story) if p != q.post]
             if q.post not in t or not self._read([q.post]):
                 return None
-            card = tasks.rule_card(tasks._earliest(self._p(ms)), rd)
-            return self.settled(q, tasks.join_input(t[q.post], rd.get(q.post), self._p(q.side), card),
-                                a=q.post, priority=self._priority(q.post))
+            text = self._render("join", (q.post, "|", *ms, "|", *q.side), lambda: tasks.join_input(
+                t[q.post], rd.get(q.post), self._p(q.side), tasks.rule_card(tasks._earliest(self._p(ms)), rd)),
+                reads=True)
+            return self.settled(q, text, a=q.post, priority=self._priority(q.post))
         if q.type == "pair":
             if q.post not in t or q.anchor not in t or not self._read([q.post, q.anchor]):
                 return None
-            return self.settled(q, tasks.pair_input(t[q.anchor], t[q.post], rd), a=q.anchor, b=q.post,
-                                priority=self._priority(q.post))
+            text = self._render("pair", (q.anchor, "|", q.post), lambda: tasks.pair_input(t[q.anchor], t[q.post], rd),
+                                reads=True)
+            return self.settled(q, text, a=q.anchor, b=q.post, priority=self._priority(q.post))
         if q.type == "merge":
             pa, pb = self.story_posts(q.story, outcome), self.story_posts(q.other, outcome)
             ca, cb = self.card(q.story, pa), self.card(q.other, pb)
             if ca is None or cb is None or not pa or not pb:
                 return None
-            return self.settled(q, tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
-                                a=pa[0], b=pb[0], priority=self._priority(pb[0]))
+            import json as _json
+            text = self._render("merge", (*q.side, "|", *q.side_b),
+                                lambda: tasks.merge_input(ca, self._p(q.side), cb, self._p(q.side_b)),
+                                extra=(_json.dumps(ca, sort_keys=True, default=str),
+                                       _json.dumps(cb, sort_keys=True, default=str)))
+            return self.settled(q, text, a=pa[0], b=pb[0], priority=self._priority(pb[0]))
         return None
 
 
@@ -1123,7 +1146,8 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
     for x0, y0, _cos in pairs:
         text = incremental.rendered(world.memo, "connect", (*groups[x0], "|", *groups[y0]), lambda: tasks.connect_input(
-            tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])))
+            tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])),
+            texts=world.text if world.memo is not None else None)
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0])
         if v is None or v.relation not in CONNECT_RELATIONS:
             continue
@@ -1142,11 +1166,16 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
     cur.execute("SELECT id::text, headline, headline_call::text FROM mx_stories WHERE id = ANY(%s::uuid[])",
                 ([ids[k] for k in news_keys],))
     stored = {sid: {"headline": h, "headline_call": c} for sid, h, c in cur.fetchall()}
+    from insight_core.markx import incremental
     for key in news_keys:
-        ps = tasks._earliest([world.text[p] for p in out.about[key] if p in world.text])
+        ps = world.earliest(p for p in out.about[key] if p in world.text)
         if not ps:
             continue
-        got = ask.answer("headline", tasks.headline_input(ps), a=ps[0].id)
+        shown = ps[:tasks.HEADLINE_MEMBERS]   # all headline_input shows (tasks._earliest(...)[:HEADLINE_MEMBERS])
+        text = incremental.rendered(world.memo, "headline", shown,
+                                    lambda: tasks.headline_input([world.text[p] for p in shown]),
+                                    texts=world.text if world.memo is not None else None)
+        got = ask.answer("headline", text, a=ps[0])
         if got is None:
             continue
         story = stored.get(ids[key])
@@ -1158,8 +1187,9 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
 
 
 def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = False):
-    """A run's reading of its snapshot through `memo` (0116: incremental.refresh, then load and think): (world, ask,
-    outcome, counts). `dry`: nothing is added or asked again (the check's incremental reading)."""
+    """A run's reading of its snapshot through `memo` (0116, 0169: incremental.State; incremental.refresh, then load
+    and think): (world, ask, outcome, counts). `dry`: nothing is added or asked again (the check's incremental
+    reading)."""
     from insight_core.markx import incremental
     incremental.refresh(cur, memo)
     world = load(cur, now, config, memo=memo)
@@ -1190,13 +1220,14 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
-    raises stops the run between stages, and the caller's transaction rolls back: nothing half done (and, 0116, the
-    run leaves no memo: the next run is full).
+    raises stops the run between stages, and the caller's transaction rolls back: nothing half done (and, 0169, the
+    state it would have left with it: the next run starts from the last finished run's).
 
-    0116: a run is incremental (it reads again only what changed since the last run: markx/incremental.py) unless
-    `full`, or there is no memo of the last run in this process, the code, config or a guide changed, or no full run
-    started since the night's NIGHTLY_HOUR. A nightly full run with a memo first reads the snapshot as an incremental
-    run would, writing nothing, and logs any difference from the full reading (`counts.check`).
+    0116, 0169: a run is incremental (it reads again only what changed since the last run, by the state the last
+    run left in Postgres: markx/incremental.py) unless `full`, or there is no state of the last finished run, the
+    code, config or a guide changed, or no full run started since the night's NIGHTLY_HOUR. A full run with a state
+    first reads the snapshot as an incremental run would, writing nothing, and logs any difference from the full
+    reading (`counts.check`). Every run leaves its state in the same transaction (a failed run leaves the last).
 
     0128: `entity_budget` is the entities stage's own seconds (entity_stage.entities); its full pass stops after a
     chunk past it and the next run resumes it. None: no limit.
@@ -1227,21 +1258,22 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("load")
     schemas.ensure_guides(cur)
     guides = {k.name: k.guide for k in schemas.KINDS.values()}
-    key = _json.dumps([CODE_VERSION, config.as_dict(), guides], sort_keys=True, default=str)
-    memo, warm = incremental.memo_for(cur, key)
+    key = _json.dumps([CODE_VERSION, incremental.code_stamp(), config.as_dict(), guides], sort_keys=True, default=str)
+    memo, warm = incremental.open_state(cur, key)
     nightly = warm and full is None and incremental.nightly_due(cur, now)
     kind = "full" if (full or not warm or nightly) else "incremental"
     check = None
     if kind == "full" and warm:
         prev = memo
-        memo = incremental.fresh(prev.db, key)
+        prev.dry = True
+        memo = incremental.fresh(prev)
         p_world, p_ask, p_out, _ = _reading(cur, prev, now, config, dry=True)
         p_ids, _ = persist(cur, None, p_out, p_world, now, write=False)
         p_keys = [s["story"] for s in p_out.stories(p_world.posts) if voices(p_world.posts, s["posts"]) >= 2]
         p_conns = connections(cur, p_out, p_ids, p_world, p_ask, config, p_keys)
         p_news = mx_news.write(cur, None, out=p_out, ids=p_ids, world=p_world, now=now, store=False)["made_rows"]
         check = _digest(p_out, p_ids, p_world, p_conns, p_news)
-    memo.run_id = None                              # until this run finishes: a failed run leaves no memo
+        del prev, p_world, p_ask, p_out, p_ids, p_conns, p_news
     cur.execute("SELECT max(started_at) FROM mx_runs WHERE finished_at IS NOT NULL")
     previous = cur.fetchone()[0]                    # 0119: what the entities stage reads as new since
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
@@ -1306,16 +1338,16 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
                      "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
                      "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
                      "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),
+                     **{k: memo.report.get(k) for k in ("texts_loaded", "inputs_rendered", "inputs_kept")},
                      **(incremental.closure(memo, want, world.stories) if kind == "incremental" else
-                        {"closure": len(want), "stories": len(want)}),
-                     "seconds": round(_time.monotonic() - started, 3)}
-    memo.want = want
+                        {"closure": len(want), "stories": len(want)})}
+    counts["run"]["state"] = incremental.save(cur, memo, run_id, want)   # 0169: what the next run starts from
+    counts["run"]["seconds"] = round(_time.monotonic() - started, 3)
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
-    memo.run_id = str(run_id)
     return {"run": str(run_id), **counts}
 
 

@@ -25,7 +25,8 @@ import psycopg
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
-from insight_core.markx import incremental, pairing, repo, schemas, tasks
+from insight_core.markx import pairing, repo, schemas, tasks
+from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo (0169 moved it to Postgres)
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import candidates_a395c13 as OLD_C
 from insight_core.tests.legacy import decide_a395c13 as OLD_D

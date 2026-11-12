@@ -223,14 +223,17 @@ def _row_posts(cur: Any, rows: Sequence[Dict[str, Any]], known: Optional[Dict[st
 
 
 def ask_row_headlines(cur: Any, rows: Sequence[Dict[str, Any]], ask: Any, *, headed: Set[str],
-                      known: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+                      known: Optional[Dict[str, Any]] = None, memo: Any = None) -> Dict[str, int]:
     """0121 Decided 2: a headline task for every News row whose main story is asked none of its own (`headed`: the
     Mark X stories of 2+ voices the run asks a headline for), so every row gets one: a row of stories of one voice,
     or of posts joined by a surging name (14 of the 19 rows the v10.0.1 review saw titled by their lead).
-    {"asked": rows asked, "answered": of them, answered}."""
+    {"asked": rows asked, "answered": of them, answered}. With the run's state (`memo`, 0169: `known` its texts),
+    each row's input is kept by its posts' stamps."""
     need = [r for r in rows if main_story(r) not in headed]
     if not need:
         return {"asked": 0, "answered": 0}
+    if memo is not None and known is not None:
+        return _ask_row_headlines_kept(cur, need, ask, memo, known)
     posts = _row_posts(cur, need, known)
     asked = answered = 0
     for r in need:
@@ -238,6 +241,25 @@ def ask_row_headlines(cur: Any, rows: Sequence[Dict[str, Any]], ask: Any, *, hea
         if text is None:
             continue
         asked += 1
+        if ask.answer("headline", text, a=r["posts"][0]["post_id"]) is not None:
+            answered += 1
+    return {"asked": asked, "answered": answered}
+
+
+def _ask_row_headlines_kept(cur: Any, need: Sequence[Dict[str, Any]], ask: Any, memo: Any, texts: Any
+                            ) -> Dict[str, int]:
+    """ask_row_headlines' questions, each input kept by its posts' stamps (incremental.rendered): a row's posts that
+    exist, in its order, as row_headline_input reads them."""
+    from insight_core.markx import incremental, tasks
+    stamps = incremental.stamps_of(cur, memo, {p["post_id"] for r in need for p in r.get("posts") or []})
+    asked = answered = 0
+    for r in need:
+        ids = [p["post_id"] for p in r.get("posts") or [] if p["post_id"] in stamps]
+        if not ids:
+            continue
+        asked += 1
+        text = incremental.rendered(memo, "row_headline", ids,
+                                    lambda: tasks.headline_input([texts.load(ids)[i] for i in ids]), texts=texts)
         if ask.answer("headline", text, a=r["posts"][0]["post_id"]) is not None:
             answered += 1
     return {"asked": asked, "answered": answered}
@@ -286,7 +308,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
         made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
-                                                  known=getattr(world, "text", None))
+                                                  known=getattr(world, "text", None),
+                                                  memo=memo if isinstance(memo, incremental.State) else None)
     if not store:
         return {"rows": len(rows), "tags": tags, "written": False, "made_rows": rows, **made}
     last = last_written(cur)
