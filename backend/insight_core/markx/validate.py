@@ -424,6 +424,31 @@ def _probes(a: Dict[str, Any], _input: str) -> Optional[str]:
     return None
 
 
+def _scout(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0148: each named source has one line of address (no spaces, at most SCOUT_ADDRESS_CHARS) and is named once;
+    `why` is one line."""
+    seen: set = set()
+    for s in a["sources"]:
+        address = (s.get("address") or "").strip()
+        if not address or any(c.isspace() for c in address):
+            return "a source's address: one address, no spaces"
+        if len(address) > schemas.SCOUT_ADDRESS_CHARS:
+            return f"a source's address over {schemas.SCOUT_ADDRESS_CHARS} characters"
+        key = address.lower().split("://", 1)[-1].removeprefix("www.").rstrip("/")
+        if key in seen:
+            return "a source named twice"
+        seen.add(key)
+        why = (s.get("why") or "").strip()
+        if "\n" in why or len(why) > schemas.SCOUT_WHY_CHARS:
+            return f"a source's why: one line, at most {schemas.SCOUT_WHY_CHARS} characters"
+    return None
+
+
+def _identity(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0162: `why` is one line, at most TRACK_WHY_CHARS (the evidence, not an essay)."""
+    return _track(a, input)
+
+
 _EMBEDDED = "an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -432,6 +457,8 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "cite": _cite,       # 0133 v4.2
           "track": _track, "subtopics": _subtopics,   # 0145
           "probes": _probes,                          # 0147
+          "scout": _scout,                            # 0148
+          "identity": _identity,                      # 0162
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

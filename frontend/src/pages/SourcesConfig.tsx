@@ -19,6 +19,7 @@ import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
 import SuggestedSources, { SUGGESTED_SOURCES_KEY } from '../components/sources/SuggestedSources';
 import TrackSourceLines from '../components/tracks/TrackSourceLines';   // 0145
+import ScoutSourceLines from '../components/tracks/ScoutSourceLines';   // 0148
 import { tracksApi } from '../services/tracks';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 import { TRACK_COUNTS_KEY } from '../hooks/useTrackCounts';
@@ -596,6 +597,7 @@ export default function SourcesConfig() {
         <TabsContent value="discover" className="pt-0">
           <div className="pb-24">
             <TrackSourceLines />
+            <ScoutSourceLines />
             <SuggestedSources onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} />
           </div>
         </TabsContent>
