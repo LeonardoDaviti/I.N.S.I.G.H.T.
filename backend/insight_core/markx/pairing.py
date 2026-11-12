@@ -33,7 +33,10 @@ The sources (adapters; each idempotent, each writes only mx_candidates):
     whose readings name one happening (action group and parties) within the group's window.
 
 Step 1 of 0166 moved the sources and decide's re-gates here unchanged (the equivalence tests:
-tests/test_markx_pairing.py). graph.py, back.py and later.py keep their own gates for now (0166's anchors step).
+tests/test_markx_pairing.py). 0180 (anchors): the third relation, `develops` (a post that follows up an anchor: a
+story or a happening), holds back.py's and later.py's gates (their windows, type lists, quiet rule) and E6's
+happening windows; `develops(pol, earlier, later, gap)` is its happening gate, `specific(pol, ...)` its subject gate.
+graph.py keeps its own gates for now.
 """
 from __future__ import annotations
 
@@ -55,7 +58,7 @@ log = logging.getLogger(__name__)
 
 MODEL = "bge-m3"
 POST_POST, STORY_STORY = "post_post", "story_story"
-SAME_STORY, CONNECTED = "same_story", "connected"
+SAME_STORY, CONNECTED, DEVELOPS = "same_story", "connected", "develops"
 HAPPENING_KEY = "pairing_happening"   # mx_settings: the happening source on (off by default, until E1 sets its bars)
 
 # ---- the basics ------------------------------------------------------------------------------------------
@@ -179,6 +182,10 @@ HAPPENING_WINDOW = 72 * H
 # The groups the source pairs: the company groups E1 measured (49/52 right with 2+ shared parties). release, research,
 # pricing and announcement keys are made but not paired until measured (the 72-hour sources keep them).
 HAPPENING_GROUPS = ("deal", "funding", "legal", "people")
+# E6 (plan/research/exp-2026-11-12/e1): a later post of one happening develops it from 3 days on, a deal to 120 days
+# (12/12 right), a legal step to 30 (company follow-ups with 2+ parties 23/27 = 85%); funding and people moves never
+# (one participant 8/21); release, research, pricing and announcement unmeasured, so never.
+DEVELOPS_WINDOWS: Mapping[str, Tuple[timedelta, timedelta]] = {"deal": (3 * D, 120 * D), "legal": (3 * D, 30 * D)}
 
 
 @dataclass(frozen=True)
@@ -204,6 +211,19 @@ class Policy:
     min_words: Optional[int] = None             # judged: each post of this many words
     roundups: str = ROUNDUP_WHOLE_EXCLUDED
     units: str = "post"
+    # develops (0180): a follow-up of an anchor (markx/anchors.py; back.py and later.py read these, never their own)
+    develops_windows: Mapping[str, Tuple[timedelta, timedelta]] = field(default_factory=dict)  # group: (from, to)
+    first_after: Optional[timedelta] = None     # back: a burst starts this long after the story's first post ...
+    last_after: Optional[timedelta] = None      # ... and this long after its last one
+    again: Optional[timedelta] = None           # back: a story still followed fires again this long after its window
+    hub_weeks: Optional[int] = None             # back: a page linked in this many ISO weeks is a hub, no story page
+    always_types: Tuple[str, ...] = ()          # later: a subject of these types is specific ...
+    release_types: Tuple[str, ...] = ()         # ... of these only as one release ...
+    release_levels: Tuple[str, ...] = ()        # ... (an entity level that is one release)
+    main_share: Optional[float] = None          # later: the main subject is the subject of this share of read members
+    quiet_days: Optional[int] = None            # later: in the days before a follow-up ...
+    quiet_max: Optional[int] = None             # ... at most this many sources named its subject (subject matches)
+    quiet_for_links: bool = True                # ... and for page matches too
 
     def within(self, ta: Any, tb: Any) -> bool:
         return abs(ta - tb) <= self.window
@@ -213,6 +233,14 @@ class Policy:
 
     def happening_span(self, group: str) -> timedelta:
         return self.happening_windows.get(group, self.happening_window)
+
+    @property
+    def develops_groups(self) -> Tuple[str, ...]:
+        return tuple(self.develops_windows)
+
+    def develops_span(self, group: str) -> Optional[Tuple[timedelta, timedelta]]:
+        """(from, to): how long after a post of this group's happening another may develop it; None: never."""
+        return self.develops_windows.get(group)
 
 
 POLICIES: Dict[str, Policy] = {
@@ -224,6 +252,18 @@ POLICIES: Dict[str, Policy] = {
                        min_words=20),
     # decide's connect questions (F6): two News stories, a typed connection.
     CONNECTED: Policy(CONNECTED, sources=("centroid",), story_window=30 * D, story_cosine=0.60, min_voices=2),
+    # 0180: a post that follows up an anchor (a Mark IX story, a Mark X story, a happening; markx/anchors.py). The
+    # happening first: E6's windows by group (2+ separate shared parties, no money clash); funding and people never.
+    # Then the subject: back's gates (0136: a `window` burst of `min_voices` sources, `first_after` the first post and
+    # `last_after` the last, the centre at `cosine`, hubs of `hub_weeks`, subjects of the `types`) and later's (0163:
+    # one specific main subject, `quiet_days` / `quiet_max`), the values those modules wrote down.
+    DEVELOPS: Policy(DEVELOPS, sources=("happening", "subject", "page", "centre"),
+                     window=72 * H, cosine=0.70, min_voices=2,
+                     types=("model", "product", "software", "paper", "document", "dataset", "event", "law", "other"),
+                     develops_windows=DEVELOPS_WINDOWS, first_after=14 * D, last_after=7 * D, again=30 * D,
+                     hub_weeks=6, always_types=("paper", "document", "dataset", "method"),
+                     release_types=("model", "software"), release_levels=("version", "variant", "checkpoint"),
+                     main_share=0.5, quiet_days=14, quiet_max=2, quiet_for_links=True),
 }
 
 
@@ -255,6 +295,35 @@ def admits_stories(pol: Policy, cos: Optional[float], voices_a: int, voices_b: i
     if voices_a < pol.min_voices or voices_b < pol.min_voices:
         return False
     return cos is None or pol.story_cosine is None or cos >= pol.story_cosine
+
+
+def develops(pol: Policy, earlier: Any, later: Any, gap: timedelta) -> bool:
+    """Whether a post whose happening is `later` (happening.Happening), `gap` after a post whose happening is
+    `earlier`, may be judged a development of it (the develops row): one group the row names, 2+ shared separate
+    parties, no money clash (happening.MONEY_TOLERANCE), the gap within the group's window. The stage and the stated
+    day are not compared: a later stage of one happening is what a development is."""
+    from insight_core.markx.happening import MIN_PARTIES, MONEY_TOLERANCE
+    span = pol.develops_span(earlier.group)
+    if span is None or earlier.group != later.group or not (span[0] <= gap <= span[1]):
+        return False
+    if len(earlier.parties & later.parties) < MIN_PARTIES:
+        return False
+    a, b = earlier.numbers, later.numbers
+    return not (a and b and not any(abs(x - y) <= MONEY_TOLERANCE * max(x, y) for x in a for y in b))
+
+
+def specific(pol: Policy, type_: Optional[str], *, level: Optional[str] = None, version: Optional[str] = None,
+             variant: Optional[str] = None, build: Optional[str] = None, status: Optional[str] = None) -> bool:
+    """Whether an entity is specific enough to keep a story listening by its subject (the develops row; 0163's rule):
+    a type of `always_types` always; of `release_types` only as one release (a level of `release_levels`, or a
+    version, a variant or a build named; a family never); any other type never; an entity marked not one never."""
+    if status == "not_entity":
+        return False
+    if type_ in pol.always_types:
+        return True
+    if type_ not in pol.release_types or level == "family":
+        return False
+    return level in pol.release_levels or any((v or "").strip() for v in (version, variant, build))
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,

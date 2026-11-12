@@ -10,7 +10,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from insight_core.markx import back, decide, repo, schemas, tasks, validate
+from insight_core.markx import anchors, back, decide, repo, schemas, tasks, validate
 from insight_core.tests._db import insert_scratch_source
 from insight_core.tests.test_markx_api import _Api, call
 from insight_core.tests.test_markx_graph import unit
@@ -86,6 +86,11 @@ class _Back(_Api):
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = ANY(%s::uuid[])", ([self.third, self.fourth],))
         self.stories = []
         self.addCleanup(self._drop_stories)
+        # 0180: these tests are the old engine's; the anchors engine's Shadow rows are test_markx_anchors' (it turns
+        # the Shadow back on)
+        repo.set_setting(self.cur, anchors.SHADOW_KEY, self.shadow)
+
+    shadow = False
 
     def _drop_stories(self):
         self.cur.execute("DELETE FROM story_posts WHERE story_id = ANY(%s::uuid[])", (self.stories,))

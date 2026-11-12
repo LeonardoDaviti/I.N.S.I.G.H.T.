@@ -964,6 +964,7 @@ def mx_label_edge(body: EdgeLabelIn):
 from insight_core.markx import sources_api as _sources_api; router.include_router(_sources_api.router)  # noqa: E402,E702  0132 B: the source analysis page
 from insight_core.markx import back_api as _back_api; router.include_router(_back_api.router)  # noqa: E402,E702  0136: back in the news
 from insight_core.markx import later_api as _later_api; router.include_router(_later_api.router)  # noqa: E402,E702  0163: later developments
+from insight_core.markx import anchors_api as _anchors_api; router.include_router(_anchors_api.router)  # noqa: E402,E702  0180: anchors in Shadow
 from insight_core.markx import track_counts as _track_counts; router.include_router(_track_counts.router)  # noqa: E402,E702  v10.12.1: a topic track's sidebar count (before tracks_api: /tracks/{id})
 from insight_core.markx import tracks_api as _tracks_api; router.include_router(_tracks_api.router)  # noqa: E402,E702  0145: tracks as topics
 from insight_core.markx import scout_api as _scout_api; router.include_router(_scout_api.router)  # noqa: E402,E702  0148: the track scout
