@@ -7,7 +7,9 @@ every page reads through redirects and pins, so the answer shows at once).
     apart, undoing any merge that joined them; they are never merged by a rule or Haiku again;
   - a collision: `different` or `other_version` splits it as proposed (each sense but the largest an entity of its
     own, the mentions the question showed pinned there); `same` keeps one page; `not_entity` marks the entity;
-  - an automatic merge from the history: `undo` closes its redirect.
+  - an automatic merge from the history: `undo` closes its redirect;
+  - a rename (0165 B): `same` redirects the older name's cluster into the newer's (kind 'rename': the older names are
+    shown as earlier names); the other answers keep them apart, undoing any merge that joined them.
 Each answer is also a label: mx_labels item kind `entity`, a and b the two entities, split `test`, the queue item in
 its note.
 """
@@ -203,6 +205,20 @@ def owner_same(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def owner_rename(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
+    """0165 B: the owner's `same` on a rename item (a = the older name, b = the newer): the older cluster redirects into
+    the newer one (kind 'rename', markx/rename.merge). Like 0164 A's `same`, never a product family joined to an org
+    blindly: when the two clusters would mix them, nothing is written ({result: 'needs_choice', message})."""
+    from insight_core.markx import rename
+    a, b = item["a"], item["b"]
+    if join_plan(book, a, b)["mixes"]:
+        return {"result": "needs_choice", "message": (
+            f"“{book.ents[a].name}” and “{book.ents[b].name}” are in groups holding a product family and an org: "
+            "a rename would join them. Undo the merge that put one of them there first, or answer another way.")}
+    return {"redirect": rename.merge(cur, book, a, b, queue_id=item["id"], call_id=item["call_id"],
+                                     evidence={"queue": item["id"]}), "renamed": True}
+
+
 def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict[str, Any]:
     """The owner's answer to one review item, applied at once and labelled."""
     if ans not in ANSWERS:
@@ -213,7 +229,18 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     book = I.load_book(cur)
     a, b = item["a"], item["b"]
     applied: Dict[str, Any] = {"answer": ans}
-    if item["kind"] == "alias":
+    if item["kind"] == "rename":    # 0165 B: `same` = one thing, renamed: the older name becomes the newer's earlier name
+        if ans == "same":
+            got = owner_rename(cur, book, item)
+            if got.get("result") == "needs_choice":
+                return {**applied, **got}
+            applied.update(got)
+            _confirm(cur, a, b)
+        else:
+            applied["undone"] = separate(cur, book, a, b)
+            if ans != "not_entity":
+                _confirm(cur, a, b)
+    elif item["kind"] == "alias":
         if ans == "same":
             got = owner_same(cur, book, item)
             if got.get("result") == "needs_choice":

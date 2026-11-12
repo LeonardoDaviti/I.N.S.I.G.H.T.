@@ -683,6 +683,21 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     else:
         todo = sorted({book.root(r) for r in roots if r in book.ents} & set(members))
     out = Counter({"clusters": 0, "names": 0, "types": 0})
+    from insight_core.markx import rename
+    early = rename.earlier_members(cur)   # 0165 B: an earlier name (a rename's old side) is never the name shown
+
+    def now_named(ms: List[str]) -> List[str]:
+        if not early:
+            return ms
+        keep = []
+        for m in ms:
+            x, seen = m, set()
+            while x is not None and x not in early and x in book.redirect and x not in seen:
+                seen.add(x)
+                x = book.redirect[x][0]
+            if x not in early:
+                keep.append(m)
+        return keep or ms
 
     def write(r: str, spans: Dict[str, List[Tuple[str, int, int]]]) -> None:
         out["clusters"] += 1
@@ -693,7 +708,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             typ = _type(book, r, [r], [e])
             name, typ = None, (typ if typ != I.schemas_type(e.type) else None)
         else:
-            name, typ = choose(book, r, sorted(members[r]), spans)
+            name, typ = choose(book, r, now_named(sorted(members[r])), spans)
         if (name, typ) != (e.shown_name, e.shown_type):
             cur.execute("""UPDATE mx_entities SET shown_name = %s, shown_type = %s, shown_by = 'evidence'
                             WHERE id = %s AND shown_by IS DISTINCT FROM 'owner'""", (name, typ, r))

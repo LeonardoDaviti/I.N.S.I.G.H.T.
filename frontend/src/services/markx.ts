@@ -134,6 +134,34 @@ export interface MarkxPostPanel {
   before?: MarkxBefore[];
   /** 0131: how many more the list leaves out. */
   before_more?: number;
+  /** 0165 D: the post's subjects' previous events from their timelines (birth, last release, first outside mention). */
+  before_timeline?: { entity: { id: string; name: string | null }; items: MarkxTimelineEvent[] }[];
+}
+
+/** 0165 C: one dated line of an entity's timeline, and why it is on the line. */
+export type MarkxTimelineKind = 'birth' | 'earlier_name' | 'renamed' | 'release' | 'first_outside' | 'outside' | 'story'
+  | 'later' | 'back';
+export interface MarkxTimelineEvent {
+  kind: MarkxTimelineKind;
+  at: string;
+  rank: number;
+  /** One of the 8 most important (shown before "all"). */
+  top?: boolean;
+  post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null } | null;
+  /** The name it was written as (birth, release), its earlier name (earlier_name), its name now (renamed). */
+  name?: string | null;
+  /** Other reasons the same post is on the line (the birth may be the maker's release, the first outside mention). */
+  also?: MarkxTimelineKind[];
+  /** outside: the month's posts and sources; first_outside: found by a post linking back. */
+  month?: string; n?: number; sources?: number; linked?: boolean;
+  /** story, later, back. */
+  story?: string; mark?: 'x' | 'ix'; headline?: string | null; voices?: number;
+}
+export interface MarkxTimeline {
+  items: MarkxTimelineEvent[];
+  shown: number;
+  total: number;
+  earlier: { id: string; name: string | null; names: string[] }[];
 }
 
 /** 0131: one older post a post connects to (Stalker's first edges). `uncertain`: the judge's alone (label it). */
@@ -444,6 +472,10 @@ export interface MarkxEntityPage {
   older?: MarkxOlderPost[];
   /** 0138 E3: an org, person or document with 2+ works or 10+ posts: its sites, works and people. */
   rabbit_hole?: MarkxRabbitHole | null;
+  /** 0165 A: a product's components (things under it), with their posts. */
+  components?: { id: string; name: string | null; type: string | null; posts: number }[];
+  /** 0165 C: its timeline (null under two dated events). */
+  timeline?: MarkxTimeline | null;
 }
 
 export interface MarkxRabbitHole {
@@ -507,7 +539,7 @@ export interface MarkxQueueJoin {
 
 export interface MarkxQueueItem {
   id: string;
-  kind: 'alias' | 'collision';
+  kind: 'alias' | 'collision' | 'rename';   // 0165 B: rename (a: the older name, b: the newer)
   a: MarkxQueueSide;
   b: MarkxQueueSide | null;
   proposal: 'same' | 'other_version' | 'different' | 'split';
@@ -524,6 +556,8 @@ export interface MarkxQueueItem {
     mentions?: { n: number; span: string; type: string; maker: string | null }[];
     split_runs?: number | null;
     runs?: number | null;
+    /** 0165 B: why a rename was asked (a shared address, the new post naming the old one). */
+    asked_because?: string | null;
   };
 }
 
@@ -531,7 +565,7 @@ export interface MarkxEntityQueue {
   open: MarkxQueueItem[];
   answered: MarkxQueueItem[];
   merges: { id: string; from: { id: string; name: string | null }; to: { id: string; name: string | null }; by: string;
-    automatic: boolean; at: string; undone_at: string | null; confidence: number | null }[];
+    automatic: boolean; at: string; undone_at: string | null; confidence: number | null; kind?: 'same' | 'rename' }[];
   counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
   accuracy: MarkxEntityAccuracy;
 }

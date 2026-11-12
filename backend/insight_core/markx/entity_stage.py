@@ -126,6 +126,9 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     sweep = whole and not left
     out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
                                  deadline=deadline, also=linked, book=book)
+    # 0165 B: every thing once a night (the run that finishes the full pass, within the budget), else the run's posts
+    every = whole and bool((out.get("full") or {}).get("done")) and (deadline is None or time.monotonic() < deadline)
+    out["renames"] = renames(cur, book, ask=ask, run_id=run_id, full=every, since=since, posts=linked)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
     out["days_linked"] = len(days)
     if whole or since is None:
@@ -228,6 +231,30 @@ def addresses(cur: Any, *, now: datetime, since: Optional[datetime], full: bool,
         logging.getLogger(__name__).exception("Mark X: the entity addresses stage failed")
         return {"error": str(error)[:200]}
     cur.execute("RELEASE SAVEPOINT entity_addresses")
+    return got
+
+
+def renames(cur: Any, book: Any, *, ask: Any, run_id: Any, full: bool, since: Optional[datetime],
+            posts: Any) -> Dict[str, Any]:
+    """0165 B: the rename questions (markx/rename.py) of the entities the run's posts name (every thing on the full
+    pass), and Haiku's `renamed` answers queued for the owner. In a savepoint: a failure is logged in the counts,
+    never the run's."""
+    import logging
+    from insight_core.markx import rename, schemas
+    cur.execute("SAVEPOINT entity_renames")
+    try:
+        seeds: Set[str] = set()
+        if not full and posts:
+            cur.execute("""SELECT DISTINCT entity_id::text FROM mx_mentions_now
+                            WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""",
+                        (schemas.mention_guides(), list(posts)))
+            seeds = {r[0] for r in cur.fetchall()}
+        got = rename.stage(cur, book, ask=ask, run_id=run_id, full=full, since=since, seeds=seeds)
+    except Exception as error:  # noqa: BLE001 - a derived step never stops the run
+        cur.execute("ROLLBACK TO SAVEPOINT entity_renames")
+        logging.getLogger(__name__).exception("Mark X: the rename step failed")
+        return {"error": str(error)[:200]}
+    cur.execute("RELEASE SAVEPOINT entity_renames")
     return got
 
 
