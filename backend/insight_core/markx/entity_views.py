@@ -116,7 +116,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
-    book = I.load_book(cur)
+    book = I.load_book(cur, counts=False)   # v10.14: the list reads no mention count (a read of every mention)
     since = now - timedelta(days=WINDOW_DAYS)
     agg: Dict[str, Dict[str, Any]] = {}
     for pid, n, role, eid, at, src, read, g in _rows(cur, guide, since):

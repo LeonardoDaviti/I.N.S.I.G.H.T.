@@ -199,6 +199,20 @@ def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
 
 # ---- calls ----------------------------------------------------------------------------------------
 
+def calls_days_floor(cur: Cursor, days: int) -> Optional[datetime]:
+    """v10.14: the start (midnight, the session's time zone, as created_at::date reads it) of the oldest of the `days`
+    newest days that have a call, or None when there is no call. A per-day sum from there (`created_at >=` it, the
+    created_at index) is the `GROUP BY created_at::date ORDER BY 1 DESC LIMIT days` of every call, without reading
+    them all: one index probe a day."""
+    cur.execute("""WITH RECURSIVE d(day, n) AS (
+                     SELECT (SELECT max(created_at) FROM mx_calls)::date, 1
+                     UNION ALL
+                     SELECT (SELECT max(c.created_at) FROM mx_calls c WHERE c.created_at < d.day::timestamptz)::date, d.n + 1
+                       FROM d WHERE d.day IS NOT NULL AND d.n < %s)
+                   SELECT min(day)::timestamptz FROM d WHERE day IS NOT NULL""", (days,))
+    return cur.fetchone()[0]
+
+
 def add_call(cur: Cursor, *, task_id: Id, executor: str, model: str, valid: bool, answer: Any,
              error: Optional[str] = None, tokens_in: Optional[int] = None, tokens_out: Optional[int] = None,
              ms: Optional[int] = None, cost_usd: Optional[float] = None) -> UUID:

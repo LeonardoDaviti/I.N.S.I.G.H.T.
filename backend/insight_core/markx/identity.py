@@ -413,7 +413,7 @@ class Book:
         return None if e is None else schemas_type(e.shown_type or e.type)
 
 
-def load_book(cur: Any) -> Book:
+def load_book(cur: Any, *, counts: bool = True) -> Book:
     b = Book()
     cur.execute("""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
                           size, build, status, first_seen, shown_name, shown_type FROM mx_entities""")
@@ -437,12 +437,21 @@ def load_book(cur: Any) -> Book:
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
+    if not counts:   # v10.14: the caller reads no type count (types, subject, mentioned stay empty)
+        return b
     cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject') FROM mx_mentions_now
                     WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
+    product: Dict[Optional[str], bool] = {}   # v10.14: a type read once, a Counter made once an entity
     for eid, type_, n, subj in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read)
-        b.types.setdefault(eid, Counter())[type_] += n
-        if subj and schemas_type(type_) in PRODUCT_TYPES:   # 0164 B: a product as the subject
-            b.subject[eid] = b.subject.get(eid, 0) + subj
+        got = b.types.get(eid)
+        if got is None:
+            got = b.types[eid] = Counter()
+        got[type_] += n
+        if subj:
+            if type_ not in product:
+                product[type_] = schemas_type(type_) in PRODUCT_TYPES
+            if product[type_]:   # 0164 B: a product as the subject
+                b.subject[eid] = b.subject.get(eid, 0) + subj
     b.mentioned = set(b.types) | set(b.pins.values())
     return b
 

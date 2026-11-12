@@ -31,7 +31,7 @@ def topic_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
     out: Dict[str, Dict[str, int]] = {}
     reader = ReaderRepository()
     for t in tracks.described(cur):
-        items = tracks.placed(cur, t)["items"]
+        items = tracks.placed(cur, t, shown=False)["items"]   # v10.14: only what a place needs
         inside = [it["post_id"] for it in items if it["place"] in IN_TRACK]
         unread = reader.scope_unread(cur, FeedScope("folder", t["folder_id"], tuple(inside))) if inside else 0
         discover = sum(1 for it in items if it["place"] == "discover")
