@@ -56,6 +56,7 @@ ENTITY_BUDGET = 45.0             # 0128: the entities stage's own seconds, outsi
 OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
+WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan")
@@ -140,8 +141,20 @@ def mark_ix_busy(cur: Any) -> Optional[str]:
     return None
 
 
-def waiting_posts(cur: Any) -> List[str]:
-    cur.execute("SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at")
+def decision_running(cur: Any) -> bool:
+    """v10.14: whether a decision run holds its advisory lock now (decide.LOCK_KEY, pg_try_advisory_xact_lock)."""
+    from insight_core.markx.decide import LOCK_KEY
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+                                   WHERE d.datname = current_database() AND l.locktype = 'advisory' AND l.granted
+                                     AND l.objsubid = 1 AND ((l.classid::bigint << 32) | l.objid::bigint) = %s)""",
+                (LOCK_KEY,))
+    return bool(cur.fetchone()[0])
+
+
+def waiting_posts(cur: Any, limit: Optional[int] = None) -> List[str]:
+    """The posts waiting for the candidate finder, longest waiting first; at most `limit` (None: all)."""
+    cur.execute("""SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at
+                    ORDER BY noted_at, post_id LIMIT %s""", (limit,))
     return [r[0] for r in cur.fetchall()]
 
 
@@ -196,7 +209,9 @@ class Jobs:
         t0 = time.monotonic()
         try:
             with self._tx() as cur:
-                ids = waiting_posts(cur)
+                # v10.14: a page a run, so a burst of vectors (a backfill's) can't make one run too long to finish
+                ids = waiting_posts(cur, WAIT_PAGE + 1)
+                more, ids = len(ids) > WAIT_PAGE, ids[:WAIT_PAGE]
                 counts = candidates.run(cur, ids, since=since)
                 cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
                 backfill = candidates.backfill(cur, started)   # 0144 A2: the story window's next step, newest first
@@ -209,7 +224,8 @@ class Jobs:
         log.info("Mark X candidates: %d posts, %s in %.1f s", len(ids), dict(counts), seconds)
         self._finish("candidates", {"ok": True, "posts": len(ids), "counts": dict(counts), "seconds": seconds,
                                     "mentions_since": (started - MENTIONS_MARGIN).isoformat(),
-                                    **({"backfill": backfill} if backfill else {})})
+                                    **({"more": True} if more else {}),
+                                    **({"backfill": backfill} if backfill else {})}, again=more)
         return counts
 
     def plan(self) -> Dict[str, Any]:

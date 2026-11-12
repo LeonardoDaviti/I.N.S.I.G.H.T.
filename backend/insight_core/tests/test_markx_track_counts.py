@@ -53,3 +53,21 @@ class TopicCounts(_Tracks):
         self.assertEqual(call("GET", f"/api/markx/tracks/{self.folder}")[0], 200)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}")[0], 404)
         self.assertIn(self.folder, self.counts())
+
+    def test_the_counts_read_places_as_the_full_items_do(self):
+        """v10.14: the counts read only what a place needs; every item's place and rank are the full read's."""
+        from insight_core.markx import tracks
+        self.describe()
+        self.desc_vector(unit((0, 1)))
+        posts = [self.post(title=f"active {n}") for n in range(3)] + [self.passive(f"passive {n}") for n in range(4)]
+        self.plan()
+        for n, p in enumerate(posts):
+            self.judge(p, verdict(n % 3 != 2, 0.5 + n / 20))
+        self.label(posts[3], "in")
+        self.label(posts[4], "out")
+        t = [x for x in tracks.described(self.cur) if x["folder_id"] == self.folder][0]
+        keys = ("post_id", "verdict", "confidence", "source_id", "active", "label", "place", "rank", "calibrated")
+        full = [{k: it[k] for k in keys} for it in tracks.placed(self.cur, t)["items"]]
+        light = [{k: it[k] for k in keys} for it in tracks.placed(self.cur, t, shown=False)["items"]]
+        self.assertEqual(light, full)
+        self.assertEqual(len(full), 7)
