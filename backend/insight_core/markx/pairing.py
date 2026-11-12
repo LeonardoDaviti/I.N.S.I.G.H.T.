@@ -154,8 +154,13 @@ ROUNDUP_WHOLE_EXCLUDED = "roundup_whole_excluded"   # a roundup is never judged 
 ROUNDUP_ANCHORS = 3             # story_rules.ROUNDUP_ANCHORS: a post with 3+ links is about its first only (burst)
 SPECIFIC_TYPES = ("model", "product", "software", "document", "dataset")   # 0133: ent-v3's paper is read as document
 H, D = timedelta(hours=1), timedelta(days=1)
-HAPPENING_WINDOWS: Mapping[str, timedelta] = {"release": 72 * H}   # every other group: HAPPENING_WINDOW
-HAPPENING_WINDOW = 14 * D
+# E1/E3's windows (plan/research/exp-2026-11-12/e1): a deal of 2+ parties is one story to 30 days, a people move to 14
+# (2+ parties only), a legal step to 7; funding, releases and the rest keep the 72-hour window.
+HAPPENING_WINDOWS: Mapping[str, timedelta] = {"deal": 30 * D, "people": 14 * D, "legal": 7 * D}
+HAPPENING_WINDOW = 72 * H
+# The groups the source pairs: the company groups E1 measured (49/52 right with 2+ shared parties). release, research,
+# pricing and announcement keys are made but not paired until measured (the 72-hour sources keep them).
+HAPPENING_GROUPS = ("deal", "funding", "legal", "people")
 
 
 @dataclass(frozen=True)
@@ -175,6 +180,7 @@ class Policy:
     document_window: Optional[timedelta] = None  # document: two linkers at most this far apart
     happening_windows: Mapping[str, timedelta] = field(default_factory=dict)   # happening: by action group
     happening_window: Optional[timedelta] = None                               # ... any other group
+    happening_groups: Tuple[str, ...] = ()                                     # happening: the groups paired
     independence: str = OTHER_SOURCE
     min_voices: int = 2                         # stories: each of this many voices
     min_words: Optional[int] = None             # judged: each post of this many words
@@ -196,7 +202,8 @@ POLICIES: Dict[str, Policy] = {
     SAME_STORY: Policy(SAME_STORY, sources=("embedding", "centroid", "link", "entity", "burst", "document", "happening"),
                        window=72 * H, cosine=0.65, nearest=8, types=SPECIFIC_TYPES, late_after=72 * H,
                        story_window=14 * D, story_cosine=0.70, document_window=30 * D,
-                       happening_windows=HAPPENING_WINDOWS, happening_window=HAPPENING_WINDOW, min_words=20),
+                       happening_windows=HAPPENING_WINDOWS, happening_window=HAPPENING_WINDOW, happening_groups=HAPPENING_GROUPS,
+                       min_words=20),
     # decide's connect questions (F6): two News stories, a typed connection.
     CONNECTED: Policy(CONNECTED, sources=("centroid",), story_window=30 * D, story_cosine=0.60, min_voices=2),
 }
