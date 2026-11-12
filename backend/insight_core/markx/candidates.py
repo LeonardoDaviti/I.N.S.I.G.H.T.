@@ -84,15 +84,27 @@ def mentioned_since(cur: Cursor, since: datetime) -> List[str]:
 
 def run(cur: Cursor, post_ids: Iterable[str] = (), *, since: Optional[datetime] = None, model: str = MODEL) -> Counter:
     """One run: every source's candidates of `post_ids` (the posts embedded since the last run), and the entity
-    candidates of the posts whose mentions were written since `since`. A post's embedding neighbours, links and bursts
+    candidates of the posts whose mentions were written since `since` (and, while Pairing's happening source is on,
+    the happening candidates of all of these and of the posts read since). A post's embedding neighbours, links and bursts
     were found when its vector came, so its new mentions only ask the entity source (0121 Decided 7, 0116's pattern:
     the review measured 75 s, 35 s of CPU, finding every mentioned post's neighbours again for 0 new candidates)."""
     ids = set(map(str, post_ids))
     out = find(cur, ids, model=model)
+    mentioned: set = set()
     if since is not None:
         mentioned = set(mentioned_since(cur, since)) - ids
         out.update(find(cur, mentioned, model=model, sources=("entity",)))
+    if pairing.happening_on(cur):   # 0166: the happening source, off by default (a reading or mentions change a key)
+        read = set(read_since(cur, since)) if since is not None else set()
+        out.update(find(cur, ids | mentioned | read, model=model, sources=("happening",)))
     return out
+
+
+def read_since(cur: Cursor, since: datetime) -> List[str]:
+    """Posts whose read-v2 reading was written since (their call's time)."""
+    cur.execute("""SELECT DISTINCT r.post_id::text FROM mx_readings r JOIN mx_calls c ON c.id = r.call_id
+                    WHERE r.guide = 'read-v2' AND c.created_at >= %s""", (since,))
+    return [r[0] for r in cur.fetchall()]
 
 
 # ---- the story window's backfill (0144 A2) ------------------------------------------------------------
