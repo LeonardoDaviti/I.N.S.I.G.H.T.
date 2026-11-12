@@ -121,7 +121,9 @@ class Config:
 
 @dataclass(frozen=True)
 class Post:
-    """A post as the rules read it. `at`: anything that orders (a datetime; the prototype's ISO strings)."""
+    """A post as the rules read it. `at`: anything that orders (a datetime; the prototype's ISO strings). `source`: the
+    voice it counts as (tasks.Post.voice: a repost's author when a source follows that author, else its own source),
+    which is all the rules read it for (`voices`, Pairing's story pairs)."""
     id: str
     source: str
     kind: str
@@ -779,7 +781,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
         text, posts, readings = incremental.world(cur, memo, ids)
     else:
         text = tasks.load_posts(cur, ids)
-        posts = {pid: Post(pid, p.source_id, p.kind, p.at, tasks.words(p)) for pid, p in text.items()}
+        posts = {pid: Post(pid, p.voice, p.kind, p.at, tasks.words(p)) for pid, p in text.items()}   # 0168 E
         readings = tasks.readings(cur, ids)
     stories: Dict[str, List[Member]] = defaultdict(list)
     for sid, pid, role, why in rows:
@@ -1258,7 +1260,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("load")
     schemas.ensure_guides(cur)
     guides = {k.name: k.guide for k in schemas.KINDS.values()}
-    key = _json.dumps([CODE_VERSION, incremental.code_stamp(), config.as_dict(), guides], sort_keys=True, default=str)
+    key = _json.dumps([CODE_VERSION, incremental.code_stamp(), incremental.accounts_stamp(cur), config.as_dict(),
+                       guides], sort_keys=True, default=str)
     memo, warm = incremental.open_state(cur, key)
     nightly = warm and full is None and incremental.nightly_due(cur, now)
     kind = "full" if (full or not warm or nightly) else "incremental"

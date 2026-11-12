@@ -233,6 +233,66 @@ class Incremental(unittest.TestCase):
         self.assertEqual((out["run"]["kind"], out["run"]["dirty_tasks"]), ("incremental", 3))   # the answers, still new
         self.full_writes_nothing()
 
+    def test_a_repost_counts_as_its_author_only_when_a_source_follows_the_author(self):
+        """Mark IX's rule in Mark X's decisions (pairing.counted_voice): two feeds forwarding one followed channel are
+        that channel's one voice (their story is never checked); forwards of a stranger stay their feeds' two voices;
+        a feed quoting a stranger is one voice. In a full run and in the state an incremental run keeps; a source that
+        starts following an author makes the next run full."""
+        def forward(pid, name, username):
+            self.cur.execute("UPDATE posts SET metadata = jsonb_build_object('forwarded_from', jsonb_build_object("
+                             "'name', %s::text, 'username', %s::text)) WHERE id = %s", (name, username, pid))
+        wire, stranger = f"examplewire{uuid.uuid4().hex[:8]}", f"strangerwire{uuid.uuid4().hex[:8]}"
+        followed = insert_scratch_source(self.cur, platform="telegram",
+                                         settings_json=json.dumps({"display_name": "Wire"}))
+        self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s", (wire, followed))
+        a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
+        self.ix_story(a, b, c)                                         # three feeds, three voices: checked
+        d, e = self.post(3, "Beta launches Gizmo"), self.post(4, "Gizmo by Beta is here")
+        forward(d, "Example Wire", wire)
+        forward(e, "Example Wire", "@" + wire.upper())
+        self.ix_story(d, e)                                            # two feeds, one followed voice: never checked
+        f, g = self.post(5, "Gamma ships Doohickey"), self.post(6, "Doohickey by Gamma is out")
+        forward(f, "Stranger Wire", stranger)
+        forward(g, "Stranger Wire", stranger)
+        self.ix_story(f, g)                                            # a stranger's forwards: the two feeds' voices
+        x = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Ivo"}))
+        self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s",
+                         (f"https://nitter.example.net/ivo{uuid.uuid4().hex[:6]}/rss", x))
+        self.cur.execute("SELECT handle_or_url FROM sources WHERE id = %s", (x,))
+        own = self.cur.fetchone()[0].split("/")[3]
+        q1, q2 = self.post(7, "Delta Gadget notes", source=x), self.post(8, "Delta Gadget, quoted", source=x)
+        self.cur.execute("UPDATE posts SET author = %s WHERE id = ANY(%s::uuid[])", (own, [q1, q2]))
+        self.cur.execute("UPDATE post_parts SET quoted = 'a stranger: Delta Gadget is out' WHERE post_id = %s", (q2,))
+        self.read_all([a, b, c, d, e, f, g, q1, q2])
+        world = D.load(self.cur, self.now, D.Config())
+        self.assertEqual(world.posts[d].source, followed)              # the followed channel's voice
+        self.assertEqual((D.voices(world.posts, [d, e]), D.voices(world.posts, [f, g])), (1, 2))
+        quote = tasks.load_posts(self.cur, [q1, q2])
+        self.assertEqual(tasks.voices(quote.values()), 1)              # a quote of a stranger adds no voice
+        self.assertEqual(D.voices(world.posts, [a, b, c]), 3)
+        self.go()
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'check'")
+        checked = {r[0] for r in self.cur.fetchall()}
+        self.assertTrue(checked & {b, c})
+        self.assertIn(g, checked)
+        self.assertFalse(checked & {d, e})
+        self.cur.execute("SELECT voice FROM mx_inc_posts WHERE post_id = %s", (d,))
+        self.assertEqual(self.cur.fetchone()[0], followed)            # the state keeps the voice
+        self.assertEqual(self.go()["run"]["kind"], "incremental")
+        self.full_writes_nothing()
+        forward(c, "Example Wire", wire)                               # a member becomes a forward: read again
+        out = self.go()
+        self.assertEqual((out["run"]["kind"], out["run"]["texts_read"]), ("incremental", 1))
+        self.full_writes_nothing()
+        also = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "S"}))
+        self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s", (stranger, also))
+        out = self.go()                                                # the stranger is followed now: a full run
+        self.assertEqual(out["run"]["kind"], "full")
+        world = D.load(self.cur, self.now, D.Config())
+        self.assertEqual(D.voices(world.posts, [f, g]), 1)
+        self.assertEqual(self.go()["run"]["kind"], "incremental")
+        self.full_writes_nothing()
+
     def test_a_seeded_world_over_rounds_of_answers_and_changes(self):
         """A random world (seeded): 8 sources, 36 posts in 6 topics, Mark IX stories, candidates within and across
         topics. Each round answers some open questions at random (every kind and relation, confidences across the
