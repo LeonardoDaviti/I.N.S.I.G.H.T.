@@ -27,10 +27,11 @@ a project's page and its releases, tags and files under it (a prefix).
 exactly; an author's newer papers are kept only when they share a co-author or the field with the seed (the index
 merges namesakes into one author: test 1 of the spec).
 
-**Web search** (`web_search`): a pluggable provider, off until configured (INSIGHT_WEB_SEARCH = searxng | brave, with
+**Web search** (`web_search`): a pluggable provider (INSIGHT_WEB_SEARCH = searxng | brave, with
 INSIGHT_WEB_SEARCH_URL for a SearXNG instance or INSIGHT_WEB_SEARCH_KEY for Brave's API; the key is read from the
-environment only, never stored or logged). Its results are candidates only: a result is an identity after the plain
-rules or Haiku say so.
+environment only, never stored or logged). Unconfigured, the worker's (0171, `worker`: Claude Code's web search on the
+owner's device, asked as a `websearch` task); `off` turns it off. Its results are candidates only: a result is an
+identity after the plain rules or Haiku say so.
 
 **A discussion hit is exact** (`exact_hit`): the item contains the paper's id or the project's owner/name as a whole token
 (2606.13843 is not 2406.13843), links an address of the seed, or carries its exact title. No fuzzy match.
@@ -499,14 +500,29 @@ class BraveSearch:
                 for r in ((got or {}).get("web") or {}).get("results") or [] if isinstance(r, dict) and r.get("url")]
 
 
+class WorkerSearch:
+    """0171: the Mark X worker's web search (Claude Code on the owner's device, its web search tool only). Not a call
+    the server makes: research asks one `websearch` task a run (guide websearch-v1) and goes on when the worker has
+    answered it (research.web_by_worker / after_websearch). Its answers are candidates, judged like any other."""
+    name = "worker"
+    asks_worker = True
+
+
+OFF_WORDS = ("off", "none", "no", "0", "false")
+
+
 def web_search() -> Optional[Any]:
-    """The configured web search provider, or None (off) when nothing is configured."""
+    """The web search provider: SearXNG or Brave when configured (INSIGHT_WEB_SEARCH = searxng | brave with its address
+    or key); else the worker's (0171, the default: the owner's Claude has web search); None only when the setting says
+    off (INSIGHT_WEB_SEARCH=off). A named provider without its address or key falls back to the worker's."""
     provider = os.getenv(WEB_SEARCH_ENV, "").strip().lower()
+    if provider in OFF_WORDS:
+        return None
     if provider == "searxng" and os.getenv(WEB_SEARCH_URL_ENV, "").strip():
         return SearxngSearch(os.environ[WEB_SEARCH_URL_ENV].strip())
     if provider == "brave" and os.getenv(WEB_SEARCH_KEY_ENV, "").strip():
         return BraveSearch(os.environ[WEB_SEARCH_KEY_ENV].strip())
-    return None
+    return WorkerSearch()
 
 
 # The platform classes' own hosts, as `classify` writes their accounts' addresses.
@@ -526,4 +542,4 @@ def web_queries(name: str, n: int) -> List[str]:
 
 __all__ = ["BraveSearch", "OpenAlex", "SearxngSearch", "classify", "declared_links", "exact_hit", "id_terms",
            "page_summary", "paper_index", "profile_address", "same_identity", "versions", "web_queries", "web_search",
-           "work_ref"]
+           "work_ref", "WorkerSearch"]

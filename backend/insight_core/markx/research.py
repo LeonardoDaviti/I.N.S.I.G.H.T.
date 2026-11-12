@@ -19,8 +19,10 @@ is a page of its own (`/research/<id>`), kept, re-run any time (what an earlier 
      (research_web.classify). Same identity by plain rules first (research_web.same_identity: the platform's owner,
      declared both ways, the same handle, the page names the other); the rest one Haiku `identity` question each (guide
      identity-v1, at most IDENTITY_MAX a run); a name alone never. Only a confirmed page's links are followed.
-  4. `web` (only when a web search is configured, research_web.web_search; off otherwise): the maker's name on each
-     platform class INSIGHT reads; each result an address to read and judge as in 3, never an identity by its name.
+  4. `web` (research_web.web_search): with SearXNG or Brave configured, the maker's name on each platform class INSIGHT
+     reads; else (0171, the default) one `websearch` task asked of the worker (guide websearch-v1: Claude Code with its
+     web search tool only, on the owner's device), the run waiting for its answer (`web_by_worker`); `off` skips it.
+     Each result an address to read and judge as in 3, never an identity by its name. WEB_QUERIES searches a run.
   5. `channels`: every confirmed account, project and site (not a paper) a candidate of the run's scout run (0148,
      trigger 'research'): test-read through the add path into the scratch area, its health; judged by a track only
      once the run has one ("Watch this"). Follow goes through 0148's add path, its provenance kind 'research'.
@@ -58,6 +60,7 @@ from insight_core.markx import research_web as W
 log = logging.getLogger(__name__)
 
 KIND = "identity"
+WEB_KIND = "websearch"         # 0171: the web search asked of the worker (Claude Code's web search tool)
 SEED_KINDS = ("post", "link", "entity", "name", "question")
 PAGE_REQUESTS = 60
 PAPER_CALLS = 4               # a paper: its record, its references, its citing papers, its authors' newer papers
@@ -154,13 +157,14 @@ def _put_account(cur: Cursor, run: Dict[str, Any], key: str, data: Dict[str, Any
 def get_run(cur: Cursor, run_id: str) -> Optional[Dict[str, Any]]:
     cur.execute("""SELECT id::text, seed_kind, seed, entity_id::text, scout_run_id::text, track_id::text, previous_id::text,
                           status, steps, page_requests, paper_calls, search_calls, identity_asked, stats, created_at,
-                          finished_at
+                          finished_at, web_task_id::text
                      FROM mx_research_runs WHERE id = %s""", (run_id,))
     row = cur.fetchone()
     if row is None:
         return None
     cols = ("id", "seed_kind", "seed", "entity_id", "scout_run_id", "track_id", "previous_id", "status", "steps",
-            "page_requests", "paper_calls", "search_calls", "identity_asked", "stats", "created_at", "finished_at")
+            "page_requests", "paper_calls", "search_calls", "identity_asked", "stats", "created_at", "finished_at",
+            "web_task_id")
     return dict(zip(cols, row))
 
 
@@ -665,6 +669,116 @@ async def web(cur_factory: Callable, run: Dict[str, Any], http: Any, provider: A
     return {"queries": len(queries), "found": found}
 
 
+# ---- step 4, by the worker (0171): Claude Code's web search on the owner's device ---------------------------------------
+
+def web_budget(run: Dict[str, Any]) -> int:
+    """The searches the run may still ask of the web (WEB_QUERIES, within the run's searches with discussion's)."""
+    return max(0, min(WEB_QUERIES, WEB_QUERIES + DISCUSSION_SEARCHES - run["search_calls"]))
+
+
+def _known_for(cur: Cursor, run: Dict[str, Any]) -> str:
+    if run.get("entity_id"):
+        book = _book(cur)
+        if run["entity_id"] in book.ents:
+            return f"{book.label(run['entity_id'])} ({book.etype(run['entity_id']) or 'a thing'})"
+    seed = re.sub(r"\s+", " ", run["seed"]).strip()
+    return seed[:300]
+
+
+def websearch_input(cur: Cursor, run: Dict[str, Any], names: Sequence[str], budget: int) -> str:
+    """The `websearch` question: the maker's names, what it is known for (the seed), the addresses already confirmed
+    (to leave out, and to tie results to), the searches allowed. No run id: the same question is one task."""
+    confirmed = sorted(a.get("address") or a["key"] for a in _confirmed(_accounts(cur, run["id"]))
+                       if a.get("kind") != "paper")
+    lines = [f"Maker: {names[0]}"]
+    if len(names) > 1:
+        lines.append("Also named: " + ", ".join(names[1:]))
+    lines.append(f"Known for: {_known_for(cur, run)}")
+    lines.append("Confirmed as its own: " + (", ".join(confirmed[:20]) if confirmed else "(none yet)"))
+    lines.append(f"Searches allowed: at most {budget}")
+    return "\n".join(lines)
+
+
+def _web_task_answer(cur: Cursor, task_id: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """(the task's status, its first valid answer or None)."""
+    cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (task_id,))
+    row = cur.fetchone()
+    status = row[0] if row else "failed"
+    cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at LIMIT 1", (task_id,))
+    got = cur.fetchone()
+    return status, (got[0] or {}) if got else None
+
+
+def web_candidates(cur: Cursor, run: Dict[str, Any], answer: Dict[str, Any], names: Sequence[str]) -> int:
+    """The worker's candidates as addresses to read and judge (never an identity by its name): each one an identity
+    address (classify: an account, a community, a project or a site; never an article or a post), not yet in the run's
+    graph. Idempotent (a run sharing an answered task adds them once)."""
+    accounts = _accounts(cur, run["id"])
+    who = names[0] if names else "the maker"
+    found = 0
+    for c in (answer.get("candidates") or [])[:schemas.WEBSEARCH_MAX]:
+        got = W.classify((c.get("url") or "").strip())
+        if not got or got["key"] in accounts or got["kind"] not in ("account", "community", "site", "project"):
+            continue
+        data = dict(got, hop=HOPS, how=f"web search (the worker's Claude) for {who}", parent=None, same=None, rule=None,
+                    read=None, result_title=(c.get("title") or "")[:300], found_why=(c.get("why") or "")[:300])
+        _put_account(cur, run, got["key"], data)
+        accounts[got["key"]] = data
+        found += 1
+    return found
+
+
+def web_by_worker(cur: Cursor, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Step 4 asked of the worker: one `websearch` task a run (the same question one task, its answer reused); the
+    run's WEB_QUERIES searches spent when it is asked. None while the worker has not answered (the run waits; the next
+    advance after the answer goes on); the step's stats once answered (its candidates in the graph) or failed."""
+    names = maker_names(cur, run)
+    if not run.get("web_task_id"):
+        if not names:
+            return {"by": "worker", "queries": 0, "found": 0, "why": "no name to search for"}
+        budget = web_budget(run)
+        if budget <= 0:
+            return {"by": "worker", "queries": 0, "found": 0, "why": "the run's searches are spent"}
+        schemas.ensure_guides(cur)
+        task_id, new = repo.add_task(cur, kind=WEB_KIND, guide=schemas.KINDS[WEB_KIND].guide, subject_kind="research_run",
+                                     input=websearch_input(cur, run, names, budget), a=run["id"], priority=-1)
+        cur.execute("UPDATE mx_research_runs SET web_task_id = %s WHERE id = %s", (task_id, run["id"]))
+        run["web_task_id"] = str(task_id)
+        if new:
+            _spend(cur, run, "search_calls", budget)
+    status, answer = _web_task_answer(cur, run["web_task_id"])
+    if answer is not None:
+        queries = [q for q in answer.get("queries") or [] if isinstance(q, str)]
+        return {"by": "worker", "queries": len(queries), "asked": queries[:WEB_QUERIES],
+                "found": web_candidates(cur, run, answer, names)}
+    if status in ("open", "leased"):
+        return None
+    find(cur, run, "unread", "web:worker", {"why": f"the worker's web search gave no valid answer ({status})"})
+    return {"by": "worker", "queries": 0, "found": 0, "failed": status}
+
+
+def after_websearch(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> None:
+    """tasks.record's part for a `websearch` answer: each run waiting on it may go on (its next advance adds the
+    candidates and reads them)."""
+    cur.execute("UPDATE mx_research_runs SET status = 'running' WHERE web_task_id = %s AND status = 'waiting'",
+                (task["id"],))
+
+
+def web_waiting(cur: Cursor, run: Dict[str, Any]) -> bool:
+    """Whether the run waits for the worker's web search (asked, its step not done, the task still open)."""
+    if not run.get("web_task_id") or "web" in (run.get("steps") or {}):
+        return False
+    cur.execute("SELECT status IN ('open', 'leased') FROM mx_tasks WHERE id = %s", (run["web_task_id"],))
+    return bool((cur.fetchone() or (False,))[0])
+
+
+def web_view(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
+    """0171: which web search the run used (or uses), whether it waits for the worker, what was searched."""
+    stats = (run.get("stats") or {}).get("web") or {}
+    by = stats.get("by") or ("worker" if run.get("web_task_id") else getattr(W.web_search(), "name", None))
+    return {"by": by, "waiting": web_waiting(cur, run), "asked": stats.get("asked") or []}
+
+
 # ---- step 6: papers ---------------------------------------------------------------------------------------------------
 
 def paper_refs(run: Dict[str, Any], accounts: Dict[str, Dict[str, Any]]) -> List[str]:
@@ -843,7 +957,7 @@ def claim(cur: Cursor, run_id: str, now: datetime) -> bool:
 def settle(cur: Cursor, run: Dict[str, Any], now: datetime) -> str:
     cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_research_pairs p JOIN mx_tasks t ON t.id = p.task_id
                                    WHERE p.run_id = %s AND t.status IN ('open', 'leased'))""", (run["id"],))
-    pairs_open = cur.fetchone()[0]
+    pairs_open = cur.fetchone()[0] or web_waiting(cur, run)      # 0171: the worker's web search, asked
     cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (run["scout_run_id"],))
     scout_status = (cur.fetchone() or ("done",))[0]
     accounts = _accounts(cur, run["id"])
@@ -901,13 +1015,21 @@ async def advance(db_url: str, run_id: str, *, tools: Optional[Tools] = None,
                     _step_done(cur, run, "same_post", **got)
             out["maker"] = await maker(tx, run, tools.http)
             if "web" not in steps:
-                if tools.search is not None:
+                if getattr(tools.search, "asks_worker", False):       # 0171: the worker's web search, asked
+                    with tx() as cur:
+                        got = web_by_worker(cur, run)
+                    if got is not None and got.get("found"):
+                        out["maker"]["web"] = await maker(tx, run, tools.http)
+                elif tools.search is not None:
                     got = await web(tx, run, tools.http, tools.search)
                     out["maker"]["web"] = await maker(tx, run, tools.http)
                 else:
                     got = {"off": "no web search is configured"}
-                with tx() as cur:
-                    _step_done(cur, run, "web", **got)
+                if got is not None:
+                    with tx() as cur:
+                        _step_done(cur, run, "web", **got)
+                else:
+                    out["web"] = "waiting for the worker's web search"
             if "papers" not in steps:
                 got = await papers(tx, run, tools.http, tools.index) if tools.index is not None else {"off": "no paper index"}
                 with tx() as cur:
@@ -1006,6 +1128,7 @@ def view(cur: Cursor, run_id: str) -> Optional[Dict[str, Any]]:
                 "spent": {"page_requests": run["page_requests"], "paper_calls": run["paper_calls"],
                           "search_calls": run["search_calls"], "identity_asked": run["identity_asked"],
                           "identity_open": pairs_open, "identity_pairs": pairs},
+                "web_search": web_view(cur, run),
                 "budget": {"page_requests": PAGE_REQUESTS, "paper_calls": PAPER_CALLS, "identity": IDENTITY_MAX,
                            "test_reads": scout.MAX_READS, "judgements": scout.MAX_JUDGEMENTS,
                            "web_queries": WEB_QUERIES, "discussion_searches": DISCUSSION_SEARCHES}},
@@ -1089,4 +1212,4 @@ def rerun(cur: Cursor, run_id: str) -> Dict[str, Any]:
     return start(cur, run["seed"], kind=run["seed_kind"], previous_id=run_id)
 
 
-__all__ = ["advance", "after_identity", "follow", "held", "rerun", "seed_kind", "start", "tick", "view", "watch"]
+__all__ = ["advance", "after_identity", "after_websearch", "follow", "held", "rerun", "seed_kind", "start", "tick", "view", "watch"]
