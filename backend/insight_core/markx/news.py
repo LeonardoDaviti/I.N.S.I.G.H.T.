@@ -436,6 +436,12 @@ def _checks(cur: Any, post_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def rank_key(row: Dict[str, Any], now: datetime) -> Tuple[Any, ...]:
+    """News' own order (the page's): the last 48 hours first, then the highest score, the newest, the id."""
+    return (row["first_at"] < now - timedelta(hours=48), -float(row["score"]), -row["first_at"].timestamp(),
+            str(row["id"]))
+
+
 def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = None) -> Dict[str, Any]:
     """The Mark X News beside Mark IX's: the newest written run's rows (only the differences, by default), each with its
     tag, headline, members (why each is there and what Mark IX did with it) and the Mark IX posts it left out; and the
@@ -445,7 +451,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     now = now or datetime.now(timezone.utc)
     run = last_written(cur)
     if run is None:
-        return {"run": None, "items": [], "gone": [], "counts": {}, "ix_rows": 0}
+        return {"run": None, "items": [], "gone": [], "counts": {}, "ix_rows": 0, "sections": None}
     since = now - timedelta(days=NEWS_DAYS)
     rows = [r for r in repo.news_rows(cur, run) if r["first_at"] >= since]
     ix_of, ix_rows = _ix_news(cur, since)
@@ -499,7 +505,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                       "removed": removed,
                       "surging": list({s["id"]: s for p in mine for s in surging.get(p, [])}.values()),
                       "ix": [{"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {})} for nid in ix_hit]})
-    items.sort(key=lambda i: (i["first_at"] < now - timedelta(hours=48), -i["score"], -i["first_at"].timestamp(), i["id"]))
+    items.sort(key=lambda i: rank_key(i, now))
     from insight_core.markx import folds   # 0127: each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
     from insight_core.markx import built   # 0128: how each row's story is built, its original first, published order
@@ -513,9 +519,11 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                                for p in sorted(ix_rows[nid])]})
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
+    from insight_core.markx import news_sections   # 0174: the rows in Haiku's titled sections
+    untitled = sum(1 for i in items if i["headline"]["from"] != "haiku")
     return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
-            "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone)}, "items": items, "gone": gone,
-            "folds": fold_count}
+            "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
+            "items": items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, items)}
 
 
 def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:

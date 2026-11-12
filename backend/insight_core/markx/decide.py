@@ -1324,6 +1324,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("news")
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now, ask=ask,
                                    headed={ids[k] for k in news_keys})
+    from insight_core.markx import news_sections   # 0174: a row still titled by its lead has its headline asked first
+    counts["news_titles"] = guarded("news_titles", lambda: news_sections.title_rows(cur, now=now))
     if check is not None:
         diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}

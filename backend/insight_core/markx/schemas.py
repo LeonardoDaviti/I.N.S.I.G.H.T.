@@ -383,6 +383,19 @@ SOURCE_JUDGE_SCHEMA = {
         "fits": {"type": "boolean"},
         "original": {"enum": SOURCE_ORIGINAL}},
 }
+# 0174 (news sections): Mark X News divided into 3-8 sections Haiku titles (news-sections-v1), every row (keyed r1..rN in
+# the question) in exactly one. Sphere-agnostic: no fixed list of sections in code, the titles are the answer's.
+NEWS_SECTIONS = (3, 8)
+NEWS_SECTION_TITLE_CHARS, NEWS_SECTION_TITLE_WORDS = 40, 4
+NEWS_SECTIONS_SCHEMA = {
+    "type": "object",
+    "required": ["sections"],
+    "properties": {"sections": {"type": "array", "minItems": NEWS_SECTIONS[0], "maxItems": NEWS_SECTIONS[1], "items": {
+        "type": "object", "required": ["title", "row_ids"],
+        "properties": {"title": {"type": "string", "minLength": 1, "maxLength": NEWS_SECTION_TITLE_CHARS},
+                       "row_ids": {"type": "array", "minItems": 1,
+                                   "items": {"type": "string", "pattern": "^r[0-9]{1,4}$"}}}}}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -428,6 +441,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
     Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
     Kind("source_judge", "source-judge-v1", "source_candidate", SOURCE_JUDGE_SCHEMA),   # 0173: a candidate worth it?
+    Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
 )}
 
 
