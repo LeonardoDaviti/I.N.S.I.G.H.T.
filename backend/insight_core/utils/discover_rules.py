@@ -375,6 +375,27 @@ def _site_word(site: str) -> str:
     return site.split(".", 1)[0]
 
 
+# Top-level domains anyone registers under: never an owner's brand (v10.15.2).
+GENERIC_SUFFIXES = frozenset({"info", "name", "site", "online", "blog", "news", "tech", "club", "shop", "store", "live",
+                              "life", "world", "today", "page", "work", "space", "website", "media", "press", "cloud",
+                              "email", "link", "codes", "tools", "agency", "studio", "design", "network", "digital"})
+
+
+def _brand_suffix(publication: str) -> Set[str]:
+    """A brand's own top-level domain as a name of its site (v10.15.2: a company's blog at blog.<brand>, whose
+    registrable word is "blog", named nothing of its owner, so its cloud.<brand>.com was no longer its other channel):
+    when the site's word names no one (NOT_NAME), its top-level label if it is a word of NAME_MIN+ letters that isn't a
+    generic suffix."""
+    if not publication:
+        return set()
+    site = site_of(publication)
+    labels = site.split(".")
+    if len(labels) != 2 or labels[0] not in NOT_NAME:
+        return set()
+    suffix = labels[1].lower()
+    return {suffix} if len(suffix) >= NAME_MIN and suffix.isalpha() and suffix not in GENERIC_SUFFIXES else set()
+
+
 def own_names(name: str, *, account: str = "", publication: str = "",
               shared_sites: Iterable[str] = frozenset()) -> Set[str]:
     """A source's names as a key may hold them (above). `account`: its platform account (x.com/<name>);
@@ -401,6 +422,7 @@ def channel_names(name: str, *, account: str = "", publication: str = "",
     <y>"): (its places' names: its account's and its site's word, its own addresses; its whole name: the display
     name's words run together; the words of its display name, own_names', which name only an account)."""
     places = own_names("", account=account, publication=publication, shared_sites=shared_sites)
+    places |= _brand_suffix(publication)
     whole: Set[str] = set()
     if name and not _NAME_ADDRESS.match(name):
         words = [w for w in _NAME_WORDS.split(name.lower()) if w and w not in NOT_NAME]

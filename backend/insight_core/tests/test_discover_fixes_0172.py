@@ -56,6 +56,15 @@ class OtherChannelTests(unittest.TestCase):
         self.assertTrue(self.credited("x.com/acmelabs_ai", "Acme Labs", publication="news.acmelabs.example"))
         self.assertTrue(self.credited("acmelabs.example", "Acme Labs", account="x.com/acmelabs"), "its account's name")
 
+    def test_a_brands_own_top_level_domain_names_it(self):
+        """v10.15.2: a company's blog at blog.<brand> named nothing of its owner ("blog"), so cloud.<brand>.com left its
+        other channels for the suggestions, with the sources named by their feed address that link it."""
+        self.assertTrue(self.credited("cloud.acmebrand.example", "News from Acmebrand", publication="blog.acmebrand"))
+        self.assertFalse(self.credited("cloud.other.example", "News from Acmebrand", publication="blog.acmebrand"))
+        self.assertFalse(self.credited("news.example", "Someone", publication="blog.news"), "a generic suffix names no one")
+        self.assertFalse(self.credited("cloud.acmebrand.example", "Acme Notes", publication="acmenotes.example"),
+                         "a site whose word names someone: as before")
+
     def test_an_account_on_a_read_platform_by_a_word_of_the_name(self):
         self.assertTrue(self.credited("x.com/janer", "Jane Roe", publication="janeroe.example"),
                         "a handle the owner chose, starting with a word of the name")
