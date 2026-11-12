@@ -27,6 +27,8 @@ DISCOVER_ARTICLE_SHARE = 0.4   # the prototype's, not measured
 # publishers by year or section (nytimes.com/2026) and hid blogs whose posts sit at the root.
 DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube")))
                                | {"github.com", "medium.com"})
+# Of those, the ones a source kind reads an account of (services/discover_reads.kind_source), issue 0172.
+KIND_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube"))))
 # First path segments of a platform that name a kind of page, not an account.
 NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "search", "hashtag", "intent",
                          "share", "home", "explore", "wiki", "posts", "in"})
@@ -285,8 +287,40 @@ def paper_address(url: str) -> bool:
             or (len(segs) >= 2 and segs[0] in PAPER_PATH))
 
 
+# Issue 0172 b3, what isn't a channel by its pages' shape (classes, never hosts):
+# - an interactive page told by its query, not its path: a path of at most one segment whose query carries the
+#   page (/forum?id=<x>, /?q=<x>, /compare?model=a): a forum's paper, a tool's state, never a publication's article;
+# - a listing of models or packages: pages under a first segment naming a catalogue (LISTING_PATH: /models/<x>,
+#   /library/<x>): a catalogue's entry, not an article.
+LISTING_PATH = frozenset({"models", "model", "library", "leaderboard", "leaderboards", "providers", "rankings",
+                          "compare", "playground", "spaces", "datasets"})
+
+
+# A publication's own section, whose article a query may name (a blog drawn by its script, /blog?id=<post>): its
+# site is a channel that can't be read as pages, never an interactive page (its account may be followed, b5).
+PUBLICATION_PATH = frozenset({"blog", "blogs", "news", "posts", "post", "articles", "article", "research", "stories",
+                              "story", "updates", "press", "newsroom", "insights", "journal", "notes"})
+
+
+def query_address(url: str) -> bool:
+    """An interactive page told by its query (above): one path segment at most (not a publication's section), a
+    query that names the page."""
+    rest = bare(url).partition("/")[2]
+    path, _, query = rest.partition("?")
+    segs = [s.lower() for s in path.split("#", 1)[0].split("/") if s]
+    return (bool(query.strip("&")) and len(segs) <= 1 and "=" in query
+            and not (segs and segs[0] in PUBLICATION_PATH))
+
+
+def listing_address(url: str) -> bool:
+    """A catalogue's entry (above): its first segment (a language aside) names a listing, an entry under it."""
+    segs = [s for s in path_segments(url) if not LANGUAGE.match(s)]
+    return len(segs) >= 2 and segs[0] in LISTING_PATH
+
+
 PLACE_TESTS = (("reference", reference_address), ("archive", archive_address), ("app", app_address),
-               ("document", document_address), ("paper", paper_address))
+               ("document", document_address), ("paper", paper_address), ("app", query_address),
+               ("listing", listing_address))
 # What Discover does with each (issue 0109): references and documents are a quiet line of references; an
 # archive, an app's pages and a paper source are no suggestion at all (papers stay in stories and Classics).
 REFERENCE_KINDS = ("reference", "document")
@@ -294,13 +328,14 @@ REFERENCE_KINDS = ("reference", "document")
 
 def place_kind(key: str, urls: Iterable[str]) -> Optional[str]:
     """What a suggestion is when it is no source: "reference" (its host so named, or PLACE_SHARE of its
-    shown pages reference_address), "archive", "app", "document" or "paper" (PLACE_SHARE of them of that
-    shape, in that order), else None. A platform's owner (a key with a path) is only a reference or a
-    paper source: the other shapes are read of a whole host."""
+    shown pages reference_address), "archive", "app" (a share link or a page told by its query), "document",
+    "paper" or "listing" (PLACE_SHARE of them of that shape, in that order), else None. A platform's owner (a
+    key with a path) is only a reference, a paper source or a listing: the other shapes are read of a whole host."""
     urls = list(urls)
     if REFERENCE_HOST.match(key):
         return "reference"
-    tests = PLACE_TESTS if "/" not in key else tuple(t for t in PLACE_TESTS if t[0] in ("reference", "document", "paper"))
+    tests = PLACE_TESTS if "/" not in key else tuple(t for t in PLACE_TESTS
+                                                     if t[0] in ("reference", "document", "paper", "listing"))
     for kind, test in tests:
         if urls and sum(1 for u in urls if test(u)) >= PLACE_SHARE * len(urls):
             return kind
@@ -356,6 +391,39 @@ def own_names(name: str, *, account: str = "", publication: str = "",
         if len(words) > 1:
             names.add("".join(w for w in words if w not in NOT_NAME))
     return {n for n in names if len(n) >= NAME_MIN and n not in NOT_NAME and n.isalpha()}
+
+
+def channel_names(name: str, *, account: str = "", publication: str = "",
+                  shared_sites: Iterable[str] = frozenset()) -> Tuple[Set[str], Set[str], Set[str]]:
+    """A followed source's names for crediting it a suggestion as its other channel (issue 0172 b2: a word
+    shared by name credited a newspaper's science section to a source named "<x> Science Digest", a
+    country's portal to a newsletter named "<country> Talk", a cloud company's blog to a source named "<x> Cloud
+    <y>"): (its places' names: its account's and its site's word, its own addresses; its whole name: the display
+    name's words run together; the words of its display name, own_names', which name only an account)."""
+    places = own_names("", account=account, publication=publication, shared_sites=shared_sites)
+    whole: Set[str] = set()
+    if name and not _NAME_ADDRESS.match(name):
+        words = [w for w in _NAME_WORDS.split(name.lower()) if w and w not in NOT_NAME]
+        if words:
+            whole.add("".join(words))
+    whole = {n for n in whole if len(n) >= NAME_MIN and n.isalnum() and not n.isdigit()}
+    return places, whole, own_names(name, shared_sites=shared_sites) - places - whole
+
+
+def other_channel(key: str, places: Iterable[str], whole: Iterable[str], words: Iterable[str] = ()) -> bool:
+    """Whether a suggestion is a followed source's other channel (channel_names): a word of its key is one of the
+    source's places' names, starts or ends with one (its own address on another host or platform), or is its
+    whole name; an account on a platform a source kind reads (KIND_PLATFORMS: an account's handle is chosen
+    by its owner) also by a word of its display name. A site's or a section's word shared with a word of the
+    name is no relation: a site names its publisher, not the source's."""
+    held = owner_words(key)
+    places = [n for n in places if n]
+    if (any(w == n or w.startswith(n) or w.endswith(n) for w in held for n in places)
+            or bool(held & set(whole))):
+        return True
+    if "/" not in key or site_of(key.split("/", 1)[0]) not in KIND_PLATFORMS:
+        return False
+    return any(w == n or w.startswith(n) or w.endswith(n) for w in held for n in words if n)
 
 
 def owner_words(key: str) -> Set[str]:
@@ -552,12 +620,42 @@ def section(s: Mapping) -> int:
     return 0 if label in FOLLOWABLE else 1 if label in UNFOLLOWABLE else 2
 
 
+def not_channel(key: str, label: Optional[str]) -> bool:
+    """Issue 0172 b3: an owner on a platform (a key with a path) that is no channel to follow: a model hub's owner
+    (its pages are models, never posts), or one on a platform no source kind reads (KIND_PLATFORMS: X, Telegram,
+    Reddit, YouTube) whose follow test found nothing to follow (a code host's organization without a feed, a
+    network without a reader). A site, and an account a kind reads, are left to the follow test's sections."""
+    from insight_core.utils.entity_originals import MODEL_HUBS   # entity_originals reads this module
+    if "/" not in key:
+        return False
+    site = site_of(key.split("/", 1)[0])
+    if site in MODEL_HUBS:
+        return True
+    return label in UNFOLLOWABLE and site not in KIND_PLATFORMS
+
+
+def follow_url(url: str, platforms: Platforms = {}) -> Optional[str]:
+    """What a page's "Follow" follows (issue 0172 c3: Pages followed the bare domain, a platform's home page for a
+    tweet): on a platform its account (a tweet's author), None for a page naming none; elsewhere its section (its
+    first path segment, discover_place's), the site's home when the page sits at its root or under a date."""
+    key, _, platform = discover_address(url, platforms)
+    if platform:
+        return "https://" + key if key else None
+    host = bare(url).partition("/")[0].lower()
+    if not host:
+        return None
+    segs = path_segments(url)
+    first = segs[0] if len(segs) >= 2 and not NUMBERISH.match(segs[0]) else ""
+    return f"https://{host}/{first + '/' if first else ''}"
+
+
 def order(found: Iterable[Mapping]) -> List[Mapping]:
     """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
     untested suggestion): those tested followable first, then the section of those that can't be followed
-    as a feed, then the untested; each by score, ties by key. Each of the section says so
+    as a feed, then the untested; each by score, ties by key, but one none of your sources links (Mark X's
+    originals rows, issue 0172 b4) after every linked one of its section. Each of the section says so
     (`section: "unfollowable"`)."""
-    out = sorted(found, key=lambda s: (section(s), -s["score"], s["key"]))
+    out = sorted(found, key=lambda s: (section(s), not s.get("voices"), -s["score"], s["key"]))
     for s in out:
         if section(s) == 1:
             s["section"] = "unfollowable"   # type: ignore[index]
@@ -800,5 +898,5 @@ def address_stamp(platforms: Platforms) -> str:
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
            "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
-           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
+           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
            "Origin", "Origins", "origins", "is_roundup", "address_rules", "ADDRESS_RULES"]

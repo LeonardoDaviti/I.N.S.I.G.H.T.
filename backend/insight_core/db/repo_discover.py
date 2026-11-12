@@ -63,6 +63,7 @@ _SEGMENTS = ("array_remove(string_to_array(lower(regexp_replace(regexp_replace({
              "'[?#].*$', '') COLLATE \"und-x-icu\"), '/'), '')")
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
 LIST_KEY = "discover_list"     # Discover's last list, by what it was made from (system_settings, issue 0080 cold open)
+SERVED_KEY = "discover_served"   # the answer Discover's page serves, built in the background (issue 0172 c1)
 # When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
 DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read (system_settings, issue 0080)
@@ -416,6 +417,30 @@ class DiscoverRepository:
         SystemSettingsRepository.upsert(cur, LIST_KEY, {"made_from": made_from, "list": found})
 
     @staticmethod
+    def any_list(cur: Cursor) -> Optional[Dict[str, Any]]:
+        """The list kept last (LIST_KEY), whatever it was made from: what Discover serves before its first build."""
+        cur.execute("SELECT value->'list' FROM system_settings WHERE key = %s", (LIST_KEY,))
+        row = cur.fetchone()
+        return row[0] if row and isinstance(row[0], dict) and "suggestions" in row[0] else None
+
+    @staticmethod
+    def served_stamp(cur: Cursor) -> Optional[Tuple[str, str]]:
+        """(made_from, built_at) of the answer Discover serves (issue 0172 c1), without the answer, or None."""
+        cur.execute("SELECT value->>'made_from', value->>'built_at' FROM system_settings WHERE key = %s", (SERVED_KEY,))
+        row = cur.fetchone()
+        return (row[0], row[1]) if row and row[1] else None
+
+    @staticmethod
+    def served(cur: Cursor) -> Optional[Dict[str, Any]]:
+        """The answer Discover serves: {made_from, built_at, answer}, or None before the first build."""
+        row = SystemSettingsRepository.get(cur, SERVED_KEY)
+        return row[0] if row and isinstance(row[0], dict) and row[0].get("answer") else None
+
+    @staticmethod
+    def keep_served(cur: Cursor, made_from: str, built_at: str, answer: Dict[str, Any]) -> None:
+        SystemSettingsRepository.upsert(cur, SERVED_KEY, {"made_from": made_from, "built_at": built_at, "answer": answer})
+
+    @staticmethod
     def archive_states(cur: Cursor, missing: Dict[str, Sequence[str]]) -> Dict[str, Dict[str, Any]]:
         """Each source's archive as it is stored (issue 0080: an archive row follows it), for the sources
         missing these pages: {state: running | paused | finished | None, found: how many of the pages it
@@ -577,7 +602,7 @@ def entity_pages(cur: Cursor, db_url: str, now: datetime, *, hidden: Set[str], n
     name; `skip`: the addresses already a row. Collected ones are stored, so they leave by themselves."""
     from insight_core.services.originals_service import OriginalsService, site_reads
     from insight_core.utils.addresses import is_tweet, site_of
-    from insight_core.utils.discover_rules import page_key_of
+    from insight_core.utils.discover_rules import follow_url, page_key_of
     from insight_core.utils.originals_rules import SiteReads, strip_access_tokens, tokened
     wanted, _ = OriginalsService(db_url).plan_entities(cur, now, listing=True)
     walls = site_reads(cur)
@@ -589,7 +614,7 @@ def entity_pages(cur: Cursor, db_url: str, now: datetime, *, hidden: Set[str], n
         skip.add(url)
         site = site_of(host_of(url))
         out.append({"url": url, "title": None, "site": site, "hide_key": page_key_of(url), "video": False,
-                    "tweet": is_tweet(url), "first_linked_at": w["first_at"].isoformat(), "voices": w["voices"],
+                    "tweet": is_tweet(url), "follow_url": follow_url(url), "first_linked_at": w["first_at"].isoformat(), "voices": w["voices"],
                     "readable": not (tokened(w["url"]) or walls.get(site, SiteReads()).walled), "stories": [],
                     "entity": {"id": w["entity_id"], "name": w["name"]},
                     "voice_names": sorted({names(s) for s in w["sources"] if names(s)})[:6]})

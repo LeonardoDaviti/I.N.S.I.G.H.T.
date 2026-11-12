@@ -767,13 +767,21 @@ class StoriesRepository:
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:
         """What Discover is computed from, in one string: when a story run last changed what it counts
-        (StoriesService._settle's discover_at: links, stories, Classics), the sources (added, removed,
-        renamed), the hidden suggestions and what Discover read of the web (issue 0080). Same string, same list."""
+        (StoriesService._settle's discover_at: new posts, links, stories, Classics), the sources by what
+        Discover reads of them (their address, kind, name, enabled state and confirmed voice: never their
+        updated_at, which every fetch's settings write moves, issue 0172 c1), the hidden suggestions and
+        what Discover read of the web (issue 0080). Same string, same list."""
         cur.execute(
             """
             SELECT concat_ws('|', (SELECT COALESCE(value->>'discover_at', value->>'computed_at') FROM system_settings
                                    WHERE key = 'stories'),
-                             (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM sources),
+                             (SELECT count(*) || ':' || md5(COALESCE(string_agg(
+                                         concat_ws(' ', id::text, platform, handle_or_url,
+                                                   NULLIF(btrim(settings->>'display_name'), ''), enabled::text,
+                                                   voice_id::text), E'\\n' ORDER BY id), ''))
+                              FROM sources),
+                             (SELECT count(*) || ':' || COALESCE(max(COALESCE(confirmed_at, created_at))::text, '')
+                                     || ':' || count(removed_at) FROM voices),
                              (SELECT count(*) || ':' || COALESCE(max(hidden_at)::text, '') FROM discover_hidden),
                              (SELECT updated_at::text FROM system_settings WHERE key = 'discover_reads'))
             """

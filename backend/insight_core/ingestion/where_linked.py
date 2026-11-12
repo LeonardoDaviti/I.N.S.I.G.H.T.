@@ -324,6 +324,8 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         watch = offered[0] if offered else None
     return {"status": finding.status, "feeds": feeds, "homepage": finding.status == "none" and home,
             "pages": pages, "linked": len(articles), "start": start,
+            # Where the address itself landed (issue 0172 b1: an old domain redirecting to a site you follow).
+            **({"landed": finding.landed} if finding.landed else {}),
             # A feed was found whose items INSIGHT cannot read (issue 0135): never offered.
             **({"refused": finding.refused} if finding.refused else {}),
             **({"reason": finding.reason} if finding.reason else {}),

@@ -38,7 +38,7 @@ from insight_core.ingestion.kinds import page_watch, parsing
 from insight_core.ingestion.kinds.nitter_rss import NITTER_BASE_URL
 from insight_core.ingestion.kinds.parsing import TELEGRAM_BASE_URL
 from insight_core.utils.addresses import ACCOUNT_NAMESPACES, PLATFORM_SITES, host_of, is_tweet, publication_of, site_of
-from insight_core.utils.discover_rules import CHECK_DAYS, FIRST_PAGE
+from insight_core.utils.discover_rules import CHECK_DAYS, FIRST_PAGE, FOLLOWABLE, UNFOLLOWABLE
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,13 @@ BLOCKED = (401, 403)
 LABELS = ("feed", "page", "headlines", "blocked", "other_feed")
 # The rules a follow test is made by (issue 0109: platform accounts through their kind): a stored test
 # by other rules is due again.
-FOLLOW_TEST = 3   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages
+FOLLOW_TEST = 4   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages;
+#                   4 (issue 0172): where it landed (moved_to), its own pages' sections, its declared account, transient
 KIND_POSTS = 3           # the posts a platform account's kind is asked for
+# Issue 0172 b6: a test that failed for a passing reason (a bridge's error, a timeout, a 5xx, a 429) is asked again
+# after this, not after CHECK_DAYS (a bridge's hiccup had labelled an X account "headlines" for 30 days).
+TRANSIENT_HOURS = 6
+SECTIONS_TRIED = 2       # b7: the sections of a site's own linked pages its test tries when its home page gives none
 _ACCOUNT = re.compile(r"^[\w.@-]+$")
 _ADDRESS = re.compile(r"^\s*(?:https?://\S+|[\w-]+(?:\.[\w-]+)+/\S*)\s*$")
 
@@ -69,6 +74,7 @@ class Polite:
         self.limiter = limiter
         self.answered = 0
         self.refused: List[Optional[int]] = []
+        self.troubled = 0   # refusals for a passing reason: a 5xx, a timeout, a 429 (issue 0172 b6)
 
     async def _call(self, name: str, url: str, *args: Any, **kwargs: Any) -> Any:
         if self.limiter is None:
@@ -81,6 +87,8 @@ class Polite:
             got = await getattr(self.http, name)(url, *args, **kwargs)
         except HttpError as exc:
             self.refused.append(exc.status)
+            if exc.their_trouble or exc.limiting:
+                self.troubled += 1
             raise
         self.answered += 1
         return got
@@ -168,32 +176,124 @@ def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
     return source if kind.name not in ("generic_rss", "page_watch") else None
 
 
-async def kind_test(registry: Any, source: Dict[str, str]) -> str:
+async def kind_read(registry: Any, source: Dict[str, str]) -> Dict[str, Any]:
     """A platform account's follow test (issue 0109): its kind's latest posts, as a fetch run reads them.
-    "feed" when there are some, "blocked" when the read was refused with 401 or 403, else "headlines"."""
+    {label: "feed" when there are some, "blocked" when the read was refused with 401 or 403, else "headlines";
+    transient: true when it failed for a passing reason (issue 0172 b6: the bridge's error, a timeout, a 5xx)}."""
     try:
         posts = await registry.resolve(source).fetch_latest(source, KIND_POSTS)
     except HttpError as exc:
-        return "blocked" if exc.status in BLOCKED else "headlines"
-    except Exception as exc:  # noqa: BLE001 - a bridge that can't be asked: nothing to follow by it now
+        if exc.status in BLOCKED:
+            return {"label": "blocked"}
+        return {"label": "headlines", **({"transient": True} if exc.their_trouble or exc.limiting else {})}
+    except Exception as exc:  # noqa: BLE001 - a bridge that can't be asked: nothing to follow by it now, ask again soon
         logger.info("Discover: the follow test of %s failed (%s)", source["handle_or_url"], type(exc).__name__)
-        return "headlines"
-    return "feed" if posts else "headlines"
+        return {"label": "headlines", "transient": True}
+    return {"label": "feed" if posts else "headlines"}
+
+
+async def kind_test(registry: Any, source: Dict[str, str]) -> str:
+    return (await kind_read(registry, source))["label"]
+
+
+_HREF = re.compile(r"""href\s*=\s*["']([^"'#\s]+)["']""", re.I)
+
+
+def declared_accounts(page: str, base: str, registry: Any) -> List[str]:
+    """The platform accounts a site's page links to (its "follow us" links, issue 0172 b5), that a source kind
+    reads (kind_source), the most linked first: x.com/<name>, t.me/<name>, youtube.com/@<name>, reddit.com/r/<name>.
+    A post (a tweet's status), a share or intent page names no account."""
+    from collections import Counter
+    from urllib.parse import urljoin
+
+    from insight_core.utils.discover_rules import discover_address
+    found: Counter = Counter()
+    for href in _HREF.findall(page or ""):
+        url = urljoin(base, html.unescape(href))
+        if "://" not in url:
+            continue
+        key, _, platform = discover_address(url)
+        rest = url.split("://", 1)[1].partition("/")[2].split("?", 1)[0].strip("/")
+        if not (platform and key) or rest.count("/") > (1 if key.count("/") > 1 else 0):
+            continue   # an account's own page only, never one of its posts
+        if kind_source(key, registry) is not None:
+            found[key] += 1
+    return [key for key, _ in found.most_common()]
+
+
+def _sections(key: str, linked: Sequence[str]) -> List[str]:
+    """The sections a site's own linked pages sit in (their first path segment, not a date or a number), the most
+    pages first, at most SECTIONS_TRIED, as addresses (issue 0172 b7)."""
+    from collections import Counter
+
+    from insight_core.utils.post_links import NUMBERISH
+    counts: Counter = Counter()
+    hosts: Dict[str, str] = {}
+    for url in own_pages(key, linked):
+        host, _, path = url.split("://", 1)[-1].partition("/")
+        segs = [s for s in path.split("?", 1)[0].split("/") if s]
+        if len(segs) >= 2 and not NUMBERISH.match(segs[0]):
+            counts[segs[0]] += 1
+            hosts.setdefault(segs[0], host)
+    return [f"https://{hosts[seg]}/{seg}/" for seg, _ in counts.most_common(SECTIONS_TRIED)]
+
+
+async def follow_read(http: Any, registry: Any, url: str, linked: List[str],
+                      limiter: Optional[HostLimiter] = None) -> Dict[str, Any]:
+    """The follow test (module doc), as stored: {label, moved_to? (the site it landed on, when another: issue 0172
+    b1), url? (the section of its own pages that can be followed when its home page gives nothing: b7), account?
+    ({url, label}: the account it declares, a kind reads and that answers, when it can't be followed itself: b5),
+    transient? (failed for a passing reason: asked again within TRANSIENT_HOURS, b6)}."""
+    polite = Polite(http)
+    key = url.split("://", 1)[-1]
+    source = kind_source(key, registry)
+    own = own_pages(key, linked)
+    try:
+        async with (limiter or HostLimiter()).slot(slot(source["handle_or_url"] if source else url)):
+            if source is not None:
+                return await kind_read(registry, source)
+            found = await where_linked.follow(polite, registry, url, own)
+            out: Dict[str, Any] = {"label": label(found, polite)}
+            landed = publication_of(host_of(found.get("landed") or "")) or ""
+            if landed and site_of(landed) != site_of(publication_of(host_of(url))):
+                out["moved_to"] = landed
+                return out
+            if out["label"] == "headlines" and not polite.troubled:
+                for section in _sections(key, linked):
+                    tried = Polite(http)
+                    again = label(await where_linked.follow(tried, registry, section, own), tried)
+                    if again in FOLLOWABLE:
+                        out = {"label": again, "url": section}
+                        break
+            if out["label"] in UNFOLLOWABLE:
+                account = await _declared(http, registry, found.get("landed") or (url if "/" in key else url + "/"))
+                if account:
+                    out["account"] = account
+    except Exception as exc:  # noqa: BLE001 - a site that can't be asked is labelled by what it answered
+        logger.info("Discover: the follow test of %s failed (%s)", url, type(exc).__name__)
+        out = {"label": label({}, polite)}
+    if out["label"] == "headlines" and polite.troubled and not polite.answered:
+        out["transient"] = True
+    return out
+
+
+async def _declared(http: Any, registry: Any, url: str) -> Optional[Dict[str, str]]:
+    """The first account a site's home page declares that its kind can read now (issue 0172 b5), as {url, label}."""
+    try:
+        body, here = await http.get_start(url, PAGE_BYTES)
+    except Exception:  # noqa: BLE001 - an unread page declares nothing
+        return None
+    for key in declared_accounts(body.decode("utf-8", "replace"), here, registry)[:2]:
+        source = kind_source(key, registry)
+        if source and (await kind_read(registry, source))["label"] == "feed":
+            host, _, name = key.partition("/")
+            return {"url": "https://" + key, "label": "@" + name if site_of(host) in PLATFORM_SITES["x"] else key}
+    return None
 
 
 async def follow_test(http: Any, registry: Any, url: str, linked: List[str],
                       limiter: Optional[HostLimiter] = None) -> str:
-    polite = Polite(http)
-    source = kind_source(url.split("://", 1)[-1], registry)
-    try:
-        async with (limiter or HostLimiter()).slot(slot(source["handle_or_url"] if source else url)):
-            if source is not None:
-                return await kind_test(registry, source)
-            found = await where_linked.follow(polite, registry, url, own_pages(url.split("://", 1)[-1], linked))
-    except Exception as exc:  # noqa: BLE001 - a site that can't be asked is labelled by what it answered
-        logger.info("Discover: the follow test of %s failed (%s)", url, type(exc).__name__)
-        found = {}
-    return label(found, polite)
+    return (await follow_read(http, registry, url, linked, limiter))["label"]
 
 
 def page_title(page: str, url: str) -> Optional[str]:
@@ -217,10 +317,12 @@ async def read_title(polite: Polite, url: str) -> Optional[str]:
 
 
 def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) -> bool:
-    """Never read, or read CHECK_DAYS ago or more; a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
+    """Never read, or read CHECK_DAYS ago or more (TRANSIENT_HOURS for one that failed for a passing reason, issue
+    0172 b6); a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
     try:
+        again = timedelta(hours=TRANSIENT_HOURS) if read and read.get("transient") else timedelta(days=CHECK_DAYS)
         return (read is None or (test and read.get("test") != FOLLOW_TEST)
-                or now - datetime.fromisoformat(read["at"]) >= timedelta(days=CHECK_DAYS))
+                or now - datetime.fromisoformat(read["at"]) >= again)
     except (AttributeError, KeyError, TypeError, ValueError):
         return True
 
@@ -273,7 +375,7 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     async def test(key: str):
         async with gate:
             linked = await asyncio.to_thread(stories.linked_articles, "https://" + key)
-            return key, {"label": await follow_test(http, registry, "https://" + key, linked, limiter), "at": clock().isoformat(),
+            return key, {**await follow_read(http, registry, "https://" + key, linked, limiter), "at": clock().isoformat(),
                          "test": FOLLOW_TEST}
 
     async def title(url: str):
@@ -289,28 +391,42 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
         reads["titles"] = {**reads.get("titles", {}), **titled}
         DiscoverRepository.keep_reads(cur, reads)
     logger.info("Discover: %d follow tests, %d page titles read", len(tested), len(titled))
-    await asyncio.to_thread(stories.discover, limit=FIRST_PAGE)   # made with the answers, and kept
+    await asyncio.to_thread(stories.refresh)   # the answer served, made with the answers (issue 0172 c1)
     return {"follow": len(tested), "titles": len(titled)}
 
 
 _running: Optional[asyncio.Task] = None
 
 
-def start(stories: Any, http: Any, registry: Any) -> bool:
-    """Start reading the first page in the background (one run at a time, when enabled). Never raises."""
+def running() -> bool:
+    """Whether Discover's background work (a rebuild of the answer served, the first page's reads) runs now."""
+    return _running is not None and not _running.done()
+
+
+def start(stories: Any, http: Any, registry: Any, *, refresh: bool = False, read: bool = True) -> bool:
+    """Start Discover's background work, one run at a time (issue 0172 c1): with `refresh`, build the answer
+    served again first (an open found it due); with `read` (and reads enabled), read what the first page lacks,
+    which builds it again when it read anything. Never raises."""
     global _running
-    if not enabled() or (_running is not None and not _running.done()):
+    read = read and enabled()
+    if not (refresh or read) or running():
         return False
 
     async def run() -> None:
-        try:
-            await read_first_page(stories, http, registry)
-        except Exception:  # noqa: BLE001 - derived; the next open tries again
-            logger.exception("Discover: reading the first page failed")
+        if refresh:
+            try:
+                await asyncio.to_thread(stories.refresh)
+            except Exception:  # noqa: BLE001 - derived; the next open tries again
+                logger.exception("Discover: rebuilding the list failed")
+        if read:
+            try:
+                await read_first_page(stories, http, registry)
+            except Exception:  # noqa: BLE001 - derived; the next open tries again
+                logger.exception("Discover: reading the first page failed")
 
     _running = asyncio.get_running_loop().create_task(run())
     return True
 
 
-__all__ = ["read_first_page", "start", "label", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
-           "FOLLOW_TEST", "enabled"]
+__all__ = ["read_first_page", "start", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
+           "FOLLOW_TEST", "enabled", "running"]
