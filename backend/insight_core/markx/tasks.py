@@ -71,6 +71,24 @@ SCAN_PAGES = 40                                # plan_posts: at most 40 pages of
 READING_WINDOW = "reading_window_days"     # mx_settings: the owner's window for those three (an int, or null: every post)
 SETTING = object()                         # a planner's `days` when the caller names none: the owner's setting
 
+# 0176 A: the fresh lane. A post fetched (or surfaced) in the last FRESH_HOURS is planned first for the kinds of
+# FRESH_KINDS whatever its date says and however long the queue is (fresh_planners, run on every lease of the kind),
+# and a lease gives those tasks up to FRESH_SHARE of its slots before the rest (backfill pages, older posts): a big
+# backfill never holds a new post back, and the rest always keeps at least one slot of a lease of two or more.
+FRESH_HOURS = 24
+FRESH_KINDS = ("read", "entities", "read3", "headline")   # leased in the lane (a headline by its story's first post)
+FRESH_SHARE = 0.75                                         # of a lease's slots, at most (the rest keep the others)
+FRESH_DATED_DAYS = 7                                       # ... and dated in the last week: an archive import of
+                                                           # old posts (fetched today, dated months back) is not new
+
+
+def fresh_sql(alias: str = "p", since: str = "%(fresh)s") -> str:
+    """The fresh lane's condition over posts `alias`, `since` the lane's start (now - FRESH_HOURS): fetched or surfaced
+    since then, and dated (surfaced, published, fetched) within FRESH_DATED_DAYS."""
+    return (f"(GREATEST({alias}.fetched_at, {alias}.surfaced_at) >= {since} "
+            f"AND COALESCE({alias}.surfaced_at, {alias}.published_at, {alias}.fetched_at) "
+            f">= {since}::timestamptz + make_interval(hours => {FRESH_HOURS}) - make_interval(days => {FRESH_DATED_DAYS}))")
+
 
 def reading_window(cur: Cursor) -> Optional[int]:
     """The read, entities and embed planners' window in days, as the owner set it on the page (0112 Decided 9): an
@@ -263,11 +281,17 @@ def _cut(text: str, n: int) -> str:
 
 # ---- the renders (the prototype's) ----------------------------------------------------------------
 
-def post_block(p: Post, nlinks: int, chars: int = TEXT_CHARS) -> str:
-    """read.block: the post as every reader sees it: platform, source, title, text, links in order, the quote."""
+def _head(p: Post) -> List[str]:
+    """The lines every post render starts with: platform and source, the author of a repost, the title."""
     lines = [f"Platform: {p.kind} | Source: {p.source}", f"Title: {p.title}"]
     if p.by:   # 0168 E: a repost: its author is the original one, never the feed that carried it
         lines.insert(1, f"Author: {p.by} (a post by {p.by} shared by {p.source}; not {p.source}'s own words)")
+    return lines
+
+
+def post_block(p: Post, nlinks: int, chars: int = TEXT_CHARS) -> str:
+    """read.block: the post as every reader sees it: platform, source, title, text, links in order, the quote."""
+    lines = _head(p)
     if p.text:
         lines.append("Text: " + _cut(p.text, chars))
     if p.links:
@@ -359,6 +383,86 @@ def _render(cur: Cursor, kind: str) -> Any:   # 0133: the planners' input, the e
         return read_input
     chars = schemas.entities_arm(cur).chars
     return lambda p: entities_input(p, chars)
+
+
+# ---- 0176 B (0150 C): a long post's entities read in windows ---------------------------------------
+# The entities arm shows the first `chars` of a post's text (1,500 or 6,000); a long round-up names most of its people
+# after that (experiment E7: 31% of them lost). A post whose text is longer than one window is asked per window: the
+# first window's input is exactly today's (entities_input: the same task, never asked again), each later window shows
+# the post's head (platform, source, author, title), which window of how many and the characters it holds, and the
+# text from (w * (chars - WINDOW_OVERLAP)) for `chars` characters: consecutive windows share WINDOW_OVERLAP characters,
+# so a name cut by one window's end is whole in the next. At most `max_windows` (the setting, MAX_WINDOWS by default);
+# a post's text past them stays unread. A short post has one window and behaves exactly as before.
+
+WINDOW_OVERLAP = 200                 # characters two consecutive windows share
+MAX_WINDOWS = 12                     # windows a post is read in at most (the default of the setting)
+WINDOWS_SETTING = "entity_windows_max"   # mx_settings: the owner's cap (an int; 1: the first window only, as before)
+WINDOW_N = repo.WINDOW_N                # window w's mentions are numbered from w * WINDOW_N (mx_mentions' key stays (post, guide, n))
+_WINDOW_LINE = re.compile(r"^Window: (\d+) of (\d+) ", re.M)
+
+
+def max_windows(cur: Cursor) -> int:
+    got = repo.get_setting(cur, WINDOWS_SETTING, default=MAX_WINDOWS)
+    try:
+        return max(1, int(got))
+    except (TypeError, ValueError):
+        return MAX_WINDOWS
+
+
+def set_max_windows(cur: Cursor, n: int) -> int:
+    n = max(1, int(n))
+    repo.set_setting(cur, WINDOWS_SETTING, n)
+    return n
+
+
+def text_windows(text: str, chars: int, cap: int = MAX_WINDOWS) -> List[Tuple[int, int]]:
+    """The windows (start, end) a text of this length is read in: one, (0, min(len, chars)), unless it is longer than
+    `chars`; then windows of `chars` characters every chars - WINDOW_OVERLAP, at most `cap`."""
+    n = len(text or "")
+    if n <= chars or cap <= 1:
+        return [(0, min(n, chars))]
+    step = chars - WINDOW_OVERLAP
+    count = min(cap, 1 + -(-(n - chars) // step))
+    return [(w * step, min(n, w * step + chars)) for w in range(count)]
+
+
+def window_input(p: Post, w: int, windows: Sequence[Tuple[int, int]]) -> str:
+    """Window w's input (w >= 1): the post's head, which window it is, its text. The post's links and quote are read
+    with its first window."""
+    start, end = windows[w]
+    n = len(p.text)
+    lines = _head(p)
+    lines.append(f"Window: {w + 1} of {len(windows)} of the post's text (characters {start + 1:,}-{end:,} of {n:,})")
+    lines.append("Text: […] " + p.text[start:end] + (" […]" if end < n else ""))
+    return "\n".join(lines)
+
+
+def entity_inputs(p: Post, chars: int, cap: int = MAX_WINDOWS) -> List[str]:
+    """The post's entities inputs, one a window: [entities_input(p, chars)] for a short post."""
+    windows = text_windows(p.text, chars, cap)
+    return [entities_input(p, chars)] + [window_input(p, w, windows) for w in range(1, len(windows))]
+
+
+def window_of(input: str) -> int:
+    """The window (0 first) an entities input shows: 0 for the first window's (every input before 0176)."""
+    m = _WINDOW_LINE.search(input.split("\nText: ", 1)[0])
+    return int(m.group(1)) - 1 if m else 0
+
+
+def window_overlap(input: str) -> Tuple[str, str]:
+    """A later window's text as (what it shares with the window before it: its first WINDOW_OVERLAP characters, the
+    rest); ("", "") for the first window."""
+    body = input.split("\nText: […] ", 1)
+    if window_of(input) == 0 or len(body) < 2:
+        return "", ""
+    return body[1][:WINDOW_OVERLAP], body[1][WINDOW_OVERLAP:]
+
+
+def add_entities(cur: Cursor, p: Post, *, chars: int, cap: int, priority: int = 0) -> Tuple[bool, int]:
+    """The post's entities tasks, a window each: (whether its first window's is new, how many tasks were added)."""
+    inputs = entity_inputs(p, chars, cap)
+    first = add(cur, "entities", inputs[0], a=p.id, priority=priority)[1]
+    return first, int(first) + sum(1 for x in inputs[1:] if add(cur, "entities", x, a=p.id, priority=priority)[1])
 
 
 def check_input(post: Post, members: Sequence[Post]) -> str:
@@ -462,8 +566,14 @@ def read_task(cur: Cursor, post_id: Any, priority: int = 0):
 
 
 def entities_task(cur: Cursor, post_id: Any, priority: int = 0):
+    """The post's first window's entities task (its id, whether it is new); a long post's later windows are added
+    with it (0176)."""
     p, = _posts(cur, [post_id])
-    return add(cur, "entities", _render(cur, "entities")(p), a=p.id, priority=priority)   # 0133
+    inputs = entity_inputs(p, schemas.entities_arm(cur).chars, max_windows(cur))   # 0133, 0176
+    got = add(cur, "entities", inputs[0], a=p.id, priority=priority)
+    for x in inputs[1:]:
+        add(cur, "entities", x, a=p.id, priority=priority)
+    return got
 
 
 def translate_task(cur: Cursor, post_id: Any, priority: int = 0):
@@ -524,14 +634,19 @@ def briefing_task(cur: Cursor, day: date, stories: Sequence[Tuple[str, Sequence[
 # ---- planning: what is asked without S2 or S5 ------------------------------------------------------
 
 def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN_LIMIT,
-               now: Optional[datetime] = None) -> int:
+               now: Optional[datetime] = None, fetched_since: Optional[datetime] = None) -> int:
     """`read` or `entities` tasks for the newest posts of the last `days` (by default the owner's reading window,
     `reading_window`; None: every post) that have none under the kind's guide, newest first (priority: the post's
-    age in days, so a lease takes today's first): how many were added."""
+    age in days, so a lease takes today's first): how many were added. A long post's entities are a task a window
+    (0176). `fetched_since` (the fresh lane, 0176 A): the posts fetched (or surfaced) since then and dated in the last
+    FRESH_DATED_DAYS instead (`fresh_sql`), whatever the window."""
     guide = schemas.guide_of(cur, kind)   # 0133: a new entities guide plans new tasks (no row rewritten)
-    if days is SETTING:
+    if fetched_since is not None:
+        days = None
+    elif days is SETTING:
         days = reading_window(cur)
     render = _render(cur, kind)
+    chars, cap = (schemas.entities_arm(cur).chars, max_windows(cur)) if kind == "entities" else (0, 1)
     added, after = 0, None
     # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
     # same input is one task), so it stays "unplanned"; newest first, such posts filled every LIMIT and the older
@@ -545,13 +660,14 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
                  FROM posts p
                 WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
+                  AND (%(fresh)s::timestamptz IS NULL OR {fresh_sql()})
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
                        OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
                 LIMIT %(limit)s""",
-            {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit,
+            {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit, "fresh": fetched_since,
              "at": after[0] if after else None, "id": after[1] if after else None})
         posts = load_posts(cur, [r[0] for r in rows])
         passed = []
@@ -561,9 +677,13 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
             p = posts.get(str(pid))
             if p is None:
                 continue
-            if add(cur, kind, render(p), a=p.id, priority=age)[1]:
-                added += 1
-            else:   # v10.14: its input is another post's task: not read again until its text changes
+            if kind == "entities":   # 0176: a task a window
+                first, n = add_entities(cur, p, chars=chars, cap=cap, priority=age)
+                added += n
+            else:
+                first = add(cur, kind, render(p), a=p.id, priority=age)[1]
+                added += int(first)
+            if not first:   # v10.14: its input is another post's task: not read again until its text changes
                 passed.append((p.id, plan_marks.SAME_INPUT, stamp))
         plan_marks.mark(cur, kind, guide, passed)
         if added >= limit or len(rows) < limit:
@@ -767,17 +887,23 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         from insight_core.markx import back
         back.after_answer(cur, task)
     elif task["kind"] == "entities":
+        win = window_of(task["input"])   # 0176: a long post's later window (0: the first, every short post's)
+        entities = answer.get("entities") or []
+        if win:   # a name wholly in the text the window shares with the one before was read there
+            shared, rest = window_overlap(task["input"])
+            entities = [e for e in entities if not (e.get("span") and e["span"] in shared and e["span"] not in rest)]
         mentions = [dict({f: e.get(f) for f in repo.MENTION_FIELDS}, name_key=name_key(e.get("name")),
                          by_name=e.get("by") or None)                                       # 0133: ent-v4's `by`
-                    for e in answer.get("entities") or []]
+                    for e in entities]
         arm = schemas.ENTITY_ARMS.get(task["guide"])
-        if arm is not None and arm.rule:   # 0133: the citation rule, merged in (never under ent-v3)
+        if win == 0 and arm is not None and arm.rule:   # 0133: the citation rule, merged in (never under ent-v3)
             from insight_core.markx import citations
             mentions = citations.for_post(cur, task["a"], mentions, name_key)
         if task["guide"] == "ent-v4.2":    # 0133 v4.2: own title dropped, the cite answer merged (q2); no rule
             from insight_core.markx import ent42
-            mentions = ent42.main_mentions(cur, task["a"], answer.get("entities") or [])
-        repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions)
+            mentions = (ent42.main_mentions(cur, task["a"], entities) if win == 0
+                        else ent42.window_mentions(cur, task["a"], entities))   # 0176: the cite answer is window 0's
+        repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions, win=win)
     elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
@@ -918,7 +1044,11 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
     added = 0
     for pid, age in rows:
         p = posts.get(str(pid))
-        if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+        if p is None:
+            continue
+        if kind == "entities":   # 0176: a task a window
+            added += add_entities(cur, p, chars=schemas.entities_arm(cur).chars, cap=max_windows(cur), priority=age)[1]
+        elif add(cur, kind, render(p), a=p.id, priority=age)[1]:
             added += 1
     return added
 
@@ -932,6 +1062,81 @@ def _with_last_posts(kind: str, planner: Any) -> Any:   # 0132 C1: the window's 
 PLANNERS["stance"] = plan_stance                                           # 0132 B
 PLANNERS["read"] = _with_last_posts("read", PLANNERS["read"])              # 0132 C1
 PLANNERS["entities"] = _with_last_posts("entities", PLANNERS["entities"])  # 0132 C1
+
+WINDOWS_MARK = "entities-windows"   # 0176: plan_marks' kind for a long-stored post the windows planner passed over
+
+
+def plan_windows(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+    """0176 B: the later windows of the posts whose first window was asked before windows existed (or under a lower
+    cap), newest first, over the owner's reading window (or `days`; None: every post): how many tasks were added. A
+    post whose text needs one window, or whose windows are another post's tasks (a repost), is marked and not read
+    again until its text changes. Cheap to call: only posts stored longer than one window are read."""
+    cap = max_windows(cur)
+    if cap <= 1:
+        return 0
+    guide = schemas.guide_of(cur, "entities")
+    chars = schemas.entities_arm(cur).chars
+    if days is SETTING:
+        days = reading_window(cur)
+    rows = plan_marks.execute(cur,
+        f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
+                  {plan_marks.STAMP}
+             FROM posts p
+            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                             >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
+              AND octet_length(p.content) > %(chars)s   -- bytes: a toasted text is not decompressed
+              AND (SELECT count(*) FROM mx_tasks t                -- its first window's task only (no input read)
+                    WHERE t.a = p.id AND t.kind = 'entities' AND t.guide = %(guide)s) = 1
+              AND {plan_marks.unmarked()}
+            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+            LIMIT %(limit)s""",
+        {"now": now, "days": days, "chars": chars, "guide": guide, "kind": WINDOWS_MARK, "limit": limit})
+    posts = load_posts(cur, [r[0] for r in rows])
+    added, passed = 0, []
+    for pid, age, stamp in rows:
+        p = posts.get(str(pid))
+        if p is None:
+            continue
+        inputs = entity_inputs(p, chars, cap)
+        new = sum(1 for x in inputs[1:] if add(cur, "entities", x, a=p.id, priority=age)[1])
+        added += new
+        if not new:
+            passed.append((p.id, plan_marks.ONE_WINDOW if len(inputs) == 1 else plan_marks.SAME_INPUT, stamp))
+        if added >= limit:
+            break
+    plan_marks.mark(cur, WINDOWS_MARK, guide, passed)
+    return added
+
+
+def _with_windows(planner: Any) -> Any:   # 0176 B: the window's planner, then the later windows of earlier posts
+    def plan(cur: Cursor, **kw: Any) -> int:
+        got = planner(cur, **kw)
+        return got + plan_windows(cur, **{k: v for k, v in kw.items() if k in ("days", "now")})
+    return plan
+
+
+PLANNERS["entities"] = _with_windows(PLANNERS["entities"])                # 0176 B
+
+
+def fresh_since(now: Optional[datetime] = None) -> datetime:
+    return (now or datetime.now(timezone.utc)) - timedelta(hours=FRESH_HOURS)
+
+
+def plan_fresh(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+    """0176 A: the fresh lane's planning for `kind` (read, entities, read3): the posts fetched or surfaced in the last
+    FRESH_HOURS that have no task of the kind, whatever their date and the reading window: how many were added. A
+    lease runs it first, every time (the general planner runs only when its queue runs low)."""
+    since = fresh_since(now)
+    if kind in ("read", "entities"):
+        return plan_posts(cur, kind, limit=limit, now=now, fetched_since=since)
+    if kind == "read3":
+        from insight_core.markx import folds
+        return folds.plan(cur, limit=limit, now=now, fetched_since=since)
+    return 0
+
+
+FRESH_PLANNERS = {k: (lambda kind: lambda cur, **kw: plan_fresh(cur, kind, **kw))(k) for k in ("read", "entities", "read3")}
 
 
 def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second question, cue posts only (ent42.plan)

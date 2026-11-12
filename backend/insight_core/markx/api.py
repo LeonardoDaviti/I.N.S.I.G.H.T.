@@ -20,6 +20,9 @@ GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
          "guides": {"<guide id>": {"sha256": "<hex of body>", "body": "<text>", "schema": {..}}},
          "tasks": [{"id": "<uuid>", "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
     Every task's guide is in "guides". No open task: "tasks": [] and "guides": {}. An unknown kind: 400.
+    0176 (additive): an entities task also carries "post": "<uuid>" (a long post is asked a task a window; the worker
+    never puts two tasks of one post in one call). Posts fetched in the last 24 hours are planned and leased first
+    (the fresh lane, up to 3/4 of a lease).
 
 POST /api/markx/answers
     {"worker": "<name>", "executor": "claude-code" | "api" | "api-batch", "model": "<model id>",
@@ -255,6 +258,9 @@ PLANNED_BY_RUNS = ("relate", "back")
 
 PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests this long before a lease runs it again
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
+FRESH = "fresh:"                    # 0176 A: _PLAN_REST's key prefix for a kind's fresh-lane planner
+FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
+POST_KINDS = ("entities",)          # 0176 B: kinds whose leased tasks carry their post (a long post's windows)
 
 
 def _plan_resting(kind: str) -> bool:
@@ -271,7 +277,11 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     asked are planned for that window first, newest first and PLAN_LIMIT a call, whatever the page's reading window
     (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait, or at
     once when the window it was last planned for is not the page's (0121 Decided 4). Those kinds are leased inside
-    the window first, newest first, then the older tasks still queued (a narrowed window drops none)."""
+    the window first, newest first, then the older tasks still queued (a narrowed window drops none).
+    0176 A, the fresh lane: before any of that, the posts fetched in the last tasks.FRESH_HOURS are planned for read,
+    entities and read3 whatever the queue holds, and a lease gives the fresh tasks up to tasks.FRESH_SHARE of its
+    slots first (repo.lease_tasks). A task of a post's kind carries its post ("post": the worker never asks two windows
+    of one post in one call)."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
@@ -283,6 +293,10 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
         ensure_guides(cur)
         waiting = repo.open_counts(cur, wanted)
         setting = tasks.reading_window(cur)
+        for kind in wanted:   # 0176 A: the fresh lane is planned on every lease (FRESH_REST_SECONDS after a dry one)
+            if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
+                if not tasks.FRESH_PLANNERS[kind](cur):
+                    _PLAN_REST[FRESH + kind] = time.monotonic() + FRESH_REST_SECONDS
         for kind in wanted:
             if kind not in tasks.PLANNERS:
                 continue
@@ -299,13 +313,17 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
                 if not tasks.PLANNERS[kind](cur):
                     _PLAN_REST[kind] = time.monotonic() + PLAN_REST_SECONDS
         leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker, windowed=tasks.WINDOWED,
-                                  days=setting if window is tasks.SETTING else window)
+                                  days=setting if window is tasks.SETTING else window,
+                                  fresh=tasks.FRESH_KINDS, fresh_hours=tasks.FRESH_HOURS, fresh_share=tasks.FRESH_SHARE,
+                                  fresh_dated_days=tasks.FRESH_DATED_DAYS)
         guides = repo.guides(cur, sorted({t["guide"] for t in leased})) if leased else {}
     until = max((t["lease_until"] for t in leased), default=datetime.now(timezone.utc)
                 + timedelta(minutes=repo.LEASE_MINUTES))
     return {"lease_until": _iso(until),
             "guides": {gid: {"sha256": g["sha256"], "body": g["body"], "schema": g["schema"]} for gid, g in guides.items()},
-            "tasks": [{"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]} for t in leased]}
+            "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
+                           **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}))
+                      for t in leased]}
 
 
 class Answer(BaseModel):

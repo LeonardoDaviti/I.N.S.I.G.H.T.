@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Optional, Tuple
 
-SAME_INPUT, NOT_CUE = "same_input", "not_cue"
+SAME_INPUT, NOT_CUE, ONE_WINDOW = "same_input", "not_cue", "one_window"   # 0176: one_window (the windows planner)
 
 # The post's text stamp, over alias `p` (posts): what load_posts reads. Row versions (xmin || ctid, as
 # incremental.post_stamps) for the post, its parts and its links; the source's values themselves (its row is

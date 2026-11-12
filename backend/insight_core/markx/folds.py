@@ -174,13 +174,17 @@ def read3_task(cur: Any, post_id: Any, priority: int = 0):
     return tasks.add(cur, KIND, text, a=str(post_id), priority=priority)
 
 
-def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] = None) -> int:
+def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] = None,
+         fetched_since: Optional[datetime] = None) -> int:
     """`read3` tasks for the current members of Mark X stories with 2+ members, posted in the last `days` (default:
-    the owner's reading window; None: every post) that have none, newest first: how many were added."""
-    if days is tasks.SETTING:
+    the owner's reading window; None: every post) that have none, newest first: how many were added.
+    `fetched_since` (0176 A, the fresh lane): the members fetched or surfaced since then (tasks.fresh_sql) instead."""
+    if fetched_since is not None:
+        days = None
+    elif days is tasks.SETTING:
         days = tasks.reading_window(cur)
     cur.execute(
-        """SELECT p.id::text, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+        f"""SELECT p.id::text, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                     - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
              FROM posts p
             WHERE p.id IN (SELECT sp.post_id FROM mx_story_posts sp
@@ -190,9 +194,11 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                                                    GROUP BY story_id HAVING count(*) >= 2))
               AND (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
+              AND (%(fresh)s::timestamptz IS NULL OR {tasks.fresh_sql()})
               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
             ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
-            LIMIT %(limit)s""", {"now": now, "days": days, "kind": KIND, "guide": GUIDE, "limit": limit})
+            LIMIT %(limit)s""", {"now": now, "days": days, "kind": KIND, "guide": GUIDE, "limit": limit,
+                                 "fresh": fetched_since})
     rows = cur.fetchall()
     texts = inputs(cur, [r[0] for r in rows])
     added = 0

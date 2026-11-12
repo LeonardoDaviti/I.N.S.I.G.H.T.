@@ -569,6 +569,21 @@ def shares(total, n):
     return [base + (1 if k < extra else 0) for k in range(n)]
 
 
+def split_calls(tasks, n):
+    """0176 (0150 B): a lease's tasks of one kind and guide in calls of at most n, in order, never two tasks of the
+    same post (the server's "post": a long post's windows) in one call: windows asked together answer from each other."""
+    calls = []
+    for t in tasks:
+        post = t.get("post")
+        for c in calls:
+            if len(c) < n and (post is None or all(x.get("post") != post for x in c)):
+                c.append(t)
+                break
+        else:
+            calls.append([t])
+    return calls
+
+
 def read_token(path):
     p = Path(path).expanduser()
     try:
@@ -904,7 +919,7 @@ class Worker:
                 self.log("guide-sha256-mismatch", kind=k, guide=gid, tasks=len(ts))
                 continue
             n = self.per_call(k)
-            out += [Batch(k, gid, g, ts[i:i + n], until) for i in range(0, len(ts), n)]
+            out += [Batch(k, gid, g, c, until) for c in split_calls(ts, n)]   # 0176: one window of a post a call
         self.log("leased", kind=kind, tasks=len(tasks), ms=ms, lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
 

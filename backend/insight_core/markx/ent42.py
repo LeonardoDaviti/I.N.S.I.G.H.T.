@@ -360,13 +360,19 @@ def main_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) ->
     return [_mention(e) for e in finish(entities, _title(cur, post_id), _cite_answer(cur, post_id))]
 
 
+def window_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """0176: a later window's ent-v4.2 answer's mentions: its own title dropped (the cite answer is merged into the
+    first window's only)."""
+    return [_mention(e) for e in finish(entities, _title(cur, post_id))]
+
+
 def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> int:
     """A cite answer after the post's ent-v4.2 main answer: its new entities appended to that set, marked q2 (a cite
     answer before it waits: the main answer merges it). How many were added."""
     pid = task["a"]
     _lock(cur, pid)
     cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = 'entities' AND guide = %s AND a = %s AND status = 'answered'
-                   LIMIT 1""", (GUIDE, pid))
+                      AND input !~ %s LIMIT 1""", (GUIDE, pid, r"\nWindow: \d+ of \d+ "))   # 0176: the first window's
     if cur.fetchone() is None:
         return 0
     have = repo.mentions(cur, pid, GUIDE)
@@ -375,7 +381,7 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     new = [e for e in merge_cite(have, cite)[len(have):]]
     if not new:
         return 0
-    start = max((m["n"] for m in have), default=-1) + 1
+    start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # 0176: in the first window's numbers
     fields = repo.MENTION_FIELDS + repo.MENTION_FIELDS_0133
     cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
                     f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING",

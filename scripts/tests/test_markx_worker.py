@@ -124,13 +124,15 @@ class Stub:
         self.httpd.shutdown()
         self.httpd.server_close()
 
-    def add(self, kind, n, start=1, ids=None):
+    def add(self, kind, n, start=1, ids=None, post=None):
         for k in range(n):
             tid = ids[k] if ids else start + k
             self.tasks[str(tid)] = {"id": tid, "kind": kind, "guide": KIND_GUIDE[kind], "priority": 0,
                                     "input": f"platform: test\ntitle: post {tid}\ntext: something happened",
                                     "status": "open", "lease_until": None, "leased_by": None, "attempts": 0,
                                     "last_error": None}
+            if post is not None:          # 0176: a long post's windows carry their post
+                self.tasks[str(tid)]["post"] = post
 
     def _expire(self, now):
         for t in self.tasks.values():
@@ -150,8 +152,8 @@ class Stub:
             for t in pick:
                 t.update(status="leased", lease_until=until, leased_by=q["worker"])
             return {"lease_until": until.isoformat(), "guides": {t["guide"]: self.guides[t["guide"]] for t in pick},
-                    "tasks": [{"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]}
-                              for t in pick]}
+                    "tasks": [dict({"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
+                                   **({"post": t["post"]} if "post" in t else {})) for t in pick]}
 
     def check(self, answer):
         err = W.schema_error(SCHEMA, answer) if isinstance(answer, dict) else "not an object"
@@ -375,6 +377,26 @@ class TestValid(Base):
         self.assertEqual(sizes["merge"], [1] * 7)
         self.assertEqual(sorted(sizes["read"]), [5, 20])
         self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "4")])
+
+    def test_two_windows_of_one_post_are_never_in_one_call(self):
+        """0176 (0150 B): a long post's entities windows (the server's "post") are asked in different calls."""
+        for k, post in enumerate(("p-a", "p-b", "p-c")):
+            self.stub.add("entities", 4, start=100 + 10 * k, post=post)
+        self.stub.add("entities", 8, start=1)
+        p = self.run_worker("--kinds", "entities", "--parallel", "1", "--batches", "5")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        for c in self.fake_calls():
+            ids = [x for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            posts = [self.stub.tasks[i].get("post") for i in ids if self.stub.tasks[i].get("post")]
+            self.assertEqual(len(posts), len(set(posts)), posts)
+        self.assertEqual(len(self.fake_calls()), 4)                    # 4 windows of a post: 4 calls, no more
+
+    def test_split_calls_keeps_order_and_size(self):
+        ts = [{"id": 1, "post": "a"}, {"id": 2, "post": "a"}, {"id": 3}, {"id": 4, "post": "b"}, {"id": 5, "post": "a"}]
+        self.assertEqual([[t["id"] for t in c] for c in W.split_calls(ts, 3)], [[1, 3, 4], [2], [5]])
+        self.assertEqual([[t["id"] for t in c] for c in W.split_calls([{"id": k} for k in range(5)], 2)],
+                         [[0, 1], [2, 3], [4]])
 
     def test_per_call_sets_a_kinds_call_size(self):
         self.stub.add("merge", 7)
