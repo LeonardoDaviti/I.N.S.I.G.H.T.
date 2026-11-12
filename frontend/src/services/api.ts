@@ -669,6 +669,32 @@ export interface SourceHealthRow {
   tidy_kept_at?: string | null;
   /** Its posts now live on another site (issue 0108: their pages redirect there); `followed`: a source of yours is there. */
   moved_to?: { host: string; followed: boolean } | null;
+  /** Silent far beyond its own rhythm (issue 0178): over max(5x its usual gap, 14 days) since its newest post, and
+   *  where the source doctor found it went. null when it is not, or the owner said it stopped (until it posts). */
+  silent?: SourceSilence | null;
+}
+
+/** A silent source (issue 0178): how long, against its usual gap, and the doctor's look (looked_at null: not yet). */
+export interface SourceSilence {
+  days: number;
+  usual_gap_hours: number;
+  last_post_at: string | null;
+  looked_at: string | null;
+  /** Its address, home page or newest posts now landing on another site. */
+  moved: { via: string; from: string; to: string }[];
+  /** A live feed found where it went: Switch to it (never switched by itself). */
+  replacement: SilentReplacement | null;
+}
+
+export interface SilentReplacement {
+  kind: 'feed';
+  url: string;
+  title: string;
+  latest?: string[];
+  /** Its newest item's date. */
+  newest?: string | null;
+  /** Where it was found: "its address now lands at …", "its home page". */
+  via: string;
 }
 
 /** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */
@@ -690,6 +716,8 @@ export interface SourceHealthSummary {
   backoff: number;
   unavailable: number;
   errors: number;
+  /** Sources silent far beyond their rhythm (issue 0178), whatever their status. */
+  silent?: number;
 }
 
 export interface SourcesHealthResponse {
@@ -1281,6 +1309,9 @@ export function createApi() {
     /** Keep a source marked quiet or never opened (issue 0046): its mark hides for 90 days; the fresh row. */
     keepSource: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/tidy/keep`, { method: 'POST' }),
+    /** A silent source stopped (issue 0178): its silence is not shown again until it posts; the fresh row. */
+    markSourceStopped: (sourceId: string) =>
+      request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/silence/stopped`, { method: 'POST' }),
     /** Source anatomy (issue 0054): every source, how it is read and what it gives. Fetches nothing. */
     getSourceAnatomy: () => request<SourceAnatomyResponse>('/api/sources/anatomy'),
     /** Discover (issue 0050): what your sources keep linking that you don't follow. Fetches nothing. */

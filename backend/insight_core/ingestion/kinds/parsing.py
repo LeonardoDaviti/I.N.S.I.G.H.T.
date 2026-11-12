@@ -146,6 +146,16 @@ def child_text(node: ET.Element, child_name: str) -> Optional[str]:
     return None
 
 
+def rss_source(item: ET.Element) -> Optional[Dict[str, str]]:
+    """An RSS item's <source url="...">title</source> (RSS 2.0: the channel the item came from), as {url, title};
+    None without one or without its url."""
+    for child in item:
+        if local_name(child.tag) == "source":
+            url = (child.attrib.get("url") or "").strip()
+            return {"url": url, "title": " ".join((child.text or "").split())} if url else None
+    return None
+
+
 def child_inner_xml(node: ET.Element, child_name: str) -> str:
     for child in node:
         if local_name(child.tag) != child_name:
@@ -1557,6 +1567,24 @@ def _undated(post: Dict[str, Any]) -> Dict[str, Any]:
     return post
 
 
+def feed_channel_title(feed_text: str) -> Optional[str]:
+    """The feed's own title (RSS's and RSS 1.0's <channel><title>, Atom's <feed><title>), spaces collapsed;
+    None when it has none or does not parse (issue 0178: an unnamed source's name). Never raises."""
+    try:
+        root = feed_root(feed_text)
+    except Exception:  # noqa: BLE001 - no title from a document that does not parse
+        return None
+    holder = root if local_name(root.tag) == "feed" else next(
+        (child for child in root if local_name(child.tag) == "channel"), None)
+    if holder is None:
+        return None
+    for child in holder:
+        if local_name(child.tag) == "title":
+            title = " ".join("".join(child.itertext()).split())
+            return title or None
+    return None
+
+
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
     """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first. A document a
     strict parser refuses is read repaired (feed_root, issue 0137 B4); each item's address is its
@@ -1590,6 +1618,9 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "categories": _extract_xml_categories(item),
                 # <comments>: the item's discussion page (on Hacker News, the HN thread).
                 "metadata": {"comments_url": comments} if (comments := child_text(item, "comments")) else {},
+                # <source url="...">title</source>: the feed the item came from (a Telegram bridge's forward,
+                # issue 0178); a kind that knows what it means reads it (telegram_rss), the others ignore it.
+                **({"origin_item": origin} if (origin := rss_source(item)) else {}),
             }))
     elif local_name(root.tag) == "feed":
         entries = [child for child in root if local_name(child.tag) == "entry"]

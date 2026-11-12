@@ -71,6 +71,8 @@ class FetchStateRow:
     linked_wanted_at: Optional[datetime] = None   # a story linked one of its pages not stored (issue 0114)
     linked_url: Optional[str] = None
     linked_fetched_at: Optional[datetime] = None  # the last early fetch decided: one per interval
+    silent_checked_at: Optional[datetime] = None  # the doctor last looked where a silent source went (issue 0178)
+    silent_finding: Optional[Dict[str, Any]] = None  # what it found: {moved, replacement, stopped, ...}
 
 
 _COLUMNS = [f.name for f in fields(FetchStateRow)]
@@ -338,6 +340,50 @@ class FetchStateRepository:
             {"sid": str(source_id), "at": checked_at, "finding": json.dumps(finding)},
         )
 
+    def record_silence(self, cur: Cursor, source_id: str, *, checked_at: datetime,
+                       finding: Optional[Dict[str, Any]]) -> None:
+        """The source doctor looked where a silent source went (issue 0178); None: it is not silent (cleared)."""
+        cur.execute(
+            """
+            INSERT INTO source_fetch_state (source_id, silent_checked_at, silent_finding, updated_at)
+            VALUES (%(sid)s, %(at)s, %(finding)s::jsonb, %(at)s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                silent_checked_at = EXCLUDED.silent_checked_at,
+                silent_finding = EXCLUDED.silent_finding,
+                updated_at = EXCLUDED.updated_at
+            """,
+            {"sid": str(source_id), "at": checked_at if finding is not None else None,
+             "finding": json.dumps(finding) if finding is not None else None},
+        )
+
+    def mark_stopped(self, cur: Cursor, source_id: str, *, last_post_at: Optional[datetime], at: datetime) -> bool:
+        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts
+        after `last_post_at`. Nothing is switched off or deleted. False for no such source."""
+        cur.execute("SELECT 1 FROM sources WHERE id = %s::uuid", (str(source_id),))
+        if cur.fetchone() is None:
+            return False
+        stopped = {"stopped": True, "stopped_at": at.isoformat(),
+                   "last_post_at": last_post_at.isoformat() if last_post_at else None}
+        cur.execute(
+            """
+            INSERT INTO source_fetch_state (source_id, silent_checked_at, silent_finding, updated_at)
+            VALUES (%(sid)s, %(at)s, %(finding)s::jsonb, %(at)s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                silent_finding = COALESCE(source_fetch_state.silent_finding, '{}'::jsonb) || EXCLUDED.silent_finding,
+                silent_checked_at = COALESCE(source_fetch_state.silent_checked_at, EXCLUDED.silent_checked_at),
+                updated_at = EXCLUDED.updated_at
+            """,
+            {"sid": str(source_id), "at": at, "finding": json.dumps(stopped)},
+        )
+        return True
+
+    def last_post_at(self, cur: Cursor, source_id: str) -> Optional[datetime]:
+        """When its newest post was published (surfaced, else fetched, if undated): health's last_post_at."""
+        cur.execute("SELECT max(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts WHERE source_id = %s",
+                    (str(source_id),))
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def dismiss_doctor(self, cur: Cursor, source_id: str) -> bool:
         """Hide the doctor's finding until the next failure streak. False when there is none."""
         cur.execute(
@@ -360,7 +406,7 @@ class FetchStateRepository:
             UPDATE source_fetch_state
                SET consecutive_failures = 0, next_retry_at = NULL, last_outcome = NULL,
                    last_error = NULL, last_error_at = NULL, doctor_checked_at = NULL,
-                   doctor_finding = NULL, updated_at = now(),
+                   doctor_finding = NULL, silent_checked_at = NULL, silent_finding = NULL, updated_at = now(),
                    last_success_at = CASE WHEN %s THEN NULL ELSE last_success_at END
              WHERE source_id = %s
             """,

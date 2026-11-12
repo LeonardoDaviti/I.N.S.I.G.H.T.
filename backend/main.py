@@ -916,12 +916,29 @@ async def add_source(request: NewSourceRequest):
     created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
                                                    enabled=(request.state or "enabled") == "enabled")
     recognised = await _recognise_new_source(created["source_id"], platform, created["handle"], settings)
+    named = None if str(settings.get("display_name") or "").strip() else await _name_new_source(
+        created["source_id"], platform, created["handle"], settings)
     _export_sources_json()
     # Issue 0167: following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
     archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
             "handle_or_url": created["handle"], **({"recognised": recognised} if recognised else {}),
-            "archive": archive}
+            **({"display_name": named} if named else {}), "archive": archive}
+
+
+async def _name_new_source(source_id: str, platform: str, handle: str, settings: Dict[str, Any]) -> Optional[str]:
+    """Issue 0178: a source added with no name is named by what its feed or page calls itself (one request, the
+    feed's start; the home page only when the feed has no name), never over a name set meanwhile. The name, or
+    None; never raises."""
+    from insight_core.ingestion.source_names import own_name
+
+    try:
+        name = await own_name(FEED_FINDER_HTTP, {"platform": platform, "handle_or_url": handle, "settings": settings})
+        if name and await asyncio.to_thread(services().sources.name_if_unnamed, source_id, name):
+            return name
+    except Exception:  # noqa: BLE001 - the source is added; its first fetch or the repair names it
+        logger.exception("Could not name %s", handle)
+    return None
 
 
 async def _recognise_new_source(source_id: str, platform: str, handle: str, settings: Dict[str, Any]) -> Optional[str]:
@@ -1169,6 +1186,14 @@ async def dismiss_replacement(source_id: str):
     """Hide the source doctor's finding until the next failure streak; the fresh health row.
     404 when the source has no finding."""
     return {"success": True, "row": services().operations.dismiss_replacement(source_id)}
+
+
+@app.post("/api/sources/{source_id}/silence/stopped")
+@error_detail("record that the source stopped")
+async def source_stopped(source_id: str):
+    """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts.
+    Nothing is switched, switched off or deleted. The fresh health row; 404 for no such source."""
+    return {"success": True, "row": await asyncio.to_thread(services().operations.source_stopped, source_id)}
 
 
 @app.post("/api/sources/{source_id}/tidy/keep")

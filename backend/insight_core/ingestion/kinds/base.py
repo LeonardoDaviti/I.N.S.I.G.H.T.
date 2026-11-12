@@ -254,6 +254,8 @@ class FetchedPosts(list):
     # What the fetch learned the source is (issue 0167: {"substack": True}, a Substack publication on its own
     # domain): the runner merges it into the source's settings, and the next fetch reads it by that kind.
     recognised: Optional[dict] = None
+    # What the feed read calls itself (its <title>, issue 0178): the runner names a source that has no name by it.
+    title: Optional[str] = None
 
 
 def collapsed(posts: list) -> Optional[str]:
