@@ -413,16 +413,23 @@ class Book:
         return None if e is None else schemas_type(e.shown_type or e.type)
 
 
-def load_book(cur: Any, *, counts: bool = True) -> Book:
-    b = Book()
-    cur.execute("""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
-                          size, build, status, first_seen, shown_name, shown_type FROM mx_entities""")
+def read_ents(cur: Any, b: "Book", ids: Optional[Iterable[str]] = None) -> None:
+    """Read entities into the book: every one, or (v10.16) those of `ids`."""
+    cur.execute(f"""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
+                          size, build, status, first_seen, shown_name, shown_type FROM mx_entities
+                    {"WHERE id = ANY(%s::uuid[])" if ids is not None else ""}""",
+                (sorted(set(ids)),) if ids is not None else None)
     for (eid, type_, name, key, level, parent, maker, fam, version, vkey, variant, size, build, status,
          first, shown_name, shown_type) in cur.fetchall():
         b.ents[eid] = Ent(eid, type_, name, key, level, parent, maker, fam, version, N.from_json(vkey), variant, size,
                           build, status, first, haiku={"family": fam, "version": version, "variant": variant,
                                                        "size": size, "build": build},
                           shown_name=shown_name, shown_type=shown_type)
+
+
+def load_book(cur: Any, *, counts: bool = True) -> Book:
+    b = Book()
+    read_ents(cur, b)
     cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases")
     b.alias = dict(cur.fetchall())
     cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")

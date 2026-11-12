@@ -112,14 +112,43 @@ def _when(at: Optional[datetime], now: datetime) -> Optional[str]:
     return "today" if days <= 0 else "yesterday" if days == 1 else f"{days} days ago"
 
 
+def _list_book(cur: Any, rows: Iterable[Tuple]) -> I.Book:
+    """v10.16: the book the list reads (it was the whole book: 250k entities at the server's scale, most of /entities'
+    5 s): every merge and pin, and the entities of the clusters its rows name. `_list_more` adds what the shown rows
+    read besides (their makers' and families' entities)."""
+    b = I.Book()
+    cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
+    b.redirect = I.Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
+    cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
+    b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
+    I.read_ents(cur, b, {b.root(b.pins.get((pid, g, n), eid)) for pid, n, _r, eid, _a, _s, _rd, g in rows})
+    return b
+
+
+def _list_more(cur: Any, book: I.Book, eids: Iterable[str]) -> None:
+    """The entities `_ent_view` reads of these rows' besides their own: each stated maker's (through its alias) and
+    each version's family, as their clusters' roots."""
+    eids = [e for e in eids if e in book.ents]
+    keys = sorted({k for k in (N.key(book.ents[e].maker) for e in eids if book.ents[e].maker) if k} - set(book.alias))
+    if keys:
+        cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE key = ANY(%s)", (keys,))
+        book.alias.update(dict(cur.fetchall()))
+    need = {book.root(book.alias[k]) for k in keys if k in book.alias}
+    need |= {book.root(book.ents[e].parent) for e in eids if book.ents[e].parent}
+    need -= set(book.ents)
+    if need:
+        I.read_ents(cur, book, need)
+
+
 def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_LIMIT) -> Dict[str, Any]:
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
-    book = I.load_book(cur, counts=False)   # v10.14: the list reads no mention count (a read of every mention)
     since = now - timedelta(days=WINDOW_DAYS)
+    rows = _rows(cur, guide, since)
+    book = _list_book(cur, rows)   # v10.14: no mention count; v10.16: only the entities the rows name
     agg: Dict[str, Dict[str, Any]] = {}
-    for pid, n, role, eid, at, src, read, g in _rows(cur, guide, since):
+    for pid, n, role, eid, at, src, read, g in rows:
         eid = book.root(book.pins.get((pid, g, n), eid))
         if eid not in book.ents or book.ents[eid].status == "not_entity":
             continue
@@ -131,6 +160,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     ranked = sorted(agg.items(), key=lambda kv: (-len(kv[1]["voices"]), -len(kv[1]["reports"]),
                                                  -max(at.timestamp() for at, _ in kv[1]["posts"].values()), kv[0]))
     top = ranked[:limit]
+    _list_more(cur, book, [eid for eid, _ in top])
     newest = {eid: sorted(a["posts"].items(), key=lambda kv: (-kv[1][0].timestamp(), kv[0]))[:3] for eid, a in top}
     story_of = _stories(cur, {p for _, a in top for p in a["posts"]})
     heads = _story_heads(cur, {s for ss in story_of.values() for s in ss})
