@@ -141,7 +141,7 @@ class PlannerMarks(_Db):
         schemas.set_entities_arm(self.cur, "ent-v4.2", allow_placeholder=True)
         rnd = random.Random(42)
         for n in range(40):
-            text = CITED.replace("Varga", f"Varga{n}") if rnd.random() < 0.3 else f"Plain words about thing {n}. " * 3
+            text = CITED.replace("Varga", "Varga" + "abcdefghijklmnopqrstuvwxyz"[n % 26] + "abcdefghijklmnopqrstuvwxyz"[n // 26]) if rnd.random() < 0.3 else f"Plain words about thing {n}. " * 3
             self.post(rnd.randrange(5), T0 - n * H, text=text)
         tasks.plan_posts(self.cur, "entities", days=5, now=T0 + H)
 
@@ -158,7 +158,10 @@ class PlannerMarks(_Db):
                 got.append(_tasks(self.cur, "cite"))
                 raise psycopg.Rollback(tx)
             return got
-        self.assertEqual(run(True), run(False))
+        new, old = run(True), run(False)
+        self.assertEqual(new, old)                     # each call's count, then the tasks, ordered by (post, input)
+        self.assertGreaterEqual(len(old[-1]), 8)       # not vacuous: the cue posts were asked
+        self.assertGreater(sum(old[:-1]), 0)
 
 
 @requires_test_db
