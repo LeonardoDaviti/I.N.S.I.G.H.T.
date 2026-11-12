@@ -772,8 +772,10 @@ class Snapshot(unittest.TestCase):
         self.other = psycopg.connect(db_url(), autocommit=True)
         self.addCleanup(self.other.close)
         self.cur = self.other.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
-        self.addCleanup(self.cur.execute, f"TRUNCATE {', '.join(MX_TABLES)}")
+        tables = ", ".join(MX_TABLES + ("mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies",
+                                        "mx_inc_tasks"))
+        self.cur.execute(f"TRUNCATE {tables}")
+        self.addCleanup(self.cur.execute, f"TRUNCATE {tables}")
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
         self.posts, self.sources = [], []
@@ -845,6 +847,80 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], 1)
         self.cur.execute("SELECT count(*) FROM mx_runs")
         self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
+
+
+    # -- v10.15: a concurrent update never loses the run ------------------------------------------------------
+    def back_row(self):
+        """A back row asking whether c brings the story (a, b) back: committed, no task yet."""
+        self.cur.execute("""INSERT INTO mx_back (story, members, first_at, last_at, window_at, trig, posts)
+                            VALUES (%s, %s::uuid[], %s, %s, %s, ARRAY['L'], %s::uuid[]) RETURNING id""",
+                         (self.story, [self.a, self.b], T, T + H, T + 2 * H, [self.c]))
+        return str(self.cur.fetchone()[0])
+
+    def back_input(self):
+        from insight_core.markx import back
+        ps = tasks.load_posts(self.cur, [self.a, self.b, self.c])
+        return back.render(sorted((ps[self.a], ps[self.b]), key=lambda p: (p.at, p.id)), [ps[self.c]])
+
+    def test_the_cause_a_task_another_transaction_changed_since_the_snapshot_fails_its_insert(self):
+        """What failed the server's run after its back stage: in one REPEATABLE READ snapshot, inserting a task
+        (ON CONFLICT DO NOTHING) that another transaction added or leased since is a serialization failure."""
+        from insight_core.markx import back
+        text = self.back_input()
+        conn = psycopg.connect(db_url())
+        self.addCleanup(conn.close)
+        run = conn.cursor()
+        run.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        run.execute("SELECT 1")                                       # the run's snapshot
+        tid, _ = tasks.add(self.cur, back.KIND, text, a=self.story)  # a worker's lease plans it, and commits
+        self.cur.execute("UPDATE mx_tasks SET status = 'leased', lease_until = now() + interval '5 minutes' "
+                         "WHERE id = %s", (tid,))
+        with self.assertRaises(psycopg.errors.SerializationFailure):
+            tasks.add(run, back.KIND, text, a=self.story)
+        conn.rollback()
+
+    def test_a_back_question_another_transaction_asked_mid_run_is_left_for_the_next_run(self):
+        from insight_core.markx import back
+        row = self.back_row()
+        text = self.back_input()
+
+        def lease():   # a worker's lease plans the same back question mid-run, and commits
+            tasks.add(self.cur, back.KIND, text, a=self.story)
+        seen = self.run_with(lambda: D.snapshot(db_url()), lease)
+        self.assertNotIn("deferred", seen["out"])
+        self.assertEqual(seen["out"]["back"]["planned"], 0)
+        self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
+        self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
+        self.cur.execute("SELECT task_id FROM mx_back WHERE id = %s", (row,))
+        self.assertIsNone(self.cur.fetchone()[0])                  # left for the next plan ...
+        with D.snapshot(db_url()) as cur:
+            D.run(cur, now=self.now)
+        self.cur.execute("SELECT t.input_hash = encode(sha256(convert_to(%s, 'UTF8')), 'hex') FROM mx_back b "
+                         "JOIN mx_tasks t ON t.id = b.task_id WHERE b.id = %s", (text, row))
+        self.assertTrue(self.cur.fetchone()[0])                    # ... which points it at the lease's task
+
+    def test_a_concurrent_update_of_a_row_a_stage_writes_defers_that_stage_never_the_run(self):
+        from insight_core.markx import back
+
+        def owner():   # another transaction writes the back stage's own clock mid-run, and commits
+            repo.set_setting(self.cur, back.SINCE_KEY, "2100-01-01T00:00:00+00:00")
+        seen = self.run_with(lambda: D.snapshot(db_url()), owner)
+        out = seen["out"]
+        self.assertIn("back", out["deferred"])
+        self.assertIn("could not serialize", out["deferred"]["back"])
+        self.assertIsNone(out["back"])
+        self.assertIn("later", out)                                 # the stages after it ran
+        self.cur.execute("SELECT count(*), max(counts->'run'->>'kind') FROM mx_runs WHERE finished_at IS NOT NULL")
+        self.assertEqual(self.cur.fetchone(), (1, "full"))         # the run committed, its decisions kept
+        self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE valid_to IS NULL")
+        self.assertGreater(self.cur.fetchone()[0], 0)
+        self.cur.execute("SELECT s.run_id = r.id FROM mx_inc_state s, mx_runs r")
+        self.assertTrue(self.cur.fetchone()[0])                    # and the state it leaves
+        self.assertEqual(repo.get_setting(self.cur, back.SINCE_KEY), "2100-01-01T00:00:00+00:00")   # the other's
+        with D.snapshot(db_url()) as cur:
+            again = D.run(cur, now=self.now)
+        self.assertEqual(again["run"]["kind"], "incremental")
+        self.assertNotIn("deferred", again)                          # the next run does the back stage
 
 
 class Routes(unittest.TestCase):

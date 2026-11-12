@@ -1288,15 +1288,34 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
     # v10.13.9: graph and back are stages of their own (were inside "connections", 95.8 s on the server, unsplit).
     # graph counts in LIMIT: its backfills stop at their own deadline, sized as a share of LIMIT (BACKFILL_SECONDS)
+    deferred: Dict[str, str] = {}
+
+    def guarded(name: str, fn: Callable[[], Any], default: Any = None) -> Any:
+        """v10.15: a stage after the run's own decisions, in a savepoint. The run is one REPEATABLE READ snapshot; a
+        row another transaction changed since (a worker's lease or answer on a task, a lease's planner, the owner's
+        setting) fails the run's write of it with a serialization failure, and with it, before, the whole run
+        (the server's 103.6 s run, lost after its back stage). Now only that stage's writes are undone and it is
+        deferred to the next run, which reads them anew (each stage resumes from its own clock); the decisions, the
+        stories, News and the kept state are kept."""
+        added, old_added = Counter(ask.added), Counter(ask.old_added)
+        try:
+            with cur.connection.transaction():
+                return fn()
+        except (psycopg_errors.SerializationFailure, psycopg_errors.DeadlockDetected) as exc:
+            ask.added, ask.old_added = added, old_added
+            deferred[name] = str(exc).strip().splitlines()[0][:200]
+            log.warning("Mark X decision run: the %s stage met a concurrent update and is deferred to the next run: %s",
+                        name, deferred[name])
+            return default
     mark("graph")
     from insight_core.markx import graph   # 0131: Stalker's first edges (authors' links, identity, the judge)
-    counts["graph"] = graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open)
+    counts["graph"] = guarded("graph", lambda: graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open))
     mark("back")
     from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
-    counts["back"] = back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open)
+    counts["back"] = guarded("back", lambda: back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
     mark("later")
     from insight_core.markx import later   # 0163: later developments (the follow-up trigger, then their back questions)
-    counts["later"] = later.stage(cur, now=now, run_id=run_id, open_cap=config.back_open)
+    counts["later"] = guarded("later", lambda: later.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")
@@ -1309,15 +1328,21 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage
-    counts["entities"], days = entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
-                                                     full=full, budget=entity_budget)
+    got = guarded("entities", lambda: entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
+                                                             full=full, budget=entity_budget))
+    days = set()                        # deferred: it linked nothing, no day to recount; and no "entities" counts,
+    if got is not None:                 # so the next run resumes a full pass from the last finished run's record
+        counts["entities"], days = got
     mark("surges")                      # 0119 A2
-    counts["surges"] = entity_stage.surges(cur, now=now, run_id=run_id, days=days, since=previous,
-                                           window_days=recent_days)
+    counts["surges"] = guarded("surges", lambda: entity_stage.surges(cur, now=now, run_id=run_id, days=days,
+                                                                      since=previous, window_days=recent_days))
     mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
     from insight_core.markx import perspectives
-    counts["perspectives"] = perspectives.stage(cur, ask=ask, now=now, run_id=run_id)
-    counts["briefing"] = mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR, limit=BRIEFING_STORIES)
+    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id))
+    counts["briefing"] = guarded("briefing", lambda: mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR,
+                                                                      limit=BRIEFING_STORIES))
+    if deferred:
+        counts["deferred"] = deferred
     if config.story_window and story_window.backfilling(cur):   # 0144 A2: the backfill steps back once this step is asked and found
         from insight_core.markx import candidates as mx_candidates
         since_next = story_window.next_since(cur, now)
@@ -1357,9 +1382,11 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
 def snapshot(url: Optional[str] = None):
     """A transaction at REPEATABLE READ for one decision run: its first statement sets the level, so every read of
     Mark IX's stories, News and posts sees the one snapshot taken at the run's first query, and a story-job commit
-    landing mid-run is never half seen. The run writes only mx_* rows, which only the run (under its advisory lock)
-    updates; the one write another transaction can race is a task insert (the worker's check planner), which `Ask`
-    takes in a savepoint."""
+    landing mid-run is never half seen. The run's own decisions (stories, memberships, connections, News, the kept
+    state) are rows only the run writes (under its advisory lock); its task inserts and reopens race the worker's
+    leases, answers and planners, and are taken in savepoints (`Ask`, back/later's `planned`, graph's). v10.15: every
+    stage after the decisions runs in a savepoint too (`run`'s `guarded`): a row another transaction changed since the
+    snapshot defers that stage to the next run, never the run."""
     from insight_core.db import database
     if url is None:
         from insight_core.services.registry import services

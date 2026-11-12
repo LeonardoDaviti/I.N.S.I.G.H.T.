@@ -277,6 +277,10 @@ class Incremental(unittest.TestCase):
         for round_ in range(8):
             for kind in ("check", "join", "pair", "merge", "card", "headline", "connect"):
                 self.answer(kind, answer_of, limit=rng.randint(0, 3))
+            if round_ >= 6:   # the last two rounds agree on every open join and pair (asked, then asked again): joins
+                for kind in ("join", "pair"):
+                    self.answer(kind, lambda x, y: {"relation": "same_event", "confidence": 95,
+                                                    "reason": "the same launch"})
             if round_ == 2:                                            # a text changes
                 pid = rng.choice(posts)
                 self.cur.execute("UPDATE posts SET content = content || ' Updated.' WHERE id = %s", (pid,))

@@ -536,9 +536,9 @@ def plan(cur: Any, *, open_cap: int = back.OPEN, now: Optional[datetime] = None,
         if not old or pid not in posts:
             continue
         age = max(0, int((now - at).total_seconds() // 86400))
-        tid, new_task = tasks.add(cur, KIND, back.render(old, [posts[pid]]), a=story, priority=age)
-        cur.execute("UPDATE mx_later SET task_id = %s WHERE id = %s", (tid, lid))
-        added += bool(new_task)
+        got = back.planned(cur, lambda: tasks.add(cur, KIND, back.render(old, [posts[pid]]), a=story, priority=age),
+                           "UPDATE mx_later SET task_id = %s WHERE id = %s", lid)   # v10.15: a race skips the row
+        added += bool(got and got[1])
     return added
 
 

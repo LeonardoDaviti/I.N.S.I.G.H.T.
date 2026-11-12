@@ -177,3 +177,59 @@ step for that branch: read the book once a run and hand it to surges and perspec
   with the new `texts_loaded`, `inputs_rendered`, `inputs_kept` and `state` (rows written and dropped).
 - `scripts/realdata-check.sh` was not run (as asked); the real-data equivalence above was run by hand on scratch
   copies, dropped after.
+
+## Follow-up (branch `v1015-voices` from `v1015`): the rules count a repost as its original author
+
+0168 E made `tasks.voices` count a repost (an X repost or quote of another account, a Telegram forward) as its
+original author's voice (`tasks.Post.voice`); the decision rules still counted the feed. Now `decide.Post.source` is
+the voice in the full path and in the kept state: `mx_inc_posts.voice` (migration 0114), and `STATE_VERSION`
+(`inc-v2-voices`) in the code stamp, so the first run after it is full and writes every post again. The stamp
+already covers what the voice is read from (the post's author and metadata, the source's platform and handle).
+Test: two feeds forwarding one channel are one voice (their story is never checked), the state keeps the voice, a
+member that becomes a forward is read again, incremental equals full.
+
+**Measured** on a scratch copy of `insight_server_1105_mxreal` (migrated, story window everything; main of v1015
+settled first, then two copies: v1015 against this branch, one run each):
+- 3,819 of 10,815 X posts carry another author; no Telegram post of this copy has a forward header.
+- Of 1,886 current Mark X stories, 252 count other voices: 218 go from 1 voice to 2+ (all from one feed: 161 the
+  feed's own post with a repost or quote of another account, 57 only reposts of two or more accounts), 34 already 2+
+  count more. None go down (no forwards here).
+- The run's decisions now: no membership, connection or News row changed yet (Mark X News counts voices with Mark
+  IX's own code); the new 2-voice stories are asked what such stories are asked: 218 headlines, 11 cards, 6 joins,
+  4 checks. Memberships change once those are answered.
+- Incremental equals full after it (a full run of the next snapshot wrote nothing, its check the same).
+- **Read of 10 changed stories, at random:** 7 are one account quoting or replying to a stranger's post ("will do",
+  "spot on", a joke on another's tweet): one person's conversation, now counted as two voices, wrong for a story's
+  voices. 3 are closer to right: one feed reposting four different people on one incident, one reposting two
+  accounts on one livestream, one an author's release reposted beside his own post on it (the same party). Mark IX
+  counts a repost as its author's voice only when the author is one of the owner's sources; counting every reposted
+  account makes a single account's quote-tweet threads look like 2-voice stories. Left as the coordinator asked;
+  the owner should decide whether an author who is not one of the sources counts (see the report).
+
+## Follow-up 2: a concurrent update never loses the run
+
+**The server's failure** (v10.13.11, 2026-11-12: ok false after 103.6 s, "could not serialize access due to
+concurrent update", stages logged up to back, so it failed in later). A decision run is one REPEATABLE READ snapshot;
+Postgres fails any write of a row another transaction changed after the snapshot. The run's later stage plans back
+questions (`later.plan`, v10.13.11 later.py:452–453: `tasks.add`, i.e. repo.py:100 `INSERT ... ON CONFLICT (kind,
+guide, input_hash) DO NOTHING`, then `UPDATE mx_later SET task_id`), as does back's (back.py:382–383, and its clock
+back.py:446). The same rows are written meanwhile by the worker: a lease of `back` runs the same planners in the API's
+transaction (api.py:284–292 → tasks.py:646 `_plan_back` = back.plan + later.plan; v10.14 skips it while a run holds
+its lock, but a lease that began before the run still commits inside it), and leases (repo.py:143, status 'leased')
+and answers (back.py:388, reopened) change the back tasks themselves. An insert whose conflicting task row is newer
+than the snapshot, or an update of an mx_later/mx_back row the lease planned, is a serialization failure, and the whole
+run rolled back. Shown by `test_the_cause_a_task_another_transaction_changed_since_the_snapshot_fails_its_insert`.
+
+**The fix (the class):**
+- back and later plan each row in a savepoint (`back.planned`): a row another transaction planned, or a task it added
+  or leased since the snapshot, is left for the next plan (which finds the task and points the row at it), as Ask
+  already does for the judge kinds and graph for relate.
+- every stage after the run's own decisions (graph, back, later, entities, surges, perspectives, briefing) runs in a
+  savepoint (`decide.run`'s `guarded`): any other serialization failure or deadlock undoes that stage's writes only,
+  is logged and shown (`counts.deferred`), and the next run does it (each stage resumes from its own clock; an
+  entities stage deferred writes no `entities` counts, so a half-done full pass resumes from the last record). The
+  run's decisions, memberships, connections, News and the kept state (0169) are written by the run alone and kept.
+- Decisions are unchanged (no stage reads another's deferred writes; the core is as before). Tests with two
+  connections: a back question a lease asks mid-run is skipped and planned by the next run; a stage's row updated
+  mid-run defers that stage, the run commits with its stories and its state, and the next run is incremental and
+  does the stage.

@@ -353,10 +353,27 @@ def plan(cur: Any, *, open_cap: int = OPEN, now: Optional[datetime] = None, **_k
         if not old or not new:
             continue
         age = max(0, int((now - at).total_seconds() // 86400))
-        tid, new_task = tasks.add(cur, KIND, render(old, new), a=story, priority=age)
-        cur.execute("UPDATE mx_back SET task_id = %s WHERE id = %s", (tid, bid))
-        added += bool(new_task)
+        got = planned(cur, lambda: tasks.add(cur, KIND, render(old, new), a=story, priority=age),
+                      "UPDATE mx_back SET task_id = %s WHERE id = %s", bid)
+        added += bool(got and got[1])
     return added
+
+
+def planned(cur: Any, add: Any, link: str, row: str) -> Optional[Tuple[Any, bool]]:
+    """v10.15: a row's task added (`add()`: (task id, new)) and the row pointed at it (`link`), in a savepoint. Inside a
+    decision run (one REPEATABLE READ snapshot) another transaction may have asked the same question or planned the
+    same row since the snapshot (a worker's lease plans back and later too, and leases and answers its tasks): Postgres
+    then fails the insert or the update with a serialization failure, which here leaves the row for the next plan
+    instead of failing the run. None when so."""
+    from psycopg import errors as psycopg_errors
+    try:
+        with cur.connection.transaction():
+            tid, new_task = add()
+            cur.execute(link, (tid, row))
+            return tid, new_task
+    except psycopg_errors.SerializationFailure:
+        log.info("Mark X back: a row another transaction planned since this one's snapshot is left for the next plan")
+        return None
 
 
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
