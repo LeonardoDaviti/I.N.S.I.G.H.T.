@@ -21,7 +21,9 @@ server 137 s, 28,902 texts read, 2.8 GiB in "questions and decisions". 0169 keep
   - **The dirty set** is still every judge task whose (status, valid calls) changed since the last run, now against
     `mx_inc_tasks` (what the last run saw); it is reported with its closure (`counts.run`), as 0116 did.
   - **News** keeps the last run's inputs and rows (`mx_inc_state.news`), so it is made again only for the rows the
-    changed stories reach (0116's `news.write`), and in full when Mark IX's posts, links, surges or roundups changed.
+    changed stories reach (0116's `news.write`). 0177: and the rows of the posts whose StoryPost inputs changed (their
+    text stamp, their links' resolution) or whose Mark IX surge did, by digests kept with them; in full only when the
+    source facts a StoryPost reads changed (or no digests were kept).
 
 **The rules still run over the whole world**: the plan, glue, merges, the second pass and the matching of stories are
 global and cost little next to reading (0116: 50 ms on 6,606 posts); running them in full is what keeps the result a

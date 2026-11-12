@@ -56,16 +56,64 @@ def tag(posts: Sequence[str], x_of: Dict[str, str], row_id: str, ix_of: Dict[str
     return "SAME" if set(posts) == ix_rows.get(nid, set()) else "CHANGED"
 
 
-def _story_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Any]:
-    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here)."""
+def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str, Any]:
+    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here). `sources`: the SourceFacts read
+    this run, else read here."""
     from insight_core.db.repo_stories import SourceFacts, StoriesRepository
     from insight_core.services.stories_service import StoriesService
     cur.execute("SELECT post_id::text FROM post_parts WHERE post_id = ANY(%s::uuid[])", (sorted(set(ids)),))
     parsed = [r[0] for r in cur.fetchall()]
     if not parsed:
         return {}
-    sources = SourceFacts(cur)
+    sources = SourceFacts(cur) if sources is None else sources
     return {row["id"]: StoriesService._story_post(row, sources) for row in StoriesRepository.load_posts(cur, sources, parsed)}
+
+
+# ---- 0177: what each post's StoryPost is made of, kept by the run's state ------------------------------------------
+# A post's StoryPost (StoriesService._story_post over StoriesRepository.load_posts) reads its posts row, its parts, its
+# kept links and the stored post each link resolves to (the first at that address), and its source's facts. News was
+# made in full whenever ingestion touched Mark IX's tables (on the server: almost every run). The run's state now
+# keeps, for every post News reads, a digest of its text stamp (plan_marks.STAMP: its row, parts and links rows) and
+# of its links' resolution; the facts as a StoryPost reads them; and Mark IX's surges. The posts whose digest changed,
+# and those of a surge that changed, seed the rows made again (with `_changed_rows`' closure); other facts: in full.
+
+def facts_digest(sources: Any) -> str:
+    """The source facts as a StoryPost reads them (kind, publication, home site, account; accounts; owners)."""
+    import hashlib
+    data = [[i, sources.kind.get(i), sources.publication(i), sources.home_site(i), sources.account.get(i)]
+            for i in sorted(sources.kind)]
+    blob = json.dumps([data, sorted(sources.of_account.items()), sorted(sources.owners.items())], default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
+def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
+    """{post: a digest of its text stamp and of its kept links' resolution} of the posts of `ids` that exist."""
+    import hashlib
+    from insight_core.markx import incremental
+    ids = sorted(set(ids))
+    stamps = incremental.stamps_of(cur, memo, ids)
+    cur.execute("""SELECT pl.post_id::text, string_agg(pl.target_url || ' ' || COALESCE(t.id::text, '-'), ' '
+                                                       ORDER BY pl.position, pl.target_url)
+                     FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
+                                                           ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
+                    WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
+    links = dict(cur.fetchall())
+    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}".encode()).hexdigest()[:16] for i in ids if i in stamps}
+
+
+def surge_keys(found: Iterable[Any]) -> List[List[Any]]:
+    return sorted([s.name, s.at.isoformat() if s.at else None, list(s.posts), s.usual] for s in found)
+
+
+def changed_posts(last: Dict[str, Any], now: Dict[str, Any]) -> Set[str]:
+    """The posts whose StoryPost inputs differ between two runs' digests, and the posts of a surge in one of them only."""
+    a, b = last.get("posts") or {}, now.get("posts") or {}
+    out = {p for p in set(a) | set(b) if a.get(p) != b.get(p)}
+    was = {json.dumps(k) for k in last.get("surges") or []}
+    new = {json.dumps(k) for k in now.get("surges") or []}
+    for k in was ^ new:
+        out |= set(json.loads(k)[2])
+    return out
 
 
 def window_posts(cur: Any, since: datetime) -> Set[str]:
@@ -80,7 +128,7 @@ def window_posts(cur: Any, since: datetime) -> Set[str]:
 
 def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
-            first: Optional[Dict[str, Any]] = None, memo: Any = None) -> List[Dict[str, Any]]:
+            first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None) -> List[Dict[str, Any]]:
     """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
     story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
     rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
@@ -92,7 +140,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
     if only is not None:
         every &= only
-    sp = _story_posts(cur, every)
+    sp = _story_posts(cur, every, sources)
     built = []
     story_of: Dict[str, str] = {}
     for sid, (members, mentions) in sorted(stories.items()):
@@ -136,15 +184,15 @@ def last_written(cur: Any) -> Optional[str]:
 
 
 def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
-                  last: Dict[str, Any], window: Set[str], memo: Any = None
-                  ) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
+                  last: Dict[str, Any], window: Set[str], memo: Any = None, extra: Iterable[str] = (),
+                  sources: Any = None) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
     """0116: the last run's rows, with only those its changed stories reach made again (as Mark IX's incremental News,
     0072 A). The seeds: the posts of every story whose members or mentions changed (now and before), the posts that
     came into or left the window, and the stories whose start left it. The group: the seeds with every row, story
     (members and mentions) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
     from insight_core.markx import incremental
     stories = {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}
-    seeds: Set[str] = set(window ^ last["window"])
+    seeds: Set[str] = set(window ^ last["window"]) | set(extra)   # 0177: `extra`, the posts whose StoryPost changed
     for sid in set(stories) | set(last["stories"]):
         now_, was = stories.get(sid), last["stories"].get(sid)
         if now_ != was:
@@ -185,7 +233,8 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
         group |= frontier
     touching = {sid: (sorted(v[0]), set(v[1])) for sid, v in stories.items() if (v[0] | v[1]) & group}
     first = {sid: at for sid, at in last["first"].items() if sid in stories and sid not in touching}
-    made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo) if group else []
+    made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo,
+                   sources=sources) if group else []
     kept = [r for r in last["rows"] if not any(p["post_id"] in group for p in r["posts"])]
     return sorted(kept + made, key=lambda r: (r["first_at"], str(r["id"]))), group, first
 
@@ -291,12 +340,26 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     window = window_posts(cur, since)
     how, group = "full", None
     first: Dict[str, Any] = {}
-    if (memo is not None and memo.news is not None
-            and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
-        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)
+    sources = inputs = last_inputs = None
+    state = isinstance(memo, incremental.State)   # 0169's kept state (an older run's in-process memo has no stamps)
+    if state:   # 0177: what the StoryPosts are made of (the state keeps it; the next run compares)
+        from insight_core.db.repo_stories import SourceFacts
+        sources = SourceFacts(cur)
+        universe = window | {p for ms, _ in stories.values() for p in ms}
+        inputs = {"facts": facts_digest(sources), "posts": post_digests(cur, memo, universe),
+                  "surges": surge_keys(incremental.surges(cur, memo))}
+        last_inputs = (memo.news or {}).get("inputs")
+    if state and memo.news is not None and last_inputs is not None and last_inputs["facts"] == inputs["facts"]:
+        # 0177: Mark IX's tables changed or not (ingestion: almost every run), the posts whose StoryPost changed seed it
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo,
+                                           extra=changed_posts(last_inputs, inputs), sources=sources)
+        how = "incremental"
+    elif (not state and memo is not None and memo.news is not None
+          and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)   # 0116's in-process memo
         how = "incremental"
     else:
-        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo)
+        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo, sources=sources)
     ix_of, ix_rows = _ix_news(cur, since)
     x_of = {p["post_id"]: r["id"] for r in rows for p in r["posts"]}
     for r in rows:
@@ -304,7 +367,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     tags = dict(Counter(r["tag"] for r in rows))
     if memo is not None:
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
-                     "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}}
+                     "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()},
+                     "inputs": inputs}
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
         made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
