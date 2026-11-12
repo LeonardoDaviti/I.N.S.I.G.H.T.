@@ -326,7 +326,7 @@ class OriginalsService:
         it triggered (the second voice's first post, else the lead). A document entity of 2+ voices with no address
         is a lookup (C). Entities by voices, then the newest."""
         from insight_core.markx import entity_addresses as EA, identity as I, schemas
-        from insight_core.markx.candidates import SPECIFIC_TYPES
+        from insight_core.markx.pairing import SPECIFIC_TYPES
         since = now - E.TRIGGER_WITHIN
         cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, p.source_id::text,
                               COALESCE(p.surfaced_at, p.published_at, p.fetched_at), m.by_name, m.type

@@ -8,7 +8,7 @@ Each hit is a mention: type `document`, role `source`, rule `citation`.
     frozen report (plan/research/lab/markx/proto/out/entv41_v1/REPORT.md); the report's patterns replace
     IN_TEXT (and PATTERNS_VERSION) when it passes. Nothing else here waits for it.
   - **Identifiers** (final): arXiv ids and links (arXiv:2401.01234, arxiv.org/abs|pdf|html/..., the arXiv DOI), DOIs.
-  - **Links to documents** (final): every open, non-boilerplate post_refs link whose candidates.document_key is a
+  - **Links to documents** (final): every open, non-boilerplate post_refs link whose pairing.document_key is a
     document (a paper by its id; a record or a filing by 0109's address shapes).
 
 Merged with the answer's mentions (`merge`): a hit and a model document naming the same thing (the same DOI or arXiv
@@ -89,8 +89,8 @@ def ids_in(text: str) -> List[str]:
 
 
 def link_ref(url: str) -> Optional[str]:
-    """The ref of a link to a document (candidates.document_key), else None."""
-    from insight_core.markx.candidates import document_key
+    """The ref of a link to a document (pairing.document_key), else None."""
+    from insight_core.markx.pairing import document_key
     if not url:
         return None
     if "://" not in url:

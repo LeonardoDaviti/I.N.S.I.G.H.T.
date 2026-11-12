@@ -41,7 +41,7 @@ from uuid import UUID
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas
+from insight_core.markx import pairing, repo, schemas
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -53,7 +53,7 @@ READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
 STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
 CARD_MEMBERS, HEADLINE_MEMBERS, CONNECT_MEMBERS, BRIEFING_POSTS = 8, 6, 5, 4
 PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
-NOT_VOICE = {"saved"}
+NOT_VOICE = pairing.NOT_VOICE   # Pairing's voice rule (0166)
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
 PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
@@ -192,7 +192,7 @@ def near_copies(members: Sequence[Post]) -> set:
 
 
 def voices(posts: Iterable[Post]) -> int:
-    return len({p.source_id for p in posts if p.kind not in NOT_VOICE})
+    return pairing.voices((p.source_id, p.kind) for p in posts)
 
 
 def _cut(text: str, n: int) -> str:

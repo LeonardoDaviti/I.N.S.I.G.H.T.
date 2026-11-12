@@ -119,7 +119,7 @@ ACL = re.compile(r"/(\d{4}\.[a-z\-]+\.\d+|[A-Z]\d{2}-\d{4})(?:\.pdf)?/?$")
 def shape(url: Optional[str]):
     """(shape, id) for a link to a document (entv42_rule.shape: the product's document_key, then PMC, PubMed, PII,
     RFC, ECMA, ISO, SSRN, OSF, a Springer Nature article id, OpenReview, ACL Anthology), else None. Used by the cue."""
-    from insight_core.markx.candidates import document_key
+    from insight_core.markx.pairing import document_key
     if not url:
         return None
     host, path, query = _host_path(url)

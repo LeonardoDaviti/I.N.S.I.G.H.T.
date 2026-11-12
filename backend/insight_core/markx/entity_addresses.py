@@ -49,7 +49,7 @@ def _makers(book: I.Book, root: str, members: Optional[Dict[str, Set[str]]] = No
 def _mentions(cur: Any, post_ids: Optional[List[str]], after: Optional[str] = None) -> List[Tuple]:
     """The linked mentions of the specific types, of `post_ids` (None: every post), or `after` that post as well."""
     from insight_core.markx import schemas
-    from insight_core.markx.candidates import SPECIFIC_TYPES
+    from insight_core.markx.pairing import SPECIFIC_TYPES
     if after is not None:
         where = "AND (m.post_id > %(after)s::uuid OR m.post_id = ANY(%(ids)s::uuid[]))"
     else:

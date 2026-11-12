@@ -50,15 +50,19 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 
 from psycopg import errors as psycopg_errors
 
+from insight_core.markx import pairing
+
 log = logging.getLogger(__name__)
 
 CODE_VERSION = "markx-decide-v1"
 CERTAIN = frozenset({"thread", "quote", "address"})    # a tree reason that is not a guess: no check (unless a roundup)
 LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to the story's page (0121 Decided 1)
-NOT_VOICE = frozenset({"saved"})
+NOT_VOICE = pairing.NOT_VOICE
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
 LATE = timedelta(hours=72)                              # Mark IX's link window (experiment W)
+_SAME = pairing.POLICIES[pairing.SAME_STORY]             # the bars below default to Pairing's policy rows (0166)
+_CONNECTED = pairing.POLICIES[pairing.CONNECTED]
 
 
 @dataclass(frozen=True)
@@ -69,13 +73,13 @@ class Config:
     tau_keep: float = 0.30          # a check removes below it ...
     tau_keep2: float = 0.15         # ... in a 2-voice story below this (rule B)
     tau_connect: float = 0.60       # F6's development bar, for typed connections
-    min_words: int = 20             # rule A
-    cand_lo: float = 0.65           # an embedding candidate's cosine
-    story_lo: float = 0.70          # story pairs' centroid cosine
-    story_days: int = 14            # story pairs' first posts at most this far apart
-    connect_lo: float = 0.60        # connect questions: story pairs at this centroid cosine ...
-    connect_days: int = 30          # ... at most this far apart ...
-    connect_voices: int = 2         # ... both stories of this many voices or more ...
+    min_words: int = _SAME.min_words                # rule A
+    cand_lo: float = _SAME.cosine                   # an embedding candidate's cosine
+    story_lo: float = _SAME.story_cosine            # story pairs' centroid cosine
+    story_days: int = _SAME.story_window.days       # story pairs' first posts at most this far apart
+    connect_lo: float = _CONNECTED.story_cosine     # connect questions: story pairs at this centroid cosine ...
+    connect_days: int = _CONNECTED.story_window.days   # ... at most this far apart ...
+    connect_voices: int = _CONNECTED.min_voices     # ... both stories of this many voices or more ...
     connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first ...
     connect_open: int = 100         # ... and none while this many connect tasks wait (open or leased)
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
@@ -91,7 +95,7 @@ class Config:
     # over the server copy's whole history it asked 7 questions, all wrong (stories citing one background paper),
     # and 0 in the 30-day window; it missed the filing it was for.
     document_merges: bool = False
-    document_days: int = 30         # ... when two of their posts linking it are at most this far apart
+    document_days: int = _SAME.document_window.days   # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides (corrections 8) ...
     story_window: bool = True       # ... read from the owner's story window each run (0144 A: markx/story_window.py)
 
@@ -102,6 +106,17 @@ class Config:
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    def same_story(self) -> pairing.Policy:
+        """Pairing's same-story row with this config's bars."""
+        return pairing.policy(pairing.SAME_STORY, cosine=self.cand_lo, min_words=self.min_words,
+                              story_cosine=self.story_lo, story_window=timedelta(days=self.story_days),
+                              document_window=timedelta(days=self.document_days))
+
+    def connected(self) -> pairing.Policy:
+        """Pairing's connected row with this config's bars."""
+        return pairing.policy(pairing.CONNECTED, story_cosine=self.connect_lo,
+                              story_window=timedelta(days=self.connect_days), min_voices=self.connect_voices)
 
 
 @dataclass(frozen=True)
@@ -184,7 +199,7 @@ def _at_key(posts: Dict[str, Post], pid: str):
 
 
 def voices(posts: Dict[str, Post], ids: Iterable[str]) -> int:
-    return len({posts[i].source for i in ids if i in posts and posts[i].kind not in NOT_VOICE})
+    return pairing.voices((posts[i].source, posts[i].kind) for i in ids if i in posts)
 
 
 def ix_members(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]]) -> Dict[str, List[Member]]:
@@ -244,17 +259,13 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             last = voices(posts, [x.post for x in ms if x.post != m.post]) < 2
             out.append(Question(f"check:{key}:{m.post}", "check", story=key, post=m.post, voices=nv[key], why=m.why,
                                 roundup=roundup, side=shown, last_voice=last))
+    pol = config.same_story()
     seen: Set[Any] = set()
     for a, b, cos in candidates:
-        if cos is not None and cos < config.cand_lo:
-            continue
+        if not pairing.admits(pol, a, b, cos, posts, kinds):
+            continue                                           # Pairing's gate: the bar, rule A, a roundup as a whole
         if in_window is not None and not in_window(a):
             continue
-        pa, pb = posts.get(a), posts.get(b)
-        if not pa or not pb or pa.words < config.min_words or pb.words < config.min_words:
-            continue
-        if kinds.get(a) == "roundup" or kinds.get(b) == "roundup":
-            continue                                           # a roundup is matched per item, never whole
         sa, sb = home.get(a, []), home.get(b, [])
         if set(sa) & set(sb):
             continue                                           # one Mark IX story already
@@ -287,7 +298,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             out.append(Question(tid, "pair", post=b, anchor=a, cos=cos, side=(a,)))
     first = {key: posts[ms[0].post].at for key, ms in members.items() if ms}
     for x, y, cos in story_pairs:   # cos None: found by a shared document, not by meaning (0121 Decided 5)
-        if x not in members or y not in members or nv[x] < 2 or nv[y] < 2 or (cos is not None and cos < config.story_lo):
+        if x not in members or y not in members or not pairing.admits_stories(pol, cos, nv[x], nv[y]):
             continue
         k = tuple(sorted([x, y]))
         if k in seen:
@@ -308,12 +319,12 @@ def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
     of two post sets' mean vectors (None when either has none). `within(at_a, at_b)`: the days rule (default: a
     timedelta of story_days). `documents(posts_a, posts_b)`: whether two of their posts link one document page within
     `document_days` (0121 Decided 5): such a pair is asked whatever its centroid and days."""
-    span = timedelta(days=config.story_days)
-    within = within or (lambda ta, tb: abs(ta - tb) <= span)
+    pol = config.same_story()
+    within = within or pol.story_within
     st: Dict[str, Tuple[List[str], Any, bool]] = {}
     for s in first_pass.stories(posts):
         ps = sorted((p for p in s["posts"] if p in posts), key=lambda p: posts[p].at)
-        if voices(posts, ps) < 2:
+        if voices(posts, ps) < pol.min_voices:
             continue
         st[s["story"]] = (ps, posts[ps[0]].at, s["story"] in first_pass.ix)
     out, seen = [], set()
@@ -322,7 +333,7 @@ def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
             if y == x or tuple(sorted([x, y])) in seen:
                 continue
             c = centroid_cos(st[x][0], vy[0]) if within(st[x][1], vy[1]) else None
-            if c is not None and c < config.story_lo:
+            if c is not None and c < pol.story_cosine:
                 c = None
             if c is None and not (documents is not None and documents(st[x][0], vy[0])):
                 continue
@@ -778,22 +789,9 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
                      only: Optional[Iterable[str]] = None) -> Dict[Tuple[str, str], float]:
-    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them."""
-    keys, ids = [], []
-    for k, ps in groups.items():
-        for p in ps:
-            keys.append(k)
-            ids.append(p)
-    if not keys:
-        return {}
-    cur.execute("""WITH g AS (SELECT * FROM unnest(%(k)s::text[], %(p)s::uuid[]) AS g(k, post_id)),
-                        c AS (SELECT g.k, avg(e.v::vector) AS v FROM g
-                                JOIN mx_embeddings e ON e.post_id = g.post_id AND e.model = %(m)s GROUP BY g.k)
-                   SELECT x.k, y.k, 1 - (x.v <=> y.v) FROM c x JOIN c y ON x.k < y.k
-                    WHERE (%(only)s::text[] IS NULL OR x.k = ANY(%(only)s) OR y.k = ANY(%(only)s))
-                      AND 1 - (x.v <=> y.v) >= %(lo)s""",
-                {"k": keys, "p": ids, "m": MODEL, "lo": lo, "only": None if only is None else list(only)})
-    return {(x, y): float(c) for x, y, c in cur.fetchall()}
+    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them
+    (Pairing's centroid source)."""
+    return pairing.centroid_cosines(cur, groups, lo, only, MODEL)
 
 
 class Questions:
@@ -887,50 +885,13 @@ class Questions:
         return None
 
 
-class Documents:
-    """0121 Decided 5 (the owner's call, default yes): the document pages each post links (candidates.document_key:
-    a paper, a record or a filing, 0106's and 0109's address shapes), a roundup's never (it lists them), and which
-    stories two of whose posts link one within `document_days`. A merge question, never a rule."""
+class Documents(pairing.Documents):
+    """0121 Decided 5 (the owner's call, default yes): Pairing's document source over this run's world (the document
+    pages each post links, a roundup's never; the stories two of whose posts link one within `document_days`)."""
 
     def __init__(self, world: World, config: Config) -> None:
-        from insight_core.markx import candidates
-        self.w, self.span = world, timedelta(days=config.document_days)
-        kinds = world.kinds()
-        self.of: Dict[str, Set[str]] = {}
-        for pid, p in world.text.items():
-            if kinds.get(pid) != "roundup" and pid in world.posts:
-                keys = {k for k in (candidates.document_key(url) for url, _ in p.links) if k}
-                if keys:
-                    self.of[pid] = keys
-
-    def _linkers(self, ps: Sequence[str]) -> Dict[str, List[Any]]:
-        out: Dict[str, List[Any]] = defaultdict(list)
-        for p in ps:
-            for k in self.of.get(p, ()):
-                out[k].append(self.w.posts[p].at)
-        return out
-
-    def _near(self, xs: Sequence[Any], ys: Sequence[Any]) -> bool:
-        return any(abs(a - b) <= self.span for a in xs for b in ys)
-
-    def shared(self, pa: Sequence[str], pb: Sequence[str]) -> bool:
-        la, lb = self._linkers(pa), self._linkers(pb)
-        return any(self._near(la[k], lb[k]) for k in la.keys() & lb.keys())
-
-    def pairs(self, groups: Dict[str, Sequence[str]]) -> List[Tuple[str, str]]:
-        """The (x, y) of `groups` (x < y) sharing a document within the days."""
-        by_key: Dict[str, Dict[str, List[Any]]] = defaultdict(dict)
-        for g, ps in groups.items():
-            for k, ats in self._linkers(ps).items():
-                by_key[k][g] = ats
-        out = set()
-        for k, held in by_key.items():
-            gs = sorted(held)
-            for i, x in enumerate(gs):
-                for y in gs[i + 1:]:
-                    if self._near(held[x], held[y]):
-                        out.add((x, y))
-        return sorted(out)
+        super().__init__(world.text, world.posts, world.kinds(), config.same_story())
+        self.w = world
 
 
 def _question_at(q: Question, world: World) -> Any:
@@ -957,12 +918,10 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
     extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
     q = Questions(world, ask, now, config)
+    pol = config.same_story()
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
-    multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= 2}
-    first = {k: world.posts[ps[0]].at for k, ps in multi.items()}
-    span = timedelta(days=config.story_days)
-    story_pairs = [(x, y, c) for (x, y), c in sorted(centroid_cosines(cur, multi, config.story_lo).items())
-                   if abs(first[x] - first[y]) <= span]
+    multi = {k: [m.post for m in ms] for k, ms in q.members.items() if nv[k] >= pol.min_voices}
+    story_pairs = [(x, y, c) for (x, y), c in sorted(pairing.story_pairs(cur, pol, multi, world.posts).items())]
     docs = Documents(world, config) if config.document_merges else None
     if docs is not None:
         found = {tuple(sorted(xy)) for xy in ((x, y) for x, y, _ in story_pairs)}
@@ -973,9 +932,9 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     ans1 = [(x, got1[n]) for n, x in enumerate(q1) if got1[n] is not None]
     p1 = decide(world.posts, world.stories, ans1, config, world.events())
     groups = {s["story"]: [p for p in s["posts"] if p in world.posts] for s in p1.stories(world.posts)
-              if voices(world.posts, s["posts"]) >= 2}
+              if voices(world.posts, s["posts"]) >= pol.min_voices}
     new = [k for k in groups if k not in p1.ix]
-    cos2 = centroid_cosines(cur, groups, config.story_lo, only=new) if new else {}
+    cos2 = centroid_cosines(cur, groups, pol.story_cosine, only=new) if new else {}
     by_posts = {tuple(ps): k for k, ps in groups.items()}
 
     def centroid_cos(pa: Sequence[str], pb: Sequence[str]) -> Optional[float]:
@@ -1152,12 +1111,12 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             rows.append(dict(c, a=a, b=b))
     groups = {k: sorted((p for p in out.about[k] if p in world.posts), key=lambda p: _at_key(world.posts, p))
               for k in news_keys}
+    found = pairing.story_pairs(cur, config.connected(), groups, world.posts)   # voices, bar, days: Pairing's
     groups = {k: ps for k, ps in groups.items() if ps and voices(world.posts, ps) >= config.connect_voices}
     first = {k: world.posts[ps[0]].at for k, ps in groups.items()}
-    span = timedelta(days=config.connect_days)
     pairs = []
-    for (x, y), cos in centroid_cosines(cur, groups, config.connect_lo).items():
-        if abs(first[x] - first[y]) > span or ids.get(x) == ids.get(y):
+    for (x, y), cos in found.items():
+        if ids.get(x) == ids.get(y):
             continue
         x0, y0 = sorted([x, y], key=lambda k: (first[k], k))
         pairs.append((x0, y0, cos))
