@@ -54,7 +54,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequ
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
 from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, KindHttp
-from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds import parsing, paywall
 from insight_core.ingestion.kinds.base import UNREADABLE, Inspection, RateLimit, Source
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
 from insight_core.utils.addresses import host_of, publication_of
@@ -537,7 +537,9 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "categories": [],
         # When the page says it last changed: what a watched page is checked by (issue 0039).
         "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity,
-                     **({"modified": modified} if (modified := parsing.page_modified(page)) else {})},
+                     **({"modified": modified} if (modified := parsing.page_modified(page)) else {}),
+                     # A page that says it is for paying readers (issue 0167): its free part, marked
+                     **({"paywalled": True} if paywall.marker(page) else {})},
     }
 
 

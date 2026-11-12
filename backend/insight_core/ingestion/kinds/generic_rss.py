@@ -144,6 +144,11 @@ class GenericRssKind(BaseKind):
             posts = await self._maybe_expand(source, parsed[:limit])
         result = FetchedPosts(await self._read_again(source, posts))
         result.failure = failure
+        if feed_text is not None:
+            from insight_core.ingestion.kinds import substack   # substack's module reads feeds through parsing too
+
+            if substack.feed_signal(feed_text) == "generator" and not substack.is_platform_host(host_of(url)):
+                result.recognised = {"substack": True}   # issue 0167: a Substack publication on its own domain
         return result
 
     # ------------------------------------------------------------------ the archive (issues 0108, 0143)

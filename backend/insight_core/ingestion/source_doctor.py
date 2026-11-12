@@ -53,7 +53,7 @@ from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.ingestion.feed_finder import FEED_BYTES, feed_title, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
-from insight_core.ingestion.kinds import KindRegistry, page_watch
+from insight_core.ingestion.kinds import KindRegistry, page_watch, substack
 from insight_core.ingestion.kinds.base import EmptyFetch
 from insight_core.ingestion.kinds.parsing import path_segments
 from insight_core.utils.addresses import host_of, publication_of
@@ -259,6 +259,16 @@ class SourceDoctor:
         settings = source.get("settings") or {}
         name = str(settings.get("display_name") or address)
         followed = settings.get("page_watch") if isinstance(settings.get("page_watch"), dict) else None
+        if followed is None and settings.get("substack") is not True and hasattr(self.store, "merge_settings"):
+            # Issue 0167: a Substack publication on its own domain read as a plain feed: read by its kind from now.
+            why = await substack.recognise(self.http, address)
+            if why:
+                await asyncio.to_thread(self.store.merge_settings, str(source["id"]), {"substack": True})
+                await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding={
+                    "replacement": None, "dismissed": False, "recognised": "substack",
+                    "note": f"a Substack publication on its own domain ({why}): read as one from its next fetch"})
+                logger.info("Source doctor: %s is a Substack publication on its own domain (%s)", name, why)
+                return
         if await reads_again(self.http, address, followed):
             # A temporary error (devblogs.microsoft.com's SSL on the server): nothing to replace.
             await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=WORKING_AGAIN)
@@ -302,6 +312,15 @@ class DbDoctorStore:
 
     def switch(self, source_id: str, url: str, page_watch: Optional[Dict[str, Any]]) -> Any:
         return self._switch(source_id, url, page_watch)
+
+    def merge_settings(self, source_id: str, settings: Dict[str, Any]) -> None:
+        """What the doctor learned the source is (issue 0167: {"substack": True}), into its settings."""
+        from insight_core.db.repo_sources import SourcesRepository
+
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                SourcesRepository(self.db_url).merge_source_settings(cur, source_id, settings)
+            conn.commit()
 
     def items(self, source_id: str) -> List[Item]:
         """The source's latest STORED_ITEMS posts, (url, title)."""

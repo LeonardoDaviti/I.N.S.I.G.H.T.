@@ -46,6 +46,7 @@ from insight_core.services.operations_service import (
 )
 from insight_core.services.registry import services
 from insight_core.services import discover_reads
+from insight_core.services import follow_archive
 from insight_core.services.stories_service import in_own_process
 
 # Configure logging
@@ -914,9 +915,32 @@ async def add_source(request: NewSourceRequest):
         settings["page_watch"] = request.page_watch
     created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
                                                    enabled=(request.state or "enabled") == "enabled")
+    recognised = await _recognise_new_source(created["source_id"], platform, created["handle"], settings)
     _export_sources_json()
+    # Issue 0167: following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
+    archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
-            "handle_or_url": created["handle"]}
+            "handle_or_url": created["handle"], **({"recognised": recognised} if recognised else {}),
+            "archive": archive}
+
+
+async def _recognise_new_source(source_id: str, platform: str, handle: str, settings: Dict[str, Any]) -> Optional[str]:
+    """Issue 0167: a feed added that is a Substack publication on its own domain is read as one (settings.substack):
+    "substack", else None. One request (the feed), and the publication's API only on Substack's sign; never raises."""
+    from insight_core.ingestion.kinds import substack
+
+    if platform != "rss" or settings.get("page_watch") is not None:
+        return None
+    try:
+        why = await substack.recognise(FEED_FINDER_HTTP, handle)
+        if not why:
+            return None
+        await asyncio.to_thread(services().sources.merge_source_settings, source_id, {"substack": True})
+        logger.info("Added source %s is a Substack publication on its own domain (%s)", handle, why)
+        return "substack"
+    except Exception:  # noqa: BLE001 - the source is added; it reads as a feed
+        logger.exception("Could not tell whether %s is a Substack publication", handle)
+        return None
 
 
 # The Add source dialog's own client (the feed finder, the page-watch preview): a short timeout,

@@ -251,6 +251,9 @@ class FetchedPosts(list):
 
     warning: Optional[str] = None
     failure: Optional[str] = None
+    # What the fetch learned the source is (issue 0167: {"substack": True}, a Substack publication on its own
+    # domain): the runner merges it into the source's settings, and the next fetch reads it by that kind.
+    recognised: Optional[dict] = None
 
 
 def collapsed(posts: list) -> Optional[str]:

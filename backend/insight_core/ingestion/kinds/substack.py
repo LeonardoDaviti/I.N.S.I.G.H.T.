@@ -124,6 +124,62 @@ def is_substack_host(host: str) -> bool:
     return host.endswith(".substack.com") and not is_platform_host(host)
 
 
+# A Substack publication on its own domain (issue 0167): read as a plain feed, its paid posts were stored as teasers
+# saying "its page held nothing longer". What a feed or a page of one carries, never a publication's name:
+_GENERATOR_RE = re.compile(r"(?is)<(?:\w+:)?generator\b[^>]*>\s*substack\b|<meta\b[^>]*\bname\s*=\s*[\"']generator[\"'][^>]*"
+                           r"\bcontent\s*=\s*[\"']substack")
+SUBSTACK_ASSETS = "substackcdn.com"     # its images and scripts, on every publication's domain
+
+
+def feed_signal(text: Optional[str]) -> Optional[str]:
+    """Why a feed or a page is a Substack publication's, by itself: "generator" (the feed's or the page's generator
+    names Substack); "assets" (it carries substackcdn.com, which a page quoting one image of it may too: the API's
+    answer confirms it, `recognise`); None."""
+    if not text:
+        return None
+    if _GENERATOR_RE.search(text):
+        return "generator"
+    return "assets" if SUBSTACK_ASSETS in text.lower() else None
+
+
+def api_answers(data: Any) -> bool:
+    """Whether /api/v1/archive's answer is Substack's: a list of posts, each with a slug and a post date."""
+    return (isinstance(data, list) and bool(data)
+            and all(isinstance(item, dict) and item.get("slug") and ("post_date" in item or "canonical_url" in item)
+                    for item in data))
+
+
+async def recognise(http: KindHttp, address: str, text: Optional[str] = None) -> Optional[str]:
+    """Why a website source at `address` (its feed or page; `text` its body when already read) is a Substack
+    publication on its own domain: "generator", or "assets+api" (substackcdn.com, and its /api/v1/archive answers
+    as Substack's), or "api" (an address whose body can't be read: its API answers); None. The API is asked only
+    on that evidence: a site with no sign of Substack costs no request more. A publication at
+    <name>.substack.com is matched by its host already (SubstackKind.matches) and Substack's own host is none.
+    Raises nothing: a request that fails is no signal."""
+    host = host_of(address)
+    if not host or is_substack_host(host) or is_platform_host(host):
+        return None
+    if text is None:
+        try:
+            text, _ = await http.get_text(address)
+        except Exception:  # noqa: BLE001 - unreadable: the API alone may still say so
+            text = None
+    found = feed_signal(text)
+    if found == "generator":
+        return found
+    if found is None and text is not None:
+        return None   # a feed or page with no sign of Substack: its API is not asked
+    parsed = urllib.parse.urlparse(address)
+    try:
+        body, _ = await http.get_text(f"{parsed.scheme or 'https'}://{parsed.netloc}/api/v1/archive?sort=new&limit=1")
+        answered = api_answers(json.loads(body))
+    except Exception:  # noqa: BLE001 - no API: not Substack
+        return None
+    if not answered:
+        return None
+    return "assets+api" if found else "api"
+
+
 def publication_base(source: Source) -> str:
     """The publication's origin. Raises ValueError for Substack's own host: reading it would read the
     platform (its /feed is a 404), never a publication (v10.13.10)."""

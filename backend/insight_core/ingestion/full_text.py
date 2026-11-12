@@ -36,7 +36,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 from insight_core.db.repo_posts import (FULL_TEXT_FLAG, FULL_TEXT_RULE_KEY, MOVED_KEY, PAGE_OUTCOME_KEY, PAGE_READ_KEY,
                                         PAGE_TRIES_KEY)
 from insight_core.ingestion.http import HttpError, KindHttp
-from insight_core.ingestion.kinds import embedded_article, parsing
+from insight_core.ingestion.kinds import embedded_article, parsing, paywall
 from insight_core.utils.addresses import host_of, same_site
 from insight_core.utils.content_fingerprints import normalize_text
 from insight_core.utils.titles import title_key
@@ -51,11 +51,15 @@ SAME_ARTICLE_MIN_CHARS = 200
 # The version of the rules a page read is made by (metadata.full_text_rule): 1 before issue 0140 (none
 # stored), 2 its same-article test, cut marker and embedded data. Raise it when they change: the repair
 # reads the posts left short again, once.
-FULL_TEXT_RULE = 2
+FULL_TEXT_RULE = 3   # 3 (issue 0167): a page that says it is for paying readers ends PAYWALLED
 # A page read's outcome (metadata.page_read_outcome.outcome); else error:<class> or http:<status>.
 FULL, NOTHING_LONGER, NOT_SAME_ARTICLE, NEEDS_SCRIPT = "full", "nothing_longer", "not_same_article", "needs_script"
 # An X Article of which only the title and opening could be read (kinds/x_articles.py, v10.13.10).
 PREVIEW_ONLY = "preview_only"
+# A page that says it is for paying readers (issue 0167: kinds/paywall.py's markers): the post is marked
+# metadata.paywalled, and its page's free part is taken only when longer than the feed's.
+PAYWALLED = "paywalled"
+PAYWALLED_KEY = "paywalled"
 # The outcomes a later rule may change: the repair reads them again once per rule version.
 READ_AGAIN_OUTCOMES = (NOTHING_LONGER, NOT_SAME_ARTICLE, NEEDS_SCRIPT)
 # The same article (issue 0140): a title this short is no evidence ("Update", "Notes"); the teaser's runs
@@ -231,10 +235,12 @@ def error_outcome(exc: BaseException) -> str:
 
 
 def with_outcome(post: Dict[str, Any], outcome: str, at: datetime) -> Dict[str, Any]:
-    """The post with its page read's outcome and the rules' version it was read by (issue 0140)."""
+    """The post with its page read's outcome and the rules' version it was read by (issue 0140); a page for paying
+    readers marks it paywalled (issue 0167)."""
     return {**post, "metadata": {**(post.get("metadata") or {}),
                                  PAGE_OUTCOME_KEY: {"outcome": outcome, "at": at.isoformat()},
-                                 FULL_TEXT_RULE_KEY: FULL_TEXT_RULE}}
+                                 FULL_TEXT_RULE_KEY: FULL_TEXT_RULE,
+                                 **({PAYWALLED_KEY: True} if outcome == PAYWALLED else {})}}
 
 
 def outcome_of(metadata: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -306,10 +312,12 @@ async def read_page(http: KindHttp, url: str, current_text: str, *, title: Optio
             (html, text, fidelity), outcome = embedded, FULL
         elif not html and embedded_article.script_rendered(page):
             outcome = NEEDS_SCRIPT
+    paid = paywall.marker(page) is not None
     if outcome != FULL:
-        return PageRead(outcome)
+        return PageRead(PAYWALLED if paid else outcome)
     date = page_date(page, url)
-    return PageRead(FULL, (html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None, moved))
+    return PageRead(PAYWALLED if paid else FULL,
+                    (html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None, moved))
 
 
 async def read_article(http: KindHttp, url: str, current_text: str, *, title: Optional[str] = None,
@@ -363,6 +371,7 @@ TEASER_REASONS = {
     NOT_SAME_ARTICLE: "its page did not read as the same article",
     NEEDS_SCRIPT: "its page needs a script to show the article",
     NOTHING_LONGER: "its page held nothing longer",
+    PAYWALLED: "for paid subscribers",
     PREVIEW_ONLY: "X gave only the article's opening",
 }
 
@@ -375,6 +384,8 @@ def teaser_reason(metadata: Optional[Mapping[str, Any]], *, url: Any = None, tit
     held nothing longer is otherwise whole (a link post, a short note)."""
     meta = metadata or {}
     outcome = outcome_of(meta)
+    if meta.get(PAYWALLED_KEY) is True:
+        return TEASER_REASONS[PAYWALLED]   # issue 0167: a paid post's page (its kind's, or its page read's markers)
     if meta.get(FULL_TEXT_FLAG) or not outcome or outcome == FULL:
         return None
     if outcome == NOTHING_LONGER:

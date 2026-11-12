@@ -95,6 +95,7 @@ class _Fetched:
     checks: List[page_changes.PageCheck] = dataclasses.field(default_factory=list)   # watched pages (0039)
     watching: bool = False
     failure: Optional[EmptyFetch] = None     # its posts saved, the fetch failing: why (issue 0137 A1)
+    recognised: Optional[Dict[str, Any]] = None   # settings the fetch learned (issue 0167: a Substack on its domain)
 
 
 class _RunSessions:
@@ -354,6 +355,8 @@ class IngestionRunner:
                                        [c for c in f.checks if not (lost and c.post is not None)], now=self.clock())
                 if outcome.status == OutcomeStatus.HEALTHY:
                     await self.inspections.refresh(source, f.kind, outcome.fetched)
+                if f.recognised and outcome.status.is_success and hasattr(self.inspections, "recognised"):
+                    await self.inspections.recognised(source, f.recognised)   # issue 0167
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
@@ -437,9 +440,10 @@ class IngestionRunner:
 
         warning: Optional[str] = None
         failure: Optional[str] = None
+        recognised: Optional[Dict[str, Any]] = None
 
         async def fetch_latest() -> List[dict]:
-            nonlocal memory, warning, failure
+            nonlocal memory, warning, failure, recognised
             if not getattr(kind, "conditional", False):
                 got = await kind.fetch_latest(source, decision.post_limit)
             else:
@@ -449,6 +453,7 @@ class IngestionRunner:
             warning = getattr(got, "warning", None)
             # Items stored as fewer posts than they are (issue 0137 A1): saved, and the fetch fails.
             failure = getattr(got, "failure", None)
+            recognised = getattr(got, "recognised", None)
             return list(got or [])
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
@@ -494,6 +499,7 @@ class IngestionRunner:
         fetched = _Fetched(source, kind, outcome, posts, memory=memory, checks=checks, watching=watching)
         if failure:
             fetched.failure = EmptyFetch(failure)
+        fetched.recognised = recognised
         return fetched
 
     async def _check_pages(self, source: Dict[str, Any], kind: SourceKind, full: bool) -> List[page_changes.PageCheck]:
