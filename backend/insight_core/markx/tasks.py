@@ -41,7 +41,7 @@ from uuid import UUID
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas
+from insight_core.markx import plan_marks, repo, schemas
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -469,30 +469,37 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     added, after = 0, None
     # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
     # same input is one task), so it stays "unplanned"; newest first, such posts filled every LIMIT and the older
-    # posts were never reached. Page on past them (keyset), at most SCAN_PAGES pages a call.
+    # posts were never reached. Page on past them (keyset), at most SCAN_PAGES pages a call. v10.14: such a post is
+    # marked (plan_marks) and not read again while its text is unchanged, so a planner with nothing to add reads no post.
     for _page in range(SCAN_PAGES):
-        cur.execute(
-            """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+        rows = plan_marks.execute(cur,
+            f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                         - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
                  FROM posts p
                 WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+                  AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
                        OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
-        rows = cur.fetchall()
         posts = load_posts(cur, [r[0] for r in rows])
-        for pid, age, _at in rows:
+        passed = []
+        for pid, age, _at, stamp in rows:
             if added >= limit:
                 break
             p = posts.get(str(pid))
-            if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+            if p is None:
+                continue
+            if add(cur, kind, render(p), a=p.id, priority=age)[1]:
                 added += 1
+            else:   # v10.14: its input is another post's task: not read again until its text changes
+                passed.append((p.id, plan_marks.SAME_INPUT, stamp))
+        plan_marks.mark(cur, kind, guide, passed)
         if added >= limit or len(rows) < limit:
             break
         after = (rows[-1][2], rows[-1][0])
