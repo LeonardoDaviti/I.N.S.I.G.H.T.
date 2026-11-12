@@ -11,7 +11,7 @@ import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its t
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
-  MarkxSampleAnswer } from '../services/markx';
+  MarkxEntityHandles, MarkxSampleAnswer } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
 import { researchStartHref } from '../services/research';
@@ -234,6 +234,32 @@ export const looseGroup = (p: MarkxEntityPost) => Math.min(3, ...(p.roles ?? [])
  * Original first (and its code, demo, other pages); one no current reading names lists the posts an earlier guide named
  * it in, with what each names now.
  */
+const PLATFORM: Record<string, string> = { x: 'X', github: 'GitHub', telegram: 'Telegram', bluesky: 'Bluesky', hf: 'Hugging Face' };
+
+/** 0168: its handles (the owner's yes, its own sources' accounts; an old one with the months its pairs span) and how
+ *  many posts cite them by the handle rule (their posts are in the stories and the lists above, as by / source /
+ *  mention); the replies to them are hidden until asked. */
+function Handles({ h, name, onReplies }: { h: MarkxEntityHandles; name: string; onReplies: () => void }) {
+  return (
+    <section aria-label={`${name}'s handles`}>
+      <h2 className={H2}>Handles · {plural(h.posts, 'post')} cite them</h2>
+      <p className="mt-2 text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">
+        {h.known.map((k, n) => (
+          <span key={`${k.platform}:${k.handle}`} data-handle={`${k.platform}:${k.handle}`}>
+            {n ? ', ' : ''}@{k.handle} <span className="text-fg-3">({PLATFORM[k.platform] ?? k.platform}
+              {k.first_seen && k.last_seen ? `, ${k.first_seen.slice(0, 7)} to ${k.last_seen.slice(0, 7)}` : ''}
+              {k.via === 'source' ? ', its own source' : ''})</span>
+          </span>
+        ))}
+        {h.replies && !h.replies_shown ? (
+          <> · <button type="button" className="text-fg underline-offset-2 hover:underline" onClick={onReplies}>
+            show {plural(h.replies, 'reply', 'replies')} to them</button></>
+        ) : null}
+      </p>
+    </section>
+  );
+}
+
 export default function MarkXEntityPage() {
   const { entityId = '' } = useParams();
   const api = useApi();
@@ -241,8 +267,10 @@ export default function MarkXEntityPage() {
   const client = useQueryClient();
   const [byLimit, setByLimit] = useState<number | undefined>(undefined);
   const [mentionsOpen, setMentionsOpen] = useState(false);
-  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null],
-    queryFn: () => (byLimit === undefined ? api.getMarkxEntity(entityId) : api.getMarkxEntity(entityId, byLimit)), staleTime: 30_000,
+  const [replies, setReplies] = useState(false);   // 0168: the replies to its handles, hidden by default
+  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null, replies],
+    queryFn: () => (replies ? api.getMarkxEntity(entityId, byLimit, true)
+      : byLimit === undefined ? api.getMarkxEntity(entityId) : api.getMarkxEntity(entityId, byLimit)), staleTime: 30_000,
     placeholderData: (previous, last) => (last?.queryKey[1] === entityId ? previous : undefined) });
   const refresh = () => void client.invalidateQueries({ queryKey: ['markx-entity', entityId] });
   const act = async (call: () => Promise<unknown>) => {
@@ -348,6 +376,7 @@ export default function MarkXEntityPage() {
               ) : null}
             </section>
           ) : null}
+          {d.handles?.known.length ? <Handles h={d.handles} name={e.name} onReplies={() => setReplies(true)} /> : null}
           {group(0).length || group(2).length || group(3).length ? (
             <section aria-label={`About ${e.name}`}>
               <h2 className={H2}>About {e.name} · in no story · {plural(group(0).length + group(2).length + group(3).length, 'post')}</h2>

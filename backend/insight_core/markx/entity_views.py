@@ -255,7 +255,8 @@ def _members(book: I.Book, root: str) -> Set[str]:
 
 
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
-                by_limit: Optional[int] = None, offer_sample: bool = False) -> Optional[Dict[str, Any]]:
+                by_limit: Optional[int] = None, offer_sample: bool = False,
+                replies: bool = False) -> Optional[Dict[str, Any]]:
     from insight_core.markx import person_page as PP
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
@@ -279,6 +280,25 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     for pid, (at, src, read) in mine.items():
         ln = lines.setdefault(pid, {"roles": set(), "at": at, "source_id": src, "read": read, "as": set()})
         ln["roles"].add("by")
+    # 0168 A-B: the posts citing the entity's known handles (the owner's yes, its own sources' accounts) by the
+    # handle rule: a repost or quote of theirs is `by` (their own post, the original of its story), a status link or
+    # "@h said" `source`, an @mention `mention`; a reply to them is hidden unless asked (`replies`)
+    from insight_core.markx import handles as HD
+    known = HD.entity_handles(cur, book, root, members, selves["by"])
+    cited = HD.posts_citing(cur, known, exclude_sources=[s["id"] for s in selves["by"]])
+    hidden_replies = 0
+    for pid, ref in cited.items():
+        if ref["role"] == "reply" and not replies:
+            hidden_replies += 1
+            continue
+        if ref["at"] is None:
+            continue
+        ln = lines.setdefault(pid, {"roles": set(), "at": ref["at"], "source_id": ref["source_id"], "read": ref["read"],
+                                    "as": set()})
+        ln["roles"].add(ref["role"])
+        ln["as"] |= {"@" + h.split(":", 1)[1] for h in ref["handles"]}
+        if ref["role"] == "by":
+            mine.setdefault(pid, (ref["at"], ref["source_id"], ref["read"]))
     # 0144 B2: every Mark X story of these posts and, for a post in none, its Mark IX story, each with all its posts
     x_of, x_members = PP.mark_x_stories(cur, lines)
     ix_of, ix_stories = PP.mark_ix_stories(cur, [p for p in lines if not x_of.get(p)])
@@ -377,6 +397,9 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "timeline": TL.of_entity(cur, book, root, stories=blocks),   # 0165 C
             "stories": blocks, "loose": [line(p) for p in loose], "loose_counts": groups_n,   # 0144 B2-B4
             "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
+            "handles": {"known": known,
+                        "posts": len([p for p, r in cited.items() if r["role"] != "reply" or replies]),
+                        "replies": hidden_replies, "replies_shown": replies},   # 0168
             "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in blocks if b["mark"] == "x"}, now)
             if offer_sample else [],                                                                  # 0144 C
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
@@ -547,7 +570,11 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
                              "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
                                           for m in ev.get("mentions") or []],
                              "split_runs": ev.get("split_runs"), "runs": ev.get("runs"),
-                             "asked_because": ev.get("asked_because")}}   # 0165 B: why a rename was asked
+                             "asked_because": ev.get("asked_because"),   # 0165 B: why a rename was asked
+                             # 0168 C: a handle question's (or a handle-named alias's) pairs
+                             **({k: ev.get(k) for k in ("platform", "handle", "display", "pairs", "total", "first",
+                                                        "last", "alias_of", "named_by_handle")}
+                                if ev.get("handle") else {})}}
     cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.automatic, r.at, r.undone_at, r.evidence,
                           r.kind FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
     merges = [{"id": rid, "from": {"id": f, "name": book.ents[f].name if f in book.ents else None},

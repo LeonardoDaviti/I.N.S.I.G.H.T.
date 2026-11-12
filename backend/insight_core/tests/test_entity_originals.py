@@ -29,7 +29,7 @@ PAPER = "https://arxiv.org/abs/2611.01234"
 CODE = "https://github.com/nimbus-lab/nimbus-proof"
 DEMO = "https://huggingface.co/spaces/nimbus-lab/nimbus_demo"
 TITLE = "Proving the Nimbus Hypothesis with Lattices"
-DELETE_ORDER = ("mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news",
+DELETE_ORDER = ("mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans", "mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news",
                 "mx_connections", "mx_story_posts", "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins",
                 "mx_entity_queue", "mx_entity_redirects", "mx_entity_aliases", "mx_entity_addresses", "mx_mentions",
                 "mx_entity_fixes", "mx_entities", "mx_stories", "mx_candidate_posts", "mx_candidates", "mx_jobs", "mx_runs", "mx_embeddings",

@@ -33,7 +33,8 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
      a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
      its one-word name; the type that most (SHOWN_TYPE_SHARE) of its mentions give, or person over org when a
      person's full name is in it and a third of its mentions say person. The touched clusters each run; every
-     cluster over the full passes, resumed (`after`).
+     cluster over the full passes, resumed (`after`). 0168 D: a cluster shown under one of its confirmed handles
+     ("ikestrel") is shown by the display name the handle's "Name (@handle)" pairs gave (markx/handles.learned_names).
 
 Config: entity_bands.json `repairs` (each on or off, and their bars).
 """
@@ -685,6 +686,8 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     out = Counter({"clusters": 0, "names": 0, "types": 0})
     from insight_core.markx import rename
     early = rename.earlier_members(cur)   # 0165 B: an earlier name (a rename's old side) is never the name shown
+    from insight_core.markx import handles
+    learned = handles.learned_names(cur, book)   # 0168 D: {root: (display name, its confirmed handles squashed)}
 
     def now_named(ms: List[str]) -> List[str]:
         if not early:
@@ -709,6 +712,9 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             name, typ = None, (typ if typ != I.schemas_type(e.type) else None)
         else:
             name, typ = choose(book, r, now_named(sorted(members[r])), spans)
+        lr = learned.get(r)   # 0168 D: a name that is one of its confirmed handles shows the name its pairs gave
+        if lr and N.squash(N.key(name or e.name)) in lr[1]:
+            name = lr[0] if lr[0] != e.name else None
         if (name, typ) != (e.shown_name, e.shown_type):
             cur.execute("""UPDATE mx_entities SET shown_name = %s, shown_type = %s, shown_by = 'evidence'
                             WHERE id = %s AND shown_by IS DISTINCT FROM 'owner'""", (name, typ, r))

@@ -90,7 +90,26 @@ const REASONS: Record<string, string> = {
   paren: '“X (Y)” written in one post', fields_parser: 'Haiku’s version fields agree, the parser’s don’t',
   maker_unstated: 'the maker in front is only guessed', collision: 'one name, maybe several things',
   rename: 'one maker, the older name gone quiet as the newer came',   // 0165 B
+  // 0168: handles learned from "Name (@handle)" pairs
+  pairs: 'posts write this name beside this handle', second_handle: 'another handle paired with the same name',
+  named_by_handle: 'named by its handle; the pairs give its name', handle_name: 'one is named by the other’s handle',
 };
+
+/** 0168: a handle item's answers: `same` = yes, this is their handle (any other answer is a no, never asked again). */
+const HANDLE_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
+  { answer: 'same', label: 'yes, theirs' }, { answer: 'different', label: 'no' },
+];
+
+const PLATFORM_NAMES: Record<string, string> = { x: 'X', github: 'GitHub', telegram: 'Telegram', bluesky: 'Bluesky', hf: 'Hugging Face' };
+
+/** 0168: "12 posts write “Name (@h)” (12 of 12) · 2024-03 to 2026-11 · their other handle @old". */
+function handleLine(ev: MarkxQueueItem['evidence']): string | null {
+  if (!ev.handle) return null;
+  const range = ev.first && ev.last ? ` · ${ev.first.slice(0, 7)} to ${ev.last.slice(0, 7)}` : '';
+  const other = ev.alias_of?.length ? ` · their other handle ${ev.alias_of.map((h) => `@${h}`).join(', ')}` : '';
+  return `${ev.pairs ?? 0} posts write “${ev.display ?? '?'} (@${ev.handle})”`
+    + `${ev.total && ev.total !== ev.pairs ? ` (${ev.pairs} of ${ev.total})` : ''}${range}${other}`;
+}
 
 /** 0165 B: a rename item's answers: `same` is "same thing, renamed" (the older name becomes the newer's earlier name). */
 const RENAME_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
@@ -187,7 +206,9 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
         {item.kind === 'collision'
           ? `Split proposed (${item.evidence.split_runs ?? 2} of ${item.evidence.runs ?? 3} runs)`
           : item.kind === 'rename' ? `Renamed? ${item.a.name} (older) → ${item.b?.name ?? '—'} (newer)`
-            : `Proposed: ${item.proposal.replace('_', ' ')}`}
+            : item.kind === 'handle'
+              ? `Is @${item.evidence.handle ?? '?'} ${item.a.name}’s ${PLATFORM_NAMES[item.evidence.platform ?? 'x'] ?? item.evidence.platform} handle?`
+              : `Proposed: ${item.proposal.replace('_', ' ')}`}
         {' · '}{REASONS[item.reason] ?? item.reason}
         {(item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
         {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
@@ -213,6 +234,9 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
           {item.b ? <Side side={item.b} /> : null}
         </div>
       )}
+      {handleLine(item.evidence) ? (
+        <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]" data-handle-evidence="">{handleLine(item.evidence)}</p>
+      ) : null}
       {item.kind === 'rename' && item.evidence.asked_because ? (
         <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Asked because {item.evidence.asked_because}</p>
       ) : null}
@@ -220,7 +244,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
       <SecondOpinion item={item} />
       {warning ? <p className="mt-1 text-[0.8125rem] text-fg [overflow-wrap:anywhere]" role="note">{warning}</p> : null}
       <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Your answer">
-        {(item.kind === 'rename' ? RENAME_ANSWERS : ANSWERS).map((a) => (
+        {(item.kind === 'rename' ? RENAME_ANSWERS : item.kind === 'handle' ? HANDLE_ANSWERS : ANSWERS).map((a) => (
           <Button key={a.answer} size="sm" variant={chosen === a.answer ? 'primary' : 'secondary'}
                   aria-pressed={chosen === a.answer} disabled={answer.isPending} onClick={() => answer.mutate(a.answer)}>
             {a.label}
