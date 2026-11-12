@@ -148,7 +148,8 @@ class ReadBatchTests(unittest.TestCase):
             opened.append(limit)
             return {"suggestions": first, "archives": [{"origin_stories": [{"url": old, "title": None}]}]}
 
-        stories = SimpleNamespace(db_url=db_url(), discover=discover, linked_articles=lambda address: [],
+        stories = SimpleNamespace(db_url=db_url(), discover=discover, refresh=lambda: opened.append("refresh"),
+                                  linked_articles=lambda address: [],
                                   untitled_classics=lambda: [essay])
         responses = {f"https://{key}/": page('<link rel="alternate" type="application/rss+xml" href="/feed.xml">'),
                      f"https://{key}/feed.xml": rss("Site"),
@@ -162,7 +163,7 @@ class ReadBatchTests(unittest.TestCase):
         titles = DiscoverRepository.reads(self.cur)["titles"]
         self.assertEqual({u: titles[u]["title"] for u in (origin, old, essay)},
                          {origin: "The origin", old: "The archive's page", essay: "The essay"})
-        self.assertEqual(len(opened), 2, "the first page, then the list made and kept once at the batch's end")
+        self.assertEqual(opened, [None, "refresh"], "the first page, then the answer built and kept once at the batch's end (0172)")
         again = asyncio.run(discover_reads.read_first_page(stories, http, KindRegistry.default(http, None),
                                                            clock=lambda: NOW + timedelta(days=1)))
         self.assertEqual((again, len(opened)), ({"follow": 0, "titles": 0}, 3), "nothing read: nothing kept again")
