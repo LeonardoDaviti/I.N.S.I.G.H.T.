@@ -188,7 +188,7 @@ class Jobs:
     def candidates(self) -> Optional[Counter]:
         """The candidate finder over the waiting posts and the posts whose entities were written since its last run.
         A failed run leaves its posts waiting and the job wanted."""
-        from insight_core.markx import candidates
+        from insight_core.markx import candidates, embed
         previous = (self.last("candidates").get("last") or {})
         started = self._begin("candidates", "candidates")
         since_text = previous.get("mentions_since")
@@ -196,6 +196,7 @@ class Jobs:
         t0 = time.monotonic()
         try:
             with self._tx() as cur:
+                embed.set_aside(cur)                           # v1 vectors of texts that say nothing, once
                 ids = waiting_posts(cur)
                 counts = candidates.run(cur, ids, since=since)
                 cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))

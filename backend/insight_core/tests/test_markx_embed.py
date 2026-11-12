@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from insight_core.markx import embed, jobs, repo, schemas, tasks
 from insight_core.tests._db import requires_test_db
 from insight_core.tests.test_markx_api import _Api, call
+from insight_core.tests.test_markx_candidates import H, T0, _Cands
 
 BUILD = "a" * 64
 OTHER_BUILD = "b" * 64
@@ -67,7 +68,51 @@ class TheText(unittest.TestCase):
     def test_the_title_is_left_out_when_the_text_starts_with_it(self):
         self.assertEqual(embed.embed_text(self.post("Acme released Widget", "Acme released Widget 4.1 today.")),
                          "Acme released Widget 4.1 today.")
-        self.assertEqual(embed.embed_text(self.post("", "")), "(empty)")
+
+    def test_a_post_that_says_nothing_gets_no_text_never_a_constant(self):
+        """embed text v2: v1 embedded these as "(empty)", "[Photo]", "Image", "paper:", one vector for them all."""
+        for title, text in (("", ""), ("[Photo]", ""), ("Image", ""), ("[Video]", "[Video]"),
+                            ("example.com/notes/2501…", "example.com/notes/2501…"),
+                            ("paper:", "paper: https://papers.test.invalid/2501.01234"), ("😳", "😳"),
+                            ("example.com", "example.com")):
+            with self.subTest(title=title):
+                self.assertIsNone(embed.embed_text(self.post(title, text)))
+
+    def test_a_post_of_addresses_is_described_by_its_links(self):
+        p = self.post("tools.test.invalid/acme-widget-launch-notes…", "tools.test.invalid/acme-widget-launch-notes…")
+        p.links = [("https://tools.test.invalid/acme-widget-launch-notes", "tools.test.invalid/acme-widget-launch…")]
+        self.assertEqual(embed.embed_text(p), "acme widget launch notes tools.test.invalid")
+        # a stored post's title at that address says more than the slug, and comes first
+        titles = {"https://tools.test.invalid/acme-widget-launch-notes": "Acme launches Widget 5"}
+        self.assertEqual(embed.embed_text(p, titles),
+                         "Acme launches Widget 5 acme widget launch notes tools.test.invalid")
+        # an id, a hash or a media file says nothing: no text
+        for url in ("https://video.test.invalid/watch/ncWRe-JIWRs", "https://papers.test.invalid/abs/2501.01234",
+                    "https://cdn.test.invalid/media/1/Screen_Recording_at_noon.mp4",
+                    "https://blog.test.invalid/p/abbed9b8edab"):
+            with self.subTest(url=url):
+                q = self.post("[Photo]", "")
+                q.links = [(url, None)]
+                self.assertIsNone(embed.embed_text(q))
+
+    def test_a_post_that_says_something_keeps_its_v1_text(self):
+        """Only the posts v1 embedded as nothing change: every other v1 vector stays current."""
+        for title, text, want in (("Acme", "Acme released Widget https://example.com", "Acme released Widget"),
+                                  ("[Photo]", "Look at this", "[Photo] Look at this"),
+                                  ("", "Claude Opus дома", "Claude Opus дома"),
+                                  ("", "新模型发布了", "新模型发布了")):
+            with self.subTest(text=text):
+                self.assertEqual(embed.embed_text(self.post(title, text)), want)
+
+    def test_words_that_say_something(self):
+        self.assertEqual(embed.words("[Photo] Image"), 1)
+        self.assertEqual(embed.words("example.com"), 1)
+        self.assertEqual(embed.words("a b c"), 0)
+        self.assertEqual(embed.words("Next.js released"), 2)
+        self.assertEqual(embed.words("新模型发布"), 2)
+        self.assertFalse(embed.says_something("paper: https://papers.test.invalid/2501.01234"))
+        self.assertFalse(embed.says_something("(empty)"))
+        self.assertTrue(embed.says_something("Widget 5 out"))
 
     def test_the_kind_has_its_guide_and_schema(self):
         kind = schemas.KINDS["embed"]
@@ -114,6 +159,120 @@ class Planning(_Embed):
         self.assertEqual(set(body["guides"]), {"embed-v1"})
         self.assertIn("No model reads this guide", body["guides"]["embed-v1"]["body"])
         self.assertIn(uuid.UUID(pid), [repo.get_task(self.cur, t["id"])["a"] for t in body["tasks"]])
+
+
+class SaidNothing(_Embed):
+    """embed text v2 on the database: a post that says nothing is skipped (recorded, not read again); a v1 vector of
+    a text that said nothing is set aside (kept under SET_ASIDE) and its post planned again; a late answer to a
+    v1 task of nothing is kept aside; the decision run reads embedding candidates by the vectors now."""
+
+    def setUp(self):
+        super().setUp()
+        embed._set_aside.clear()
+        self.addCleanup(embed._set_aside.clear)
+
+    def v1_vector(self, pid, text, v):
+        """A post embedded under v1 as `text` (its task answered, its vector stored)."""
+        task_id, _ = repo.add_task(self.cur, kind="embed", guide="embed-v1", subject_kind="post", input=text, a=pid)
+        repo.answer_task(self.cur, task_id)
+        repo.put_embedding(self.cur, post_id=pid, model="bge-m3", text_hash=repo.sha256_hex(text), vector=v,
+                           model_sha256=BUILD)
+
+    def test_a_post_that_says_nothing_is_skipped_once(self):
+        now = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        photo = self.post(title="[Photo]", text="", at=now)
+        said = self.post(at=now - timedelta(hours=1))
+        with self.conn.transaction():
+            self.assertEqual(embed.plan(self.cur, days=10, now=now), 1)
+        self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'embed'")
+        self.assertEqual([r[0] for r in self.cur.fetchall()], [said])
+        self.cur.execute("SELECT post_id::text, text_version FROM mx_embed_skips")
+        self.assertEqual(self.cur.fetchall(), [(photo, embed.TEXT_VERSION)])
+        with self.conn.transaction():
+            self.assertEqual(embed.plan(self.cur, days=10, now=now), 0)
+            self.assertEqual(embed.embed_task(self.cur, photo), (None, False))
+
+    def test_v1_vectors_of_nothing_are_set_aside_and_planned_again(self):
+        now = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        slug = "https://tools.test.invalid/acme-widget-launch-notes"
+        a = self.post(title="tools.test.invalid/acme-widget…", text="tools.test.invalid/acme-widget…", at=now,
+                      links=[(slug, "tools.test.invalid/acme-widget…")])
+        b = self.post(title="papers.test.invalid/abs/2501…", text="papers.test.invalid/abs/2501…", at=now,
+                      source=self.other, links=[("https://papers.test.invalid/abs/2501.01234", None)])
+        kept = self.post(at=now - timedelta(hours=2))
+        with self.conn.transaction():
+            self.v1_vector(a, "(empty)", unit((0, 1.0)))
+            self.cur.execute("""INSERT INTO mx_embeddings (post_id, model, model_sha256, text_hash, v)
+                                SELECT %s, model, model_sha256, text_hash, v FROM mx_embeddings WHERE post_id = %s""",
+                             (b, a))                                    # v1 copied the vector to b: one text
+            self.v1_vector(kept, embed.embed_text(tasks.load_posts(self.cur, [kept])[kept]), unit((1, 1.0)))
+            self.assertEqual(embed.plan(self.cur, days=10, now=now), 1)
+        self.cur.execute("SELECT post_id::text, model FROM mx_embeddings")
+        self.assertEqual(sorted(self.cur.fetchall()),
+                         sorted([(a, embed.SET_ASIDE), (b, embed.SET_ASIDE), (kept, "bge-m3")]))   # kept, not deleted
+        self.cur.execute("SELECT a::text, input FROM mx_tasks WHERE kind = 'embed' AND status = 'open'")
+        self.assertEqual(self.cur.fetchall(), [(a, "acme widget launch notes tools.test.invalid")])
+        self.cur.execute("SELECT post_id::text FROM mx_embed_skips")
+        self.assertEqual([r[0] for r in self.cur.fetchall()], [b])
+        self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 1})
+
+    def test_a_late_vector_of_a_v1_text_of_nothing_is_kept_aside(self):
+        pid = self.post(title="[Photo]", text="")
+        with self.conn.transaction():
+            task_id, _ = repo.add_task(self.cur, kind="embed", guide="embed-v1", subject_kind="post", input="[Photo]",
+                                       a=pid)
+        self.lease("embed")
+        status, body = self.upload((task_id, unit((0, 1.0))))
+        self.assertEqual((status, body["stored"]), (200, 1))
+        self.assertIsNone(repo.embedding(self.cur, pid, "bge-m3"))
+        self.assertIsNotNone(repo.embedding(self.cur, pid, embed.SET_ASIDE))
+        self.assertEqual(jobs.waiting_posts(self.cur), [])                 # no candidates from it
+
+    def test_the_decision_run_reads_embedding_candidates_by_the_vectors_now(self):
+        a, b, c, d = (self.post(title=f"Post {n}", text=f"Words of post {n} about something else entirely {n}.")
+                      for n in "abcd")
+        copy1 = self.post(title="Acme", text="Acme released Widget 5 today for everyone who asked.")
+        copy2 = self.post(title="Acme", text="Acme released Widget 5 today for everyone who asked.", source=self.other)
+        e = self.post(title="Other", text="Globex raised money from investors this week, a round of $300m.")
+        with self.conn.transaction():
+            for pid, v in ((a, unit((0, 1.0))), (b, unit((0, 0.8), (1, 0.6))), (c, unit((2, 1.0))),
+                           (copy1, unit((3, 1.0))), (copy2, unit((3, 1.0))), (e, unit((3, 1.0)))):
+                repo.put_embedding(self.cur, post_id=pid, model="bge-m3", text_hash="h-" + pid, vector=v,
+                                   model_sha256=BUILD)
+            repo.put_embedding(self.cur, post_id=d, model=embed.SET_ASIDE, text_hash="h-" + d, vector=unit((2, 1.0)),
+                               model_sha256=BUILD)
+        rows = [(a, b, "embedding", 0.95),          # a's vector replaced since: its cosine now (0.8)
+                (a, d, "embedding", 1.0),           # d set aside: not asked
+                (c, d, "entity", None),             # another source: as it was
+                (c, a, "embedding", 0.7),           # below the bar now: carried, plan_pass1 leaves it
+                (copy1, copy2, "embedding", 1.0),   # one vector, near-copies: kept
+                (copy1, e, "embedding", 1.0)]       # one vector, two texts: not asked
+        got = embed.current_candidates(self.cur, rows)
+        self.assertEqual([(x, y, s, None if sc is None else round(sc, 2)) for x, y, s, sc in got],
+                         [(a, b, "embedding", 0.8), (c, d, "entity", None), (c, a, "embedding", 0.0),
+                          (copy1, copy2, "embedding", 1.0)])
+
+    def test_a_name_of_no_letter_is_not_embedded(self):
+        with self.conn.transaction():
+            self.cur.execute("INSERT INTO mx_entities (name, key, type) VALUES ('—', 'x-dash', 'product'), "
+                             "('Acme Widget', 'acme widget', 'product')")
+            self.assertEqual(embed.plan_names(self.cur), 1)
+        self.cur.execute("SELECT input FROM mx_tasks WHERE kind = 'embed_name'")
+        self.assertEqual([r[0] for r in self.cur.fetchall()], ["Acme Widget"])
+
+
+class OneVector(_Cands):
+    """The candidate finder never pairs two posts of one vector unless their texts are near-copies that say
+    something (embed.same_vector)."""
+
+    def test_one_vector_two_texts_is_no_candidate(self):
+        s1, s2, s3 = self.source(), self.source(), self.source()
+        a = self.post(s1, T0, vector=unit((0, 1.0)), title="Acme released Widget 4.1")
+        other = self.post(s2, T0 + H, vector=unit((0, 1.0)), title="Globex raised $300m from investors")
+        copy = self.post(s3, T0 + 2 * H, vector=unit((0, 1.0)), title="Acme released Widget 4.1")
+        self.find(a)
+        self.assertEqual(self.pairs("embedding"), {(a, copy)})
+        del other
 
 
 class Uploads(_Embed):
