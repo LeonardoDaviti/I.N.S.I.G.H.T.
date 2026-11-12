@@ -959,7 +959,16 @@ class Worker:
                         self.set_fatal("server", str(e))
                         break
                     continue
-                except (ServerUnreachable, ServerError) as e:
+                except ServerError as e:
+                    if e.code == 400 and "unknown kind" in str(e):
+                        # v10.14: a worker newer than its server (a kind added before the deploy): that kind sits
+                        # out, the others go on; never a stop, which would hold every kind until the server updates
+                        self.log("kind-unknown", kind=kind, error=str(e)[:300])
+                        done.add(kind)
+                        continue
+                    self.set_fatal("server", str(e))
+                    break
+                except ServerUnreachable as e:
                     self.set_fatal("server", str(e))
                     break
                 except (KeyError, ValueError, TypeError, AttributeError) as e:

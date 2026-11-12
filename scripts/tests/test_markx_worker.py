@@ -62,6 +62,7 @@ class Stub:
         self.picked = []            # tasks each /work leased
         self.fail_posts = 0         # answer this many posts with 503 first
         self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
+        self.unknown_kinds = set()  # /work for these kinds answers 400 unknown kind (a server older than the worker)
         self.guides = dict(GUIDES)
         self.lock = threading.Lock()
         stub = self
@@ -92,6 +93,8 @@ class Stub:
                     q = {k: v[0] for k, v in parse_qs(u.query).items()}
                     if q.get("kinds") in stub.slow_kinds:
                         time.sleep(2)
+                    if q.get("kinds") in stub.unknown_kinds:
+                        return self._send(400, {"detail": f"unknown kind: {q.get('kinds')}"})
                     self._send(200, stub.work(q))
                 elif u.path == "/api/markx/status":
                     self._send(200, stub.status())
@@ -669,6 +672,15 @@ class TestServer(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.stub.by_status("answered")), 20)          # every read answered
         self.assertEqual([e["kind"] for e in self.events("lease-slow")], ["entities"])
+
+    def test_a_kind_the_server_does_not_know_sits_out_and_the_others_go_on(self):
+        """v10.14: a worker newer than its server: the unknown kind is skipped, never a stop for every kind."""
+        self.stub.add("read", 20)
+        self.stub.unknown_kinds = {"rename"}
+        p = self.run_worker("--kinds", "rename,read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual([e["kind"] for e in self.events("kind-unknown")], ["rename"])
 
     def test_slow_leases_in_a_row_count_as_unreachable(self):
         self.stub.add("read", 5)
