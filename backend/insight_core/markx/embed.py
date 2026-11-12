@@ -7,11 +7,30 @@ The embedder runs on the owner's device, not on the server: an `embed` task is l
 never embeds anything in Shadow: it plans the tasks, checks and stores the vectors, and finds the candidates
 (markx/candidates.py) when they arrive.
 
-  - **The text** (`embed_text`, markx embed text v1): markx text v1's title and first 1,500 characters of the text
+  - **The text** (`embed_text`, markx embed text v2): markx text v1's title and first 1,500 characters of the text
     (tasks.load_posts, read from post_parts), the title left out when the text starts with it, web addresses
     removed and spaces squashed, as the prototype embedded its posts (its step 1; it cut at 1,200 characters,
     0086 B says 1,500). The task's input is that text, so two posts with the same text are one task: the second
     post's vector is the first's, copied when the planner meets it again (`plan`).
+  - **A text that says nothing** (v2, 2026-11-12): v1 embedded a post whose title and text were only web addresses
+    or a media placeholder ("[Photo]", "Image") as one constant ("(empty)", "[Photo]", ...), so hundreds of posts
+    shared one vector and every pair of them was an embedding candidate at cosine 1.0. A text says something when
+    it has MIN_WORDS words of two letters or more once its addresses are removed (`says_something`; a bracketed
+    placeholder is no word, a bare site name one). When the title and text don't, v2 describes the post by its
+    links (their first LINKS, a link to a media file none): a linked post stored here by its title, the anchor
+    text, the address's readable slug, and then the sites' names; when even that says nothing, the post gets no
+    vector (and so no embedding candidate), recorded in mx_embed_skips under TEXT_VERSION, never a constant. A post
+    v1 described says the same in v2: only the posts v1 embedded as nothing change.
+  - **The v1 vectors of nothing** (`set_aside`): an `embed` vector stored for a text that says nothing is set
+    aside, its row kept as it is under the model SET_ASIDE (every reader of mx_embeddings reads MODEL only), so the
+    post is planned again under v2 (a vector of what describes it, or a skip). Candidate pairs found from such a
+    vector are kept (never deleted) but not asked: the decision run reads an embedding candidate by its posts'
+    current vectors (`current_candidates`).
+  - **Identical vectors** (`same_vector`): two posts whose vectors are at cosine IDENTICAL or more are never an
+    embedding candidate unless their texts are near-copies that say something (tasks.near_copy): one vector for
+    two different posts is a text that said nothing, not one meaning; a real copy is Mark IX's to join. Measured
+    on the 2026-11-05 server copy: of 6,490 candidates at 1.0, one was a real copy (kept), 6,489 were posts of
+    "[Photo]", "(empty)", "[Video]" and "Image" texts paired with unrelated posts.
   - **The vector:** 1,024 little-endian float16, base64 (2 KB a post, not ~9 KB of JSON numbers), scaled to
     length 1 by the worker. The server decodes it, checks its length, its numbers and its norm, and stores it in
     mx_embeddings (halfvec, so float16 is stored as sent) with text_hash = the task's input hash.
@@ -31,7 +50,8 @@ import math
 import re
 import struct
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from psycopg import Cursor
@@ -40,7 +60,12 @@ from insight_core.markx import repo, schemas, tasks
 
 KIND = "embed"
 MODEL = "bge-m3"
-TEXT_VERSION = "markx-embed-text-v1"
+TEXT_VERSION = "markx-embed-text-v2"          # v2: a text that says nothing is described by its links, or not embedded
+SET_ASIDE = MODEL + ":said-nothing"            # the model a v1 vector of a text that says nothing is kept under
+MIN_WORDS = 2                                  # a text says something with 2 words of 2+ letters (addresses removed)
+LINKS = 3                                      # the links a post that says nothing is described by (a roundup's 3)
+IDENTICAL = 0.9999                             # two vectors this close are one text, not one meaning
+SCAN_CHARS = 400                               # set_aside reads the embed inputs this short (a text of nothing is short)
 TEXT_CHARS = tasks.TEXT_CHARS                  # 1,500 (0086 B)
 DIMENSIONS = repo.DIMENSIONS                   # 1,024
 VECTOR_BYTES = 2 * DIMENSIONS                  # float16
@@ -58,21 +83,161 @@ class BuildMismatch(Exception):
 
 # ---- the text --------------------------------------------------------------------------------------
 
-def embed_text(p: tasks.Post) -> str:
-    """markx embed text v1: the text an `embed` task asks for (its input)."""
+PLACEHOLDER_RE = re.compile(r"^\[[^\[\]]{0,40}\]$")          # a feed's stand-in for media: [Photo], [Video], ...
+LETTER_RE = re.compile(r"[^\W\d_]")
+WIDE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")   # scripts written without spaces
+SLUG_SPLIT_RE = re.compile(r"[-_+]+")
+
+
+def words(s: Optional[str]) -> int:
+    """The words of `s` that say something: tokens of 2+ letters ("Next.js" and a bare "example.com" one each), a
+    bracketed placeholder ("[Photo]") none (web addresses are the caller's to remove); a run of a script written
+    without spaces counts a word per two characters."""
+    n = 0
+    for tok in (s or "").split():
+        if PLACEHOLDER_RE.match(tok.rstrip(".,:;!?…")):
+            continue
+        tok = tok.strip("()[]{}<>\"'«»“”‘’.,:;!?…-—–*#")
+        if not tok:
+            continue
+        wide = len(WIDE_RE.findall(tok))
+        if wide:
+            n += max(1, wide // 2)
+        elif len(LETTER_RE.findall(tok)) >= 2:
+            n += 1
+    return n
+
+
+def says_something(s: Optional[str]) -> bool:
+    """Whether a text says something worth a vector: MIN_WORDS words once its web addresses are removed."""
+    return words(URL_RE.sub(" ", s or "")) >= MIN_WORDS
+
+
+def _own_text(p: tasks.Post) -> str:
+    """markx embed text v1 without its constant: the title (left out when the text starts with it) and the first
+    1,500 characters of the text, web addresses removed, spaces squashed."""
     title, text = p.title or "", (p.text or "")[:TEXT_CHARS]
     if text.startswith(title[:40]):
         title = ""
-    s = re.sub(r"\s+", " ", URL_RE.sub(" ", title + "\n" + text)).strip()
-    return s or "(empty)"
+    return re.sub(r"\s+", " ", URL_RE.sub(" ", title + "\n" + text)).strip()
+
+
+MEDIA_FILE_RE = re.compile(r"\.(?:jpe?g|png|gif|webp|avif|bmp|svg|mp4|webm|mov|m4v|m3u8|mkv|avi|mp3|m4a|ogg|wav|tgs)$",
+                           re.I)                       # a link to the post's own picture, clip or sticker: no page
+SLUG_WORD_RE = re.compile(r"^(?:[^\W\d_][^\W\d_A-Z]+|[^\W\d_a-z]{2,})\d{0,2}$")   # word, Word or WORD (+ "3")
+
+
+def _slug(url: str) -> str:
+    """The readable words of an address's path: a segment of 2+ words joined by - or _ ("ai-agents-course"), its
+    file extension off; a token that is no word (an id, a hash, "ncWRe") is left out."""
+    out = []
+    for seg in urlsplit(url).path.split("/"):
+        seg = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", seg)
+        parts = [w for w in SLUG_SPLIT_RE.split(seg) if SLUG_WORD_RE.match(w)]
+        if len(parts) >= 2:
+            out.append(" ".join(parts))
+    return " ".join(out)
+
+
+def _site(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def linked_titles(cur: Cursor, posts: Iterable[tasks.Post]) -> Dict[str, str]:
+    """{address: title} of the posts stored here that the first LINKS links of `posts` point at (by normalized
+    address), the titles that say something."""
+    from insight_core.utils.url_normalization import normalize_url
+    want: Dict[str, List[str]] = {}
+    for p in posts:
+        for url, _anchor in p.links[:LINKS]:
+            n = normalize_url(url)
+            if n:
+                want.setdefault(n, []).append(url)
+    if not want:
+        return {}
+    cur.execute("""SELECT p.normalized_url, COALESCE(pp.title, p.title) FROM posts p
+                     LEFT JOIN post_parts pp ON pp.post_id = p.id
+                    WHERE p.normalized_url = ANY(%s) ORDER BY p.normalized_url, p.id""", (sorted(want),))
+    out: Dict[str, str] = {}
+    for n, title in cur.fetchall():
+        title = re.sub(r"\s+", " ", title or "").strip()
+        if says_something(title):
+            for url in want[n]:
+                out.setdefault(url, title)
+    return out
+
+
+def embed_text(p: tasks.Post, titles: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """markx embed text v2: the text an `embed` task asks for (its input), or None when nothing describes the post.
+    The post's own words (v1's text) when they say something; else they and what its first LINKS links say (a
+    stored post's title from `titles`, linked_titles', the anchor text, the address's slug), then the sites' names;
+    None when even that says nothing (no vector, never a constant)."""
+    own = _own_text(p)
+    if says_something(own):
+        return own
+    about, sites = [], []
+    for url, anchor in p.links[:LINKS]:
+        if MEDIA_FILE_RE.search(urlsplit(url).path):
+            continue
+        for said in ((titles or {}).get(url), anchor, _slug(url)):
+            said = re.sub(r"\s+", " ", URL_RE.sub(" ", said or "")).strip()
+            if said and words(said) and said not in about and said not in own:
+                about.append(said)
+        site = _site(url)
+        if site and site not in sites:
+            sites.append(site)
+    text = " ".join([own, *about]).strip()
+    if not says_something(text):
+        return None
+    return " ".join([text, *sites]).strip()
 
 
 # ---- the tasks -------------------------------------------------------------------------------------
 
 def embed_task(cur: Cursor, post_id: Any, priority: int = 0):
-    """The embed task of one post: (its id, whether it is new)."""
+    """The embed task of one post: (its id, whether it is new); (None, False) when nothing describes the post (its
+    skip recorded)."""
     p, = tasks._posts(cur, [post_id])
-    return tasks.add(cur, KIND, embed_text(p), a=p.id, priority=priority)
+    text = embed_text(p, linked_titles(cur, [p]))
+    if text is None:
+        skip(cur, [p.id])
+        return None, False
+    return tasks.add(cur, KIND, text, a=p.id, priority=priority)
+
+
+def skip(cur: Cursor, post_ids: Sequence[Any]) -> None:
+    """The posts nothing describes under TEXT_VERSION: no vector, and never planned again under it."""
+    if post_ids:
+        cur.execute("""INSERT INTO mx_embed_skips (post_id, text_version)
+                       SELECT unnest(%s::uuid[]), %s ON CONFLICT DO NOTHING""", ([str(i) for i in post_ids], TEXT_VERSION))
+
+
+_set_aside: set = set()
+
+
+def set_aside(cur: Cursor, model: str = MODEL) -> int:
+    """Set aside the `embed` vectors of texts that say nothing (markx embed text v1's "(empty)", "[Photo]", ...):
+    each row is kept as it is under the model SET_ASIDE, so no reader of `model` vectors sees it and the post is
+    planned again under v2. How many were set aside. Once a process and database (after it commits): a text that
+    says nothing is never asked again, and `store` sets aside a late answer to one asked before."""
+    from insight_core.db import database
+    info = cur.connection.info
+    where = (info.host, info.port, info.dbname, model)
+    if where in _set_aside:
+        return 0
+    cur.execute("""SELECT input_hash, input FROM mx_tasks
+                    WHERE kind = %s AND subject_kind = 'post' AND length(input) <= %s""", (KIND, SCAN_CHARS))
+    nothing = [h for h, text in cur.fetchall() if not says_something(text)]
+    n = 0
+    if nothing:
+        cur.execute("""UPDATE mx_embeddings e SET model = %s
+                        WHERE e.model = %s AND e.text_hash = ANY(%s)
+                          AND NOT EXISTS (SELECT 1 FROM mx_embeddings o WHERE o.post_id = e.post_id AND o.model = %s)""",
+                    (SET_ASIDE, model, nothing, SET_ASIDE))
+        n = cur.rowcount
+    database.after_commit(cur.connection, lambda: _set_aside.add(where))   # a plain connection: every time
+    return n
 
 
 def _copy_vector(cur: Cursor, post_id: str, task: Dict[str, Any], model: str) -> bool:
@@ -92,6 +257,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
     waits for it."""
     from insight_core.markx import jobs
     spec = schemas.KINDS[KIND]
+    set_aside(cur, model)
     added = 0
     seen: set = set()
     copied: List[str] = []
@@ -103,28 +269,37 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
                 WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = p.id AND e.model = %(model)s)
-                  AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+                  AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id
+                                     AND t.status <> 'answered')   -- answered with no vector: set aside
+                  AND NOT EXISTS (SELECT 1 FROM mx_embed_skips k WHERE k.post_id = p.id AND k.text_version = %(version)s)
                   AND NOT (p.id = ANY(%(seen)s::uuid[]))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "model": model, "kind": KIND, "guide": spec.guide, "seen": list(seen),
-             "limit": limit})
+             "limit": limit, "version": TEXT_VERSION})
         rows = cur.fetchall()
         if not rows:
             break
         posts = tasks.load_posts(cur, [r[0] for r in rows])
+        titles = linked_titles(cur, [p for p in posts.values() if not says_something(_own_text(p))])
+        skipped = []
         for pid, age in rows:
             seen.add(str(pid))
             p = posts.get(str(pid))
             if p is None:
                 continue
-            task_id, new = tasks.add(cur, KIND, embed_text(p), a=p.id, priority=age)
+            text = embed_text(p, titles)
+            if text is None:
+                skipped.append(p.id)
+                continue
+            task_id, new = tasks.add(cur, KIND, text, a=p.id, priority=age)
             if new:
                 added += 1
                 continue
             task = repo.get_task(cur, task_id)
             if task["status"] == "answered" and _copy_vector(cur, p.id, task, model):
                 copied.append(p.id)
+        skip(cur, skipped)
         if added >= limit or len(rows) < limit:
             break
     jobs.note_posts(cur, copied)
@@ -136,7 +311,8 @@ NAME_KIND = "embed_name"
 
 def plan_names(cur: Cursor, *, limit: int = PLAN_LIMIT, **_kw) -> int:
     """0119 A1: embed_name tasks for the entities (not marked not-an-entity) with no name vector and no task, the
-    newest first: how many were added. The input is the entity's shown name."""
+    newest first: how many were added. The input is the entity's shown name, spaces squashed; a name of no letter or
+    digit is not embedded (every such name would share one vector)."""
     cur.execute("""SELECT e.id::text, e.name FROM mx_entities e
                     WHERE e.status <> 'not_entity'
                       AND NOT EXISTS (SELECT 1 FROM mx_entity_vectors v WHERE v.entity_id = e.id)
@@ -144,6 +320,9 @@ def plan_names(cur: Cursor, *, limit: int = PLAN_LIMIT, **_kw) -> int:
                     ORDER BY e.created_at DESC, e.id LIMIT %s""", (NAME_KIND, limit))
     added = 0
     for eid, name in cur.fetchall():
+        name = re.sub(r"\s+", " ", name or "").strip()
+        if not re.search(r"\w", name):     # a name of no letter or digit: one vector for every such name
+            continue
         if tasks.add(cur, NAME_KIND, name, a=eid)[1]:
             added += 1
     return added
@@ -238,9 +417,73 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
             repo.answer_task(cur, task_id)
             stored += 1
             continue
-        if repo.put_embedding(cur, post_id=task["a"], model=model, text_hash=task["input_hash"], vector=v,
-                              model_sha256=model_sha256):
+        if not says_something(task["input"]):   # a v1 text of nothing asked before v2: kept, set aside
+            repo.put_embedding(cur, post_id=task["a"], model=SET_ASIDE, text_hash=task["input_hash"], vector=v,
+                               model_sha256=model_sha256)
+        elif repo.put_embedding(cur, post_id=task["a"], model=model, text_hash=task["input_hash"], vector=v,
+                                model_sha256=model_sha256):
             posts.append(str(task["a"]))
         repo.answer_task(cur, task_id)
         stored += 1
     return {"stored": stored, "invalid": invalid, "repeated": repeated, "posts": posts}
+
+
+# ---- the candidates' guards ------------------------------------------------------------------------
+
+def same_vector(cur: Cursor, pairs: Iterable[Tuple[str, str, float]]) -> Set[Tuple[str, str]]:
+    """The pairs (a, b, cosine) whose two vectors are one vector (cosine IDENTICAL or more) while their texts are not
+    near-copies (tasks.near_copy) that say something: never an embedding candidate (one vector for two different
+    posts is a text that said nothing, not one meaning; two "[Photo]" posts are no copy of each other; a real copy
+    is Mark IX's to join)."""
+    one = [(str(a), str(b)) for a, b, c in pairs if c >= IDENTICAL]
+    if not one:
+        return set()
+    got = tasks.load_posts(cur, {p for ab in one for p in ab})
+
+    def copies(a: str, b: str) -> bool:
+        return (a in got and b in got and says_something(_own_text(got[a])) and tasks.near_copy(got[a], got[b]))
+    return {(a, b) for a, b in one if not copies(a, b)}
+
+
+def current_candidates(cur: Cursor, rows: Sequence[Tuple[Any, Any, str, Optional[float]]], model: str = MODEL
+                       ) -> List[Tuple[Any, Any, str, Optional[float]]]:
+    """mx_candidates rows (a, b, source, score) as the posts' current vectors have them: an `embedding` row whose
+    post's vector was set aside and not replaced (a text that said nothing, embed text v1) is dropped, a row of two
+    current vectors carries their cosine now (a vector replaced since moved) and is dropped when they are one vector
+    (same_vector).
+    The rows themselves are kept (never deleted). A dropped row whose post already has an answered pair or join
+    stays as it was, so no story it made changes silently."""
+    emb = [(str(a), str(b)) for a, b, src, _ in rows if src == "embedding"]
+    if not emb:
+        return list(rows)
+    cur.execute("""SELECT k.a::text, k.b::text, 1 - (x.v <=> y.v)
+                     FROM unnest(%s::uuid[], %s::uuid[]) AS k(a, b)
+                     JOIN mx_embeddings x ON x.post_id = k.a AND x.model = %s
+                     JOIN mx_embeddings y ON y.post_id = k.b AND y.model = %s""",
+                ([a for a, _ in emb], [b for _, b in emb], model, model))
+    now = {(a, b): float(c) for a, b, c in cur.fetchall()}
+    ids = sorted({p for ab in emb if ab not in now for p in ab})
+    cur.execute("""SELECT s.post_id::text FROM mx_embeddings s
+                    WHERE s.model = %s AND s.post_id = ANY(%s::uuid[])
+                      AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = s.post_id AND e.model = %s)""",
+                (SET_ASIDE, ids, model))
+    aside = {r[0] for r in cur.fetchall()}
+    gone = ({ab for ab in emb if ab[0] in aside or ab[1] in aside}
+            | same_vector(cur, [(a, b, c) for (a, b), c in now.items()]))
+    if gone:
+        ids = sorted({p for ab in gone for p in ab})
+        cur.execute("""SELECT DISTINCT unnest(ARRAY[a, b])::text FROM mx_tasks
+                        WHERE kind IN ('pair', 'join') AND status = 'answered'
+                          AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""", (ids, ids))
+        asked = {r[0] for r in cur.fetchall()}
+        gone = {ab for ab in gone if not (ab[0] in asked or ab[1] in asked)}
+    out = []
+    for a, b, src, score in rows:
+        ab = (str(a), str(b))
+        if src == "embedding":
+            if ab in gone:
+                continue
+            if ab in now:
+                score = round(now[ab], 4)
+        out.append((a, b, src, score))
+    return out

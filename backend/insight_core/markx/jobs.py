@@ -201,7 +201,7 @@ class Jobs:
     def candidates(self) -> Optional[Counter]:
         """The candidate finder over the waiting posts and the posts whose entities were written since its last run.
         A failed run leaves its posts waiting and the job wanted."""
-        from insight_core.markx import candidates
+        from insight_core.markx import candidates, embed
         previous = (self.last("candidates").get("last") or {})
         started = self._begin("candidates", "candidates")
         since_text = previous.get("mentions_since")
@@ -209,6 +209,7 @@ class Jobs:
         t0 = time.monotonic()
         try:
             with self._tx() as cur:
+                embed.set_aside(cur)                           # v1 vectors of texts that say nothing, once
                 # v10.14: a page a run, so a burst of vectors (a backfill's) can't make one run too long to finish
                 ids = waiting_posts(cur, WAIT_PAGE + 1)
                 more, ids = len(ids) > WAIT_PAGE, ids[:WAIT_PAGE]

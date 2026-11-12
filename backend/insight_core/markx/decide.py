@@ -747,7 +747,7 @@ class World:
 def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
     candidate pairs, and their readings. With `memo` (0116), the texts are read again only where a row changed."""
-    from insight_core.markx import incremental, tasks
+    from insight_core.markx import embed, incremental, tasks
     since = now - timedelta(days=config.days)
     cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
@@ -756,7 +756,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     rows = cur.fetchall()
     cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")
     pairs: Dict[Tuple[str, str], Optional[float]] = {}
-    for a, b, source, score in cur.fetchall():
+    for a, b, source, score in embed.current_candidates(cur, cur.fetchall()):   # by the vectors now (embed text v2)
         cos = float(score) if source == "embedding" and score is not None else None
         if (a, b) not in pairs:
             pairs[(a, b)] = cos

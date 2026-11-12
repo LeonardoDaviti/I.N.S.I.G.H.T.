@@ -38,7 +38,7 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_entity_aliases", "mx_entity_fixes", "mx_entities", "mx_entity_addresses",   # 0119; 0138; 0164
              "mx_research_pairs", "mx_research_findings", "mx_research_runs",   # 0162
              "mx_scout_items", "mx_scout_candidates", "mx_scout_runs", "mx_source_provenance",   # 0148
-             "mx_plan_marks")   # v10.14
+             "mx_plan_marks", "mx_embed_skips")   # v10.14; 0110
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,

@@ -424,7 +424,9 @@ def _top(cos: Dict[str, float], k: int) -> List[str]:
 
 
 def embedding_pairs(cur: Cursor, posts: Posts, new: Iterable[str], model: str = MODEL) -> int:
-    """Post pairs: (i, q) when q is among i's k nearest or i among q's, at the cosine bar, i one of `new`."""
+    """Post pairs: (i, q) when q is among i's k nearest or i among q's, at the cosine bar, i one of `new`; never two
+    posts of one vector whose texts are not near-copies (embed.same_vector)."""
+    from insight_core.markx.embed import same_vector
     pol = posts.pol
     added = 0
     near_of: Dict[str, List[str]] = {}
@@ -439,8 +441,9 @@ def embedding_pairs(cur: Cursor, posts: Posts, new: Iterable[str], model: str = 
             continue
         cos = _cosines(cur, i, posts.window(i), model)
         top = set(_top(cos, pol.nearest))
+        one = same_vector(cur, [(i, q, c) for q, c in cos.items()])   # one vector, not one meaning (embed text v2)
         for q, c in cos.items():
-            if c < pol.cosine or posts.one_story(i, q):
+            if c < pol.cosine or posts.one_story(i, q) or (i, q) in one:
                 continue
             if q in top or i in nearest_of(q):
                 a, b = posts.ordered(i, q)
