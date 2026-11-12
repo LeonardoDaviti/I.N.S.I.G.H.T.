@@ -619,7 +619,8 @@ class Ask:
         `caps`, else CAP). In the run's snapshot (`snapshot`) a task another transaction committed since is not
         seen; adding it again is a serialization failure, caught in a savepoint: the task exists and is not
         answered in this snapshot, so the run goes on (`raced` counts them)."""
-        from insight_core.markx import incremental, repo, schemas, tasks
+        from insight_core.markx import repo, schemas, tasks
+        from insight_core.tests.legacy import incremental_a395c13 as incremental
         spec = schemas.KINDS[kind]
         memo = self.memo if kind in incremental.KINDS else None
         if memo is not None:
@@ -723,7 +724,7 @@ class World:
     def copies(self) -> Dict[str, Set[str]]:
         """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
         from insight_core.markx import tasks
-        from insight_core.markx import incremental
+        from insight_core.tests.legacy import incremental_a395c13 as incremental
         out = {}
         for key, ms in self.stories.items():
             members = [self.text[m.post] for m in ms if m.post in self.text]
@@ -736,7 +737,8 @@ class World:
 def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
     candidate pairs, and their readings. With `memo` (0116), the texts are read again only where a row changed."""
-    from insight_core.markx import embed, incremental, tasks
+    from insight_core.markx import embed, tasks
+    from insight_core.tests.legacy import incremental_a395c13 as incremental
     since = now - timedelta(days=config.days)
     cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
@@ -1140,7 +1142,8 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
     the run's cap on new connect tasks (the Ask's: `connect_new`, less what `connect_open` leaves room for) keeps the
     newest; the rest wait for later runs."""
-    from insight_core.markx import incremental, tasks
+    from insight_core.markx import tasks
+    from insight_core.tests.legacy import incremental_a395c13 as incremental
     rows: List[Dict[str, Any]] = []
 
     def sid(key: str) -> Optional[str]:
@@ -1201,7 +1204,7 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
 def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = False):
     """A run's reading of its snapshot through `memo` (0116: incremental.refresh, then load and think): (world, ask,
     outcome, counts). `dry`: nothing is added or asked again (the check's incremental reading)."""
-    from insight_core.markx import incremental
+    from insight_core.tests.legacy import incremental_a395c13 as incremental
     incremental.refresh(cur, memo)
     world = load(cur, now, config, memo=memo)
     cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect' AND status IN ('open', 'leased')")
@@ -1217,7 +1220,7 @@ def _reading(cur: Any, memo: Any, now: datetime, config: Config, dry: bool = Fal
 def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dict[str, Any]],
             news_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """incremental.digest of a reading: a story connection's ends as its member posts (ids differ between readings)."""
-    from insight_core.markx import incremental
+    from insight_core.tests.legacy import incremental_a395c13 as incremental
     members = {sid: tuple(sorted(out.about.get(key, {}))) for key, sid in ids.items()}
     ends = [dict(c, a=c["a"] if c["a_kind"] == "post" else members.get(c["a"], c["a"]),
                  b=c["b"] if c["b_kind"] == "post" else members.get(c["b"], c["b"])) for c in conns]
@@ -1247,7 +1250,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     LIMIT counts; this call's start when None)."""
     import json as _json
     import time as _time
-    from insight_core.markx import incremental, news as mx_news, repo, schemas
+    from insight_core.markx import news as mx_news, repo, schemas
+    from insight_core.tests.legacy import incremental_a395c13 as incremental
     timed: List[Tuple[str, float]] = []           # (stage, when it began): the room check's own clock
 
     def mark(name: str) -> None:

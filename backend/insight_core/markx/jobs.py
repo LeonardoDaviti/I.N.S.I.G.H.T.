@@ -30,6 +30,8 @@ at 101% CPU and every /api/* request timed out.
     stops after a chunk of entities, the run goes on, and the next run resumes the pass (entity_stage).
   - One run at a time: this process runs one job at a time, and `decide.run` holds a Postgres advisory lock across
     processes (a second run is skipped).
+  - A decision run is incremental though its process is new (0169): what the next run starts from is kept in Postgres
+    (mx_inc_*, markx/incremental.py), written in the run's own transaction, so nothing here keeps state between runs.
   - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
     never waits for a run.
 
