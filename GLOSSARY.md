@@ -21,6 +21,11 @@ research, announcement), its parties, its stage, its stated day, its money amoun
 (`backend/insight_core/markx/happening.py`). Two posts of one happening may be paired whatever their words or
 language.
 
+**Event type** — what kind of happening a post reports, whichever read guide said it: a closed type (and who tells
+it), and the happening group of its main action. Read only through the event-type seam
+(`backend/insight_core/markx/event_types.py`), never from a reading's raw fields. A post's happening key is stored
+(`mx_happenings`) with the inputs it was computed from, and computed again when they move.
+
 **Party** — an entity a happening is between: the thing released, the two companies in a deal, the company that
 raised. Resolved to its root entity (or its name key until it is linked), never free text. Parties are unordered.
 

@@ -29,7 +29,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
-from insight_core.markx import folds
+from insight_core.markx import event_types, folds
 
 PUBLISHED = "COALESCE(p.published_at, p.surfaced_at, p.fetched_at)"
 JOIN_HOURS = 24          # a leak this close before its release, with no coverage of its own, joins the release
@@ -195,14 +195,15 @@ def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]
     """{story: [{id, source, at (published), event_type, origin}]} over each story's current members."""
     if not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED},
-                           r.reading->>'event_type', r.reading->>'origin'
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED}
                       FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
-                      LEFT JOIN mx_readings r ON r.post_id = sp.post_id AND r.guide = %s
                      WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
-                (folds.GUIDE, list(story_ids)))
+                (list(story_ids),))
+    rows = cur.fetchall()
+    types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for sid, pid, src, at, et, origin in cur.fetchall():
+    for sid, pid, src, at in rows:
+        et, origin = types[pid]
         out[sid].append({"id": pid, "source": src, "at": at, "event_type": et, "origin": origin})
     return dict(out)
 
@@ -212,10 +213,9 @@ def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str]) -> List[st
     of a leak or a news type: the stories a viewed one may be linked "came true" to."""
     cur.execute(f"""SELECT DISTINCT sp.story_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                       JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
-                      JOIN mx_readings r ON r.post_id = sp.post_id AND r.guide = %s
-                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %s AND %s
-                       AND r.reading->>'event_type' = ANY(%s)""",
-                (folds.GUIDE, lo, hi, [LEAK, *NEWS_TYPES]))
+                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %(lo)s AND %(hi)s
+                       AND {event_types.typed_sql("sp.post_id", "%(types)s")}""",   # 0175: through the seam
+                {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES]})
     return sorted({r[0] for r in cur.fetchall()} - have)
 
 
