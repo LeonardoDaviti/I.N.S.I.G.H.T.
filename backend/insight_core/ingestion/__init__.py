@@ -59,6 +59,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.sources_service import SourcesService
     from insight_core.services.originals_service import run_originals
+    from insight_core.markx.scout import with_scouts
     from insight_core.services.stories_service import in_own_process, recompute_job
     from insight_core.services.youtube_service import YouTubeService
 
@@ -88,7 +89,8 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
         ),
         watch=DbPageWatchStore(db_url),
         stories=partial(in_own_process, recompute_job, db_url),   # the API and ingestion keep none of its rows
-        originals=run_originals(db_url),   # issues 0114, 0123: after the story job
+        # issues 0114, 0123: after the story job; then 0148's scouts and 0162's research runs advanced (markx/scout.py)
+        originals=with_scouts(run_originals(db_url), db_url),
     )
 
 

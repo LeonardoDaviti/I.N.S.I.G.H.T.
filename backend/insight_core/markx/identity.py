@@ -413,7 +413,7 @@ class Book:
         return None if e is None else schemas_type(e.shown_type or e.type)
 
 
-def load_book(cur: Any) -> Book:
+def load_book(cur: Any, *, counts: bool = True) -> Book:
     b = Book()
     cur.execute("""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
                           size, build, status, first_seen, shown_name, shown_type FROM mx_entities""")
@@ -437,12 +437,21 @@ def load_book(cur: Any) -> Book:
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
+    if not counts:   # v10.14: the caller reads no type count (types, subject, mentioned stay empty)
+        return b
     cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject') FROM mx_mentions_now
                     WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
+    product: Dict[Optional[str], bool] = {}   # v10.14: a type read once, a Counter made once an entity
     for eid, type_, n, subj in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read)
-        b.types.setdefault(eid, Counter())[type_] += n
-        if subj and schemas_type(type_) in PRODUCT_TYPES:   # 0164 B: a product as the subject
-            b.subject[eid] = b.subject.get(eid, 0) + subj
+        got = b.types.get(eid)
+        if got is None:
+            got = b.types[eid] = Counter()
+        got[type_] += n
+        if subj:
+            if type_ not in product:
+                product[type_] = schemas_type(type_) in PRODUCT_TYPES
+            if product[type_]:   # 0164 B: a product as the subject
+                b.subject[eid] = b.subject.get(eid, 0) + subj
     b.mentioned = set(b.types) | set(b.pins.values())
     return b
 
@@ -663,7 +672,22 @@ def resolve_mention(book: Book, m: Mention) -> Optional[str]:
         pin = e if g is not None and g != m.guide else None
     if pin:
         return pin
+    comp = book.__dict__.get("components")   # 0165 A: a span naming a product's component (markx/components.py)
+    if comp:
+        got = comp.get((m.post_id, m.guide, m.n))
+        if got:
+            return got
     return book.by_key(m.key)
+
+
+def link_components(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> Optional[Dict[str, int]]:
+    """0165 A: the components among the mentions about to be linked (markx/components.py), when the switch is on:
+    their entities made under their products before the keys' own entities are, and the span-only mentions sent to
+    them. None when off."""
+    from insight_core.markx import components
+    if not components.config()["components"]:
+        return None
+    return components.make(cur, book, w, components.plan(cur, book, ms), run_id=w.run_id)
 
 
 def _join_refs(w: Writer, refs: Sequence[Mention]) -> None:
@@ -1794,6 +1818,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         t = tick("collide", t)
 
     stopped = False
+    comp_out: List[Optional[Dict[str, int]]] = []   # 0165 A: what the components rule did, a call a part
     # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks
     if not full or resume:
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
@@ -1806,6 +1831,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 have = {(m.post_id, m.n) for m in ms}
                 ms = [m for m in _mentions(cur, guide, unlinked=False) if (m.post_id, m.n) in moved - have] + ms
         t = tick("load", t)
+        comp_out.append(link_components(cur, book, w, ms))   # 0165 A: components first (off until measured)
         make_entities(book, w, ms)   # every new key's entity, from all of the run's mentions of it
         link_out["entities_made"] += len(w.made)
         t = tick("link", t)
@@ -1855,6 +1881,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             ms = _mentions(cur, guide, unlinked=False, posts=ids)
             t = tick("load", t)
             made_before = len(w.made)
+            comp_out.append(link_components(cur, book, w, ms))   # 0165 A
             make_entities(book, w, ms)
             link_out["entities_made"] += len(w.made) - made_before
             before = link_part(ms)
@@ -1908,6 +1935,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                        "chunks": done_chunks, "of": n_chunks, "resumed": resume}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
     out["entities_made"] = len(w.made)
+    got_comp = [c for c in comp_out if c is not None]
+    out["components"] = ({k: sum(c.get(k, 0) for c in got_comp) for k in ("mentions", "made", "reparented", "by_span")}
+                         if got_comp else {"off": True})
     out["timing"] = {k: round(v, 2) for k, v in sorted(timing.items())}
     out["seconds"] = round(_time.monotonic() - t0, 3)
     out["days"] = sorted(d.isoformat() for d in touched_days)

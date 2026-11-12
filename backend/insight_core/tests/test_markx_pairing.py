@@ -1,5 +1,5 @@
 """Pairing (issue 0166): the move of the candidate sources and decide's re-gates behind markx/pairing.py changed no
-pair. Each test runs the code as it was (tests/legacy: verbatim copies at d16336f) and the code as it is on the same
+pair. Each test runs the code as it was (tests/legacy: verbatim copies, candidates.py at main 08aa2bb, decide.py at d16336f, unchanged on main) and the code as it is on the same
 data and requires the same output:
   - the candidate job (every source, a subset of posts, the entity source alone, the job's `run`) on a seeded
     synthetic world: the same mx_candidates rows (kind, a, b, source, score) and the same counts;
@@ -27,7 +27,7 @@ from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
 from insight_core.markx import incremental, pairing, repo, schemas, tasks
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
-from insight_core.tests.legacy import candidates_d16336f as OLD_C
+from insight_core.tests.legacy import candidates_08aa2bb as OLD_C
 from insight_core.tests.legacy import decide_d16336f as OLD_D
 from insight_core.tests.test_markx_api import MX_TABLES
 

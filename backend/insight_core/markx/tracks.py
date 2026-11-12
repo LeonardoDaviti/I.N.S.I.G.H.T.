@@ -434,7 +434,9 @@ def _ask(cur: Cursor, track: Dict[str, Any], head: str, p: tasks.Post, *, origin
 
 
 def open_tasks(cur: Cursor) -> int:
-    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased')", (KIND,))
+    # 0148: a scout's test-read items (subject 'scout_item') have their own budget, never this cap's
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased') AND subject_kind = 'post_track'",
+                (KIND,))
     return cur.fetchone()[0]
 
 
@@ -840,8 +842,15 @@ def rank_of(cal: Dict[str, Any], conf: Optional[float]) -> float:
     return float(b["lower"])
 
 
-def _items(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
-    """The track's judged posts: each post's newest verdict (any version)."""
+def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str, Any]]:
+    """The track's judged posts: each post's newest verdict (any version). v10.14: `shown` False reads only what a
+    place needs (post, verdict, confidence, source), for the sidebar's counts: a quarter of the time (the scale copy)."""
+    if not shown:
+        cur.execute("""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, p.source_id::text
+                         FROM mx_track_items i JOIN posts p ON p.id = i.post_id
+                        WHERE i.track_id = %s AND i.verdict IS NOT NULL
+                        ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
+        return [dict(zip(("post_id", "verdict", "confidence", "source_id"), r)) for r in cur.fetchall()]
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, i.subtopic, i.why, i.origin,
                            i.cos, i.answered_at, i.version, i.found_by, p.title, p.url, {_date()}, p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
@@ -862,12 +871,13 @@ def active_sources(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
     return [{"id": i, "name": n} for i, n in cur.fetchall()]
 
 
-def placed(cur: Cursor, track: Dict[str, Any]) -> Dict[str, Any]:
-    """Every judged post of the track with its place (track, joined, discover, out) and rank: {items, calibration}."""
+def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[str, Any]:
+    """Every judged post of the track with its place (track, joined, discover, out) and rank: {items, calibration}.
+    `shown` False: the items carry only their post, verdict, confidence, source and place (the counts' read)."""
     folder = track["folder_id"]
     active = {s["id"] for s in active_sources(cur, folder)}
     marks = labels(cur, folder)
-    items = _items(cur, folder)
+    items = _items(cur, folder, shown=shown)
     for it in items:
         it["active"] = it["source_id"] in active
         it["label"] = marks.get(it["post_id"], (None,))[0]

@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import TrackSheet from './TrackSheet';
+import TrackScout from './TrackScout';
 import { foundByLine, joinLine, precisionLine, rankWords, suggestionLine, footerLine } from './trackWords';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
@@ -138,6 +139,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         {page.discover.length ? <ul>{page.discover.map((it) => <Row key={it.post_id} folderId={folderId} item={it} discover />)}</ul>
           : <p className="mt-2 text-[0.8125rem] text-fg-2">Nothing waiting.</p>}
       </section>
+      <TrackScout folderId={folderId} />
       {page.footer ? <p className="text-[0.75rem] tabular-nums text-fg-3">{footerLine(page.footer, counts)}</p> : null}
       {sheet}
     </section>

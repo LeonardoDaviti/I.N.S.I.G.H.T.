@@ -284,17 +284,20 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "headline", "briefing", "translate", "embed",   # embed: S2
                                               "alias", "collide", "embed_name",                # 0119 A1
                                               "alias2",                                         # 0130 A2
+                                              "rename",                                         # 0165 B
                                               "perspective", "sheet", "read3",                         # 0119 B
                                               "relate", "stance",                               # 0131, 0132 B
                                               "back",                                           # 0136
                                               "cite",                                           # 0133 v4.2
-                                              "track", "subtopics", "probes"})                  # 0145, 0147
+                                              "track", "subtopics", "probes",                   # 0145, 0147
+                                              "scout", "identity"})                             # 0148, 0162
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
                 self.assertIsInstance(kind.schema, dict)
                 self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
-                                             "entity", "entity_entity", "source", "track", "post_track"))   # 0132 B: source; 0145
+                                             "entity", "entity_entity", "source", "track", "post_track",
+                                             "research_pair"))   # 0132 B: source; 0145; 0162
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
         """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide (persp-v1's "@x"

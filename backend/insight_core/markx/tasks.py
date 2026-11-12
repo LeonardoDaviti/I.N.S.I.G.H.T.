@@ -41,7 +41,7 @@ from uuid import UUID
 
 from psycopg import Cursor
 
-from insight_core.markx import pairing, repo, schemas
+from insight_core.markx import pairing, plan_marks, repo, schemas
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -469,30 +469,37 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     added, after = 0, None
     # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
     # same input is one task), so it stays "unplanned"; newest first, such posts filled every LIMIT and the older
-    # posts were never reached. Page on past them (keyset), at most SCAN_PAGES pages a call.
+    # posts were never reached. Page on past them (keyset), at most SCAN_PAGES pages a call. v10.14: such a post is
+    # marked (plan_marks) and not read again while its text is unchanged, so a planner with nothing to add reads no post.
     for _page in range(SCAN_PAGES):
-        cur.execute(
-            """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+        rows = plan_marks.execute(cur,
+            f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                         - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
                  FROM posts p
                 WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+                  AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
                        OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
-        rows = cur.fetchall()
         posts = load_posts(cur, [r[0] for r in rows])
-        for pid, age, _at in rows:
+        passed = []
+        for pid, age, _at, stamp in rows:
             if added >= limit:
                 break
             p = posts.get(str(pid))
-            if p is not None and add(cur, kind, render(p), a=p.id, priority=age)[1]:
+            if p is None:
+                continue
+            if add(cur, kind, render(p), a=p.id, priority=age)[1]:
                 added += 1
+            else:   # v10.14: its input is another post's task: not read again until its text changes
+                passed.append((p.id, plan_marks.SAME_INPUT, stamp))
+        plan_marks.mark(cur, kind, guide, passed)
         if added >= limit or len(rows) < limit:
             break
         after = (rows[-1][2], rows[-1][0])
@@ -711,9 +718,18 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
         from insight_core.markx import tracks
         tracks.after_answer(cur, task, call_id, answer)
+        if task["kind"] == "track":                 # 0148: a scout's test-read item shares the judge (scratch rows)
+            from insight_core.markx import scout
+            scout.after_judge(cur, task, answer)
     elif task["kind"] == "probes":                  # 0147: a track's example posts
         from insight_core.markx import finders
         finders.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "scout":                   # 0148: the sources Haiku names for a track's sphere
+        from insight_core.markx import scout
+        scout.after_answer(cur, task, answer)
+    elif task["kind"] == "identity":                # 0162: two accounts, one maker?
+        from insight_core.markx import research
+        research.after_identity(cur, task, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])

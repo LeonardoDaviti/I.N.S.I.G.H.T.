@@ -16,6 +16,8 @@ import { useSearch } from '../hooks/useSearch';
 import { middleTruncate } from '../lib/format';
 import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, searchOrder, type SearchState } from '../lib/search';
 import SearchEntities from '../components/reader/SearchEntities';
+import { useMarkxOn } from '../hooks/useMarkxOn';
+import TextLink from '../components/ui/TextLink';
 
 const ShortcutHelp = lazy(() => import('../components/reader/ShortcutHelp'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
@@ -55,6 +57,7 @@ export default function SearchPage() {
   const counts = useUnreadCounts();
   const { folders, sourceNames } = useReaderDirectory();
   const results = useSearch(state);
+  const markxOn = useMarkxOn();   // 0162: Research this
 
   // New words are a new entry in the history (Back returns to the last search); a chip or the order replaces it.
   const go = useCallback((next: Partial<SearchState>, { push = false } = {}) => {
@@ -142,6 +145,12 @@ export default function SearchPage() {
               </Suspense>
             ) : state.q ? (
               <>
+              {markxOn ? (
+                <p className="mb-2 text-[0.8125rem] text-fg-3">
+                  <TextLink to={`/research?seed=${encodeURIComponent(state.q)}`} muted>Research “{middleTruncate(state.q, 60)}”</TextLink>
+                  {' '}· its maker, channels, papers and who discusses it
+                </p>
+              ) : null}
               {results.entities.length ? <SearchEntities entities={results.entities} /> : null}
               <PostList
                 feed={results}

@@ -195,6 +195,15 @@ ALIAS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
+# 0165 B: two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
+RENAME_RELATIONS = ["renamed", "successor", "part", "different", "cant_tell"]
+RENAME_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence"],
+    "properties": {"evidence": _STR, "relation": {"enum": RENAME_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
 COLLIDE_MENTIONS = 8          # mentions a collision question shows (the lab's MAXM)
 COLLIDE_RUNS = 3              # asked three times; a split two runs make goes to the queue (never applied by itself)
 COLLIDE_SCHEMA = {
@@ -320,6 +329,26 @@ PROBES_SCHEMA = {
                               "items": {"type": "string", "minLength": 1}},
                    "near_misses": {"type": "array", "maxItems": NEAR_MAX, "items": {"type": "string", "minLength": 1}}},
 }
+# 0148 (track scout): the sources Haiku names for a track's sphere (scout-v1): 20-30 asked, 5-30 taken, each a platform
+# class INSIGHT reads, its address or handle and why. Never trusted as is: each is test-read (markx/scout.py).
+SCOUT_PLATFORMS = ["site", "reddit", "youtube", "telegram", "x", "hn", "code", "hub", "paper", "podcast", "newsletter"]
+SCOUT_MIN, SCOUT_MAX, SCOUT_ADDRESS_CHARS, SCOUT_WHY_CHARS = 5, 30, 300, 300
+SCOUT_SCHEMA = {
+    "type": "object",
+    "required": ["sources"],
+    "properties": {"sources": {"type": "array", "minItems": SCOUT_MIN, "maxItems": SCOUT_MAX, "items": {
+        "type": "object", "required": ["platform", "address"],
+        "properties": {"name": _STR_OR_NULL, "platform": {"enum": SCOUT_PLATFORMS},
+                       "address": {"type": "string", "minLength": 1}, "why": _STR_OR_NULL}}}},
+}
+# 0162 (research): are two accounts one person or org (identity-v1)? Asked only for a pair the plain rules leave unclear.
+IDENTITY_ANSWERS = ["yes", "no", "unsure"]
+IDENTITY_SCHEMA = {
+    "type": "object",
+    "required": ["same", "confidence", "why"],
+    "properties": {"same": {"enum": IDENTITY_ANSWERS}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                   "why": {"type": "string", "minLength": 1}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -349,6 +378,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
+    Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
@@ -360,6 +390,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("track", "track-v1", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py)
     Kind("subtopics", "subtopics-v1", "track", SUBTOPICS_SCHEMA),    # 0145: a track's sub-topics, proposed
     Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # 0147: a track's example posts (track recall)
+    Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
+    Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
 )}
 
 

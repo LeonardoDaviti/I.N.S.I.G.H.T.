@@ -1394,7 +1394,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       ) : null}
 
       {/* ---- Mark X (issue 0086 E): folded, only while Mark X Shadow is on ---- */}
-      {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} /></Suspense> : null}
+      {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} url={post.url} /></Suspense> : null}
 
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 

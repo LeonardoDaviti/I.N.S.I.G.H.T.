@@ -7,12 +7,14 @@ import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/
 import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
 import { EntityLater } from '../components/markx/MarkXLater';   // 0163: later developments
+import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
   MarkxSampleAnswer } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
+import { researchStartHref } from '../services/research';
 
 type PageCalls = {
   answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
@@ -265,6 +267,7 @@ export default function MarkXEntityPage() {
               <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</> : null}
             {d.aliases.length > 1 ? ` · also written ${d.aliases.filter((a) => a !== e.name).join(', ')}` : ''}
             {' '}<SurgeMark surges={d.surges} />
+            {' · '}<TextLink to={researchStartHref(e.id)}>Research this</TextLink>
           </p>
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}
@@ -281,6 +284,18 @@ export default function MarkXEntityPage() {
               </ul>
             </section>
           ) : null}
+          {d.components?.length ? (
+            <section aria-label="Components">
+              <h2 className={H2}>Components</h2>
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem]">
+                {d.components.map((c) => (
+                  <li key={c.id}><TextLink to={entityHref(c.id)}>{c.name ?? 'a component'}</TextLink>
+                    <span className="text-fg-3"> · {plural(c.posts, 'post')}</span></li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {d.timeline ? <Timeline timeline={d.timeline} /> : null}{/* 0165 C */}
           <EntityLater entityId={e.id} />
           {d.published?.length ? (
             <section aria-label="Published">

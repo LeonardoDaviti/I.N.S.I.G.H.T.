@@ -62,6 +62,7 @@ class Stub:
         self.picked = []            # tasks each /work leased
         self.fail_posts = 0         # answer this many posts with 503 first
         self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
+        self.unknown_kinds = set()  # /work for these kinds answers 400 unknown kind (a server older than the worker)
         self.guides = dict(GUIDES)
         self.lock = threading.Lock()
         stub = self
@@ -92,6 +93,8 @@ class Stub:
                     q = {k: v[0] for k, v in parse_qs(u.query).items()}
                     if q.get("kinds") in stub.slow_kinds:
                         time.sleep(2)
+                    if q.get("kinds") in stub.unknown_kinds:
+                        return self._send(400, {"detail": f"unknown kind: {q.get('kinds')}"})
                     self._send(200, stub.work(q))
                 elif u.path == "/api/markx/status":
                     self._send(200, stub.status())
@@ -670,6 +673,15 @@ class TestServer(Base):
         self.assertEqual(len(self.stub.by_status("answered")), 20)          # every read answered
         self.assertEqual([e["kind"] for e in self.events("lease-slow")], ["entities"])
 
+    def test_a_kind_the_server_does_not_know_sits_out_and_the_others_go_on(self):
+        """v10.14: a worker newer than its server: the unknown kind is skipped, never a stop for every kind."""
+        self.stub.add("read", 20)
+        self.stub.unknown_kinds = {"rename"}
+        p = self.run_worker("--kinds", "rename,read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual([e["kind"] for e in self.events("kind-unknown")], ["rename"])
+
     def test_slow_leases_in_a_row_count_as_unreachable(self):
         self.stub.add("read", 5)
         self.stub.slow_kinds = {"read", "entities", "merge"}
@@ -829,6 +841,82 @@ class TestProbes(Base):
             sizes.setdefault(self.stub.tasks[str(ids[0])]["kind"], []).append(len(ids))
         self.assertEqual(sizes["probes"], [1, 1, 1])
         self.assertEqual(sizes["track"], [4])
+
+
+class TestRename(Base):
+    """0165 B: the rename judge (rename-v1) is a default kind, after the collision judge, five items a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["rename"] = "rename-v1"
+        self.addCleanup(KIND_GUIDE.pop, "rename")
+        self.stub.guides["rename-v1"] = guide("rename-v1", "GUIDE rename-v1")
+
+    def test_rename_is_a_default_kind_five_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertIn("rename", kinds)
+        self.assertEqual(kinds.index("rename"), kinds.index("collide") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["rename"], 5)
+
+    def test_renames_asked_five_a_call(self):
+        self.stub.add("rename", 7, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sorted(sizes), [2, 5])
+
+
+class TestScout(Base):
+    """0148: a track's scout question (scout-v1) is a default kind, asked one track a call, before the track judge."""
+
+    def setUp(self):
+        super().setUp()
+        for kind, gid in (("scout", "scout-v1"), ("track", "track-v1")):
+            KIND_GUIDE[kind] = gid
+            self.addCleanup(KIND_GUIDE.pop, kind)
+            self.stub.guides[gid] = guide(gid, f"GUIDE {gid}")
+
+    def test_scout_is_a_default_kind_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertIn("scout", kinds)
+        self.assertLess(kinds.index("scout"), kinds.index("track"))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["scout"], 1)
+
+    def test_scout_asked_one_track_a_call(self):
+        self.stub.add("scout", 2, start=1)
+        self.stub.add("track", 3, start=101)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 5)
+        sizes = {}
+        for c in self.fake_calls():
+            ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            sizes.setdefault(self.stub.tasks[str(ids[0])]["kind"], []).append(len(ids))
+        self.assertEqual(sizes["scout"], [1, 1])
+        self.assertEqual(sizes["track"], [3])
+
+
+class TestIdentity(Base):
+    """0162: research's same-maker question (identity-v1) is a default kind, five pairs a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["identity"] = "identity-v1"
+        self.addCleanup(KIND_GUIDE.pop, "identity")
+        self.stub.guides["identity-v1"] = guide("identity-v1", "GUIDE identity-v1")
+
+    def test_identity_is_a_default_kind_five_a_call(self):
+        self.assertIn("identity", W.DEFAULT_KINDS.split(","))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["identity"], 5)
+
+    def test_identity_pairs_asked_five_a_call(self):
+        self.stub.add("identity", 7, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sorted(sizes), [2, 5])
 
 
 if __name__ == "__main__":

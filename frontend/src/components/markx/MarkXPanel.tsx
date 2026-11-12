@@ -10,13 +10,14 @@ import { request } from '../../lib/request';   // 0133 v4.2
 import { plural } from '../../lib/format';
 import { postBylineTime } from '../../lib/dates';
 import MarkXTranslation from './MarkXTranslation';   // 0130 D
+import { TimelineLine } from './MarkXTimeline';       // 0165 D
 
 /**
  * The post page's "Mark X" panel (issue 0086 E), folded, loaded only when opened (its own chunk, and only while
  * Mark X is on): the post's reading, its entities and their roles, its Mark X stories with why it is in each, and
  * its connections, each with its reason; and (0131) the older posts it connects to, "Before".
  */
-export default function MarkXPanel({ postId }: { postId: string }) {
+export default function MarkXPanel({ postId, url }: { postId: string; url?: string | null }) {
   const api = useApi();
   const [open, setOpen] = useState(false);
   const query = useQuery({ queryKey: ['markx-post', postId], queryFn: () => api.getMarkxPost(postId), enabled: open, staleTime: 60_000 });
@@ -31,6 +32,12 @@ export default function MarkXPanel({ postId }: { postId: string }) {
         <span className="font-normal text-fg-3">Haiku’s reading, in shadow</span>
       </summary>
       <div className="space-y-4 border-t border-line px-4 py-3 text-fg-2">
+        {url ? (
+          <p className="text-fg-3">
+            <TextLink to={`/research?seed=${encodeURIComponent(url)}`} muted>Research this</TextLink>
+            {' '}· its maker, channels, papers and who discusses it (issue 0162)
+          </p>
+        ) : null}
         {query.isPending ? <p className="text-fg-3">Loading…</p> : null}
         {query.isError ? <p className="text-fg">× Could not load Mark X for this post.</p> : null}
         {data ? (
@@ -88,7 +95,9 @@ export default function MarkXPanel({ postId }: { postId: string }) {
                 </ul>
               ) : <p className="mt-1 text-fg-3">In no Mark X story.</p>}
             </section>
-            {data.before?.length ? <BeforeList postId={postId} rows={data.before} more={data.before_more ?? 0} /> : null}
+            {data.before?.length || data.before_timeline?.length ? (
+              <BeforeList postId={postId} rows={data.before ?? []} more={data.before_more ?? 0} timeline={data.before_timeline ?? []} />
+            ) : null}
             {data.connections.length ? (
               <section aria-label="Connections">
                 <h3 className="text-[0.75rem] font-medium text-fg-3">Connections</h3>
@@ -179,11 +188,21 @@ const RULE_WORDS: Record<string, string> = {
  * The older posts this post connects to (issue 0131, Stalker's first edges), oldest first, with their relation and
  * the reason line. An edge the judge alone made is marked uncertain, with ✓ / ✗ (the owner's labels).
  */
-function BeforeList({ postId, rows, more }: { postId: string; rows: MarkxBefore[]; more: number }) {
+function BeforeList({ postId, rows, more, timeline }: { postId: string; rows: MarkxBefore[]; more: number;
+  timeline: NonNullable<MarkxPostPanel['before_timeline']> }) {
   return (
     <section aria-label="Before">
       <h3 className="text-[0.75rem] font-medium text-fg-3">Before</h3>
-      <ul className="mt-1 space-y-1.5">
+      {/* 0165 D: what came before in its subject's timeline (its birth, its last release, its first outside mention) */}
+      {timeline.map((t) => (
+        <div key={t.entity.id} className="mt-1" data-timeline={t.entity.id}>
+          <p className="text-fg-3">
+            In <TextLink to={`/markx/entities/${encodeURIComponent(t.entity.id)}`} muted>{t.entity.name ?? 'its subject'}</TextLink>’s timeline
+          </p>
+          <ol className="mt-0.5 space-y-0.5">{t.items.map((e) => <TimelineLine key={`${e.kind}-${e.post?.id ?? e.at}`} e={e} />)}</ol>
+        </div>
+      ))}
+      {rows.length ? <ul className="mt-1 space-y-1.5">
         {rows.map((r) => (
           <li key={r.post_id} className="[overflow-wrap:anywhere]" data-uncertain={r.uncertain || undefined}>
             <span className="text-fg">{relationWords(r.relation)}</span>{' '}
@@ -197,7 +216,7 @@ function BeforeList({ postId, rows, more }: { postId: string; rows: MarkxBefore[
             {r.reason ? <span className="block text-fg-3">{r.reason}</span> : null}
           </li>
         ))}
-      </ul>
+      </ul> : null}
       {more > 0 ? <p className="mt-1 text-fg-3">+{more} more</p> : null}
     </section>
   );

@@ -56,6 +56,7 @@ document_key = pairing.document_key
 _SAME = pairing.POLICIES[pairing.SAME_STORY]
 WINDOW, EMBEDDING_MIN, NEAREST = _SAME.window, _SAME.cosine, _SAME.nearest
 STORY_MIN, STORY_DAYS, BURST_GAP = _SAME.story_cosine, _SAME.story_window, _SAME.late_after
+spans = pairing.spans
 
 
 # ---- the job ---------------------------------------------------------------------------------------

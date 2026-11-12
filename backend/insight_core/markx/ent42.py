@@ -22,7 +22,7 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Sequence
 
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import plan_marks, repo, schemas, tasks
 
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
@@ -289,25 +289,26 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
         days = tasks.reading_window(cur)
     added, after = 0, None
     for _page in range(tasks.SCAN_PAGES):
-        cur.execute(
-            """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+        rows = plan_marks.execute(cur,
+            f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                         - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
                  FROM posts p
                 WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s AND t.a = p.id)
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+                  AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
                        OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "main": GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
-        rows = cur.fetchall()
         todo = [r for r in rows if str(r[0]) not in _not_cue]
         posts = tasks.load_posts(cur, [r[0] for r in todo])
-        for pid, age, _at in todo:
+        passed = []   # v10.14: marked (plan_marks), so a fresh process doesn't read them again (84 s on the server)
+        for pid, age, _at, stamp in todo:
             if added >= limit:
                 break
             p = posts.get(str(pid))
@@ -315,9 +316,13 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                 continue
             if not cue(p):
                 _not_cue.add(p.id)
+                passed.append((p.id, plan_marks.NOT_CUE, stamp))
                 continue
             if tasks.add(cur, CITE_KIND, cite_input(p), a=p.id, priority=age)[1]:
                 added += 1
+            else:
+                passed.append((p.id, plan_marks.SAME_INPUT, stamp))
+        plan_marks.mark(cur, CITE_KIND, CITE_GUIDE, passed)
         if added >= limit or len(rows) < limit:
             break
         after = (rows[-1][2], rows[-1][0])

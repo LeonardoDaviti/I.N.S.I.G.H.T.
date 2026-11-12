@@ -116,7 +116,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
-    book = I.load_book(cur)
+    book = I.load_book(cur, counts=False)   # v10.14: the list reads no mention count (a read of every mention)
     since = now - timedelta(days=WINDOW_DAYS)
     agg: Dict[str, Dict[str, Any]] = {}
     for pid, n, role, eid, at, src, read, g in _rows(cur, guide, since):
@@ -358,6 +358,11 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                           reverse=True)
     named = named_now(cur, book)
     versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
+    # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
+    from insight_core.markx import components as C, timeline as TL
+    comps = [c for c in C.components_of(book, root) if c in named]
+    versions = [v for v in versions if v["id"] not in set(comps)]
+    comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
     return {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
@@ -367,6 +372,9 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "maker": {"id": maker, "name": book.label(maker)} if maker in book.ents else None,
             "family": ({"id": fam_root, "name": book.label(fam_root)} if fam_root and fam_root != root else None),
             "versions": versions, "posts": len(lines), "voices": len(sources),
+            "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
+                           for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
+            "timeline": TL.of_entity(cur, book, root, stories=blocks),   # 0165 C
             "stories": blocks, "loose": [line(p) for p in loose], "loose_counts": groups_n,   # 0144 B2-B4
             "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
             "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in blocks if b["mark"] == "x"}, now)
@@ -376,6 +384,22 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": [q for q in queue(cur, book=book)["open"] if root in (q["a"]["id"], (q.get("b") or {}).get("id"))]}
+
+
+def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:
+    """{root: the posts naming its cluster now} (0165 A: a product's components block)."""
+    roots = set(roots)
+    members = sorted(m for r in roots for m in book.cluster(r))
+    if not members:
+        return {}
+    cur.execute("""SELECT post_id::text, guide, n, entity_id::text FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""", (_guide(), members))
+    got: Dict[str, Set[str]] = defaultdict(set)
+    for pid, g, n, eid in cur.fetchall():
+        r = book.root(book.pins.get((pid, g, n), eid))
+        if r in roots:
+            got[r].add(pid)
+    return {r: len(ps) for r, ps in got.items()}
 
 
 def _rabbit_hole(cur: Any, book: I.Book, root: str, members: Set[str], posts: int) -> Optional[Dict[str, Any]]:
@@ -522,13 +546,14 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
                              "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
                              "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
                                           for m in ev.get("mentions") or []],
-                             "split_runs": ev.get("split_runs"), "runs": ev.get("runs")}}
-    cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.automatic, r.at, r.undone_at, r.evidence
-                     FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
+                             "split_runs": ev.get("split_runs"), "runs": ev.get("runs"),
+                             "asked_because": ev.get("asked_because")}}   # 0165 B: why a rename was asked
+    cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.automatic, r.at, r.undone_at, r.evidence,
+                          r.kind FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
     merges = [{"id": rid, "from": {"id": f, "name": book.ents[f].name if f in book.ents else None},
                "to": {"id": t, "name": book.ents[t].name if t in book.ents else None}, "by": by, "automatic": auto,
-               "at": at, "undone_at": undone, "confidence": (ev or {}).get("confidence")}
-              for rid, f, t, by, auto, at, undone, ev in cur.fetchall()]
+               "at": at, "undone_at": undone, "confidence": (ev or {}).get("confidence"), "kind": kind}   # 0165 B
+              for rid, f, t, by, auto, at, undone, ev, kind in cur.fetchall()]
     cur.execute("""SELECT count(*) FILTER (WHERE automatic AND undone_at IS NULL),
                           count(*) FILTER (WHERE automatic AND undone_by = 'owner') FROM mx_entity_redirects""")
     auto_live, auto_undone = cur.fetchone()

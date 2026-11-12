@@ -591,7 +591,8 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     from insight_core.markx import repo
     queue = repo.queue_counts(cur)
     cur.execute("""SELECT created_at::date, count(*), count(*) FILTER (WHERE valid), COALESCE(sum(tokens_in), 0),
-                          COALESCE(sum(tokens_out), 0) FROM mx_calls GROUP BY 1 ORDER BY 1 DESC LIMIT 14""")
+                          COALESCE(sum(tokens_out), 0) FROM mx_calls WHERE created_at >= COALESCE(%s, '-infinity'::timestamptz)
+                    GROUP BY 1 ORDER BY 1 DESC LIMIT 14""", (repo.calls_days_floor(cur, 14),))   # v10.14: 14 days read
     days = [{"day": d, "calls": n, "valid": v, "tokens_in": int(ti), "tokens_out": int(to),
              "api_usd": round(int(ti) * HAIKU_PER_MILLION[0] / 1e6 + int(to) * HAIKU_PER_MILLION[1] / 1e6, 4)}
             for d, n, v, ti, to in cur.fetchall()]

@@ -319,26 +319,38 @@ class Documents:
 
 class Posts:
     """Mark X's time, source and kind of the embedded posts (and of any post loaded), and their Mark IX stories.
-    `embedded` False: none of the embedded posts is read (the entity source alone reads only the posts it names)."""
+    `embedded` False: none of the embedded posts is read (the entity source alone reads only the posts it names).
+    v10.14: the embedded posts read are those within 2 x the window of a post of `extra` (the new posts), the only
+    ones a new post's embedding pairs reach (its window, and its neighbours' own windows); before, every embedded post
+    and every story row was read on each run. A post's story is read as the post is loaded."""
 
     def __init__(self, cur: Cursor, model: str = MODEL, extra: Iterable[str] = (), embedded: bool = True,
                  pol: Optional[Policy] = None) -> None:
         self.cur = cur
         self.pol = pol or POLICIES[SAME_STORY]
-        self.embedded: Set[str] = set()
-        if embedded:
-            cur.execute("SELECT post_id::text FROM mx_embeddings WHERE model = %s", (model,))
-            self.embedded = {r[0] for r in cur.fetchall()}
         self.source: Dict[str, str] = {}
         self.at: Dict[str, datetime] = {}
         self.kind: Dict[str, str] = {}
-        self.load(self.embedded | set(extra))
-        cur.execute("SELECT post_id::text, story_id::text FROM story_posts")
-        self.story: Dict[str, str] = dict(cur.fetchall())
+        self.story: Dict[str, str] = {}
+        self._storied: Set[str] = set()
+        extra = set(extra)
+        self.load(extra)
+        self.embedded: Set[str] = set()
+        if embedded:
+            lo, hi = spans((self.at[p] for p in extra if p in self.at), 2 * self.pol.window)
+            cur.execute(f"""SELECT e.post_id::text FROM mx_embeddings e JOIN posts p ON p.id = e.post_id
+                             WHERE e.model = %s AND EXISTS (
+                                   SELECT 1 FROM unnest(%s::timestamptz[], %s::timestamptz[]) AS w(lo, hi)
+                                    WHERE {post_date()} BETWEEN w.lo AND w.hi)""",
+                        (model, lo, hi))
+            self.embedded = {r[0] for r in cur.fetchall()}
+            self.load(self.embedded)
         self.order = sorted((self.at[p], p) for p in self.embedded if p in self.at)
         self.times = [t for t, _ in self.order]
 
     def load(self, ids: Iterable[str]) -> None:
+        ids = list(ids)
+        self._stories(ids)
         ids = [i for i in ids if i not in self.at]
         if not ids:
             return
@@ -349,6 +361,14 @@ class Posts:
             if at is not None:
                 self.source[pid], self.at[pid], self.kind[pid] = source, at, source_kind(platform, handle)
 
+    def _stories(self, ids: Iterable[str]) -> None:
+        ids = sorted({str(i) for i in ids} - self._storied)
+        if not ids:
+            return
+        self.cur.execute("SELECT post_id::text, story_id::text FROM story_posts WHERE post_id = ANY(%s::uuid[])", (ids,))
+        self.story.update(self.cur.fetchall())
+        self._storied.update(ids)
+
     def voice(self, pid: str) -> bool:
         return pid in self.at and is_voice(self.kind[pid])
 
@@ -356,6 +376,7 @@ class Posts:
         return self.voice(a) and self.voice(b) and self.source[a] != self.source[b]
 
     def one_story(self, a: str, b: str) -> bool:
+        self._stories((a, b))
         sa = self.story.get(a)
         return sa is not None and sa == self.story.get(b)
 
@@ -367,6 +388,19 @@ class Posts:
         t, span = self.at[pid], span or self.pol.window
         lo, hi = bisect.bisect_left(self.times, t - span), bisect.bisect_right(self.times, t + span)
         return [q for _, q in self.order[lo:hi] if q != pid and self.source[q] != self.source[pid] and self.voice(q)]
+
+
+def spans(times: Iterable[datetime], reach: timedelta) -> Tuple[List[datetime], List[datetime]]:
+    """v10.14: the time spans within `reach` of any of `times`, overlapping ones merged: (starts, ends), inclusive."""
+    lo: List[datetime] = []
+    hi: List[datetime] = []
+    for t in sorted(times):
+        if hi and t - reach <= hi[-1]:
+            hi[-1] = max(hi[-1], t + reach)
+        else:
+            lo.append(t - reach)
+            hi.append(t + reach)
+    return lo, hi
 
 
 def _add(cur: Cursor, kind: str, a: str, b: str, source: str, score: Optional[float]) -> bool:
@@ -479,7 +513,14 @@ def entity_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
     keys = sorted({k for s in mine.values() for k, _ in s})
     if not keys:
         return 0
-    theirs = _subjects(cur, "name_key = ANY(%(k)s)", {"k": keys}, pol.types)
+    posts.load(mine)
+    # v10.14: only the subjects' posts within the window of one of `mine` (the pairs' own window), not every post ever
+    lo, hi = spans((posts.at[i] for i in mine if i in posts.at), pol.window)
+    theirs = _subjects(cur, f"""name_key = ANY(%(k)s) AND EXISTS (
+                                    SELECT 1 FROM posts p, unnest(%(lo)s::timestamptz[], %(hi)s::timestamptz[]) AS w(lo, hi)
+                                     WHERE p.id = mx_mentions_now.post_id
+                                       AND {post_date()} BETWEEN w.lo AND w.hi)""",
+                       {"k": keys, "lo": lo, "hi": hi}, pol.types)
     posts.load(theirs)
     by_subject: Dict[Tuple[str, str], List[str]] = defaultdict(list)
     for pid, s in theirs.items():
