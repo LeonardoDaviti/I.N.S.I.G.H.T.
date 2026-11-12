@@ -300,7 +300,10 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
     body = REPOST.sub("", REPLY.sub("", raw_title)) + "\n" + (text or "")
     pairs: List[Pair] = []
     claimed: Set[int] = set()   # an embed's "(@h)" is its embed, not a mention too
-    for m in EMBED.finditer(body):
+    # v10.16: an embed and a pair both hold "(@": a body without one has neither, and PAIR's lazy name tried 80
+    # characters from every position of every body (9 of a scan's 11 s on the scale copy's 2,000 newest posts)
+    paren = "(@" in body
+    for m in EMBED.finditer(body) if paren else ():
         add("x", m.group(2), "embed", pos=m.start(2), body=body)
         claimed.add(m.start(2) - 1)
     for platform, h, form, status, pos in links_in(body):
@@ -323,7 +326,7 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
     for u in links:
         for platform, h, form, status, _pos in links_in(u):
             add(platform, h, form, status=status)
-    for m in PAIR.finditer(body):
+    for m in PAIR.finditer(body) if paren else ():
         name = _clean_name(m.group(1))
         h = m.group(2)
         if name and _ok(at_platform, h.casefold()) and not (at_platform == own_p and h.casefold() == own_h.casefold()):

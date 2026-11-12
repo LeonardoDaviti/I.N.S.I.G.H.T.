@@ -549,10 +549,13 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     stats: Dict[str, Dict[str, Any]] = {t["folder_id"]: {} for t in ts}
     heads: Dict[str, str] = {}
     profs: Dict[str, Dict[str, Any]] = {}
+    exs = {t["folder_id"]: examples(cur, t["folder_id"]) for t in ts}
+    cache: Dict[Any, int] = {}   # v10.16: the window's counts, read once for every track's ✓ items
+    finders.prefetch(cur, {p for ex in exs.values() for p in ex.get("in") or []}, now=now, cache=cache)
     for t in ts:
-        ex = examples(cur, t["folder_id"])
+        ex = exs[t["folder_id"]]
         heads[t["folder_id"]] = header(cur, t, ex)
-        profs[t["folder_id"]] = finders.prepare(cur, t, ex, now=now)   # 0147: the finders, their bar, the classifier
+        profs[t["folder_id"]] = finders.prepare(cur, t, ex, now=now, cache=cache)   # 0147: the finders, their bar, the classifier
 
     def share(left: int, k: int) -> int:
         return max(1, -(-left // max(1, k)))

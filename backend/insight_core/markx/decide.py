@@ -1332,18 +1332,25 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
-    from insight_core.markx import entity_stage
+    from insight_core.markx import entity_stage, identity
+    # v10.16: the entity book is read once for the entities stage, and once after it (its entities, names, merges and
+    # pins as the stage left them; no mention count, which the surges and perspectives never read) for both of those
+    # (was: a whole book read by each of the three)
+    book = identity.load_book(cur)
     got = guarded("entities", lambda: entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
-                                                             full=full, budget=entity_budget))
+                                                             full=full, budget=entity_budget, book=book))
     days = set()                        # deferred: it linked nothing, no day to recount; and no "entities" counts,
     if got is not None:                 # so the next run resumes a full pass from the last finished run's record
         counts["entities"], days = got
+    book_now = identity.load_book(cur, counts=False)
     mark("surges")                      # 0119 A2
     counts["surges"] = guarded("surges", lambda: entity_stage.surges(cur, now=now, run_id=run_id, days=days,
-                                                                      since=previous, window_days=recent_days))
+                                                                      since=previous, window_days=recent_days,
+                                                                      book=book_now))
     mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
     from insight_core.markx import perspectives
-    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id))
+    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id,
+                                                                                book=book_now))
     counts["briefing"] = guarded("briefing", lambda: mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR,
                                                                       limit=BRIEFING_STORIES))
     if deferred:
