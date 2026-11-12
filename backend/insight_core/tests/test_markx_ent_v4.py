@@ -214,8 +214,9 @@ class StoredAndRead(_Db):
         self.assertEqual(tasks.plan_posts(self.cur, "entities", days=1, now=T0 + H), 0)   # ent-v3: asked already
         self.switch("ent-v4")
         self.assertEqual(tasks.plan_posts(self.cur, "entities", days=1, now=T0 + H), 1)   # a new ent-v4 task
-        self.cur.execute("SELECT guide, input LIKE %s FROM mx_tasks WHERE kind = 'entities' AND a = %s ORDER BY created_at",
-                         ("%Kestrel Report%", p))
+        self.cur.execute("SELECT guide, input LIKE %s FROM mx_tasks WHERE kind = 'entities' AND a = %s "
+                         "AND input NOT LIKE %s ORDER BY created_at",
+                         ("%Kestrel Report%", p, "%\nWindow: %"))   # 0176: ent-v3's later windows of the long text apart
         self.assertEqual(self.cur.fetchall(), [("ent-v3", False), ("ent-v4", True)])        # the 6,000 cut
         self.assertEqual(repo.current_guide(self.cur, p), "ent-v3")
         self.answer(p, [ent("Kestrel Report", "Kestrel Report", "document", "source", by="Word Corp")])
