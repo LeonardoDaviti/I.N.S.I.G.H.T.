@@ -861,5 +861,27 @@ class TestScout(Base):
         self.assertEqual(sizes["track"], [3])
 
 
+class TestIdentity(Base):
+    """0162: research's same-maker question (identity-v1) is a default kind, five pairs a call."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["identity"] = "identity-v1"
+        self.addCleanup(KIND_GUIDE.pop, "identity")
+        self.stub.guides["identity-v1"] = guide("identity-v1", "GUIDE identity-v1")
+
+    def test_identity_is_a_default_kind_five_a_call(self):
+        self.assertIn("identity", W.DEFAULT_KINDS.split(","))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["identity"], 5)
+
+    def test_identity_pairs_asked_five_a_call(self):
+        self.stub.add("identity", 7, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 7)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sorted(sizes), [2, 5])
+
+
 if __name__ == "__main__":
     unittest.main()

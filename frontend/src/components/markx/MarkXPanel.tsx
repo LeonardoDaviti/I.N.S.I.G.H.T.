@@ -16,7 +16,7 @@ import MarkXTranslation from './MarkXTranslation';   // 0130 D
  * Mark X is on): the post's reading, its entities and their roles, its Mark X stories with why it is in each, and
  * its connections, each with its reason; and (0131) the older posts it connects to, "Before".
  */
-export default function MarkXPanel({ postId }: { postId: string }) {
+export default function MarkXPanel({ postId, url }: { postId: string; url?: string | null }) {
   const api = useApi();
   const [open, setOpen] = useState(false);
   const query = useQuery({ queryKey: ['markx-post', postId], queryFn: () => api.getMarkxPost(postId), enabled: open, staleTime: 60_000 });
@@ -31,6 +31,12 @@ export default function MarkXPanel({ postId }: { postId: string }) {
         <span className="font-normal text-fg-3">Haiku’s reading, in shadow</span>
       </summary>
       <div className="space-y-4 border-t border-line px-4 py-3 text-fg-2">
+        {url ? (
+          <p className="text-fg-3">
+            <TextLink to={`/research?seed=${encodeURIComponent(url)}`} muted>Research this</TextLink>
+            {' '}· its maker, channels, papers and who discusses it (issue 0162)
+          </p>
+        ) : null}
         {query.isPending ? <p className="text-fg-3">Loading…</p> : null}
         {query.isError ? <p className="text-fg">× Could not load Mark X for this post.</p> : null}
         {data ? (

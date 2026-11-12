@@ -430,10 +430,11 @@ def add_candidates(cur: Cursor, run_id: str, cands: Sequence[Dict[str, Any]], *,
     rank = cur.fetchone()[0]
     added = 0
     for c in cands:
-        key, site, platform = (c["key"], "", False) if c.get("key") else key_of(c["address"], platforms)
-        if not key or key in skip:
-            continue
-        if not c.get("key") and is_followed(key, site, platform, followed):
+        if c.get("key"):
+            key, (_, site, platform) = c["key"], key_of(c["address"], platforms)
+        else:
+            key, site, platform = key_of(c["address"], platforms)
+        if not key or key in skip or is_followed(key, site, platform, followed):
             continue
         cur.execute("""INSERT INTO mx_scout_candidates (run_id, finder, platform, address, key, name, why, evidence, rank)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s) ON CONFLICT (run_id, key) DO NOTHING""",

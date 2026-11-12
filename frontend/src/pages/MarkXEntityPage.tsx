@@ -13,6 +13,7 @@ import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntitySto
   MarkxSampleAnswer } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
+import { researchStartHref } from '../services/research';
 
 type PageCalls = {
   answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
@@ -265,6 +266,7 @@ export default function MarkXEntityPage() {
               <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</> : null}
             {d.aliases.length > 1 ? ` · also written ${d.aliases.filter((a) => a !== e.name).join(', ')}` : ''}
             {' '}<SurgeMark surges={d.surges} />
+            {' · '}<TextLink to={researchStartHref(e.id)}>Research this</TextLink>
           </p>
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}

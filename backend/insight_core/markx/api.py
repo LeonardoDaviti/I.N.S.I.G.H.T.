@@ -913,3 +913,4 @@ from insight_core.markx import later_api as _later_api; router.include_router(_l
 from insight_core.markx import track_counts as _track_counts; router.include_router(_track_counts.router)  # noqa: E402,E702  v10.12.1: a topic track's sidebar count (before tracks_api: /tracks/{id})
 from insight_core.markx import tracks_api as _tracks_api; router.include_router(_tracks_api.router)  # noqa: E402,E702  0145: tracks as topics
 from insight_core.markx import scout_api as _scout_api; router.include_router(_scout_api.router)  # noqa: E402,E702  0148: the track scout
+from insight_core.markx import research_api as _research_api; router.include_router(_research_api.router)  # noqa: E402,E702  0162: research
