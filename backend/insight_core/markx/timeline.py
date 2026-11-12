@@ -285,9 +285,11 @@ def _back(cur: Any, posts: Set[str]) -> List[Dict[str, Any]]:
     from insight_core.markx import back
     if not posts:
         return []
+    from insight_core.markx import anchors   # 0180: the engine shown's rows
     cur.execute("""SELECT b.id::text, b.story::text, b.window_at, b.task_id::text, b.posts::text[] FROM mx_back b
-                    WHERE b.members && %s::uuid[] OR b.story IN (SELECT story_id FROM story_posts WHERE post_id = ANY(%s::uuid[]))""",
-                (sorted(posts), sorted(posts)))
+                    WHERE b.engine = %s AND (b.members && %s::uuid[]
+                          OR b.story IN (SELECT story_id FROM story_posts WHERE post_id = ANY(%s::uuid[])))""",
+                (anchors.shown(cur), sorted(posts), sorted(posts)))
     rows = cur.fetchall()
     answers = back._answers(cur, [r[3] for r in rows if r[3]])
     out = []

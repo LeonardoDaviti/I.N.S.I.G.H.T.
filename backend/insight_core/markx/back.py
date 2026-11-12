@@ -24,6 +24,10 @@ only read, and the row never enters Mark IX's News.
      related / unrelated) and the running precision of those labels.
 
 Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (the lab's).
+
+0180 (anchors): the gates above are Pairing's `develops` row, read here. This module's rows are engine 'old'; the
+anchors engine (markx/anchors.py: Mark IX and Mark X stories, a happening's H hits first) writes engine 'anchors'
+rows beside them from `stage` (Shadow), and the page shows the engine anchors.shown names (old by default).
 """
 from __future__ import annotations
 
@@ -39,12 +43,14 @@ from insight_core.markx import pairing
 log = logging.getLogger(__name__)
 
 KIND = "back"
-FIRST_DAYS = 14               # the window starts this long after the story's first post or later ...
-LAST_DAYS = 7                 # ... and this long after its last one
-WINDOW = timedelta(hours=72)
-MIN_SOURCES = 2
-COS = 0.70
-HUB_WEEKS = 6                 # a page linked in this many distinct ISO weeks is a hub (no L)
+# 0180: the gates are Pairing's `develops` row (one place for back, later and the anchors engine); named here as before.
+DEVELOPS = pairing.policy(pairing.DEVELOPS)
+FIRST_DAYS = DEVELOPS.first_after.days   # the window starts this long after the story's first post or later ...
+LAST_DAYS = DEVELOPS.last_after.days     # ... and this long after its last one
+WINDOW = DEVELOPS.window                 # 72 hours
+MIN_SOURCES = DEVELOPS.min_voices        # 2
+COS = DEVELOPS.cosine                    # 0.70
+HUB_WEEKS = DEVELOPS.hub_weeks           # a page linked in this many distinct ISO weeks is a hub (no L)
 MAX_POSTS = 6
 OLD_SHOWN = 4                 # the question shows the old story's earliest 4 posts ...
 OLD_CHARS = 300               # ... at 300 characters, and each new post at 500 (the lab's render)
@@ -55,7 +61,8 @@ FIRST_SCAN_DAYS = 30          # the first run reads this far back; each next one
 MARGIN = timedelta(hours=1)
 SINCE_KEY = "back_since"
 MODEL = "bge-m3"
-SPECIFIC = ("model", "product", "software", "paper", "document", "dataset", "event", "law", "other")
+SPECIFIC = DEVELOPS.types               # the subject types that name one thing (E)
+ENGINE = "old"                          # this module's rows in mx_back (0180: the anchors engine writes 'anchors')
 LABELS = ("development", "retold", "related", "unrelated")
 ANSWERS = LABELS + ("undo",)
 UNKNOWN = "unknown"
@@ -95,20 +102,22 @@ def _posts(cur: Any, where: str, params: Sequence[Any]) -> Dict[str, _P]:
             if at is not None}
 
 
-def _links(cur: Any, ids: Sequence[str]) -> Dict[str, Set[str]]:
+def _links(cur: Any, ids: Sequence[str], page: Any = None) -> Dict[str, Set[str]]:
+    """{post: the pages it links, by `page` (default norm; the anchors engine: Pairing's page_key)}."""
+    page = page or norm
     out: Dict[str, Set[str]] = defaultdict(set)
     if ids:
         cur.execute("SELECT post_id::text, target_url FROM post_links WHERE NOT boilerplate AND post_id = ANY(%s::uuid[])",
                     (list(ids),))
         for pid, u in cur.fetchall():
-            n = norm(u)
+            n = page(u)
             if n:
                 out[pid].add(n)
     return out
 
 
-def _pages(p: _P, links: Dict[str, Set[str]]) -> Set[str]:
-    own = norm(p.url)
+def _pages(p: _P, links: Dict[str, Set[str]], page: Any = None) -> Set[str]:
+    own = (page or norm)(p.url)
     return set(links.get(p.id, ())) | ({own} if own else set())
 
 
@@ -156,7 +165,7 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
             by[sid].append(_P(pid, src, at, url, False))
             origin[sid] = o
     out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if len({m.src for m in ms}) >= MIN_SOURCES}
-    cur.execute("SELECT story::text, max(window_at) FROM mx_back GROUP BY story")
+    cur.execute("SELECT story::text, max(window_at) FROM mx_back WHERE engine = %s GROUP BY story", (ENGINE,))
     fired = dict(cur.fetchall())
     again = sorted(sid for sid in fired if sid in out)
     if again:   # 0163: a long-lived story (later.py), still followed, may fire again AGAIN after its last window
@@ -165,9 +174,17 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
         for sid in lived:
             out[sid].again = fired[sid] + later.AGAIN
     out = {sid: s for sid, s in out.items() if s.t0() <= now and (sid not in fired or s.again is not None)}
+    fill(cur, out)
+    return out
+
+
+def fill(cur: Any, out: Dict[str, Story], page: Any = None) -> None:
+    """Each story's subjects (the specific subjects of 2+ of its read members, of 1 when one was read) and pages (its
+    members' own, pages 2+ members link, its origin; compared by `page`, default norm), hubs not taken out."""
+    page = page or norm
     mids = sorted({m.id for s in out.values() for m in s.members})
     subj, read = _subjects(cur, mids)
-    links = _links(cur, mids)
+    links = _links(cur, mids, page)
     for s in out.values():
         c: Counter = Counter()
         for m in s.members:
@@ -177,9 +194,8 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
         count: Counter = Counter()
         for m in s.members:
             count.update(links.get(m.id, ()))
-        own = {norm(m.url) for m in s.members} | {norm(s.origin)}
+        own = {page(m.url) for m in s.members} | {page(s.origin)}
         s.pages = {n for n in own | {n for n, k in count.items() if k >= 2} if n}
-    return out
 
 
 def hubs(cur: Any, pages: Iterable[str]) -> Set[str]:
@@ -224,6 +240,10 @@ def near(cur: Any, story_list: Sequence[Story], post_ids: Sequence[str]) -> Dict
     return out
 
 
+TRIGS = "HELV"     # H: the anchors engine's happening hits (0180); the old engine has none
+PRIMARY = "HEL"    # a V burst is a candidate only without one of these
+
+
 def burst(hits: Sequence[Tuple[datetime, str]], src: Dict[str, str]) -> Optional[datetime]:
     """The start of the first WINDOW of `hits` (sorted [(at, post)]) with MIN_SOURCES distinct sources, or None."""
     for a in range(len(hits)):
@@ -234,37 +254,52 @@ def burst(hits: Sequence[Tuple[datetime, str]], src: Dict[str, str]) -> Optional
 
 
 def candidate(story: Story, hits: Dict[str, Sequence[Tuple[datetime, str]]], src: Dict[str, str]) -> Optional[Dict[str, Any]]:
-    """The story's candidate from its hits {E|L|V: sorted [(at, post)]}: {window_at, trig, posts, post_trig}, or None."""
-    found = {k: b for k in "ELV" if (b := burst(hits.get(k) or (), src)) is not None}
+    """The story's candidate from its hits {H|E|L|V: sorted [(at, post)]}: {window_at, trig, posts, post_trig}, or
+    None. H (0180, the anchors engine only: a post whose happening develops the anchor's) counts as E and L do."""
+    found = {k: b for k in TRIGS if (b := burst(hits.get(k) or (), src)) is not None}
     if not found:
         return None
-    prim = [b for k, b in found.items() if k in "EL"]
+    prim = [b for k, b in found.items() if k in PRIMARY]
     start = min(prim) if prim else found["V"]
     by: Dict[str, Set[str]] = defaultdict(set)
     at: Dict[str, datetime] = {}
-    for k in "ELV":
+    for k in TRIGS:
         for t, i in hits.get(k) or ():
             if start <= t <= start + WINDOW:
                 by[i].add(k)
                 at[i] = t
-    trig = [k for k in "ELV" if len({src[i] for i in by if k in by[i]}) >= MIN_SOURCES]
-    posts = sorted(by, key=lambda i: (-len(by[i] & {"E", "L"}), at[i], i))[:MAX_POSTS]
+    trig = [k for k in TRIGS if len({src[i] for i in by if k in by[i]}) >= MIN_SOURCES]
+    posts = sorted(by, key=lambda i: (-len(by[i] & set(PRIMARY)), at[i], i))[:MAX_POSTS]
     return {"window_at": start, "trig": trig, "posts": posts, "post_trig": {i: sorted(by[i]) for i in posts}}
 
 
 def find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any]]:
     """The candidates the posts dated in [since, now] make: one per story at most, each {story, window_at, trig,
     posts, post_trig}. Nothing is written."""
-    st = stories(cur, now)
+    return triggers(cur, stories(cur, now), now=now, since=since)
+
+
+def recent_posts(cur: Any, *, now: datetime, since: datetime) -> Dict[str, _P]:
+    """The posts dated in [since, now], saved ones out."""
+    return {i: p for i, p in _posts(cur, f"{_date()} >= %s AND {_date()} <= %s", (since, now)).items() if not p.saved}
+
+
+def triggers(cur: Any, st: Dict[str, Story], *, now: datetime, since: datetime, page: Any = None,
+             recent: Optional[Dict[str, _P]] = None, extra: Optional[Dict[str, Sequence[Tuple[datetime, str]]]] = None
+             ) -> List[Dict[str, Any]]:
+    """The candidates of the stories `st` (filled: `fill`) that the posts dated in [since, now] make. `page`: how
+    pages compare (default norm); `recent`: those posts when the caller read them; `extra`: {story: [(at, post)]}
+    H hits a caller found (the anchors engine's happenings: checked by their own gate, not by t0)."""
     if not st:
         return []
-    recent = {i: p for i, p in _posts(cur, f"{_date()} >= %s AND {_date()} <= %s", (since, now)).items() if not p.saved}
+    if recent is None:
+        recent = recent_posts(cur, now=now, since=since)
     if not recent:
         return []
     ids = sorted(recent)
     subj, _read = _subjects(cur, ids)
-    links = _links(cur, ids)
-    pages = {i: _pages(p, links) for i, p in recent.items()}
+    links = _links(cur, ids, page)
+    pages = {i: _pages(p, links, page) for i, p in recent.items()}
     hub = hubs(cur, set().union(*(s.pages for s in st.values())) & set().union(*pages.values()))
     vec = near(cur, list(st.values()), [i for i in ids if recent[i].at >= min(s.t0() for s in st.values())])
     src = {i: p.src for i, p in recent.items()}
@@ -273,6 +308,8 @@ def find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any]]:
         t0, mem = s.t0(), {m.id for m in s.members}
         own = s.pages - hub
         hits: Dict[str, List[Tuple[datetime, str]]] = {"E": [], "L": [], "V": []}
+        if extra and extra.get(s.id):
+            hits["H"] = [(t, i) for t, i in extra[s.id] if i in recent and i not in mem]
         for i in ids:
             p = recent[i]
             if i in mem or p.at < t0:
@@ -291,16 +328,19 @@ def find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any]]:
     return out
 
 
-def write(cur: Any, found: Sequence[Dict[str, Any]], *, run_id: Any = None) -> int:
-    """The new candidates (once per story and window): how many were new."""
+def write(cur: Any, found: Sequence[Dict[str, Any]], *, run_id: Any = None, engine: str = ENGINE) -> int:
+    """The new candidates (once per engine, anchor and window): how many were new. A candidate's `anchor_kind`
+    (default ix_story) and `story` (the anchor's id) name its anchor (0180)."""
     import json
     added = 0
     for c in found:
-        cur.execute("""INSERT INTO mx_back (story, members, first_at, last_at, window_at, trig, posts, post_trig, run_id)
-                       VALUES (%s, %s::uuid[], %s, %s, %s, %s, %s::uuid[], %s::jsonb, %s)
-                       ON CONFLICT (story, window_at) DO NOTHING""",
+        kind = c.get("anchor_kind", "ix_story")
+        cur.execute("""INSERT INTO mx_back (story, members, first_at, last_at, window_at, trig, posts, post_trig, run_id,
+                                            engine, anchor_kind, anchor_id)
+                       VALUES (%s, %s::uuid[], %s, %s, %s, %s, %s::uuid[], %s::jsonb, %s, %s, %s, %s)
+                       ON CONFLICT (engine, anchor_kind, story, window_at) DO NOTHING""",
                     (c["story"], c["members"], c["first_at"], c["last_at"], c["window_at"], c["trig"], c["posts"],
-                     json.dumps(c["post_trig"]), run_id))
+                     json.dumps(c["post_trig"]), run_id, engine, kind, c["story"]))
         added += cur.rowcount
     return added
 
@@ -339,8 +379,10 @@ def plan(cur: Any, *, open_cap: int = OPEN, now: Optional[datetime] = None, **_k
     room = open_cap - cur.fetchone()[0]
     if room <= 0:
         return 0
+    from insight_core.markx import anchors   # 0180: the engine shown first, then the other (Shadow compares both)
     cur.execute("""SELECT id::text, story::text, members::text[], posts::text[], window_at FROM mx_back
-                    WHERE task_id IS NULL ORDER BY window_at DESC, id LIMIT %s""", (room,))
+                    WHERE task_id IS NULL ORDER BY engine <> %s, window_at DESC, id LIMIT %s""",
+                (anchors.shown(cur), room))
     picks = cur.fetchall()
     if not picks:
         return 0
@@ -432,7 +474,9 @@ def stage(cur: Any, *, now: datetime, run_id: Any = None, open_cap: int = OPEN) 
     last = repo.get_setting(cur, SINCE_KEY, default=None)
     since = (datetime.fromisoformat(last) - WINDOW - MARGIN) if last else now - timedelta(days=FIRST_SCAN_DAYS)
     found = find(cur, now=now, since=since)
+    from insight_core.markx import anchors   # 0180: the anchors engine's rows beside these (Shadow), before the plan
     out = {"since": since.isoformat(), "found": len(found), "added": write(cur, found, run_id=run_id),
+           "anchors": anchors.shadow(cur, "back", now=now, run_id=run_id),
            "planned": plan(cur, open_cap=open_cap, now=now)}
     repo.set_setting(cur, SINCE_KEY, now.isoformat())
     out["seconds"] = round(time.monotonic() - t0, 3)
@@ -468,10 +512,13 @@ def _iso(t: Optional[datetime]) -> Optional[str]:
 def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
     """/markx's "Back in the news": {items [rows judged development, newest window first], counts, precision}. Each
     row {id, story, headline, first_at, window_at, days_later, trig, posts [{id, n, title, source, at, trig,
-    verdict}], old_thing, what_new [the development runs' words], runs, label}."""
+    verdict}], old_thing, what_new [the development runs' words], runs, label}: the rows of the engine shown (0180:
+    anchors.shown, old by default; `engine` says which)."""
+    from insight_core.markx import anchors
+    engine = anchors.shown(cur)
     cur.execute("""SELECT b.id::text, b.story::text, b.members::text[], b.first_at, b.window_at, b.trig,
                           b.posts::text[], b.post_trig, b.task_id::text
-                     FROM mx_back b ORDER BY b.window_at DESC, b.id""")
+                     FROM mx_back b WHERE b.engine = %s ORDER BY b.window_at DESC, b.id""", (engine,))
     rows = cur.fetchall()
     answers = _answers(cur, [r[8] for r in rows if r[8]])
     counts = Counter(candidates=len(rows))
@@ -508,13 +555,19 @@ def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
                       "old_thing": next((a.get("old_thing") for a in dev if a.get("old_thing")), None),
                       "what_new": list(dict.fromkeys(str(a["what_new"]) for a in dev if a.get("what_new"))),
                       "runs": v["runs"], "label": marks.get(bid)})
-    return {"items": items, "counts": dict(counts), "precision": precision(cur), "measured": MEASURED}
+    return {"items": items, "counts": dict(counts), "precision": precision(cur, engine=engine), "measured": MEASURED,
+            "engine": engine}
 
 
-def precision(cur: Any) -> Dict[str, Any]:
-    """The owner's labels on the rows shown: {labelled, development, precision (None before the first)}."""
-    cur.execute("""SELECT DISTINCT ON (a) a::text, answer FROM mx_labels WHERE item_kind = 'back' AND labeller = 'owner'
-                    ORDER BY a, created_at DESC, ctid DESC""")
+def precision(cur: Any, *, engine: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's labels on the rows shown (of `engine`'s rows; default the engine shown): {labelled, development,
+    precision (None before the first)}."""
+    if engine is None:
+        from insight_core.markx import anchors
+        engine = anchors.shown(cur)
+    cur.execute("""SELECT DISTINCT ON (l.a) l.a::text, l.answer FROM mx_labels l JOIN mx_back b ON b.id = l.a
+                    WHERE l.item_kind = 'back' AND l.labeller = 'owner' AND b.engine = %s
+                    ORDER BY l.a, l.created_at DESC, l.ctid DESC""", (engine,))
     marks = [ans for _, ans in cur.fetchall() if ans != "undo"]
     dev = sum(a == "development" for a in marks)
     return {"labelled": len(marks), "development": dev, "precision": round(dev / len(marks), 4) if marks else None}

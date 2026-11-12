@@ -7,8 +7,8 @@ first needed, and its module is named where one owns it.
 (`backend/insight_core/markx/pairing.py`). Every candidate source and every gate before a judge lives behind it.
 
 **Relation** — a question a judge may later be asked about a pair: *same story* (one story? the join, pair and
-merge questions) or *connected* (a typed link between two stories). Each relation has one row in Pairing's policy
-table.
+merge questions), *connected* (a typed link between two stories) or *develops* (a later post follows up an
+anchor). Each relation has one row in Pairing's policy table.
 
 **Gate** — one condition a pair must pass before it is judged: a window (how far apart in time), a cosine bar, an
 entity-type list, a word count, a unit rule. Gates belong to a relation's policy row, never to a caller.
@@ -32,8 +32,9 @@ raised. Resolved to its root entity (or its name key until it is linked), never 
 **Stage** — how far a happening has got, when the action says it: rumored, announced, released, closed. A later
 stage of one happening is a development, not a new happening.
 
-**Anchor** *(planned)* — what a follow-up attaches to: a Mark IX story, a Mark X story or a happening. Back in the
-news and later developments will ask Pairing for follow-ups of an anchor, not only of a Mark IX story.
+**Anchor** — what a follow-up attaches to: a Mark IX story, a Mark X story or a happening no story holds
+(`backend/insight_core/markx/anchors.py`). Back in the news and later developments ask Pairing's *develops* relation
+for an anchor's follow-ups: its happening first, its subject second. In Shadow beside the old engines (0180).
 
 **Unit** *(planned)* — what is compared: a post, or one item (span) of a round-up. Today every unit is a whole post,
 and a round-up is never compared as a whole.

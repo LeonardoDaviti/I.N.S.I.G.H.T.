@@ -87,7 +87,7 @@ class _Db(unittest.TestCase):
                               answer={"entities": ents})
         if hooked:
             tasks.record(self.cur, {"kind": "read", "guide": "read-v2", "a": pid}, call, r)
-            tasks.record(self.cur, {"kind": "entities", "guide": "ent-v3", "a": pid}, ecall, {"entities": ents})
+            tasks.record(self.cur, {"kind": "entities", "guide": "ent-v3", "a": pid, "input": ""}, ecall, {"entities": ents})
         else:
             repo.add_reading(self.cur, post_id=pid, guide="read-v2", call_id=call, kind=r.get("kind"), events="one",
                              lang="en", headline=None, reading=r)
@@ -124,7 +124,7 @@ class Rows(_Db):
         self.assertEqual([x[:2] for x in self.rows(pid)], [(None, [])])          # read, no mentions yet: no key
         ents = [{"span": n, "name": n, "type": t, "role": role, "version": None} for n, t, role, _m in
                 (self.ACME, self.WIDGETCO, self.LAND)]
-        tasks.record(self.cur, {"kind": "entities", "guide": "ent-v3", "a": pid}, call, {"entities": ents})
+        tasks.record(self.cur, {"kind": "entities", "guide": "ent-v3", "a": pid, "input": ""}, call, {"entities": ents})
         self.assertEqual([x[:2] for x in self.rows(pid)], [(None, []), ("deal", ["name:acme", "name:widgetco"])])
         self.cur.execute("SELECT read_group, guide FROM mx_happenings_now WHERE post_id = %s", (pid,))
         self.assertEqual(self.cur.fetchone(), ("deal", "read-v2"))
