@@ -53,7 +53,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import back
+from insight_core.markx import back, pairing
 from insight_core.markx.back import _date, norm
 
 KIND = back.KIND
@@ -196,16 +196,7 @@ class Long:
         return {self.subject} if self.subject else set()
 
 
-def page_key(u: Optional[str]) -> Optional[str]:
-    """A page's compared form: 'paper <ref>' for a paper's page (any of its forms and versions), else back.norm."""
-    if not u:
-        return None
-    from insight_core.utils.entity_originals import paper_ref
-    try:
-        ref = paper_ref(u.strip())
-    except Exception:   # an address the paper rules can't read is compared as a page
-        ref = None
-    return f"paper {ref}" if ref else norm(u)
+page_key = pairing.page_key      # 'paper <ref>' for a paper's page, else back.norm: Pairing's page key (0166)
 
 
 def _subject_rows(cur: Any, ids: Sequence[str]) -> List[Tuple]:

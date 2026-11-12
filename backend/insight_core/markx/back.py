@@ -33,7 +33,8 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urlsplit
+
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +61,8 @@ ANSWERS = LABELS + ("undo",)
 UNKNOWN = "unknown"
 _MAP = {"mixed": "development", "late_repeat": "retold", "different": "unrelated"}   # the lab's older words
 MEASURED = {"precision": 0.87, "lo": 0.68, "hi": 0.96, "n": 23, "words": "measured 87% precise (68–96%), about 1 in 8 wrong"}
-DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"
-SOCIAL = {"t.me", "x.com", "twitter.com", "youtube.com", "reddit.com", "instagram.com", "facebook.com", "linkedin.com",
-          "threads.net", "bsky.app", "github.com", "huggingface.co", "medium.com", "substack.com", "youtu.be"}
+DATE = pairing.POST_DATE       # Pairing's post date (0166)
+SOCIAL = pairing.SOCIAL
 
 
 def _date(p: str = "p") -> str:
@@ -71,33 +71,7 @@ def _date(p: str = "p") -> str:
 
 # ---- pages (the lab's norm) -------------------------------------------------------------------------------
 
-def norm(u: Optional[str]) -> Optional[str]:
-    """A page's compared form (host/path, lowercased), or None for no page: a home page, a social profile or channel
-    page, a subreddit."""
-    if not u:
-        return None
-    try:
-        s = urlsplit(u.strip())
-        host = s.hostname
-    except ValueError:
-        return None
-    h = (host or "").lower().removeprefix("www.").removeprefix("m.").removeprefix("mobile.")
-    if not h:
-        return None
-    segs = [x for x in re.sub(r"/+$", "", s.path or "").split("/") if x]
-    if h == "youtube.com" and "v=" in (s.query or ""):
-        m = re.search(r"v=([\w-]+)", s.query)
-        if m:
-            segs = ["watch", m.group(1)]
-    if h == "twitter.com":
-        h = "x.com"
-    if not segs:
-        return None
-    if h in SOCIAL and len(segs) == 1:
-        return None
-    if h == "reddit.com" and len(segs) <= 2:
-        return None
-    return h + "/" + "/".join(segs).lower()
+norm = pairing.page_address    # a page's compared form: Pairing's page address (0166)
 
 
 def _week(t: datetime) -> Tuple[int, int]:
