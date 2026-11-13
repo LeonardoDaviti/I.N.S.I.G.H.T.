@@ -53,6 +53,7 @@ import type {
   YouTubeWatchProgress,
 } from '../services/api';
 import { proxiedImage } from '../lib/mediaProxy';
+import { htmlText } from '../lib/inertHtml';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 
 // Mark X's folded panel (issue 0086 E): its own chunk, fetched only while Mark X is on.
@@ -244,10 +245,7 @@ function postPlainText(post: Post): string {
   const text = typeof post.content === 'string' ? post.content.trim() : '';
   if (text) return text;
   const html = typeof post.content_html === 'string' ? post.content_html : '';
-  if (!html || typeof document === 'undefined') return '';
-  const container = document.createElement('div');
-  container.innerHTML = html;
-  return (container.textContent || '').trim();
+  return htmlText(html).trim();   // inert: the feed's HTML never runs here (issue 0187)
 }
 
 /** A section heading in the reading column: small, semibold, a hairline above. */
