@@ -811,6 +811,14 @@ class TheUnsureQueue(_Db):
         d.reason, d.reasons = "below_bar", ("below_bar",)
         I.third(book, [d], {("a", "b"): [("c4", {"relation": "part", "confidence": 0.65})]})
         self.assertEqual(d.tier, "queue")                                   # below its bar: stays
+        # a version-held `same` has its own, higher bar (`same_min`)
+        I._BANDS["third"] = dict(I._BANDS["third"], reasons=["chain", "below_bar", "version"],
+                                 same_min={"version": 0.9})
+        for conf, tier in ((0.85, "queue"), (0.92, "auto")):
+            book, d = self._decision()
+            d.reason, d.reasons = "version", ("version",)
+            I.third(book, [d], {("a", "b"): [("c4", {"relation": "same", "confidence": conf})]})
+            self.assertEqual(d.tier, tier)
         book, d = self._decision()
         d.reason, d.reasons = "below_bar", ("below_bar",)
         d.ask2 = True

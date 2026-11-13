@@ -14,7 +14,10 @@
   },
   "third": {
     "about": "0201 (identity.third): a Haiku `same` still queued after both opinions and the chain guard, for a reason listed here, is asked alias-v2 (alias3: each side's known facts, the accounts naming it, four posts with wider windows). Its `same` >= same_min_conf merges ('third', past the chain guard's two-groups rule, never past 6 names a cluster); its answer in apart_relations >= apart_min_conf keeps the pair apart; anything else stays queued with it. Measured 2026-11-14, blind, held out: chain-held pairs, alias-v2 `same` >= 0.8: 76/77 right (98.7%, Wilson 93.0-99.8%), it decides 77 of 88; weak first answers (below_bar): `same` >= 0.85 12/15, so below_bar is not listed; `apart` never measured (alias-v2 said it once in 168): off.",
-    "on": true, "reasons": ["chain", "below_bar"], "kinds": {"below_bar": "alias4"}, "same_min_conf": 0.8,
+    "on": true, "reasons": ["chain", "below_bar", "version", "version_year", "version_one_side"],
+    "kinds": {"below_bar": "alias4", "version": "alias4", "version_year": "alias4", "version_one_side": "alias4"},
+    "same_min_conf": 0.8, "same_min": {"version": 0.9, "version_year": 0.9, "version_one_side": 0.9},
+    "version": "v10.18 round 5: version-held pairs asked alias-v2 with Sonnet (alias4): `same` >= 0.9 67/67 right (Wilson 94.6-100%) on 140 held-out items (28 of 60, then 39 of 80, every one labelled); >= 0.8 42/45: the bar is 0.9; apart not listed (11/11, too few).",
     "apart": {"below_bar": {"relations": ["different", "part", "other_version"], "min_conf": 0.7, "right": 36, "n": 36}},
     "right": 76, "n": 77,
     "apart_about": "v10.18 round 4: Sonnet's not-`same` on the weak class (alias4) at >= 0.7: 36/36 right (Wilson 90.4-100%) on 160 held-out weak items (all its not-`same` answers labelled: 120 + 40 more); below 0.7 it is 24/32. Chain-held: alias-v2 said apart once, never measured: no row. Version-held with Sonnet: same >= 0.9 28/28 (low 87.9%), >= 0.8 42/45; apart 11/11 (low 74.1%): not listed.",

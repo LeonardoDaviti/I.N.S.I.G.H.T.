@@ -1656,7 +1656,7 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
         call, a = got_[0]
         conf = float(a.get("confidence") or 0)
         d.second = d.second if d.second is not None else None
-        if a.get("relation") == "same" and conf >= float(cfg.get("same_min_conf", 1.01)) and \
+        if a.get("relation") == "same" and conf >= float((cfg.get("same_min") or {}).get(d.reason, cfg.get("same_min_conf", 1.01))) and \
                 book.cluster_size(book.root(d.pair[0])) + book.cluster_size(book.root(d.pair[1])) <= MAX_CLUSTER:
             d.tier, d.reason, d.conf, d.call_id, d.judge = "auto", "third", conf, call, dict(a)
         elif a.get("relation") in (apart_cfg(cfg, d).get("relations") or ()) \
