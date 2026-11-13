@@ -417,8 +417,9 @@ class Types(_Db):
         units.note(self.cur, [rd])
         self.assertEqual(units.digest(self.cur, "day", T0 + 3 * H)["untyped"], 1)
         self.assertEqual(units.plan_types(self.cur, now=T0 + H), 1)
-        self.assertEqual(re.findall(r"^\[(u\d+)\] ", self.asked()[-1][1], re.M), ["u1"])
-        self.assertIn("(before u1: Item 4", self.asked()[-1][1])                 # the item before, for context
+        (_, again), = [t for t in self.asked() if t[0] != tid]
+        self.assertEqual(re.findall(r"^\[(u\d+)\] ", again, re.M), ["u1"])
+        self.assertIn("(before u1: Item 4", again)                               # the item before, for context
 
     def test_what_insight_holds_or_two_curators_carry_ranks_first_single_curator_items_capped(self):
         second = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Links"}))
