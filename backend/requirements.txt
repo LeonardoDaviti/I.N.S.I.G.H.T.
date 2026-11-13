@@ -1,11 +1,11 @@
 # Pinned to the versions in the image that runs v9.12 (pip freeze in insight-backend:lab-f15fd9d,
 # issue 0071), so a rebuild installs what was tested. Change a pin on purpose, then run the tests.
 # pydantic and starlette are imported directly (main.py), so they are pinned too.
-# yt-dlp alone floats: sites break it, and a newer one is the fix. It is reinstalled only when this
-# file changes or on ./update --refresh, which rebuilds the pip layer (2026.10.26 in that image).
+# yt-dlp is pinned too (issue 0187: a rebuild installed whatever was newest, unreviewed). Sites break it and a newer
+# one is the fix: bump this pin on purpose (the version the server's image ran on 2026-11-13 below).
 telethon==1.45.0
 python-dotenv==1.2.4
-yt-dlp
+yt-dlp==2026.10.26
 fastapi==0.162.0
 starlette==1.10.0
 pydantic==2.14.2
