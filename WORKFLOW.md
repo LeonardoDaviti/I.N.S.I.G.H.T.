@@ -78,8 +78,9 @@ JOBS=6 scripts/test-backend.sh                                    # once, before
   start time>`; one is removed only when that boot is over, or that pid is gone or now another process, and nobody is
   connected. Nothing unstamped is ever touched, however old (`CLEAN_ORPHANS=0` skips, `=dry` lists).
 - Run the full suite once per slice at merge time, not after every change.
-- Tests empty tables with `tests/_db.clear_tables(cur, tables, cascade=False)`, not `TRUNCATE`: a TRUNCATE makes
-  new files and syncs every empty index (11-48 s for the Mark X tables on a busy disk; the DELETE 0.36 s).
+- Tests empty tables with `tests/_db.clear_tables(cur, tables, cascade=False)`: a TRUNCATE on the scratch server
+  (fsync off: 0.09 s for the Mark X tables, and exactly the old semantics); children-first DELETEs, triggers firing,
+  where files are synced (a TRUNCATE there syncs every empty index: 11-48 s on a busy disk; the DELETEs 0.36 s).
 - A test that waits on the wall clock fails under load: inject the clock (`now=`), poll for a condition with a
   generous deadline instead of a fixed `sleep`, and bound "it did not hang" assertions far below the hang but far
   above a busy machine's latency.

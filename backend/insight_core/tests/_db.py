@@ -52,49 +52,62 @@ requires_test_db = unittest.skipUnless(
 
 
 def clear_tables(cur, tables, *, cascade: bool = False) -> None:
-    """Empty these tables, as `TRUNCATE a, b, ...` would (v10.17), by DELETE.
+    """Empty these tables, as `TRUNCATE a, b, ...` would (v10.17): a TRUNCATE where files are not synced, else DELETEs.
 
     A TRUNCATE gives every table and index a new file, and Postgres syncs each new index to disk at once
     (an empty btree's build ends in an immediate fsync): a setUp truncating ~60 Mark X tables issued ~150 syncs,
-    1-3 minutes a test while other agents' copies kept the disk busy (measured; test_entity_originals had seen
-    ~25 s). A DELETE of a test's few rows writes no new file. Foreign keys are not checked while it runs
-    (session_replication_role = replica, as TRUNCATE of the whole set checks none among them), so the order of
-    `tables` is free; a role that may not set it (not a superuser) falls back to the TRUNCATE.
+    11-48 s a test while other agents' copies kept the disk busy (measured; test_entity_originals had seen ~25 s).
+    A DELETE of a test's few rows writes no new file. The tables are emptied children first (their foreign keys among
+    the set, read from pg_constraint), with every trigger firing as it does in the product: the kept counts of 0132
+    follow a DELETE as they follow a TRUNCATE (a delete with triggers off left them wrong). Tables in a cycle of keys,
+    and the tables with an HNSW index (a DELETE leaves its rows in the graph until a vacuum, and an index scan that
+    meets them returns fewer live neighbours: test_markx_storage's nearest lost one), are truncated.
     `tables`: names, or one comma-separated string of them. `cascade`: as TRUNCATE ... CASCADE, every table whose
     foreign keys reach these (at any depth) is emptied too."""
     names = [t.strip() for t in (tables.split(",") if isinstance(tables, str) else tables) if t.strip()]
     if not names:
         return
-    cur.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
-    row = cur.fetchone()
-    if not (row and row[0]):
+    # Where Postgres does not sync files (the scratch server: fsync off) a TRUNCATE costs what a DELETE does (56 Mark X
+    # tables: 0.09 s, measured) and is exactly what the tests were written against: a DELETE leaves the dead rows'
+    # space, and where later rows land changes the order a scan returns them in (test_markx_units' NeverAVoice
+    # compared News rows built over two worlds and differed after test_markx_pairing ran before it).
+    cur.execute("SELECT current_setting('fsync') = 'off'")
+    if cur.fetchone()[0]:
         cur.execute("TRUNCATE " + ", ".join(names) + (" CASCADE" if cascade else ""))
         return
+    cur.execute("SELECT unnest(%s::regclass[])::text", (names,))
+    names = list(dict.fromkeys(r[0] for r in cur.fetchall()))
     if cascade:
         cur.execute("""WITH RECURSIVE reach(rel) AS (
                          SELECT unnest(%s::regclass[])
                          UNION SELECT c.conrelid FROM pg_constraint c JOIN reach r ON c.confrelid = r.rel AND c.contype = 'f')
                        SELECT rel::regclass::text FROM reach""", (names,))
         names = list(dict.fromkeys(names + [r[0] for r in cur.fetchall()]))
-    # A table with an HNSW index is truncated all the same: a DELETE leaves its rows in the graph until a vacuum, and
-    # an index scan that meets them returns fewer live neighbours (test_markx_storage's nearest lost one after other
-    # modules' vectors were deleted). Few tables (mx_embeddings, mx_entity_vectors), none referenced by a key.
     cur.execute("""SELECT DISTINCT i.indrelid::regclass::text FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
                      JOIN pg_am a ON a.oid = c.relam
                     WHERE a.amname = 'hnsw' AND i.indrelid = ANY(%s::regclass[])""", (names,))
-    graphs = [r[0] for r in cur.fetchall()]
-    if graphs:
-        cur.execute("TRUNCATE " + ", ".join(graphs))
-        names = [n for n in names if n not in graphs]
-    cur.execute("SET session_replication_role = replica")
-    try:
-        for name in names:
-            cur.execute(f"DELETE FROM {name}")
-    finally:
-        try:
-            cur.execute("SET session_replication_role = DEFAULT")
-        except psycopg.Error:   # a failed DELETE's transaction: its rollback undoes the SET too
-            pass
+    truncate = {r[0] for r in cur.fetchall()}
+    cur.execute("""SELECT conrelid::regclass::text, confrelid::regclass::text FROM pg_constraint
+                    WHERE contype = 'f' AND conrelid = ANY(%s::regclass[]) AND confrelid = ANY(%s::regclass[])
+                      AND conrelid <> confrelid""", (names, names))
+    children = {n: set() for n in names}     # parent -> the tables whose keys point at it
+    for child, parent in cur.fetchall():
+        children[parent].add(child)
+    order, done = [], set()
+    left = [n for n in names if n not in truncate]
+    while left:
+        ready = [n for n in left if not (children[n] - done - truncate)]
+        if not ready:             # a cycle of keys: all of them truncated together, as before
+            cur.execute("TRUNCATE " + ", ".join(names))
+            return
+        for n in ready:
+            order.append(n)
+            done.add(n)
+        left = [n for n in left if n not in done]
+    if truncate:
+        cur.execute("TRUNCATE " + ", ".join(sorted(truncate)))
+    for name in order:
+        cur.execute(f"DELETE FROM {name}")
 
 
 def scratch_handle() -> str:
