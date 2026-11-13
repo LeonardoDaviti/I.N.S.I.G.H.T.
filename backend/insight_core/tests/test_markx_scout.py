@@ -14,7 +14,7 @@ from unittest import mock
 
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.markx import repo, schemas, scout, scout_reads, tasks, tracks, validate
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.tests.test_markx_api import _Api, call
 
@@ -288,7 +288,7 @@ class Triggers(_Scout):
             self.in_post(f"part {k}", at=NOW - k * DAY)
         with self.conn.transaction():
             self.assertEqual(scout.due_weekly(self.cur, NOW), [])            # 5 in in 7 days: not quiet
-        self.cur.execute("TRUNCATE mx_track_items")
+        clear_tables(self.cur, "mx_track_items")
         reader = StubReader()
         with mock.patch.object(scout, "default_reader", return_value=reader), \
                 mock.patch.object(scout, "reads_allowed", return_value=True):

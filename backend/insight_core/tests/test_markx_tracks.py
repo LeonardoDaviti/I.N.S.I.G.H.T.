@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from insight_core.markx import repo, schemas, tasks, tracks, validate
-from insight_core.tests._db import insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import _Api, call
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
@@ -118,14 +118,14 @@ class _Tracks(_Api):
 
     def setUp(self):
         super().setUp()
-        self.cur.execute(f"TRUNCATE {', '.join(TRACK_TABLES)}")
+        clear_tables(self.cur, TRACK_TABLES)
         self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id", (f"Prints {uuid.uuid4().hex[:6]}",))
         self.folder = str(self.cur.fetchone()[0])
         self.addCleanup(self.cur.execute, "DELETE FROM folders WHERE id = %s", (self.folder,))
         self.cur.execute("INSERT INTO source_folders (folder_id, source_id) VALUES (%s, %s)", (self.folder, self.source))
         self.third = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Blog"}))
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = %s", (self.third,))
-        self.addCleanup(self.cur.execute, f"TRUNCATE {', '.join(TRACK_TABLES)}")
+        self.addCleanup(clear_tables, self.cur, TRACK_TABLES)
 
     def describe(self, description="Things worth 3D printing: useful prints and why", excludes=None):
         with self.conn.transaction():

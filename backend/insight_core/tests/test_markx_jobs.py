@@ -14,7 +14,7 @@ from unittest import mock
 import psycopg
 
 from insight_core.markx import api, decide, jobs
-from insight_core.tests._db import db_url
+from insight_core.tests._db import clear_tables, db_url
 from insight_core.tests.test_markx_api import _Api, call, reading
 
 T0 = datetime(2026, 11, 5, 22, 0, tzinfo=timezone.utc)
@@ -220,7 +220,7 @@ class TheRunner(_Api):
         self.post()
         self.runner().tick()
         with self.conn.transaction():
-            self.cur.execute("TRUNCATE mx_label_queue_items, mx_label_queues")
+            clear_tables(self.cur, "mx_label_queue_items, mx_label_queues")
             self.cur.execute("DELETE FROM mx_jobs WHERE job = 'labels'")
         self.assertTrue(labels.missing(self.cur))
         self.assertEqual(self.runner().tick(), "labels")

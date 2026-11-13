@@ -15,7 +15,7 @@ from unittest import mock
 import psycopg
 
 from insight_core.markx import api, decide as D, labels as L, repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES, call
 
 T = datetime(2100, 3, 1, 12, tzinfo=timezone.utc)
@@ -114,7 +114,7 @@ class Labels(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
@@ -369,8 +369,8 @@ class Routes(unittest.TestCase):
         self.conn = psycopg.connect(db_url(), autocommit=True)
         self.addCleanup(self.conn.close)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
-        self.addCleanup(self.cur.execute, f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
+        self.addCleanup(clear_tables, self.cur, MX_TABLES)
         schemas._ready.clear()
         with self.conn.transaction():
             schemas.load_guides(self.cur)

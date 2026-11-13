@@ -16,7 +16,7 @@ import psycopg
 
 from insight_core.markx import decide, entity_addresses as EA, entity_stage, entity_views, identity as I
 from insight_core.markx import names as N, repo, schemas, tasks
-from insight_core.tests._db import db_url, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.tests.test_markx_api import MX_TABLES
 from insight_core.tests.test_markx_entities import D, H, T0, _Db
@@ -169,7 +169,7 @@ class _AddressCase(_Db):
 
     def setUp(self):
         super().setUp()
-        self.cur.execute("TRUNCATE mx_entity_addresses")
+        clear_tables(self.cur, "mx_entity_addresses")
 
     def say(self, pid, *ents, guide=None):
         if guide:
@@ -218,7 +218,7 @@ class Addresses(_AddressCase):
             self.say(pid, m(f"Nimbus Paper {n}", ref=f"arXiv:2611.0123{n}"))
             posts.append(pid)
         self.stage()
-        self.cur.execute("TRUNCATE mx_entity_addresses")
+        clear_tables(self.cur, "mx_entity_addresses")
         self.cur.execute("SAVEPOINT once")
         once = EA.stage(self.cur, now=T0, since=None, full=True)
         self.cur.execute("SELECT entity_id::text, url FROM mx_entity_addresses")
@@ -428,7 +428,7 @@ class _CollectCase(OriginalsCase):
                     for table in DELETE_ORDER:
                         cur.execute(f"DELETE FROM {table}")
             except psycopg.errors.ForeignKeyViolation:
-                cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+                clear_tables(cur, MX_TABLES)
             cur.execute("DELETE FROM story_originals WHERE kind IN ('entity', 'lookup', 'classic', 'work')")
             cur.execute("DELETE FROM system_settings WHERE key = 'originals_suppliers'")
             schemas.load_guides(cur)

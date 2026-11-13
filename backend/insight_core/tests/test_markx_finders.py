@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from insight_core.tests._db import clear_tables
 from insight_core.markx import finders, repo, schemas, tasks, tracks, validate
 from insight_core.tests.test_markx_api import call
 from insight_core.tests.test_markx_tracks import NOW, _Tracks, b64, BUILD, unit, verdict
@@ -125,8 +126,8 @@ class _Finders(_Tracks):
     def setUp(self):
         super().setUp()
         self.enterContext(mock.patch.object(finders, "ADOPTED", finders.FINDERS))   # every finder, to test each
-        self.cur.execute("TRUNCATE mx_track_probes, mx_track_models")
-        self.addCleanup(self.cur.execute, "TRUNCATE mx_track_probes, mx_track_models")
+        clear_tables(self.cur, "mx_track_probes, mx_track_models")
+        self.addCleanup(clear_tables, self.cur, "mx_track_probes, mx_track_models")
 
     def probes(self, answer=PROBES):
         with self.conn.transaction():

@@ -51,6 +51,35 @@ requires_test_db = unittest.skipUnless(
 )
 
 
+def clear_tables(cur, tables) -> None:
+    """Empty these tables, as `TRUNCATE a, b, ...` would (v10.17), by DELETE.
+
+    A TRUNCATE gives every table and index a new file, and Postgres syncs each new index to disk at once
+    (an empty btree's build ends in an immediate fsync): a setUp truncating ~60 Mark X tables issued ~150 syncs,
+    1-3 minutes a test while other agents' copies kept the disk busy (measured; test_entity_originals had seen
+    ~25 s). A DELETE of a test's few rows writes no new file. Foreign keys are not checked while it runs
+    (session_replication_role = replica, as TRUNCATE of the whole set checks none among them), so the order of
+    `tables` is free; a role that may not set it (not a superuser) falls back to the TRUNCATE.
+    `tables`: names, or one comma-separated string of them."""
+    names = [t.strip() for t in (tables.split(",") if isinstance(tables, str) else tables) if t.strip()]
+    if not names:
+        return
+    cur.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+    row = cur.fetchone()
+    if not (row and row[0]):
+        cur.execute("TRUNCATE " + ", ".join(names))
+        return
+    cur.execute("SET session_replication_role = replica")
+    try:
+        for name in names:
+            cur.execute(f"DELETE FROM {name}")
+    finally:
+        try:
+            cur.execute("SET session_replication_role = DEFAULT")
+        except psycopg.Error:   # a failed DELETE's transaction: its rollback undoes the SET too
+            pass
+
+
 def scratch_handle() -> str:
     return f"{SCRATCH_PREFIX}{uuid.uuid4().hex}"
 

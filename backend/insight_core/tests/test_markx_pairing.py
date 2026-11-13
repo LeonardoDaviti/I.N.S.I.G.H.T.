@@ -27,7 +27,7 @@ from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
 from insight_core.markx import pairing, repo, schemas, tasks
 from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo (0169 moved it to Postgres)
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import candidates_a395c13 as OLD_C
 from insight_core.tests.legacy import decide_a395c13 as OLD_D
 from insight_core.tests.test_markx_api import MX_TABLES
@@ -160,7 +160,7 @@ class _World(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         incremental.forget()
         self.addCleanup(incremental.forget)
