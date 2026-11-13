@@ -6,7 +6,6 @@ import io
 import sys
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -226,12 +225,12 @@ class FeedFinderTests(unittest.TestCase):
                 self.assertEqual(finding, FeedFinding("direct"))
                 self.assertEqual(http.requests, [])
         # A bridge's address is probed first (issue 0137 B3): one that answers is direct.
-        finding, http = find({"https://nitter.local/karpathy/rss": atom("karpathy")}, "https://nitter.local/karpathy/rss")
-        self.assertEqual((finding, http.requests), (FeedFinding("direct"), ["https://nitter.local/karpathy/rss"]))
+        finding, http = find({"https://nitter.local/nn_teacher/rss": atom("nn_teacher")}, "https://nitter.local/nn_teacher/rss")
+        self.assertEqual((finding, http.requests), (FeedFinding("direct"), ["https://nitter.local/nn_teacher/rss"]))
 
     def test_medium_and_github_rules_need_no_page(self):
         cases = {
-            "https://medium.com/@karpathy/a-recipe-1": "https://medium.com/feed/@karpathy",
+            "https://medium.com/@nn_teacher/a-recipe-1": "https://medium.com/feed/@nn_teacher",
             "https://eng.medium.com/some-post": "https://eng.medium.com/feed",
             "https://github.com/astral-sh/uv/issues": "https://github.com/astral-sh/uv/releases.atom",
         }
@@ -288,7 +287,7 @@ class GetStartTests(unittest.TestCase):
             def geturl(self):
                 return "https://x.example/final"
 
-        with mock.patch.object(urllib.request, "urlopen", return_value=Response(b"a" * 100)):
+        with mock.patch.object(KindHttp, "_open", return_value=Response(b"a" * 100)):
             body, final = asyncio.run(KindHttp().get_start("https://x.example/", 10))
         self.assertEqual((body, final), (b"a" * 10, "https://x.example/final"))
 

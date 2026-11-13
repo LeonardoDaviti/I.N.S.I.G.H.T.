@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 import unittest
-import urllib.request
 import zlib
 from pathlib import Path
 from unittest import mock
@@ -19,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import main
-from insight_core.ingestion.http import HttpError, KindHttp
+from insight_core.ingestion.http import AddressGuard, HttpError, KindHttp
 
 
 class _Truncated(io.BytesIO):
@@ -37,17 +36,17 @@ class DroppedConnectionTests(unittest.TestCase):
         dropped = http.client.RemoteDisconnected("Remote end closed connection without response")
         for call in (lambda h: h.get_text("https://x.example/"), lambda h: h.get_start("https://x.example/", 10),
                      lambda h: h.post_json("https://x.example/", {})):
-            with mock.patch.object(urllib.request, "urlopen", side_effect=dropped):
+            with mock.patch.object(KindHttp, "_open", side_effect=dropped):
                 with self.assertRaises(HttpError) as raised:
                     asyncio.run(call(KindHttp()))
             self.assertIsNone(raised.exception.status)
             self.assertFalse(raised.exception.timed_out)
 
     def test_a_truncated_body_and_a_reset_are_http_errors(self):
-        with mock.patch.object(urllib.request, "urlopen", return_value=_Truncated()):
+        with mock.patch.object(KindHttp, "_open", return_value=_Truncated()):
             with self.assertRaises(HttpError):
                 asyncio.run(KindHttp().get_text("https://x.example/"))
-        with mock.patch.object(urllib.request, "urlopen", side_effect=ConnectionResetError(104, "reset")):
+        with mock.patch.object(KindHttp, "_open", side_effect=ConnectionResetError(104, "reset")):
             with self.assertRaises(HttpError):
                 asyncio.run(KindHttp().get_start("https://x.example/", 10))
 
@@ -75,24 +74,24 @@ class CompressedBodyTests(unittest.TestCase):
         packed = gzip.compress(self.FEED)
         for headers in ({"Content-Encoding": "gzip"}, {}):
             with self.subTest(headers=headers):
-                with mock.patch.object(urllib.request, "urlopen", return_value=_Response(packed, headers)):
+                with mock.patch.object(KindHttp, "_open", return_value=_Response(packed, headers)):
                     body, _ = asyncio.run(KindHttp().get_text("https://x.example/feed"))
                 self.assertEqual(body, self.FEED.decode())
-                with mock.patch.object(urllib.request, "urlopen", return_value=_Response(packed, headers)):
+                with mock.patch.object(KindHttp, "_open", return_value=_Response(packed, headers)):
                     start, _ = asyncio.run(KindHttp().get_start("https://x.example/feed", 40))
                 self.assertEqual(start, self.FEED[:40])
 
     def test_deflate_and_a_plain_body_pass(self):
-        with mock.patch.object(urllib.request, "urlopen",
+        with mock.patch.object(KindHttp, "_open",
                                return_value=_Response(zlib.compress(self.FEED), {"Content-Encoding": "deflate"})):
             self.assertEqual(asyncio.run(KindHttp().get_text("https://x.example/feed"))[0], self.FEED.decode())
-        with mock.patch.object(urllib.request, "urlopen", return_value=_Response(self.FEED, {})):
+        with mock.patch.object(KindHttp, "_open", return_value=_Response(self.FEED, {})):
             self.assertEqual(asyncio.run(KindHttp().get_text("https://x.example/feed"))[0], self.FEED.decode())
 
 
 class SchemeTests(unittest.TestCase):
     def test_only_http_and_https_are_requested(self):
-        with mock.patch.object(urllib.request, "urlopen") as urlopen:
+        with mock.patch.object(KindHttp, "_open") as urlopen:
             for call in (lambda h: h.get_text("file:///etc/hostname"), lambda h: h.get_start("ftp://x.example/", 10),
                          lambda h: h.post_json("gopher://x.example/", {})):
                 with self.assertRaises(HttpError):
@@ -134,7 +133,7 @@ class DeadlineTests(unittest.TestCase):
         drip = SlowDrip()
         started = time.monotonic()
         with self.assertRaises(HttpError) as raised:
-            asyncio.run(KindHttp(timeout=1).get_start(drip.url, 1_000_000))
+            asyncio.run(KindHttp(timeout=1, guard=AddressGuard(bridges={"127.0.0.1"})).get_start(drip.url, 1_000_000))
         self.assertLess(time.monotonic() - started, 2)
         self.assertTrue(raised.exception.timed_out)
         drip.thread.join(3)
@@ -148,7 +147,7 @@ class DeadlineTests(unittest.TestCase):
             names.append(threading.current_thread().name)
             return _Body(b"<html></html>")
 
-        with mock.patch.object(urllib.request, "urlopen", urlopen):
+        with mock.patch.object(KindHttp, "_open", urlopen):
             asyncio.run(main.FEED_FINDER_HTTP.get_start("https://x.example/", 10))
             asyncio.run(main.FEED_FINDER_HTTP.get_text("https://x.example/"))
         self.assertEqual(len(names), 2)

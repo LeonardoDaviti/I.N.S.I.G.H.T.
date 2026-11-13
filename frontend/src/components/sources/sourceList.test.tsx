@@ -26,7 +26,7 @@ const empty = { id: 'f-empty', name: 'Empty track' };
 const rows = [
   healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),
   healthRow({ source_id: 'flaky', display_name: 'Flaky Feed', status: 'backoff', folders: [ai, ar] }),
-  healthRow({ source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [] }),
+  healthRow({ source_id: 'tg', display_name: 'ai_dispatch', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [] }),
   healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [ar] }),
 ];
 

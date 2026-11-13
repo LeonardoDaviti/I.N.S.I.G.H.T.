@@ -99,7 +99,7 @@ _MARK_RE = re.compile(r"^[>•*\-–—]\s+")
 # A Telegram link preview's lines (issue 0070): the bridge writes it as <cite>site</cite>, then the
 # page's title and description, each ended by a break; the stored text has lost those breaks.
 _PREVIEW_SITE_RE = re.compile(r"<cite>.*?</cite>", re.I | re.S)
-# A preview of a tweet is titled by its author, "Percy Liang (@percyliang)": who, not what; its text says it.
+# A preview of a tweet is titled by its author, "Jane Roe (@janeroe)": who, not what; its text says it.
 # A quoted tweet's words open on it too (issue 0072): who is quoted, not what.
 _BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)(?:\s+|$)")
 _LINE_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/b|/blockquote|/li|/h[1-6])>", re.I)

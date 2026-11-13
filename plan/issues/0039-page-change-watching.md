@@ -154,7 +154,7 @@ full read). Bytes are the body as read (no Accept-Encoding is sent).
 | techcrunch.com | 236,325 | ~2 KB | none | unchanged (head) | 48,000 | 80% |
 | blog.cloudflare.com/php-ctf | 290,468 | ~12 KB | Last-Modified | 304 | 0 | 100% |
 | theverge.com | 509,906 | ~3 KB | ETag (changes per request) | unchanged (head) | 48,000 | 91% |
-| danluu.com/ambitious (no date) | 46,529 | none | ETag, Last-Modified | 304 | 0 | 100% |
+| danlunotes.com/ambitious (no date) | 46,529 | none | ETag, Last-Modified | 304 | 0 | 100% |
 | bbc.co.uk/news/videos/… (no date) | 370,354 | none | none | whole page; hash differed | 370,354 | 0% |
 | jvns.ca/blog/2026/09/27/… (no date) | 17,439 | none | ETag | (two full reads: same text) | | |
 | paulgraham.com/greatwork.html (no date) | 79,767 | none | none | gone: the reader finds no article (a table layout) | 79,767 | 0% |
@@ -163,7 +163,7 @@ full read). Bytes are the body as read (no Accept-Encoding is sent).
 - gwern.net's head ends near 35 KB and its `dcterms.modified` sits at 33-34 KB on every page, so
   48 KB was chosen over the first try's 64 KB (Gwern saved 69% at 64 KB, 76% at 48 KB). A short
   page (llm-timetravel, 57 KB) saves little; the long essays, where it matters, 77-87%.
-- Pages that state no date: one with validators answers 304 (danluu); one without is read whole
+- Pages that state no date: one with validators answers 304 (dan_lu_notes); one without is read whole
   every check. The BBC page's article text differed between two reads 1.2 s apart by one word
   (twice; the address with its feed's `&amp;` query): the hash changes, `change_summary` says
   `{words_added: 1, words_removed: 1}`, not meaningful, so nothing comes back. That is the case

@@ -77,7 +77,7 @@ excluded (the r/… feeds, r/LocalLLaMA, tg.i-c-a.su).
 
 | Mark | Sources | Examples |
 |---|---|---|
-| Quiet | 14 (8 feeds, 6 YouTube) | modelcontextprotocol/docs commits (last post 8 Apr 2025, gap 0.6 d); karpathy.bearblog.dev (30 Apr, gap 45 d: 181 d > 134 d); DigiLens News (7 Oct 2025, gap 48 d); Vuzix Corporation on YouTube (13 Aug 2025, gap 100 d); The Verge AR/VR and anthropics/skills releases (fetched, never a post, added Aug/Jul) |
+| Quiet | 14 (8 feeds, 6 YouTube) | modelcontextprotocol/docs commits (last post 8 Apr 2025, gap 0.6 d); nnteacher.bearblog.dev (30 Apr, gap 45 d: 181 d > 134 d); DigiLens News (7 Oct 2025, gap 48 d); Vuzix Corporation on YouTube (13 Aug 2025, gap 100 d); The Verge AR/VR and anthropics/skills releases (fetched, never a post, added Aug/Jul) |
 | Never opened | 32 | rss.arxiv.org cs.LG (1,025 posts) and cs.CL (985); arXiv physics.optics (510); UploadVR (183); Marques Brownlee (29) |
 | Both | 3 | anthropics/courses commits, modelcontextprotocol/docs commits, Solos Glasses Blog (20 posts each) |
 

@@ -60,7 +60,7 @@ def _hosting_suffixes() -> FrozenSet[str]:
 
 def site_of(host: Optional[str]) -> str:
     """The registrable part of a host: one label under a hosting platform's suffix (issue 0068:
-    karpathy.github.io and lilianweng.github.io are two sites), else its last two labels, three for
+    nnteacher.github.io and lilianweng.github.io are two sites), else its last two labels, three for
     a co.uk-like ending. Where a post is (Discover's places, a site's sections, a link to its own
     site); who said it is its publication (publication_of, issue 0069)."""
     host = (host or "").lower()

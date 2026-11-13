@@ -237,9 +237,9 @@ export interface StoryPost {
   internal_links?: Record<string, string>;
   /** A thread's reply that quotes a tweet of its story (issue 0070): no card, "↩ quotes the post above". */
   quotes_above?: boolean;
-  /** The accounts that reposted it (issue 0068): "↻ reposted by @steipete, @badlogicgames". */
+  /** The accounts that reposted it (issue 0068): "↻ reposted by @toolsmith_pete, @oddlogic_games". */
   reposted_by?: string[] | null;
-  /** A tweet its source reposted (issue 0070): the line names its author, "@danintheory · … · ↻ sama". */
+  /** A tweet its source reposted (issue 0070): the line names its author, "@dan_theory · … · ↻ lab_sam". */
   repost?: Repost | null;
   /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
   byline?: Byline | null;
@@ -907,7 +907,7 @@ export type FollowLabel = 'feed' | 'page' | 'headlines' | 'blocked' | 'other_fee
 
 /** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
 export interface SuggestedSource {
-  /** A site (`openai.com`) or an account on a platform (`x.com/karpathy`). */
+  /** A site (`openai.com`) or an account on a platform (`x.com/nn_teacher`). */
   key: string;
   url: string;
   /** The sources linking it (issue 0080: a Reddit source once, never Saved). */

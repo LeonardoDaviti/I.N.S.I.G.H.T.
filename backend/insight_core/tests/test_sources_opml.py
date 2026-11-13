@@ -21,7 +21,7 @@ SOURCES = [
     {"id": "s2", "platform": "rss", "handle_or_url": "https://www.anthropic.com/news",
      "settings": {"display_name": "Anthropic News", "page_watch": {"prefix": "/news/"}}},
     {"id": "s3", "platform": "rss", "handle_or_url": "https://gwern.net", "settings": {}},
-    {"id": "s4", "platform": "telegram", "handle_or_url": "@ai_newz", "settings": {"page_watch": {}}},
+    {"id": "s4", "platform": "telegram", "handle_or_url": "@ai_dispatch", "settings": {"page_watch": {}}},
     # The built-in Saved source (issue 0031) is no subscription: nothing to export.
     {"id": "s5", "platform": "saved", "handle_or_url": "Saved", "settings": {}},
 ]
@@ -56,7 +56,7 @@ class ExportOpmlRouteTests(unittest.TestCase):
         self.assertEqual(groups, [("AI & <ML>", ["https://borretti.me/feed.xml", "https://www.anthropic.com/news"]),
                                   ("AR glasses", [])])
         loose = [o.get("xmlUrl") for o in body if o.get("xmlUrl") is not None]
-        self.assertEqual(loose, ["https://gwern.net", "@ai_newz"])
+        self.assertEqual(loose, ["https://gwern.net", "@ai_dispatch"])
         borretti = body.find("outline/outline")
         self.assertEqual(borretti.get("category"), "AI & <ML>,AR glasses")
 
@@ -75,7 +75,7 @@ class ExportOpmlRouteTests(unittest.TestCase):
         self.assertIsNone(gwern.get(f"{INSIGHT}pageWatchPrefix"))
         self.assertIsNone(gwern.get(f"{INSIGHT}platform"))
         # A page followed with the path inferred: the attribute is there, empty.
-        telegram = outlines["@ai_newz"]
+        telegram = outlines["@ai_dispatch"]
         self.assertEqual(telegram.get(f"{INSIGHT}pageWatchPrefix"), "")
         self.assertEqual(telegram.get(f"{INSIGHT}platform"), "telegram")
 

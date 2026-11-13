@@ -31,8 +31,17 @@ runs one process; anything that isn't a number of 1 or more stops the start with
 - The Telegram RSS bridge and Nitter are self-hosted outside this compose file. Sources reach
   them as `https://telegram.local/...` and `https://nitter.local/...`, so those names must
   resolve from inside the `backend` and `ingestion` containers.
-- `.local` HTTPS hosts are fetched without TLS verification. Add other internal hosts to
-  `RSS_SKIP_TLS_VERIFY_HOSTS`.
+- Outgoing requests (feeds, Add source, page watch, saved pages, Discover, research, `/api/media`) go
+  only to hosts that resolve to public addresses (issue 0187): a private, loopback, link-local
+  (169.254.169.254), CGNAT/Tailscale (100.64/10) or Docker-network address is refused, on every
+  redirect too, so a pasted address can't reach the database, the API or the LAN. The exceptions
+  are the bridges: `telegram.local`, `nitter.local`, and every host named in `NITTER_HOSTS`,
+  `TELEGRAM_RSS_HOSTS`, `INSIGHT_MEDIA_PRIVATE_HOSTS` or `RSS_SKIP_TLS_VERIFY_HOSTS`. A feed on another
+  LAN host (an RSSHub, a FreshRSS) needs its host in `INSIGHT_MEDIA_PRIVATE_HOSTS`. No `HTTP_PROXY` is
+  used for them.
+- A bridge on a LAN address is fetched without TLS verification (self-signed certificates); other
+  `.local` hosts are no longer skipped automatically. Add any other host to `RSS_SKIP_TLS_VERIFY_HOSTS`.
+- A fetched body is read up to 10 MB, unpacked or not; a larger one fails that fetch.
 - Never use `localhost` in a source URL: inside a container it is the container itself.
 
 ## Prerequisites
@@ -155,8 +164,7 @@ changes (the build stamp comes after `npm ci`). `./update --refresh` (or `docker
 fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
 and then for security patches, and after changing `requirements.txt` or `package.json`
 (those rebuild their install layer anyway). `backend/requirements.txt` pins every package to the
-version tested, except `yt-dlp`, which a rebuild of that layer brings fresh; the first update to
-v9.13 rebuilds it once, since the file changed.
+version tested, `yt-dlp` too (since v10.16.2): when YouTube breaks it, bump its pin and update.
 If only environment variables changed: `docker compose up -d --force-recreate`.
 
 ### Backups and rollback (issue 0188)
@@ -538,6 +546,9 @@ cd frontend && npm install && npm run dev
 
 Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/api` to
 `http://localhost:8000`. To point the dev UI at another backend, set `VITE_API_URL` and restart Vite.
+Vite answers only `localhost` and raw IP addresses; to open the dev UI from another device by
+name (a machine name, a `.local` or tailnet name), list them in `VITE_ALLOWED_HOSTS`, comma
+separated (`myhost,.example.net`), in `.env` or `frontend/.env`, and restart Vite.
 
 ## Tests
 

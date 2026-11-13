@@ -9,7 +9,7 @@ ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 COPY package*.json ./
-RUN npm ci || npm install
+RUN npm ci
 
 # The build stamp (issue 0020), inlined by Vite into the Ingestion tab's version line. After npm ci
 # (issue 0069): a new commit changes it, and before npm ci it reinstalled every package each deploy.

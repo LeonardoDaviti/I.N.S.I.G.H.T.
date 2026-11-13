@@ -7,9 +7,11 @@ import json
 import sys
 import unittest
 import urllib.error
+import socket
 import uuid
 from email.message import Message
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -25,10 +27,8 @@ from insight_core.services.media_proxy_service import (
     is_public_address,
     post_image_urls,
 )
+from insight_core.tests._local_web import DNS, FakeDns, LocalWeb, guard
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
-
-PUBLIC = ["93.184.216.34"]
-
 
 class FakeResponse(io.BytesIO):
     def __init__(self, body: bytes, content_type: str):
@@ -38,30 +38,27 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeOrigin:
-    """url -> FakeResponse | (status, location); records (url, insecure_tls)."""
+    """url -> FakeResponse | status; records the urls asked (the guard's opener is replaced: the address
+    rules have their own tests below, through the real opener, and in test_address_guard)."""
 
     def __init__(self, answers: dict):
         self.answers = answers
-        self.requests: list[tuple[str, bool]] = []
+        self.requests: list[str] = []
 
-    def __call__(self, request, timeout, insecure_tls):
+    def __call__(self, request, timeout):
         url = request.full_url
-        self.requests.append((url, insecure_tls))
+        self.requests.append(url)
         answer = self.answers.get(url)
         if answer is None:
             raise urllib.error.URLError("unreachable")
-        if isinstance(answer, tuple):
-            status, location = answer
-            headers = Message()
-            if location:
-                headers["Location"] = location
-            raise urllib.error.HTTPError(url, status, "", headers, None)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(url, answer, "", Message(), None)
         return answer
 
 
-def service(allowed: set[str], origin: FakeOrigin, resolve=None) -> MediaProxyService:
-    proxy = MediaProxyService("postgresql://unused", private_hosts={"telegram.local"},
-                              resolve=resolve or (lambda host: PUBLIC), opener=origin)
+def service(allowed: set[str], origin=None, *, dns=None) -> MediaProxyService:
+    """origin: a FakeOrigin; None: the real, guarded opener against _local_web's fake DNS."""
+    proxy = MediaProxyService("postgresql://unused", guard=guard(dns), opener=origin)
     proxy._allowed = lambda post_id: allowed  # the DB lookup has its own test below
     return proxy
 
@@ -88,7 +85,7 @@ class AllowedImagesTests(unittest.TestCase):
     def test_public_addresses(self):
         self.assertTrue(is_public_address("8.8.8.8"))
         for private in ["10.0.0.1", "127.0.0.1", "172.18.0.3", "192.168.0.25", "169.254.169.254",
-                        "100.86.230.4", "::1", "fd00::1"]:
+                        "100.64.0.1", "::1", "fd00::1"]:
             with self.subTest(address=private):
                 self.assertFalse(is_public_address(private))
 
@@ -100,7 +97,7 @@ class FetchTests(unittest.TestCase):
         origin = FakeOrigin({self.URL: FakeResponse(b"jpeg-bytes", "image/jpeg; charset=binary")})
         image = service({self.URL}, origin).fetch("p", self.URL)
         self.assertEqual((image.body, image.content_type), (b"jpeg-bytes", "image/jpeg"))
-        self.assertEqual(origin.requests, [(self.URL, False)])
+        self.assertEqual(origin.requests, [self.URL])
 
     def test_an_entity_escaped_url_matches_its_decoded_form(self):
         url = "https://cdn.test/a.jpg?a=1&b=2"
@@ -113,31 +110,25 @@ class FetchTests(unittest.TestCase):
             service({self.URL}, origin).fetch("p", "https://evil.test/other.jpg")
         self.assertEqual(origin.requests, [])
 
-    def test_a_host_on_a_private_address_is_refused(self):
-        origin = FakeOrigin({})
-        url = "http://postgres:5432/x.jpg"
-        with self.assertRaises(MediaNotAllowed):
-            service({url}, origin, resolve=lambda host: ["172.18.0.2"]).fetch("p", url)
-        self.assertEqual(origin.requests, [])
-
-    def test_a_lan_bridge_is_fetched_with_its_self_signed_certificate(self):
-        url = "https://telegram.local/media/chan/1/a.jpg"
-        origin = FakeOrigin({url: FakeResponse(b"x", "image/jpeg")})
-        resolve = lambda host: (_ for _ in ()).throw(AssertionError("a bridge is not resolved"))  # noqa: E731
-        service({url}, origin, resolve=resolve).fetch("p", url)
-        self.assertEqual(origin.requests, [(url, True)])
+    def test_a_host_on_a_private_address_is_refused_without_connecting(self):
+        url = "http://docker.test:5432/x.jpg"
+        with mock.patch.object(socket, "create_connection", side_effect=AssertionError("connected")):
+            with self.assertRaises(MediaNotAllowed):
+                service({url}).fetch("p", url)
 
     def test_a_redirect_to_a_private_address_is_refused(self):
-        origin = FakeOrigin({self.URL: (302, "http://169.254.169.254/latest/meta-data")})
-        resolve = lambda host: ["169.254.169.254"] if host == "169.254.169.254" else PUBLIC  # noqa: E731
-        with self.assertRaises(MediaNotAllowed):
-            service({self.URL}, origin, resolve=resolve).fetch("p", self.URL)
-        self.assertEqual(len(origin.requests), 1)
+        with LocalWeb() as web:
+            url = web.url("origin.test", "/to-internal")
+            dns = FakeDns(DNS)
+            with self.assertRaises(MediaNotAllowed):
+                service({url}, dns=dns).fetch("p", url)
+        self.assertEqual(dns.asked, ["origin.test", "metadata.test"])
 
-    def test_a_public_redirect_is_followed(self):
-        final = "https://cdn2.test/a.jpg"
-        origin = FakeOrigin({self.URL: (301, final), final: FakeResponse(b"x", "image/gif")})
-        self.assertEqual(service({self.URL}, origin).fetch("p", self.URL).content_type, "image/gif")
+    def test_an_allowed_redirect_is_followed(self):
+        with LocalWeb() as web:
+            url = web.url("origin.test", "/to-image")
+            image = service({url}).fetch("p", url)
+        self.assertEqual((image.body, image.content_type), (b"png-bytes", "image/png"))
 
     def test_something_that_is_not_an_image_fails(self):
         origin = FakeOrigin({self.URL: FakeResponse(b"<html>", "text/html")})
@@ -150,7 +141,7 @@ class FetchTests(unittest.TestCase):
             service({self.URL}, origin).fetch("p", self.URL)
 
     def test_an_origin_error_fails(self):
-        for answer in [(404, None), None]:
+        for answer in [404, None]:
             with self.subTest(answer=answer):
                 origin = FakeOrigin({self.URL: answer} if answer else {})
                 with self.assertRaises(MediaFetchFailed):

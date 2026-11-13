@@ -3,9 +3,11 @@ import logging
 import math
 import os
 import asyncio
+import collections
 import itertools
 import re
 import threading
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import anyio
 import psycopg
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -26,7 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from insight_core.db import database
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
-from insight_core.db.repo_search import SearchQuery
+from insight_core.db.repo_search import MAX_SEARCH_OFFSET, SearchQuery
 from insight_core.ingestion import run_ingestion, where_linked
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import page_watch
@@ -442,6 +444,33 @@ class ClassicHideRequest(BaseModel):
 
 
 # ============= JOBS =============
+# A route that starts runs (a fetch, an archive) takes run_rate first (issue 0187): at most RUN_STARTS_PER_MINUTE
+# starts a minute in this process, then 429 with Retry-After. A click a second is far under it; a loop is not.
+
+RUN_STARTS_PER_MINUTE = 30
+
+
+class RunRate:
+    """The last `per_minute` starts' times in this process (a bounded deque: nothing grows)."""
+
+    def __init__(self, per_minute: int = RUN_STARTS_PER_MINUTE, clock=None) -> None:
+        self.per_minute = per_minute
+        self.clock = clock or time.monotonic
+        self.starts = collections.deque(maxlen=per_minute)
+        self.lock = threading.Lock()
+
+    def __call__(self) -> None:
+        with self.lock:
+            now = self.clock()
+            if len(self.starts) == self.per_minute and now - self.starts[0] < 60:
+                wait = max(1, math.ceil(60 - (now - self.starts[0])))
+                raise HTTPException(status_code=429, headers={"Retry-After": str(wait)},
+                                    detail=f"Too many runs started in the last minute: try again in {wait} s.")
+            self.starts.append(now)
+
+
+run_rate = RunRate()
+
 # Work that outlives the request runs as a background task with a job_runs row the frontend
 # polls. A job row that cannot be written is logged (OperationsService.try_*); an untracked
 # manual fetch or archive never starts (503).
@@ -1113,7 +1142,8 @@ def hide_classic(request: ClassicHideRequest):
 
 @app.get("/api/sources/suggested")
 @error_detail("load the suggested sources")
-async def get_suggested_sources(offset: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=200),
+async def get_suggested_sources(offset: int = Query(0, ge=0, le=MAX_SEARCH_OFFSET),
+                                limit: int = Query(30, ge=1, le=200),
                                 q: Optional[str] = Query(None, max_length=300)):
     """Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like
     pages, that you don't follow, one page of them (issue 0080: `offset`, `limit`, the first 30;
@@ -1302,7 +1332,7 @@ def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
     return {"success": True, **result}
 
 
-@app.post("/api/folders/{folder_id}/ingest")
+@app.post("/api/folders/{folder_id}/ingest", dependencies=[Depends(run_rate)])
 def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
     """Fetch every enabled source in a folder/track now (forced). Body: {limit?: int}.
 
@@ -1366,7 +1396,7 @@ async def get_linked_pages(source_id: str):
     return {"success": True, "source_id": source_id, "linked": summary}
 
 
-@app.post("/api/archive/{source_id}/linked")
+@app.post("/api/archive/{source_id}/linked", dependencies=[Depends(run_rate)])
 @error_detail("fetch the linked pages")
 async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
     """Fetch them (issue 0084 B): an archive_source job that reads each linked, not stored page of the
@@ -1421,7 +1451,7 @@ async def get_archive_catalog():
     return {"success": True, "sources": catalog, "total": len(catalog), "interrupted": interrupted, "queued": queued}
 
 
-@app.post("/api/archive/resume-interrupted")
+@app.post("/api/archive/resume-interrupted", dependencies=[Depends(run_rate)])
 @error_detail("resume the interrupted archives")
 async def resume_interrupted_archives():
     """Queue every source whose last archive a restart interrupted (issue 0130 B5): each resumes from its
@@ -1432,7 +1462,7 @@ async def resume_interrupted_archives():
     return {"success": True, "queued": queued, "count": count}
 
 
-@app.post("/api/archive/{source_id}/queue")
+@app.post("/api/archive/{source_id}/queue", dependencies=[Depends(run_rate)])
 @error_detail("queue the archive")
 async def queue_archive(source_id: str, request: ArchiveRequest):
     """Queue an archive of the source (issue 0130 C): it runs in its turn, one per lane at a time. 409 when the
@@ -1489,7 +1519,7 @@ async def plan_archive(source_id: str, request: ArchiveRequest):
     return {"success": True, "archive": plan}
 
 
-@app.post("/api/archive/{source_id}/run")
+@app.post("/api/archive/{source_id}/run", dependencies=[Depends(run_rate)])
 @error_detail("run the archive")
 async def run_archive(source_id: str, request: ArchiveRequest, background_tasks: BackgroundTasks):
     """Run an archive job for a single source (202 + archive_source job when background)."""
@@ -1512,7 +1542,7 @@ async def run_archive(source_id: str, request: ArchiveRequest, background_tasks:
     return result
 
 
-@app.post("/api/sources/{source_id}/fetch-now")
+@app.post("/api/sources/{source_id}/fetch-now", dependencies=[Depends(run_rate)])
 def fetch_source_now(source_id: str, request: LiveFetchRequest, background_tasks: BackgroundTasks):
     """Fetch one source now (forced, even when disabled). 202 + ingestion_run job."""
     fetch = FetchRequest(SourceSelector.source(source_id), Trigger.MANUAL, force=True, limit=request.limit)
@@ -1761,7 +1791,7 @@ def get_status():
 
 # ============= INGESTION ENDPOINTS =============
 
-@app.post("/api/ingestion/run")
+@app.post("/api/ingestion/run", dependencies=[Depends(run_rate)])
 def run_ingestion_cycle(background_tasks: BackgroundTasks, request: IngestionRunRequest | None = None):
     """The manual "Run cycle": every enabled source; due ones only unless force. 202 + job."""
     force = bool(request.force) if request else False

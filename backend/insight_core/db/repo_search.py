@@ -64,6 +64,7 @@ SearchOrder = Literal["newest", "best"]
 SEARCH_FILTERS: Tuple[str, ...] = ("all", "later", "starred", "history", "news", "classics")
 SEARCH_ORDERS: Tuple[str, ...] = ("newest", "best")
 MAX_QUERY_CHARS = 500
+MAX_SEARCH_OFFSET = 10_000   # issue 0187: a deeper "best" page made the database rank and skip that many rows
 
 # The matching line: one fragment of the text around the best cover of the query, its words
 # between two control characters (stripped from the text first, so only ts_headline's remain).
@@ -186,8 +187,8 @@ class SearchQuery:
             raise ValueError(f"limit must be between 1 and {MAX_FEED_LIMIT}")
         if self.days is not None and int(self.days) < 1:
             raise ValueError("days must be at least 1")
-        if self.offset < 0:
-            raise ValueError("offset must not be negative")
+        if not 0 <= self.offset <= MAX_SEARCH_OFFSET:
+            raise ValueError(f"the search cursor must be from 0 to {MAX_SEARCH_OFFSET}")
 
     @property
     def paged_by_offset(self) -> bool:

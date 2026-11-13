@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
+import { decodeEntities } from '../../lib/inertHtml';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { defaultSchema } from 'hast-util-sanitize';
@@ -20,21 +21,6 @@ interface MarkdownRendererProps {
   internalLinks?: Record<string, string>;
 }
 
-function decodeHtmlEntities(input: string): string {
-  if (typeof document === 'undefined') {
-    return input
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'");
-  }
-
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = input;
-  return textarea.value;
-}
-
 /**
  * Feed HTML often arrives indented ("\n    <p>On Friday…"). Markdown reads four
  * leading spaces as a code block, so the whole article rendered as one
@@ -52,7 +38,7 @@ export function normalizeRendererContent(content: string): string {
     return dedentHtml(content);
   }
 
-  return dedentHtml(decodeHtmlEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim());
+  return dedentHtml(decodeEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim());
 }
 
 /** A body holds HTML when it has a tag; some feeds store plain text in the HTML field. */

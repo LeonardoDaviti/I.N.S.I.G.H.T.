@@ -99,7 +99,7 @@ one (`page_watch.page_title`); none names a host; no dependency.
   is no table.
 - **Titles** (`page_watch.page_title`): an og:title that is the og:site_name (vuzix.com's blog:
   "Vuzix Corporation") is no title; one equal to the `<title>` loses its short suffix as a
-  `<title>` does ("— LessWrong", " - Aleksa Gordić").
+  `<title>` does ("— LessWrong", " - Alex Gorin").
 
 ### The corpus, before and after
 - Before (672056d): **194 of 203** expectations met on the 25 pages (0032's 113 of 123 was
@@ -112,8 +112,8 @@ one (`page_watch.page_title`); none names a host; no dependency.
   fasterthanli 5/9 → 9/9, lesswrong 4/7 → 7/7, techcrunch 4/8 → 8/8, roadtovr 5/8 → 8/8,
   solosglasses 5/8 → 8/8, vuzix 6/8 → 8/8, fabiensanglard 6/7 → 7/7, aleksagordic 6/7 → 7/7,
   nvidianews 7/8 → 8/8, about.fb 7/8 → 8/8, tomsguide 4/8 → 5/8. Unchanged, with a listed gap:
-  hn_item 4/5, seangoedecke 6/8, ir.vuzix 6/7, lexfridman 7/8, androidauthority 6/8, auganix 6/8,
-  uploadvr 6/7, pluralistic 5/7. Unchanged and met: danluu, matklad, karpathy.bearblog,
+  hn_item 4/5, seangoedecke 6/8, ir.vuzix 6/7, longform_pod 7/8, androidauthority 6/8, augmentix 6/8,
+  uploadvr 6/7, pluralistic 5/7. Unchanged and met: dan_lu_notes, matklad, nnteacher.bearblog,
   simonwillison, displaydaily, skarredghost, kguttag, sivers.
 - Unit tests: 11 in `test_full_text.ReaderGapsTests` (9 fail on 672056d; 2 guard what must not
   change: a byline with one `<br>`, a link post's opening) and 1 in `test_page_watch` (titles).
@@ -127,15 +127,15 @@ one (`page_watch.page_title`); none names a host; no dependency.
 - Named by the spec: **paulgraham** (greatwork, the table layout), **fasterthanli** (code in
   figures), **hn_item** (a Show HN item page; its post is a link, so the page is its discussion).
 - The worst sites of the symptom scan (teasers the repair would read, or reader-read posts with
-  a symptom): **uploadvr** (169 teasers), **roadtovr** (70), **auganix** (48),
+  a symptom): **uploadvr** (169 teasers), **roadtovr** (70), **augmentix** (48),
   **androidauthority** (43), **about_fb** (35), **tomsguide** (31, link-dense), **techcrunch**
   (26), **skarredghost** (23, link-dense), **solosglasses** (20, a shop's blog), **ir_vuzix** (12,
   the title repeated), **displaydaily** (10), **nvidianews** (8), **vuzix** (a shop's blog),
   **kguttag**, **seangoedecke**, **simonwillison** (the most posts; link posts),
-  **karpathy_bearblog**, **lexfridman** (a podcast page), **aleksagordic** (link-dense references).
+  **karpathy_bearblog**, **longform_pod** (a podcast page), **aleksagordic** (link-dense references).
 - Sites the owner reads (`config/sources.json`) the corpus didn't have, chosen for their
   layouts: **incompleteideas** (no `<p>`), **lesswrong** (a big app-rendered page),
-  **pluralistic** (WordPress, a long colophon), **danluu** (data tables), **matklad** (a static
+  **pluralistic** (WordPress, a long colophon), **dan_lu_notes** (data tables), **matklad** (a static
   site), **fabiensanglard** (hand-written HTML, a palette table), **sivers** (568 comments).
 
 ### Symptoms on the preview (read only, 2026-10-30)
@@ -156,7 +156,7 @@ again.
 ### Which stored posts `repair_full_text` would help
 - Not run. Its query and plan replicated on the export: it would read **873 teasers**, 868 pages
   on 22 sites and 5 Substack posts through the API: simonwillison 257, uploadvr 169, roadtovr
-  70, auganix 48, apple 45, androidauthority 43, about.fb 35, tomsguide 31, blog.google 31,
+  70, augmentix 48, apple 45, androidauthority 43, about.fb 35, tomsguide 31, blog.google 31,
   techcrunch 26, 9to5google 25, skarredghost 23, solosglasses 20, ir.vuzix 12, displaydaily 10,
   gordicaleksa.medium 9, nvidianews 8, vuzix 2, 4 others. It skips 3,394 other short posts
   (arXiv, Reddit, Telegram, nitter, page watch, links to GitHub).
@@ -188,10 +188,10 @@ Each listed in `expectations.json` with its reason, failing on purpose:
   text in a cell) is the class the loose-text rule reads, but no such page was in the sample.
 - **A related preview with no link** (seangoedecke): another post's title and first paragraphs
   in a `<blockquote>` after the post, nothing marking them as chrome.
-- **Prose-like chrome**: auganix's newsletter box and author box (a plugin's own names,
+- **Prose-like chrome**: augmentix's newsletter box and author box (a plugin's own names,
   "m-a-box-bio"); tomsguide's "Follow Tom's Guide on Google News" promo (a linked picture, then
   a paragraph under half link); androidauthority's affiliate notice (a sentence before the
-  title); lexfridman's player line ("Podcast: Play in new window | Download"), links and words
+  title); longform_pod's player line ("Podcast: Play in new window | Download"), links and words
   together. A rule loose enough to take these takes real paragraphs too.
 - **Images with no size or name**: ir.vuzix's company logo, pluralistic's Creative Commons
   badge, uploadvr's ten in-body bookmark cards (an icon and a thumbnail each),

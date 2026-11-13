@@ -519,8 +519,21 @@ class SubstackKind(BaseKind):
         sid = self._sid
         return {"Cookie": f"substack.sid={sid}"} if sid else {}
 
+    def _cookie_goes_to(self, url: str) -> bool:
+        """Issue 0187: the cookie goes only to Substack's own hosts (substack.com, <name>.substack.com) and to a
+        custom domain Substack's own subscriptions answer names as a publication you pay for; never to a site
+        that only looks like Substack (a feed's generator line anyone can write; settings.substack). Such a
+        publication is read as one you don't pay for: its paid posts stored as their teaser. The redirects a
+        request follows keep the cookie only on its own host (KindHttp)."""
+        host = (urllib.parse.urlsplit(url).hostname or "").lower().rstrip(".")
+        if host == "substack.com" or host.endswith(".substack.com"):
+            return True
+        cached = self._subscriptions_cache
+        return (cached is not None and cached[0] == hashlib.sha256(self._sid.encode()).hexdigest()
+                and isinstance(cached[2], Subscriptions) and _bare_host(url) in cached[2].paid_hosts)
+
     async def _get_json(self, url: str, *, cookie: bool) -> Any:
-        headers = self._headers() if cookie else {}
+        headers = self._headers() if cookie and self._cookie_goes_to(url) else {}
         try:
             body, _ = await self.http.get_text(url, headers=headers)
         except ValueError as exc:

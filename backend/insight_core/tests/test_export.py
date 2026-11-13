@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import main
 from insight_core.db import import_export
 from insight_core.services import registry
-from insight_core.services.export_service import LAST_EXPORT_KEY, ExportService, live_bytes
+from insight_core.services.export_service import LAST_EXPORT_KEY, ExportBusy, ExportService, live_bytes
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
 from insight_core.tests._asgi import call
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
@@ -158,6 +158,19 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertTrue(done["done"])
         self.assertEqual(done["bytes"], streaming.progress("tok-abcdefgh")["bytes"])
         self.assertIsNone(other.progress("../etc/passwd"))      # a token names a file only when it is one
+
+    def test_one_export_at_a_time_across_processes(self):
+        """Issue 0187: a second export while one streams is ExportBusy before any byte; once the first ends
+        (here stopped), the next one runs."""
+        first = ExportService(self.url).stream(include_logins=False)
+        next(first)
+        second = ExportService(self.url).stream(include_logins=False)   # the other API process's
+        with self.assertRaises(ExportBusy):
+            next(second)
+        first.close()
+        third = ExportService(self.url).stream(include_logins=False)
+        self.assertTrue(next(third))
+        third.close()
 
     def test_a_stopped_export_keeps_no_size(self):
         self._forget_last_export()

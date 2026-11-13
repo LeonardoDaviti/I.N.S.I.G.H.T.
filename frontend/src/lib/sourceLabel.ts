@@ -8,8 +8,8 @@
  *   https://rss.arxiv.org/rss/cs.CL                          -> arXiv cs.CL
  *   http://export.arxiv.org/api/query?search_query=cat:cs.AI -> arXiv cs.AI
  *   https://www.reddit.com/r/LocalLLaMA/.rss                 -> r/LocalLLaMA
- *   https://tg.i-c-a.su/rss/denissexy?limit=50               -> @denissexy
- *   https://nitter.local/karpathy/rss                        -> @karpathy
+ *   https://tg.i-c-a.su/rss/dennis_it?limit=50               -> @dennis_it
+ *   https://nitter.local/nn_teacher/rss                        -> @nn_teacher
  *   https://simonwillison.net/atom/everything/               -> simonwillison.net
  *   r/x, "Road to VR"                                        -> unchanged
  */

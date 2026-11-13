@@ -76,13 +76,13 @@ print(message.content)</code></pre>
 
 const STORY_HTML = `
 <p>Moonshot released <a href="https://moonshotai.github.io/Kimi-K3.1/">Kimi K3.1 Pro</a> today: 2.8T parameters, 104B active, open weights.</p>
-<p>data_secrets wrote about the <a href="https://t.me/data_secrets/9951">isolated-computer experiment</a> last month, which INSIGHT has stored; the release notes are elsewhere.</p>
+<p>data_whispers wrote about the <a href="https://t.me/data_whispers/9951">isolated-computer experiment</a> last month, which INSIGHT has stored; the release notes are elsewhere.</p>
 `;
 
 const TELEGRAM = 'Новая открытая модель возглавила многоязычный рейтинг 🚀\n\n'
   + 'A new open-weights model tops the multilingual leaderboard this morning, ahead of last month’s leader by two points on average. '
   + 'Weights are on the hub under a permissive licence; the tech report is promised for next week.\n\n'
-  + 'https://t.me/ai_newz/3150';
+  + 'https://t.me/ai_dispatch/3150';
 
 /** The post page's states by name; the post id in the URL is ignored. */
 export function postStateDetail(state: string, now: Date = new Date()): PostDetailResponse | null {
@@ -115,12 +115,12 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         // Stored with no title: the API's title is the text's first line (display_title).
         title: TELEGRAM.split('\n')[0],
         source_id: sourceId('s-newz'),
-        source: 'https://t.me/s/ai_newz',
-        source_display_name: 'ai_newz',
+        source: 'https://t.me/s/ai_dispatch',
+        source_display_name: 'ai_dispatch',
         platform: 'telegram',
         content: TELEGRAM,
         content_html: undefined,
-        url: 'https://t.me/ai_newz/3150',
+        url: 'https://t.me/ai_dispatch/3150',
       }, now);
     case 'teaser':
       // Issue 0140: the feed's written abstract, its page built by a script that holds no data to read.
@@ -140,34 +140,34 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         url: 'https://simonwillison.net/2026/Oct/23/kimi-k31-pro/',
         content_html: STORY_HTML,
         content: STORY_HTML.replace(/<[^>]+>/g, ''),
-        internal_links: { 'https://t.me/data_secrets/9951': 'p-article' },
+        internal_links: { 'https://t.me/data_whispers/9951': 'p-article' },
         // A tree (issue 0064): the origin is Kimi's own page, outside INSIGHT, that 8 posts link;
         // this post is one of them; a forward hangs under the post it copies.
         story: {
           id: 'p-story-ai-newz', voices: 4, first: null, parent_id: null, parent_reason: 'citation',
           origin: { url: 'https://kimi.ai/blog/kimi-k3-1-pro', title: 'Introducing Kimi K3.1 Pro', linked_by: 8 },
-          sources: [{ id: 's-newz', name: 'ai_newz' }, { id: 's-ds', name: 'data_secrets' },
-            { id: 's-simon', name: 'Simon Willison’s Weblog' }, { id: 's-denis', name: 'denissexy' }],
+          sources: [{ id: 's-newz', name: 'ai_dispatch' }, { id: 's-ds', name: 'data_whispers' },
+            { id: 's-simon', name: 'Simon Willison’s Weblog' }, { id: 's-dennis', name: 'dennis_it' }],
           posts: [
-            { ...storyPost('p-story-ai-newz', 'ai_newz', 'Moonshot выпустили K3.1 Pro', 'report', now, 9, true), parent_id: null, parent_reason: 'citation' as const },
-            { ...storyPost('p-story-ds', 'data_secrets', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false), parent_id: null, parent_reason: 'citation' as const },
-            { ...storyPost('p-story-denis', 'denissexy', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false), parent_id: 'p-story-ds', parent_reason: 'copy' as const },
+            { ...storyPost('p-story-ai-newz', 'ai_dispatch', 'Moonshot выпустили K3.1 Pro', 'report', now, 9, true), parent_id: null, parent_reason: 'citation' as const },
+            { ...storyPost('p-story-ds', 'data_whispers', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false), parent_id: null, parent_reason: 'citation' as const },
+            { ...storyPost('p-story-dennis', 'dennis_it', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false), parent_id: 'p-story-ds', parent_reason: 'copy' as const },
           ],
         },
       }, now);
     case 'thread':
-      // An X thread (issue 0066): badlogicgames' first post, then its five replies to itself, in order.
+      // An X thread (issue 0066): oddlogic_games' first post, then its five replies to itself, in order.
       return detail('p-bg', {
         title: 'software is dead. sad.', content: 'software is dead. sad.', content_html: '<p>software is dead. sad.</p>',
-        source_id: sourceId('s-bg'), source: 'https://nitter.local/badlogicgames/rss', source_display_name: 'badlogicgames',
-        url: 'https://nitter.local/badlogicgames/status/2115002476311241104#m',
+        source_id: sourceId('s-bg'), source: 'https://nitter.local/oddlogic_games/rss', source_display_name: 'oddlogic_games',
+        url: 'https://nitter.local/oddlogic_games/status/2115002476311241104#m',
         published_at: new Date(now.getTime() - 5 * HOUR).toISOString(),
         story: {
           id: 'p-bg', voices: 1, first: 'p-bg', parent_id: null, parent_reason: null, origin: null, thread: true,
-          sources: [{ id: sourceId('s-bg'), name: 'badlogicgames' }],
+          sources: [{ id: sourceId('s-bg'), name: 'oddlogic_games' }],
           // Each reply as stored (issue 0068): read as the post's body is.
           posts: THREAD_REPLIES.map(([id, text, hoursAgo], i) => ({
-            ...storyPost(id, 'badlogicgames', text.split('\n')[0], 'report', now, hoursAgo, false), text,
+            ...storyPost(id, 'oddlogic_games', text.split('\n')[0], 'report', now, hoursAgo, false), text,
             html: `<p>${text.replace(/\n/g, '<br>\n')}</p>`,
             parent_id: i ? THREAD_REPLIES[i - 1][0] : 'p-bg', parent_reason: 'thread' as const,
           })),

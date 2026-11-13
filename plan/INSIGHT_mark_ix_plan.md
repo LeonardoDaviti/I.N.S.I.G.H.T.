@@ -694,7 +694,7 @@ class KindRegistry:
 6. `telegram_mtproto` (platform telegram **and** a bare handle, no `://`)
 7. `generic_rss`, which is the fallback
 
-For every source *except* platform-telegram bare handles, this matches Mark VIII `classify_source` (`source_fetch_service.py:494-532`), and a table test pins it. **Deliberate deviation:** `classify_source` has no MTProto branch, so today a bare handle such as `ai_newz` (platform telegram) falls through to `generic_rss` and fails as an RSS URL. (Mark VIII `safe_ingest` did reach these through `TelegramConnector`, which prompts on stdin when the session is not authorised.) In Mark IX they resolve to `telegram_mtproto`. B3 ships the kind's resolution and profile; until B8 lands, `Availability.telegram_credentials` is False, so they are `skip_unavailable`. B8 makes them fetchable when an authorised session exists. All 12 such sources are currently disabled. The table test carries this as an explicit, labelled row.
+For every source *except* platform-telegram bare handles, this matches Mark VIII `classify_source` (`source_fetch_service.py:494-532`), and a table test pins it. **Deliberate deviation:** `classify_source` has no MTProto branch, so today a bare handle such as `ai_dispatch` (platform telegram) falls through to `generic_rss` and fails as an RSS URL. (Mark VIII `safe_ingest` did reach these through `TelegramConnector`, which prompts on stdin when the session is not authorised.) In Mark IX they resolve to `telegram_mtproto`. B3 ships the kind's resolution and profile; until B8 lands, `Availability.telegram_credentials` is False, so they are `skip_unavailable`. B8 makes them fetchable when an authorised session exists. All 12 such sources are currently disabled. The table test carries this as an explicit, labelled row.
 
 ### D.2 Kinds and profiles
 
@@ -1187,7 +1187,7 @@ Other functions:
 - An empty input makes no calls.
 
 ### 5.5 Kinds — `tests/test_source_kinds.py` (no network; `FakeHttp`)
-- Registry resolution table (platform, url) → kind name, covering all 12 kinds and the fallback. Rows with `platform='telegram'` and a bare handle are **excluded** from the parity check against Mark VIII `classify_source`; the table instead has an explicit row `('telegram', 'ai_newz') → telegram_mtproto`, labelled "intentional divergence: Mark VIII returned generic_rss". Every other row is identical to the Mark VIII results (written first against the current `classify_source`). The existing classify tests in `test_source_fetch_service.py` are moved here and pointed at `KindRegistry.resolve`.
+- Registry resolution table (platform, url) → kind name, covering all 12 kinds and the fallback. Rows with `platform='telegram'` and a bare handle are **excluded** from the parity check against Mark VIII `classify_source`; the table instead has an explicit row `('telegram', 'ai_dispatch') → telegram_mtproto`, labelled "intentional divergence: Mark VIII returned generic_rss". Every other row is identical to the Mark VIII results (written first against the current `classify_source`). The existing classify tests in `test_source_fetch_service.py` are moved here and pointed at `KindRegistry.resolve`.
 - The cache resolves each (platform, url) pair only once (a counting `matches`).
 - `generic_rss.fetch_latest` parses a fixture feed (moved parse tests).
 - `reddit_subreddit.fetch_latest` requests `/r/x/new/.rss` and does not request `.json`.
@@ -1307,7 +1307,7 @@ Rules:
 - **Frontend slices** list their backend dependency.
 - **"Parallel-safe with"** means the two slices touch disjoint files.
 
-**Test commands** (from the repo root `/home/normie/Documents/Projects/I.N.S.I.G.H.T.`):
+**Test commands** (from the repo root `<repo dir>`):
 - **One-time setup (required):** `docker exec insight-db createdb -U insight insight_test`. Committing test classes are skipped unless the DSN's database ends in `_test` (§5 conventions).
 - **Migrations before tests.** B1 adds `MIGRATE=1` to `run-tests.sh`: when set, it runs `python -m insight_core.db.migrate` with `DATABASE_URL=$DB_URL` in the same image before the test command. A slice that adds a migration (B1: 0019, B7: 0020) runs its tests with `MIGRATE=1`, so the tests never run against an unmigrated schema. (Migrating the live `insight` DB this way is what the container start does anyway; take the §7 `pg_dump` backup first.)
 - `T=postgresql://insight:insight@postgres:5432/insight_test` below.

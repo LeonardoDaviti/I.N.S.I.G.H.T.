@@ -5,7 +5,7 @@ Status: **built, not deployed** (2026-10-31) for v9.9; spec 2026-10-31 (owner, 2
 ## 1. A saved page is dated by the page, not by the day you saved it
 - **The case (the lab):**
   - All 8 Saved pages (0031) are dated the day they were saved.
-  - Your sources link them a lot. Of the 1,248 citations between stored posts, 252 have the linked post published *after* the post linking it, which is impossible. Saved pages make most of them: 46 from danielhanchen, 26 from LessWrong, 17 from Smol.
+  - Your sources link them a lot. Of the 1,248 citations between stored posts, 252 have the linked post published *after* the post linking it, which is impossible. Saved pages make most of them: 46 from finetune_dan, 26 from LessWrong, 17 from Smol.
   - Those dates also mislead the story tree (0064) and Classics' spread.
 - **Decided:**
   - **Saving a page:** it takes the page's own published date when the page states one, using the same reading the page-watch reader and 0039 already do (meta tags, JSON-LD, `<time>`). Otherwise it takes the save time, as now.

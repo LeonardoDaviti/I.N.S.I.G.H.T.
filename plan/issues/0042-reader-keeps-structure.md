@@ -79,9 +79,9 @@ Write it as a general rule on HTML semantics. No site names in code ([[generaliz
 ### Before/after on real pages
 The 48 pages of 0032's check were not kept, so an equivalent set: 50 public article pages
 outside the corpus, fetched once on 2026-10-28 with INSIGHT's User-Agent (read only, nothing
-stored): Wikipedia (3), paulgraham.com (2), danluu.com (2), Simon Willison, Martin Fowler, the
+stored): Wikipedia (3), paulgraham.com (2), danlunotes.com (2), Simon Willison, Martin Fowler, the
 Rust and Go blogs, PEP 8, MDN, SQLite, the PostgreSQL docs, Python's docs, kernel.org, gov.uk,
-ACOUP, Schneier, Eugene Yan, Chip Huyen, Karpathy, colah, Distill, overreacted, Joel on
+ACOUP, Schneier, Eugene Yan, Chip Huyen, Tutor, colah, Distill, overreacted, Joel on
 Software, Daring Fireball, Quanta, Nature, arXiv HTML, two Substacks, Stratechery, two more Gwern
 pages, the Verge, Wired, Tom's Hardware, Phoronix, Hacker News, PyTorch, Anthropic engineering,
 jvns, ciechanow.ski, fasterthanli.me, Smashing, CSS-Tricks, web.dev. Base cbc5931 against the
@@ -89,7 +89,7 @@ branch, the same pages.
 
 | | before | after |
 |---|---|---|
-| tables kept | 1 (danluu, by accident inside a `<p>` block) | 108 (on 14 pages) |
+| tables kept | 1 (dan_lu_notes, by accident inside a `<p>` block) | 108 (on 14 pages) |
 | figures kept | 0 | 321 (on 20 pages) |
 | captions kept | 199 | 199 (now inside their figures) |
 | images kept | 351 | 351 |
@@ -97,7 +97,7 @@ branch, the same pages.
 
 - **Newly kept, all table text no `<p>` held:** arXiv's 74 data tables (+9,940 words: Llama 2's
   results), Wikipedia's largest-cities table (1,121 cells, +1,780) and Rust's two infoboxes,
-  Tom's Hardware's benchmark tables (+646), CSS-Tricks (+798), danluu's input-lag tables (+349),
+  Tom's Hardware's benchmark tables (+646), CSS-Tricks (+798), dan_lu_notes's input-lag tables (+349),
   the PostgreSQL types table (+118), MDN, kernel.org's releases, gov.uk's tax bands, ciechanow.ski,
   fasterthanli's type table. Python's 13 tables were kept as loose paragraphs before; same words,
   now tables.

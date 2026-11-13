@@ -421,11 +421,11 @@ describe('FeedList', () => {
     const user = userEvent.setup();
     const story = {
       id: ID(1), voices: 3,
-      sources: [{ id: 's1', name: 'Anthropic News' }, { id: 's2', name: 'Simon Willison' }, { id: 's3', name: 'https://tg.i-c-a.su/rss/denissexy?limit=50' }],
+      sources: [{ id: 's1', name: 'Anthropic News' }, { id: 's2', name: 'Simon Willison' }, { id: 's3', name: 'https://tg.i-c-a.su/rss/dennis_it?limit=50' }],
       posts: [
         { id: ID(7), title: 'My notes on the model', url: 'https://simonwillison.net/x', source_id: 's2', source_display_name: 'Simon Willison',
           platform: 'rss', sort_at: '2026-10-01T12:00:00Z', published_at: null, read_at: null, role: 'report' as const },
-        { id: ID(8), title: 'Вышел новый Claude', url: 'https://t.me/denissexy/1', source_id: 's3', source_display_name: 'https://tg.i-c-a.su/rss/denissexy?limit=50',
+        { id: ID(8), title: 'Вышел новый Claude', url: 'https://t.me/dennis_it/1', source_id: 's3', source_display_name: 'https://tg.i-c-a.su/rss/dennis_it?limit=50',
           platform: 'rss', sort_at: '2026-10-01T13:00:00Z', published_at: null, read_at: '2026-10-01T14:00:00Z', role: 'share' as const },
       ],
     };
@@ -437,7 +437,7 @@ describe('FeedList', () => {
     const list = document.querySelector('[data-story-posts]') as HTMLElement;
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       expect.stringContaining('Simon Willison·My notes on the model'),
-      expect.stringContaining('@denissexy·Вышел новый Claude· share'),
+      expect.stringContaining('@dennis_it·Вышел новый Claude· share'),
     ]);
     await user.click(within(list).getByRole('link', { name: 'My notes on the model' }));
     expect(screen.getByTestId('location')).toHaveTextContent(`/posts/${ID(7)}`);
@@ -451,27 +451,27 @@ describe('FeedList', () => {
     // GPT-6.1 Terra: OpenAI's own post leads; HN's row of its address and two citers under it; LessWrong under Simon.
     const terra = {
       id: ID(1), voices: 4, first: ID(1), parent_id: null, parent_reason: null, origin: null,
-      sources: [{ id: 's1', name: 'OpenAI News' }, { id: 's2', name: 'Hacker News' }, { id: 's3', name: 'data_secrets' }, { id: 's4', name: 'Simon Willison' }],
-      posts: [post(2, 'Hacker News', 'GPT-6.1 Terra', 18, ID(1), 'address'), post(3, 'data_secrets', 'Вышла GPT-6.1 Terra', 19, ID(1), 'citation'),
+      sources: [{ id: 's1', name: 'OpenAI News' }, { id: 's2', name: 'Hacker News' }, { id: 's3', name: 'data_whispers' }, { id: 's4', name: 'Simon Willison' }],
+      posts: [post(2, 'Hacker News', 'GPT-6.1 Terra', 18, ID(1), 'address'), post(3, 'data_whispers', 'Вышла GPT-6.1 Terra', 19, ID(1), 'citation'),
         post(4, 'Simon Willison', 'GPT-6.1 Terra notes', 23, ID(1), 'citation'), post(5, 'Lesswrong', 'AI #192', 23, ID(4), 'citation')],
     };
     // Claude Fable 5: the origin is Anthropic's page, linked by 3; this row is one of its citers.
     const fable = {
       id: ID(9), voices: 3, first: null, parent_id: null, parent_reason: 'citation' as const,
       origin: { url: 'https://www.anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', linked_by: 3 },
-      sources: [{ id: 's9', name: 'ai_newz' }, { id: 's10', name: 'denissexy' }],
-      posts: [post(10, 'denissexy', 'Вышла новая модель', 17, null, 'citation')],
+      sources: [{ id: 's9', name: 'ai_dispatch' }, { id: 's10', name: 'dennis_it' }],
+      posts: [post(10, 'dennis_it', 'Вышла новая модель', 17, null, 'citation')],
     };
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
       feedItem({ id: ID(1), title: 'Introducing GPT-6.1 Terra', story: terra }),
-      feedItem({ id: ID(9), title: 'Вышел Claude 5 Fable', source_display_name: 'ai_newz', sort_at: '2026-10-26T16:00:00Z', story: fable }),
+      feedItem({ id: ID(9), title: 'Вышел Claude 5 Fable', source_display_name: 'ai_dispatch', sort_at: '2026-10-26T16:00:00Z', story: fable }),
     ])) });
     await user.click(await screen.findByRole('button', { name: /^covered by 4/ }));
     await user.click(screen.getByRole('button', { name: /^covered by 3/ }));
     const [terraList, fableList] = Array.from(document.querySelectorAll('[data-story-posts]')) as HTMLElement[];
     const lines = (list: HTMLElement) => within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[0]}`);
-    expect(lines(terraList)).toEqual(['0 Hacker News', '0 data_secrets', '0 Simon Willison', '1 Lesswrong']);
-    expect(lines(fableList)).toEqual(['0 anthropic.com', '1 ai_newz', '1 denissexy']);
+    expect(lines(terraList)).toEqual(['0 Hacker News', '0 data_whispers', '0 Simon Willison', '1 Lesswrong']);
+    expect(lines(fableList)).toEqual(['0 anthropic.com', '1 ai_dispatch', '1 dennis_it']);
     expect(within(fableList).getAllByRole('listitem')[1]).toHaveTextContent(/· this post$/);
     expect(within(fableList).getByRole('link', { name: 'Claude Fable 5' })).toHaveAttribute('href',
       '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5-mythos-5&title=Claude+Fable+5');
@@ -479,20 +479,20 @@ describe('FeedList', () => {
   it('a thread is one row, "Thread · 3 posts", its replies in order; a repost says who reposted it, from whom (issue 0066)', async () => {
     const user = userEvent.setup();
     const reply = (n: number, title: string, parent: string) => ({
-      id: ID(n), title, url: `https://nitter.local/badlogicgames/status/${n}`, source_id: 'bg', source_display_name: 'badlogicgames',
+      id: ID(n), title, url: `https://nitter.local/oddlogic_games/status/${n}`, source_id: 'bg', source_display_name: 'oddlogic_games',
       platform: 'rss', sort_at: '2026-10-27T08:52:39Z', published_at: null, read_at: null, role: 'report' as const,
       parent_id: parent, parent_reason: 'thread' as const, text: title,
     });
     const thread = {
       id: ID(1), voices: 1, first: ID(1), parent_id: null, parent_reason: null, origin: null, thread: true,
-      sources: [{ id: 'bg', name: 'badlogicgames' }],
+      sources: [{ id: 'bg', name: 'oddlogic_games' }],
       posts: [reply(2, 'pretty joyless now. guess i switch to gardening.', ID(1)), reply(3, 'there will remain some niche holdouts', ID(2))],
     };
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
-      feedItem({ id: ID(1), title: 'software is dead. sad.', source_id: 'bg', source_display_name: 'badlogicgames', story: thread }),
-      feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
-        repost: { by: [], author: 'badlogicgames' },
-        byline: { author: '@badlogicgames', via: 'steipete', quoting: null } }),
+      feedItem({ id: ID(1), title: 'software is dead. sad.', source_id: 'bg', source_display_name: 'oddlogic_games', story: thread }),
+      feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'toolsmith_pete',
+        repost: { by: [], author: 'oddlogic_games' },
+        byline: { author: '@oddlogic_games', via: 'toolsmith_pete', quoting: null } }),
     ])) });
     const toggle = await screen.findByRole('button', { name: 'Thread · 3 posts' });
     // On a phone a story's line may take two lines, so the names show (issue 0073).
@@ -503,8 +503,8 @@ describe('FeedList', () => {
       .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
     const [, repost] = screen.getAllByRole('article');
     // The source once (issue 0070), the repost's line beside it from `sm` up, under it on a phone (issue 0073).
-    expect(repost.textContent?.match(/steipete/g)).toHaveLength(1);
-    expect(within(repost).getByText('↻ from @badlogicgames')).toHaveClass('sm:order-1');
+    expect(repost.textContent?.match(/toolsmith_pete/g)).toHaveLength(1);
+    expect(within(repost).getByText('↻ from @oddlogic_games')).toHaveClass('sm:order-1');
     expect(within(repost).getByText('4 min read').parentElement).toHaveClass('sm:order-2');
   });
   it('a story names the roundups that mention it, who reposted a tweet, and on a phone a deep line its parent (issue 0068)', async () => {
@@ -514,13 +514,13 @@ describe('FeedList', () => {
       sort_at: `2026-10-26T1${n}:00:00Z`, published_at: null, read_at: null, role: 'report' as const, parent_id: parent,
       parent_reason: 'citation' as const, ...extra,
     });
-    // Ghostty leaves GitHub: mitchellh.com's post (read) is the origin; @steipete's tweet (reposted) and Mat Duggan's row
+    // Ghostty leaves GitHub: mitchellh.com's post (read) is the origin; @toolsmith_pete's tweet (reposted) and Mat Duggan's row
     // under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.
     const ghostty = {
       id: ID(1), voices: 4, first: ID(1), parent_id: ID(1), parent_reason: 'citation' as const, origin: null,
-      sources: [{ id: 's1', name: 'mitchellh.com' }, { id: 's2', name: 'steipete' }, { id: 's3', name: 'Mat Duggan' }, { id: 's4', name: 'Andrew Nesbitt' }],
+      sources: [{ id: 's1', name: 'mitchellh.com' }, { id: 's2', name: 'toolsmith_pete' }, { id: 's3', name: 'Mat Duggan' }, { id: 's4', name: 'Andrew Nesbitt' }],
       posts: [{ ...post(1, 'mitchellh.com', 'Ghostty is leaving GitHub', ''), parent_id: null, parent_reason: null },
-        post(2, 'steipete', 'ghostty is leaving github', ID(1), { reposted_by: ['steipete', 'badlogicgames'] }),
+        post(2, 'toolsmith_pete', 'ghostty is leaving github', ID(1), { reposted_by: ['toolsmith_pete', 'oddlogic_games'] }),
         post(4, 'Andrew Nesbitt', 'A GitHub for maintainers', ID(3))],
       roundups: [{ id: ID(7), title: 'AI #192: Anthropic Is Going Public', source_display_name: 'Lesswrong' },
         { id: ID(8), title: 'not much happened today', source_display_name: 'Smol' }],
@@ -532,7 +532,7 @@ describe('FeedList', () => {
     const list = document.querySelector('[data-story-posts]') as HTMLElement;
     const items = within(list).getAllByRole('listitem');
     expect(items.map((li) => li.textContent?.split('·')[0])).toEqual(
-      ['mitchellh.com', 'steipete', '↻ reposted by @steipete, @badlogicgames', 'Mat Duggan', '↳ Mat DugganAndrew Nesbitt']);
+      ['mitchellh.com', 'toolsmith_pete', '↻ reposted by @toolsmith_pete, @oddlogic_games', 'Mat Duggan', '↳ Mat DugganAndrew Nesbitt']);
     expect(items.map((li) => li.dataset.depth)).toEqual(['0', '1', '1', '1', '2']);
     expect(items[4]).toHaveClass('pl-2', 'sm:pl-8');
     expect(within(items[4]).getByText('↳ Mat Duggan')).toHaveClass('sm:hidden');

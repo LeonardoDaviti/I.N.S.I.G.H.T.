@@ -132,7 +132,7 @@ export function coveredBy(story: FeedStory, selfSourceId?: string): string | nul
   return `covered by ${story.voices} · ${coveredNames(story)}`;
 }
 
-/** "↻ reposted by @steipete, @badlogicgames": under a tweet in "covered by" (issue 0068). */
+/** "↻ reposted by @toolsmith_pete, @oddlogic_games": under a tweet in "covered by" (issue 0068). */
 export const repostedBy = (by: string[]) => `↻ reposted by @${by.join(', @')}`;
 
 

@@ -27,7 +27,7 @@ function rows() {
       last_error: 'HTTP 503 Service Unavailable',
       folders: [ai, ar],
     }),
-    healthRow({ source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [] }),
+    healthRow({ source_id: 'tg', display_name: 'ai_dispatch', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [] }),
     healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [ar] }),
   ];
 }
@@ -279,7 +279,7 @@ describe('SourcesConfig', () => {
     ['a disabled source', healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [] }),
       /Off: not fetched until you switch it on/],
     ['an unavailable source', healthRow({
-      source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [],
+      source_id: 'tg', display_name: 'ai_dispatch', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [],
       unavailable_reason: 'no Telegram session; sign in under Sources → Connections', decision_detail: 'Unavailable: no Telegram session',
     }), /add in Connections/],
   ])('%s’s sheet says why in one line, without cadence, main feed, archive or Fetch now (issue 0027)', async (_, row, line) => {
@@ -617,12 +617,12 @@ describe('SourcesConfig', () => {
   it('an unavailable source links from its sheet to Connections', async () => {
     const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
     const tg = healthRow({
-      source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable',
+      source_id: 'tg', display_name: 'ai_dispatch', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable',
       decision: 'skip_unavailable', decision_detail: 'Telegram API ID is not set; add it in Sources → Connections',
       unavailable_reason: 'Telegram API ID is not set; add it in Sources → Connections', folders: [],
     });
     setup('/settings/sources', { getCredentials, getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([tg])) });
-    await userEvent.click(await screen.findByRole('button', { name: 'ai_newz' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'ai_dispatch' }));
     const sheet = await screen.findByRole('dialog');
     await userEvent.click(within(sheet).getByRole('link', { name: 'add in Connections' }));
     expect(await screen.findByRole('region', { name: 'Connections' })).toBeInTheDocument();
@@ -992,7 +992,7 @@ describe('SourcesConfig deep links', () => {
   it('suggested lists what your sources link, says why, follows through the feed finder and hides for good (issue 0050)', async () => {
     const suggestion = {
       key: 'openai.com', url: 'https://openai.com', voices: 5, article_count: 32, link_count: 49,
-      voice_names: ['Simon Willison', 'Anthropic News', 'https://tg.i-c-a.su/rss/seeallochnaya?limit=50', 'One Useful Thing', 'Sean Goedecke'],
+      voice_names: ['Simon Willison', 'Anthropic News', 'https://tg.i-c-a.su/rss/seeall_notes?limit=50', 'One Useful Thing', 'Sean Goedecke'],
       articles: [{ url: 'https://openai.com/index/introducing-gpt-live', title: 'Introducing GPT Live', linked_by: ['Simon Willison', 'Sean Goedecke'] }],
     };
     const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [{ url: 'https://openai.com/news/rss.xml', title: 'OpenAI News' }] });
@@ -1001,7 +1001,7 @@ describe('SourcesConfig deep links', () => {
       getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [suggestion, { ...suggestion, key: 'metr.org', url: 'https://metr.org' }] }),
       hideSuggestedSource, findFeed,
     });
-    const reason = await screen.findAllByRole('button', { name: /linked by 5 of your sources \(Simon Willison, Anthropic News, @seeallochnaya, \+2\) · 32 articles/ });
+    const reason = await screen.findAllByRole('button', { name: /linked by 5 of your sources \(Simon Willison, Anthropic News, @seeall_notes, \+2\) · 32 articles/ });
     await userEvent.click(reason[0]);
     expect(screen.getByRole('link', { name: 'Introducing GPT Live' })).toHaveAttribute('href', 'https://openai.com/index/introducing-gpt-live');
 
@@ -1127,9 +1127,9 @@ describe('SourcesConfig deep links', () => {
   it('Discover says where your stories start, a section of a site you follow, and what a followed source misses (issue 0065)', async () => {
     const news = {
       key: 'anthropic.com/news', url: 'https://anthropic.com/news', voices: 23, article_count: 16, link_count: 16, classics: 0,
-      voice_names: ['denissexy', 'Simon Willison'], origins: 16, follows: ['anthropic.com/research'],
+      voice_names: ['dennis_it', 'Simon Willison'], origins: 16, follows: ['anthropic.com/research'],
       origin_stories: [{ url: 'https://anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', voices: 13, stored: false }],
-      articles: [{ url: 'https://anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', linked_by: ['denissexy'] }],
+      articles: [{ url: 'https://anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', linked_by: ['dennis_it'] }],
     };
     const linked = { ...news, key: 'reuters.com', url: 'https://reuters.com', origins: 0, follows: undefined, origin_stories: [] };
     const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [{ url: 'https://anthropic.com/news/rss.xml', title: 'News' }] });

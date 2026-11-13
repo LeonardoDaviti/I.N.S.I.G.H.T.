@@ -922,7 +922,7 @@ class StoriesService:
         for s in counted["found"]:
             if not discover_open(s["key"], site_of(s["key"]), "/" in s["key"], followed=followed, hidden=hidden,
                                  followed_accounts=sources.followed_accounts()):
-                continue   # followed or hidden (a platform's key is its account, x.com/karpathy; a site's its host)
+                continue   # followed or hidden (a platform's key is its account, x.com/nn_teacher; a site's its host)
             names = {voice: sources.voice_name(voice, source_id or "") for voice, source_id in s["voices"]}
             linking = _linking(sources, ((v, i, v in s["roundups"]) for v, i in s["voices"]), s.get("sources", ()), saved)
             weight[s["key"]] = len(linking) - sum(1 for only, _ in linking if only) / 2

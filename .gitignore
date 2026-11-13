@@ -40,3 +40,4 @@ briefings_export/
 # Notes built from the owner's real data (channel names, titles): kept on disk, never pushed
 plan/research/
 *.tsbuildinfo
+*.pid

@@ -34,7 +34,7 @@ export function bylineName(post: HasByline & { source_display_name?: string | nu
 /** Whether the feed carried another's post (a repost or a forward): the line then names the feed as the carrier. */
 export const carried = (post: HasByline) => Boolean(post.byline?.author);
 
-/** "↻ from @thsottiaux" beside the feed that carried it, "↻ @steipete, from @thsottiaux" when other accounts of yours
+/** "↻ from @tl_codex" beside the feed that carried it, "↻ @toolsmith_pete, from @tl_codex" when other accounts of yours
  *  reposted it too (issues 0066, 0070), "↻ from Acme News" for a Telegram forward; ", quoting @x" when it quotes one;
  *  null for the feed's own post that quotes none. */
 export function carriedLine(post: HasByline & { repost?: Repost | null }): string | null {

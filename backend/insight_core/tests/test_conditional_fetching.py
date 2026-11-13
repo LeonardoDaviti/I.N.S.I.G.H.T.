@@ -20,6 +20,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.ingestion.http import (
     VALIDATORS_MAX_AGE,
+    AddressGuard,
     AddressMemory,
     Conditional,
     HttpError,
@@ -120,7 +121,7 @@ class ConditionalGetTests(unittest.TestCase):
         _Site.seen = []
 
     def get(self, path, validators=None, **kwargs) -> Conditional:
-        return asyncio.run(KindHttp(timeout=5).get_conditional(f"{self.base}{path}", validators, **kwargs))
+        return asyncio.run(KindHttp(timeout=5, guard=AddressGuard(bridges={"127.0.0.1"})).get_conditional(f"{self.base}{path}", validators, **kwargs))
 
     def test_a_200_gives_the_body_and_its_validators(self):
         answer = self.get("/feed")
