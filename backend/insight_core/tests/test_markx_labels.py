@@ -208,6 +208,39 @@ class Labels(unittest.TestCase):
         check = next(f for f in L.precision(self.cur, q2)["features"] if f["feature"] == "check")
         self.assertEqual((check["labelled"], check["splits"]["all"]["acted"]["precision"]), (1, 1.0))
 
+    def test_the_answers_are_read_in_sql_as_python_read_them(self):
+        """0182: the population reads of an answer only the verdict's fields and whether `entities` names anything,
+        in SQL: the same truth as Python's `(answer or {}).get("entities")`, the same Verdict.of."""
+        answers = {"list": {"entities": [{"name": "Acme"}]}, "empty list": {"entities": []}, "none": {},
+                   "null": {"entities": None}, "object": {"entities": {"a": 1}}, "empty object": {"entities": {}},
+                   "string": {"entities": "Acme"}, "empty string": {"entities": ""}, "zero": {"entities": 0},
+                   "number": {"entities": 2}, "true": {"entities": True}, "false": {"entities": False}}
+        ids = {}
+        for name, answer in answers.items():
+            tid, _ = repo.add_task(self.cur, kind="entities", guide=schemas.KINDS["entities"].guide,
+                                   subject_kind="post", input=f"POST {name}", a=str(uuid.uuid4()))
+            repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=answer)
+            repo.answer_task(self.cur, tid)
+            ids[str(tid)] = name
+        verdicts = {"full": {"relation": "development", "confidence": 80, "reason": "later"},
+                    "no confidence": {"relation": "related", "reason": "r"}, "nothing": {},
+                    "string confidence": {"relation": "development", "confidence": "70"}}
+        for name, answer in verdicts.items():
+            tid, _ = repo.add_task(self.cur, kind="connect", guide=schemas.KINDS["connect"].guide,
+                                   subject_kind="story_story", input=f"STORIES {name}", a=str(uuid.uuid4()),
+                                   b=str(uuid.uuid4()))
+            repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=answer)
+            repo.answer_task(self.cur, tid)
+            ids[str(tid)] = name
+        got = {it.id: it for it in L.population(self.cur, now=self.now)}
+        named = {ids[i] for i, it in got.items() if it.feature == "entities"}
+        self.assertEqual(named, {n for n, a in answers.items() if (a or {}).get("entities")})
+        for i, it in got.items():
+            if it.feature == "connect":
+                v = D.Verdict.of(verdicts[ids[i]])
+                self.assertEqual((it.p, it.relation, it.reason), (round(v.p, 4), v.relation, v.reason), ids[i])
+        self.assertEqual(sum(it.feature == "connect" for it in got.values()), len(verdicts))
+
     def test_one_tap_on_a_news_member_is_a_label_and_ok_takes_it_back(self):
         a, b, c, d, e = self.scene()
         self.cur.execute("SELECT story_id::text, reason FROM mx_story_posts WHERE post_id = %s AND valid_to IS NULL", (e,))

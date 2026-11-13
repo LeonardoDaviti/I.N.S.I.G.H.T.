@@ -131,7 +131,8 @@ class _Reader(decide.Ask):
         call = repo.valid_call(self.cur, task["id"])
         if call is None:
             return None
-        self.task_of[str(call["id"])] = task
+        # 0182: only what `population` reads of the task (its input, ~1.5 kB a row, is not held)
+        self.task_of[str(call["id"])] = {"id": task["id"], "a": task["a"], "b": task["b"]}
         return call["answer"], str(call["id"])
 
 
@@ -148,14 +149,47 @@ def _times(cur: Any, ids: Iterable[Any]) -> Dict[str, datetime]:
     return dict(cur.fetchall())
 
 
+# 0182: of a judge's answer `population` reads only the verdict's three fields (connect, and the labelled questions),
+# and of an entities answer only whether it names anything, Python's truth of `answer["entities"]`: both taken in SQL,
+# so the answers themselves (an entities answer ~0.6-2 kB; ~130k on a server) are never loaded. Measured on a copy
+# with 138k answered entities tasks: the population's peak 532 -> 85 MB of Python allocations, the process's 732 ->
+# 223 MB, 17 -> 4.5 s; the same items in the same order (issue 0182).
+_VERDICT_SQL = "c.answer->'relation', c.answer->'confidence', c.answer->'reason'"
+_NAMES_SQL = """CASE jsonb_typeof(c.answer->'entities')
+                     WHEN 'array' THEN jsonb_array_length(c.answer->'entities') > 0
+                     WHEN 'object' THEN c.answer->'entities' <> '{}'::jsonb
+                     WHEN 'string' THEN c.answer->>'entities' <> ''
+                     WHEN 'number' THEN (c.answer->>'entities')::numeric <> 0
+                     WHEN 'boolean' THEN (c.answer->>'entities')::boolean
+                     ELSE false END"""
+PAGE = 5000         # rows a fetch (the answered connect and entities tasks are read a page at a time)
+
+
+def _verdict(relation: Any, confidence: Any, reason: Any) -> decide.Verdict:
+    """decide.Verdict.of on the answer's three fields as SQL gave them (an absent field is None, as .get gives it)."""
+    return decide.Verdict.of({"relation": relation, "confidence": confidence, "reason": reason})
+
+
+def _pages(cur: Any) -> Iterable[Tuple[Any, ...]]:
+    while True:
+        rows = cur.fetchmany(PAGE)
+        if not rows:
+            return
+        yield from rows
+
+
 def population(cur: Any, *, config: decide.Config = decide.Config(), now: Optional[datetime] = None) -> List[Item]:
     """Every question behind a decision, with its verdict and its decision: the decision job's checks, joins, pairs
-    and merges as the last run read them (nothing is written), and the answered connect and entities tasks."""
+    and merges as the last run read them (nothing is written), and the answered connect and entities tasks.
+    0182: the decision reading is let go before the tasks are read, and the tasks' answers are read only as far as
+    the items need them (`_VERDICT_SQL`, `_NAMES_SQL`), a page at a time: the same items, a lower peak."""
+    import gc
     now = now or datetime.now(timezone.utc)
     world = decide.load(cur, now, config)
     ask = _Reader(cur, now)
     answered: List[Tuple[decide.Question, decide.Verdict]] = []
     decide.think(cur, world, config, ask, now, answered=answered)
+    del world
     items: Dict[str, Item] = {}
     raw: List[Tuple[Item, Dict[str, Any]]] = []
     for q, v in answered:
@@ -176,20 +210,22 @@ def population(cur: Any, *, config: decide.Config = decide.Config(), now: Option
                   relation=v.relation, reason=v.reason, accepted=accepted)
         items[it.id] = it
         raw.append((it, task))
-    cur.execute("""SELECT t.id::text, t.kind, t.a::text, t.b::text, c.answer FROM mx_tasks t
+    del ask, answered
+    gc.collect()                             # the reading's cycles, before the tasks are read
+    cur.execute(f"""SELECT t.id::text, t.kind, t.a::text, t.b::text, {_VERDICT_SQL}, {_NAMES_SQL} FROM mx_tasks t
                      JOIN LATERAL (SELECT answer FROM mx_calls WHERE task_id = t.id AND valid
                                     ORDER BY created_at, ctid LIMIT 1) c ON true
                     WHERE t.kind IN ('connect', 'entities') AND t.status = 'answered' AND t.created_at <= %s""", (now,))
-    for tid, kind, a, b, answer in cur.fetchall():
+    for tid, kind, a, b, relation, confidence, reason, named in _pages(cur):
         if tid in items:
             continue
         if kind == "connect":
-            v = decide.Verdict.of(answer or {})
+            v = _verdict(relation, confidence, reason)
             it = Item(id=tid, feature="connect", post=b or a, day=None, p=round(v.p, 4), bar=config.tau_connect,
                       relation=v.relation, reason=v.reason,
                       accepted=v.relation in decide.CONNECT_RELATIONS and v.p >= config.tau_connect)
         else:
-            if not (answer or {}).get("entities"):
+            if not named:
                 continue                     # nothing named: nothing to call right or wrong
             it = Item(id=tid, feature="entities", post=a, day=None)
         items[tid] = it
@@ -197,12 +233,12 @@ def population(cur: Any, *, config: decide.Config = decide.Config(), now: Option
     # labelled questions today's run no longer asks (their story changed, or they left the window) keep counting,
     # each in its feature's "earlier" pool, by its own answer (a check at the 0.30 bar: its story's voices are gone)
     kind_of = {f.item_kind: f.key for f in FEATURES.values()}
-    cur.execute("""SELECT DISTINCT t.id::text, t.kind, t.a::text, t.b::text, l.item_kind, c.answer
+    cur.execute(f"""SELECT DISTINCT t.id::text, t.kind, t.a::text, t.b::text, l.item_kind, {_VERDICT_SQL}
                      FROM mx_labels l JOIN mx_tasks t ON t.id = l.a
                      JOIN LATERAL (SELECT answer FROM mx_calls WHERE task_id = t.id AND valid
                                     ORDER BY created_at, ctid LIMIT 1) c ON true
                     WHERE l.item_kind <> 'news_row'""")
-    for tid, kind, a, b, item_kind, answer in cur.fetchall():
+    for tid, kind, a, b, item_kind, relation, confidence, reason in _pages(cur):
         if tid in items:
             continue
         feature = kind if kind in FEATURES else kind_of.get(item_kind)
@@ -211,7 +247,7 @@ def population(cur: Any, *, config: decide.Config = decide.Config(), now: Option
         it = Item(id=tid, feature=feature, post=b if feature in ("pair", "merge", "connect") and b else a, day=None,
                   pool=f"{feature}:earlier")
         if feature != "entities":
-            v = decide.Verdict.of(answer or {})
+            v = _verdict(relation, confidence, reason)
             it.p, it.relation, it.reason = round(v.p, 4), v.relation, v.reason
             it.bar = {"check": config.tau_keep, "join": config.tau_join, "pair": config.tau_join,
                       "merge": config.tau_merge, "connect": config.tau_connect}[feature]
