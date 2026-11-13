@@ -251,7 +251,7 @@ export interface PageUpdate {
   sections_added: number; sections_removed: number;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
-/** GET /api/news (issue 0204): whose rows (`mark`: Mark X's, the main News, or Mark IX's, the older News), and when
+/** GET /api/news (issue 0205): whose rows (`mark`: Mark X's, the main News, or Mark IX's, the older News), and when
  *  the main News fell back to the older one (`fallback`, with the `note` the page shows). */
 export interface NewsPage extends FeedPage { mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null; }
 export type NewsMark = 'main' | 'ix';
@@ -1343,7 +1343,7 @@ export function createApi() {
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
-    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0204: Mark X's rows
+    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0205: Mark X's rows
      *  (`mark` main, falling back to Mark IX's when it has none) or the older News (`mark` ix). */
     getNews: ({ scope, cursor, signal, mark = 'main' }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark }) =>
       request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}`, { signal }),

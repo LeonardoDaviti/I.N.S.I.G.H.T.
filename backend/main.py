@@ -1121,7 +1121,7 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     score}, recent first, then by score, then the newest. On one source (issue 0077) also the
     stories its roundups mention, and `news.scope_role`: origin | report | share | mention.
     Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end.
-    Issue 0204: Mark X's rows are the main News (`mark` "x"), Mark IX's when Mark X has none (`fallback`, `note`);
+    Issue 0205: Mark X's rows are the main News (`mark` "x"), Mark IX's when Mark X has none (`fallback`, `note`);
     `mark=ix` asks for the older News (Mark IX's rows)."""
     return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark)
 

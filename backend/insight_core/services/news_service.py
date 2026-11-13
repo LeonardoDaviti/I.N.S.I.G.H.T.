@@ -234,7 +234,7 @@ class NewsService:
         strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
         the origin of its 0050 story, issue 0082), report, share, else mention.
 
-        Issue 0204: whose rows (`mark`): "main" reads Mark X's stored rows (`rows_of`: its newest written run, mx_news)
+        Issue 0205: whose rows (`mark`): "main" reads Mark X's stored rows (`rows_of`: its newest written run, mx_news)
         when Mark X is on and has rows in the window, else Mark IX's, with `fallback` and a `note` saying so; "ix" is
         the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix")."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -251,7 +251,7 @@ class NewsService:
 
     def rows_of(self, cur: Any, mark: str = "main") -> Tuple[Optional[str], Optional[str]]:
         """(the Mark X run whose rows News reads, or None for Mark IX's; the note when main fell back to Mark IX).
-        0204: Mark X's rows are main when Mark X is on and its newest written run has a row in the window."""
+        0205: Mark X's rows are main when Mark X is on and its newest written run has a row in the window."""
         if mark == "ix":
             return None, None
         from insight_core.markx import api as mx_api, news as mx_news
@@ -267,7 +267,7 @@ class NewsService:
 
     def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None,
                 mx_run: Optional[str] = None) -> Dict[str, Any]:
-        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0204)."""
+        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0205)."""
         feed_scope = FeedScope.parse(scope)
         one_source = feed_scope.kind in ("source", "voice")   # a voice's page reads as a source's (issue 0132 A)
         now = self.clock()

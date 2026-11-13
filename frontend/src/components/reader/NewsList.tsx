@@ -33,7 +33,7 @@ const RANKED = { name: 'News', sectionOf, storyLine };
  * row's line first says the source's part ("Started it", "Covered", ...) when the API sends it. A story is its lead's row, its line saying what the score is made of and
  * who covered it, its other posts one click away; reading it marks it as the feed does (0050).
  * Loaded when shown, a page at a time as you scroll (issue 0195); it never reorders under you.
- * Issue 0204: the rows are Mark X's (the main News); "Older News view" shows Mark IX's, one click away, and back. When
+ * Issue 0205: the rows are Mark X's (the main News); "Older News view" shows Mark IX's, one click away, and back. When
  * Mark X has no rows yet the API answers Mark IX's itself and the page says so in one line.
  */
 export default function NewsList({ scope, helpOpen, onHelpOpenChange, onUnreadDelta }: {

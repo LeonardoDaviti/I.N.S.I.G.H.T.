@@ -116,7 +116,7 @@ describe('News (issue 0051)', () => {
     expect(screen.getAllByText(/^Week of \d+ \w+/)).toHaveLength(1);
   });
 
-  it("News is Mark X's rows; the older News (Mark IX's) is one click away and back (issue 0204)", async () => {
+  it("News is Mark X's rows; the older News (Mark IX's) is one click away and back (issue 0205)", async () => {
     const user = userEvent.setup();
     const getNews = vi.fn().mockImplementation(({ mark }: { mark?: string }) => Promise.resolve(mark === 'ix'
       ? { ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]), mark: 'ix', fallback: false, note: null }
@@ -131,7 +131,7 @@ describe('News (issue 0051)', () => {
     expect(await screen.findByRole('link', { name: 'The Mark X row' })).toBeInTheDocument();
   });
 
-  it('when Mark X has no rows the API falls back to the older News and the page says so (issue 0204)', async () => {
+  it('when Mark X has no rows the API falls back to the older News and the page says so (issue 0205)', async () => {
     const note = 'Mark X has no News yet (a new install, or its worker has not run): this is the older News.';
     render(base({ getNews: vi.fn().mockResolvedValue({ ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]),
       mark: 'ix', fallback: true, note }) }), '/?view=news');

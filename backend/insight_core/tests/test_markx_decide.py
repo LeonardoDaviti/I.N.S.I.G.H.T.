@@ -63,7 +63,7 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:c"})   # a quote is not a guess
 
     def test_a_roundup_that_begins_a_story_is_checked_too(self):
-        """0204: two digests citing one outside page were a story of their own, its first digest never asked. A roundup
+        """0205: two digests citing one outside page were a story of their own, its first digest never asked. A roundup
         is checked against the story's other reports even when it is the first post; any other first post is not."""
         self.stories["E"] = [D.Member("e", "report"), D.Member("f", "report", "citation")]
         tids = {q.tid for q in self.plan(kinds={"e": "roundup", "f": "roundup"}) if q.story == "E"}
@@ -73,7 +73,7 @@ class Rules(unittest.TestCase):
         self.assertNotIn("check:A:a", {q.tid for q in self.plan()})   # a first post that is no roundup: never
 
     def test_a_connection_holds_only_while_the_members_it_was_asked_about_stay(self):
-        """0204: a connection carries the members its question showed; once they left the story it joins (its id
+        """0205: a connection carries the members its question showed; once they left the story it joins (its id
         now holds other posts), it is no longer found, so it closes and the pair is asked again over the members now."""
         c = {"a_kind": "story", "a": "S1", "b_kind": "story", "b": "S2", "shown": {"a": ["p1", "p2"], "b": ["q1"]}}
         self.assertTrue(D.holds(c, {"S1": {"p1", "p2", "p3"}, "S2": {"q1"}}))

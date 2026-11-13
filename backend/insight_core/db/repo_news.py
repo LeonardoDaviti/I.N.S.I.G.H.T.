@@ -327,7 +327,7 @@ class NewsRepository:
         """Every post of the News stories begun since `since` that have a post in `scope`, as feed
         items, with its story's numbers and its role. Each story's posts first posted first. On one
         source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions).
-        `news_id`: that story's only (a post page's row, issue 0083). `mx_run` (0204): Mark X's rows of that run
+        `news_id`: that story's only (a post page's row, issue 0083). `mx_run` (0205): Mark X's rows of that run
         (mx_news, the same shape: its news_posts rows in `posts`) instead of Mark IX's news_stories and news_posts."""
         scope_sql, params = _scope_sql(scope)
         one = "AND ns.id = %s" if news_id else ""

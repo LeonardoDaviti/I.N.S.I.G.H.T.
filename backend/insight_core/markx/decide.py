@@ -85,7 +85,7 @@ class Config:
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
     back_open: int = 50             # 0136: no new back question while this many wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
-    roundup_first: bool = True      # 0204: ... and a roundup that is its story's first post
+    roundup_first: bool = True      # 0205: ... and a roundup that is its story's first post
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
@@ -224,7 +224,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                in_window: Optional[Callable[[str], bool]] = None,
                copies: Optional[Dict[str, Set[str]]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
-    2+ voice story (its first post too when that is a roundup, 0204) (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
+    2+ voice story (its first post too when that is a roundup, 0205) (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
     unrelated replies on a story, which its root's check never reaches). A check shows the story's reports but the
     post, or its other members of any role when the post is its only report (0112 bug 2), never an empty story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
@@ -251,7 +251,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         for m in ms:
             p = posts[m.post]
             roundup = kinds.get(m.post) == "roundup"
-            # 0204: a roundup is checked even when it is the story's first post: two digests citing one outside page
+            # 0205: a roundup is checked even when it is the story's first post: two digests citing one outside page
             # made a story of their own (Mark IX's citation join), its first digest never asked, its second asked
             # against the first; the check against the story's other reports demotes it ("digest item"), as any roundup
             if (m.post == origin and not (roundup and config.roundup_first)) or not voice.is_voice(p.kind) \
@@ -1104,7 +1104,7 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
 def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]], scope: Set[str],
                         now: datetime) -> Counter:
     """The run's typed connections become the current ones touching `scope` (its stories and posts): new ones open,
-    the ones no longer found close (valid_to). 0204: each carries the members its question showed (evidence `shown`):
+    the ones no longer found close (valid_to). 0205: each carries the members its question showed (evidence `shown`):
     one found again over other members is closed and opened anew with them."""
     from insight_core.markx import repo
     counts: Counter = Counter()
@@ -1195,7 +1195,7 @@ def members_of(out: Outcome, ids: Dict[str, str]) -> Dict[str, Set[str]]:
 
 
 def holds(c: Dict[str, Any], members: Dict[str, Set[str]]) -> bool:
-    """0204: a connection holds while the members its question showed are still members of the stories it joins (a
+    """0205: a connection holds while the members its question showed are still members of the stories it joins (a
     story id whose members moved keeps none of its old answers: 16 of 94 same-event story connections on the server
     were about members those stories no longer hold). One with no record of what it showed holds as before."""
     for end in ("a", "b"):

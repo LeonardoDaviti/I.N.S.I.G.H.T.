@@ -304,7 +304,7 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
 
     def test_stories_that_agree_join_even_when_the_surges_first_story_refuses(self):
-        """0204: one IPO in 4 rows. The surge's first post was a release story's (its main name another), which the
+        """0205: one IPO in 4 rows. The surge's first post was a release story's (its main name another), which the
         IPO stories each refused; joining each post to the first only left the connected IPO stories apart."""
         def run(prefix, n, title, start):
             return [post(f"{prefix}{k}", f"{prefix}s{k}", hours=start + k, title=f"{title} {k}") for k in range(n)]
@@ -480,7 +480,7 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], 0, "a name never folds rows in the Main feed")
 
     def test_mark_x_rows_are_the_main_news_and_mark_ix_the_fallback(self):
-        """Issue 0204: News reads Mark X's stored rows (its newest written run) through the same reading as Mark
+        """Issue 0205: News reads Mark X's stored rows (its newest written run) through the same reading as Mark
         IX's; Mark IX's rows when Mark X is off or has no row in the window (with the note), and on asking (`ix`)."""
         from unittest import mock
         from insight_core.markx import api as mx_api, news as mx_news, repo as mx_repo
@@ -966,7 +966,7 @@ class NewsRouteTests(unittest.TestCase):
         self.assertIsInstance(body["classics"], list)
         self.assertEqual(self.call(self.app, "GET", "/api/news", query={"scope": "nowhere"})[0], 400)
         status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all", "mark": "ix"})
-        self.assertEqual((status, body["mark"], body["fallback"], body["note"]), (200, "ix", False, None))   # 0204
+        self.assertEqual((status, body["mark"], body["fallback"], body["note"]), (200, "ix", False, None))   # 0205
         status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all"})
         self.assertIn(body["mark"], ("x", "ix"))
         self.assertEqual(body["fallback"], body["mark"] == "ix", "main falls back to the older News only with a note")

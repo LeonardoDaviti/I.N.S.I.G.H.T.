@@ -1,4 +1,4 @@
-# 0204: Mark X News becomes the main News (Stealth v10.18)
+# 0205: Mark X News becomes the main News (Stealth v10.18)
 
 Status: **built** (branch `v1018-measure`, which has v10172 merged in: 0198's kept pages and 0202's API memory). Not
 merged, not pushed, not deployed. No migration. Follows [0203](0203-ship-or-drop.md), where Mark X News passed the

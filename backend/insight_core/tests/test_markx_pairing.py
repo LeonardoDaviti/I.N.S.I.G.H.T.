@@ -47,7 +47,7 @@ class Table(unittest.TestCase):
         self.assertEqual((same.story_cosine, same.story_window, same.types), (OLD_C.STORY_MIN, OLD_C.STORY_DAYS,
                                                                             OLD_C.SPECIFIC_TYPES))
         old = OLD_D.Config()
-        self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k != "roundup_first"}, asdict(old))   # 0204: new
+        self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k != "roundup_first"}, asdict(old))   # 0205: new
         self.assertEqual((same.min_words, same.document_window), (old.min_words, timedelta(days=old.document_days)))
         self.assertEqual((conn.story_cosine, conn.story_window, conn.min_voices),
                          (old.connect_lo, timedelta(days=old.connect_days), old.connect_voices))
@@ -104,7 +104,7 @@ CONFIGS = (D.Config(), D.Config.prototype(), D.Config(cand_lo=0.7, min_words=15,
 
 
 def _old(config: D.Config) -> OLD_D.Config:
-    return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k != "roundup_first"})   # 0204's rule: new
+    return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k != "roundup_first"})   # 0205's rule: new
 
 
 class Planning(unittest.TestCase):
@@ -119,7 +119,7 @@ class Planning(unittest.TestCase):
                     new = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=False),
                                        in_window=in_window)
                     self.assertEqual([asdict(q) for q in new], [asdict(q) for q in old], (seed, config))
-                    # 0204: a roundup that begins a story is checked too; every other question is the same
+                    # 0205: a roundup that begins a story is checked too; every other question is the same
                     more = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=True),
                                         in_window=in_window)
                     added = [q for q in more if q not in new]
@@ -323,7 +323,7 @@ class DecisionRun(_World):
             return out
         for config in (D.Config(), D.Config(document_merges=True, connect_lo=0.5, story_days=5)):
             old_cfg = _old(config)
-            config = replace(config, roundup_first=False)   # 0204's rule is new: the rest is the same
+            config = replace(config, roundup_first=False)   # 0205's rule is new: the rest is the same
             self.cur.execute("SAVEPOINT pairing_run")
             # 0203 dropped Later developments: the legacy copy's later stage is a no-op here
             with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):
