@@ -19,11 +19,9 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
      states no maker, one of its versions already merged with one of the other's. Their versions stating the same
      version, variant, size and build then merge (rule 'family_version', identity.family_version: the version guard
      and the chain guard as for every rule). Two makers stating one family name are never joined.
-  4. `suffix`: two orgs whose names are one once a corporate suffix goes ("Zentra" / "Zentra AI": AI, Inc.,
-     Corporation, Labs, Technologies, Holdings), with posts naming the bare org beside things the suffixed one makes
-     (or the other way round) in at least `min_posts` posts, merge (rule 'corp_suffix'); squashed-equal orgs (a maker
-     made for the hierarchy alone is never pooled) merge as the squash rule does. Without the posts, nothing: the
-     existing alias questions decide (a suffix alone is ambiguous: "Moon" / "Moon AI"). The full pass only.
+  4. (dropped in v10.18, 0203) `suffix`, two orgs one once a corporate suffix goes, merged with posts naming one
+     beside the other's things: shipped off, it merged none of 11 candidate pairs on the server copy (none had the
+     posts), and the bare pairs were one org 8 of 11. The alias questions alone decide such pairs.
   1b. `product_accounts` (0164 B): a name typed an org that is a product account's ("Zentra Vela": its family Vela's
      maker in front of the family's name; identity.Book.product_of) merges into its family (rule 'product_account'),
      never left an org; its shown type is the family's. Step 1 has cut it out of the maker's cluster first (Book.sides
@@ -56,10 +54,8 @@ UNDO_LIMIT = 200          # redirects a run undoes (org_family)
 PRODUCT_LIMIT = 500       # product accounts a run merges into their family (product_accounts)
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
-SUFFIX_LIMIT = 200        # suffix pairs a run checks against the posts
 SHOWN_CHUNK = 2000        # clusters whose shown name one query reads
 BRAND_MIN = 3
-SUFFIXES = ("ai", "inc", "corporation", "corp", "labs", "lab", "technologies", "holdings")
 SHOWN_TYPE_SHARE = 0.75
 SHOWN_TYPE_MIN = 5
 
@@ -68,8 +64,7 @@ def config() -> Dict[str, Any]:
     got = I.bands().get("repairs") or {}
     return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
             "reparent": got.get("reparent", True),
-            "families": got.get("families", True), "suffix": got.get("suffix", True),
-            "suffix_min_posts": int(got.get("suffix_min_posts", 2)), "shown": got.get("shown", True)}
+            "families": got.get("families", True), "shown": got.get("shown", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -499,98 +494,6 @@ def merge_versions(cur: Any, book: I.Book, *, run_id: Any, limit: int = FAMILY_L
     return n
 
 
-# ---- 4. an org and its name with a corporate suffix --------------------------------------------------------------
-
-def _bare(key: str) -> Optional[str]:
-    words = key.split()
-    if len(words) >= 2 and words[-1] in SUFFIXES:
-        b = N.squash(" ".join(words[:-1]))
-        return b if len(b) >= 3 else None
-    return None
-
-
-def link_suffix(cur: Any, book: I.Book, guide: Any, *, run_id: Any, min_posts: int = 2,
-                limit: int = SUFFIX_LIMIT) -> Dict[str, int]:
-    out = Counter({"pairs": 0, "merged_squash": 0, "merged_suffix": 0, "no_posts": 0, "judged_apart": 0})
-    orgs = [r for r, ms in book.members().items() if r in book.ents and book.ents[r].status != "not_entity"
-            and book.org_like(r)]
-    by_sq: Dict[str, Set[str]] = defaultdict(set)
-    for r in orgs:
-        for x in book.cluster(r):
-            if book.ents[x].sq:
-                by_sq[book.ents[x].sq].add(r)
-    cands: Set[Tuple[str, str, str]] = set()
-    for r in orgs:
-        for x in book.cluster(r):
-            k = book.ents[x].key
-            for o in by_sq.get(book.ents[x].sq, ()):
-                if o != r:
-                    cands.add((min(r, o), max(r, o), "squash"))
-            b = _bare(k)
-            for o in by_sq.get(b or "", ()):
-                if o != r:
-                    cands.add((r, o, "suffix"))      # r: the suffixed side
-    made_by_key: Dict[str, List[str]] = defaultdict(list)    # a stated maker's key -> the things it makes
-    made_under: Dict[str, List[str]] = defaultdict(list)     # a parent cluster -> the things under it
-    for e in book.ents.values():
-        if e.id in book.mentioned:
-            if e.maker:
-                made_by_key[N.key(e.maker)].append(e.id)
-            if e.parent:
-                made_under[book.root(e.parent)].append(e.id)
-
-    def made(r: str) -> List[str]:
-        got = set(made_under.get(r, ()))
-        for x in book.cluster(r):
-            got.update(made_by_key.get(book.ents[x].key, ()))
-        return sorted(got)
-    for a, b, how in sorted(cands):
-        if out["pairs"] >= limit:
-            break
-        ra, rb = book.root(a), book.root(b)
-        if ra == rb or ra not in book.ents or rb not in book.ents:
-            continue
-        ca, cb = book.cluster(ra), book.cluster(rb)
-        # the chain guard's: never two clusters of 2 or more names, never more than MAX_CLUSTER
-        if _never_between(book, ca, cb) or (len(ca) >= 2 and len(cb) >= 2) or len(ca) + len(cb) > I.MAX_CLUSTER:
-            continue
-        out["pairs"] += 1
-        if _judged_apart(cur, ca, cb):
-            out["judged_apart"] += 1
-            continue
-        ev: Dict[str, Any] = {"rules": [f"corp_{how}"], "confidence": I.RULE_CONF}
-        if how == "suffix":
-            n = _beside(cur, guide, made(ra), cb) + _beside(cur, guide, made(rb), ca)
-            if n < min_posts:
-                out["no_posts"] += 1
-                continue
-            ev["posts"] = n
-        if I.merge(cur, book, ra, rb, by="rule:corp_" + how, automatic=True, run_id=run_id, evidence=ev):
-            out["merged_" + how] += 1
-    return dict(out)
-
-
-def _beside(cur: Any, guide: Any, made: List[str], others: List[str]) -> int:
-    """The posts naming one of `others` beside one of `made` (the things a maker makes: their stated maker one of its
-    cluster's names, or their parent the cluster)."""
-    if not made or not others:
-        return 0
-    cur.execute("""SELECT count(DISTINCT x.post_id) FROM mx_mentions_now x JOIN mx_mentions_now y
-                     ON y.post_id = x.post_id AND y.guide = x.guide
-                    WHERE x.guide = ANY(%s) AND x.entity_id = ANY(%s::uuid[]) AND y.entity_id = ANY(%s::uuid[])""",
-                (guide, list(others), made))
-    return int(cur.fetchone()[0] or 0)
-
-
-def _judged_apart(cur: Any, xs: List[str], ys: List[str]) -> bool:
-    """Haiku called a pair of their names different (or another thing's version)."""
-    cur.execute("""SELECT 1 FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
-                    WHERE t.kind IN ('alias', 'alias2') AND ((t.a = ANY(%s::uuid[]) AND t.b = ANY(%s::uuid[]))
-                          OR (t.a = ANY(%s::uuid[]) AND t.b = ANY(%s::uuid[])))
-                      AND c.answer->>'relation' IS DISTINCT FROM 'same' LIMIT 1""", (xs, ys, ys, xs))
-    return cur.fetchone() is not None
-
-
 # ---- 5. the name and type shown ----------------------------------------------------------------------------------
 
 _SPAN_SQUASH = "lower(regexp_replace(m.span, '[^[:alnum:]]+', '', 'g'))"
@@ -745,7 +648,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 # ---- the step ---------------------------------------------------------------------------------------------------
 
 def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None) -> Dict[str, Any]:
-    """Steps 1-4 (4 on the full pass), in order, each skipped past `deadline` (the next run does it)."""
+    """Steps 1-3 and 1b, in order, each skipped past `deadline` (the next run does it)."""
     from insight_core.markx import schemas
     cfg = config()
     guide = schemas.mention_guides()
@@ -756,9 +659,6 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
              ("product_accounts", lambda: product_accounts(cur, book, run_id=run_id)),
              ("reparent", lambda: reparent(cur, book, w, run_id=run_id)),
              ("families", lambda: merge_families(cur, book, run_id=run_id))]
-    if full:
-        steps.append(("suffix", lambda: link_suffix(cur, book, guide, run_id=run_id,
-                                                     min_posts=cfg["suffix_min_posts"])))
     for name, step in steps:
         if not cfg.get(name, True):
             continue
