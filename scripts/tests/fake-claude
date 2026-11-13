@@ -94,7 +94,7 @@ def main():
     if os.environ.get("FAKE_CLAUDE_LOG"):
         with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps({"n": n, "argv": argv, "system": system, "stdin": stdin, "plan": plan, "effort": effort,
+            f.write(json.dumps({"n": n, "argv": argv, "system": system, "stdin": stdin, "plan": plan, "effort": effort, "t": time.time(),
                                 "cache_env": {k: v for k, v in os.environ.items()
                                               if "PROMPT_CACHE" in k or "PROMPT_CACHING" in k}}) + "\n")
     if "sleep" in feats:

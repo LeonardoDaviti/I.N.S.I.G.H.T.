@@ -1118,6 +1118,20 @@ class TestCost0191(Base):
         got = {("ent" if "GUIDE ent-v3" in c["system"] else "read"): c["cache_env"] for c in self.fake_calls()}
         self.assertEqual(got, {"read": {"DISABLE_PROMPT_CACHING": "1"}, "ent": {}})
 
+    def test_under_the_5_minute_cache_a_kinds_first_call_goes_alone(self):
+        # four merges, one a call, four callers: the first call alone (it writes the guide), then the other three at once
+        self.stub.add("merge", 4)
+        p = self.run_worker("--kinds", "merge", "--parallel", "4", "--prompt-cache", "off,merge=5m",
+                            plan="valid+sleep:0.4")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.fake_calls()
+        self.assertEqual(len(calls), 4)
+        self.assertEqual({c["cache_env"].get("CLAUDE_CODE_PROMPT_CACHE_TTL") for c in calls}, {"5m"})
+        self.assertEqual(len(self.stub.by_status("answered")), 4)
+        starts = sorted(c["t"] for c in calls)   # the first call returned (0.4 s) before any other started
+        self.assertGreaterEqual(starts[1] - starts[0], 0.35, starts)
+        self.assertLess(starts[3] - starts[1], 0.35, starts)   # then the other three at once
+
     def test_a_calls_cache_and_thinking_tokens_are_logged(self):
         self.stub.add("read", 4)
         p = self.run_worker("--kinds", "read")

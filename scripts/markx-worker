@@ -162,10 +162,13 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # v10.17 (0191): Claude Code's prompt cache, by kind. On a subscription it writes every prompt to the 1-hour cache
 # (billed at 2x input) and calls of distinct items almost never read it back: "off" sends the input once at 1x. The
 # kinds whose input the week's logs billed at about 1x or less (relate, back: the majority's runs ask the same prompt
-# again; read3) read it back, so they keep "default".
+# again; read3) read it back, so they keep "default", and so does websearch (its turns re-send the conversation). A
+# kind asked one item a call, whose guide is a large share of its prompt, takes "5m": its first call of a cycle goes
+# alone and writes the guide at 1.25x, the others read it at 0.1x (measured: 0.75x of list, against 1.0x off).
 # "mode[,kind=mode]": the first a mode alone, for every kind not named.
 PROMPT_CACHE = {"default": {}, "off": {"DISABLE_PROMPT_CACHING": "1"}, "5m": {"CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}}
-DEFAULT_PROMPT_CACHE = "off,relate=default,back=default,read3=default"
+DEFAULT_PROMPT_CACHE = ("off,relate=default,back=default,read3=default,websearch=default,merge=5m,sheet=5m,stance=5m,"
+                        "subtopics=5m,probes=5m,scout=5m,source_judge=5m,news_sections=5m,unit_types=5m")
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
@@ -712,6 +715,7 @@ class Worker:
                        "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
         self.model_seen = None
         self.refused = self.load_refused()   # 0191: tasks and posts a refusal was isolated to before
+        self.warm = {}                       # 0191: kind -> set once its first call under the 5-minute cache returned
 
     # -- fatal ------------------------------------------------------------------------------------------
     def set_fatal(self, kind, why):
@@ -1168,6 +1172,24 @@ class Worker:
             for _ in range(callers):
                 ready.put(None)
 
+    def warmed(self, b):
+        """first(b); 0191: under the 5-minute cache, a kind's first call of the cycle goes alone and the kind's other
+        calls wait for it (at most --timeout), so they read its guide from the cache instead of each writing it."""
+        if self.cache_mode(b.kind) != "5m":
+            return self.first(b)
+        with self.lock:
+            ready = self.warm.get(b.kind)
+            warmer = ready is None
+            if warmer:
+                ready = self.warm[b.kind] = threading.Event()
+        if not warmer:
+            ready.wait(self.a.timeout)
+            return self.first(b)
+        try:
+            return self.first(b)
+        finally:
+            ready.set()
+
     def run_batch(self, b):
         """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked once more in calls
         of per_call(kind) (as a round's retry did before v10.13.3)."""
@@ -1177,7 +1199,7 @@ class Worker:
                 return
             if self.stop.is_set():
                 return
-            todo = self.first(b)
+            todo = self.warmed(b)
             if not todo or self.stop.is_set() or self.a.no_retry:
                 return
             n = self.per_call(b.kind)
