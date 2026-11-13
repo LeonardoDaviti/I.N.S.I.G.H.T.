@@ -167,23 +167,16 @@ class Makers:
 
     def __init__(self, book: Any, mentions: Dict[str, List[Dict[str, Any]]]) -> None:
         self.book, self.mentions = book, mentions
-        self._forms: Dict[str, Set[str]] = defaultdict(set)
-        for k, eid in book.alias.items():
-            r = book.root(eid)
-            if r:
-                self._forms[r].add(N.squash(k))
-        for eid, e in book.ents.items():
-            r = book.root(eid)
-            if r:
-                self._forms[r].add(N.squash(e.key))
-        makers = {self.of_name(e.maker) for e in book.ents.values() if e.maker} - {None}
-        self._index: Dict[str, Set[str]] = defaultdict(set)
-        for r, fs in self._forms.items():
-            e = book.ents.get(r)
-            if e is not None and (e.type in ORG_TYPES or r in makers):
-                for f in fs:
-                    if f:
-                        self._index[f].add(r)
+        ms = [m for got in mentions.values() for m in got]   # v10.16.1: what `hits` asks first, read in one go (a page's
+        book.prime(ids=[m.get("entity_id") for m in ms],     # book reads what it is asked: identity.lazy_book)
+                   keys=[N.key(m.get(f)) for m in ms for f in ("maker", "name") if m.get(f)])
+        self._makers = book.maker_roots()
+        # the names an owner can match: an org's, or a cluster some entity names as its maker
+        self._names = book.name_forms(keep=self._org_or_maker)
+
+    def _org_or_maker(self, r: str) -> bool:
+        e = self.book.ents.get(r)
+        return e is not None and (e.type in ORG_TYPES or r in self._makers)
 
     def root(self, eid: Optional[str]) -> Optional[str]:
         return self.book.root(eid) if eid else None
@@ -193,7 +186,7 @@ class Makers:
         return self.root(self.book.by_key(k)) if k else None
 
     def forms(self, root: Optional[str]) -> Set[str]:
-        return self._forms.get(root, set()) if root else set()
+        return self._names.of(root) if root else set()
 
     def of_owner(self, o: Optional[str]) -> Optional[str]:
         """The one maker an owner string (a handle, an org, a site's name) names, or None."""
@@ -201,7 +194,7 @@ class Makers:
             return None
         found = set()
         for f in N.handle_forms(o):
-            found |= self._index.get(f, set())
+            found |= self._names.roots(f)
         return next(iter(found)) if len(found) == 1 else None
 
     def is_maker(self, o: Optional[str], mk: Optional[str]) -> bool:

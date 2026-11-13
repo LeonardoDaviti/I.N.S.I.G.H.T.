@@ -53,8 +53,14 @@ def key(name: Optional[str]) -> str:
     return base_key(s)
 
 
+SQUASH = r"[^0-9a-zа-яͰ-Ͽ一-鿿぀-ヿ가-힯+#]+"   # what squash drops
+# squash(key) in Postgres (v10.16.1, 0186: the same answer for every code point, measured), as migration 0127's
+# indexes on mx_entity_aliases.key and mx_entities.key spell it: a query must write it exactly so to use them
+SQUASH_SQL = "regexp_replace(key, '" + SQUASH + "', '', 'g')"
+
+
 def squash(k: Optional[str]) -> str:
-    return re.sub(r"[^0-9a-zа-яͰ-Ͽ一-鿿぀-ヿ가-힯+#]+", "", k or "")
+    return re.sub(SQUASH, "", k or "")
 
 
 def is_handle(span: Optional[str]) -> bool:
