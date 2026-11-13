@@ -127,4 +127,22 @@ describe('the entity queue, measured (issue 0130 A)', () => {
     expect(screen.getAllByRole('group', { name: 'Your answer' })).toHaveLength(1);
     expect(screen.queryByText(/Second opinion asked/)).not.toBeInTheDocument();
   });
+
+  it('says who proposes an item: a name rule (no confidence) or Haiku with its own (v10.18)', async () => {
+    const Q3: MarkxEntityQueue = {
+      ...QUEUE, counts: { ...QUEUE.counts, open: 2 },
+      open: [
+        { ...ITEM, id: 'r1', reason: 'type', confidence: null, band: null, evidence: { rules: ['squash'] },
+          opinion: { by: 'rule', rules: ['squash'] } } as MarkxQueueItem,
+        { ...ITEM, id: 'r2', reason: 'type', confidence: 0.6, band: null,
+          evidence: { rules: ['maker_prefix'], judge: { relation: 'cant_tell', confidence: 0.6 }, reasons: ['type', 'haiku_unsure'] },
+          opinion: { by: 'haiku', relation: 'cant_tell', confidence: 0.6, rules: ['maker_prefix'] } } as MarkxQueueItem,
+      ],
+    };
+    renderWithProviders(<MarkXEntities />, { api: makeFakeApi({
+      getMarkxEntities: vi.fn().mockResolvedValue(LIST), getMarkxEntityQueue: vi.fn().mockResolvedValue(Q3) }) });
+    expect(await screen.findByText(/a name rule suggests same \(the names match without spaces or punctuation\) · Haiku not asked yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Haiku says cant tell, 60% · a name rule suggests same/)).toBeInTheDocument();
+    expect(screen.queryByText(/97%/)).not.toBeInTheDocument();
+  });
 });

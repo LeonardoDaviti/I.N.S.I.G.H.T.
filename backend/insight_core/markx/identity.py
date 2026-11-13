@@ -36,6 +36,15 @@ entity_id only:
   4. **Collisions:** a key whose mentions differ in type or (stated) maker gets the collision judge (`collide`),
      asked COLLIDE_RUNS times; a split two of the runs make is queued as a proposal, never applied.
 
+v10.18 (issue 0201): **Haiku decides the queue.** A name rule's `same` across two types (or an org and a product
+family) is no longer queued on the rule alone (right ~30% on the server): Haiku is asked as for any pair; `different`
+at >= the config's bar keeps it apart (`rule_apart`, entity_bands.json `rule_type`), `same` goes the way of any `same`
+held for its types (the second opinion, on since measured), anything else stays queued (`haiku_unsure`). A rule has no
+confidence of its own: a queued item's confidence is Haiku's. **The backlog** (`backlog`): each run decides again up
+to REDECIDE_CAP open alias items not yet decided by this rule set (stamped `evidence.redecided`); a pair merged, kept
+apart or already one cluster closes its open item (kept, with `closed_by`), one still queued says what was decided now
+(`refresh_queued`, the earlier reason and confidence in `evidence.before`).
+
 The owner's answers (`answer`, the API's, in the request's own transaction: mx_entity* and mx_labels only) apply at
 once for the pages, which read through redirects and pins; the next run's snapshot sees them.
 
@@ -95,6 +104,8 @@ TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
 ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.I)
 ANSWERS = ("same", "other_version", "different", "not_entity")
 ALIAS2_CAP = 2000           # 0130 A2: second-opinion questions a run adds
+REDECIDE = "v10.18"         # the queue's open alias items decided again by this rule set (evidence.redecided)
+REDECIDE_CAP = 2000         # v10.18: open alias items a run decides again (the backlog, oldest first)
 
 
 # ---- 0130 A1-A2: the bands, as config (markx/entity_bands.json), measured on labels ----------------------------
@@ -1564,14 +1575,22 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
         # two stated versions that differ, in Haiku's fields or the parser's: kept apart, never asked (the guard kept
         # 135/135 labelled version pairs apart). A disagreement that changes a merge is the fields rule's queue.
         return Decision(k, "apart", "version" if not strong_only_one(a, b) else "version_one_parse")
+    proposed: Tuple[str, ...] = ()
     if auto and vc is None and not queue:
-        if not types_ok(a.type, b.type):
-            return Decision(k, "queue", "type", RULE_CONF, None, judge, tuple(sorted(auto)))
-        return Decision(k, "auto", "rule:" + sorted(auto)[0], RULE_CONF, None, judge, tuple(sorted(auto)))
+        mixed = not types_ok(a.type, b.type) or org_family(book, p.a, p.b)
+        if not mixed:
+            return Decision(k, "auto", "rule:" + sorted(auto)[0], RULE_CONF, None, judge, tuple(sorted(auto)))
+        # v10.18: a name rule's `same` across two types is right ~30% (the server's queue): Haiku decides it, as any
+        # pair no rule decides; the rule is only why the pair was proposed (never a confidence of its own)
+        proposed = tuple(sorted(auto))
     if judge is None:
-        return Decision(k, "ask", "unasked")
+        return Decision(k, "ask", "unasked", rules=proposed)
     if judge["relation"] != "same":
-        return Decision(k, "apart", "judge", judge["confidence"], call_id, judge)
+        if proposed and not rule_apart(judge):
+            # Haiku unsure (cant_tell, or `different` below the measured bar) where a rule says same: the owner's
+            return Decision(k, "queue", "type", float(judge.get("confidence") or 0), call_id, judge, proposed,
+                            reasons=("type", "haiku_unsure"))
+        return Decision(k, "apart", "judge", judge["confidence"], call_id, judge, proposed)
     conf = float(judge["confidence"])
     # every reason the `same` is held back for (0130: the first is the one shown; all of them decide the second opinion)
     reasons = sorted(queue)
@@ -1582,8 +1601,8 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
     if not types_ok(a.type, b.type):
         reasons.append("type")
     if not reasons:
-        return Decision(k, "auto", "haiku", conf, call_id, judge)
-    d = Decision(k, "queue", reasons[0], conf, call_id, judge, reasons=tuple(reasons))
+        return Decision(k, "auto", "haiku", conf, call_id, judge, proposed)
+    d = Decision(k, "queue", reasons[0], conf, call_id, judge, proposed, reasons=tuple(reasons))
     if second_asked(reasons, conf):
         d.second = second
         if second is None:
@@ -1594,6 +1613,15 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
         else:
             d.second_call = second_call
     return d
+
+
+def rule_apart(judge: Dict[str, Any]) -> bool:
+    """v10.18: Haiku's not-`same` on a pair a name rule proposed across two types keeps it apart by itself when the
+    config's row for it is on, the answer one of its relations (`different`: 160/160) and at least its bar
+    (entity_bands.json `rule_type`, measured on the server's queue); `part` and `cant_tell` never do."""
+    rt = bands().get("rule_type") or {}
+    return bool(rt.get("on")) and judge.get("relation") in (rt.get("apart_relations") or ()) and \
+        float(judge.get("confidence") or 0) >= float(rt.get("apart_min_conf", 1.01))
 
 
 def chain_guard(book: Book, decisions: List[Decision]) -> None:
@@ -1832,14 +1860,41 @@ def close_queued(cur: Any, p: Tuple[str, str], note: Dict[str, Any]) -> int:
     return 0 if got is None or got is True else 1
 
 
-def mark_second(cur: Any, p: Tuple[str, str], ev: Dict[str, Any]) -> bool:
-    """0130 A2: an open queue item gets its second opinion (and whether it disagrees) when the answer comes later."""
-    note = {k: ev.get(k) for k in ("second", "second_call", "disagree", "reasons", "band")}
-    got = _savepoint(cur, """UPDATE mx_entity_queue SET evidence = COALESCE(evidence, '{}'::jsonb) || %s::jsonb
+def refresh_queued(cur: Any, p: Tuple[str, str], d: "Decision", ev: Dict[str, Any]) -> bool:
+    """v10.18: the pair's open item says what the run decided now (its reason, Haiku's confidence, the evidence), the
+    item's earlier reason and confidence kept in `evidence.before`. Only when one of them changed."""
+    got = _savepoint(cur, """UPDATE mx_entity_queue
+                                SET reason = %s, confidence = %s, call_id = COALESCE(%s, call_id),
+                                    evidence = COALESCE(evidence, '{}'::jsonb)
+                                               || jsonb_build_object('before', jsonb_build_object('reason', reason,
+                                                                                                  'confidence', confidence))
+                                               || %s::jsonb
                               WHERE kind = 'alias' AND a = %s AND b = %s AND answer IS NULL AND closed_at IS NULL
-                                AND NOT COALESCE(evidence, '{}'::jsonb) ? 'second'
-                          RETURNING id""", (json.dumps(note, default=str), p[0], p[1]))
+                                AND (reason IS DISTINCT FROM %s OR confidence IS DISTINCT FROM %s
+                                     OR evidence->'judge' IS DISTINCT FROM %s::jsonb
+                                     OR evidence->'second' IS DISTINCT FROM %s::jsonb)
+                          RETURNING id""",
+                     (d.reason, d.conf, d.call_id, json.dumps(ev, default=str), p[0], p[1], d.reason, d.conf,
+                      json.dumps(ev.get("judge"), default=str), json.dumps(ev.get("second"), default=str)))
     return got is not None and got is not True
+
+
+def backlog(cur: Any, limit: int = REDECIDE_CAP) -> List[Tuple[str, str]]:
+    """v10.18: the open alias items not decided again by this rule set yet (REDECIDE), oldest first: their pairs."""
+    cur.execute("""SELECT a::text, b::text FROM mx_entity_queue
+                    WHERE kind = 'alias' AND b IS NOT NULL AND answer IS NULL AND closed_at IS NULL
+                      AND COALESCE(evidence->>'redecided', '') <> %s
+                    ORDER BY created_at, id LIMIT %s""", (REDECIDE, limit))
+    return [pair(a, b) for a, b in cur.fetchall()]
+
+
+def stamp_backlog(cur: Any, pairs: Iterable[Tuple[str, str]]) -> None:
+    ps = sorted(set(pairs))
+    if ps:
+        cur.execute("""UPDATE mx_entity_queue SET evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('redecided', %s::text)
+                        WHERE kind = 'alias' AND answer IS NULL AND closed_at IS NULL
+                          AND (a, b) IN (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
+                    (REDECIDE, [x for x, _ in ps], [y for _, y in ps]))
 
 
 def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, call_id: Any = None, queue_id: Any = None,
@@ -1970,6 +2025,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
                         WHERE t.kind = 'collide' AND c.created_at >= %s""", (since,))
         collide_since = {r[0] for r in cur.fetchall()}
+    again = set(backlog(cur))   # v10.18: the open alias items decided again (the backlog, a cap a run)
     vec_seeds: Set[str] = set()
     if not full or resume:   # the names whose vector came since the last run
         cur.execute("""SELECT t.a::text FROM mx_tasks t WHERE t.kind = 'embed_name' AND t.status = 'answered'
@@ -2021,7 +2077,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     collide_out: Counter = Counter()
     decided: Set[Tuple[str, str]] = set()
     pooled: Set[Tuple[str, str]] = set()
-    n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0}
+    n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0, "refreshed": 0}
+    closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
 
     seeded: Set[str] = set()
     collided: Set[str] = set()
@@ -2047,10 +2104,20 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         if first:
             for a, b in sorted(answered_pairs):
                 pool.add(a, b, "answered")
-            if answered_pairs:   # the rules' facts hold for every pair decided, not only the seeds'
-                ends = {x for p_ in answered_pairs for x in p_}
+            for a, b in sorted(again):
+                pool.add(a, b, "queued")
+            known = answered_pairs | again
+            if known:   # the rules' facts hold for every pair decided, not only the seeds'
+                ends = {x for p_ in known for x in p_}
                 hextra.update(pool_handles(Pool(book), book, hf, ends))
                 anchored |= pool_anchors(Pool(book), an, ends)
+                # the posts naming both ends of an answered or queued pair: their "X (Y)"
+                cur.execute("""SELECT DISTINCT a.post_id::text FROM mx_mentions_now a JOIN mx_mentions_now b
+                                 ON b.post_id = a.post_id AND b.guide = a.guide
+                                WHERE a.guide = ANY(%s) AND (a.entity_id, b.entity_id) IN
+                                      (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
+                            (guide, [p_[0] for p_ in known], [p_[1] for p_ in known]))
+                parens = set(parens) | paren_pairs(cur, book, guide, sorted({r[0] for r in cur.fetchall()}))
         for a, b in parens:
             if {a, b} & seeds:
                 pool.add(a, b, "paren")
@@ -2067,8 +2134,13 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         decisions: List[Decision] = []
         for p in pairs:
             if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
+                if (p.a, p.b) in again:
+                    closed["owner"] += close_queued(cur, (p.a, p.b), {"closed_by": "owner", "redecided": REDECIDE})
                 continue
             if book.root(p.a) == book.root(p.b):
+                if (p.a, p.b) in again:
+                    closed["same_cluster"] += close_queued(cur, (p.a, p.b), {"closed_by": "same_cluster",
+                                                                            "redecided": REDECIDE})
                 continue
             auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
             judge = call = None
@@ -2123,11 +2195,22 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                             run_id=run_id, evidence=ev)
                 if rid:
                     n["merged"] += 1
+                    # the pair's open item, if any, is answered by the merge (kept, closed with why)
+                    got_ = close_queued(cur, d.pair, {"closed_by": d.reason, "redirect": rid, "redecided": REDECIDE})
                     if d.reason == "second":
-                        n["cleared"] += close_queued(cur, d.pair, {"closed_by": "second", "redirect": rid})
+                        n["cleared"] += got_
+                    else:
+                        closed[d.reason] += got_
+            elif d.tier == "same_cluster" and d.pair in again:
+                closed["same_cluster"] += close_queued(cur, d.pair, {"closed_by": "same_cluster", "redecided": REDECIDE})
+            elif d.tier == "apart":
+                # v10.18: kept apart (Haiku's answer, or a version rule): an open item of the pair is closed, with why
+                closed["apart:" + d.reason] += close_queued(cur, d.pair, {
+                    "closed_by": "apart:" + d.reason, "judge": d.judge, "call_id": d.call_id, "rules": list(d.rules),
+                    "redecided": REDECIDE})
             elif d.tier == "queue":
                 ev = {"rules": list(d.rules), "judge": d.judge, "reasons": list(d.reasons),
-                      "band": band_of(d.conf) if d.judge else None}
+                      "band": band_of(d.conf) if d.judge and d.judge.get("relation") == "same" else None}
                 if d.second is not None:
                     ev.update(second=d.second, second_call=d.second_call, disagree=not second_agrees(d.second))
                 elif d.ask2:
@@ -2135,8 +2218,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
                               evidence=ev, call_id=d.call_id, run_id=run_id):
                     n["queued"] += 1
-                elif d.second is not None and mark_second(cur, d.pair, ev):
-                    n["marked"] += 1
+                elif refresh_queued(cur, d.pair, d, ev):
+                    n["marked" if d.second is not None else "refreshed"] += 1
+        if first and again:
+            stamp_backlog(cur, again)
         t = tick("write", t)
         decide_collisions(collide)
 
@@ -2173,13 +2258,6 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             link_part(part)
             facts_for(sorted({m.post_id for m in part}))
             paren_posts = sorted({m.post_id for m in part if m.entity_id})
-            if k == 0 and answered_pairs:   # the posts naming both ends of an answered pair
-                cur.execute("""SELECT DISTINCT a.post_id::text FROM mx_mentions_now a JOIN mx_mentions_now b
-                                 ON b.post_id = a.post_id AND b.guide = a.guide
-                                WHERE a.guide = ANY(%s) AND (a.entity_id, b.entity_id) IN
-                                      (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
-                            (guide, [p_[0] for p_ in answered_pairs], [p_[1] for p_ in answered_pairs]))
-                paren_posts = sorted(set(paren_posts) | {r[0] for r in cur.fetchall()})
             parens = paren_pairs(cur, book, guide, paren_posts)
             t = tick("paren", t)
             seeds = {m.entity_id for m in part if m.entity_id}
@@ -2258,6 +2336,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     out["alias_asked"] = n["added"]
     out["second"] = {"asked": n["added2"], "cleared": n["cleared"], "marked": n["marked"]}
     out["merged"], out["queued"] = n["merged"], n["queued"]
+    out["queue"] = {"again": len(again), "closed": dict(closed), "refreshed": n["refreshed"]}   # v10.18: the backlog
     if full:
         done = not stopped
         out["full"] = {"done": done, "phase": None if done else phase,

@@ -5,6 +5,7 @@ it), so only on a database whose name ends in _test."""
 from __future__ import annotations
 
 import json
+import math
 import re
 import unittest
 from unittest import mock
@@ -118,7 +119,11 @@ class Rules(unittest.TestCase):
         a, b = self.ent("a", "Acme Box Pro", "product"), self.ent("b", "Acme Box 2 Pro", "product")
         self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version_one_side")   # 0130 A3: one Box version
         a, b = self.ent("a", "Acme", "org"), self.ent("b", "Acme", "product")
-        self.assertEqual(self.decide(a, b, None, auto={"squash"}).reason, "type")
+        # v10.18: a rule's `same` across two types is Haiku's to decide (asked), never queued on the rule alone
+        d = self.decide(a, b, None, auto={"squash"})
+        self.assertEqual((d.tier, d.rules), ("ask", ("squash",)))
+        d = self.decide(a, b, self.same(0.95), auto={"squash"})
+        self.assertEqual((d.tier, d.reason, d.conf, d.rules), ("queue", "type", 0.95, ("squash",)))
 
     def test_an_edition_year_on_one_side(self):
         a, b = self.ent("a", "Acme Awards 2031", "event"), self.ent("b", "Acme Awards", "event")
@@ -144,8 +149,11 @@ class Rules(unittest.TestCase):
         for r in I.bands()["rows"]:     # a row is on only when it meets the bar (a second row: no wrong merge)
             if r["auto"] and r["opinion"] == "first":
                 self.assertGreaterEqual(r["right"] / r["n"], I.bands()["bar"]["point"])
-            if r["auto"] and r["opinion"] == "second":
-                self.assertEqual(r["right"], r["n"])
+            if r["auto"] and r["opinion"] == "second":   # no wrong merge, or (v10.18) the bar's point and Wilson bound
+                p_, n_, z = r["right"] / r["n"], r["n"], 1.96
+                low = (p_ + z * z / (2 * n_) - z * math.sqrt(p_ * (1 - p_) / n_ + z * z / (4 * n_ * n_))) / (1 + z * z / n_)
+                self.assertTrue(r["right"] == r["n"] or (p_ >= I.bands()["bar"]["point"]
+                                                         and low >= I.bands()["bar"]["wilson_low"]), r)
         with_rows = dict(I.bands(), rows=[dict(r, auto=True) if r["guard"] == "none" and r["band"] == "0.85-0.90" else r
                                           for r in I.bands()["rows"]])
         saved = dict(I._BANDS)
@@ -179,7 +187,11 @@ class Rules(unittest.TestCase):
         d = I.decide_pair(book, p, set(), {"paren"}, self.same(0.95), "c1")
         self.assertFalse(d.ask2)                                            # "X (Y)" is not measured: off
         a2 = self.ent("a", "Kestrel", "org")
+        d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1")
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "type", True))   # v10.18: measured 88/89, on
         d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1", self.same(0.95), "c2")
+        self.assertEqual((d.tier, d.reason), ("auto", "second"))
+        d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1", self.same(0.8), "c2")
         self.assertEqual((d.tier, d.reason), ("queue", "type"))
 
     def test_queue_only_rules_never_merge_by_themselves(self):
@@ -668,6 +680,87 @@ class Merging(_Db):
         self.stage(since=self.since)
         self.assertEqual([i["reason"] for i in entity_views.queue(self.cur)["open"]], ["paren"])
         self.assertEqual(self.cur.execute("SELECT count(*) FROM mx_entity_redirects").fetchone()[0], 0)
+
+
+class RuleProposedPairs(_Db):
+    """v10.18: a name rule's `same` across two types is decided by Haiku; the open backlog is decided again."""
+
+    def setUp(self):
+        super().setUp()
+        saved = dict(I._BANDS) or dict(I.bands())
+        I._BANDS.clear()
+        I._BANDS.update(dict(saved, rule_type={"on": True, "apart_min_conf": 0.8, "apart_relations": ["different"]}))
+        self.addCleanup(lambda: (I._BANDS.clear(), I._BANDS.update(saved)))
+
+    def _pair(self):
+        a = self.post(0, T0, title="KestrelCoder ships a CLI")
+        b = self.post(1, T0 + H, title="Kestrel Coder raises money")
+        self.mentions(a, ("KestrelCoder", "software", "subject"))
+        self.mentions(b, ("Kestrel Coder", "org", "subject"))
+        return a, b
+
+    def test_haiku_decides_a_rule_proposed_pair_of_two_types(self):
+        a, b = self._pair()
+        out = self.stage()
+        self.assertEqual((out["queued"], out["alias_asked"]), (0, 1))      # asked, never queued unasked
+        self.answer_task("alias", {"evidence": "a tool and a company", "relation": "different", "confidence": 0.93})
+        out = self.stage(since=self.since)
+        self.assertEqual((out["queued"], out["merged"]), (0, 0))
+        self.assertEqual(entity_views.queue(self.cur)["open"], [])
+        self.assertNotEqual(self.book().root(self.entity_of(a)), self.book().root(self.entity_of(b)))
+
+    def test_haiku_unsure_where_a_rule_says_same_is_queued_with_its_own_confidence(self):
+        self._pair()
+        self.stage()
+        self.answer_task("alias", {"evidence": "can't tell", "relation": "cant_tell", "confidence": 0.55})
+        self.stage(since=self.since)
+        item, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((item["reason"], item["confidence"], item["evidence"]["reasons"]), ("type", 0.55, ["type", "haiku_unsure"]))
+        self.assertEqual(item["opinion"], {"by": "haiku", "relation": "cant_tell", "confidence": 0.55, "rules": ["squash"]})
+        self.assertIsNone(item["band"])
+
+    def test_the_backlog_is_decided_again_and_closed_items_kept(self):
+        """An item queued before v10.18 (a rule's 0.97, Haiku never asked): asked, then closed by Haiku's answer."""
+        a, b = self._pair()
+        self.stage()
+        self.cur.execute("DELETE FROM mx_tasks WHERE kind = 'alias'")    # as before v10.18: never asked
+        ea, eb = I.pair(self.entity_of(a), self.entity_of(b))
+        self.assertTrue(I.queue_item(self.cur, kind="alias", a=ea, b=eb, proposal="same", reason="type", conf=I.RULE_CONF,
+                                     evidence={"rules": ["squash"], "judge": None}, call_id=None, run_id=None))
+        item, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((item["confidence"], item["opinion"], item["band"]), (None, {"by": "rule", "rules": ["squash"]}, None))
+        out = self.stage(since=self.since)
+        self.assertEqual((out["queue"]["again"], out["alias_asked"]), (1, 1))
+        self.assertEqual(I.backlog(self.cur), [])                       # stamped: not taken again
+        self.answer_task("alias", {"evidence": "a tool and a company", "relation": "different", "confidence": 0.9})
+        out = self.stage(since=self.since)
+        self.assertEqual(out["queue"]["closed"], {"apart:judge": 1})
+        self.assertEqual(entity_views.queue(self.cur)["open"], [])
+        self.cur.execute("SELECT closed_at IS NOT NULL, answer, evidence->>'closed_by', evidence->'judge'->>'relation' "
+                         "FROM mx_entity_queue")
+        self.assertEqual(self.cur.fetchall(), [(True, None, "apart:judge", "different")])   # kept, with why
+
+    def test_part_where_a_rule_says_same_stays_queued(self):
+        """`part` on a rule's pair (a company and its same-name product) measured 10/16: the owner's."""
+        self._pair()
+        self.stage()
+        self.answer_task("alias", {"evidence": "a company and its tool", "relation": "part", "confidence": 0.9})
+        self.stage(since=self.since)
+        item, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((item["reason"], item["evidence"]["reasons"]), ("type", ["type", "haiku_unsure"]))
+
+    def test_a_queued_item_says_what_the_run_decided_now(self):
+        a, b = self._pair()
+        self.stage()
+        self.answer_task("alias", {"evidence": "one tool", "relation": "same", "confidence": 0.95})
+        self.stage(since=self.since)
+        item, = entity_views.queue(self.cur)["open"]
+        self.assertEqual((item["reason"], item["confidence"], item["opinion"]["by"]), ("type", 0.95, "haiku"))
+        # an older row's rule constant is replaced by the decision now, the earlier one kept in evidence.before
+        self.cur.execute("UPDATE mx_entity_queue SET confidence = 0.97, evidence = evidence - 'redecided'")
+        self.stage(since=self.since)
+        self.cur.execute("SELECT confidence, evidence->'before'->>'confidence' FROM mx_entity_queue")
+        self.assertEqual(self.cur.fetchone(), (0.95, "0.97"))
 
 
 class Collisions(_Db):

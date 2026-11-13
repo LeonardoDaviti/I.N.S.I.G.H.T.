@@ -631,10 +631,20 @@ def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
     """One queue row as the queue shows it (`ex`: its entities' examples; `joins`: join()'s cache)."""
     qid, kind, a, b, proposal, reason, conf, ev, ans, at, created = r
     ev = ev or {}
+    judge = ev.get("judge") if isinstance(ev.get("judge"), dict) else None
+    opinion = None
+    if kind == "alias":
+        # v10.18: who says what, truthfully: Haiku's answer with its own confidence, or a name rule's proposal (a rule
+        # has no confidence; the 0.97 stored on rule-proposed items was a constant for the chain guard's order)
+        conf = float(judge["confidence"]) if judge and judge.get("confidence") is not None else None
+        opinion = ({"by": "haiku", "relation": judge.get("relation"), "confidence": conf, "rules": ev.get("rules") or []}
+                   if judge else {"by": "rule", "rules": ev.get("rules") or []} if ev.get("rules") else None)
     return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
             "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
             "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
-            "band": I.band_of(conf) if kind == "alias" else None,   # 0130 A1: the measured band it falls in
+            "opinion": opinion,
+            # 0130 A1: the measured band Haiku's `same` falls in (none for a rule's proposal or another answer)
+            "band": I.band_of(conf) if opinion and opinion["by"] == "haiku" and opinion["relation"] == "same" else None,
             "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
                          "reasons": ev.get("reasons"), "second": ev.get("second"),      # 0130 A2
                          "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
