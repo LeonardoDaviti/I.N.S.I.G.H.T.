@@ -154,7 +154,8 @@ class Stub:
                 t.update(status="leased", lease_until=until, leased_by=q["worker"])
             return {"lease_until": until.isoformat(), "guides": {t["guide"]: self.guides[t["guide"]] for t in pick},
                     "tasks": [dict({"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
-                                   **({"post": t["post"]} if "post" in t else {})) for t in pick]}
+                                   **({"post": t["post"]} if "post" in t else {}),
+                                   **({"model": t["model"]} if "model" in t else {})) for t in pick]}
 
     def check(self, answer):
         err = W.schema_error(SCHEMA, answer) if isinstance(answer, dict) else "not an object"
@@ -291,6 +292,15 @@ class TestValid(Base):
             self.assertEqual(w["worker"], "test-device")
         self.assertEqual(self.stub.releases, [])
         self.assertTrue(all(c["valid"] for c in self.stub.calls))
+
+    def test_a_kinds_model_from_the_server_is_the_one_asked(self):
+        """v10.18: a task the server names a model for (entity_bands.json `models`) is asked with it, else --model."""
+        self.stub.add("read", 3)
+        for t in list(self.stub.tasks.values())[:3]:
+            t["model"] = "sonnet"
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual({c["argv"][2] for c in self.fake_calls()}, {"sonnet"})
 
     def test_days_goes_with_every_lease_and_without_it_none(self):
         """0112 Decided 9: `--days <N|all>` makes the server plan that window first; without it the page's holds."""

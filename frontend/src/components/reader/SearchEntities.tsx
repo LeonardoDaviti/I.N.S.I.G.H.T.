@@ -13,6 +13,10 @@ export default function SearchEntities({ entities }: { entities: SearchEntity[] 
     <ul aria-label="Entities" data-search-entities className="mb-3 flex flex-col gap-2">
       {entities.map((entity) => {
         const kind = [entity.type, entity.maker ? `by ${entity.maker}` : null].filter(Boolean).join(' · ');
+        // 0184: "terminal app (3) · voice mode of a chat app (1)": the name's senses, else what it is
+        const what = entity.senses && entity.senses.length > 1
+          ? entity.senses.map((s) => `${s.what ?? '?'} (${s.posts})`).join(' · ')
+          : entity.what ?? null;
         return (
           <li key={entity.id}>
             <Link
@@ -21,6 +25,7 @@ export default function SearchEntities({ entities }: { entities: SearchEntity[] 
             >
               <span dir="auto" className="min-w-0 font-semibold text-fg [overflow-wrap:anywhere]">{entity.name}</span>
               {kind ? <span dir="auto" className="min-w-0 text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">{kind}</span> : null}
+              {what ? <span dir="auto" data-senses="" className="min-w-0 basis-full text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">{what}</span> : null}
               <span className="ml-auto text-[0.8125rem] tabular-nums text-fg-3">
                 {plural(entity.posts, 'post')} · {plural(entity.voices, 'voice')}
               </span>

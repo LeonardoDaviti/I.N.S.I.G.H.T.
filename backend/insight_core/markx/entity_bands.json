@@ -8,6 +8,29 @@
     "min_conf": 0.85,
     "about": "A held-back `same` whose every reason has a second row that is on, at >= min_conf, is asked again: the same guide (alias-v1) with two other example posts per name. Both `same` at >= min_conf: automatic, with its redirect (undoable). A disagreement stays in the queue, marked. Measured: these merges 71/71 right (held out of the guide's writing: 64/64), against alias-v2 (a stricter second-opinion guide) 78/79."
   },
+  "rule_type": {
+    "about": "v10.18: a pair a name rule (squash, maker_prefix, handle, anchor, fields) proposes across two types (or an org and a product family) is Haiku's to decide: asked when unasked; Haiku's answer in apart_relations at >= apart_min_conf keeps it apart by itself (its open queue item closed, kept); any other not-`same` (part, other_version, cant_tell, or a lower confidence) stays queued (haiku_unsure); `same` is held as any `same` with a type mismatch. Measured 2026-11-14 on the server's 304 open rule-proposed items (Haiku asked on the 281 never asked; one blind labeller, disputes refereed): `different` >= 0.8 kept apart 160/160 right (Wilson 97.7-100%); `part` >= 0.8 10/16 (a company and its same-name product: often one page), so `part` stays queued. Off: every such not-`same` stays queued.",
+    "on": true, "apart_min_conf": 0.8, "apart_relations": ["different"], "right": 160, "n": 160
+  },
+  "third": {
+    "about": "0201 (identity.third): a Haiku `same` still queued after both opinions and the chain guard, for a reason listed here, is asked alias-v2 (alias3: each side's known facts, the accounts naming it, four posts with wider windows). Its `same` >= same_min_conf merges ('third', past the chain guard's two-groups rule, never past 6 names a cluster); its answer in apart_relations >= apart_min_conf keeps the pair apart; anything else stays queued with it. Measured 2026-11-14, blind, held out: chain-held pairs, alias-v2 `same` >= 0.8: 76/77 right (98.7%, Wilson 93.0-99.8%), it decides 77 of 88; weak first answers (below_bar): `same` >= 0.85 12/15, so below_bar is not listed; `apart` never measured (alias-v2 said it once in 168): off.",
+    "on": true, "reasons": ["chain", "below_bar", "version", "version_year", "version_one_side"],
+    "kinds": {"below_bar": "alias4", "version": "alias4", "version_year": "alias4", "version_one_side": "alias4"},
+    "same_min_conf": 0.8, "same_min": {"version": 0.9, "version_year": 0.9, "version_one_side": 0.9},
+    "version": "v10.18 round 5: version-held pairs asked alias-v2 with Sonnet (alias4): `same` >= 0.9 67/67 right (Wilson 94.6-100%) on 140 held-out items (28 of 60, then 39 of 80, every one labelled); >= 0.8 42/45: the bar is 0.9; apart not listed (11/11, too few).",
+    "apart": {"below_bar": {"relations": ["different", "part", "other_version"], "min_conf": 0.7, "right": 36, "n": 36}},
+    "right": 76, "n": 77,
+    "apart_about": "v10.18 round 4: Sonnet's not-`same` on the weak class (alias4) at >= 0.7: 36/36 right (Wilson 90.4-100%) on 160 held-out weak items (all its not-`same` answers labelled: 120 + 40 more); below 0.7 it is 24/32. Chain-held: alias-v2 said apart once, never measured: no row. Version-held with Sonnet: same >= 0.9 28/28 (low 87.9%), >= 0.8 42/45; apart 11/11 (low 74.1%): not listed.",
+    "below_bar": "v10.18 round 3: a weak first `same` (< 0.85, no second opinion) asked alias-v2 with Sonnet (kind alias4, `models`): `same` >= 0.8 67/68 right (98.5%, Wilson 92.1-99.7%) on 120 held-out items, the second 60 alone 34/34; it fires on 68 of 120. Sonnet's not-`same` 31/32 (Wilson low 84.3%): apart stays off. Haiku's alias-v2 on the same class: 12/15, off."
+  },
+  "models": {
+    "about": "v10.18: the model a kind is asked with when not the worker's own --model (the server names it on each leased task; identity.model_for). Measured per kind: alias4 (the weak `same` class) with Sonnet, above.",
+    "alias4": "sonnet"
+  },
+  "facts": {
+    "about": "0184 (markx/entity_facts.py): identity facts. on: the readers read them and the stage writes them (makers from stated mentions; the facts of a settled collision answer); place: a bare name's new mention placed in a sense by rule (stated maker, shared source or co-named entity), else marked wait and its entity asked; split: a split two runs agree on becomes sense entities with their mentions pinned (else queued for the owner, as before); backfill: bare names with 2+ posts and no facts are asked, cap a run. Off until the switch-on bars of 0184 are met on frozen sets (plan/issues/0184). Measured 2026-11-14: place (rule 1, the stated maker) 53/54 (98.1%, Wilson low 90.2%) on held-out server collisions: on (it acts only once `on` is); rule_context 140/171: off; rule_handle: no person rows on the copies (18 rows, all orgs): off, unmeasured; split 54/54: off until the owner switches `on`.",
+    "on": false, "place": true, "known": false, "rule_context": false, "rule_handle": false, "split": false, "backfill": false, "cap": 200
+  },
   "repairs": {
     "about": "0164 (markx/entity_repair.py): the identity repairs each run. org_family: a product family merged into an org is cut apart (automatic redirects undone; never the owner's). reparent: a version whose family is an org gets a family entity. families: families differing only by their maker's name or brand merge, then their same versions. suffix: orgs one once a corporate suffix goes merge only with min posts naming one beside the other's things (unmeasured: off sets the alias questions alone to decide). shown: the name and type shown, by evidence. product_accounts (0164 B): an org-typed name that is a family's maker in front of the family's name merges into the family.",
     "org_family": true, "product_accounts": true, "reparent": true, "families": true, "suffix": false, "suffix_min_posts": 2, "shown": true
@@ -35,7 +58,7 @@
     {"opinion": "second", "guard": "handle_extra_word", "band": "any", "auto": true, "right": 4, "n": 4},
     {"opinion": "second", "guard": "version_year", "band": "any", "auto": true, "right": 4, "n": 4},
     {"opinion": "second", "guard": "version_one_side", "band": "any", "auto": true, "right": 3, "n": 3},
-    {"opinion": "second", "guard": "type", "band": "any", "auto": false, "right": 2, "n": 2, "why": "the first opinion is 4/6 on a type mismatch; too few to trust"},
+    {"opinion": "second", "guard": "type", "band": "any", "auto": true, "right": 88, "n": 89, "why": "v10.18, the server's queue 2026-11-14 (blind labels, disputes refereed): a `same` held for its types (a name rule's pair 47/48, a Haiku pair 39/39) with both opinions >= 0.85; 2/2 before. 98.9%, Wilson 93.9-99.8%"},
     {"opinion": "second", "guard": "version", "band": "any", "auto": false, "right": 5, "n": 5, "why": "held by 0130 A3: the family has several versions"},
     {"opinion": "second", "guard": "paren", "band": "any", "auto": false, "right": 0, "n": 0, "why": "not measured"},
     {"opinion": "second", "guard": "chain", "band": "any", "auto": false, "right": 11, "n": 11, "why": "the chain guard runs after; a chain is never automatic"}

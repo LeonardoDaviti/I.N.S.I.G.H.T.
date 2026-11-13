@@ -162,7 +162,9 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         return []
     earlier = rename.earlier(cur, book, root)
     early = {m for x in earlier for m in x["members"]}
-    maker = maker_of(book, root)
+    from insight_core.markx import entity_facts
+    fact = entity_facts.read(cur, [root]).get(root)   # 0184: the maker the facts give, else by identity
+    maker = (book.root(fact.maker_id) if fact and fact.maker_id else None) or maker_of(book, root)
     sites = maker_names(book, root, maker)
     by_maker = _maker_sources(cur, book, maker)
     from insight_core.markx import entity_addresses as EA

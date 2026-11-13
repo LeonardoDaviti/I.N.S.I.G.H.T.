@@ -195,6 +195,16 @@ ALIAS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
+# 0201 (v10.18): alias-v2, the question for pairs alias-v1 left unsure: each side's facts first, then the relation.
+_SIDE = {"type": "object", "properties": {"what": _STR, "kind": {"type": ["string", "null"]},
+                                         "maker": {"type": ["string", "null"]}}}
+ALIAS_V2_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence"],
+    "properties": {"a": _SIDE, "b": _SIDE, "evidence": _STR, "relation": {"enum": ALIAS_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
 # 0165 B: two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
 RENAME_RELATIONS = ["renamed", "successor", "part", "different", "cant_tell"]
 RENAME_SCHEMA = {
@@ -215,6 +225,28 @@ COLLIDE_SCHEMA = {
             "type": "object", "required": ["m"],
             "properties": {"m": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
                            "what": _STR}}},
+        "related": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 3}},
+        "unclear": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
+# 0184 (v10.18): collide-v2, the same question with each sense's identity facts (markx/entity_facts.py): a superset
+# of collide-v1's answer (its readers read `m` and `what` as before).
+FACT_KINDS = ["person", "org", "model", "product", "software", "dataset", "paper", "event", "place", "project", "law",
+              "other"]
+COLLIDE2_SCHEMA = {
+    "type": "object",
+    "required": ["senses"],
+    "properties": {
+        "evidence": _STR,
+        "senses": {"type": "array", "minItems": 1, "items": {
+            "type": "object", "required": ["m"],
+            "properties": {"m": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+                           "known": {"type": ["string", "null"]}, "what": _STR,
+                           "kind": {"enum": FACT_KINDS}, "maker": {"type": ["string", "null"]},
+                           "context": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
+                           "generic": {"type": "boolean"}}}},
         "related": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 3}},
         "unclear": {"type": "array", "items": {"type": "integer", "minimum": 1}},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -451,6 +483,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
+    Kind("alias3", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the unsure queue's question (each side's facts)
+    Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the same, for a class asked with its own model
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)

@@ -87,7 +87,7 @@ const ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
 const REASONS: Record<string, string> = {
   below_bar: 'Haiku says the same, below its 0.9 bar', version: 'one name states a version the other lacks',
   version_year: 'a year or edition on one side only', version_one_side: 'one name states a version the other lacks, its family has one',
-  type: 'their types differ', chain: 'it would join two groups of names', handle_extra_word: 'a handle with an extra word',
+  type: 'their types differ', haiku_unsure: 'Haiku is unsure where a name rule says same', chain: 'it would join two groups of names', handle_extra_word: 'a handle with an extra word',
   paren: '“X (Y)” written in one post', fields_parser: 'Haiku’s version fields agree, the parser’s don’t',
   maker_unstated: 'the maker in front is only guessed', collision: 'one name, maybe several things',
   rename: 'one maker, the older name gone quiet as the newer came',   // 0165 B
@@ -117,6 +117,27 @@ const RENAME_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
   { answer: 'same', label: 'same thing, renamed' }, { answer: 'different', label: 'different' },
   { answer: 'not_entity', label: 'not an entity' },
 ];
+
+/** v10.18: the name rules that propose a pair (a rule has no confidence of its own). */
+const RULES: Record<string, string> = {
+  squash: 'the names match without spaces or punctuation', maker_prefix: 'one is the other with its maker in front',
+  handle: 'one is the other’s handle', anchor: 'the same repository or model address',
+  fields: 'the same version fields', family_version: 'the same version of one family',
+};
+
+/** v10.18: who proposes an alias item, truthfully: " · Haiku says different, 93%" or " · a name rule suggests same
+ * (…) · Haiku not asked yet". Never a rule's constant shown as Haiku's confidence. */
+function opinionLine(item: MarkxQueueItem): string {
+  const o = item.opinion;
+  if (!o) return '';
+  if (o.by === 'rule') {
+    const why = o.rules.map((r) => RULES[r] ?? r).join('; ');
+    return ` · a name rule suggests same${why ? ` (${why})` : ''} · Haiku not asked yet`;
+  }
+  const pct = o.confidence != null ? `, ${Math.round(o.confidence * 100)}%` : '';
+  const rule = o.rules.length ? ' · a name rule suggests same' : '';
+  return ` · Haiku says ${(o.relation ?? '?').replace('_', ' ')}${pct}${rule}`;
+}
 
 /** 0130 A1-A2: what the queue item carries beyond 0119's: its band, every reason, the second opinion. */
 type Opinion = { relation?: string; confidence?: number; evidence?: string } | null;
@@ -212,7 +233,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
               : `Proposed: ${item.proposal.replace('_', ' ')}`}
         {' · '}{REASONS[item.reason] ?? item.reason}
         {(item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
-        {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
+        {item.kind === 'alias' ? opinionLine(item) : item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
         {item.band ? ` · band ${bandLabel(item.band)}` : ''}
       </p>
       {item.kind === 'collision' ? (

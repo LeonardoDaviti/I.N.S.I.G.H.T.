@@ -72,3 +72,11 @@ suggestion: its posts are no evidence for Discover, a track's Discover and sourc
 source missing rows or the voices' suggestions, and its address is never proposed (it stays followed). Its stored
 posts keep their places, and their voices, in News, stories and Classics. One rule:
 `backend/insight_core/db/repo_stories.py` (`suggestable_sql`, `switched_off`, `SourceFacts.suggestable`) (0200).
+
+**Identity facts** *(0184, built v10.18 behind a switch)* — what an entity is, as one sense of its name: its kind,
+its maker, a one-line "what it is", the few words that tell it from another thing of the same name, and whether the
+name is only a generic word (`markx/entity_facts.py`, `mx_entity_facts`). Linking a bare name asks them; the
+timeline, cards and search read them (`entity_facts.read`, by id), never re-deriving a maker or a kind.
+
+**Sense** *(0184)* — one thing a name stands for. A bare name ("Vexa") may have several senses, each its own entity
+with its own identity facts; a mention is placed in one sense (a pin `by` facts), never joined by the name alone.

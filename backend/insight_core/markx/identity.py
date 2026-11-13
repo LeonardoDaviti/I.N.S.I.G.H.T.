@@ -36,6 +36,15 @@ entity_id only:
   4. **Collisions:** a key whose mentions differ in type or (stated) maker gets the collision judge (`collide`),
      asked COLLIDE_RUNS times; a split two of the runs make is queued as a proposal, never applied.
 
+v10.18 (issue 0201): **Haiku decides the queue.** A name rule's `same` across two types (or an org and a product
+family) is no longer queued on the rule alone (right ~30% on the server): Haiku is asked as for any pair; `different`
+at >= the config's bar keeps it apart (`rule_apart`, entity_bands.json `rule_type`), `same` goes the way of any `same`
+held for its types (the second opinion, on since measured), anything else stays queued (`haiku_unsure`). A rule has no
+confidence of its own: a queued item's confidence is Haiku's. **The backlog** (`backlog`): each run decides again up
+to REDECIDE_CAP open alias items not yet decided by this rule set (stamped `evidence.redecided`); a pair merged, kept
+apart or already one cluster closes its open item (kept, with `closed_by`), one still queued says what was decided now
+(`refresh_queued`, the earlier reason and confidence in `evidence.before`).
+
 The owner's answers (`answer`, the API's, in the request's own transaction: mx_entity* and mx_labels only) apply at
 once for the pages, which read through redirects and pins; the next run's snapshot sees them.
 
@@ -94,6 +103,9 @@ TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
 ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.I)
 ANSWERS = ("same", "other_version", "different", "not_entity")
 ALIAS2_CAP = 2000           # 0130 A2: second-opinion questions a run adds
+ALIAS3_CAP = 2000           # 0201: the unsure queue's questions (alias-v2) a run adds
+REDECIDE = "v10.18"         # the queue's open alias items decided again by this rule set (evidence.redecided)
+REDECIDE_CAP = 2000         # v10.18: open alias items a run decides again (the backlog, oldest first)
 
 
 # ---- 0130 A1-A2: the bands, as config (markx/entity_bands.json), measured on labels ----------------------------
@@ -111,6 +123,13 @@ def bands() -> Dict[str, Any]:
     if not _BANDS:
         _BANDS.update(json.loads(BANDS_FILE.read_text(encoding="utf-8")))
     return _BANDS
+
+
+def model_for(kind: str) -> Optional[str]:
+    """v10.18: the model a kind's tasks are asked with when it is not the worker's own (entity_bands.json `models`,
+    measured per kind); the worker's --model otherwise."""
+    m = (bands().get("models") or {}).get(kind)
+    return m if isinstance(m, str) else None
 
 
 def band_of(conf: Optional[float]) -> Optional[str]:
@@ -1579,14 +1598,22 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
         # two stated versions that differ, in Haiku's fields or the parser's: kept apart, never asked (the guard kept
         # 135/135 labelled version pairs apart). A disagreement that changes a merge is the fields rule's queue.
         return Decision(k, "apart", "version" if not strong_only_one(a, b) else "version_one_parse")
+    proposed: Tuple[str, ...] = ()
     if auto and vc is None and not queue:
-        if not types_ok(a.type, b.type):
-            return Decision(k, "queue", "type", RULE_CONF, None, judge, tuple(sorted(auto)))
-        return Decision(k, "auto", "rule:" + sorted(auto)[0], RULE_CONF, None, judge, tuple(sorted(auto)))
+        mixed = not types_ok(a.type, b.type) or org_family(book, p.a, p.b)
+        if not mixed:
+            return Decision(k, "auto", "rule:" + sorted(auto)[0], RULE_CONF, None, judge, tuple(sorted(auto)))
+        # v10.18: a name rule's `same` across two types is right ~30% (the server's queue): Haiku decides it, as any
+        # pair no rule decides; the rule is only why the pair was proposed (never a confidence of its own)
+        proposed = tuple(sorted(auto))
     if judge is None:
-        return Decision(k, "ask", "unasked")
+        return Decision(k, "ask", "unasked", rules=proposed)
     if judge["relation"] != "same":
-        return Decision(k, "apart", "judge", judge["confidence"], call_id, judge)
+        if proposed and not rule_apart(judge):
+            # Haiku unsure (cant_tell, or `different` below the measured bar) where a rule says same: the owner's
+            return Decision(k, "queue", "type", float(judge.get("confidence") or 0), call_id, judge, proposed,
+                            reasons=("type", "haiku_unsure"))
+        return Decision(k, "apart", "judge", judge["confidence"], call_id, judge, proposed)
     conf = float(judge["confidence"])
     # every reason the `same` is held back for (0130: the first is the one shown; all of them decide the second opinion)
     reasons = sorted(queue)
@@ -1597,8 +1624,8 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
     if not types_ok(a.type, b.type):
         reasons.append("type")
     if not reasons:
-        return Decision(k, "auto", "haiku", conf, call_id, judge)
-    d = Decision(k, "queue", reasons[0], conf, call_id, judge, reasons=tuple(reasons))
+        return Decision(k, "auto", "haiku", conf, call_id, judge, proposed)
+    d = Decision(k, "queue", reasons[0], conf, call_id, judge, proposed, reasons=tuple(reasons))
     if second_asked(reasons, conf):
         d.second = second
         if second is None:
@@ -1609,6 +1636,84 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
         else:
             d.second_call = second_call
     return d
+
+
+def rule_apart(judge: Dict[str, Any]) -> bool:
+    """v10.18: Haiku's not-`same` on a pair a name rule proposed across two types keeps it apart by itself when the
+    config's row for it is on, the answer one of its relations (`different`: 160/160) and at least its bar
+    (entity_bands.json `rule_type`, measured on the server's queue); `part` and `cant_tell` never do."""
+    rt = bands().get("rule_type") or {}
+    return bool(rt.get("on")) and judge.get("relation") in (rt.get("apart_relations") or ()) and \
+        float(judge.get("confidence") or 0) >= float(rt.get("apart_min_conf", 1.01))
+
+
+def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], Any]) -> List[Decision]:
+    """0201: a `same` still queued after both opinions and the chain guard, for a reason the config's `third` row
+    names (a weak first answer, a chain, a held version), is asked alias-v2 (each side's facts, accounts and four
+    posts). Its `same` at >= its bar merges ('third'; past the chain guard's two-groups rule, never past MAX_CLUSTER
+    names); its not-`same` keeps the pair apart where the reason held has a measured row (`apart`, by reason); anything else stays queued with it. Returns the
+    decisions still to ask."""
+    cfg = bands().get("third") or {}
+    if not cfg.get("on"):
+        return []
+    need = []
+    for d in decisions:
+        if d.tier != "queue" or not d.judge or d.judge.get("relation") != "same" or d.rules:
+            continue
+        if not set(d.reasons or (d.reason,)) | {d.reason} <= set(cfg.get("reasons") or ()):
+            continue
+        if d.ask2 or (d.second is not None and not second_agrees(d.second)):
+            continue   # the second opinion is still to come, or disagrees: the owner's (never measured here)
+        got_ = answers.get(d.pair)
+        if not got_:
+            need.append(d)
+            continue
+        call, a = got_[0]
+        conf = float(a.get("confidence") or 0)
+        d.second = d.second if d.second is not None else None
+        if a.get("relation") == "same" and conf >= float((cfg.get("same_min") or {}).get(d.reason, cfg.get("same_min_conf", 1.01))) and \
+                book.cluster_size(book.root(d.pair[0])) + book.cluster_size(book.root(d.pair[1])) <= MAX_CLUSTER:
+            d.tier, d.reason, d.conf, d.call_id, d.judge = "auto", "third", conf, call, dict(a)
+        elif a.get("relation") in (apart_cfg(cfg, d).get("relations") or ()) \
+                and conf >= float(apart_cfg(cfg, d).get("min_conf", 1.01)):
+            d.tier, d.reason, d.conf, d.call_id, d.judge = "apart", "third", conf, call, dict(a)
+        else:
+            d.judge = dict(d.judge, third=a)
+    return need
+
+
+def apart_cfg(cfg: Dict[str, Any], d: Decision) -> Dict[str, Any]:
+    """When the unsure queue's answer keeps a pair apart, by the reason it was held for (`third.apart`, measured per
+    class): {relations, min_conf}; none: never."""
+    return (cfg.get("apart") or {}).get(d.reason) or {}
+
+
+def third_kind(d: Decision) -> str:
+    """The kind a held `same` is asked as: the config's per-reason kind (`third.kinds`: a class asked with its own
+    model, `models`), else alias3."""
+    return ((bands().get("third") or {}).get("kinds") or {}).get(d.reason, "alias3")
+
+
+def alias3_input(cur: Any, book: Book, guide: Any, a: str, b: str) -> str:
+    """alias-v2's item: each side's name and fields, its known facts (markx/entity_facts.py), the accounts whose
+    posts name it (their handles), and four example posts with wider windows."""
+    from insight_core.markx import entity_facts
+    ids = [a, b]
+    ex = examples(cur, guide, ids, n=4, wide=True)
+    written, nposts = spans(cur, guide, ids), counts_of(cur, guide, ids)
+    facts = entity_facts.read(cur, [book.root(x) for x in ids], force=True)
+    cur.execute("""SELECT m.entity_id::text, array_agg(DISTINCT r.handle) FROM mx_mentions_now m
+                     JOIN mx_handle_refs r ON r.post_id = m.post_id AND r.role = 'by'
+                    WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[]) GROUP BY 1""", (list(guide), ids))
+    accounts = dict(cur.fetchall())
+    sides = []
+    for x in ids:
+        e = book.ents[x]
+        f = facts.get(book.root(x))
+        known = (f"{f.what} | kind {f.kind} | maker {f.maker or 'none'}" if f and f.what else "none")
+        sides.append(show(e, written.get(x, [e.name]), nposts.get(x, 0), ex.get(x, [])).replace(
+            "\n", f"\n  known facts: {known}\n  accounts naming it: {', '.join(sorted(accounts.get(x) or [])[:6]) or 'none'}\n", 1))
+    return alias_input(*sides)
 
 
 def chain_guard(book: Book, decisions: List[Decision]) -> None:
@@ -1670,7 +1775,8 @@ def _pick(eid: str, ms: Sequence[Tuple[str, str, str, str]], n: int, salt: int =
     return out
 
 
-def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool = False) -> Dict[str, List[str]]:
+def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool = False,
+             wide: bool = False) -> Dict[str, List[str]]:
     """Up to n example posts of each entity: distinct sources, subjects first, picked by a seed of its key (stable).
     `other` (0130 A2, the second opinion): n other posts than the first question's, topped up with the first's when
     the entity has fewer."""
@@ -1691,7 +1797,8 @@ def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool 
             first = again + [x for x in first if x[0] not in {pid for pid, _ in again}][:max(0, n - len(again))]
         picks[eid] = first
     posts = tasks.load_posts(cur, {pid for xs in picks.values() for pid, _ in xs})
-    return {eid: [_ctx(posts[pid], span) for pid, span in xs if pid in posts] for eid, xs in picks.items()}
+    win = (300, 500) if wide else (140, 220)   # 0201: alias-v2's wider windows
+    return {eid: [_ctx(posts[pid], span, *win) for pid, span in xs if pid in posts] for eid, xs in picks.items()}
 
 
 def spans(cur: Any, guide: str, eids: Sequence[str]) -> Dict[str, List[str]]:
@@ -1847,14 +1954,41 @@ def close_queued(cur: Any, p: Tuple[str, str], note: Dict[str, Any]) -> int:
     return 0 if got is None or got is True else 1
 
 
-def mark_second(cur: Any, p: Tuple[str, str], ev: Dict[str, Any]) -> bool:
-    """0130 A2: an open queue item gets its second opinion (and whether it disagrees) when the answer comes later."""
-    note = {k: ev.get(k) for k in ("second", "second_call", "disagree", "reasons", "band")}
-    got = _savepoint(cur, """UPDATE mx_entity_queue SET evidence = COALESCE(evidence, '{}'::jsonb) || %s::jsonb
+def refresh_queued(cur: Any, p: Tuple[str, str], d: "Decision", ev: Dict[str, Any]) -> bool:
+    """v10.18: the pair's open item says what the run decided now (its reason, Haiku's confidence, the evidence), the
+    item's earlier reason and confidence kept in `evidence.before`. Only when one of them changed."""
+    got = _savepoint(cur, """UPDATE mx_entity_queue
+                                SET reason = %s, confidence = %s, call_id = COALESCE(%s, call_id),
+                                    evidence = COALESCE(evidence, '{}'::jsonb)
+                                               || jsonb_build_object('before', jsonb_build_object('reason', reason,
+                                                                                                  'confidence', confidence))
+                                               || %s::jsonb
                               WHERE kind = 'alias' AND a = %s AND b = %s AND answer IS NULL AND closed_at IS NULL
-                                AND NOT COALESCE(evidence, '{}'::jsonb) ? 'second'
-                          RETURNING id""", (json.dumps(note, default=str), p[0], p[1]))
+                                AND (reason IS DISTINCT FROM %s OR confidence IS DISTINCT FROM %s
+                                     OR evidence->'judge' IS DISTINCT FROM %s::jsonb
+                                     OR evidence->'second' IS DISTINCT FROM %s::jsonb)
+                          RETURNING id""",
+                     (d.reason, d.conf, d.call_id, json.dumps(ev, default=str), p[0], p[1], d.reason, d.conf,
+                      json.dumps(ev.get("judge"), default=str), json.dumps(ev.get("second"), default=str)))
     return got is not None and got is not True
+
+
+def backlog(cur: Any, limit: int = REDECIDE_CAP) -> List[Tuple[str, str]]:
+    """v10.18: the open alias items not decided again by this rule set yet (REDECIDE), oldest first: their pairs."""
+    cur.execute("""SELECT a::text, b::text FROM mx_entity_queue
+                    WHERE kind = 'alias' AND b IS NOT NULL AND answer IS NULL AND closed_at IS NULL
+                      AND COALESCE(evidence->>'redecided', '') <> %s
+                    ORDER BY created_at, id LIMIT %s""", (REDECIDE, limit))
+    return [pair(a, b) for a, b in cur.fetchall()]
+
+
+def stamp_backlog(cur: Any, pairs: Iterable[Tuple[str, str]]) -> None:
+    ps = sorted(set(pairs))
+    if ps:
+        cur.execute("""UPDATE mx_entity_queue SET evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('redecided', %s::text)
+                        WHERE kind = 'alias' AND answer IS NULL AND closed_at IS NULL
+                          AND (a, b) IN (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
+                    (REDECIDE, [x for x, _ in ps], [y for _, y in ps]))
 
 
 def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, call_id: Any = None, queue_id: Any = None,
@@ -1881,15 +2015,18 @@ class Asked:
     alias: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)   # pair -> (task id, status)
     collide: Dict[str, Tuple[str, str, str]] = field(default_factory=dict)         # entity -> (task id, status, input)
     alias2: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)  # 0130 A2: the second opinions
+    alias3: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)  # 0201: the unsure queue's question
 
 
 def asked(cur: Any) -> Asked:
     out = Asked()
-    cur.execute("SELECT id::text, kind, a::text, b::text, status, input FROM mx_tasks WHERE kind IN ('alias', 'alias2', 'collide') "
-                "ORDER BY created_at")
+    cur.execute("SELECT id::text, kind, a::text, b::text, status, input FROM mx_tasks "
+                "WHERE kind IN ('alias', 'alias2', 'alias3', 'alias4', 'collide') ORDER BY created_at")
     for tid, kind, a, b, status, text in cur.fetchall():
         if kind == "alias2" and b is not None:
             out.alias2[pair(a, b)] = (tid, status)
+        elif kind in ("alias3", "alias4") and b is not None:   # one unsure-queue answer a pair, whichever kind
+            out.alias3[pair(a, b)] = (tid, status)
         elif b is not None:
             out.alias[pair(a, b)] = (tid, status)
         elif a is not None:
@@ -1972,6 +2109,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     if hasattr(ask, "caps"):   # identity's questions are cheap and each waits otherwise for the nightly pass
         ask.caps.setdefault("alias", ALIAS_CAP)
         ask.caps.setdefault("alias2", ALIAS2_CAP)
+        ask.caps.setdefault("alias3", ALIAS3_CAP)
+        ask.caps.setdefault("alias4", ALIAS3_CAP)
         ask.caps.setdefault("collide", COLLIDE_CAP)
     got = asked(cur)
     answered_pairs: Set[Tuple[str, str]] = set()
@@ -1985,6 +2124,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
                         WHERE t.kind = 'collide' AND c.created_at >= %s""", (since,))
         collide_since = {r[0] for r in cur.fetchall()}
+    again = set(backlog(cur))   # v10.18: the open alias items decided again (the backlog, a cap a run)
     vec_seeds: Set[str] = set()
     if not full or resume:   # the names whose vector came since the last run
         cur.execute("""SELECT t.a::text FROM mx_tasks t WHERE t.kind = 'embed_name' AND t.status = 'answered'
@@ -1996,7 +2136,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         vec_seeds |= {r[0] for r in cur.fetchall()}
     t = tick("load", t)
 
+    from insight_core.markx import entity_facts
     link_out: Counter = Counter({"mentions": 0, "linked": 0, "entities_made": 0, "published": 0})
+    placed: Counter = Counter()
     touched_days: Set[Any] = set()
     posts_linked: Set[str] = set()
     facts: Dict[str, Any] = {"hf": None, "an": None}
@@ -2006,6 +2148,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         nonlocal t
         before = {(m.post_id, m.guide, m.n): m.entity_id for m in ms}
         got_ = relink(cur, book, ms)
+        placed.update(entity_facts.place(cur, book, ms, run_id=run_id))   # 0184: a bare name's mentions, by sense
+        placed.update(entity_facts.place_by_handle(cur, book, ms))         # 0184: a first name in its own account's post
         link_out["mentions"] += got_["mentions"]
         link_out["linked"] += got_["linked"]
         link_out["published"] += published(cur, book, w, ms)   # 0133: a document's `by`
@@ -2036,7 +2180,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     collide_out: Counter = Counter()
     decided: Set[Tuple[str, str]] = set()
     pooled: Set[Tuple[str, str]] = set()
-    n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0}
+    n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0, "refreshed": 0,
+         "added3": 0}
+    closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
 
     seeded: Set[str] = set()
     collided: Set[str] = set()
@@ -2062,10 +2208,20 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         if first:
             for a, b in sorted(answered_pairs):
                 pool.add(a, b, "answered")
-            if answered_pairs:   # the rules' facts hold for every pair decided, not only the seeds'
-                ends = {x for p_ in answered_pairs for x in p_}
+            for a, b in sorted(again):
+                pool.add(a, b, "queued")
+            known = answered_pairs | again
+            if known:   # the rules' facts hold for every pair decided, not only the seeds'
+                ends = {x for p_ in known for x in p_}
                 hextra.update(pool_handles(Pool(book), book, hf, ends))
                 anchored |= pool_anchors(Pool(book), an, ends)
+                # the posts naming both ends of an answered or queued pair: their "X (Y)"
+                cur.execute("""SELECT DISTINCT a.post_id::text FROM mx_mentions_now a JOIN mx_mentions_now b
+                                 ON b.post_id = a.post_id AND b.guide = a.guide
+                                WHERE a.guide = ANY(%s) AND (a.entity_id, b.entity_id) IN
+                                      (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
+                            (guide, [p_[0] for p_ in known], [p_[1] for p_ in known]))
+                parens = set(parens) | paren_pairs(cur, book, guide, sorted({r[0] for r in cur.fetchall()}))
         for a, b in parens:
             if {a, b} & seeds:
                 pool.add(a, b, "paren")
@@ -2078,12 +2234,18 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         n["pairs"] += len(pairs)
         decided.update((p.a, p.b) for p in pairs)
         answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias] +
-                                [got.alias2[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias2])
+                                [got.alias2[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias2] +
+                                [got.alias3[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias3])
         decisions: List[Decision] = []
         for p in pairs:
             if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
+                if (p.a, p.b) in again:
+                    closed["owner"] += close_queued(cur, (p.a, p.b), {"closed_by": "owner", "redecided": REDECIDE})
                 continue
             if book.root(p.a) == book.root(p.b):
+                if (p.a, p.b) in again:
+                    closed["same_cluster"] += close_queued(cur, (p.a, p.b), {"closed_by": "same_cluster",
+                                                                            "redecided": REDECIDE})
                 continue
             auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
             judge = call = None
@@ -2096,6 +2258,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 call2, second = answers[task2[0]][0]
             decisions.append(decide_pair(book, p, auto, queue, judge, call, second, call2))
         chain_guard(book, decisions)
+        need3 = third(book, decisions, {d.pair: answers.get(got.alias3[d.pair][0]) for d in decisions
+                                        if d.pair in got.alias3})
         tiers.update(d.tier for d in decisions)
         asks_by.update(w_ for d in decisions if d.tier == "ask" for w_ in pool.pairs[d.pair].why)
         reasons.update(f"{d.tier}:{d.reason}" for d in decisions)
@@ -2128,6 +2292,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     continue
                 ask.answer("alias2", text, a=d.pair[0], b=d.pair[1])
                 n["added2"] += 1
+        if need3:   # 0201: the unsure queue's question, each side's facts, accounts and four posts
+            for d in need3:
+                if d.pair in got.alias3:
+                    continue
+                kind3 = third_kind(d)
+                if ask.added[kind3] >= ALIAS3_CAP:
+                    ask.waiting[kind3] += 1
+                    continue
+                ask.answer(kind3, alias3_input(cur, book, guide, *d.pair), a=d.pair[0], b=d.pair[1])
+                n["added3"] += 1
         t = tick("ask", t)
         for d in decisions:
             if d.tier == "auto":
@@ -2138,11 +2312,22 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                             run_id=run_id, evidence=ev)
                 if rid:
                     n["merged"] += 1
+                    # the pair's open item, if any, is answered by the merge (kept, closed with why)
+                    got_ = close_queued(cur, d.pair, {"closed_by": d.reason, "redirect": rid, "redecided": REDECIDE})
                     if d.reason == "second":
-                        n["cleared"] += close_queued(cur, d.pair, {"closed_by": "second", "redirect": rid})
+                        n["cleared"] += got_
+                    else:
+                        closed[d.reason] += got_
+            elif d.tier == "same_cluster" and d.pair in again:
+                closed["same_cluster"] += close_queued(cur, d.pair, {"closed_by": "same_cluster", "redecided": REDECIDE})
+            elif d.tier == "apart":
+                # v10.18: kept apart (Haiku's answer, or a version rule): an open item of the pair is closed, with why
+                closed["apart:" + d.reason] += close_queued(cur, d.pair, {
+                    "closed_by": "apart:" + d.reason, "judge": d.judge, "call_id": d.call_id, "rules": list(d.rules),
+                    "redecided": REDECIDE})
             elif d.tier == "queue":
                 ev = {"rules": list(d.rules), "judge": d.judge, "reasons": list(d.reasons),
-                      "band": band_of(d.conf) if d.judge else None}
+                      "band": band_of(d.conf) if d.judge and d.judge.get("relation") == "same" else None}
                 if d.second is not None:
                     ev.update(second=d.second, second_call=d.second_call, disagree=not second_agrees(d.second))
                 elif d.ask2:
@@ -2150,8 +2335,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
                               evidence=ev, call_id=d.call_id, run_id=run_id):
                     n["queued"] += 1
-                elif d.second is not None and mark_second(cur, d.pair, ev):
-                    n["marked"] += 1
+                elif refresh_queued(cur, d.pair, d, ev):
+                    n["marked" if d.second is not None else "refreshed"] += 1
+        if first and again:
+            stamp_backlog(cur, again)
         t = tick("write", t)
         decide_collisions(collide)
 
@@ -2188,13 +2375,6 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             link_part(part)
             facts_for(sorted({m.post_id for m in part}))
             paren_posts = sorted({m.post_id for m in part if m.entity_id})
-            if k == 0 and answered_pairs:   # the posts naming both ends of an answered pair
-                cur.execute("""SELECT DISTINCT a.post_id::text FROM mx_mentions_now a JOIN mx_mentions_now b
-                                 ON b.post_id = a.post_id AND b.guide = a.guide
-                                WHERE a.guide = ANY(%s) AND (a.entity_id, b.entity_id) IN
-                                      (SELECT x, y FROM unnest(%s::uuid[], %s::uuid[]) u(x, y))""",
-                            (guide, [p_[0] for p_ in answered_pairs], [p_[1] for p_ in answered_pairs]))
-                paren_posts = sorted(set(paren_posts) | {r[0] for r in cur.fetchall()})
             parens = paren_pairs(cur, book, guide, paren_posts)
             t = tick("paren", t)
             seeds = {m.entity_id for m in part if m.entity_id}
@@ -2272,7 +2452,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     out["reasons"] = dict(reasons)
     out["alias_asked"] = n["added"]
     out["second"] = {"asked": n["added2"], "cleared": n["cleared"], "marked": n["marked"]}
+    out["third"] = {"asked": n["added3"]}
     out["merged"], out["queued"] = n["merged"], n["queued"]
+    out["queue"] = {"again": len(again), "closed": dict(closed), "refreshed": n["refreshed"]}   # v10.18: the backlog
     if full:
         done = not stopped
         out["full"] = {"done": done, "phase": None if done else phase,
@@ -2280,6 +2462,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                        "link_after": None if done or phase != "link" else link_after,
                        "chunks": done_chunks, "of": n_chunks, "resumed": resume}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
+    if entity_facts.on():   # 0184
+        out["facts"] = {"placed": dict(placed), "facts": collide_out.get("facts", 0), "split": collide_out.get("split", 0),
+                        "makers": entity_facts.makers(cur, book, {book.root(x) for x in seeded | collided if x in book.ents},
+                                                      guide, run_id=run_id)}
     out["entities_made"] = len(w.made)
     got_comp = [c for c in comp_out if c is not None]
     out["components"] = ({k: sum(c.get(k, 0) for c in got_comp) for k in ("mentions", "made", "reparented", "by_span")}
@@ -2295,7 +2481,11 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                seeds: Optional[Set[str]]) -> Dict[str, int]:
     """The collision judge: keys (entities) whose mentions differ in type or stated maker, asked COLLIDE_RUNS times;
     a split two runs make goes to the queue. `seeds` None: every entity."""
-    from insight_core.markx import tasks
+    from insight_core.markx import entity_facts, tasks
+    # 0184: with the facts on, also the entities holding unplaced mentions of a bare name, and the backfill's
+    extra = entity_facts.to_ask(cur, book, seeds, guide, int(entity_facts.config().get("cap") or 0))
+    if seeds is not None:
+        seeds = set(seeds) | extra
     cur.execute(f"""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
                      WHERE guide = ANY(%s) AND entity_id IS NOT NULL
                      {"AND entity_id = ANY(%s::uuid[])" if seeds is not None else ""}
@@ -2304,8 +2494,9 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     for eid, pid, span, type_, maker in cur.fetchall():
         by[eid].setdefault(pid, (pid, span or "", type_, maker))
     out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
+    facts_on = entity_facts.on()
     want = {eid: list(ms.values()) for eid, ms in by.items()
-            if len(ms) >= 2 and odd([(p, t, mk) for p, _, t, mk in ms.values()])
+            if len(ms) >= 2 and (odd([(p, t, mk) for p, _, t, mk in ms.values()]) or eid in extra)
             and book.ents.get(eid) and book.ents[eid].status != "not_entity"}
     out["odd"] = len(want)
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])
@@ -2332,13 +2523,21 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                 out["asked_again"] += 1
             continue
         prop = split_of([a for _, a in calls[:COLLIDE_RUNS]], n)
+        if prop is not None:
+            prop["mentions"] = _sample_rows(text)
+            found = match_pick(cur, guide, eid, text)
+            for row in prop["mentions"]:
+                row["posts"] = [list(x) for x in found.get(row["n"], [])]
+        if facts_on:   # 0184: the answer's facts; a split made into senses when its bar is on, else queued below
+            got_ = entity_facts.apply(cur, book, eid, calls[:COLLIDE_RUNS], text, prop=prop, run_id=run_id,
+                                      guide=schemas_guide("collide"), mguide=guide)
+            out["facts"] += got_.get("facts", 0)
+            out["split"] += got_.get("split", 0)
+            if got_.get("split"):
+                continue
         if prop is None:
             out["one_thing"] += 1
             continue
-        prop["mentions"] = _sample_rows(text)
-        found = match_pick(cur, guide, eid, text)
-        for row in prop["mentions"]:
-            row["posts"] = [list(x) for x in found.get(row["n"], [])]
         if queue_item(cur, kind="collision", a=eid, b=None, proposal="split", reason="collision",
                       conf=None, evidence=prop, call_id=calls[0][0], run_id=run_id):
             out["queued"] += 1
@@ -2348,9 +2547,15 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         posts = tasks.load_posts(cur, {m[0] for pick in picks.values() for m in pick})
         nposts = counts_of(cur, guide, list(picks))
         for eid, pick in picks.items():
-            ask.answer("collide", collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
+            known = entity_facts.known_block(cur, eid) if facts_on else ""
+            ask.answer("collide", known + collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
             out["asked"] += 1
     return dict(out)
+
+
+def schemas_guide(kind: str) -> Optional[str]:
+    from insight_core.markx import schemas
+    return schemas.KINDS[kind].guide
 
 
 def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tuple[str, int]]]:

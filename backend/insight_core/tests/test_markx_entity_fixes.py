@@ -34,6 +34,8 @@ class Guards(unittest.TestCase):
         book.redirect["z"] = ("f", False)                        # the owner merged it into the family
         p = I.Pooled(*I.pair("o", "z"))
         d = I.decide_pair(book, p, {"handle"}, set(), None, None)
+        self.assertEqual(d.tier, "ask")                              # v10.18: Haiku decides a rule's mixed pair
+        d = I.decide_pair(book, p, {"handle"}, set(), self.same(0.97), "c")
         self.assertEqual((d.tier, d.reason), ("queue", "type"))
         self.assertIn("org_family", d.reasons)
         d = I.decide_pair(book, p, set(), set(), self.same(0.97), "c")   # Haiku's `same` too

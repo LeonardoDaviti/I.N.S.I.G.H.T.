@@ -596,6 +596,9 @@ export interface MarkxQueueItem {
   answered_at: string | null;
   created_at: string;
   join?: MarkxQueueJoin | null;
+  /** v10.18: who proposes the alias item: Haiku's answer with its own confidence, or a name rule (no confidence). */
+  opinion?: { by: 'haiku'; relation?: string | null; confidence: number | null; rules: string[] }
+    | { by: 'rule'; rules: string[] } | null;
   evidence: {
     judge?: { relation?: string; confidence?: number; evidence?: string } | null;
     rules?: string[] | null;

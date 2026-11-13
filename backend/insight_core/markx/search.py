@@ -358,6 +358,29 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
          "roles": list(LEAD_ROLES), "min_posts": CARD_MIN_POSTS, **_version_params(key)},
         prepare=False,
     )
-    return [{"id": eid, "name": name, "type": schemas.entity_type(type_), "maker": maker, "posts": int(posts),
-             "voices": int(voices), "matched": matched}
-            for eid, name, type_, maker, posts, voices, matched in cur.fetchall()]
+    cards = [{"id": eid, "name": name, "type": schemas.entity_type(type_), "maker": maker, "posts": int(posts),
+              "voices": int(voices), "matched": matched}
+             for eid, name, type_, maker, posts, voices, matched in cur.fetchall()]
+    return with_senses(cur, cards)
+
+
+def with_senses(cur: Cursor, cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """0184: one card a name: each card's `what`, its maker from the facts when it has none, and the other senses of
+    its name ("Vexa — terminal app (3) · voice mode (1)"); a card that is another card's sense is folded into it."""
+    from insight_core.markx import entity_facts
+    facts = entity_facts.read(cur, [c["id"] for c in cards], senses=True)
+    if not facts:
+        return cards
+    out, folded = [], set()
+    for c in cards:
+        if c["id"] in folded:
+            continue
+        f = facts.get(c["id"])
+        if f is not None:
+            c["what"] = f.what
+            c["maker"] = c["maker"] or f.maker
+            if f.senses:
+                c["senses"] = [{"id": c["id"], "what": f.what, "posts": c["posts"]}] + f.senses
+                folded |= {s["id"] for s in f.senses}
+        out.append(c)
+    return out
