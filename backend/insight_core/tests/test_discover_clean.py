@@ -68,6 +68,7 @@ class RulesTests(unittest.TestCase):
 class DiscoverCleanTests(unittest.TestCase):
     def setUp(self):
         self.mark = uuid.uuid4().hex[:8]
+        self.roundups = []
         self.conn = psycopg.connect(db_url())
         self.cur = self.conn.cursor()
         self.addCleanup(self._clean)
@@ -75,6 +76,7 @@ class DiscoverCleanTests(unittest.TestCase):
     def _clean(self):
         self.conn.rollback()
         delete_scratch_sources(self.cur)
+        self.cur.execute("DELETE FROM mx_roundups WHERE post_id = ANY(%s::uuid[])", (self.roundups,))
         self.cur.execute("DELETE FROM discover_addresses WHERE url LIKE %s", (f"%{self.mark}%",))
         self.conn.commit()
         self.conn.close()
@@ -85,14 +87,18 @@ class DiscoverCleanTests(unittest.TestCase):
     def _post(self, voice, links, *, html=""):
         source, host = voice
         url = f"https://{host}/p/{uuid.uuid4().hex}"
-        insert_post(self.cur, source, url, html=html, host=host, normalized=url, links=list(links))
+        return insert_post(self.cur, source, url, html=html, host=host, normalized=url, links=list(links))
 
     def _pages(self, host, n=2):
         return [f"https://{host}-{self.mark}.example/2026/10/story-{k}" for k in range(n)]
 
     def _roundup(self, voice, *links):
-        """A post listing news: its links have 3+ anchors."""
-        self._post(voice, [*links, *self._pages(f"elsewhere{uuid.uuid4().hex[:6]}", 3)])
+        """A post listing news: markx/units.py tags it a round-up (v10.17, 0190: its predicate is Discover's; the
+        reading says so). Its links have 3+ anchors as well, as a round-up's do."""
+        pid = self._post(voice, [*links, *self._pages(f"elsewhere{uuid.uuid4().hex[:6]}", 3)])
+        self.cur.execute("""INSERT INTO mx_roundups (post_id, source_id, version, basis, roundup, said, why)
+                            VALUES (%s, %s, 'test', 'test', true, true, 'reading')""", (pid, voice[0]))
+        self.roundups.append(str(pid))
 
     def _discover(self):
         self.conn.commit()

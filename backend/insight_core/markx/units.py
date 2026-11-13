@@ -691,6 +691,21 @@ def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
     return {"split": len(now), "roundups": n, "units": int(u)}
 
 
+def roundup_sql(post: str) -> str:
+    """The round-up predicate as SQL (GLOSSARY "Round-up": this module owns it): the post (the column `post`) is a
+    round-up as `tag` keeps it current (its reading says so, or it has a digest's shape in a digest source). For a
+    query over many posts (Discover's counts, v10.17's 0190)."""
+    return f"EXISTS (SELECT 1 FROM mx_roundups r_ WHERE r_.post_id = {post} AND r_.roundup)"
+
+
+def tags_stamp(cur: Any) -> str:
+    """What the round-up tags are now, as a short hash (the tagged posts): a reader that keeps counts made with
+    `roundup_sql` counts again when it moves (Discover's kept counts)."""
+    cur.execute("""SELECT md5(COALESCE(string_agg(post_id::text, ',' ORDER BY post_id), ''))
+                     FROM mx_roundups WHERE roundup""")
+    return cur.fetchone()[0][:16]
+
+
 def digest_sources(cur: Any, source_ids: Iterable[str]) -> Set[str]:
     """The sources whose posts are mostly shaped as round-ups: more than DIGEST_SHARE of their split posts of
     DIGEST_WORDS+ words, DIGEST_POSTS+ of them (a daily digest; an essayist's post with a list of links is not)."""
