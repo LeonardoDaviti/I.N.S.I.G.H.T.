@@ -675,13 +675,16 @@ class StoriesService:
         own_sites = {i: sources.publication(i) for i in sources.kind}
         selves = {i: sorted(sources.selves(i)) for i in sources.kind}
         ask = dict(kinds=sources.kind, own_sites=own_sites, accounts=accounts, shown=DISCOVER_ARTICLES_SHOWN, selves=selves)
-        facts = sorted((i, sources.kind[i], own_sites[i], accounts.get(i, ""), selves[i]) for i in sources.site)
+        facts = sorted((i, sources.kind[i], own_sites[i], accounts.get(i, ""), selves[i], sources.suggestable(i))
+                       for i in sources.site)
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
         kept = DiscoverRepository.kept(cur)
         if kept and kept["stamp"] == stamp:
             return kept
         mirrors, scanned_to = DiscoverRepository.mirrors(cur, kept)
-        if urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept:
+        off = sorted(sources.off)   # issue 0200: a source switched off or on moves every key it linked, not a run's
+        if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept
+                and kept.get("off", []) == off):
             platforms = _platforms(kept)
             keys = DiscoverRepository.keys_of(cur, urls, platforms)
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, platforms=platforms, **ask)
@@ -701,7 +704,7 @@ class StoriesService:
             StoriesService._title_articles(cur, sources, found)
         found.sort(key=lambda s: s["key"])
         kept = {"stamp": stamp, "base": base, "found": found, "mirrors": mirrors, "scanned_to": scanned_to,
-                "platforms": {host: list(prefix) for host, prefix in sorted(platforms.items())}}
+                "platforms": {host: list(prefix) for host, prefix in sorted(platforms.items())}, "off": off}
         if keep:
             DiscoverRepository.keep(cur, kept)
         return kept
@@ -1030,7 +1033,8 @@ class StoriesService:
         # A source's archive row holds its own pages only (issue 0172 b8): a link blog's posts are at the pages it
         # links (another site's), which its archive can never hold.
         missing = {source_id: [root for root in stories if _own_page(sources, source_id, root.url, platforms)]
-                   for source_id, stories in started.missing.items()}
+                   for source_id, stories in started.missing.items()
+                   if sources.suggestable(source_id)}   # issue 0200: no archive is offered for a source switched off
         archives = [{
             "source_id": source_id, "name": sources.name.get(source_id, ""),
             "places": sorted({discover_place(root.url, platforms) for root in stories}),

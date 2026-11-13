@@ -49,6 +49,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from psycopg import Cursor
 
 from insight_core.markx import pairing, repo, schemas, scout_reads
+from insight_core.db.repo_stories import suggestable_sql
 
 log = logging.getLogger(__name__)
 
@@ -207,7 +208,7 @@ def linked(cur: Cursor, key: str, site: str, now: datetime) -> Dict[str, Any]:
                            count(DISTINCT pl.post_id),
                            count(DISTINCT pl.post_id) FILTER (WHERE {pairing.ix_date('p')} > %(since)s)
                       FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN sources s ON s.id = p.source_id
-                     WHERE NOT pl.boilerplate AND s.enabled AND pl.target_site = %(site)s AND {_on_key('pl.target_url')}
+                     WHERE NOT pl.boilerplate AND {suggestable_sql("s.id")} AND pl.target_site = %(site)s AND {_on_key('pl.target_url')}
                        AND NOT {_on_key('s.handle_or_url')}
                      GROUP BY 1, 2 ORDER BY 3 DESC, 2""",
                 {"key": key, "site": site, "since": now - timedelta(days=LINK_DAYS)})
@@ -243,9 +244,9 @@ def in_stories(cur: Cursor, items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     every = sorted({u for us in urls.values() for u in us})
     if not every:
         return {"linked": 0, "started": 0, "ids": []}
-    cur.execute("""SELECT DISTINCT pl.target_url FROM post_links pl JOIN posts p ON p.id = pl.post_id
+    cur.execute(f"""SELECT DISTINCT pl.target_url FROM post_links pl JOIN posts p ON p.id = pl.post_id
                      JOIN sources s ON s.id = p.source_id
-                    WHERE pl.target_url = ANY(%s) AND NOT pl.boilerplate AND s.enabled""", (every,))
+                    WHERE pl.target_url = ANY(%s) AND NOT pl.boilerplate AND {suggestable_sql("s.id")}""", (every,))
     linked_urls = {u for (u,) in cur.fetchall()}
     from insight_core.utils.discover_rules import ORIGIN_MIN_VOICES
     cur.execute("SELECT DISTINCT origin_url FROM stories WHERE origin_url = ANY(%s) AND voices >= %s",
@@ -281,14 +282,14 @@ def repeats(cur: Cursor, items: Sequence[Dict[str, Any]], key: str, site: str, n
     if urls:
         cur.execute(f"""SELECT DISTINCT COALESCE(p.normalized_url, p.url), {name_sql()} FROM posts p
                           JOIN sources s ON s.id = p.source_id
-                         WHERE s.enabled AND (p.normalized_url = ANY(%(u)s) OR p.url = ANY(%(u)s))
+                         WHERE {suggestable_sql("s.id")} AND (p.normalized_url = ANY(%(u)s) OR p.url = ANY(%(u)s))
                            AND NOT {_on_key('s.handle_or_url')}""", {"u": sorted(urls), "key": key})
         for url, name in cur.fetchall():
             if url in urls:
                 hits.setdefault(urls[url], set()).add(name)
     if titles:
         cur.execute(f"""SELECT p.title, {name_sql()} FROM posts p JOIN sources s ON s.id = p.source_id
-                         WHERE s.enabled AND p.title IS NOT NULL AND {pairing.ix_date('p')} > %(since)s
+                         WHERE {suggestable_sql("s.id")} AND p.title IS NOT NULL AND {pairing.ix_date('p')} > %(since)s
                            AND length(p.title) >= 20 AND NOT {_on_key('s.handle_or_url')}""",
                     {"since": now - timedelta(days=REPEAT_DAYS), "key": key})
         for title, name in cur.fetchall():
@@ -296,7 +297,7 @@ def repeats(cur: Cursor, items: Sequence[Dict[str, Any]], key: str, site: str, n
             if k in titles:
                 hits.setdefault(titles[k], set()).add(name)
     names = Counter(n for ns in hits.values() for n in ns)
-    cur.execute(f"""SELECT {name_sql()} FROM sources s WHERE s.enabled AND {_addr_sql('s.handle_or_url')} <> ''
+    cur.execute(f"""SELECT {name_sql()} FROM sources s WHERE {suggestable_sql("s.id")} AND {_addr_sql('s.handle_or_url')} <> ''
                      AND (split_part({_addr_sql('s.handle_or_url')}, '/', 1) = %(site)s
                           OR split_part({_addr_sql('s.handle_or_url')}, '/', 1) LIKE '%%.' || %(site)s)
                      AND NOT {_on_key('s.handle_or_url')} ORDER BY 1 LIMIT 5""", {"site": site, "key": key})
@@ -465,10 +466,10 @@ def interests(cur: Cursor, now: Optional[datetime] = None) -> List[str]:
             text = text[:INTEREST_TRACK_CHARS].rsplit(" ", 1)[0] + "…"
         lines.append(f"Track “{t['name']}”: {text}")
     since = now - timedelta(days=90)
-    cur.execute("""SELECT COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
+    cur.execute(f"""SELECT COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                           count(DISTINCT i.post_id)
                      FROM post_interactions i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
-                    WHERE i.interaction_type = 'opened' AND i.created_at > %s AND s.enabled
+                    WHERE i.interaction_type = 'opened' AND i.created_at > %s AND {suggestable_sql("s.id")}
                     GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT %s""", (since, INTEREST_SOURCES))
     read = cur.fetchall()
     if read:

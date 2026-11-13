@@ -49,6 +49,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.db.repo_stories import suggestable_sql
 from insight_core.markx import pairing, units
 from insight_core.utils import voice as voice_keys
 from insight_core.utils.addresses import host_of
@@ -111,13 +112,14 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses, bu
     FROM unfollowed u JOIN post_links pl ON pl.target_url = u.url AND NOT pl.boilerplate
     JOIN posts p ON p.id = pl.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE u.key IN (SELECT key FROM candidate) AND s.kind IS DISTINCT FROM 'saved'
+      AND """ + suggestable_sql("p.source_id") + """   -- a source switched off links nothing (issue 0200)
       AND NOT (COALESCE(s.selves, '') <> '' AND EXISTS (
           SELECT 1 FROM unnest((""" + _SEGMENTS.format(url="u.url") + """)[1:%(depth)s]) g
           WHERE ltrim(g, '@~') = ANY(string_to_array(s.selves, ' '))))
     UNION ALL                     -- and the reposts of them
     SELECT r.key, r.url, r.article, r.post_id, p.source_id, COALESCE(s.kind, 'site'), COALESCE(s.own_site, '')
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
-    WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
+    WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate) AND """ + suggestable_sql("p.source_id") + """
 ),
 roundup AS MATERIALIZED (         -- the linking posts that are round-ups (markx/units.py owns the predicate,
     SELECT DISTINCT l.post_id FROM linked l   -- GLOSSARY "Round-up"; v10.17, 0190: 3+ anchors before)
@@ -214,7 +216,7 @@ SELECT d.key, max({pairing.ix_date('p')}),
            SELECT 1 FROM post_interactions i WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session')))
 FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND NOT pl.boilerplate
 JOIN posts p ON p.id = pl.post_id LEFT JOIN post_reader_state rs ON rs.post_id = p.id
-WHERE d.rules = %(rules)s AND d.key = ANY(%(keys)s)
+WHERE d.rules = %(rules)s AND d.key = ANY(%(keys)s) AND {suggestable_sql("p.source_id")}
 GROUP BY d.key
 """
 
@@ -233,9 +235,12 @@ SELECT DISTINCT ON (voice) voice, source_id FROM (
 _ORIGINS = f"""
 SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, {shown_title()}, p.source_id,
        s.first_at, EXISTS (SELECT 1 FROM posts held WHERE s.origin_url IS NOT NULL AND held.normalized_url = s.origin_url),
-       (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id),
+       (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp JOIN posts vp ON vp.id = sp.post_id
+        WHERE sp.story_id = s.id AND {suggestable_sql("vp.source_id")}),
        (SELECT array_agg(DISTINCT rp.source_id::text) FROM story_posts sp JOIN posts rp ON rp.id = sp.post_id
-        WHERE sp.story_id = s.id AND sp.voice LIKE '{voice_keys.POSTER_LIKE}')
+        WHERE sp.story_id = s.id AND sp.voice LIKE '{voice_keys.POSTER_LIKE}' AND {suggestable_sql("rp.source_id")}),
+       EXISTS (SELECT 1 FROM story_posts sp JOIN posts op ON op.id = sp.post_id
+               WHERE sp.story_id = s.id AND NOT {suggestable_sql("op.source_id")})
 FROM stories s
 LEFT JOIN LATERAL (
     SELECT min(sp.post_id::text)::uuid AS post_id FROM story_posts sp
@@ -519,7 +524,10 @@ class DiscoverRepository:
         each named as Discover names it, and its title: the outside page's (origin_title), else the
         post's as every place shows it (post_title, issue 0072 D1)."""
         cur.execute(_ORIGINS, {"min_voices": ORIGIN_MIN_VOICES})
-        rows = cur.fetchall()
+        # Its voices are those of sources not switched off (issue 0200): a story with a post of one, which the others
+        # leave under the bar, starts nothing Discover suggests, nor a page or an archive row (its place in the
+        # stories is unchanged). A story with none keeps the story job's count.
+        rows = [r[:-1] for r in cur.fetchall() if not r[-1] or len(r[7] or ()) >= ORIGIN_MIN_VOICES]
         namers = DiscoverRepository._site_namers(
             cur, kinds, own_sites, {v for *_, voices, _ in rows for v in voices if voice_keys.is_site(v)})
         return [Origin(str(story_id), url, title if source_id else origin_title,
@@ -582,10 +590,11 @@ SUPPLIERS_KEY = "originals_suppliers"   # 0138 D2: kept by OriginalsService.keep
 def light_facts(cur: Cursor) -> Any:
     """0138: the sources' facts from the sources table alone (names, own sites, followed sites), with none of their
     posts read: what Discover's per-open rows need, cheap enough for every open (the full SourceFacts reads posts)."""
-    from insight_core.db.repo_stories import SourceFacts
+    from insight_core.db.repo_stories import SourceFacts, switched_off
     cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) "
                 "FROM sources")
-    return SourceFacts.of(cur.fetchall(), [])
+    rows = cur.fetchall()
+    return SourceFacts.of(rows, [], off=switched_off(cur))
 
 
 def entity_pages(cur: Cursor, db_url: str, now: datetime, *, hidden: Set[str], names: Any,
@@ -640,7 +649,7 @@ def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> Lis
     from insight_core.utils.addresses import site_of
     if not suggested:
         return []
-    cur.execute("SELECT id::text, created_at FROM sources WHERE enabled")
+    cur.execute(f"SELECT id::text, created_at FROM sources WHERE {suggestable_sql('id')}")
     created = dict(cur.fetchall())
     out = []
     for key, since in sorted(suggested.items()):

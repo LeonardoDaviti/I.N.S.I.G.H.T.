@@ -128,9 +128,11 @@ class _Api(unittest.TestCase):
         clear_tables(self.cur, MX_TABLES)
         self.cur.execute("DELETE FROM mx_inc_state")   # 0183: no pass's kept stamp (an empty table's) carries over
         self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
-        self.source = insert_scratch_source(self.cur, platform="telegram",
+        # on: a source switched off feeds no suggestion (issue 0200); these stand for the sources you follow
+        self.source = insert_scratch_source(self.cur, platform="telegram", enabled=True,
                                             settings_json=json.dumps({"display_name": "Example Channel"}))
-        self.other = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Site"}))
+        self.other = insert_scratch_source(self.cur, platform="rss", enabled=True,
+                                           settings_json=json.dumps({"display_name": "Example Site"}))
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = ANY(%s::uuid[])", ([self.source, self.other],))
         status, body = call("POST", "/api/markx/token")
         self.assertEqual(status, 200, body)

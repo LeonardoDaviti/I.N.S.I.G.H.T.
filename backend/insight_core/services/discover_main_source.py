@@ -34,9 +34,11 @@ channel's account or a site source on the channel's site): nothing. Else, for ea
   - an enabled source on it covers the page (an account; a page watch whose prefix the page is under; a feed that
     holds posts in the page's section, or holds nothing yet): nothing for the whole event, its source is followed (a
     page stored under an aggregator, or published before the follow, is ingestion's to fix);
-  - only a disabled source covers it: `disabled`, surfaced;
+  - only a source switched off covers it: nothing (issue 0200, v10.17.1: the owner switched it off, so it is never
+    suggested again; before, `disabled`, surfaced, as was a switched-off source whose name is the actor's);
   - enabled sources on the site, none covering it: `wrong_section`, a second section for the same site.
-A disabled source whose name is the actor's (r/<actor>, "<Actor> blog") is surfaced as `disabled` too.
+A story's members are its posts from sources not switched off (repo_stories.suggestable_sql): a switched-off source's
+posts are no voice of an event here and never say the actor's own post is held.
 
 Measured before it was adopted (2026-11-12, a read-only run on the local census copy of Oct 5 - Nov 5, which has no
 read-v3: every type let through): 141 stories of 2+ voices, 18 events flagged in 17 rows, 16 plausible by E5's rows
@@ -86,7 +88,7 @@ SHOWN = 20                        # rows returned
 POSTS_SHOWN = 5                   # an event's posts shown
 TESTS_PER_RUN = 8
 CACHE_SECONDS = 600
-KINDS = ("missing", "wrong_section", "disabled")
+KINDS = ("missing", "wrong_section")   # 0200: "disabled" (a switched-off source surfaced) is no longer made
 # Hosts whose pages are a platform's, not an owner's (perspectives.PLATFORMS's, X and Telegram aside: their posts are
 # an account's), and the paper, code and model hosts: nobody's channel.
 _PLATFORM_SITES = frozenset().union(*PLATFORM_SITES.values()) | {"medium.com", "substack.com", "arxiv.org",
@@ -231,10 +233,8 @@ def _verdict(ch: Channel, pages: Sequence[str], sources: Sequence[Src]) -> Tuple
     if not on:
         return "missing", None
     covering = [s for s in on if any(covers(s, ch, p) is not False for p in pages)]
-    if any(s.enabled for s in covering):
+    if covering:   # followed, or switched off by the owner (0200): never suggested again
         return None, None
-    if covering:
-        return "disabled", covering[0]
     enabled = [s for s in on if s.enabled]
     if enabled:
         return "wrong_section", enabled[0]
@@ -278,12 +278,6 @@ def judge(events: Sequence[Event], sources: Dict[str, Src]) -> List[Dict[str, An
         if verdicts:                                         # the main post's channel: the best evidenced
             ch, owns, kind, src = verdicts[0]
             add(kind, ch, src, ev, owns[0])
-        for sid in sorted(ev.actor_sources):                 # a disabled source of the actor's own
-            src = sources.get(sid)
-            if src is None or src.enabled or any(s is not None and s.id == sid for _, _, _, s in verdicts):
-                continue
-            ch = Channel(f"source:{src.id}", "source", src.kind, "", None, "")
-            add("disabled", ch, src, ev, ev.pages[0] if ev.pages else None)
     rows = []
     for g in groups.values():
         (actor, name), _ = g.pop("actors").most_common(1)[0]
@@ -307,14 +301,16 @@ def due(test: Optional[Dict[str, Any]], now: datetime) -> bool:
 # ---- from the database (reads only) -------------------------------------------------------------------
 
 def _sources(cur: Any) -> Dict[str, Src]:
-    from insight_core.db.repo_stories import source_account
+    from insight_core.db.repo_stories import source_account, switched_off
     from insight_core.ingestion.kinds.page_watch import normalise_prefix
-    cur.execute("""SELECT id::text, platform, handle_or_url, enabled,
+    off = switched_off(cur)
+    cur.execute("""SELECT id::text, platform, handle_or_url,
                           COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url),
                           settings ? 'page_watch', settings->'page_watch'->>'prefix'
                      FROM sources""")
     out = {}
-    for sid, platform, handle, enabled, name, watched, prefix in cur.fetchall():
+    for sid, platform, handle, name, watched, prefix in cur.fetchall():
+        enabled = sid not in off
         kind = source_kind(platform, handle)
         watch = None
         if watched and kind == "site":
@@ -344,13 +340,15 @@ def _with_sections(cur: Any, sources: Dict[str, Src], sites: Set[str]) -> Dict[s
 
 
 def _stories(cur: Any, since: datetime) -> Dict[str, Dict[str, Any]]:
+    from insight_core.db.repo_stories import suggestable_sql
     from insight_core.markx import built, event_types
     from insight_core.utils.post_links import source_kind
     cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {built.PUBLISHED}, s.headline,
                            s.first_at, so.platform, so.handle_or_url
                       FROM mx_story_posts sp JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                       JOIN posts p ON p.id = sp.post_id JOIN sources so ON so.id = p.source_id
-                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s""", (since,))
+                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s
+                       AND {suggestable_sql("p.source_id")}""", (since,))   # 0200: a switched-off source's are no voice
     rows = cur.fetchall()
     types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, Dict[str, Any]] = {}

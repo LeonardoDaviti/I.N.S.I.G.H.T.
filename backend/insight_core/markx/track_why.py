@@ -9,6 +9,7 @@ vector computed. The track page shows only its top items; this says where any on
       `joined`   Haiku's in from a passive source, at or above the join band (shown in the track, marked);
       `discover` Haiku's in from a passive source below the join band: in Discover at `position` of `of`, cut off
                  the page after tracks.DISCOVER_ITEMS (`shown`);
+      `off`      Haiku's in from a passive source the owner switched off: never suggested (issue 0200);
       `out`      Haiku's out (its why and confidence), or the owner's ✗;
     each with Haiku's `why`, `confidence`, `subtopic`, `origin`, `found_by`, the description `version` it was asked
     under (`current` False: an older description's verdict; `waiting_again` when the current one is asked and open).

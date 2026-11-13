@@ -506,6 +506,20 @@ class Collecting(_CollectCase):
             planned, _ = self.service().plan_entities(cur, self.now)
         self.assertEqual([(p["url"], p["kind"], p["voices"]) for p in planned], [(self.paper, O.PAGE, 1)])
 
+    def test_a_switched_off_voice_lists_no_page_for_discover_but_still_collects(self):
+        """Issue 0200: Discover's Pages (`listing`) count no source switched off: one voice left, no trigger. The
+        collection (the originals of what your sources talk about, not a suggestion) is unchanged."""
+        self.two_voices()
+        self.switch()
+        self._rows("UPDATE sources SET enabled = false WHERE id = %s::uuid", self.b)
+        self.addCleanup(self._rows, "UPDATE sources SET enabled = true WHERE id = %s::uuid", self.b)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertEqual([w["url"] for w in self.service().plan_entities(cur, self.now, listing=True)[0]], [])
+            self.assertEqual([p["url"] for p in self.service().plan_entities(cur, self.now)[0]], [self.paper])
+        self._rows("UPDATE sources SET enabled = true WHERE id = %s::uuid", self.b)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertEqual([w["url"] for w in self.service().plan_entities(cur, self.now, listing=True)[0]], [self.paper])
+
     def test_source_and_recommended_roles_never_trigger(self):
         for role in ("source", "recommended"):
             with self.subTest(role=role):
@@ -778,6 +792,23 @@ class LongReads(_CollectCase):
             self.service().keep_cited(cur)
             cited = repo_discover.longread_citations(cur)
         self.assertEqual(cited.get("shared.oocitedx.example"), {"n": 3, "posts": 2})
+
+    def test_a_switched_off_sources_long_reads_cite_nothing_for_discover(self):
+        """Issue 0200: Discover's citations never count a source the owner switched off; collecting its references
+        (membership, not a suggestion) still reads it."""
+        from insight_core.db import repo_discover
+        shared = ["shared.oocitedy.example"] * 2 + [f"other{n}.oorefc{chr(97 + n)}.example" for n in range(7)]
+        pid, _ = self.longread(tag="-off", hosts=shared)
+        self._rows("UPDATE sources SET enabled = false WHERE id = %s::uuid", self.c)
+        self.addCleanup(self._rows, "UPDATE sources SET enabled = true WHERE id = %s::uuid", self.c)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.service().keep_cited(cur)
+            self.assertNotIn("shared.oocitedy.example", repo_discover.longread_citations(cur))
+            self.assertIn(pid, self.service().longreads(cur))
+        self._rows("UPDATE sources SET enabled = true WHERE id = %s::uuid", self.c)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.service().keep_cited(cur)
+            self.assertEqual(repo_discover.longread_citations(cur).get("shared.oocitedy.example"), {"n": 2, "posts": 1})
 
 
 if __name__ == "__main__":

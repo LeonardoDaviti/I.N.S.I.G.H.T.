@@ -478,7 +478,8 @@ ex AS MATERIALIZED (SELECT e.v, CASE WHEN e.post_id = ANY(%(pos)s::uuid[]) THEN 
 ps AS (SELECT p.id, {DATE} AS at, p.source_id, e.v, p.search_vector
          FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
         WHERE {{where}}
-          AND (NOT %(passive)s OR p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)))
+          AND (NOT %(passive)s OR (p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
+                                   AND {{suggestable}})))
 SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr, s.bare, k.pos_max, k.pos_mean, k.neg_mean,
        cardinality(%(ents)s::text[]) > 0 AND EXISTS (
            SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.role = ANY(%(roles)s)
@@ -531,7 +532,9 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
               "pos": learned["pos"], "neg": prep.get("neg") or [], "ents": learned["entities"],
               "roles": list(ROLES), "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
               "units": units_regex(learned["units"]), "stories": learned["stories"], "passive": passive}
-    cur.execute(_SCORE.format(where=" AND ".join(where) or "true"), params)
+    from insight_core.db.repo_stories import suggestable_sql
+    # issue 0200: a passive post of a source switched off is never asked (it could only become a suggestion)
+    cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
     out = []
     for r in cur.fetchall():
         d = dict(zip(ROW, r))

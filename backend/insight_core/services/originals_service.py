@@ -37,6 +37,7 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_linked import _followed, _own_pages, linked_not_stored
 from insight_core.db.repo_operations import SystemSettingsRepository
+from insight_core.db.repo_stories import suggestable_sql
 from insight_core.utils import originals_rules as rules
 from insight_core.utils import entity_originals as E
 from insight_core.utils.addresses import host_of, site_of
@@ -372,8 +373,9 @@ class OriginalsService:
                               {pairing.ordinary_date('p')}, m.by_name, m.type
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.type = ANY(%s) AND m.entity_id IS NOT NULL
-                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s""",
-                    (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since))
+                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s
+                          AND (NOT %s OR {suggestable_sql("p.source_id")})""",   # 0200: Discover's Pages are suggestions
+                    (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since, listing))
         rows = cur.fetchall()
         if not rows:
             return [], []
@@ -619,17 +621,19 @@ class OriginalsService:
         return out
 
     @staticmethod
-    def longreads(cur: Any) -> Dict[str, List[str]]:
+    def longreads(cur: Any, *, suggesting: bool = False) -> Dict[str, List[str]]:
         """F1: the curated long-reads you opened or kept: {post: its outside article pages}. A post is one when its own
         text is LONGREAD_CHARS+ long, Mark X reads it as commentary or a roundup (its reading's kind), and it cites
-        LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's)."""
+        LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's).
+        `suggesting` (Discover's citations, issue 0200): only the posts of sources not switched off."""
         cur.execute(f"""
             WITH yours AS (SELECT post_id FROM post_interactions WHERE interaction_type IN ('opened', 'reading_session')
                            UNION SELECT post_id FROM post_reader_state WHERE starred_at IS NOT NULL)
             SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p JOIN yours y ON y.post_id = p.id
              WHERE char_length(COALESCE(p.content, '')) >= %s
-               AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))""",
-                    (E.LONGREAD_CHARS, list(E.LONGREAD_KINDS)))
+               AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))
+               AND (NOT %s OR {suggestable_sql("p.source_id")})""",
+                    (E.LONGREAD_CHARS, list(E.LONGREAD_KINDS), suggesting))
         posts = dict(cur.fetchall())
         if not posts:
             return {}
@@ -712,7 +716,7 @@ class OriginalsService:
     def keep_cited(self, cur: Any) -> int:
         """F3: each site (Discover's address key) the long-reads you opened cite: {key: {n, posts}} kept for Discover
         (`longread_citations`), the keys cited twice or more. Returns how many."""
-        found = self.longreads(cur)
+        found = self.longreads(cur, suggesting=True)
         kept = DiscoverRepository.kept(cur) or {}
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
         by: Dict[str, Dict[str, Any]] = {}
