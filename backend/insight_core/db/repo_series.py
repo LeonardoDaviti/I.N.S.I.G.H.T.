@@ -121,10 +121,9 @@ class SeriesRepository:
         words: Dict[Tuple[str, str], str] = {}
         nav: List[rule.NavLink] = []
         for pid, url, content_html, content in cur.fetchall():
-            for address, absolute, w in rule.link_words(content_html, content, url):
-                if rule.is_navigation(w):
-                    words[(pid, address)] = w
-                    nav.append(rule.NavLink(pid, address, w, resolve(pid, absolute, address)))
+            for address, absolute, w in rule.navigation_links(content_html, content, url):
+                words[(pid, address)] = w
+                nav.append(rule.NavLink(pid, address, w, resolve(pid, absolute, address)))
         groups = rule.build(posts, nav)
         counts = cls.write_groups(cur, source_id, groups, now)
         # navigation: the open refs of the groups' posts and of the navigation links
