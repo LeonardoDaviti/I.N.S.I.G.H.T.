@@ -6,7 +6,7 @@ import Kbd from '../ui/Kbd';
 import StatusGlyph from '../ui/StatusGlyph';
 import { iconButtonClass } from '../ui/styles';
 import { cn } from '../../lib/utils';
-import { useOperationsOverview } from '../../hooks/useOperations';
+import { useRunningJobs } from '../../hooks/useOperations';
 import { useNow } from '../../hooks/useNow';
 import { fetchingLabel, recentFailedRun, runningFetchJob } from '../../lib/jobRuns';
 import { sourcesIngestionHref } from '../../lib/ingestionNavigation';
@@ -21,7 +21,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
  * the job in Sources → ingestion → jobs. Static text, so it never animates.
  */
 function FetchActivity() {
-  const jobs = useOperationsOverview().data?.jobs;
+  const jobs = useRunningJobs().data?.jobs;
   const nowMs = useNow(60_000).getTime();
   const running = runningFetchJob(jobs);
   const failed = running ? null : recentFailedRun(jobs, nowMs);

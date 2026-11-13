@@ -29,8 +29,18 @@ const SIZES = {
 };
 const WIDE = { feed: 1_000_000, post: 1_000_000 };
 
-test('two routes: the feed, and the post opened from it, each file counted once', () => {
-  assert.deepEqual(routeBytes(MANIFEST, SIZES), { feed: 2200, post: 3500 });
+test('each route: the feed, the post opened from it, and the Mark X pages, each file counted once', () => {
+  // The miniature has no Mark X pages: those routes are the entry alone.
+  assert.deepEqual(routeBytes(MANIFEST, SIZES), { feed: 2200, post: 3500, markx: 1200, markxEntity: 1200, markxStory: 1200 });
+  const withEntity = { ...MANIFEST, 'src/pages/MarkXEntityPage.tsx': { file: 'assets/Entity.js', isDynamicEntry: true, imports: ['index.html', '_feed.js'] } };
+  assert.equal(routeBytes(withEntity, { ...SIZES, 'assets/Entity.js': 50 }).markxEntity, 1750);
+});
+
+test('a route with no baseline yet (issue 0195: added after the baseline was recorded) is not checked', () => {
+  assert.deepEqual(budgetProblems({ manifest: MANIFEST, sizes: SIZES, baseline: { feed: 2200, post: 3500 }, ceilingBase: { feed: 2200, post: 3500 } }), []);
+  assert.deepEqual(budgetProblems({ manifest: MANIFEST, sizes: SIZES, baseline: { feed: 2200, post: 3500, markx: 1000 }, ceilingBase: WIDE }), [
+    'the markx route is 1200 gzip bytes, 20.00% over its baseline of 1000 (the budget is +1%)',
+  ]);
 });
 
 test('within 1% of the baseline, under the ceiling and with the studio in its own chunk, the budget holds', () => {

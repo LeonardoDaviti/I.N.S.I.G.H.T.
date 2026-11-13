@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { RunReport, SchedulerConfig } from '../../services/api';
-import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
+import { OPERATIONS_OVERVIEW_KEY, RUNNING_JOBS_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
 import { INGESTION_SUB_VIEWS, ingestionSubViewHref, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
 import { useApi } from '../../services/ApiContext';
 import { useNow } from '../../hooks/useNow';
@@ -66,6 +66,7 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
   const onReport = (next: RunReport) => {
     setSessionReport(next);
     void queryClient.invalidateQueries({ queryKey: [...OPERATIONS_OVERVIEW_KEY] });
+    void queryClient.invalidateQueries({ queryKey: [...RUNNING_JOBS_KEY] });
     void queryClient.invalidateQueries({ queryKey: [...SCHEDULER_KEY] });
   };
 
