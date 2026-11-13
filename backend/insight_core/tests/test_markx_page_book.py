@@ -162,6 +162,58 @@ class TheNewsPageReadsWhatItShows(Ents, built_tests.Stored):
         self.assertEqual([s["name"] for s in small["items"][0]["surging"]], ["Acme"])
 
 
+class _Counting:
+    """A cursor that counts its queries."""
+
+    def __init__(self, cur):
+        self._cur, self.n = cur, 0
+
+    def execute(self, *a, **k):
+        self.n += 1
+        return self._cur.execute(*a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class TheNewsPageQueriesDontGrowWithItsRows(Ents, built_tests.Stored):
+    """v10.17 (0186): the News page asks the same number of queries for 2 rows as for 6, in both views (only the
+    differences, and every row): the names, owners and makers its stories ask are read ahead in a few queries
+    (Makers.prepare), the rows' own headline answers in two."""
+
+    def rows(self, n, now):
+        run = repo.start_run(self.cur, code_version="test", config={})
+        rows = []
+        for i in range(n):
+            a = self.post(title=f"Gadget {i} launched", at=now - (i + 2) * H,
+                          links=[(f"https://maker{i}.example/gadget-{i}", "post")])
+            b = self.post(title=f"Gadget {i} is out", at=now - (i + 1) * H, source=self.other,
+                          links=[(f"https://maker{i}.example/gadget-{i}", "post"), (f"https://x.com/maker{i}/status/1", "x")])
+            sid = self.story(a, b, at=now - (i + 2) * H)
+            for p in (a, b):
+                self.subject(p, f"Gadget {i}")
+            rows.append({"id": a, "first_at": now - (i + 2) * H, "voices": 2, "reports": 2, "shares": 0, "mentions": 0,
+                         "score": 5 + i, "tag": ("NEW", "SAME")[i % 2],
+                         "posts": [{"post_id": p, "role": "report", "story": sid} for p in (a, b)]})
+        repo.add_news_rows(self.cur, run, rows)
+        repo.finish_run(self.cur, run, counts={})
+
+    def queries(self, now, only_differences):
+        c = _Counting(self.cur)
+        got = news.page(c, now=now, only_differences=only_differences)
+        return c.n, got
+
+    def test_two_rows_or_six(self):
+        now = datetime.now(timezone.utc)
+        self.ent("Maker 1")
+        self.rows(2, now)
+        few = [self.queries(now, view) for view in (True, False)]
+        self.rows(6, now + timedelta(seconds=1))
+        many = [self.queries(now, view) for view in (True, False)]
+        self.assertEqual([len(p["items"]) for _n, p in few + many], [1, 2, 3, 6])
+        self.assertEqual([n for n, _p in few], [n for n, _p in many])
+
+
 class TheEntityPageReadsWhatItShows(Ents, built_tests.Stored):
     """The entity page asks the book for its cluster, versions, components, maker candidates and names: no whole-book
     read, and its entity reads don't grow with the book."""
@@ -245,7 +297,7 @@ class CameTrueReadsTheConnectedStories(built_tests.Stored):
             self.assertIn(other, loaded)
 
 
-for _cls in (APagesBook, TheNewsPageReadsWhatItShows, TheEntityPageReadsWhatItShows, CameTrueReadsTheConnectedStories):
+for _cls in (APagesBook, TheNewsPageReadsWhatItShows, TheNewsPageQueriesDontGrowWithItsRows, TheEntityPageReadsWhatItShows, CameTrueReadsTheConnectedStories):
     for _name in [n for n in dir(built_tests.Stored) if n.startswith("test")]:   # the seeding base's tests: its module
         setattr(_cls, _name, None)
 del _cls, _name

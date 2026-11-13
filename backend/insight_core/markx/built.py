@@ -300,6 +300,7 @@ def stories_of(cur: Any, story_ids: Iterable[str], *, book: Any = None, links: b
     posts = in_published_order(cur, P.load_members(cur, every))
     book = book if book is not None else identity.lazy_book(cur)
     makers = P.Makers(book, P.mentions_of(cur, every))
+    makers.prepare(posts)   # v10.17 (0186): what the stories ask of the book, in a few reads, not one each
     return {sid: P.Story([m["id"] for m in ms if m["id"] in posts], posts, makers)
             for sid, ms in rows.items() if any(m["id"] in posts for m in ms)}
 
