@@ -15,6 +15,7 @@ import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntitySto
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
 import { researchStartHref } from '../services/research';
+import { bylineText } from '../lib/byline';
 
 type PageCalls = {
   answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
@@ -57,7 +58,7 @@ export function StoryBlock({ s }: { s: MarkxEntityStory }) {
           <li key={p.id} className="text-[0.8125rem]" data-original>
             <span className="font-semibold text-fg">Original</span>{' '}
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`}>{p.title || '(no title)'}</TextLink>
-            <span className="text-fg-3">{p.source ? ` · ${p.source}` : ''} · {WHY[o.why] ?? o.why}</span>
+            <span className="text-fg-3">{p.source ? ` · ${bylineText(p.byline, p.source)}` : ''} · {WHY[o.why] ?? o.why}</span>
           </li>
         ) : <EntityPostLine key={p.id} post={p} />))}
       </ul>
@@ -206,7 +207,7 @@ export function Older({ older }: { older: MarkxOlderPost[] }) {
         {older.map((p) => (
           <li key={p.id} className="text-[0.8125rem] text-fg-2">
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
-            <span className="text-fg-3">{p.source ? ` · ${p.source}` : ''} · “{p.span}”</span>
+            <span className="text-fg-3">{p.source ? ` · ${bylineText(p.byline, p.source)}` : ''} · “{p.span}”</span>
             <span className="text-fg-3">
               {' · now about '}
               {p.now.length ? p.now.map((x, n) => (

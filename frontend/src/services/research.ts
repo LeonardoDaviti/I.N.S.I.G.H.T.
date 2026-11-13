@@ -2,12 +2,13 @@
 // the same announcement elsewhere, the maker, its channels, its papers and who discusses it. Calls and shapes.
 import { request } from '../lib/request';
 import type { ScoutCandidate } from './scout';
+import type { Byline } from '../lib/byline';
 
 export type SeedKind = 'post' | 'link' | 'entity' | 'name' | 'question';
 export type RunStatus = 'running' | 'waiting' | 'done' | 'failed';
 
 export interface ResearchPostRow {
-  post_id: string; title: string | null; at: string | null; source: string | null; url: string | null;
+  post_id: string; title: string | null; at: string | null; source: string | null; byline?: Byline | null; url: string | null;
   why?: string; strength?: 'link' | 'text' | 'around'; new?: boolean;
 }
 

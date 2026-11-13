@@ -12,6 +12,7 @@ import { feedFullTime, postBylineTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
 import { usd } from '../../lib/markx';
+import { bylineText } from '../../lib/byline';
 
 const OVERVIEW_KEY = ['markx-overview'] as const;
 
@@ -122,7 +123,7 @@ export function MarkXEntities() {
                         {e.examples.slice(0, 3).map((p) => (p.id ? (
                           <li key={p.id} className="min-w-0 truncate text-[0.8125rem] text-fg-2">
                             <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
-                            <span className="text-fg-3"> · {p.source}</span>
+                            <span className="text-fg-3"> · {bylineText(p.byline, p.source)}</span>
                           </li>
                         ) : null))}
                       </ul>

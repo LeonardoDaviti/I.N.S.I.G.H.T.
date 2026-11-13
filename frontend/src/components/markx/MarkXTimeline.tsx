@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { TextLink } from '../ui';
 import { plural } from '../../lib/format';
 import type { MarkxTimeline, MarkxTimelineEvent, MarkxTimelineKind } from '../../services/markx';
+import { bylineText } from '../../lib/byline';
 
 /** Why a line is on the timeline (0165 C), in words. */
 const WHY: Record<MarkxTimelineKind, string> = {
@@ -36,7 +37,7 @@ export function TimelineLine({ e }: { e: MarkxTimelineEvent }) {
           : e.kind === 'story' && e.mark === 'x' && e.story
             ? <TextLink to={`/markx/stories/${encodeURIComponent(e.story)}`} muted>{title}</TextLink>
             : <span className="text-fg">{title}</span>}
-        <span className="text-fg-3">{e.post?.source ? ` · ${e.post.source}` : ''} · {timelineWhy(e)}</span>
+        <span className="text-fg-3">{e.post?.source ? ` · ${bylineText(e.post.byline, e.post.source)}` : ''} · {timelineWhy(e)}</span>
       </span>
     </li>
   );

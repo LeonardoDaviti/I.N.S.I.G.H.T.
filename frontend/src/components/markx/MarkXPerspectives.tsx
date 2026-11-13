@@ -11,6 +11,7 @@ import { ErrorState, LoadingState } from '../states';
 import { feedFullTime, postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
+import { bylineText } from '../../lib/byline';
 
 export const LABEL_WORDS: Record<MarkxPerspectiveLabel, string> = {
   original: 'original', new_facts: 'new facts', opinion: 'opinion', same: 'same', not_this_story: 'not this story',
@@ -39,6 +40,8 @@ function sources(f: MarkxSheetFact): string {
 export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<string, MarkxStoryPost> }) {
   const o = sheet.original;
   const first = posts[o.post];
+  // Who wrote each (Byline, issue 0185): the member's byline, else the name the sheet kept.
+  const who = (post: string, source: string | null) => bylineText(posts[post]?.byline, source);
   return (
     <section aria-label="Story sheet" className="space-y-4 rounded-md border border-line p-4">
       <div>
@@ -47,8 +50,8 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
           <TextLink to={`/posts/${encodeURIComponent(o.post)}`}>{o.title || '(no title)'}</TextLink>
         </p>
         <p className="text-[0.8125rem] text-fg-2">
-          {o.source}{first ? ` · ${postBylineTime(first.at, new Date())}` : ''}
-          {o.also.length ? ` · also primary: ${o.also.map((a) => a.source).join(', ')}` : ''}
+          {who(o.post, o.source)}{first ? ` · ${postBylineTime(first.at, new Date())}` : ''}
+          {o.also.length ? ` · also primary: ${o.also.map((a) => who(a.post, a.source)).join(', ')}` : ''}
         </p>
         {sheet.source_page ? (
           <p className="text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">
@@ -62,7 +65,7 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
           <p className={H3}>Before the release</p>
           <ul className="mt-1 space-y-0.5 text-[0.8125rem] leading-5 text-fg">
             {sheet.before.facts.map((f) => <li key={f.lines.join()}>{f.fact} <span className="text-fg-3">({sources(f)})</span></li>)}
-            {sheet.before.claims.map((c, n) => <li key={`c${n}`}>{c.claim} <span className="text-fg-3">({c.source})</span></li>)}
+            {sheet.before.claims.map((c, n) => <li key={`c${n}`}>{c.claim} <span className="text-fg-3">({who(c.post, c.source)})</span></li>)}
           </ul>
         </div>
       ) : null}
@@ -83,7 +86,7 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
         <div>
           <p className={H3}>Unconfirmed claims</p>
           <ul className="mt-1 space-y-0.5 text-[0.8125rem] leading-5 text-fg">
-            {sheet.claims.map((c, n) => <li key={n}>{c.claim} <span className="text-fg-3">({c.source})</span></li>)}
+            {sheet.claims.map((c, n) => <li key={n}>{c.claim} <span className="text-fg-3">({who(c.post, c.source)})</span></li>)}
           </ul>
         </div>
       ) : null}
@@ -93,7 +96,7 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
           <ul className="mt-1 space-y-0.5 text-[0.8125rem] leading-5 text-fg">
             {sheet.opinions.map((o2, n) => (
               <li key={n}>{o2.point || <span className="text-fg-3">an opinion without a stated point</span>}{' '}
-                <span className="text-fg-3">({o2.source})</span></li>
+                <span className="text-fg-3">({who(o2.post, o2.source)})</span></li>
             ))}
           </ul>
         </div>
@@ -104,7 +107,7 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
           <ul className="mt-1 space-y-0.5 text-[0.8125rem] leading-5 text-fg-2">
             {sheet.related.map((r) => (
               <li key={r.post}><TextLink to={`/posts/${encodeURIComponent(r.post)}`} muted>{r.title || '(no title)'}</TextLink>
-                <span className="text-fg-3"> · {r.source}</span></li>
+                <span className="text-fg-3"> · {who(r.post, r.source)}</span></li>
             ))}
           </ul>
         </div>
@@ -209,7 +212,7 @@ export function MemberLine({ story, line, posts, now }: { story: string; line: M
       <span className="min-w-0">
         <span className="block min-w-0 text-[0.875rem] leading-5 text-fg [overflow-wrap:anywhere]">
           <TextLink to={`/posts/${encodeURIComponent(line.post)}`}>{p?.title || '(no title)'}</TextLink>
-          <span className="text-fg-3"> · {p?.source}</span>
+          <span className="text-fg-3"> · {bylineText(p?.byline, p?.source)}</span>
           {p ? <span className="text-fg-3" title={feedFullTime(p.at)}> · {postBylineTime(p.at, now)}</span> : null}
         </span>
         <span className="block text-[0.8125rem] leading-5 text-fg-2">

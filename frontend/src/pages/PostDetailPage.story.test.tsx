@@ -228,7 +228,8 @@ describe('PostDetailPage threads and reposts (issue 0066)', () => {
 
   it('a repost in a story names its author, and its reposter once (issue 0070)', async () => {
     const repost = { ...reply(3, 'We are announcing three new discoveries', ''), parent_id: null, parent_reason: null,
-      source_display_name: 'sama', role: 'share' as const, repost: { by: [], author: 'danintheory' } };
+      source_display_name: 'sama', role: 'share' as const, repost: { by: [], author: 'danintheory' },
+      byline: { author: '@danintheory', via: 'sama', quoting: null } };
     renderPage(baseApi(rssPost({ story: story({ posts: [repost] }) })));
     await screen.findByRole('article', { name: 'Post content' });
     const line = within(screen.getByRole('region', { name: 'Covered by' })).getByText('@danintheory').closest('li');
@@ -237,7 +238,8 @@ describe('PostDetailPage threads and reposts (issue 0066)', () => {
   });
 
   it('a repost says who reposted it, and its author', async () => {
-    renderPage(baseApi(rssPost({ title: 'how i work with agents in 2026.', repost: { by: [], author: 'badlogicgames' } })));
+    renderPage(baseApi(rssPost({ title: 'how i work with agents in 2026.', repost: { by: [], author: 'badlogicgames' },
+      byline: { author: '@badlogicgames', via: 'steipete', quoting: null } })));
     await screen.findByRole('article', { name: 'Post content' });
     expect(screen.getByText('↻ from @badlogicgames')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Thread' })).toBeNull();

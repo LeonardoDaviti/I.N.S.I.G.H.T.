@@ -502,11 +502,13 @@ def _shown_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     ids = sorted(set(ids))
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.title, p.url, {_date()},
-                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
-                                    s.handle_or_url)
-                      FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY(%s::uuid[])""", (ids,))
-    return {i: {"title": t or None, "url": u, "at": at, "source": src} for i, t, u, at, src in cur.fetchall()}
+    from insight_core.utils import byline
+    cur.execute(f"""SELECT p.id::text, p.title, p.url, {_date()}, {byline.SOURCE_NAME}, {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    # issue 0185: each line's byline (who wrote it, via whom)
+    return {i: {"title": t or None, "url": u, "at": at, "source": src, "byline": byline.of_row(src, *by)}
+            for i, t, u, at, src, *by in cur.fetchall()}
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -550,7 +552,7 @@ def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
                    for a in runs]
             top, n = Counter(x for x in per if x).most_common(1)[0] if any(per) else (None, 0)
             lines.append({"id": pid, "n": k, "title": p.get("title"), "source": p.get("source"), "at": _iso(p.get("at")),
-                          "url": p.get("url"), "trig": ptrig.get(pid) or [],
+                          "byline": p.get("byline"), "url": p.get("url"), "trig": ptrig.get(pid) or [],
                           "verdict": _MAP.get(top, top) if n >= 2 else None,
                           "about": next((x.get("about") for a in dev for x in (a.get("posts") or [])
                                          if isinstance(x, dict) and x.get("n") == k and x.get("about")), None)})

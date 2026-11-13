@@ -50,6 +50,8 @@ from uuid import UUID
 from psycopg import Cursor
 
 from insight_core.markx import pairing, plan_marks, repo, schemas
+from insight_core.utils import byline
+from insight_core.utils.byline import original_author  # noqa: F401 - 0168 E's rule lives in Byline (issue 0185)
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -143,8 +145,9 @@ class Post:
 
     @property
     def who(self) -> str:
-        """0168 E: who a render says wrote it: the source, or "a post by @X shared by <source>" for a repost."""
-        return f"a post by {self.by} shared by {self.source}" if self.by else self.source
+        """0168 E: who a render says wrote it: the source, or "a post by @X shared by <source>" for a repost (Byline's
+        words, issue 0185)."""
+        return byline.who({"author": self.by, "via": self.source})
 
     @property
     def voice(self) -> str:
@@ -204,24 +207,6 @@ def author_account(kind: str, by: Optional[str], forwarded_user: Optional[str] =
         return x_account(by.lstrip("@"))
     if kind == "telegram" and by and forwarded_user:
         return "t.me/" + forwarded_user.lstrip("@").lower()
-    return None
-
-
-def original_author(kind: str, platform: Optional[str], handle: Optional[str], author: Optional[str],
-                    forwarded: Optional[str], owns: Optional[Dict[Tuple[Any, Any], str]] = None) -> Optional[str]:
-    """0168 E: the original author of a post its feed carries but did not write: on X a row whose author is not the
-    feed's own account ("@acme", a repost); a Telegram forward's channel as its header names it. None: the feed's
-    own post (or unknown)."""
-    if kind == "x" and author:
-        from insight_core.db.repo_reader import _own_account
-        key = (platform, handle)
-        own = owns.get(key) if owns is not None and key in owns else _own_account(platform, handle)
-        if owns is not None:
-            owns[key] = own
-        a = author.strip().lstrip("@")
-        return "@" + a if own and a and a.casefold() != own.casefold() else None
-    if kind == "telegram" and forwarded:
-        return forwarded.strip()
     return None
 
 

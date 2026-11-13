@@ -30,9 +30,10 @@ import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
 import {
-  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree,
+  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, storyTree,
 } from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
+import { bylineName, carried, carriedLine } from '../lib/byline';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { countsLabel, middleTruncate, plural } from '../lib/format';
@@ -155,7 +156,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
               <Under name={line.under} />
               {!other.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
               <span className={LINE_NAME} title={sourceLabel(other.source_display_name)}>
-                {middleTruncate(storyPostName(other), 32)}
+                {middleTruncate(bylineName(other), 32)}
               </span>
               <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
               <Link
@@ -165,7 +166,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
               >
                 {other.title?.trim() || 'Untitled post'}
               </Link>
-              {other.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(other.source_display_name)}</span> : other.role === 'share' ? <span className="shrink-0">· share</span> : null}
+              {carried(other) ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(other.source_display_name)}</span> : other.role === 'share' ? <span className="shrink-0">· share</span> : null}
               {other.id === story.first ? <span className="shrink-0">· first</span> : null}
               <time dateTime={other.sort_at} title={feedFullTime(other.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
                 {feedDateLabel(other.sort_at, now)}
@@ -1112,7 +1113,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 {middleTruncate(sourceName, 40)}
               </span>
             )}
-            {post.repost ? <span>{repostLine(post.repost)}</span> : null}
+            {/* Who wrote it, via whom, quoting whom (Byline, issue 0185). */}
+            {carriedLine(post) ? <span>{carriedLine(post)}</span> : null}
             {/* A page you saved that is its source's post (issue 0122): "<source> · saved by you". */}
             {post.metadata?.saved_by_owner && post.platform !== 'saved' ? <span className="whitespace-nowrap">· saved by you</span> : null}
             {/* A story's original INSIGHT collected by itself (issue 0123, Collect originals): never saved by you. */}

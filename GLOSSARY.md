@@ -16,6 +16,11 @@ entity-type list, a word count, a unit rule. Gates belong to a relation's policy
 **Voice** — an independent source of a post. Two posts are independent voices when they come from different
 sources and neither is a post the owner saved. A story's voices are its distinct sources.
 
+**Byline** — who wrote a post, via whom: its original author when its feed did not write it (an X repost or quote's
+account, a Telegram forward's channel), the feed that carried it, and the account it quotes
+(`backend/insight_core/utils/byline.py`; the screens' one formatter `frontend/src/lib/byline.ts`). Display only: a
+post's voice is Pairing's to decide, and a repost counts as its author's voice only when a source follows that author.
+
 **Happening** — what a post reports as a key: an action group (release, deal, funding, legal, people, pricing,
 research, announcement), its parties, its stage, its stated day, its money amounts
 (`backend/insight_core/markx/happening.py`). Two posts of one happening may be paired whatever their words or
