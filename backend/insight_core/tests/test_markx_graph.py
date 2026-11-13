@@ -397,7 +397,7 @@ class TheBeforeList(_Graph):
         self.assertEqual([r["post_id"] for r in panel["before"]], olders[::-1][:10])
         row = panel["before"][0]
         self.assertEqual(set(row), {"post_id", "relation", "rule", "p", "reason", "uncertain", "at", "title", "source",
-                                    "label"})
+                                    "label", "byline"})   # 0185: who wrote it, via whom
         self.assertFalse(row["uncertain"])
         self.assertEqual(call("GET", f"/api/markx/posts/{olders[0]}")[1]["before"], [])   # the older post has none
 
