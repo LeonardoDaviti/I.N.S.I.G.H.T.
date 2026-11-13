@@ -134,8 +134,9 @@ class SourcesService:
         return {"handle_or_url": old["handle_or_url"], "page_watch": (old.get("settings") or {}).get("page_watch")}
 
     def delete_source(self, source_id: str) -> bool:
-        """Delete source (and cascade delete its posts)."""
-        with db.connection(self.db_url) as conn:
+        """Delete source (and cascade delete its posts). The cascade can run for minutes: the process's statement
+        timeout, not a request's (issue 0188)."""
+        with db.long_statements(), db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 deleted = self.repo.delete_source(cur, source_id)
                 conn.commit()
