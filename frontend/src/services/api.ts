@@ -254,6 +254,9 @@ export interface FeedPage { success: true; items: FeedItem[]; next_cursor: strin
 /** An entity the search's words name (issue 0139, Mark X on, a first page): it opens /markx/entities/:id. */
 export interface SearchEntity {
   id: string; name: string; type: string | null; maker: string | null; posts: number; voices: number;
+  /** 0184 (identity facts, when on): what it is, and the name's senses with theirs ("terminal app (3)"). */
+  what?: string | null;
+  senses?: { id: string; what: string | null; posts: number }[];
 }
 /** GET /api/search: a FeedPage and the entity cards ([] while Mark X is off or nothing matched). */
 export interface SearchPage extends FeedPage { entities?: SearchEntity[]; }

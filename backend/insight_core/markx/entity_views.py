@@ -84,18 +84,24 @@ def _story_heads(cur: Any, sids: Iterable[str]) -> Dict[str, Optional[str]]:
     return dict(cur.fetchall())
 
 
-def _ent_view(book: I.Book, eid: str) -> Dict[str, Any]:
+def _ent_view(book: I.Book, eid: str, facts: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from insight_core.markx import schemas
     e = book.ents[eid]
     root = book.root(eid) == eid
     # 0164: a cluster is shown under its root's shown name and type (by evidence), its maker as the maker's entity
     # (the stated maker's name read through its alias: "Zentra AI" shows as the org Zentra when they are one)
     mk = I.maker_root(book, e.maker) if e.maker else None
-    return {"id": e.id, "name": book.label(eid) if root else e.name,
-            "type": book.shown_type(eid) if root else schemas.entity_type(e.type),
-            "maker": book.label(mk) if mk in book.ents else e.maker, "maker_id": mk if mk in book.ents else None,
-            "level": e.level, "version": e.version, "variant": e.variant, "size": e.size, "build": e.build,
-            "status": e.status, "family": _family_of(book, eid)}
+    out = {"id": e.id, "name": book.label(eid) if root else e.name,
+           "type": book.shown_type(eid) if root else schemas.entity_type(e.type),
+           "maker": book.label(mk) if mk in book.ents else e.maker, "maker_id": mk if mk in book.ents else None,
+           "level": e.level, "version": e.version, "variant": e.variant, "size": e.size, "build": e.build,
+           "status": e.status, "family": _family_of(book, eid)}
+    f = (facts or {}).get(eid)
+    if f is not None:   # 0184: what it is, and its maker when made with none (markx/entity_facts.py)
+        out["what"] = f.what
+        if not out["maker"] and f.maker:
+            out["maker"], out["maker_id"] = f.maker, f.maker_id
+    return out
 
 
 def _family_of(book: I.Book, eid: str) -> Optional[Dict[str, str]]:
@@ -169,10 +175,12 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     posts = _posts(cur, {p for xs in newest.values() for p, _ in xs})
     surge = S.surging(cur, book, since=since.date())
     items = []
+    from insight_core.markx import entity_facts
+    facts = entity_facts.read(cur, [eid for eid, _ in top])   # 0184: one query by the page's ids (off: none)
     for eid, a in top:
         sids = Counter(s for p in a["posts"] for s in story_of.get(p, ()))
         last = max(at for at, _ in a["posts"].values())
-        items.append({**_ent_view(book, eid), "voices": len(a["voices"]), "posts": len(a["posts"]),
+        items.append({**_ent_view(book, eid, facts), "voices": len(a["voices"]), "posts": len(a["posts"]),
                       "reports": len(a["reports"]), "mentions": len(a["posts"]) - len(a["reports"]),
                       "last_at": last, "last_seen": _when(last, now),
                       "stories": [{"id": s, "headline": heads.get(s)} for s, _ in sids.most_common(3)],
@@ -465,7 +473,12 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
-    return {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
+    from insight_core.markx import entity_facts
+    facts = entity_facts.read(cur, [root], senses=True)   # 0184: what it is, and the name's other senses
+    page_entity = _ent_view(book, root, facts)
+    if root in facts and facts[root].senses:
+        page_entity["senses"] = facts[root].senses
+    return {"entity": page_entity, "asked": entity_id, "redirected": root != entity_id,
             "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
             **original(cur, book, root),   # 0138: its original first, and its other addresses
             "aliases": sorted(book.ents[m].name for m in members),

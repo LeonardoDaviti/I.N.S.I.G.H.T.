@@ -34,7 +34,7 @@ from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, 
 MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
              "mx_settings", "mx_jobs", "mx_candidate_posts", "mx_workers",
-             "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins", "mx_entity_queue", "mx_entity_redirects",
+             "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins", "mx_entity_facts", "mx_entity_queue", "mx_entity_redirects",
              "mx_entity_aliases", "mx_entity_fixes", "mx_entities", "mx_entity_addresses",   # 0119; 0138; 0164
              "mx_research_pairs", "mx_research_findings", "mx_research_runs",   # 0162
              "mx_scout_items", "mx_scout_candidates", "mx_scout_runs", "mx_source_provenance",   # 0148

@@ -2037,7 +2037,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         vec_seeds |= {r[0] for r in cur.fetchall()}
     t = tick("load", t)
 
+    from insight_core.markx import entity_facts
     link_out: Counter = Counter({"mentions": 0, "linked": 0, "entities_made": 0, "published": 0})
+    placed: Counter = Counter()
     touched_days: Set[Any] = set()
     posts_linked: Set[str] = set()
     facts: Dict[str, Any] = {"hf": None, "an": None}
@@ -2047,6 +2049,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         nonlocal t
         before = {(m.post_id, m.guide, m.n): m.entity_id for m in ms}
         got_ = relink(cur, book, ms)
+        placed.update(entity_facts.place(cur, book, ms, run_id=run_id))   # 0184: a bare name's mentions, by sense
+        placed.update(entity_facts.place_by_handle(cur, book, ms))         # 0184: a first name in its own account's post
         link_out["mentions"] += got_["mentions"]
         link_out["linked"] += got_["linked"]
         link_out["published"] += published(cur, book, w, ms)   # 0133: a document's `by`
@@ -2344,6 +2348,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                        "link_after": None if done or phase != "link" else link_after,
                        "chunks": done_chunks, "of": n_chunks, "resumed": resume}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
+    if entity_facts.on():   # 0184
+        out["facts"] = {"placed": dict(placed), "facts": collide_out.get("facts", 0), "split": collide_out.get("split", 0),
+                        "makers": entity_facts.makers(cur, book, {book.root(x) for x in seeded | collided if x in book.ents},
+                                                      guide, run_id=run_id)}
     out["entities_made"] = len(w.made)
     got_comp = [c for c in comp_out if c is not None]
     out["components"] = ({k: sum(c.get(k, 0) for c in got_comp) for k in ("mentions", "made", "reparented", "by_span")}
@@ -2359,7 +2367,11 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                seeds: Optional[Set[str]]) -> Dict[str, int]:
     """The collision judge: keys (entities) whose mentions differ in type or stated maker, asked COLLIDE_RUNS times;
     a split two runs make goes to the queue. `seeds` None: every entity."""
-    from insight_core.markx import tasks
+    from insight_core.markx import entity_facts, tasks
+    # 0184: with the facts on, also the entities holding unplaced mentions of a bare name, and the backfill's
+    extra = entity_facts.to_ask(cur, book, seeds, guide, int(entity_facts.config().get("cap") or 0))
+    if seeds is not None:
+        seeds = set(seeds) | extra
     cur.execute(f"""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
                      WHERE guide = ANY(%s) AND entity_id IS NOT NULL
                      {"AND entity_id = ANY(%s::uuid[])" if seeds is not None else ""}
@@ -2368,8 +2380,9 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     for eid, pid, span, type_, maker in cur.fetchall():
         by[eid].setdefault(pid, (pid, span or "", type_, maker))
     out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
+    facts_on = entity_facts.on()
     want = {eid: list(ms.values()) for eid, ms in by.items()
-            if len(ms) >= 2 and odd([(p, t, mk) for p, _, t, mk in ms.values()])
+            if len(ms) >= 2 and (odd([(p, t, mk) for p, _, t, mk in ms.values()]) or eid in extra)
             and book.ents.get(eid) and book.ents[eid].status != "not_entity"}
     out["odd"] = len(want)
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])
@@ -2396,13 +2409,21 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                 out["asked_again"] += 1
             continue
         prop = split_of([a for _, a in calls[:COLLIDE_RUNS]], n)
+        if prop is not None:
+            prop["mentions"] = _sample_rows(text)
+            found = match_pick(cur, guide, eid, text)
+            for row in prop["mentions"]:
+                row["posts"] = [list(x) for x in found.get(row["n"], [])]
+        if facts_on:   # 0184: the answer's facts; a split made into senses when its bar is on, else queued below
+            got_ = entity_facts.apply(cur, book, eid, calls[:COLLIDE_RUNS], text, prop=prop, run_id=run_id,
+                                      guide=schemas_guide("collide"))
+            out["facts"] += got_.get("facts", 0)
+            out["split"] += got_.get("split", 0)
+            if got_.get("split"):
+                continue
         if prop is None:
             out["one_thing"] += 1
             continue
-        prop["mentions"] = _sample_rows(text)
-        found = match_pick(cur, guide, eid, text)
-        for row in prop["mentions"]:
-            row["posts"] = [list(x) for x in found.get(row["n"], [])]
         if queue_item(cur, kind="collision", a=eid, b=None, proposal="split", reason="collision",
                       conf=None, evidence=prop, call_id=calls[0][0], run_id=run_id):
             out["queued"] += 1
@@ -2412,9 +2433,15 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         posts = tasks.load_posts(cur, {m[0] for pick in picks.values() for m in pick})
         nposts = counts_of(cur, guide, list(picks))
         for eid, pick in picks.items():
-            ask.answer("collide", collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
+            known = entity_facts.known_block(cur, eid) if facts_on else ""
+            ask.answer("collide", known + collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
             out["asked"] += 1
     return dict(out)
+
+
+def schemas_guide(kind: str) -> Optional[str]:
+    from insight_core.markx import schemas
+    return schemas.KINDS[kind].guide
 
 
 def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tuple[str, int]]]:

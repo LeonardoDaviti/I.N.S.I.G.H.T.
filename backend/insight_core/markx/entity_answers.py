@@ -66,9 +66,11 @@ def separate(cur: Any, book: I.Book, a: str, b: str) -> List[str]:
     return undone
 
 
-def split(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
+def split(cur: Any, book: I.Book, item: Dict[str, Any], *, by: str = "owner", call_id: Any = None) -> Dict[str, Any]:
     """Each sense but the largest becomes an entity of its own (senses related as `part` stay together), and the
-    mentions the question showed in it are pinned there."""
+    mentions the question showed in it are pinned there. 0184: `by` 'facts' is the identity facts' split
+    (markx/entity_facts.py): its entities provisional, its pins `by` facts with the call and the entity each mention
+    left (`from_entity`); `senses` the answer's sense for each entity made, for its facts."""
     from insight_core.markx import schemas
     guide = schemas.KINDS["entities"].guide
     ev = item["evidence"] or {}
@@ -89,27 +91,32 @@ def split(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
     groups.sort(key=lambda g: -len(g))
     posts_of = {int(r["n"]): [tuple(x) for x in r.get("posts") or []] for r in ev.get("mentions") or []}
     what = {int(x): (s.get("what") or "").strip() for s in senses for x in s.get("m") or []}
-    made, pinned = [], 0
+    made, pinned, made_senses = [], 0, []
     for g in groups[1:]:
         label = next((what[x] for x in g if what.get(x)), "")[:60]
         name = f"{e.name} ({label})" if label else f"{e.name} ({len(made) + 2})"
         cur.execute("""INSERT INTO mx_entities (type, name, key, level, parent, maker, status, first_seen)
-                       VALUES (%s, %s, %s, 'thing', %s, NULL, 'confirmed', %s) RETURNING id::text""",
-                    (e.type, name, N.key(name), e.parent, e.first_seen))
+                       VALUES (%s, %s, %s, 'thing', %s, NULL, %s, %s) RETURNING id::text""",
+                    (e.type, name, N.key(name), e.parent, "confirmed" if by == "owner" else "provisional", e.first_seen))
         new = cur.fetchone()[0]
         made.append(new)
+        made_senses.append(next((s for s in senses if {int(x) for x in s.get("m") or []} & set(g)), {}))
         for x in g:
             for pid, mn in posts_of.get(x, []):
                 from insight_core.markx import repo   # 0133: the pin names the post's current set's guide
                 guide = repo.current_guide(cur, pid) or schemas.KINDS["entities"].guide
-                cur.execute("""INSERT INTO mx_entity_pins (post_id, guide, n, entity_id, queue_id)
-                               SELECT %s, %s, %s, %s, %s WHERE NOT EXISTS (
+                # 0184: a facts pin never goes where the owner undid one of this mention (final)
+                cur.execute("""INSERT INTO mx_entity_pins (post_id, guide, n, entity_id, queue_id, by, call_id, from_entity)
+                               SELECT %s, %s, %s, %s, %s, %s, %s, %s WHERE NOT EXISTS (
                                  SELECT 1 FROM mx_entity_pins WHERE post_id = %s AND guide = %s AND n = %s
-                                    AND undone_at IS NULL)""",
-                            (pid, guide, mn, new, item["id"], pid, guide, mn))
+                                    AND (undone_at IS NULL OR (%s = 'facts' AND by = 'facts')))""",
+                            (pid, guide, mn, new, item["id"], by, call_id, e.id, pid, guide, mn, by))
                 pinned += cur.rowcount
-    _confirm(cur, e.id)
-    return {"entities": made, "pinned": pinned}
+                if cur.rowcount and by == "facts":   # the stage's book (the API's reads its pins again)
+                    book.pins[(pid, guide, mn)] = new
+    if by == "owner":
+        _confirm(cur, e.id)
+    return {"entities": made, "pinned": pinned, "senses": made_senses}
 
 
 def queue_get(cur: Any, item_id: str) -> Optional[Dict[str, Any]]:

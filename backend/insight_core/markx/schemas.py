@@ -221,6 +221,28 @@ COLLIDE_SCHEMA = {
     },
 }
 
+# 0184 (v10.18): collide-v2, the same question with each sense's identity facts (markx/entity_facts.py): a superset
+# of collide-v1's answer (its readers read `m` and `what` as before).
+FACT_KINDS = ["person", "org", "model", "product", "software", "dataset", "paper", "event", "place", "project", "law",
+              "other"]
+COLLIDE2_SCHEMA = {
+    "type": "object",
+    "required": ["senses"],
+    "properties": {
+        "evidence": _STR,
+        "senses": {"type": "array", "minItems": 1, "items": {
+            "type": "object", "required": ["m"],
+            "properties": {"m": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+                           "known": {"type": ["string", "null"]}, "what": _STR,
+                           "kind": {"enum": FACT_KINDS}, "maker": {"type": ["string", "null"]},
+                           "context": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
+                           "generic": {"type": "boolean"}}}},
+        "related": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 3}},
+        "unclear": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
 # 0119 B (0120 v3.2f): what each member of a story adds (persp-v1, the lab's persp_v32f_frozen.md) and the sheet's
 # merged facts (persp-merge-v1, persp_merge_v1.md). Loose, as the lab's answer check was (members with a known label;
 # groups as a list): a fact without its span, a line number out of range, a member not asked are the final checks'
