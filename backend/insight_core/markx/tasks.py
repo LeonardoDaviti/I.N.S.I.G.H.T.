@@ -698,9 +698,29 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
     stories: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
     for story, post, role, reason in cur.fetchall():
         stories.setdefault(str(story), []).append((str(post), role, reason))
-    posts = load_posts(cur, {p for ms in stories.values() for p, _, _ in ms})
-    rd = readings(cur, list(posts))
-    for ms in stories.values():
+    # 0183: the stories' posts read a chunk of stories at a time, and of their readings only the kind (was: every
+    # story's texts and whole readings at once, the plan job's peak). The same stories in the same order.
+    order = list(stories.values())
+    for at in range(0, len(order), CHECK_CHUNK):
+        chunk = order[at:at + CHECK_CHUNK]
+        posts = load_posts(cur, {p for ms in chunk for p, _, _ in ms})
+        kinds = reading_kinds(cur, list(posts))
+        yield from _checks_of(chunk, posts, kinds, certain)
+
+
+CHECK_CHUNK = 500   # stories a check planner reads at once (0183)
+
+
+def reading_kinds(cur: Cursor, ids: Sequence[str], guide: str = "read-v2") -> Dict[str, Any]:
+    """{post id: its reading's kind} of the posts read under `guide` (the reading's own value, as `readings` gives it)."""
+    cur.execute("SELECT post_id::text, reading->'kind' FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = %s",
+                (list(ids), guide))
+    return dict(cur.fetchall())
+
+
+def _checks_of(stories: Sequence[List[Tuple[str, str, Optional[str]]]], posts: Dict[str, Post], kinds: Dict[str, Any],
+               certain: Any) -> Iterable[Tuple[Post, str]]:
+    for ms in stories:
         members = _earliest(posts[p] for p, _, _ in ms if p in posts)
         if voices(members) < 2:
             continue
@@ -710,7 +730,7 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
         for p in members[1:]:
             if p.kind in NOT_VOICE or p.id in copies:
                 continue
-            roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
+            roundup = kinds.get(p.id) == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
                 continue
             side = check_side(p, members, reports)
@@ -739,6 +759,37 @@ def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None
     return kind in BACKGROUND_PLANNED
 
 
+# 0183: what each background planner reads and writes (markx/unchanged.py skips a pass while these are as they were at
+# its last pass that planned nothing). Every table a planner reads or writes is named; the key holds what else it
+# depends on: its code and its settings as it computes them. The clock only narrows check's and cite's windows within
+# a day (now - days: a post that leaves the window adds no question, and an age is only a new task's priority), so the
+# window's length in days is in their key. track's bar and windows move with the clock itself (the share of the last
+# 30 days' posts a probe passes): it has no declaration and always runs.
+_TEXT = ("posts", "post_parts", "post_links", "sources")
+BACKGROUND_INPUTS = {
+    "check": _TEXT + ("story_posts", "mx_readings", "mx_tasks", "mx_settings", "mx_guides"),
+    "cite": _TEXT + ("mx_tasks", "mx_plan_marks", "mx_settings", "mx_guides"),
+}
+_PLANNER_CODE = ("insight_core.markx.tasks", "insight_core.markx.plan_marks", "insight_core.markx.ent42",
+                 "insight_core.markx.story_window", "insight_core.markx.pairing", "insight_core.markx.schemas",
+                 "insight_core.markx.repo", "insight_core.utils.post_parts", "insight_core.utils.post_links")
+
+
+def background_inputs(cur: Cursor, kind: str, now: datetime) -> Tuple[Sequence[str], Any]:
+    """0183: (tables, key) of the background planner `kind`'s pass at `now` (unchanged.run); key None: it always runs."""
+    if kind not in BACKGROUND_INPUTS:
+        return (), None
+    from insight_core.markx import unchanged
+    key: Dict[str, Any] = {"kind": kind, "code": unchanged.code_stamp(_PLANNER_CODE), "limit": PLAN_LIMIT}
+    if kind == "check":
+        from insight_core.markx import story_window
+        from insight_core.markx.decide import Config
+        key.update(days=story_window.days_for_run(cur, now), threads=Config().check_threads)
+    else:
+        key.update(days=reading_window(cur), arm=schemas.entities_arm(cur).guide)
+    return BACKGROUND_INPUTS[kind], key
+
+
 def checks_in_background(cur: Cursor, now: Optional[datetime] = None) -> bool:
     """v10.13.2: while the story window reaches past RECENT days, planning the checks reads every story it reaches
     (over a minute on the server with `everything`, longer than a worker waits for its lease), so the decision job
@@ -765,13 +816,15 @@ def plan_checks(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, no
                     break
         return added
     edge = at - timedelta(days=story_window.RECENT)
-    asked = sorted(check_questions(cur, days=days, now=now), key=lambda pt: (pt[0].at, pt[0].id), reverse=True)
+    # 0183: what the sort keeps of each question is its post's time and id and the input (not the post's whole text)
+    asked = sorted(((p.at, p.id, text) for p, text in check_questions(cur, days=days, now=now)),
+                   key=lambda q: (q[0], q[1]), reverse=True)
     added = old = 0
-    for p, text in asked:
-        late = p.at < edge
+    for when, pid, text in asked:
+        late = when < edge
         if late and old >= story_window.BACKFILL_PAGE or not late and added >= limit:
             continue
-        if add(cur, "check", text, a=p.id, priority=story_window.BACKFILL_PRIORITY if late else 0)[1]:
+        if add(cur, "check", text, a=pid, priority=story_window.BACKFILL_PRIORITY if late else 0)[1]:
             if late:
                 old += 1
             else:

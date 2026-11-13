@@ -885,7 +885,7 @@ def fields_rule(a: Ent, b: Ent) -> Optional[str]:
     return "auto" if N.version_part(a.pk) == N.version_part(b.pk) else "queue"
 
 
-@dataclass
+@dataclass(slots=True)   # 0183: no per-pair __dict__ (a full pass pools hundreds of thousands of pairs)
 class Pooled:
     a: str
     b: str
