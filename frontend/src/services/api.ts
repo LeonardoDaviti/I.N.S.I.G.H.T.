@@ -1888,6 +1888,8 @@ export interface MarkxRoundupItem {
 export interface MarkxRoundupIssue {
   id: number; span: 'day' | 'week'; from: string; until: string; version: number; built_at: string;
   roundups: number; units: number; count: number; items?: MarkxRoundupItem[];
+  /** 0181 round 2: the items left out as no news ({type: n}, `continues`), still untyped, and over the per-source cap. */
+  left_out?: Record<string, number>; untyped?: number; capped?: number;
 }
 export interface MarkxRoundupIssues {
   daily: MarkxRoundupIssue | null; weekly: MarkxRoundupIssue | null; past: MarkxRoundupIssue[]; tz_offset_minutes: number;
