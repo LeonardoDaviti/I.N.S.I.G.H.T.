@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
@@ -224,7 +224,7 @@ class NewsService:
     # ---- News ---------------------------------------------------------------------------
 
     def news(self, scope: str | None = None, *, limit: Optional[int] = None,
-             cursor: Optional[str] = None) -> Dict[str, Any]:
+             cursor: Optional[str] = None, mark: str = "main") -> Dict[str, Any]:
         """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
         begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
         source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
@@ -232,20 +232,46 @@ class NewsService:
         posts) and `news` {part, first_at, reports, shares, mentions, score}. On one source (issue
         0077) also the stories a roundup of it mentions, and `news.scope_role`: its part, the
         strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
-        the origin of its 0050 story, issue 0082), report, share, else mention."""
+        the origin of its 0050 story, issue 0082), report, share, else mention.
+
+        Issue 0204: whose rows (`mark`): "main" reads Mark X's stored rows (`rows_of`: its newest written run, mx_news)
+        when Mark X is on and has rows in the window, else Mark IX's, with `fallback` and a `note` saying so; "ix" is
+        the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix")."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            answer = self.news_on(cur, scope)
+            run, note = self.rows_of(cur, mark)
+            answer = {**self.news_on(cur, scope, mx_run=run), "mark": "x" if run else "ix",
+                      "fallback": note is not None, "note": note}
         if limit is None:
             return answer
         items, next_cursor = page_of(answer["items"], limit, cursor)   # issue 0195: News in pages
         return {**answer, "items": items, "next_cursor": next_cursor}
 
-    def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None) -> Dict[str, Any]:
-        """`news` on the caller's cursor; `news_id`: that row only."""
+    MARKX_EMPTY = "Mark X has no News yet (a new install, or its worker has not run): this is the older News."
+    MARKX_OFF = "Mark X is off on this install: this is the older News."
+
+    def rows_of(self, cur: Any, mark: str = "main") -> Tuple[Optional[str], Optional[str]]:
+        """(the Mark X run whose rows News reads, or None for Mark IX's; the note when main fell back to Mark IX).
+        0204: Mark X's rows are main when Mark X is on and its newest written run has a row in the window."""
+        if mark == "ix":
+            return None, None
+        from insight_core.markx import api as mx_api, news as mx_news
+        if not mx_api.enabled():
+            return None, self.MARKX_OFF
+        run = mx_news.last_written(cur)
+        if run is not None:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM mx_news WHERE run_id = %s AND first_at >= %s)",
+                        (run, self.clock() - timedelta(days=NEWS_DAYS)))
+            if cur.fetchone()[0]:
+                return run, None
+        return None, self.MARKX_EMPTY
+
+    def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None,
+                mx_run: Optional[str] = None) -> Dict[str, Any]:
+        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0204)."""
         feed_scope = FeedScope.parse(scope)
         one_source = feed_scope.kind in ("source", "voice")   # a voice's page reads as a source's (issue 0132 A)
         now = self.clock()
-        rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id)
+        rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id, mx_run=mx_run)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
         owners = self.repo.owners(cur)   # one owner's channels one voice, as the job counted them (issue 0111)
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)

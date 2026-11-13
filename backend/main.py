@@ -1112,15 +1112,18 @@ NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top row
 
 @app.get("/api/news")
 @error_detail("load News")
-async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None):
+async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None,
+                   mark: str = Query("main", pattern="^(main|ix)$")):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
     counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
     and `news` {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions,
     score}, recent first, then by score, then the newest. On one source (issue 0077) also the
     stories its roundups mention, and `news.scope_role`: origin | report | share | mention.
-    Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end."""
-    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor)
+    Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end.
+    Issue 0204: Mark X's rows are the main News (`mark` "x"), Mark IX's when Mark X has none (`fallback`, `note`);
+    `mark=ix` asks for the older News (Mark IX's rows)."""
+    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark)
 
 
 @app.get("/api/classics")

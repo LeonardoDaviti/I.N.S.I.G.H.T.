@@ -463,6 +463,36 @@ class NewsJobTests(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM story_posts WHERE post_id = ANY(%s::uuid[])", (self.fresh,))
         self.assertEqual(self.cur.fetchone()[0], 0, "a name never folds rows in the Main feed")
 
+    def test_mark_x_rows_are_the_main_news_and_mark_ix_the_fallback(self):
+        """Issue 0204: News reads Mark X's stored rows (its newest written run) through the same reading as Mark
+        IX's; Mark IX's rows when Mark X is off or has no row in the window (with the note), and on asking (`ix`)."""
+        from unittest import mock
+        from insight_core.markx import api as mx_api, news as mx_news, repo as mx_repo
+        self._week()
+        run = str(mx_repo.start_run(self.cur, code_version="test", config={}))
+        row = {"id": str(uuid.uuid4()), "first_at": self.now - timedelta(hours=10), "voices": 2, "reports": 2,
+               "shares": 0, "mentions": 0, "score": 2.0, "tag": "NEW",
+               "posts": [{"post_id": p, "role": "report", "voice": f"v{n}", "name": None, "position": n, "story": None}
+                         for n, p in enumerate(self.fresh[:2])]}
+        mx_repo.add_news_rows(self.cur, run, [row])
+        with mock.patch.object(mx_api, "enabled", return_value=True):
+            with mock.patch.object(mx_news, "last_written", return_value=run):
+                self.assertEqual(self.news.rows_of(self.cur), (run, None))
+                self.assertEqual(self.news.rows_of(self.cur, "ix"), (None, None))
+            with mock.patch.object(mx_news, "last_written", return_value=None):
+                self.assertEqual(self.news.rows_of(self.cur), (None, NewsService.MARKX_EMPTY))
+        with mock.patch.object(mx_api, "enabled", return_value=False):
+            self.assertEqual(self.news.rows_of(self.cur), (None, NewsService.MARKX_OFF))
+        mine = self._mine(self.news.news_on(self.cur, "all", mx_run=run)["items"])
+        self.assertEqual([i["id"] for i in mine], [self.fresh[0]], "Mark X's row only: the older story is no row of it")
+        self.assertEqual([p["id"] for p in mine[0]["story"]["posts"]], [self.fresh[1]])
+        self.assertEqual((mine[0]["news"]["reports"], mine[0]["news"]["score"]), (2, 2.0))
+        folder = self._folder(self.a)
+        self.assertEqual([i["id"] for i in self.news.news_on(self.cur, f"folder:{folder}", mx_run=run)["items"]],
+                         [self.fresh[0]], "a scope reads Mark X's rows as Mark IX's")
+        ix = self._mine(self.news.news_on(self.cur, "all")["items"])
+        self.assertEqual([i["id"] for i in ix], [self.fresh[0], self.older[0]], "the older News is Mark IX's, unchanged")
+
     def test_a_source_without_a_name_is_named_by_its_address(self):
         """An empty display name falls back like a missing one: the reader derives a name from the
         address (sourceLabel), never a blank."""
@@ -919,6 +949,12 @@ class NewsRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIsInstance(body["classics"], list)
         self.assertEqual(self.call(self.app, "GET", "/api/news", query={"scope": "nowhere"})[0], 400)
+        status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all", "mark": "ix"})
+        self.assertEqual((status, body["mark"], body["fallback"], body["note"]), (200, "ix", False, None))   # 0204
+        status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all"})
+        self.assertIn(body["mark"], ("x", "ix"))
+        self.assertEqual(body["fallback"], body["mark"] == "ix", "main falls back to the older News only with a note")
+        self.assertEqual(self.call(self.app, "GET", "/api/news", query={"scope": "all", "mark": "y"})[0], 422)
         self.assertEqual(self.call(self.app, "POST", "/api/classics/hide", json_body={"url": ""})[0], 400)
         status, _, body = self.call(self.app, "POST", "/api/classics/hide", json_body={"url": self.url})
         self.assertEqual((status, body["url"]), (200, self.url))

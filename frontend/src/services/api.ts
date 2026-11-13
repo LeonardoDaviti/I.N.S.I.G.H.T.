@@ -251,6 +251,10 @@ export interface PageUpdate {
   sections_added: number; sections_removed: number;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
+/** GET /api/news (issue 0204): whose rows (`mark`: Mark X's, the main News, or Mark IX's, the older News), and when
+ *  the main News fell back to the older one (`fallback`, with the `note` the page shows). */
+export interface NewsPage extends FeedPage { mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null; }
+export type NewsMark = 'main' | 'ix';
 /** An entity the search's words name (issue 0139, Mark X on, a first page): it opens /markx/entities/:id. */
 export interface SearchEntity {
   id: string; name: string; type: string | null; maker: string | null; posts: number; voices: number;
@@ -1339,9 +1343,10 @@ export function createApi() {
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
-    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. */
-    getNews: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
-      request<FeedPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
+    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0204: Mark X's rows
+     *  (`mark` main, falling back to Mark IX's when it has none) or the older News (`mark` ix). */
+    getNews: ({ scope, cursor, signal, mark = 'main' }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark }) =>
+      request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}`, { signal }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
     getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
       request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),

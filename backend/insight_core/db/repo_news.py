@@ -322,23 +322,33 @@ class NewsRepository:
     # ---- reading News -----------------------------------------------------------------
 
     @staticmethod
-    def news_posts(cur: Cursor, scope: FeedScope, since: datetime, news_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def news_posts(cur: Cursor, scope: FeedScope, since: datetime, news_id: Optional[str] = None,
+                   mx_run: Optional[str] = None) -> List[Dict[str, Any]]:
         """Every post of the News stories begun since `since` that have a post in `scope`, as feed
         items, with its story's numbers and its role. Each story's posts first posted first. On one
         source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions).
-        `news_id`: that story's only (a post page's row, issue 0083)."""
+        `news_id`: that story's only (a post page's row, issue 0083). `mx_run` (0204): Mark X's rows of that run
+        (mx_news, the same shape: its news_posts rows in `posts`) instead of Mark IX's news_stories and news_posts."""
         scope_sql, params = _scope_sql(scope)
         one = "AND ns.id = %s" if news_id else ""
+        rows_with, rows_params, ns_table, np_table = "", [], "news_stories", "news_posts"
+        if mx_run is not None:
+            rows_with = """WITH mx_ns AS (SELECT id, first_at, voices, reports, shares, mentions, score FROM mx_news
+                                           WHERE run_id = %s),
+                                mx_np AS (SELECT n.id AS news_id, (x->>'post_id')::uuid AS post_id, x->>'role' AS role,
+                                                 x->>'voice' AS voice, x->>'name' AS name, (x->>'position')::int AS position
+                                            FROM mx_news n, jsonb_array_elements(n.posts) x WHERE n.run_id = %s)"""
+            rows_params, ns_table, np_table = [mx_run, mx_run], "mx_ns", "mx_np"
         mentioned, mention_params = "", []
         if scope.kind in ("source", "voice"):
             mentioned = f"""
-              OR EXISTS (SELECT 1 FROM news_posts o JOIN story_posts osp ON osp.post_id = o.post_id
+              OR EXISTS (SELECT 1 FROM {np_table} o JOIN story_posts osp ON osp.post_id = o.post_id
                          JOIN story_mentions m ON m.story_id = osp.story_id
                          JOIN posts mp ON mp.id = m.post_id JOIN sources s ON s.id = mp.source_id
                          WHERE o.news_id = ns.id AND {scope_sql})"""
             mention_params = params
         cur.execute(
-            f"""
+            f"""{rows_with}
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
                    np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope,
                    np.voice, p.content_hash, pp.subject,
@@ -346,19 +356,19 @@ class NewsRepository:
                    sp.parent_url IS NOT NULL AND sp.parent_reason IN ('citation', 'quote')
                      AND sp.parent_url = (SELECT st.origin_url FROM stories st WHERE st.id = sp.story_id) AS shares_origin,
                    sp.story_id, (SELECT st.voices FROM stories st WHERE st.id = sp.story_id), np.name
-            FROM news_stories ns
-            JOIN news_posts np ON np.news_id = ns.id
+            FROM {ns_table} ns
+            JOIN {np_table} np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
             WHERE ns.first_at >= %s {one}
-              AND (EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
+              AND (EXISTS (SELECT 1 FROM {np_table} o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
                            WHERE o.news_id = ns.id AND {scope_sql}){mentioned})
             ORDER BY ns.id, np.position NULLS LAST, {pairing.ix_date('p')}, p.id
             """,
-            [*params, since, *([news_id] if news_id else []), *params, *mention_params],
+            [*rows_params, *params, since, *([news_id] if news_id else []), *params, *mention_params],
         )
         out = []
         for row in cur.fetchall():
