@@ -39,6 +39,10 @@ inside it. Intervals are Wilson 95%.
 | merge (judge-story-v1) | 64 merge questions of the 11-05 server copy | 64 | none (agreement only) |
 
 The A/B's Haiku spend, everything: **$2.92 at list price** (6,701 items in 714 calls, the cache runs included).
+Its scripts, inputs and answers are in `plan/research/worker-cost-0191/` (gitignored: real posts): `ab.py` (one
+arm), `score.py` and `pairs.py` (agreement, gold), `gate.py`, `gate_relate.py`, `gate_back.py` (part 5),
+`cache_table.py`, `logcost.py`, `refusals.py`, `final.py`, `rules_check.py`; they expect to sit in a checkout's
+`scratch/` (they import its backend and worker).
 
 ## 1. Thinking effort, by kind
 
@@ -233,7 +237,7 @@ Code: `graph.RELATE_SETTLES`/`settles`, `back.SETTLES`/`settles`, `identity.one_
 | the rest | 0.13 | 0.11 | | | | | 0.001 | 0.001 |
 | **total** | **424.14** | **298.52** | 50.22 | 67.35 | 8.06 | | **2.97** | **2.09** |
 
-How it is computed (`final.py` in the A/B's scratch, from the logs' per-kind totals): a kind's output dollars times
+How it is computed (`final.py`, from the logs' per-kind totals): a kind's output dollars times
 (1 - its measured cut in output tokens an item: entities 29%, cite 35%, alias and alias2 17%), plus cite's 4.4% asked
 again; its input at 1x list where the cache is off (0.75x for the 5-minute kinds, unchanged where Claude Code's
 default stays); relate, back and collide times (1 - the share of calls the lab measured as saved). "Answers per new
