@@ -488,9 +488,13 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
   | container | limit | measured |
   |---|---|---|
   | insight-ingestion | 12g (`INSIGHT_INGESTION_MEM_LIMIT`) | 7.0-7.75 GiB spikes in decision runs on the server (0183); a decision run 1.2-1.6 GB on a 95k-entity copy (the server has ~250k) |
-  | insight-api | 10g (`INSIGHT_API_MEM_LIMIT`) | 2.3 GB average, 3.2 GB at most on the server before 0186; an export's process peak 7.5 GB on the 0186 copy |
+  | insight-api | 10g (`INSIGHT_API_MEM_LIMIT`) | 2.3 GB average, 3.2 GB at most on the server before 0186; an export's process peak 7.5 GB on the 0186 copy; v10.17.2 (0202) on a server-sized copy: ~230 MB at the start, ~300 MB after a reading session, ~450 MB after a stress run (was 463 and 704) |
   | insight-db | 6g (`INSIGHT_DB_MEM_LIMIT`) | its page cache is reclaimed under the limit, never killed for |
   | insight-frontend | 256m | nginx serving files |
+
+  Each API process gives the memory its requests freed back to the OS when it is idle (issue 0202: after the last
+  request in flight, 1 s of quiet and 8 MB of growth, a GC collection then glibc's `malloc_trim`; a few ms).
+  `INSIGHT_API_TRIM=off` in `.env` switches it off.
 
   If the server's corpus grows and a container is ended at its limit (`docker inspect insight-ingestion` shows
   `OOMKilled`, or a Mark X run "exited with code -9"), raise its limit in `.env` and `./update`.
