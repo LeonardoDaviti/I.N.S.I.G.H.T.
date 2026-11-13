@@ -134,12 +134,13 @@ sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FRO
 
 ```bash
 git pull
-docker exec insight-db pg_dump -U insight insight > /tmp/insight_pre_update.sql   # back up first
+./scripts/backup              # optional: the database (-Fc), the secrets volume and .env into ./backups/<time>/
 docker compose build
 docker compose up -d --remove-orphans
 ```
 
-`./update` does the same without the dump: `git pull`, build, then `up -d`. Between the build
+`./update` does the same without the backup, unless you ask for it (`INSIGHT_BACKUP_ON_UPDATE=1` in `.env`, see
+"Backups and rollback" below): `git pull`, build, then `up -d`. Between the build
 and `up -d` it lists the migrations the new code will run at its start, each with its header's
 first line (`migrate.py --pending`, read-only), so one that rewrites rows is seen before it runs. The build runs
 while the old containers keep serving; `up -d` then recreates only the containers whose image
@@ -157,6 +158,41 @@ and then for security patches, and after changing `requirements.txt` or `package
 version tested, except `yt-dlp`, which a rebuild of that layer brings fresh; the first update to
 v9.13 rebuilds it once, since the file changed.
 If only environment variables changed: `docker compose up -d --force-recreate`.
+
+### Backups and rollback (issue 0188)
+
+**A backup:** `./scripts/backup` writes `backups/<UTC time>/` next to `docker-compose.yml`:
+- `insight.dump`: the database, `pg_dump -Fc` (compressed; checked with `pg_restore --list` before it counts);
+- `secrets.tar`: the `insight_secrets` volume, the key that decrypts Connections (API keys, sessions);
+- `env`: a copy of `.env`.
+
+**`secrets.tar` and `env` hold secrets.** The directory is made 700 and its files 600. Copy a backup off the
+machine only to a place as private as the machine. The newest `INSIGHT_BACKUPS_KEEP` (default 5) backups are kept;
+older ones are removed by the next backup. `backups/` is never committed.
+
+**On a schedule** (nothing runs one by default): `contrib/systemd/insight-backup.service` and `.timer` (nightly at
+03:30, a missed night runs at the next boot; the install steps are in the service file), or root's crontab:
+`30 3 * * * cd /path/to/checkout && ./scripts/backup >> backups/backup.log 2>&1`.
+
+**Before an update, if you want it:** `INSIGHT_BACKUP_ON_UPDATE=1` in `.env` (or the shell) makes `./update` run
+`scripts/backup` after the build and before the new code starts and migrates; a backup that fails stops the update
+there, with the old version still serving. Off by default.
+
+**Rollback:** every `./update` tags the images it built with the version (`VERSION`'s `vX.Y.Z`) and the commit,
+beside `:latest`; the newest `INSIGHT_IMAGES_KEEP` (default 3) builds keep their tags. `./update --images` lists them.
+```bash
+./update --rollback v10.16          # no pull, no build: those images become :latest and start
+./scripts/backup --restore backups/2026-11-13T033000Z   # only if the older code needs the database as it was
+```
+- `--rollback` refuses, changing nothing, when that version's images are not kept. The first update with this
+  (v10.17) is the first tagged one: a rollback needs two tagged updates.
+- The database keeps what the newer code migrated. Most migrations only add, and older code runs on them; when it
+  doesn't, restore the backup taken before the update: `--restore` asks you to type the database's name, stops the
+  API and ingestion, empties the database (`dropdb`/`createdb`), `pg_restore`s the dump and starts them again.
+  Everything written since that backup is lost. It leaves `.env` and the secrets volume alone and prints how to put
+  those back from the same backup.
+- Roll back first, then restore: restoring under the newer code would migrate the database again at its start.
+- The checkout stays at the pulled code; the next `./update` builds it again.
 
 After the restart the API catches up in the background while the reader already works: it
 re-indexes search when the search rule changed, reads the links of posts never read, and runs
@@ -363,6 +399,28 @@ scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/
     --kinds read,entities --batch 20 --batches 1 --parallel 3
 ```
 Start with `--batches 1`, read what was refused (`markx-worker status`), then the last 30 days. It stops cleanly at a usage limit (exit 4) or a sign-in error (exit 5) and hands its tasks back.
+
+**Workers that survive a reboot (issue 0188), only if you want them on a schedule.** The worker is run by hand
+by default; `contrib/systemd/` has *user* units for the device that runs it:
+- `markx-worker.service`: one cycle, with the arguments in `~/.config/insight/markx-worker.env`
+  (`contrib/systemd/markx-worker.env.example`). Exit 3 (server unreachable) and 4 (usage limit) count as normal stops.
+- `markx-worker.timer`: a cycle every hour, `Persistent=true` (a run missed while the device was off runs at the
+  next boot); never two cycles at once. **Ships disabled**: enable it only if you want the worker to run by itself.
+- `llama-server.service`: the embedder for the `embed` kind (BGE-M3), `Restart=on-failure`, with its binary, GGUF
+  and port in `~/.config/insight/llama-server.env` (the steps are in the file). It holds the model in memory while
+  it runs: enable it only when you embed.
+```bash
+mkdir -p ~/.config/systemd/user ~/.config/insight
+cp contrib/systemd/markx-worker.{service,timer} contrib/systemd/llama-server.service ~/.config/systemd/user/
+cp contrib/systemd/markx-worker.env.example ~/.config/insight/markx-worker.env    # edit: paths, server, kinds
+systemctl --user daemon-reload
+systemctl --user start markx-worker.service            # one cycle now; journalctl --user -u markx-worker
+systemctl --user enable --now markx-worker.timer       # only for the schedule
+sudo loginctl enable-linger "$USER"                    # user units run at boot, before (and without) a login
+```
+The worker's state (its JSON-lines log, the spool of answers not yet delivered, the GGUF hash memo) lives in
+`~/.local/state/insight/markx-worker/`, never `/tmp`, so a reboot loses nothing. `log.jsonl` rotates past 10 MB and
+keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
 
 **Turning it off:** `INSIGHT_MARKX=off` (or remove the line) and `./update`. Every Mark X job stops and the page hides; its tables stay as they are (keep everything).
 

@@ -1,0 +1,11 @@
+# insight-backup.service every night; a night missed while the machine was off runs at the next boot.
+[Unit]
+Description=INSIGHT backup every night
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
