@@ -85,7 +85,7 @@ class AllowedImagesTests(unittest.TestCase):
     def test_public_addresses(self):
         self.assertTrue(is_public_address("8.8.8.8"))
         for private in ["10.0.0.1", "127.0.0.1", "172.18.0.3", "192.168.0.25", "169.254.169.254",
-                        "100.86.230.4", "::1", "fd00::1"]:
+                        "100.64.0.1", "::1", "fd00::1"]:
             with self.subTest(address=private):
                 self.assertFalse(is_public_address(private))
 

@@ -546,6 +546,9 @@ cd frontend && npm install && npm run dev
 
 Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/api` to
 `http://localhost:8000`. To point the dev UI at another backend, set `VITE_API_URL` and restart Vite.
+Vite answers only `localhost` and raw IP addresses; to open the dev UI from another device by
+name (a machine name, a `.local` or tailnet name), list them in `VITE_ALLOWED_HOSTS`, comma
+separated (`myhost,.example.net`), in `.env` or `frontend/.env`, and restart Vite.
 
 ## Tests
 
