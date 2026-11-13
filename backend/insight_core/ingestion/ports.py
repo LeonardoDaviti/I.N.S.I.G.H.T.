@@ -272,6 +272,26 @@ class DbFetchStateStore:
             conn.commit()
         return kept
 
+    def keep_derived(self) -> Dict[str, Any]:
+        """What the API reads kept instead of counting per request (issue 0195), brought up to date: each source's post
+        statistics, Mark X's totals folded, the topic tracks' placements. Each in its own transaction; one that fails
+        is logged and the others still run (a read of a stale one is live, never wrong)."""
+        from insight_core.markx import kept_counts, track_kept
+
+        done: Dict[str, Any] = {}
+        for name, keep in (("post_stats", None), ("markx_counts", kept_counts.fold), ("track_places", track_kept.refresh)):
+            try:
+                if keep is None:
+                    done[name] = self.refresh_post_stats()
+                    continue
+                with db.connection(self.db_url) as conn:
+                    with conn.cursor() as cur:
+                        done[name] = keep(cur)
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001 - derived; the reads stay exact without it
+                logger.warning("Could not keep %s: %s", name, exc)
+        return done
+
     def refresh_cadence(self) -> int:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:

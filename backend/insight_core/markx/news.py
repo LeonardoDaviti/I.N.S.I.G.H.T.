@@ -692,8 +692,8 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     days = [{"day": d, "calls": n, "valid": v, "tokens_in": int(ti), "tokens_out": int(to),
              "api_usd": round(int(ti) * HAIKU_PER_MILLION[0] / 1e6 + int(to) * HAIKU_PER_MILLION[1] / 1e6, 4)}
             for d, n, v, ti, to in cur.fetchall()]
-    cur.execute("SELECT count(*), COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), COALESCE(sum(cost_usd), 0) FROM mx_calls")
-    n, ti, to, cost = cur.fetchone()
+    from insight_core.markx import kept_counts
+    n, ti, to, cost = kept_counts.call_totals(cur)   # issue 0195: kept, not summed over every call per request
     cur.execute("""SELECT kind, last_error, count(*) FROM mx_tasks WHERE status = 'failed'
                     GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 20""")
     failed = [{"kind": k, "error": e, "tasks": c} for k, e, c in cur.fetchall()]

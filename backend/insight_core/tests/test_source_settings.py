@@ -164,8 +164,9 @@ class TestSourceSettings(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], history)
 
     def test_the_list_leaves_out_the_checkpoints_resume_lists(self):
-        """Issue 0195: the checkpoint's candidate URLs and ladder (72% of GET /api/sources on the server) are an
-        archive's resume state; the list keeps the checkpoint's counts, a source's own settings the whole of it."""
+        """Issue 0195: the checkpoint's candidate URLs and ladder (48% of GET /api/sources and 66% of the archive
+        catalog on the server) are an archive's resume state; the list keeps the checkpoint's counts, a source's own
+        settings the whole of it."""
         checkpoint = {"mode": "listing", "urls": [f"https://x.invalid/{n}" for n in range(50)],
                       "ladder": {"items": ["https://x.invalid/1"]}, "collected_posts": 7, "pages_fetched": 3}
         with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:

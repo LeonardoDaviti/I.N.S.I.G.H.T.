@@ -282,7 +282,7 @@ class SourcesRepository:
         get_source_settings, in one query, without the archive's history and the checkpoint's resume lists. The history stays in the row
         (left out in the query, so it is never read); the source's own settings still carry it."""
         # Issue 0195: nor the checkpoint's resume lists (the candidate URLs and the ladder an archive goes on from,
-        # 72% of the answer on the server); the list reads its counts, the archive status the whole checkpoint.
+        # 48% of the answer on the server); the list reads its counts, the archive status the whole checkpoint.
         cur.execute("SELECT id, platform, settings #- '{archive,history}' #- '{archive,checkpoint,urls}' "
                     "#- '{archive,checkpoint,ladder}' FROM sources")
         out = {}
