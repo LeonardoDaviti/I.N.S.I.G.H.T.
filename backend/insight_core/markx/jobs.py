@@ -34,6 +34,11 @@ at 101% CPU and every /api/* request timed out.
     (mx_inc_*, markx/incremental.py), written in the run's own transaction, so nothing here keeps state between runs.
   - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
     never waits for a run.
+  - **The Labels tab's queue is built here** (0182, the job "labels"): right after each decision run, in a process
+    and a transaction of its own (a failure never touches the run, which is committed already), and on any pass that
+    finds the newest run's queue not kept for this code (the first start after a deploy; a failed build is tried
+    again after GAP seconds). It is a whole decision reading (labels.population): it was built in insight-api before,
+    whose RSS then stayed at the build's high-water mark. The API reads only the kept queue (labels.kept).
 
 Both only when INSIGHT_MARKX is on; nothing here raises into the scheduler.
 """
@@ -61,7 +66,7 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan")
+JOBS = ("candidates", "decide", "plan", "labels")
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 
 
@@ -277,6 +282,32 @@ class Jobs:
             out[kind] = {"added": added, "seconds": seconds}
         return out
 
+    def labels(self) -> Optional[Dict[str, Any]]:
+        """0182: the newest decision run's Labels queue, built and kept (labels.keep) in one REPEATABLE READ
+        transaction of its own; a failure is recorded and the job tried again after GAP. Its seconds and this
+        process's peak memory are recorded with it (mx_label_queues, mx_jobs.last)."""
+        import resource
+
+        from insight_core.markx import decide, labels as mx_labels
+
+        def peak() -> float:
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0      # KiB on Linux
+        t0 = time.monotonic()
+        self._begin("labels", "building")
+        try:
+            with decide.snapshot(self.db_url) as cur:
+                out = mx_labels.keep(cur, now=self.clock(), peak=peak)
+        except Exception as exc:
+            log.exception("Mark X labels: building the queue failed; tried again later")
+            self._finish("labels", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            return None
+        seconds = round(time.monotonic() - t0, 1)
+        log.info("Mark X labels: the queue of run %s kept in %.1f s (%s items, peak %.0f MB)", out.get("run"), seconds,
+                 out.get("items", "already"), peak())
+        self._finish("labels", {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1),
+                                **{k: v for k, v in out.items() if k != "seconds"}})
+        return out
+
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
         stage logged with its duration; a failed or stopped run is wanted again."""
@@ -335,12 +366,15 @@ class Jobs:
 
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
-        gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None) -> Optional[str]:
+        gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
+        labels_missing: bool = False) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
     one started (or never ran), never within GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
     arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that long
-    ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows."""
+    ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows.
+    0182: then the Labels queue ("labels") when the newest run's is not kept (`labels_missing`); after a failed build,
+    GAP seconds after its start."""
     p = states.get("plan") or {}
     if plan_every is not None and states["candidates"]["stage"] is None and (
             p.get("started_at") is None or (now - p["started_at"]).total_seconds() >= plan_every):
@@ -352,9 +386,21 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
             return "decide"
         if since is None or since >= every:
             return "decide"
+    if labels_missing and states["candidates"]["stage"] is None and _labels_may(states.get("labels") or {}, now, gap):
+        return "labels"
     if states["candidates"]["wanted_at"] is not None:
         return "candidates"
     return None
+
+
+def _labels_may(s: Dict[str, Any], now: datetime, gap: float) -> bool:
+    """A labels build may start: never tried, its last ended well (a newer run's queue is missing), or GAP since a
+    failed one."""
+    if s.get("stage") is not None:
+        return False
+    if s.get("started_at") is None or (s.get("last") or {}).get("ok", True):
+        return True
+    return (now - s["started_at"]).total_seconds() >= gap
 
 
 def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HARD_LIMIT + STALE_MARGIN) -> List[str]:
@@ -393,7 +439,19 @@ class Runner:
             cur.execute("SELECT now()")
             self._db_now = cur.fetchone()[0]
             self._busy = mark_ix_busy(cur)
+            self._labels_missing = self._missing(cur)
             return state(cur)
+
+    @staticmethod
+    def _missing(cur: Any) -> bool:
+        """0182: whether the newest decision run's Labels queue is not kept (False when that can't be told)."""
+        try:
+            from insight_core.markx import labels
+            with cur.connection.transaction():
+                return labels.missing(cur)
+        except Exception:
+            log.exception("Mark X jobs: could not tell whether the labels queue is kept")
+            return False
 
     def recover(self) -> None:
         """At the runner's start: a run a restart ended mid-way shows no stage, and its job is wanted again."""
@@ -432,21 +490,36 @@ class Runner:
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
-                      plan_every=self.plan_every)
+                      plan_every=self.plan_every, labels_missing=self._labels_missing)
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
                 self._told = self._busy
             if job is None:
                 return None
-            if self.spawn:
-                self._in_own_process(job)
-            else:
-                getattr(Jobs(self.db_url, clock=self.clock), job)()
+            self._run(job)
+            if job == "decide":
+                self._labels_after()
             return job
         except Exception:
             log.exception("Mark X jobs: the tick failed")
             return None
+
+    def _run(self, job: str) -> None:
+        if self.spawn:
+            self._in_own_process(job)
+        else:
+            getattr(Jobs(self.db_url, clock=self.clock), job)()
+
+    def _labels_after(self) -> None:
+        """0182: right after a decision run, its Labels queue in a process of its own (when the run left a new one to
+        build: a failed or skipped run leaves none). Never raises into the tick."""
+        try:
+            states = self._states()
+            if self._labels_missing and states["labels"]["stage"] is None:
+                self._run("labels")
+        except Exception:
+            log.exception("Mark X jobs: the labels queue after the decision run failed")
 
     def _in_own_process(self, job: str) -> None:
         process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, job),
