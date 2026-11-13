@@ -116,6 +116,30 @@ describe('News (issue 0051)', () => {
     expect(screen.getAllByText(/^Week of \d+ \w+/)).toHaveLength(1);
   });
 
+  it("News is Mark X's rows; the older News (Mark IX's) is one click away and back (issue 0205)", async () => {
+    const user = userEvent.setup();
+    const getNews = vi.fn().mockImplementation(({ mark }: { mark?: string }) => Promise.resolve(mark === 'ix'
+      ? { ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]), mark: 'ix', fallback: false, note: null }
+      : { ...feedPage([story(ID(1), 'The Mark X row', {}, ['A', 'B'])]), mark: 'x', fallback: false, note: null }));
+    render(base({ getNews }), '/?view=news');
+    expect(await screen.findByRole('link', { name: 'The Mark X row' })).toBeInTheDocument();
+    expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all', mark: 'main' }));
+    await user.click(screen.getByRole('button', { name: 'Older News view' }));
+    expect(await screen.findByRole('link', { name: 'The older row' })).toBeInTheDocument();
+    expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all', mark: 'ix' }));
+    await user.click(screen.getByRole('button', { name: 'Back to News' }));
+    expect(await screen.findByRole('link', { name: 'The Mark X row' })).toBeInTheDocument();
+  });
+
+  it('when Mark X has no rows the API falls back to the older News and the page says so (issue 0205)', async () => {
+    const note = 'Mark X has no News yet (a new install, or its worker has not run): this is the older News.';
+    render(base({ getNews: vi.fn().mockResolvedValue({ ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]),
+      mark: 'ix', fallback: true, note }) }), '/?view=news');
+    expect(await screen.findByRole('link', { name: 'The older row' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(note);
+    expect(screen.queryByRole('button', { name: 'Older News view' })).not.toBeInTheDocument();   // it is the older News
+  });
+
   it('opening a story reads it as the feed does, on its own (no feed context)', async () => {
     const user = userEvent.setup();
     const setPostsRead = vi.fn().mockResolvedValue({ success: true, updated: 1, ids: [ID(1)] });

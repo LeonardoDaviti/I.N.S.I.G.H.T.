@@ -11,39 +11,31 @@ finder is one signal; none decides alone (the owner's ensemble rule): each only 
      `embed` task, subject 'track_probe'). A post's probe score is its max cosine to the probes and the description
      (the description stays one probe; with ✓ / ✗ labels the 0145 profile is one more), minus how far its nearest
      near-miss is closer than that (NEAR_PULL). It fires at the bar (`bar`).
-  2. **entity**: entities (subject / actor, mx_mentions_now) in ENTITY_MIN+ ✓ items and in at most ENTITY_MAX_SHARE of
-     the last SHARE_DAYS' posts; a post naming one as subject or actor.
-  3. **domain**: link domains (post_links, not boilerplate, not a home page, not a platform) of DOMAIN_MIN+ ✓ items,
+  2. **domain**: link domains (post_links, not boilerplate, not a home page, not a platform) of DOMAIN_MIN+ ✓ items,
      in at most DOMAIN_MAX_SHARE of the posts; and the domain classes the description names by its words (code
      hosts and 3D-model sites: DOMAIN_CLASSES; model hubs measured out); a post linking one (not its home page).
-  4. **word**: the terms most over-represented in ✓ items against the last SHARE_DAYS' posts (log-odds with an
+  3. **word**: the terms most over-represented in ✓ items against the last SHARE_DAYS' posts (log-odds with an
      informative prior, z >= WORD_Z, in WORD_MIN_POS+ ✓ items, the top WORDS), looked up in the post's index
      (posts.search_vector) and Mark X's English layer (mx_post_search, 0139); WORD_MIN_HITS+ fire. The units of the
      ✓ items' numbers (a reading's main.numbers: tok/s, GB, $) in UNIT_MIN_POS+ of them make a post's number with
      one of those units count as a word.
-  5. **source** and **story** priors: a source whose items were ✓ SOURCE_MIN+ times and in SOURCE_SHARE+ of its
-     judged ones lowers the probe bar for its posts by SOURCE_DROP; a post in the same story (mx_story_posts) as a
-     ✓ item fires `story`.
-  6. **classifier** (after CLF_MIN_LABELS labels, CLF_MIN_EACH of each): logistic regression on the post's vector
-     (as its cosines to the ✓ mean, the ✗ mean and the nearest ✓) and the finders' features; retrained when
-     CLF_RETRAIN new labels arrive (mx_track_models). It orders the candidates; a post no other finder found is a
-     candidate only at CLF_BAR+.
+Dropped in v10.18 (0203): the entity finder, the source and story priors and the classifier, never adopted (0147's
+held-out recall on the server copy: entity and story added none, the source prior -2 / +3, the classifier as the order
+-21 points on one track at 30%; the owner's labels, 7, never opened the classifier's gate of 30). mx_track_models keeps
+the rows it ever wrote.
 
 **The bar and the budget**: until MIN_EXAMPLES ✓, the probe bar is set so the union passes the same share of the last
 SHARE_DAYS' posts as 0145's prefilter (tracks.DEFAULT_PASS_SHARE, at most tracks.DEFAULT_THRESHOLD): the other
 finders' hits are counted first, the probes fill the rest (at least half of it). From MIN_EXAMPLES ✓, 0145's rule on the
-probe score: the bar that keeps PASS_SHARE of the ✓ items passing. The union is ordered by the classifier when it
-exists, else by how many finders fired, then the probe score (`order_key`), and capped by the per-run budget
-(tracks.TASKS_PER_RUN).
+probe score: the bar that keeps PASS_SHARE of the ✓ items passing. The union is ordered by how many finders fired, then
+the probe score (`order_key`), and capped by the per-run budget (tracks.TASKS_PER_RUN).
 
-**Adopted** (`ADOPTED`, or INSIGHT_TRACK_FINDERS): probe, domain and word, the finders that added recall on the server
-copy (0147-built.md); the others are computed and never fire until the owner's labels show they add some.
+**Which fire** (`active()`): all three (ADOPTED), or the ones INSIGHT_TRACK_FINDERS names (the example posts always).
 
 Only mx_* tables are written.
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
@@ -61,22 +53,16 @@ log = logging.getLogger(__name__)
 KIND = "probes"
 EMBED_SUBJECT = "track_probe"
 MODEL = "bge-m3"
-FINDERS = ("probe", "entity", "domain", "word", "source", "story", "classifier")
+FINDERS = ("probe", "domain", "word")
 FINDERS_ENV = "INSIGHT_TRACK_FINDERS"
-ADOPTED = ("probe", "domain", "word")   # measured on the server copy (0147-built.md): the others did not add recall
-SHOWN = {"probe": "example post", "entity": "entity", "domain": "domain", "word": "words", "source": "source",
-         "story": "story", "classifier": "classifier"}
+ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall
+SHOWN = {"probe": "example post", "domain": "domain", "word": "words"}
 NEAR_PULL = 1.0
-ENTITY_MIN, ENTITY_MAX_SHARE = 2, 0.01
 DOMAIN_MIN, DOMAIN_MAX_SHARE = 2, 0.01
 RARE_FLOOR = 10            # "rare" is at most this many posts however few the window holds
 WORDS, WORD_Z, WORD_MIN_POS, WORD_MIN_HITS, WORD_PRIOR = 30, 1.96, 2, 2, 500.0
 UNIT_MIN_POS = 2
-SOURCE_MIN, SOURCE_SHARE, SOURCE_DROP = 3, 0.20, 0.05
-CLF_MIN_LABELS, CLF_MIN_EACH, CLF_RETRAIN, CLF_BAR = 30, 8, 10, 0.5
-CLF_L2, CLF_STEPS, CLF_RATE = 1.0, 400, 0.5
 PROBE_FLOOR = 0.5          # the probes keep at least this share of the budget
-ROLES = ("subject", "actor")
 HOME_RE = r"^https?://[^/]+/?([?#].*)?$"
 PLATFORMS = {"reddit.com", "t.me", "youtube.com", "youtu.be", "news.ycombinator.com", "medium.com", "substack.com",
              "x.com", "twitter.com", "nitter.local", "piped.video", "facebook.com", "instagram.com", "linkedin.com",
@@ -194,17 +180,10 @@ def store_vector(cur: Cursor, task: Dict[str, Any], vector: Sequence[float]) -> 
                 (repo.vector_text(vector), task["input_hash"]))
 
 
-# ---- what the ✓ items teach (finders 2-5) ---------------------------------------------------------------
+# ---- what the ✓ items teach (finders 2-3) ---------------------------------------------------------------
 
 def _since(now: datetime, days: int) -> datetime:
     return now - timedelta(days=days)
-
-
-def entity_set(pos_keys: Sequence[Iterable[str]], df: Dict[str, int], n_posts: int) -> List[str]:
-    """Entity keys in ENTITY_MIN+ ✓ items and in at most ENTITY_MAX_SHARE of the n_posts (df: posts naming each)."""
-    c = Counter(k for keys in pos_keys for k in set(keys))
-    cap = max(RARE_FLOOR, int(ENTITY_MAX_SHARE * n_posts))
-    return sorted(k for k, n in c.items() if n >= ENTITY_MIN and df.get(k, 0) <= cap)
 
 
 def domain_set(pos_domains: Sequence[Iterable[str]], df: Dict[str, int], n_posts: int, description: str
@@ -279,12 +258,6 @@ def units_regex(units: Sequence[str]) -> Optional[str]:
     return "(" + "|".join(alts) + ")"
 
 
-def source_set(pos_by_source: Dict[str, int], judged_by_source: Dict[str, int]) -> List[str]:
-    """Sources ✓ SOURCE_MIN+ times and in SOURCE_SHARE+ of their judged items."""
-    return sorted(s for s, k in pos_by_source.items()
-                  if k >= SOURCE_MIN and k >= SOURCE_SHARE * max(k, judged_by_source.get(s, 0)))
-
-
 def _df(cur: Cursor, cache: Dict[Any, int], kind: str, cand: Sequence[str], sql: Any, params: Sequence[Any]
         ) -> Dict[str, int]:
     """Document counts of `cand` (the posts of the window holding each), read once per key and window into `cache`
@@ -319,14 +292,6 @@ def _window(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime]) 
     return int(cache[("n", win)] or 1), int(cache[("terms", win)] or 1)
 
 
-def _pos_keys(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
-    """{✓ post: its subject / actor entity keys}."""
-    cur.execute("""SELECT post_id::text, array_agg(DISTINCT COALESCE(entity_id::text, 'n:' || name_key))
-                     FROM mx_mentions_now WHERE post_id = ANY(%s::uuid[]) AND role = ANY(%s) AND name_key IS NOT NULL
-                    GROUP BY post_id""", (list(pos), list(ROLES)))
-    return dict(cur.fetchall())
-
-
 def _pos_domains(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
     """{✓ post: the sites its kept links (not a home page) point at}."""
     cur.execute("""SELECT post_id::text, array_agg(DISTINCT target_site) FROM post_links
@@ -336,13 +301,9 @@ def _pos_domains(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
 
 
 # v10.16: each document count reads the window's posts first (the posts' date index), then their rows; a count of a
-# frequent site or name read every link or mention and probed its post, 1.4 s a track on the scale copy. The words'
-# counts are Postgres' own document counts (ts_stat) of each post's terms, its index and English layer together: the
-# same count as the distinct posts holding the term, without a row per term.
-_DF_ENT = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
-              SELECT x.k, count(DISTINCT m.post_id) FROM w JOIN mx_mentions_now m ON m.post_id = w.id,
-                     LATERAL (SELECT COALESCE(m.entity_id::text, 'n:' || m.name_key) AS k) x
-               WHERE x.k IN (SELECT unnest(%s::text[])) GROUP BY 1"""
+# frequent site read every link and probed its post, 1.4 s a track on the scale copy. The words' counts are Postgres'
+# own document counts (ts_stat) of each post's terms, its index and English layer together: the same count as the
+# distinct posts holding the term, without a row per term.
 _DF_DOM = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
               SELECT l.target_site, count(DISTINCT l.post_id) FROM w JOIN post_links l ON l.post_id = w.id
                WHERE NOT l.boilerplate AND l.target_site IN (SELECT unnest(%s::text[])) GROUP BY 1"""
@@ -366,53 +327,29 @@ def _df_words(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime]
     return {c: cache[("word", win, c)] for c in cand}
 
 
-def _judged(cur: Cursor, cache: Dict[Any, Any], folder: str) -> Dict[str, str]:
-    """{post: its source} of the track's judged posts (the owner's labels, the items with a verdict), read once per
-    track into `cache` (v10.16: was read again for each ✓ item the classifier leaves out, every post of the ✓ items'
-    sources probing the items: 28 s of a pass on the scale copy)."""
-    from insight_core.markx import tracks
-    key = ("judged", folder)
-    if key not in cache:
-        cur.execute("""SELECT p.id::text, p.source_id::text FROM posts p
-                        WHERE p.id IN (SELECT unnest(%s::uuid[])
-                                       UNION SELECT i.post_id FROM mx_track_items i
-                                              WHERE i.track_id = %s AND i.verdict IS NOT NULL)""",
-                    (list(tracks.labels(cur, folder)), folder))
-        cache[key] = dict(cur.fetchall())
-    return cache[key]
-
-
 def prefetch(cur: Cursor, pos: Iterable[str], *, now: datetime, days: int = 30, cache: Dict[Any, int]) -> None:
     """v10.16: the window's counts every ✓ item of a plan pass needs (every track's, `pos`), read in one query each
-    into `cache`, so `learn` of each track (and the classifier's leave-one-out) reads none of the window again."""
+    into `cache`, so `learn` of each track reads none of the window again."""
     pos = sorted(set(pos))
     win = (_since(now, days), now)
     _window(cur, cache, win)
     if not pos:
         return
-    _df(cur, cache, "ent", sorted({k for ks in _pos_keys(cur, pos).values() for k in ks}), _DF_ENT, win)
     _df(cur, cache, "dom", sorted({d for ds in _pos_domains(cur, pos).values() for d in ds}), _DF_DOM, win)
     _df_words(cur, cache, win, sorted({w for ws in _words_of(cur, pos) for w in ws}))
 
 
 def learn(cur: Cursor, track: Dict[str, Any], pos: Sequence[str], *, now: Optional[datetime] = None,
           days: int = 30, cache: Optional[Dict[Any, int]] = None) -> Dict[str, Any]:
-    """Finders 2-5's sets from the ✓ items `pos` (post ids) against the last `days` days' posts. `cache` keeps the
-    window's counts between calls (the classifier's leave-one-out learns once per ✓ item)."""
-    from insight_core.markx import tracks
+    """Finders 2-3's sets from the ✓ items `pos` (post ids) against the last `days` days' posts. `cache` keeps the
+    window's counts between calls (a plan pass's tracks share them)."""
     now = now or datetime.now(timezone.utc)
     since = _since(now, days)
     cache = {} if cache is None else cache
-    folder = str(track["folder_id"])
     win = (since, now)
     n_posts, n_terms = _window(cur, cache, win)
     pos = list(dict.fromkeys(pos))
-    out: Dict[str, Any] = {"pos": pos, "entities": [], "domains": [], "words": [], "units": [], "sources": [],
-                           "stories": [], "n_posts": n_posts}
-    # entities
-    pos_keys = list(_pos_keys(cur, pos).values())
-    df = _df(cur, cache, "ent", sorted({k for ks in pos_keys for k in ks}), _DF_ENT, win)
-    out["entities"] = entity_set(pos_keys, df, n_posts)
+    out: Dict[str, Any] = {"pos": pos, "domains": [], "words": [], "units": [], "n_posts": n_posts}
     # domains
     pos_domains = list(_pos_domains(cur, pos).values())
     df = _df(cur, cache, "dom", sorted({d for ds in pos_domains for d in ds}), _DF_DOM, win)
@@ -428,19 +365,6 @@ def learn(cur: Cursor, track: Dict[str, Any], pos: Sequence[str], *, now: Option
     for pid, ns in cur.fetchall():
         by_post.setdefault(pid, []).extend(str(x) for x in ns or [])
     out["units"] = unit_set(list(by_post.values()))
-    # source prior: ✓ per source against the source's judged items (a verdict or a label) for this track
-    cur.execute("SELECT id::text, source_id::text FROM posts WHERE id = ANY(%s::uuid[])", (pos,))
-    pos_src = dict(cur.fetchall())
-    pos_by_source = dict(Counter(pos_src.values()))
-    judged: Dict[str, int] = {}
-    if pos_by_source:
-        seen = {**_judged(cur, cache, folder), **pos_src}
-        judged = dict(Counter(s for s in seen.values() if s is not None and s in pos_by_source))
-    out["sources"] = source_set(pos_by_source, judged)
-    # stories holding a ✓ item
-    cur.execute("""SELECT DISTINCT story_id::text FROM mx_story_posts WHERE valid_to IS NULL AND post_id = ANY(%s::uuid[])""",
-                (pos,))
-    out["stories"] = sorted(r[0] for r in cur.fetchall())
     return out
 
 
@@ -473,17 +397,12 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
 
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
-ex AS MATERIALIZED (SELECT e.v, CASE WHEN e.post_id = ANY(%(pos)s::uuid[]) THEN 'pos' ELSE 'neg' END AS g
-         FROM mx_embeddings e WHERE e.model = %(model)s AND e.post_id = ANY(%(pos)s::uuid[] || %(neg)s::uuid[])),
 ps AS (SELECT p.id, {DATE} AS at, p.source_id, e.v, p.search_vector
          FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
         WHERE {{where}}
           AND (NOT %(passive)s OR (p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
                                    AND {{suggestable}})))
-SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr, s.bare, k.pos_max, k.pos_mean, k.neg_mean,
-       cardinality(%(ents)s::text[]) > 0 AND EXISTS (
-           SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.role = ANY(%(roles)s)
-              AND COALESCE(m.entity_id::text, 'n:' || m.name_key) = ANY(%(ents)s)),
+SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
        cardinality(%(doms)s::text[]) > 0 AND EXISTS (
            SELECT 1 FROM post_links l WHERE l.post_id = ps.id AND NOT l.boilerplate AND l.target_site = ANY(%(doms)s)
               AND l.target_url !~ %(home)s),
@@ -495,29 +414,20 @@ SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr, s.bare, k
        %(units)s::text IS NOT NULL AND EXISTS (
            SELECT 1 FROM mx_readings r, jsonb_array_elements_text(CASE WHEN jsonb_typeof(r.reading->'main'->'numbers')
                   = 'array' THEN r.reading->'main'->'numbers' ELSE '[]'::jsonb END) n
-            WHERE r.post_id = ps.id AND n ~* %(units)s),
-       cardinality(%(stories)s::uuid[]) > 0 AND EXISTS (
-           SELECT 1 FROM mx_story_posts sp WHERE sp.post_id = ps.id AND sp.valid_to IS NULL
-              AND sp.story_id = ANY(%(stories)s::uuid[]) AND NOT (sp.post_id = ANY(%(pos)s::uuid[])))
+            WHERE r.post_id = ps.id AND n ~* %(units)s)
   FROM ps
   CROSS JOIN LATERAL (SELECT max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g IN ('desc', 'probe', 'profile')) AS pos,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'near') AS near,
-                             max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'desc') AS descr,
-                             max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g IN ('desc', 'probe')) AS bare FROM pr) s
-  CROSS JOIN LATERAL (SELECT max(1 - (ps.v <=> ex.v)) FILTER (WHERE ex.g = 'pos') AS pos_max,
-                             avg(1 - (ps.v <=> ex.v)) FILTER (WHERE ex.g = 'pos') AS pos_mean,
-                             avg(1 - (ps.v <=> ex.v)) FILTER (WHERE ex.g = 'neg') AS neg_mean
-                        FROM ex) k
+                             max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'desc') AS descr FROM pr) s
 """
-ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "bare_pos", "pos_max", "pos_mean", "neg_mean", "entity",
-       "domain", "words", "unit", "story")
+ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit")
 
 
 def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Optional[datetime] = None,
           until: Optional[datetime] = None, ids: Optional[Sequence[str]] = None, passive: bool = True
           ) -> List[Dict[str, Any]]:
     """Every passive post (every post: passive=False) with a vector in [since, until] (or of `ids`) with its features and the finders that fire:
-    [{post_id, at, source_id, probe, desc, entity, domain, words, story, ..., fired: [..], p (classifier or None)}]."""
+    [{post_id, at, source_id, probe, desc, domain, words, ..., fired: [..]}]."""
     where = []
     if since is not None:
         where.append(f"{DATE} >= %(since)s")
@@ -526,24 +436,20 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
     if ids is not None:
         where.append("p.id = ANY(%(ids)s::uuid[])")
     learned = prep["learned"]
-    model = prep.get("model")
     params = {"vs": [v for v, _ in prep["vectors"]], "gs": [g for _, g in prep["vectors"]], "model": MODEL,
               "t": str(track["folder_id"]), "since": since, "until": until, "ids": list(ids or []),
-              "pos": learned["pos"], "neg": prep.get("neg") or [], "ents": learned["entities"],
-              "roles": list(ROLES), "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
-              "units": units_regex(learned["units"]), "stories": learned["stories"], "passive": passive}
+              "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
+              "units": units_regex(learned["units"]), "passive": passive}
     from insight_core.db.repo_stories import suggestable_sql
     # issue 0200: a passive post of a source switched off is never asked (it could only become a suggestion)
     cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
     out = []
     for r in cur.fetchall():
         d = dict(zip(ROW, r))
-        for k in ("probe_pos", "near", "desc", "bare_pos", "pos_max", "pos_mean", "neg_mean"):
+        for k in ("probe_pos", "near", "desc"):
             d[k] = None if d[k] is None else float(d[k])
         d["words"] = int(d["words"] or 0) + (1 if d["unit"] else 0)
         d["probe"] = probe_score(d["probe_pos"], d["near"])
-        d["bare"] = probe_score(d["bare_pos"], d["near"])     # without the labels' profile: the classifier's feature
-        d["source"] = d["source_id"] in set(learned["sources"])
         out.append(d)
     for d in out:
         fire(d, prep)
@@ -551,28 +457,17 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
 
 
 def fire(d: Dict[str, Any], prep: Dict[str, Any]) -> List[str]:
-    """The finders that fire for one scored post (d["fired"]), and the classifier's probability (d["p"])."""
+    """The finders that fire for one scored post (d["fired"])."""
     bar = prep["bar"]
     on = set(prep.get("on") or FINDERS)
     probe = d.get("probe")
     fired = []
     if probe is not None and probe >= bar:
         fired.append("probe")
-    if d.get("entity") and "entity" in on:
-        fired.append("entity")
     if d.get("domain") and "domain" in on:
         fired.append("domain")
     if (d.get("words") or 0) >= WORD_MIN_HITS and "word" in on:
         fired.append("word")
-    if d.get("source") and "source" in on and probe is not None and probe >= bar - SOURCE_DROP:
-        fired.append("source")
-    if d.get("story") and "story" in on:
-        fired.append("story")
-    d["p"] = None
-    if prep.get("model") is not None and "classifier" in on:
-        d["p"] = predict(prep["model"], features(d))
-        if d["p"] >= CLF_BAR:
-            fired.append("classifier")
     d["fired"] = fired
     return fired
 
@@ -582,12 +477,9 @@ def labelled(prep: Dict[str, Any]) -> set:
     return set(prep.get("learned", {}).get("pos") or []) | set(prep.get("neg") or [])
 
 
-def order_key(d: Dict[str, Any]) -> Tuple[float, float, float]:
-    """The union's order (highest first): the classifier's probability when there is one, else how many finders fired;
-    then the probe score."""
-    n = len([f for f in d.get("fired") or [] if f != "classifier"])
-    p = d.get("p")
-    return (p if p is not None else float(n), float(n), d.get("probe") if d.get("probe") is not None else -1.0)
+def order_key(d: Dict[str, Any]) -> Tuple[float, float]:
+    """The union's order (highest first): how many finders fired, then the probe score."""
+    return (float(len(d.get("fired") or [])), d.get("probe") if d.get("probe") is not None else -1.0)
 
 
 def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> float:
@@ -604,114 +496,8 @@ def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> floa
 
 
 def _other_hit(d: Dict[str, Any]) -> bool:
-    """A finder other than the probes fired (the source prior rides on the probe bar, so it is not counted)."""
-    return any(f in (d.get("fired") or []) for f in ("entity", "domain", "word", "story", "classifier"))
-
-
-# ---- the classifier (finder 6) ------------------------------------------------------------------------
-
-FEATURES = ("pos_max", "pos_mean", "neg_mean", "bare", "entity", "domain", "words", "source", "story")
-
-
-def features(d: Dict[str, Any]) -> List[float]:
-    def f(k: str) -> float:
-        v = d.get(k)
-        if k == "words":
-            return min(3, int(v or 0)) / 3
-        if isinstance(v, bool):
-            return 1.0 if v else 0.0
-        return float(v) if v is not None else 0.0
-    return [f(k) for k in FEATURES]
-
-
-def train(xs: Sequence[Sequence[float]], ys: Sequence[int]) -> Dict[str, Any]:
-    """Logistic regression (L2, gradient descent; the features standardised): {w, b, mean, sd, n}."""
-    n, k = len(xs), len(xs[0])
-    mean = [sum(x[j] for x in xs) / n for j in range(k)]
-    sd = [math.sqrt(sum((x[j] - mean[j]) ** 2 for x in xs) / n) or 1.0 for j in range(k)]
-    zs = [[(x[j] - mean[j]) / sd[j] for j in range(k)] for x in xs]
-    w, b = [0.0] * k, 0.0
-    for _ in range(CLF_STEPS):
-        gw, gb = [CLF_L2 * wj / n for wj in w], 0.0
-        for z, y in zip(zs, ys):
-            p = _sig(b + sum(wj * zj for wj, zj in zip(w, z)))
-            e = (p - y) / n
-            gb += e
-            for j in range(k):
-                gw[j] += e * z[j]
-        w = [wj - CLF_RATE * g for wj, g in zip(w, gw)]
-        b -= CLF_RATE * gb
-    return {"w": w, "b": b, "mean": mean, "sd": sd, "features": list(FEATURES), "n": n}
-
-
-def predict(model: Dict[str, Any], x: Sequence[float]) -> float:
-    z = [(xj - m) / s for xj, m, s in zip(x, model["mean"], model["sd"])]
-    return _sig(model["b"] + sum(w * zj for w, zj in zip(model["w"], z)))
-
-
-def _sig(t: float) -> float:
-    return 1 / (1 + math.exp(-max(-35.0, min(35.0, t))))
-
-
-def gate(pos: int, neg: int) -> bool:
-    """Whether the classifier may be trained: CLF_MIN_LABELS labels, CLF_MIN_EACH of each."""
-    return pos + neg >= CLF_MIN_LABELS and pos >= CLF_MIN_EACH and neg >= CLF_MIN_EACH
-
-
-def current_model(cur: Cursor, folder_id: Any) -> Optional[Dict[str, Any]]:
-    cur.execute("""SELECT labels, coef FROM mx_track_models WHERE track_id = %s AND valid_to IS NULL
-                    ORDER BY created_at DESC LIMIT 1""", (str(folder_id),))
-    row = cur.fetchone()
-    return {**row[1], "labels": row[0]} if row else None
-
-
-def training_rows(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos: Sequence[str], neg: Sequence[str]
-                  ) -> Tuple[List[List[float]], List[int]]:
-    """The labelled posts' features, each scored as if it were not labelled (leave-one-out: its own vector, entities,
-    words, source and story don't vouch for it; the probe feature leaves out the labels' profile)."""
-    xs, ys = [], []
-    for label, ids in ((1, pos), (0, neg)):
-        for pid in ids:
-            if label:
-                others = [p for p in pos if p != pid]
-                sub = dict(prep, learned=learn(cur, track, others, now=prep.get("now"), cache=prep.setdefault("cache", {})),
-                           model=None, neg=list(neg))
-            else:
-                sub = dict(prep, model=None, neg=[n for n in neg if n != pid])
-            got = score(cur, track, sub, ids=[pid], passive=False)
-            if got:
-                xs.append(features(got[0]))
-                ys.append(label)
-    return xs, ys
-
-
-def maybe_train(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos: Sequence[str], neg: Sequence[str]
-                ) -> Optional[Dict[str, Any]]:
-    """The classifier: trained when the gate opens and again each CLF_RETRAIN new labels (else the stored one)."""
-    have = current_model(cur, track["folder_id"])
-    n = len(pos) + len(neg)
-    if not gate(len(pos), len(neg)):
-        return None
-    if have is not None and n < have["labels"] + CLF_RETRAIN and have.get("version") == track["version"]:
-        return have
-    # v10.16: a labelled post is a training row exactly when it has a vector (`score` reads only those), so a training
-    # that would end below CLF_MIN_EACH of each is known before it runs: it stored no model and ran again every pass
-    # (a leave-one-out learn and score per label, ~4 s a track on the scale copy)
-    cur.execute("""SELECT p.id::text FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %s
-                    WHERE p.id = ANY(%s::uuid[])""", (MODEL, list(pos) + list(neg)))
-    vectored = {r[0] for r in cur.fetchall()}
-    if sum(p in vectored for p in pos) < CLF_MIN_EACH or sum(p in vectored for p in neg) < CLF_MIN_EACH:
-        return have
-    xs, ys = training_rows(cur, track, prep, pos, neg)
-    if sum(ys) < CLF_MIN_EACH or len(ys) - sum(ys) < CLF_MIN_EACH:
-        return have
-    model = {**train(xs, ys), "version": track["version"]}
-    cur.execute("UPDATE mx_track_models SET valid_to = now() WHERE track_id = %s AND valid_to IS NULL",
-                (str(track["folder_id"]),))
-    cur.execute("""INSERT INTO mx_track_models (track_id, version, labels, pos, neg, coef)
-                   VALUES (%s, %s, %s, %s, %s, %s::jsonb)""",
-                (str(track["folder_id"]), track["version"], n, len(pos), len(neg), json.dumps(model)))
-    return {**model, "labels": n}
+    """A finder other than the probes fired."""
+    return any(f in (d.get("fired") or []) for f in ("domain", "word"))
 
 
 # ---- preparing a track ---------------------------------------------------------------------------------
@@ -721,7 +507,7 @@ def example_scores(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos
     """Each ✓ item's probe score as if it were not one: the probes and the description, and the 0145 profile made
     without it (leave-one-out, so the examples don't vouch for themselves)."""
     from insight_core.markx import tracks
-    bare = dict(prep, vectors=[x for x in prep["vectors"] if x[1] != "profile"], model=None)
+    bare = dict(prep, vectors=[x for x in prep["vectors"] if x[1] != "profile"])
     got = {d["post_id"]: d for d in score(cur, track, bare, ids=pos, passive=False)}
     desc = next((tracks._parse(v) for v, g in prep["vectors"] if g == "desc"), None)
     vs = tracks._vectors(cur, list(pos) + list(neg))
@@ -742,11 +528,11 @@ def example_scores(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos
 
 
 def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now: Optional[datetime] = None,
-            share: Optional[float] = None, cap: Optional[float] = None, train_model: bool = True,
+            share: Optional[float] = None, cap: Optional[float] = None,
             on: Optional[Sequence[str]] = None, cache: Optional[Dict[Any, int]] = None) -> Dict[str, Any]:
-    """Everything a plan needs to find a track's posts: {vectors, learned, model, bar, ready, neg, now, on (the finders
-    that fire: `active()` unless given)}. `ready` is False with no vector to score by (no description vector, no probe,
-    no profile)."""
+    """Everything a plan needs to find a track's posts: {vectors, learned, bar, ready, neg, now, on (the finders that
+    fire: `active()` unless given)}. `ready` is False with no vector to score by (no description vector, no probe, no
+    profile)."""
     from insight_core.markx import tracks
     now = now or datetime.now(timezone.utc)
     share = tracks.DEFAULT_PASS_SHARE if share is None else share
@@ -755,17 +541,14 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     prof = tracks.profile(cur, track, ex) if (pos or neg) else None
     vectors = probe_vectors(cur, track, profile=prof["vector"] if prof and (pos or neg) else None)
     cache = {} if cache is None else cache   # v10.16: a plan pass's tracks share it (the window's counts, `prefetch`)
-    learned = learn(cur, track, pos, now=now, cache=cache) if pos else {"pos": [], "entities": [], "domains": [], "words": [],
-                                                           "units": [], "sources": [], "stories": []}
+    learned = learn(cur, track, pos, now=now, cache=cache) if pos else {"pos": [], "domains": [], "words": [], "units": []}
     if not pos:   # the description's domain classes need no ✓ item
         learned["domains"] = domain_set([], {}, 1, (track.get("name") or "") + " " + (track.get("description") or ""))
-    prep: Dict[str, Any] = {"vectors": vectors, "learned": learned, "model": None, "bar": cap, "neg": neg, "now": now,
+    prep: Dict[str, Any] = {"vectors": vectors, "learned": learned, "bar": cap, "neg": neg, "now": now,
                             "cache": cache, "on": tuple(on) if on is not None else active(),
                             "ready": any(g in ("desc", "probe", "profile") for _, g in vectors)}
     if not prep["ready"]:
         return prep
-    if train_model and "classifier" in prep["on"]:
-        prep["model"] = maybe_train(cur, track, prep, pos, neg)
     if len(pos) >= tracks.MIN_EXAMPLES:
         prep["bar"] = tracks.threshold_for(example_scores(cur, track, prep, pos, neg), default=cap)
     else:

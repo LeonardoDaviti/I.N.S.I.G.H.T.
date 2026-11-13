@@ -17,15 +17,16 @@ import math
 import random
 import unittest
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import psycopg
 
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
-from insight_core.markx import pairing, repo, schemas, tasks
+from insight_core.markx import later as later_mod, pairing, repo, schemas, tasks
 from insight_core.utils import voice
 from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo (0169 moved it to Postgres)
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
@@ -46,7 +47,7 @@ class Table(unittest.TestCase):
         self.assertEqual((same.story_cosine, same.story_window, same.types), (OLD_C.STORY_MIN, OLD_C.STORY_DAYS,
                                                                             OLD_C.SPECIFIC_TYPES))
         old = OLD_D.Config()
-        self.assertEqual(asdict(D.Config()), asdict(old))
+        self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k != "roundup_first"}, asdict(old))   # 0205: new
         self.assertEqual((same.min_words, same.document_window), (old.min_words, timedelta(days=old.document_days)))
         self.assertEqual((conn.story_cosine, conn.story_window, conn.min_voices),
                          (old.connect_lo, timedelta(days=old.connect_days), old.connect_voices))
@@ -103,7 +104,7 @@ CONFIGS = (D.Config(), D.Config.prototype(), D.Config(cand_lo=0.7, min_words=15,
 
 
 def _old(config: D.Config) -> OLD_D.Config:
-    return OLD_D.Config(**asdict(config))
+    return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k != "roundup_first"})   # 0205's rule: new
 
 
 class Planning(unittest.TestCase):
@@ -115,8 +116,15 @@ class Planning(unittest.TestCase):
             for config in CONFIGS:
                 for in_window in (None, lambda a: posts[a].at >= cut):
                     old = OLD_D.plan_pass1(posts, stories, kinds, cands, pairs, _old(config), in_window=in_window)
-                    new = D.plan_pass1(posts, stories, kinds, cands, pairs, config, in_window=in_window)
+                    new = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=False),
+                                       in_window=in_window)
                     self.assertEqual([asdict(q) for q in new], [asdict(q) for q in old], (seed, config))
+                    # 0205: a roundup that begins a story is checked too; every other question is the same
+                    more = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=True),
+                                        in_window=in_window)
+                    added = [q for q in more if q not in new]
+                    self.assertTrue(all(q.type == "check" and kinds.get(q.post) == "roundup" for q in added))
+                    self.assertEqual([q for q in more if q not in added], new)
 
     def test_pass_two_asks_the_same_questions(self):
         for seed in range(60):
@@ -314,9 +322,12 @@ class DecisionRun(_World):
                 self.answer_all()
             return out
         for config in (D.Config(), D.Config(document_merges=True, connect_lo=0.5, story_days=5)):
-            old_cfg = OLD_D.Config(**asdict(config))
+            old_cfg = _old(config)
+            config = replace(config, roundup_first=False)   # 0205's rule is new: the rest is the same
             self.cur.execute("SAVEPOINT pairing_run")
-            old = rounds(OLD_D, old_cfg)
+            # 0203 dropped Later developments: the legacy copy's later stage is a no-op here
+            with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):
+                old = rounds(OLD_D, old_cfg)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")
             new = rounds(D, config)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")

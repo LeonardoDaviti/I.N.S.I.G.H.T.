@@ -1,6 +1,6 @@
 """Mark X entity identity fixes (issue 0164), with invented names: the name and type shown by evidence (1), a product
 family never merged into an org and a version's family never an org (2), families split by a maker or brand prefix
-joined (3), an org and its name with a corporate suffix joined only with posts that say so (4); each with what it must
+joined (3), an org and its suffixed name never joined by a rule (4: the suffix repair dropped, 0203); each with what it must
 not do (two makers, a version guard, the owner's answers), and the repair of data already made (undos are redirects
 undone, never deletions)."""
 from __future__ import annotations
@@ -269,27 +269,7 @@ class Fixes(base._Db):
 
     # ---- 4 ----------------------------------------------------------------------------------------------------
 
-    @mock.patch.object(R, "config", lambda: dict(_CONFIG(), suffix=True))   # shipped off until measured: the rule
-    def test_4_an_org_and_its_suffixed_name_join_only_when_posts_say_so(self):
-        for n in range(2):     # posts naming Zentra beside the thing "Zentra AI" makes
-            self.mentions(self.post(n, T0 + n * H), ("Vela 5", "model", "subject", "Zentra AI", v("Vela", "5")),
-                          ("Zentra", "org", "actor"))
-        self.mentions(self.post(2, T0), ("Orba 2", "model", "subject", "Moonvale AI", v("Orba", "2")))
-        self.mentions(self.post(3, T0), ("Moonvale", "org", "subject"))      # never beside Orba: another Moonvale?
-        self.stage()
-        out = self.stage(full=True)
-        got = out["repair"]["suffix"]
-        self.assertEqual((got["merged_suffix"], got["no_posts"]), (1, 1))
-        book = self.book()
-        z, zai = self.ent_named("Zentra"), self.ent_named("Zentra AI")
-        self.assertEqual(book.root(z), book.root(zai))
-        self.assertNotEqual(book.root(self.ent_named("Moonvale")), book.root(self.ent_named("Moonvale AI")))
-        page = entity_views.entity_page(self.cur, self.ent_named("Vela 5"))
-        self.assertEqual(page["entity"]["maker_id"], book.root(z))          # the maker shown is the org
-        self.cur.execute("SELECT by, automatic, evidence->>'posts' FROM mx_entity_redirects WHERE by = 'rule:corp_suffix'")
-        self.assertEqual(self.cur.fetchone(), ("rule:corp_suffix", True, "2"))
-
-    def test_4_an_owner_kept_apart_pair_is_never_joined(self):
+    def test_4_an_org_and_its_suffixed_name_are_never_joined_by_a_rule(self):
         for n in range(2):
             self.mentions(self.post(n, T0 + n * H), ("Vela 5", "model", "subject", "Zentra AI", v("Vela", "5")),
                           ("Zentra", "org", "actor"))

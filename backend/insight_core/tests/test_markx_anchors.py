@@ -1,13 +1,13 @@
 """0180 (Stealth v10.16 slice J): anchors (0166 step 3).
 
   - Pairing's `develops` row: E6's windows per group (deal 3-120 days, legal 3-30, funding and people never, release
-    unmeasured: never), 2+ separate shared parties, no money clash; back's and later's gates read from the row.
+    unmeasured: never), 2+ separate shared parties, no money clash; back's gates (and the long-lived rule's) read
+    from the row.
   - anchors.of: Mark IX stories, Mark X stories (current members, not merged), happening anchors (posts of one
     happening no story holds, chained within the first gap); 2+ voices for a story.
-  - The later engine: the happening first (one source, no quiet rule, no 14/7-day wait), the subject second (later's
-    E and L over Mark X stories too), one anchor per post (a Mark IX story before the Mark X story of its posts).
+  - (The later engine went with Later developments in v10.18, 0203.)
   - The back engine: an H burst, and its first gap instead of 14/7 days.
-  - Shadow: back.stage and later.stage write both engines' rows (engine, anchor_kind, anchor_id), the pages show the
+  - Shadow: back.stage writes both engines' rows (engine, anchor_kind, anchor_id), the pages show the
     engine `anchors.shown` names (old by default), the comparison (only old, only new, both), an error in the anchors
     engine leaves the old rows standing, a concurrent update still defers the stage.
   - Migration 0122: old rows read as ix_story; one story and window may have a row of each engine.
@@ -57,8 +57,7 @@ class TheDevelopsRow(unittest.TestCase):
                          (14, 7, timedelta(hours=72), 2, 0.70, 6))
         self.assertEqual(back.SPECIFIC, ("model", "product", "software", "paper", "document", "dataset", "event", "law",
                                          "other"))
-        self.assertEqual((later.MAIN_SHARE, later.QUIET_DAYS, later.QUIET_MAX, later.AGAIN),
-                         (0.5, 14, 2, timedelta(days=30)))
+        self.assertEqual((later.MAIN_SHARE, later.AGAIN), (0.5, timedelta(days=30)))
         self.assertEqual(later.LONG_TYPES, ("paper", "document", "dataset", "method", "model", "software"))
         with mock.patch.dict(pairing.POLICIES, {pairing.DEVELOPS: pairing.policy(pairing.DEVELOPS, release_types=())}):
             pol = pairing.policy(pairing.DEVELOPS)
@@ -107,15 +106,6 @@ class _Anchors(_Later):
                              (sid, m))
         return sid
 
-    def later_rows(self, since_days=200, now=None):
-        got, _ = anchors.later_find(self.cur, now=now or NOW, since=NOW - since_days * DAY, limit=later.PER_RUN)
-        return got
-
-    def old_later(self, since_days=200):
-        got, _ = later.find(self.cur, now=NOW, since=NOW - since_days * DAY, limit=later.PER_RUN)
-        return got
-
-
 class Anchors(_Anchors):
     def test_ix_mx_and_happening_anchors(self):
         a, b = self.deal(80, self.source), self.deal(79, self.other)
@@ -144,125 +134,6 @@ class Anchors(_Anchors):
         mx2 = self.mx_story(c, d)
         self.cur.execute("UPDATE mx_stories SET merged_into = %s WHERE id = %s", (mx, mx2))
         self.assertNotIn((anchors.MX, mx2), anchors.of(self.cur))
-
-
-class TheLaterEngine(_Anchors):
-    def test_a_deal_closed_weeks_later_follows_its_story_by_the_happening(self):
-        a, b = self.deal(80, self.source), self.deal(79, self.other)
-        sid = self.story(a, b)
-        close = self.deal(10, self.third, action="completed")
-        too_late = self.deal(80 - 125, self.fourth, action="completed")      # 125 days after: none (in the future
-        self.assertEqual(self.old_later(), [])                                # of NOW: never read) ... the old: none
-        got = self.later_rows()
-        self.assertEqual([(r["anchor_kind"], r["story"], r["post"], r["trig"]) for r in got],
-                         [(anchors.IX, sid, close, ["H"])])
-        self.assertNotIn(too_late, [r["post"] for r in got])
-
-    def test_windows_by_group_and_parties(self):
-        a, b = self.deal(200, self.source), self.deal(199, self.other)
-        self.story(a, b)
-        self.deal(199 - 121, self.third, action="completed")                 # 121 days: past the deal's window
-        self.deal(198, self.fourth)                                           # 1 day: inside its first gap (and the
-        l1, l2 = self.lawsuit(100, self.source), self.lawsuit(99, self.other)  # story tells it: no anchor of its own)
-        legal = self.story(l1, l2)
-        ok = self.lawsuit(75, self.third, action="ruled")                     # 24 days: within legal's 30
-        settled = self.lawsuit(60, self.fourth, action="settled")             # 39 days: past it, but 15 after `ok`,
-        other = self.post(source=self.third, at=self.at(70))                  # which no story holds (legal: 7 days)
-        self.read(other, "sued", ["Acme"], "Someone Else", [("Acme", "org", "actor"), ("Someone Else", "org", "subject")])
-        got = self.later_rows(since_days=300)                                 # one shared party only: none
-        self.assertEqual([(r["anchor_kind"], r["story"], r["post"]) for r in got],
-                         [(anchors.IX, legal, ok), (anchors.HAPPENING, ok, settled)])
-
-    def test_funding_and_people_never(self):
-        f1, f2 = self.post(source=self.source, at=self.at(80)), self.post(source=self.other, at=self.at(79))
-        for p in (f1, f2):
-            self.read(p, "raised", ["Acme"], "Bigfund", [("Acme", "org", "actor"), ("Bigfund", "org", "subject")])
-        self.story(f1, f2)
-        f3 = self.post(source=self.third, at=self.at(20))
-        self.read(f3, "raised", ["Acme"], "Bigfund", [("Acme", "org", "actor"), ("Bigfund", "org", "subject")])
-        self.assertEqual(self.later_rows(), [])
-
-    def test_a_happening_with_no_story_is_an_anchor(self):
-        a = self.deal(84, self.source)
-        b = self.deal(84 - 3.3, self.other, action="bought")      # 79 hours on: one happening (deal: 30 days) ...
-        close = self.deal(2, self.third, action="closed")
-        self.assertEqual(self.old_later(), [])
-        got = self.later_rows()
-        self.assertEqual([(r["anchor_kind"], r["story"], sorted(r["members"]), r["post"]) for r in got],
-                         [(anchors.HAPPENING, a, [a], b),          # ... and past the first gap: asked (the judge
-                          (anchors.HAPPENING, a, sorted([a, b]), close)])   # tells retold from development)
-        early = self.deal(83, self.fourth)                         # a day on: a member, not asked
-        self.assertNotIn(early, [r["post"] for r in self.later_rows()])
-
-    def test_money_clash_is_another_deal(self):
-        a, b = self.deal(80, self.source, numbers=["$7B"]), self.deal(79, self.other, numbers=["$7 billion"])
-        self.story(a, b)
-        self.deal(10, self.third, action="completed", numbers=["$2B"])
-        self.assertEqual(self.later_rows(), [])
-
-    def test_the_subject_second_over_a_mark_x_story(self):
-        a, b = self.post(source=self.source, at=self.at(40)), self.post(source=self.other, at=self.at(30))
-        ent = self.release("Widget 4.1")
-        for p in (a, b):
-            self.subject(p, "Widget 4.1", "model", ent)
-        sid = self.mx_story(a, b)                                             # a Mark X story only
-        n = self.later_post(5, name="Widget 4.1", entity=ent)
-        self.assertEqual(self.old_later(), [])                                # the old engine reads Mark IX only
-        got = self.later_rows()
-        self.assertEqual([(r["anchor_kind"], r["story"], r["post"], r["trig"], r["entity"]) for r in got],
-                         [(anchors.MX, sid, n, ["E"], ent)])
-
-    def test_one_anchor_per_post_the_mark_ix_story_first(self):
-        sid, (a, b) = self.long()
-        mx = self.mx_story(a, b)
-        n = self.later_post(5, name="Widget 4.1", entity=self.cur.execute(
-            "SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (a,)).fetchone()[0])
-        old = self.old_later()
-        self.assertEqual([(r["story"], r["post"]) for r in old], [(sid, n)])
-        got = self.later_rows()
-        self.assertEqual([(r["anchor_kind"], r["story"], r["post"]) for r in got], [(anchors.IX, sid, n)])
-        self.assertTrue(mx)
-
-    def test_a_mark_x_story_grown_from_the_story_does_not_house_its_follow_up_away(self):
-        sid, (a, b) = self.long()
-        ent = self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (a,)).fetchone()[0]
-        n = self.later_post(5, name="Widget 4.1", entity=ent)
-        self.mx_story(a, b, n)                                # Mark X took the follow-up into the story
-        self.assertEqual([(r["story"], r["post"]) for r in self.old_later()], [(sid, n)])
-        self.assertEqual([(r["anchor_kind"], r["story"], r["post"]) for r in self.later_rows()], [(anchors.IX, sid, n)])
-        other = self.mx_story(self.post(source=self.source, at=self.at(8)), n)   # a story of its own holds it
-        for p in self.cur.execute("SELECT post_id::text FROM mx_story_posts WHERE story_id = %s", (other,)).fetchall():
-            if p[0] != n:
-                self.subject(p[0], "Widget 4.1", "model", ent)
-        self.cur.execute("UPDATE mx_story_posts SET valid_to = now() WHERE post_id = %s AND story_id <> %s", (n, other))
-        self.assertEqual(self.later_rows(), [])               # one story per post and subject, as before
-
-    def test_a_roundup_is_never_a_follow_up_as_a_whole(self):
-        sid, (a, b) = self.long()
-        ent = self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (a,)).fetchone()[0]
-        digest = self.later_post(5, name="Widget 4.1", entity=ent)
-        with self.conn.transaction():
-            tid, _ = tasks.read_task(self.cur, digest)
-            c = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer={})
-            repo.add_reading(self.cur, post_id=digest, guide="read-v2", call_id=c, kind="roundup", events="many",
-                             lang="en", headline=None, reading={"kind": "roundup", "items": []})
-        self.assertEqual([r["post"] for r in self.old_later()], [digest])   # the old engine asks it
-        self.assertEqual(self.later_rows(), [])                             # the develops row's unit rule
-
-    def test_the_happening_joins_the_subject_on_one_row(self):
-        ent = self.ent("Widgetco Filing", "document")
-        names = [("Acme", "org", "actor"), ("Widgetco", "org", "mention"), ("Widgetco Filing", "document", "subject")]
-        posts = []
-        for days, src, action in ((80, self.source, "acquired"), (79, self.other, "acquired"), (10, self.third, "completed")):
-            p = self.post(source=src, at=self.at(days))
-            self.read(p, action, ["Acme"], "Widgetco", names)       # one answer: the deal's parties and its subject
-            self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s AND name_key = %s",
-                             (ent, p, tasks.name_key("Widgetco Filing")))
-            posts.append(p)
-        a, b, close = posts
-        sid = self.story(a, b)
-        got = self.later_rows()
-        self.assertEqual([(r["story"], r["post"], r["trig"]) for r in got], [(sid, close, ["H", "E"])])
 
 
 class TheBackEngine(_Anchors):
@@ -300,45 +171,32 @@ class Shadow(_Anchors):
         self.new(2, self.third), self.new(1, self.fourth)
         a, b = self.deal(80, self.source), self.deal(79, self.other)
         deal = self.story(a, b)
-        close = self.deal(10, self.third, action="completed")   # the anchors engine's Later row (H) only
-        return sid, deal, close
+        return sid, deal
 
-    def test_both_engines_write_their_rows_and_the_pages_show_the_old_by_default(self):
-        sid, deal, close = self.world()
+    def test_both_engines_write_their_back_rows_and_the_pages_show_the_old_by_default(self):
+        sid, _deal = self.world()
         with self.conn.transaction():
             b = back.stage(self.cur, now=NOW, open_cap=50)
-            lt = later.stage(self.cur, now=NOW, open_cap=50)
         self.assertEqual((b["added"], b["anchors"]["added"]), (1, 1))
-        self.assertEqual(lt["anchors"]["added"], 1)
         self.cur.execute("SELECT engine, anchor_kind, story::text, anchor_id::text FROM mx_back ORDER BY engine")
         self.assertEqual(self.cur.fetchall(), [("anchors", anchors.IX, sid, sid), ("old", anchors.IX, sid, sid)])
-        self.cur.execute("SELECT engine, anchor_kind, story::text, post::text, trig FROM mx_later")
-        self.assertEqual(self.cur.fetchall(), [("anchors", anchors.IX, deal, close, ["H"])])
-        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'back'")
-        self.assertEqual(self.cur.fetchone()[0], 2)          # the back row (one question for both engines' rows:
-        self.assertEqual(anchors.shown(self.cur), anchors.OLD)   # the same input) and the Later row
-        self.assertEqual(later.of_story(self.cur, deal)["items"], [])
-        self.assertEqual(later.of_story(self.cur, deal)["engine"], "old")
+        self.cur.execute("SELECT count(*) FROM mx_later")
+        self.assertEqual(self.cur.fetchone()[0], 0)          # 0203: no Later row from either engine
+        self.assertEqual(anchors.shown(self.cur), anchors.OLD)
         status, body = call("POST", "/api/markx/anchors/shown", body={"engine": "anchors"})
         self.assertEqual((status, body), (200, {"engine": "anchors"}))
-        self.assertEqual([i["post"] for i in later.of_story(self.cur, deal)["items"]], [close])
         self.assertEqual(call("POST", "/api/markx/anchors/shown", body={"engine": "x"})[0], 400)
 
     def test_the_comparison(self):
-        sid, deal, close = self.world()
+        self.world()
         with self.conn.transaction():
             back.stage(self.cur, now=NOW, open_cap=0)
-            later.stage(self.cur, now=NOW, open_cap=0)
-        status, got = call("GET", "/api/markx/anchors/compare", query={"which": "later"})
-        self.assertEqual(status, 200, got)
-        self.assertEqual({k: got["counts"][k] for k in ("old", "new", "only_old", "only_new", "both")},
-                         {"old": 0, "new": 1, "only_old": 0, "only_new": 1, "both": 0})
-        self.assertEqual(got["counts"]["only_new_by_trig"], {"H": 1})
-        self.assertEqual(got["only_new"][0]["posts"], [close])
         got = anchors.compare(self.cur, "back")
         self.assertEqual({k: got["counts"][k] for k in ("old", "new", "only_old", "only_new", "both")},
                          {"old": 1, "new": 1, "only_old": 0, "only_new": 0, "both": 1})
-        self.assertEqual(call("GET", "/api/markx/anchors/compare", query={"which": "x"})[0], 400)
+        status, got = call("GET", "/api/markx/anchors/compare", query={"which": "back"})
+        self.assertEqual(status, 200, got)
+        self.assertEqual(call("GET", "/api/markx/anchors/compare", query={"which": "later"})[0], 400)   # 0203
 
     def test_an_error_in_the_anchors_engine_leaves_the_old_rows(self):
         self.world()
@@ -351,9 +209,9 @@ class Shadow(_Anchors):
 
     def test_a_concurrent_update_still_defers_the_stage(self):
         self.world()
-        with mock.patch.object(anchors, "later_find", side_effect=psycopg_errors.SerializationFailure("raced")):
+        with mock.patch.object(anchors, "back_find", side_effect=psycopg_errors.SerializationFailure("raced")):
             with self.assertRaises(psycopg_errors.SerializationFailure), self.conn.transaction():
-                later.stage(self.cur, now=NOW, open_cap=0)
+                back.stage(self.cur, now=NOW, open_cap=0)
 
     def test_off(self):
         self.world()

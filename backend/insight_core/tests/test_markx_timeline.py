@@ -1,4 +1,4 @@
-"""A thing's timeline (issue 0165), with invented names: a product's component gets its own entity (A), a rename is
+"""A thing's timeline (issue 0165), with invented names (the components rule, A, was dropped in v10.18, 0203): a rename is
 proposed by shared evidence and only the owner's answer merges it (B), the entity page's timeline (C) and the post
 page's "before" from it (D); each with what it must not do (a version bump, an org's word, the owner's answers, no
 evidence)."""
@@ -9,26 +9,19 @@ import unittest
 import uuid
 from unittest import mock
 
-from insight_core.markx import components as C, entity_answers, entity_views, identity as I, names as N, rename as RN
+from insight_core.markx import entity_answers, entity_views, identity as I, names as N, rename as RN
 from insight_core.markx import repo, schemas, tasks, timeline as TL, validate
 from insight_core.tests import test_markx_entities as base
 
 T0, H, D = base.T0, base.H, base.D
-_CONFIG = C.config
 
 
 def soft(**kw):
     return {"family": None, "version": None, "variant": None, "size": None, "build": None, **kw}
 
 
-def config_with(**over):
-    def got():
-        return {**_CONFIG(), **over}
-    return got
-
-
 class Rules(unittest.TestCase):
-    """No database: the component's shape, the address's compared form, the rename guards."""
+    """No database: the address's compared form, the rename guards."""
     ent, book = base.Rules.ent, base.Rules.book
 
     def products(self):
@@ -36,16 +29,6 @@ class Rules(unittest.TestCase):
         forge = self.ent("f", "Acme Forge", "software", maker="Acme", fields=soft())
         other = self.ent("x", "Orbis Forge", "software", maker="Orbis", fields=soft())
         return self.book(acme, forge, other)
-
-    def test_a_component_is_a_product_name_followed_by_its_own_words(self):
-        book = self.products()
-        self.assertEqual(C.split(book, "acme forge snap", "Acme"), ("f", "acme forge", "snap"))
-        self.assertEqual(C.split(book, "acme forge snap planner", None)[0], "f")   # the longest product prefix
-        self.assertIsNone(C.split(book, "acme forge 2", "Acme"))        # a version is a version
-        self.assertIsNone(C.split(book, "acme forge labs", "Acme"))     # an org's word
-        self.assertIsNone(C.split(book, "acme snap", "Acme"))           # an org is no product
-        self.assertIsNone(C.split(book, "acme forge snap", "Orbis"))    # another maker's product
-        self.assertIsNone(C.split(book, "acme forge", "Acme"))          # the product itself
 
     def test_an_address_compares_by_its_repository(self):
         self.assertEqual(RN.address("https://github.com/Acme/Snap/tree/main/docs"), "github.com/acme/snap")
@@ -101,83 +84,6 @@ class _Db(base._Db):
         self.cur.execute("SELECT id::text FROM mx_entities WHERE name = %s ORDER BY created_at LIMIT 1", (name,))
         row = self.cur.fetchone()
         return row[0] if row else None
-
-
-@base.requires_test_db
-class Components(_Db):
-    def forge(self):
-        p = self.post_at(0, T0, "Acme ships Forge")
-        self.mentions(p, ("Acme Forge", "software", "subject", "Acme", soft()))
-        self.stage()
-        return self.ent_named("Acme Forge")
-
-    def test_a_component_about_its_post_gets_its_own_entity_under_the_product(self):
-        with mock.patch.object(C, "config", config_with(components=True)):
-            forge = self.forge()
-            p = self.post_at(1, T0 + D, "Introducing Acme Forge Snap")
-            self.mentions(p, ("Acme Forge Snap", "software", "subject", "Acme", soft()))
-            out = self.stage(since=self.since)
-        snap = self.entity_of(p)
-        book = self.book()
-        self.assertEqual(book.ents[snap].name, "Acme Forge Snap")
-        self.assertEqual((book.ents[snap].parent, book.ents[snap].level), (forge, "thing"))
-        self.assertEqual(out["components"]["made"], 1)
-        page = entity_views.entity_page(self.cur, forge, now=T0 + 2 * D)
-        self.assertEqual([(c["name"], c["posts"]) for c in page["components"]], [("Acme Forge Snap", 1)])
-        self.assertNotIn(snap, [v["id"] for v in page["versions"]])
-
-    def test_a_span_naming_the_component_moves_its_mention_only_with_evidence(self):
-        with mock.patch.object(C, "config", config_with(components=True)):
-            forge = self.forge()
-            about = self.post_at(1, T0 + D, "Acme Forge Snap restores workers")      # the post is about it
-            self.mentions(about, ("Acme Forge", "software", "subject", "Acme", soft(), "Acme Forge Snap"))
-            aside = self.post_at(2, T0 + D, "A week of tools")                        # an aside: no evidence
-            self.mentions(aside, ("Acme Forge", "software", "mention", "Acme", soft(), "Acme Forge Snap"))
-            marked = self.post_at(3, T0 + D, "Serving notes")                          # the answer says part_of
-            self.mentions(marked, ("Acme Forge", "software", "mention", "Acme", soft(), "Acme Forge Snap"))
-            self.cur.execute("""UPDATE mx_calls SET answer = %s::jsonb WHERE id = (SELECT call_id FROM mx_mentions
-                                 WHERE post_id = %s LIMIT 1)""",
-                             (json.dumps({"entities": [], "relations": [{"a": "Acme Forge Snap", "rel": "part_of",
-                                                                          "b": "Acme Forge"}]}), marked))
-            self.stage(since=self.since)
-            snap = self.ent_named("Acme Forge Snap")
-            self.assertIsNotNone(snap)
-            self.assertEqual(self.entity_of(about), snap)
-            self.assertEqual(self.entity_of(marked), snap)
-            self.assertEqual(self.entity_of(aside), forge)
-            self.assertEqual(self.book().ents[snap].parent, forge)
-            full = self.stage(full=True)                                              # the full pass agrees
-            self.assertEqual(full["check"]["relinked"], 0)
-            self.assertEqual(self.entity_of(about), snap)
-
-    def test_off_by_default_and_a_version_stays_a_version(self):
-        forge = self.forge()
-        p = self.post_at(1, T0 + D, "Acme Forge Snap")
-        self.mentions(p, ("Acme Forge", "software", "subject", "Acme", soft(), "Acme Forge Snap"))
-        out = self.stage(since=self.since)
-        self.assertEqual(out["components"], {"off": True})
-        self.assertEqual(self.entity_of(p), forge)                                    # nothing moves while off
-        self.assertEqual(C.preview(self.cur)["mentions"], 1)                          # but the preview counts it
-        self.assertEqual(C.preview(self.cur)["moved"], 1)
-        v2 = self.post_at(2, T0 + D, "Acme Forge 2")
-        self.mentions(v2, ("Acme Forge 2", "software", "subject", "Acme", soft(family="Acme Forge", version="2")))
-        book = self.book()
-        ms = I._mentions(self.cur, schemas.mention_guides(), unlinked=True)
-        self.assertEqual(C.plan(self.cur, book, [m for m in ms if m.post_id == v2]), {})
-
-    def test_a_component_made_under_its_maker_is_reparented_and_logged(self):
-        forge = self.forge()
-        p = self.post_at(1, T0 + D, "Acme Forge Snap")
-        self.mentions(p, ("Acme Forge Snap", "software", "subject", "Acme", soft()))
-        self.stage(since=self.since)                                                  # off: made under the maker
-        snap = self.entity_of(p)
-        self.assertEqual(self.book().ents[snap].parent, self.ent_named("Acme"))
-        with mock.patch.object(C, "config", config_with(components=True)):
-            out = self.stage(full=True)
-        self.assertEqual(out["components"]["reparented"], 1)
-        self.assertEqual(self.book().ents[snap].parent, forge)
-        self.cur.execute("SELECT kind, field, old, new FROM mx_entity_fixes WHERE entity_id = %s", (snap,))
-        self.assertEqual(self.cur.fetchall(), [("component", "parent", self.ent_named("Acme"), forge)])
 
 
 @base.requires_test_db

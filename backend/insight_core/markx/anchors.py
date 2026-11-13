@@ -1,6 +1,7 @@
 """Anchors (issue 0180, 0166 step 3): what a follow-up attaches to, and the follow-ups Pairing's `develops` relation
-finds for it. Back in the news (back.py) and later developments (later.py) were each a trigger over Mark IX stories
-with private gates; here one module reads every anchor the same way and asks Pairing which later posts develop it.
+finds for it. Back in the news (back.py) was a trigger over Mark IX stories with private gates; here one module
+reads every anchor the same way and asks Pairing which later posts develop it. (Its Later half, later_find and the
+mx_later rows, was dropped with Later developments in v10.18, 0203.)
 
 An **Anchor** is
   - `kind`: `ix_story` (a Mark IX story), `mx_story` (a Mark X story: its current members, not merged away) or
@@ -18,16 +19,16 @@ The interface:
   - `of(cur, kinds=KINDS, near=None)`: {(kind, id): Anchor}: the story anchors of 2+ voices, the happening anchors of
     the posts dated in `near` (lo, hi).
   - `follow_ups(anchors, posts, keys)`: Pairing's `develops` happening gate over them: {(kind, id): [(at, post)]}.
-  - `later_find` / `back_find`: the two engines' candidates (nothing written): the anchor's **happening first**
+  - `back_find`: the engine's candidates (nothing written): the anchor's **happening first**
     (a post whose key develops one of its members' keys: E6's windows, 2+ separate shared parties, no money clash;
     one source is enough, no quiet rule, no 14/7-day wait: the key replaces them), **its subject second** (later's E
     and L, back's E, L and V, with their gates now in Pairing's develops row, over Mark X stories too).
-  - `shadow(cur, "back" | "later", ...)`: the decision run's part (from back.stage and later.stage, so inside their
-    savepoints): the anchors engine's rows written beside the old engine's (mx_back / mx_later, engine 'anchors'),
+  - `shadow(cur, "back", ...)`: the decision run's part (from back.stage, so inside its savepoint): the anchors
+    engine's rows written beside the old engine's (mx_back, engine 'anchors'),
     each on its own clock; an error in it is logged and leaves the old engine's rows standing (a concurrent update
     still defers the stage).
   - `shown(cur)`: which engine the pages show (mx_settings SHOWN_KEY: 'old' by default, 'anchors').
-  - `compare(cur, "back" | "later")`: the rows only the old engine has, only the anchors engine has, and both.
+  - `compare(cur, "back")`: the rows only the old engine has, only the anchors engine has, and both.
 
 One post, one anchor per happening (or subject): when a Mark IX story, a Mark X story and a happening anchor all hold
 the post's happening, the Mark IX story's row stands (RANK), so the two engines compare on the same anchors.
@@ -55,7 +56,6 @@ SHOWN_KEY = "anchors_shown"               # mx_settings: which engine the pages 
 # against an 85% bar, and it cost 0.8-3.9 s a stage call; the owner turns it on with this key (true).
 SHADOW_KEY = "anchors_shadow"
 BACK_SINCE_KEY = "back_anchors_since"
-LATER_SINCE_KEY = "later_anchors_since"
 POL = back.DEVELOPS
 TRIG_ORDER = ("H", "E", "L")
 
@@ -276,53 +276,6 @@ def _reach() -> timedelta:
     return max((hi for _lo, hi in POL.develops_windows.values()), default=timedelta(0))
 
 
-# ---- the later engine ---------------------------------------------------------------------------------------
-
-def later_find(cur: Any, *, now: datetime, since: datetime, limit: int, after: Optional[str] = None
-               ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """The anchors engine's Later rows of the posts dated in [since, now] (later's clock and cap): the anchor's
-    happening first (H), its subject second (later's E and L over Mark IX and Mark X stories). ([{anchor_kind, story
-    (the anchor's id), post, members, entity, trig, post_at, last_at}], clock). Nothing is written."""
-    from insight_core.markx import later
-    recent, more = later._recent(cur, since, now, limit, after)
-    clock = ({"at": recent[-1].at.isoformat(), "after": recent[-1].id} if more
-             else {"at": now.isoformat(), "after": None})
-    clock["rule"] = later.RULE
-    recent = _wholes(cur, [p for p in recent if not p.saved])
-    if not recent:
-        return [], clock
-    keys = _keys(cur, [p.id for p in recent])
-    lo, hi = min(p.at for p in recent) - _reach(), max(p.at for p in recent)
-    anchors = of(cur, near=(lo, hi))
-    stops = later.stopped(cur, sorted({a.id for a in anchors.values()}))
-    anchors = {k: a for k, a in anchors.items() if a.id not in stops}
-    rows: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
-    at = {p.id: p for p in recent}
-    for ak, hits in follow_ups(anchors, recent, keys).items():
-        a = anchors[ak]
-        for t, pid, ms in hits:
-            last = max(m.at for m in a.members if m.id in set(ms))
-            rows[(ak[0], ak[1], pid)] = {"anchor_kind": a.kind, "story": a.id, "post": pid, "members": ms,
-                                         "entity": None, "trig": {"H"}, "post_at": t, "last_at": last}
-    # the subject second: later's own rule (a specific main subject; E, L; one story per post and subject; quiet)
-    stories = {a.id: a for a in anchors.values() if a.kind in (IX, MX)}
-    ids = later._Ids(cur)
-    longs = later.mains(cur, {sid: a.members for sid, a in stories.items()},
-                        {sid: a.origin for sid, a in stories.items()}, ids=ids, with_pages=True)
-    for c in later.match(cur, recent, longs, ids, grown=True,
-                         rank=lambda s: (RANK[stories[s.id].kind],) + later._rank(s)):   # a Mark IX story first
-        a = stories[c["story"]]
-        row = rows.setdefault((a.kind, a.id, c["post"]), {
-            "anchor_kind": a.kind, "story": a.id, "post": c["post"], "members": c["members"], "entity": None,
-            "trig": set(), "post_at": c["post_at"], "last_at": c["last_at"]})
-        row["entity"] = c["entity"]
-        row["trig"] |= set(c["trig"])
-    out = _one_anchor(list(rows.values()), lambda r: {r["post"]})
-    for r in out:
-        r["trig"] = [t for t in TRIG_ORDER if t in r["trig"]]
-    return sorted(out, key=lambda r: (r["post_at"], r["story"], r["post"])), clock
-
-
 def _one_anchor(rows: List[Dict[str, Any]], posts_of: Any) -> List[Dict[str, Any]]:
     """Rows of one follow-up under anchors that overlap (a Mark IX story and the Mark X story of its posts): the
     first by RANK keeps it (their triggers joined), the others are dropped."""
@@ -392,36 +345,26 @@ def back_find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any
 # ---- the decision run's part (Shadow) -----------------------------------------------------------------------------
 
 def shadow(cur: Any, which: str, *, now: datetime, run_id: Any = None, limit: Optional[int] = None) -> Dict[str, Any]:
-    """The anchors engine's rows of one module ("back" or "later") written beside the old engine's, on its own clock,
+    """The anchors engine's back rows ("back"; 0203 dropped "later") written beside the old engine's, on its own clock,
     in a savepoint: an error is logged and counted (the old engine's rows stand); a concurrent update (serialization
     failure, deadlock) is raised, so the caller's stage is deferred as before. Its counts."""
     from psycopg import errors as psycopg_errors
 
-    from insight_core.markx import later, repo
+    from insight_core.markx import repo
+    if which != "back":
+        raise ValueError("which: back (0203 dropped Later developments)")
     if not shadow_on(cur):
         return {"off": True}
     t0 = time.monotonic()
     try:
         with cur.connection.transaction():
-            if which == "back":
-                last = repo.get_setting(cur, BACK_SINCE_KEY, default=None)
-                since = (datetime.fromisoformat(last) - back.WINDOW - back.MARGIN) if last \
-                    else now - timedelta(days=back.FIRST_SCAN_DAYS)
-                found = back_find(cur, now=now, since=since)
-                out: Dict[str, Any] = {"since": since.isoformat(), "found": len(found),
-                                       "added": back.write(cur, found, run_id=run_id, engine=ENGINE)}
-                repo.set_setting(cur, BACK_SINCE_KEY, now.isoformat())
-            else:
-                last = repo.get_setting(cur, LATER_SINCE_KEY, default=None) or {}
-                if last.get("rule") != later.RULE:
-                    last = {}
-                after = last.get("after")
-                since = (datetime.fromisoformat(last["at"]) - (timedelta(0) if after else later.MARGIN)) \
-                    if last.get("at") else now - timedelta(days=later.FIRST_SCAN_DAYS)
-                found, clock = later_find(cur, now=now, since=since, limit=limit or later.PER_RUN, after=after)
-                out = {"since": since.isoformat(), "clock": clock, "found": len(found),
-                       "added": later.write(cur, found, run_id=run_id, now=now, engine=ENGINE)}
-                repo.set_setting(cur, LATER_SINCE_KEY, clock)
+            last = repo.get_setting(cur, BACK_SINCE_KEY, default=None)
+            since = (datetime.fromisoformat(last) - back.WINDOW - back.MARGIN) if last \
+                else now - timedelta(days=back.FIRST_SCAN_DAYS)
+            found = back_find(cur, now=now, since=since)
+            out: Dict[str, Any] = {"since": since.isoformat(), "found": len(found),
+                                   "added": back.write(cur, found, run_id=run_id, engine=ENGINE)}
+            repo.set_setting(cur, BACK_SINCE_KEY, now.isoformat())
     except (psycopg_errors.SerializationFailure, psycopg_errors.DeadlockDetected):
         raise
     except Exception as exc:   # Shadow: the anchors engine never takes the old one down with it
@@ -434,21 +377,16 @@ def shadow(cur: Any, which: str, *, now: datetime, run_id: Any = None, limit: Op
 # ---- the comparison --------------------------------------------------------------------------------------------
 
 def _rows(cur: Any, which: str) -> List[Dict[str, Any]]:
-    if which == "back":
-        cur.execute("""SELECT id::text, engine, anchor_kind, COALESCE(anchor_id, story)::text, members::text[],
-                              posts::text[], trig, window_at, task_id::text FROM mx_back ORDER BY window_at, id""")
-        return [{"id": i, "engine": e, "anchor_kind": k, "anchor": a, "members": list(m), "posts": list(p),
-                 "trig": list(t), "at": w, "task": tid} for i, e, k, a, m, p, t, w, tid in cur.fetchall()]
-    from insight_core.markx import later
-    cur.execute("""SELECT id::text, engine, anchor_kind, COALESCE(anchor_id, story)::text, members::text[], post::text,
-                          trig, post_at, task_id::text, verdict FROM mx_later WHERE rule = %s ORDER BY post_at, id""",
-                (later.RULE,))
-    return [{"id": i, "engine": e, "anchor_kind": k, "anchor": a, "members": list(m), "posts": [p], "trig": list(t),
-             "at": w, "task": tid, "verdict": v} for i, e, k, a, m, p, t, w, tid, v in cur.fetchall()]
+    if which != "back":
+        raise ValueError("which: back (0203 dropped Later developments)")
+    cur.execute("""SELECT id::text, engine, anchor_kind, COALESCE(anchor_id, story)::text, members::text[],
+                          posts::text[], trig, window_at, task_id::text FROM mx_back ORDER BY window_at, id""")
+    return [{"id": i, "engine": e, "anchor_kind": k, "anchor": a, "members": list(m), "posts": list(p),
+             "trig": list(t), "at": w, "task": tid} for i, e, k, a, m, p, t, w, tid in cur.fetchall()]
 
 
 def compare(cur: Any, which: str) -> Dict[str, Any]:
-    """The old engine's rows against the anchors engine's ("back" or "later"): a row of one is matched by a row of
+    """The old engine's back rows against the anchors engine's ("back"): a row of one is matched by a row of
     the other sharing a follow-up post and a member of the anchor (or the anchor itself). {only_old, only_new, both
     (pairs of ids), counts {old, new, only_old, only_new, both, new_by_kind, new_by_trig, only_new_by_kind,
     only_new_by_trig}}."""

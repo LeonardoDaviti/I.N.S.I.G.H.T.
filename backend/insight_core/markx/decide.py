@@ -85,6 +85,7 @@ class Config:
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
     back_open: int = 50             # 0136: no new back question while this many wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
+    roundup_first: bool = True      # 0205: ... and a roundup that is its story's first post
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
@@ -102,7 +103,7 @@ class Config:
     @staticmethod
     def prototype() -> "Config":
         return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
-                      link_keeps=False, confirm_check=False, document_merges=False)
+                      link_keeps=False, confirm_check=False, document_merges=False, roundup_first=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -223,7 +224,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                in_window: Optional[Callable[[str], bool]] = None,
                copies: Optional[Dict[str, Set[str]]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
-    2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
+    2+ voice story (its first post too when that is a roundup, 0205) (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
     unrelated replies on a story, which its root's check never reaches). A check shows the story's reports but the
     post, or its other members of any role when the post is its only report (0112 bug 2), never an empty story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
@@ -249,9 +250,13 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         origin = ms[0].post
         for m in ms:
             p = posts[m.post]
-            if m.post == origin or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
-                continue
             roundup = kinds.get(m.post) == "roundup"
+            # 0205: a roundup is checked even when it is the story's first post: two digests citing one outside page
+            # made a story of their own (Mark IX's citation join), its first digest never asked, its second asked
+            # against the first; the check against the story's other reports demotes it ("digest item"), as any roundup
+            if (m.post == origin and not (roundup and config.roundup_first)) or not voice.is_voice(p.kind) \
+                    or m.post in copies.get(key, ()):
+                continue
             if m.why in certain and not roundup:
                 continue
             if p.words < config.min_words and not roundup:
@@ -406,6 +411,7 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
                     if not (rel == "same_event" and pa >= config.tau_merge):
                         relation = {"development": "follows_up", "reaction": "background"}.get(rel, "related")
                         connections.append({"a_kind": "post", "a": q.post, "b_kind": "story", "b": key,
+                                            "shown": {"b": list(q.side)},
                                             "relation": relation, "p": pa, "call": v.call, "tid": q.tid,
                                             "reason": v.reason, "late": True})
                         log.append({"tid": q.tid, "change": "late_connection", "story": key, "post": q.post,
@@ -448,6 +454,7 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
             log.append({"tid": q.tid, "change": "development_link", "story": q.story, "other": q.other,
                         "p_about": pa, "cos": q.cos, "reason": v.reason, "call": v.call})
             connections.append({"a_kind": "story", "a": q.story, "b_kind": "story", "b": q.other,
+                                "shown": {"a": list(q.side), "b": list(q.side_b)},
                                 "relation": "development", "p": pa, "call": v.call, "tid": q.tid, "reason": v.reason})
         elif rel == "same_event" and pa >= config.tau_merge:
             x, y = find(g(q.story)), find(g(q.other))
@@ -1097,18 +1104,21 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
 def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]], scope: Set[str],
                         now: datetime) -> Counter:
     """The run's typed connections become the current ones touching `scope` (its stories and posts): new ones open,
-    the ones no longer found close (valid_to)."""
+    the ones no longer found close (valid_to). 0205: each carries the members its question showed (evidence `shown`):
+    one found again over other members is closed and opened anew with them."""
     from insight_core.markx import repo
     counts: Counter = Counter()
     want = {(c["a_kind"], c["a"], c["b_kind"], c["b"], c["relation"]): c for c in wanted_rows}
     # 0131: the graph's edges between two posts are markx/graph.py's (its own stage), never closed here
-    cur.execute("""SELECT a_kind, a::text, b_kind, b::text, relation, p, call_id::text, rule FROM mx_connections
+    cur.execute("""SELECT a_kind, a::text, b_kind, b::text, relation, p, call_id::text, rule, evidence->'shown'
+                     FROM mx_connections
                     WHERE valid_to IS NULL AND (a = ANY(%(s)s::uuid[]) OR b = ANY(%(s)s::uuid[]))
                       AND NOT (a_kind = 'post' AND b_kind = 'post')""", {"s": sorted(scope)})
     have = {tuple(r[:5]): r for r in cur.fetchall()}
 
     def same(c: Dict[str, Any], r: Tuple) -> bool:
-        return _p(c.get("p")) == _p(r[5]) and (c.get("call") or None) == (r[6] or None)
+        return (_p(c.get("p")) == _p(r[5]) and (c.get("call") or None) == (r[6] or None)
+                and (c.get("shown") or None) == (r[8] or None))
     for k, r in have.items():
         if k not in want or not same(want[k], r):
             repo.close_connection(cur, a_kind=k[0], a=k[1], b_kind=k[2], b=k[3], relation=k[4], at=now)
@@ -1117,7 +1127,8 @@ def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]]
         if k not in have or not same(c, have[k]):
             repo.open_connection(cur, a_kind=k[0], a=k[1], b_kind=k[2], b=k[3], relation=k[4], run_id=run_id,
                                  p=_p(c.get("p")), call_id=c.get("call"), rule=c.get("rule"),
-                                 evidence={"reason": c.get("reason"), "question": c.get("tid")}, at=now)
+                                 evidence={"reason": c.get("reason"), "question": c.get("tid"),
+                                           **({"shown": c["shown"]} if c.get("shown") else {})}, at=now)
             counts["opened"] += 1
     return counts
 
@@ -1136,14 +1147,16 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     newest; the rest wait for later runs."""
     from insight_core.markx import incremental, tasks
     rows: List[Dict[str, Any]] = []
+    members = members_of(out, ids)
 
     def sid(key: str) -> Optional[str]:
         return ids.get(out.final.get(key, key))
     for c in out.connections:
         a = sid(c["a"]) if c["a_kind"] == "story" else c["a"]
         b = sid(c["b"]) if c["b_kind"] == "story" else c["b"]
-        if a and b and a != b and c.get("call"):
-            rows.append(dict(c, a=a, b=b))
+        row = dict(c, a=a, b=b)
+        if a and b and a != b and c.get("call") and holds(row, members):
+            rows.append(row)
     groups = {k: sorted((p for p in out.about[k] if p in world.posts), key=lambda p: _at_key(world.posts, p))
               for k in news_keys}
     found = pairing.story_pairs(cur, config.connected(), groups, world.posts)   # voices, bar, days: Pairing's
@@ -1167,8 +1180,29 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             continue
         rows.append({"a_kind": "story", "a": ids[x0], "b_kind": "story", "b": ids[y0],
                      "relation": CONNECT_RELATIONS[v.relation], "p": v.p, "call": v.call, "reason": v.reason,
-                     "tid": f"connect:{x0}:{y0}"})
+                     "tid": f"connect:{x0}:{y0}",
+                     "shown": {"a": groups[x0][:tasks.CONNECT_MEMBERS], "b": groups[y0][:tasks.CONNECT_MEMBERS]}})
     return rows
+
+
+def members_of(out: Outcome, ids: Dict[str, str]) -> Dict[str, Set[str]]:
+    """{Mark X story id: its member posts in this run} (the run's stories, by the ids persist gave them)."""
+    got: Dict[str, Set[str]] = defaultdict(set)
+    for key, ms in out.about.items():
+        if key in ids:
+            got[ids[key]] |= set(ms)
+    return dict(got)
+
+
+def holds(c: Dict[str, Any], members: Dict[str, Set[str]]) -> bool:
+    """0205: a connection holds while the members its question showed are still members of the stories it joins (a
+    story id whose members moved keeps none of its old answers: 16 of 94 same-event story connections on the server
+    were about members those stories no longer hold). One with no record of what it showed holds as before."""
+    for end in ("a", "b"):
+        shown = (c.get("shown") or {}).get(end)
+        if c.get(f"{end}_kind") == "story" and shown and not set(shown) <= members.get(c[end], set()):
+            return False
+    return True
 
 
 def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, news_keys: Sequence[str]) -> int:
@@ -1335,9 +1369,6 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("back")
     from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
     counts["back"] = guarded("back", lambda: back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
-    mark("later")
-    from insight_core.markx import later   # 0163: later developments (the follow-up trigger, then their back questions)
-    counts["later"] = guarded("later", lambda: later.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")

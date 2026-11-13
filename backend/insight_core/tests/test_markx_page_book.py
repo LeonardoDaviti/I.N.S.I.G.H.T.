@@ -260,7 +260,7 @@ class TheEntityPageReadsWhatItShows(Ents, built_tests.Stored):
 
 
 class CameTrueReadsTheConnectedStories(built_tests.Stored):
-    """With SUBJECT_LINKS off only a judged connection links a leak story to its release: built.build reads the
+    """Only a judged connection links a leak story to its release (0203 dropped SUBJECT_LINKS): built.build reads the
     stories connected to the viewed ones, not every typed story of the window."""
 
     def test_an_unconnected_story_of_the_window_is_not_read(self):
@@ -290,11 +290,6 @@ class CameTrueReadsTheConnectedStories(built_tests.Stored):
         self.assertEqual([x["story"] for x in got[rel]["leaked_before"]], [leak])
         self.assertIn(leak, loaded)
         self.assertNotIn(other, loaded)                  # typed, in the window, but connected to nothing viewed
-        with mock.patch.object(B, "SUBJECT_LINKS", True):   # with subjects on, the whole window is read again
-            loaded.clear()
-            with mock.patch.object(B, "_load", recorded):
-                B.build(self.cur, [rel])
-            self.assertIn(other, loaded)
 
 
 for _cls in (APagesBook, TheNewsPageReadsWhatItShows, TheNewsPageQueriesDontGrowWithItsRows, TheEntityPageReadsWhatItShows, CameTrueReadsTheConnectedStories):
