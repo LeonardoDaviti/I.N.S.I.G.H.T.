@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 
 from psycopg import Cursor
 
+from insight_core.utils import byline
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.voice_rules import (ALSO_WITHIN_HOURS, COPY_JACCARD, HOME_HOST_SHARE, Channel, PairCounts,
@@ -64,8 +65,8 @@ class VoicesRepository:
             shown = own_handle.get(sid) or (publication_of(host_of(handle)) if "://" in (handle or "") else handle)
             out[sid] = Channel(id=sid, kind=kind, name=name or shown, handle=shown or "", keys=keys,
                                enabled=bool(enabled), voice_id=voice_id)
-        cur.execute(f"""SELECT p.id::text, p.source_id::text, p.url, p.author, COALESCE(cardinality(p.reposted_by), 0) > 0,
-                               COALESCE(p.title, '') LIKE 'RT by @%%', p.metadata->>'channel_id',
+        cur.execute(f"""SELECT p.id::text, p.source_id::text, p.url, p.author, {byline.reposted_sql("p")},
+                               {byline.retweet_sql("p")}, p.metadata->>'channel_id',
                                p.metadata->>'channel_title', {META_AUTHOR}
                         FROM posts p""")
         reposts: Set[str] = set()
@@ -79,7 +80,7 @@ class VoicesRepository:
                 continue
             source_of[pid] = sid
             c.posts += 1
-            if reposted or rt or (c.kind == "x" and author and author.lower().lstrip("@") != own_handle.get(sid)):
+            if byline.retold(c.kind, own_handle.get(sid), author, reposted, rt):
                 reposts.add(pid)
             else:
                 c.own += 1

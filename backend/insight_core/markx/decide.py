@@ -51,13 +51,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from psycopg import errors as psycopg_errors
 
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
 CODE_VERSION = "markx-decide-v1"
 CERTAIN = frozenset({"thread", "quote", "address"})    # a tree reason that is not a guess: no check (unless a roundup)
 LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to the story's page (0121 Decided 1)
-NOT_VOICE = pairing.NOT_VOICE
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
 LATE = timedelta(hours=72)                              # Mark IX's link window (experiment W)
@@ -201,7 +201,8 @@ def _at_key(posts: Dict[str, Post], pid: str):
 
 
 def voices(posts: Dict[str, Post], ids: Iterable[str]) -> int:
-    return pairing.voices((posts[i].source, posts[i].kind) for i in ids if i in posts)
+    """How many voices the known posts among `ids` are (Voice's MARKX rule over each Post's counted source)."""
+    return voice.count((voice.Said(posts[i].source, posts[i].kind) for i in ids if i in posts), voice.Policy.MARKX)
 
 
 def ix_members(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]]) -> Dict[str, List[Member]]:
@@ -248,7 +249,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         origin = ms[0].post
         for m in ms:
             p = posts[m.post]
-            if m.post == origin or p.kind in NOT_VOICE or m.post in copies.get(key, ()):
+            if m.post == origin or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
                 continue
             roundup = kinds.get(m.post) == "roundup"
             if m.why in certain and not roundup:

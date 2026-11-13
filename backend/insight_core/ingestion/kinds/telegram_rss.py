@@ -13,7 +13,7 @@ after it (message_order_dates), and keeps the bridge's in metadata.bridge_date. 
 
 A forwarded message's item carries the bridge's forward header as <source url="https://t.me/<channel>/<post>">
 title</source> (issue 0178); it is kept as metadata.forwarded_from {username, name, post, url} (forwarded_from), the
-MTProto adapter's shape, so Mark X's voice rule (pairing.counted_voice) can match the channel's account.
+MTProto adapter's shape, so Mark X's voice rule (voice.counted_source) can match the channel's account.
 
 The bridge the Add-source dialog builds a channel's address on (issue 0135): TELEGRAM_RSS_HOSTS, a
 comma list of hosts or origins, the first one used ("telegram.local" when unset; set and empty: none,

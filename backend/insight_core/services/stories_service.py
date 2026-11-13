@@ -43,7 +43,9 @@ from insight_core.services import page_titles
 from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
-from insight_core.utils.addresses import host_of, is_tweet, site_of, x_account
+from insight_core.utils.addresses import host_of, is_tweet, site_of
+from insight_core.utils import voice
+from insight_core.utils.byline import tweet_account
 from insight_core.utils.post_links import PLATFORM_KINDS
 from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, FOLLOWABLE,
                                               PAGES_WITHIN_DAYS, UNFOLLOWABLE, Origin,
@@ -51,7 +53,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               federation, follow_url, not_channel, one_card_per_domain, order, origins,
                                               other_channel, owner_domain, place_kind, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
-                                            date_alone, grouping, keys, page_key, reposter_voice, threads)
+                                            date_alone, grouping, keys, page_key, threads)
 from insight_core.utils.discover_rules import page_key_of, pages as pages_of
 from insight_core.utils.entity_originals import supplier_reason
 from insight_core.utils.originals_rules import SiteReads, site_reads_of, strip_access_tokens, tokened
@@ -565,7 +567,8 @@ class StoriesService:
         """Every field the story job reads of a post, from its stored row and parts (load_posts: issue 0076,
         read once, when it was saved) and its source's facts, here only (issue 0072)."""
         kind = sources.kind.get(row["source_id"], "site")
-        author_source = sources.of_account.get(x_account(row["author"])) if kind == "x" and row["author"] else None
+        # Who wrote it is Byline's (Mark IX reads a tweet's stored author, whoever it is: issue 0189)
+        author_source = sources.of_account.get(tweet_account(row["author"])) if kind == "x" and row["author"] else None
         post = StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             # Issue 0076: one post for everyone, the title every page shows (its stored one until parsed).
@@ -580,13 +583,13 @@ class StoriesService:
             link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
             # On X (issue 0066): a tweet of another account (a repost), the account a reply answers, a quote.
             reposted=kind == "x" and bool(row["author"])
-            and sources.account.get(row["source_id"]) != x_account(row["author"]),
+            and sources.account.get(row["source_id"]) != tweet_account(row["author"]),
             reply_to=row["reply_to"] if kind == "x" else None,
             quoted=row["quoted"] if kind == "x" else None,
             quoted_words=row["quoted_words"],   # the words of the pages it quotes (issue 0070)
             # Who else of your sources put it before you (issue 0068): its author's own source, when
             # another source holds it, and the sources that reposted it. Voices of its story.
-            reposters=tuple(sorted({sources.of_account.get(x_account(by)) for by in row["reposted_by"]}
+            reposters=tuple(sorted({sources.of_account.get(tweet_account(by)) for by in row["reposted_by"]}
                                    - {None, row["source_id"], author_source})),
             author_source=author_source if author_source != row["source_id"] else None,
             # How precise its date is (issue 0076: posts.published_precision, as the source said it at
@@ -597,7 +600,7 @@ class StoriesService:
         )
         # Who owns it and who else put it before you (issue 0111): News counts one owner's channels once.
         post.owner = sources.owner_voice(post.voice)
-        post.other_owners = tuple(sources.owner_voice(reposter_voice(s)) for s in post.other_sources)
+        post.other_owners = tuple(sources.owner_voice(voice.source_key(s)) for s in post.other_sources)
         if not any(post.other_owners):
             post.other_owners = ()
         return post
@@ -1238,15 +1241,16 @@ def _linking(sources: SourceFacts, voices: Iterable[Tuple[str, Optional[str], bo
     `voices`: (voice, the source naming it, only in roundups); `linkers`: (source, only in roundups), its
     Reddit sources read."""
     units: Dict[str, Tuple[bool, str]] = {}
-    for voice, source_id, only in voices:
-        if voice.startswith("reddit:") or (voice.startswith("source:") and voice[7:] in saved):
+    for key, source_id, only in voices:
+        if voice.is_poster(key) or voice.source_of(key) in saved:
             continue
-        was = units.get(voice, (True, ""))[0]
-        units[voice] = (was and only, sources.voice_name(voice, source_id or ""))
+        was = units.get(key, (True, ""))[0]
+        units[key] = (was and only, sources.voice_name(key, source_id or ""))
     for source_id, only in linkers:
         if sources.kind.get(source_id) == "reddit":
-            was = units.get("source:" + source_id, (True, ""))[0]
-            units["source:" + source_id] = (was and only, sources.name.get(source_id, ""))
+            key = voice.source_key(source_id)
+            was = units.get(key, (True, ""))[0]
+            units[key] = (was and only, sources.name.get(source_id, ""))
     # One owner named once (issue 0109 W10): sources of one name (a feed and its bridge, both "<handle>") are one.
     named: Dict[str, Tuple[bool, str]] = {}
     for unit, (only, name) in units.items():

@@ -37,7 +37,7 @@ from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from insight_core.utils import titles
+from insight_core.utils import titles, voice
 from insight_core.utils.addresses import bare, host_of, is_tweet, paper_id, paper_page_order, site_of, tweet_author
 from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
@@ -66,8 +66,6 @@ REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   
 # page is anyone's. Their posts never claim an address.
 NOT_PUBLISHERS = ("hn", "saved")
 HOME_SITE_SHARE = 0.5   # a source whose address is elsewhere publishes on a site holding half its posts; not measured
-# A confirmed voice's owner key (issue 0132 A): the channels the owner joined are one voice in stories and News.
-VOICE_PREFIX = "voice:"
 
 
 @dataclass
@@ -116,34 +114,14 @@ class StoryPost:
 
     @property
     def voice(self) -> str:
-        if self.kind == "site":
-            return "site:" + self.own_site
-        if self.kind == "reddit" and self.author:
-            return "reddit:" + self.author
-        return "source:" + self.source_id
-
-    @property
-    def owner_voice(self) -> str:
-        """Its voice as its owner's (issue 0111): News counts one owner's channels once."""
-        return self.owner or self.voice
-
-    @property
-    def counted_voice(self) -> str:
-        """Its voice as a story counts it: its confirmed voice's (issue 0132 A: the owner joined its channels, an
-        owner that is `VOICE_PREFIX`<id>), else its own. A Reddit post's voice stays its poster."""
-        return self.owner if confirmed(self.owner) and self.kind != "reddit" else self.voice
-
-    def other_voices(self, by_owner: bool = False) -> List[str]:
-        """The voices of its other_sources (reposter_voice), with `by_owner` each as its owner's; without, a
-        confirmed voice's still (issue 0132 A)."""
-        owners = self.other_owners
-        return [(owners[k] if k < len(owners) and owners[k] and (by_owner or confirmed(owners[k])) else None)
-                or reposter_voice(s) for k, s in enumerate(self.other_sources)]
+        """Its own voice, Mark IX's key (utils/voice.py), stored as story_posts.voice. What a story or News counts it
+        as is Voice's (voice.voice_of with Policy.STORIES_IX or NEWS_IX)."""
+        return voice.key(self.kind, self.source_id, self.own_site, self.author)
 
     @property
     def place(self) -> str:
         """Where it was said: its voice, but a subreddit (not its poster) on Reddit."""
-        return "source:" + self.source_id if self.kind == "reddit" else self.voice
+        return voice.source_key(self.source_id) if self.kind == "reddit" else self.voice
 
     @property
     def link_post(self) -> bool:
@@ -619,7 +597,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         stored = [p for p in ordered if p.stored_at is not None]
         stories.append(Story(
             id=min(stored, key=lambda p: (p.stored_at, p.id)).id if stored else ordered[0].id,
-            first_at=times[ordered[0].id], posts=ordered, voices=count_voices(group_posts),
+            first_at=times[ordered[0].id], posts=ordered, voices=voice.count(group_posts, voice.Policy.STORIES_IX),
             roles=roles(ordered),
             reasons={p.id: [r for r in REASONS if r in why[p.id]] for p in group_posts},
             mentions=mentions_of.get(root, set()),
@@ -690,43 +668,8 @@ def text_key(content_hash: Optional[str], chars: int) -> Optional[str]:
     return content_hash if content_hash and chars >= SAME_TEXT_MIN_CHARS else None
 
 
-def voice_groups(items: Iterable[Tuple[Any, Optional[str], str]]) -> List[List[Any]]:
-    """The voices among `items` ((key, text key, voice) each: a post, or a source that wrote or
-    reposted the tweet a post holds, issue 0068): items of one voice, and copies of one text, are one
-    voice. Each voice is its items' keys in the order given, the voices in the order of their first."""
-    uf = _UnionFind()
-    keys: Dict[str, Any] = {}
-    order = []
-    for node, text, voice in items:
-        order.append(node)
-        uf.find(node)
-        for key in (("text:" + text) if text else None, "voice:" + voice):
-            if key is None:
-                continue
-            if key in keys:
-                uf.union(node, keys[key])
-            else:
-                keys[key] = node
-    groups: Dict[Any, List[Any]] = {}
-    for node in order:
-        groups.setdefault(uf.find(node), []).append(node)
-    return list(groups.values())
-
-
-def count_voices(posts: Sequence[StoryPost], *, by_owner: bool = False) -> int:
-    """How many voices a story has: posts of one voice, and copies of one text, are one. A source
-    that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
-    with its posts in the story, if it has some. A page you saved is no voice (issue 0070). With
-    `by_owner` (News, issue 0111) one owner's channels are one voice; always, one confirmed voice's (issue 0132 A:
-    the channels the owner joined)."""
-    posts = [p for p in posts if p.kind != "saved"]
-    return len(voice_groups([*((p.id, p.text_key, p.owner_voice if by_owner else p.counted_voice) for p in posts),
-                             *((f"{p.id}>{s}", None, v) for p in posts
-                               for s, v in zip(p.other_sources, p.other_voices(by_owner)))]))
-
-
 def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """A story's voices as you know them (issue 0082), the ones count_voices counts, one item each, so
+    """A story's voices as you know them (issue 0082), the ones voice.count counts, one item each, so
     a count reads as its names and "+N". `posts` in the order to name them, each {source_id, name (its
     source's), kind, voice (StoryPost.voice), text_key, others: [{id, name}] (its other_sources)}; a
     page you saved is none. Each voice is {id, name, place, with}: named by its first post's source,
@@ -738,32 +681,22 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if p["kind"] == "saved":
             continue
         items.append(((i, -1), p["text_key"], p.get("owner") or p["voice"]))
-        items += [((i, j), None, s.get("owner") or reposter_voice(s["id"])) for j, s in enumerate(p["others"])]
+        items += [((i, j), None, s.get("owner") or voice.source_key(s["id"])) for j, s in enumerate(p["others"])]
     followed, reddit = [], []
-    for group in voice_groups(items):
+    for group in voice.groups(items):
         sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else
                    {k: v for k, v in posts[i]["others"][j].items() if k != "owner"} for i, j in group]
         # One owner's channels are one voice (issue 0111), named by a followed channel before a Reddit post.
         k = next((k for k, (i, j) in enumerate(group) if not (j < 0 and posts[i]["kind"] == "reddit")), 0)
         group, sources = [group[k], *group[:k], *group[k + 1:]], [sources[k], *sources[:k], *sources[k + 1:]]
         (i, j), first = group[0], dict(sources[0])
-        if j < 0 and posts[i]["voice"].startswith("reddit:"):
-            first.update(name="u/" + posts[i]["voice"].split(":", 1)[1], place=posts[i]["name"])
+        if j < 0 and voice.is_poster(posts[i]["voice"]):
+            first.update(name="u/" + voice.poster(posts[i]["voice"]), place=posts[i]["name"])
         seen = {first["id"]}
         first["with"] = [s for s in sources if not (s["id"] in seen or seen.add(s["id"]))]
         # Followed sources are named before Reddit's posters (issue 0103), each part in the order given.
         (reddit if j < 0 and posts[i]["kind"] == "reddit" else followed).append(first)
     return followed + reddit
-
-
-def confirmed(owner: Optional[str]) -> bool:
-    """An owner that is a voice the owner confirmed (issue 0132 A: SourceFacts.voice_of), not one told by the data."""
-    return bool(owner) and owner.startswith(VOICE_PREFIX)
-
-
-def reposter_voice(source_id: str) -> str:
-    """A reposting source's voice, as StoryPost.voice says an X account's (issue 0068)."""
-    return "source:" + source_id
 
 
 def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = site_of) -> str:
@@ -776,5 +709,5 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
 
 
 __all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
-           "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "confirmed", "VOICE_PREFIX", "source_site", "title_key",
+           "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "named_voices", "text_key", "source_site", "title_key",
            "anchors"]

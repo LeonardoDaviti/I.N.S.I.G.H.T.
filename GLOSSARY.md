@@ -14,13 +14,20 @@ row in Pairing's policy table.
 **Gate** — one condition a pair must pass before it is judged: a window (how far apart in time), a cosine bar, an
 entity-type list, a word count, a unit rule. Gates belong to a relation's policy row, never to a caller.
 
-**Voice** — an independent source of a post. Two posts are independent voices when they come from different
-sources and neither is a post the owner saved. A story's voices are its distinct sources.
+**Voice** — an independent source of a post: who a post counts as, and how many voices posts are
+(`backend/insight_core/utils/voice.py`: `voice_of(post, policy)`, `count(posts, policy)`; the key forms are the
+module's own). A post the owner saved is never a voice. The two engines still count by different rules, each a named
+**voice policy**: Mark X's (`MARKX`: a voice is a source, or the followed source a repost's author is) and Mark IX's
+(`STORIES_IX`: a website's publication, a Reddit poster, else the source, a confirmed voice's channels one, copies of
+one text one, a tweet's reposters and author's source voices beside the post's own; `NEWS_IX`: every owner's
+channels one).
 
 **Byline** — who wrote a post, via whom: its original author when its feed did not write it (an X repost or quote's
 account, a Telegram forward's channel), the feed that carried it, and the account it quotes
-(`backend/insight_core/utils/byline.py`; the screens' one formatter `frontend/src/lib/byline.ts`). Display only: a
-post's voice is Pairing's to decide, and a repost counts as its author's voice only when a source follows that author.
+(`backend/insight_core/utils/byline.py`; the screens' one formatter `frontend/src/lib/byline.ts`). It holds every
+"who wrote it" question the modules ask: the author's account, whether a row is a repost, Nitter's one "RT by @"
+pattern. Which voice that makes is Voice's: a repost counts as its author's voice only when a source follows that
+author.
 
 **Happening** — what a post reports as a key: an action group (release, deal, funding, legal, people, pricing,
 research, announcement), its parties, its stage, its stated day, its money amounts

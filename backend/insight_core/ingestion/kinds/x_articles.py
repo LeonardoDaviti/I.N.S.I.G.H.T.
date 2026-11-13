@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from insight_core.db.repo_posts import FULL_TEXT_FLAG, X_ARTICLE_KEY
 from insight_core.ingestion import full_text
 from insight_core.ingestion.kinds import parsing
+from insight_core.utils.byline import RT_BY_PREFIX
 
 logger = logging.getLogger("insight.ingestion.x_articles")
 
@@ -53,7 +54,7 @@ ARTICLE_LINK_RE = re.compile(r"/i/article/\d")
 ARTICLE_ANCHOR_RE = re.compile(r"(?is)<a\b[^>]*>(?:(?!</a>).)*?</a>")
 ARTICLE_URL_RE = re.compile(r"(?i)[^\s<>\"]*/i/article/[^\s<>\"]*")
 QUOTE_START_RE = re.compile(r"(?is)(?:<hr\s*/?>\s*)?<blockquote\b")
-TITLE_PREFIX_RE = re.compile(r"^(?:RT by @\w+: |R to @\w+: )+")
+TITLE_PREFIX_RE = re.compile(r"^(?:" + RT_BY_PREFIX + r"|R to @\w+: )+")   # Byline's "RT by @x: " (0189)
 HEADERS = {"header-one": "h2", "header-two": "h3", "header-three": "h4"}
 LISTS = {"unordered-list-item": "ul", "ordered-list-item": "ol"}
 

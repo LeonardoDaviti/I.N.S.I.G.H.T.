@@ -52,6 +52,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.utils import byline
+
 STAMP = "handles-v1"
 PLATFORMS = ("x", "github", "telegram", "bluesky", "hf")
 ROLE = {"repost": "by", "quote": "by", "embed": "by", "status": "source", "said": "source", "reply": "reply",
@@ -133,7 +135,7 @@ NOT_NAMES = {"it", "this", "that", "here", "there", "me", "him", "her", "them", 
              "tweet", "source", "credit", "photo", "video", "image", "pic", "account", "profile", "below", "above"}
 UNIT = re.compile(r"^\d+(?:[a-z]{1,2}|x|px|pm|am)?$", re.I)
 REPLY = re.compile(r"^R to @(\w+): ")
-REPOST = re.compile(r"^RT by @(\w+): ")
+REPOST = byline.RT_BY   # Nitter's "RT by @x: " (Byline's one pattern, issue 0189)
 
 
 @dataclass(frozen=True)

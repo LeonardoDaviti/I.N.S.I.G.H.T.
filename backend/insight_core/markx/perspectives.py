@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import names as N
+from insight_core.utils import voice
 
 LABELS = ("original", "new_facts", "opinion", "same", "not_this_story")
 WORTH = frozenset({"original", "new_facts", "opinion"})
@@ -834,7 +835,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
           book: Any = None) -> Dict[str, Any]:
     """B1-B5 over the News window's stories of MIN_VOICES or more voices (`limit`: at most that many stories built).
     `book`: the entity book as it is now (its entities, names, merges and pins), else read here when needed."""
-    from insight_core.markx import identity, tasks
+    from insight_core.markx import identity
     stories = news_stories(cur, now)
     out: Counter = Counter()
     out["stories"] = len(stories)
@@ -846,7 +847,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
     every = sorted({p for ms in todo.values() for p in ms})
     posts = load_members(cur, every)
     eligible = {sid: ms for sid, ms in todo.items()
-                if len({posts[p].src for p in ms if p in posts and posts[p].kind not in tasks.NOT_VOICE}) >= MIN_VOICES}
+                if voice.count((voice.Said(posts[p].src, posts[p].kind) for p in ms if p in posts),
+                               voice.Policy.MARKX) >= MIN_VOICES}
     out["fewer_voices"] = len(todo) - len(eligible)
     if not eligible:
         return dict(out)
