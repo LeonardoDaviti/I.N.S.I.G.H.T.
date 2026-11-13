@@ -809,7 +809,7 @@ class DiscoverClassicsTests(unittest.TestCase):
         many, few = f"many-{self.mark}.test", f"few-{self.mark}.test"
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for n in range(4):
-                source = insert_scratch_source(cur)
+                source = insert_scratch_source(cur, enabled=True)   # on: your sources (issue 0200)
                 url = f"https://voice{n}-{self.mark}.test/p"
                 html = "".join(f'<a href="https://{many}/2026/10/the-story-{k}">Story {k}</a>' for k in range(2))
                 if n < 3:

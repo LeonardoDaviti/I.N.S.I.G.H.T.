@@ -120,17 +120,18 @@ class Judge(unittest.TestCase):
         e = ev(pages=(("https://acme.example/blog/widget-5", "held"), ("https://x.com/acmelabs/status/2112345678901234567", "linked")))
         self.assertEqual(M.judge([e], {**MEMBERS, "x": x}), [])
 
-    def test_a_disabled_source_covering_the_page_is_surfaced(self):
+    def test_a_switched_off_source_covering_the_page_is_never_suggested(self):
+        """Issue 0200 (v10.17.1): the owner switched it off; before, a `disabled` row asked to switch it on."""
         off = src("off", host="acme.example", watch="/blog/", enabled=False, name="Acme Blog")
-        r = M.judge([ev()], {**MEMBERS, "off": off})[0]
-        self.assertEqual((r["kind"], r["source"]["id"], r["source"]["enabled"]), ("disabled", "off", False))
+        self.assertEqual(M.judge([ev()], {**MEMBERS, "off": off}), [])
+        # the same source on: followed, no row either; nothing is ever `disabled`
+        on = src("off", host="acme.example", watch="/blog/", enabled=True, name="Acme Blog")
+        self.assertEqual(M.judge([ev()], {**MEMBERS, "off": on}), [])
 
-    def test_a_disabled_source_named_for_the_actor_is_surfaced_beside(self):
+    def test_a_switched_off_source_named_for_the_actor_is_not_surfaced(self):
         off = src("sub", kind="reddit", enabled=False, name="r/acme")
         rows = M.judge([ev(mine=("sub",))], {**MEMBERS, "sub": off})
-        self.assertEqual([(r["kind"], r["channel"]["key"]) for r in rows],
-                         [("missing", "acme.example/blog/"), ("disabled", "source:sub")])
-        # on, and not among the story's sources: only the page's channel
+        self.assertEqual([(r["kind"], r["channel"]["key"]) for r in rows], [("missing", "acme.example/blog/")])
         on = src("sub", kind="reddit", enabled=True, name="r/acme")
         self.assertEqual([r["kind"] for r in M.judge([ev(mine=("sub",))], {**MEMBERS, "sub": on})], ["missing"])
 
@@ -302,10 +303,22 @@ class Scanned(_Api):
         self.site_source("https://acme.example/blog", settings={"page_watch": {"prefix": "/blog/"}}, name="Acme Blog")
         self.assertEqual(self.rows(), [])
 
-    def test_a_disabled_source_on_the_section_is_surfaced(self):
-        off = self.site_source("https://acme.example/blog", enabled=False, settings={"page_watch": {}}, name="Acme Blog")
+    def test_a_switched_off_source_on_the_section_is_never_suggested(self):
+        """Issue 0200: its channel is the owner's, switched off; the event is no row."""
+        self.site_source("https://acme.example/blog", enabled=False, settings={"page_watch": {}}, name="Acme Blog")
         self.event()
-        self.assertEqual([(r["kind"], r["source"]["id"]) for r in self.rows()], [("disabled", off)])
+        self.assertEqual(self.rows(), [])
+
+    def test_a_switched_off_sources_posts_are_no_voice_of_an_event(self):
+        """Issue 0200: a story of two voices, one of them switched off, is one voice here: no event, no row. The story
+        itself is unchanged (its members stay)."""
+        off = self.site_source("https://reporter-off.example/feed.xml", enabled=False, name="Reporter")
+        story = self.event(sources=(self.source, off))
+        self.assertEqual(self.rows(), [])
+        self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE story_id = %s AND valid_to IS NULL", (story,))
+        self.assertEqual(self.cur.fetchone()[0], 2)
+        self.cur.execute("UPDATE sources SET enabled = true WHERE id = %s", (off,))
+        self.assertEqual([r["kind"] for r in self.rows()], ["missing"])
 
     def test_the_route_answers_and_a_hidden_row_goes(self):
         from insight_core.routers import discover_main_source as R

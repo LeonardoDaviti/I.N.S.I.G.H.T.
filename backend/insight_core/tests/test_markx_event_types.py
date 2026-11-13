@@ -160,7 +160,7 @@ class Consumers(unittest.TestCase):
 
     def world(self, seed):
         rnd = random.Random(seed)
-        sources = [insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Ex"}))
+        sources = [insert_scratch_source(self.cur, platform="telegram", enabled=True, settings_json=json.dumps({"display_name": "Ex"}))
                    for _ in range(3)]
         posts = []
         for n in range(30):

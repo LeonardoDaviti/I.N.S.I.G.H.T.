@@ -889,9 +889,13 @@ def active_sources(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
 
 
 def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[str, Any]:
-    """Every judged post of the track with its place (track, joined, discover, out) and rank: {items, calibration}.
+    """Every judged post of the track with its place (track, joined, discover, off, out) and rank: {items, calibration}.
+    `off` (issue 0200): Haiku's in from a passive source the owner switched off (repo_stories.switched_off), which is
+    never suggested: neither in Discover nor joined. Its calibration is unchanged (the owner's labels count).
     `shown` False: the items carry only their post, verdict, confidence, source and place (the counts' read)."""
+    from insight_core.db.repo_stories import switched_off
     folder = track["folder_id"]
+    off = switched_off(cur)
     active = {s["id"] for s in active_sources(cur, folder)}
     marks = labels(cur, folder)
     items = _items(cur, folder, shown=shown)
@@ -905,6 +909,8 @@ def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[st
             it["place"] = "out"
         elif it["label"] == "in" or (it["verdict"] and it["active"]):
             it["place"] = "track"
+        elif it["verdict"] and it["source_id"] in off:
+            it["place"] = "off"
         elif it["verdict"]:
             joins = cal["join_edge"] is not None and (it["confidence"] or 0) >= cal["join_edge"] - 1e-9
             it["place"] = "joined" if joins else "discover"
@@ -930,8 +936,10 @@ def _shown(it: Dict[str, Any]) -> Dict[str, Any]:
 
 def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Passive sources with SUGGEST_MIN+ items judged `in` (not ✗ by the owner) in SUGGEST_DAYS days, per track:
-    [{track, track_name, source_id, source, n}], most first."""
+    [{track, track_name, source_id, source, n}], most first. Never a source switched off (issue 0200)."""
+    from insight_core.db.repo_stories import switched_off
     now = now or datetime.now(timezone.utc)
+    off = switched_off(cur)
     out = []
     for t in described(cur):
         if folder_id is not None and t["folder_id"] != str(folder_id):
@@ -940,7 +948,7 @@ def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[d
         kept = track_kept.suggestible(cur, t)   # issue 0195: the kept placement's suggestible items, else placed live
         got = kept if kept is not None else [it for it in placed(cur, t)["items"]
                                              if (it["verdict"] or it["label"] == "in") and it["label"] != "out"
-                                             and not it["active"]]
+                                             and not it["active"] and it["source_id"] not in off]
         c: Counter = Counter()
         names = {}
         for it in got:

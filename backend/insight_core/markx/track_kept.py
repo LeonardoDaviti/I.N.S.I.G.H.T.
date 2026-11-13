@@ -78,10 +78,11 @@ def counts(cur: Cursor, track: Dict[str, Any], inside_places: Sequence[str]) -> 
 
 
 def suggestible(cur: Cursor, track: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
-    """The items tracks.suggestions counts (judged in or labelled in, not labelled out, from a passive source), each
-    {source_id, source, at}, in placed()'s order; None: place it live."""
+    """The items tracks.suggestions counts (judged in or labelled in, not labelled out, from a passive source not
+    switched off: issue 0200), each {source_id, source, at}, in placed()'s order; None: place it live."""
     if calibration(cur, track["folder_id"]) is None:
         return None
+    from insight_core.db.repo_stories import suggestable_sql
     from insight_core.markx import tracks
     cur.execute(f"""SELECT p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
@@ -89,7 +90,7 @@ def suggestible(cur: Cursor, track: Dict[str, Any]) -> Optional[List[Dict[str, A
                            {tracks._date()}
                       FROM mx_track_places k JOIN posts p ON p.id = k.post_id JOIN sources s ON s.id = p.source_id
                      WHERE k.track_id = %s AND (k.verdict OR k.label = 'in') AND k.label IS DISTINCT FROM 'out'
-                       AND NOT k.active
+                       AND NOT k.active AND {suggestable_sql("p.source_id")}
                      ORDER BY k.post_id""", (track["folder_id"],))
     return [{"source_id": sid, "source": name, "at": at} for sid, name, at in cur.fetchall()]
 

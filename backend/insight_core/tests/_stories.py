@@ -31,10 +31,11 @@ def story_post(pid: str, source: str, *, at: datetime, hours: float = 0.0, kind:
 
 
 def insert_source(cur, name: Optional[str] = None, *, handle: Optional[str] = None, platform: str = "rss",
-                  in_main_digest: bool = False, followed_days: Optional[int] = None) -> str:
-    """A scratch source (`_db.insert_scratch_source`: disabled, so no tick fetches it), with
-    `name` as its display name, `handle` as its address, and added `followed_days` ago."""
-    source = insert_scratch_source(cur, platform=platform, in_main_digest=in_main_digest)
+                  in_main_digest: bool = False, followed_days: Optional[int] = None, enabled: bool = True) -> str:
+    """A scratch source (`_db.insert_scratch_source`), with `name` as its display name, `handle` as its address, and
+    added `followed_days` ago. On (`enabled`) by default: a source switched off feeds no suggestion (issue 0200), and
+    these are the sources you follow; no test runs a tick over every source while it holds them."""
+    source = insert_scratch_source(cur, platform=platform, in_main_digest=in_main_digest, enabled=enabled)
     cur.execute(
         """UPDATE sources SET
                settings = CASE WHEN %(name)s::text IS NULL THEN settings

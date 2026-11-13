@@ -158,12 +158,14 @@ def address_of_key(key: str) -> str:
 # ---- the track's posts -------------------------------------------------------------------------------------
 
 def in_posts(cur: Cursor, folder_id: str, *, limit: int = MATCH_POSTS, since: Optional[datetime] = None) -> List[str]:
-    """The track's posts judged in or labelled ✓ (not ✗), newest first."""
+    """The track's posts judged in or labelled ✓ (not ✗), newest first. Haiku's in from a source the owner switched
+    off is none (issue 0200: it feeds no suggestion); the owner's ✓ is the owner's."""
+    from insight_core.db.repo_stories import suggestable_sql
     from insight_core.markx import tracks
     labels = tracks.labels(cur, folder_id)
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, {tracks._date('p')}
                       FROM mx_track_items i JOIN posts p ON p.id = i.post_id
-                     WHERE i.track_id = %s AND i.verdict
+                     WHERE i.track_id = %s AND i.verdict AND {suggestable_sql("p.source_id")}
                      ORDER BY i.post_id""", (folder_id,))
     rows = {pid: at for pid, at in cur.fetchall() if labels.get(pid, ("",))[0] != "out"}
     ok = [p for p, (a, _) in labels.items() if a == "in"]

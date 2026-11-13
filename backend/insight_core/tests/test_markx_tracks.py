@@ -123,7 +123,7 @@ class _Tracks(_Api):
         self.folder = str(self.cur.fetchone()[0])
         self.addCleanup(self.cur.execute, "DELETE FROM folders WHERE id = %s", (self.folder,))
         self.cur.execute("INSERT INTO source_folders (folder_id, source_id) VALUES (%s, %s)", (self.folder, self.source))
-        self.third = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Blog"}))
+        self.third = insert_scratch_source(self.cur, platform="rss", enabled=True, settings_json=json.dumps({"display_name": "Example Blog"}))
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = %s", (self.third,))
         self.addCleanup(clear_tables, self.cur, TRACK_TABLES)
 
@@ -488,6 +488,98 @@ class KeptPlaces(_Tracks):
         self.assertFalse(self.kept(), "its sources changed")
         self.keep()
         self.assertEqual(self.keep(), 0, "nothing changed since")
+
+
+class SwitchedOff(_Tracks):
+    """Issue 0200 (v10.17.1): a passive source the owner switched off feeds no suggestion of a track: its posts are
+    neither in Discover nor joined, it is never a source suggestion, its new posts are not asked, the scout reads none
+    of them; switched on again, all come back. Kept placements follow the switch (migration 0135)."""
+
+    def setUp(self):
+        super().setUp()
+        self.describe()
+        self.desc_vector(unit((0, 1)))
+        self.cur.execute("DELETE FROM mx_track_places_state")
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_track_places_state")
+
+    def passive(self, title, source, at=None):
+        p = self.post(title=title, source=source, at=at)
+        self.vector(p, unit((0, 1), (3, 0.2)))
+        return p
+
+    def switch(self, source, on):
+        self.cur.execute("UPDATE sources SET enabled = %s WHERE id = %s", (on, source))
+
+    def keep(self):
+        from insight_core.markx import track_kept
+        with self.conn.transaction():
+            return track_kept.refresh(self.cur)
+
+    def shown(self):
+        from insight_core.markx import track_counts
+        body = self.page()
+        with self.conn.transaction():
+            counts = track_counts.topic_counts(self.cur)[self.folder]
+            sug = tracks.suggestions(self.cur, now=NOW + DAY)
+        return ({it["post_id"] for it in body["discover"]}, [(s["source_id"], s["n"]) for s in sug], counts["discover"],
+                {it["post_id"] for s in body["sections"] for it in s["items"]})
+
+    def test_its_posts_leave_discover_and_the_source_suggestions_and_come_back(self):
+        farm = [self.passive(f"farm {k}", self.third, at=NOW - k * DAY) for k in range(3)]
+        mine = self.passive("kept", self.other)
+        self.plan()
+        for p in farm + [mine]:
+            self.judge(p, verdict(conf=0.95))
+        on = self.shown()
+        self.assertEqual((on[0], on[1], on[2]), (set(farm) | {mine}, [(self.third, 3)], 4))
+        self.switch(self.third, False)
+        self.assertEqual(self.shown()[:3], ({mine}, [], 1))
+        self.keep()
+        self.assertEqual(self.shown()[:3], ({mine}, [], 1), "kept: the same")
+        self.cur.execute("SELECT place FROM mx_track_places WHERE post_id = %s", (farm[0],))
+        self.assertEqual(self.cur.fetchone()[0], "off")
+        self.switch(self.third, True)                       # the trigger: read live again, then kept again
+        self.assertEqual(self.shown()[:3], on[:3])
+        self.keep()
+        self.assertEqual(self.shown()[:3], on[:3])
+
+    def test_never_joined_but_the_owners_check_stays(self):
+        posts = [self.passive(f"p{k}", self.other) for k in range(24)]
+        farm = [self.passive(f"farm {k}", self.third) for k in range(2)]
+        self.plan()
+        for p in posts + farm:
+            self.judge(p, verdict(conf=0.95))
+        for p in posts[:22]:
+            self.label(p, "in")
+        self.label(farm[0], "in")                           # the owner's ✓ is the owner's: it stays in the track
+        self.switch(self.third, False)
+        body = self.page()
+        self.assertEqual(body["calibration"]["join_edge"], 0.9)
+        joined = {it["post_id"] for s in body["sections"] for it in s["items"] if it["place"] == "joined"}
+        self.assertEqual(joined, set(posts[22:]))
+        in_track = {it["post_id"] for s in body["sections"] for it in s["items"]}
+        self.assertIn(farm[0], in_track)
+        self.assertNotIn(farm[1], in_track)
+        self.assertEqual(body["discover"], [])
+        self.assertEqual(body["counts"].get("off"), 1)
+
+    def test_its_posts_are_not_asked_and_the_scout_reads_none(self):
+        from insight_core.markx import scout
+        self.switch(self.third, False)
+        farm = self.passive("farm", self.third)
+        mine = self.passive("mine", self.other)
+        self.plan()
+        self.assertEqual(set(self.items()), {mine})
+        self.switch(self.third, True)
+        self.plan()
+        self.assertEqual(set(self.items()), {mine, farm})
+        self.judge(mine, verdict())
+        self.judge(farm, verdict())
+        self.assertEqual(set(scout.in_posts(self.cur, self.folder)), {mine, farm})
+        self.switch(self.third, False)
+        self.assertEqual(scout.in_posts(self.cur, self.folder), [mine])
+        self.label(farm, "in")
+        self.assertEqual(set(scout.in_posts(self.cur, self.folder)), {mine, farm}, "the owner's ✓ is the owner's")
 
 
 class Subtopics(_Tracks):
