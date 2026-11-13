@@ -37,7 +37,7 @@ scripts/prepared-db.sh refresh lab                       # only the NEW migratio
 | `prep_lab` | `insight_lab`: 41.6k posts to 30 Oct, the lab's labelled cases | Mark IX reading, stories, News, Discover, Classics; anything the judged cases (`plan/research/lab/cases.json`) cover |
 | `prep_server1105` | `insight_server_1105`: 49.4k posts to 5 Nov (the server's sources) | the server's real mix of sources and posts without Mark X answers |
 | `prep_mxreal` | `insight_server_1105_mxreal`: the same with real Mark X answers (read-v2, ent-v3, vectors) | Mark X decisions, stories, News, entities on real answers |
-| `prep_scale` | `prep_mxreal` inflated (`scripts/prep/scale.py`): 148k posts, ~1.06M tasks, ~0.95M calls, ~840k mentions, ~130k vectors, ~450k candidates, 4 tracks, the full story job and decision runs over a fake worker's answers | load, memory and speed at the server's size (the v10.16 slice M copy, now a committed deterministic builder) |
+| `prep_scale` | `prep_mxreal` inflated (`scripts/prep/scale.py`): 148,152 posts, 1.06M tasks, 954k calls, 844k mentions, 130k vectors, 452k candidates, 4 tracks with 47k judged items, the full story job (4,962 stories), 744k post refs; no Mark X decision rows (entities, Mark X stories, News) unless built with `SCALE_ARGS="--rounds N"` | load, memory and speed at the server's size (the v10.16 slice M copy, now a committed deterministic builder); your first decision run on a clone is a full one (over 1.5 h, 30 GB) |
 
 The DSN a clone prints is on the scratch server: `postgresql://insight:insight@insight-scratch-db:5432/<db>` from a
 container on the compose network (`docker exec -it insight-scratch-db psql -U insight -d <db>` from the host).
@@ -102,7 +102,7 @@ came from the cache.
 | what | before | after |
 |---|---|---|
 | a usable copy of lab / server1105 / mxreal | 8 min 47 s / 15 min 37 s / 15 min 56 s (template copy, migrations, backfills on insight-db) | 0.6 s / 0.55 s / 0.6 s (a clone of the prepared copy, scratch server; 3 suites running) |
-| a server-scale copy | hours, rebuilt by hand from scripts lost in /tmp | `build scale` once, then a clone |
+| a server-scale copy | hours, rebuilt by hand from scripts lost in /tmp | 2.2 s (a clone of prep_scale, 6.2 GB; WAL_LOG 31 s); building it: ~37 min of steps on the scratch server |
 | one 15-test module | 29 s to 7 min 41 s (template build, drop waiting for checkpoints) | 7.4 s |
 | the whole suite | 152 min 22 s (one discover on insight-db; 1 failure) | 8 min 49 s (one shard), 3 min 18 s (`JOBS=6`), scratch server |
 | whole suites at once | 46 min each with ~6 at once on insight-db, one hit a 1 h timeout (reported) | three at once: 9 min 53 s to 10 min 4 s each, all OK |
