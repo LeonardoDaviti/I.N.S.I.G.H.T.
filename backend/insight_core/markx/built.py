@@ -208,14 +208,19 @@ def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]
     return dict(out)
 
 
-def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str]) -> List[str]:
+def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Optional[Iterable[str]] = None) -> List[str]:
     """The current, unmerged Mark X stories of 2+ members with a member published in [lo, hi] and a read-v3 reading
-    of a leak or a news type: the stories a viewed one may be linked "came true" to."""
+    of a leak or a news type: the stories a viewed one may be linked "came true" to. `among`: only these stories
+    (v10.17: those a judged connection joins to a viewed one, when only a connection links, SUBJECT_LINKS off)."""
+    among = None if among is None else sorted(set(among) - have)
+    if among is not None and not among:
+        return []
     cur.execute(f"""SELECT DISTINCT sp.story_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                       JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %(lo)s AND %(hi)s
+                       {"AND sp.story_id = ANY(%(among)s::uuid[])" if among is not None else ""}
                        AND {event_types.typed_sql("sp.post_id", "%(types)s")}""",   # 0175: through the seam
-                {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES]})
+                {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES], "among": among})
     return sorted({r[0] for r in cur.fetchall()} - have)
 
 
@@ -286,7 +291,7 @@ def stories_of(cur: Any, story_ids: Iterable[str], *, book: Any = None, links: b
     if not every:
         return {}
     posts = in_published_order(cur, P.load_members(cur, every))
-    book = book if book is not None else identity.load_book(cur)
+    book = book if book is not None else identity.lazy_book(cur)
     makers = P.Makers(book, P.mentions_of(cur, every))
     return {sid: P.Story([m["id"] for m in ms if m["id"] in posts], posts, makers)
             for sid, ms in rows.items() if any(m["id"] in posts for m in ms)}
@@ -300,12 +305,16 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     rows = _load(cur, ids)
     if not rows:
         return {}
-    book = identity.load_book(cur)
+    book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
     times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
+    # v10.17 (0186): a story is linked "came true" only through a judged connection while SUBJECT_LINKS is off, so
+    # only the stories connected to a viewed one can be linked to it (was: every typed story of the window, ~60 days
+    # of stories, their subjects and every leak x release pair among them, for the same links)
+    among = None if SUBJECT_LINKS else {s for c in _connected(cur, ids) for s in c}
     near = _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
-                       set(rows)) if times else []
+                       set(rows), among) if times else []
     rows.update(_load(cur, near))
-    subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book)
+    subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book) if SUBJECT_LINKS else {}
     world = {sid: [Post(id=m["id"], source=m["source"], at=m["at"], event_type=m["event_type"], origin=m["origin"],
                         subjects=frozenset(subj.get(m["id"], ()))) for m in ms] for sid, ms in rows.items()}
     links = came_true(world, connected=_connected(cur, sorted(world)), family=_family(book), by_subject=SUBJECT_LINKS)

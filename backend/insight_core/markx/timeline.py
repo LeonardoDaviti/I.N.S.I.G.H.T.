@@ -192,8 +192,8 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         out.append(_event("release", rows[p]["at"], p, name=name(sorted(rows[p]["as"])[0]),
                           rank=RANK["release"] if k in (0, len(rel) - 1) else RANK["outside"]))
     if book.ents[root].level in ("family", "thing"):
-        kids = sorted({book.root(x) for x, e in book.ents.items() if e.level in I.VERSION_LEVELS and e.parent
-                       and e.parent in members and book.root(x) != root})
+        kids = sorted({book.root(x) for x in book.with_parent_in(root)   # v10.17 (0186): asked, not walked
+                       if (e := book.ents[x]).level in I.VERSION_LEVELS and e.parent in members and book.root(x) != root})
         if kids:
             kl = lines_of(cur, book, {m for k in kids for m in book.cluster(k)})
             firsts: Dict[str, str] = {}
@@ -345,7 +345,7 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
     rows = cur.fetchall()
     if not rows:
         return []                                   # no subject linked: the book is not read
-    book = book or I.load_book(cur)
+    book = book or I.lazy_book(cur)   # v10.17 (0186): what the post's subjects ask of the book
     skip = set(skip) | {post_id}
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()

@@ -254,6 +254,57 @@ class Book:
     def by_key(self, k: Optional[str]) -> Optional[str]:
         return self.alias.get(k) if k else None
 
+    def prime(self, ids: Iterable[Optional[str]] = (), keys: Iterable[Optional[str]] = ()) -> None:
+        """Read ahead the entities (by id) and aliases (by key) a reader is about to ask, in one read each: a whole
+        book holds them all already (a page's book, `lazy_book`, reads them now)."""
+
+    def maker_roots(self) -> Set[str]:
+        """The clusters some entity names as its maker (its stated maker's alias, read through the merges)."""
+        return {r for r in (self.root(self.by_key(N.key(e.maker))) for e in self.ents.values() if e.maker) if r}
+
+    def name_forms(self, keep: Any) -> "NameForms":
+        """Each cluster's names squashed (names.squash of the keys of its entities and of the aliases leading to it)
+        and, of the roots `keep(root)` admits, which a squashed form names: as the book is now."""
+        by_root: Dict[str, Set[str]] = defaultdict(set)
+        for k, eid in self.alias.items():
+            r = self.root(eid)
+            if r:
+                by_root[r].add(N.squash(k))
+        for eid, e in self.ents.items():
+            r = self.root(eid)
+            if r:
+                by_root[r].add(N.squash(e.key))
+        by_form: Dict[str, Set[str]] = defaultdict(set)
+        for r, fs in by_root.items():
+            if keep(r):
+                for f in fs:
+                    if f:
+                        by_form[f].add(r)
+        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))
+
+    # v10.17 (0186): what a page asks of the book besides ids and keys, here so a page's book answers them by query
+    def alias_keys(self, root: str) -> List[str]:
+        """The keys of the aliases that lead to `root`."""
+        return [k for k, eid in self.alias.items() if self.root(eid) == root]
+
+    def with_parent_in(self, root: str) -> List[str]:
+        """The entities whose parent leads to `root` (in the book's order)."""
+        return [x for x, e in self.ents.items() if e.parent and self.root(e.parent) == root]
+
+    def by_squashed_key(self, forms: Iterable[str]) -> List[str]:
+        """The entities whose key squashes (names.squash) to one of `forms` (in the book's order)."""
+        forms = set(forms)
+        return [x for x, e in self.ents.items() if e.sq in forms]
+
+    def first_with_key(self, key: str) -> Optional[str]:
+        """The first entity (in the book's order) whose own key is `key`."""
+        return next((x for x, e in self.ents.items() if e.key == key), None)
+
+    def keys_around(self, key: str) -> List[str]:
+        """The entities (in the book's order) whose key starts with `key` and a space, or is the start of `key` before
+        a space ("acme" and "acme widget")."""
+        return [x for x, e in self.ents.items() if e.key and (e.key.startswith(key + " ") or key.startswith(e.key + " "))]
+
     def cluster_size(self, root: str) -> int:
         """len(members()[root]) without walking every entity (v10.13.9: a merge asked it of the whole book each
         time): the entities whose redirects lead to `root`, read from the current redirects (an undo or a merge in
@@ -461,6 +512,251 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
                 b.subject[eid] = b.subject.get(eid, 0) + subj
     b.mentioned = set(b.types) | set(b.pins.values())
     return b
+
+
+@dataclass(frozen=True)
+class NameForms:
+    """`of(root)`: the cluster's squashed names; `roots(form)`: the admitted clusters one of whose names squashes to
+    `form` (Book.name_forms)."""
+    of: Any
+    roots: Any
+
+
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+class _Reads(dict):
+    """A dict that reads what it is asked and doesn't hold yet (`read(keys) -> {key: value}`), and remembers what
+    isn't there. It cannot be walked: what it holds is only what was asked (TypeError)."""
+
+    def __init__(self, read: Any) -> None:
+        super().__init__()
+        self._read, self._absent = read, set()
+
+    def want(self, keys: Iterable[Any]) -> None:
+        todo = {k for k in keys if k is not None and not dict.__contains__(self, k) and k not in self._absent}
+        if todo:
+            got = self._read(sorted(todo))
+            dict.update(self, got)
+            self._absent |= todo - set(got)
+
+    def get(self, k: Any, default: Any = None) -> Any:
+        self.want((k,))
+        return dict.get(self, k, default)
+
+    def __contains__(self, k: Any) -> bool:
+        self.want((k,))
+        return dict.__contains__(self, k)
+
+    def __getitem__(self, k: Any) -> Any:
+        self.want((k,))
+        return dict.__getitem__(self, k)
+
+    def _whole(self, *_a: Any, **_k: Any) -> Any:
+        raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
+
+    __iter__ = __len__ = keys = values = items = _whole
+
+
+class _Has:
+    """A set that answers `x in it` by asking (`has(x)`, remembered; `many(xs) -> the xs in it` answers several in
+    one go, `want(xs)`); it cannot be walked (TypeError)."""
+
+    def __init__(self, has: Any, many: Any = None) -> None:
+        self._has, self._many, self._got = has, many, {}
+
+    def want(self, xs: Iterable[Any]) -> None:
+        todo = sorted({x for x in xs if x is not None and x not in self._got})
+        if todo and self._many is not None:
+            yes = set(self._many(todo))
+            self._got.update({x: x in yes for x in todo})
+
+    def __contains__(self, x: Any) -> bool:
+        if x not in self._got:
+            self._got[x] = bool(self._has(x))
+        return self._got[x]
+
+    def _whole(self, *_a: Any, **_k: Any) -> Any:
+        raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
+
+    __iter__ = __len__ = _whole
+
+
+class LazyBook(Book):
+    """A page's book (v10.17, issue 0186): the merges and pins read whole (they are few), each entity and alias read
+    when first asked (`ents.get(id)`, `id in ents`, `alias.get(key)`; `prime` reads many in one go) and kept for the
+    request. It answers what a whole book answers by id and key (root, label, by_key, cluster, the maker's names, an
+    entity's mention counts, its versions and families, the entities under a cluster, those of a squashed key); it
+    cannot be walked (iterating `ents`, `alias`, `types` raises TypeError; `members()` too). A page's request reads
+    a few hundred entities, not the whole book (250k on the server, read in full by every News, post and entity page
+    before)."""
+
+    def __init__(self, cur: Any) -> None:
+        super().__init__()
+        self._cur = cur
+        self.ents = _Reads(self._ents_of)
+        self.alias = _Reads(self._aliases_of)
+        cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
+        self.redirect = Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
+        cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
+        self.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
+        # the mention counts (load_book's types / subject / mentioned), read per entity asked
+        self._counted_ids: Set[str] = set()
+        self._types_got: Dict[str, Counter] = {}
+        self._subject_got: Dict[str, int] = {}
+        self.types = _Reads(lambda ids: self._counted(ids)[0])
+        self.subject = _Reads(lambda ids: self._counted(ids)[1])
+        pinned = set(self.pins.values())
+        self.mentioned = _Has(lambda x: x in self.types or x in pinned)
+
+    def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
+        todo = [i for i in ids if isinstance(i, str) and _UUID.match(i) and i not in self._counted_ids]
+        if todo:   # as load_book counts them, for these entities
+            self._cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject')
+                                   FROM mx_mentions_now WHERE entity_id = ANY(%s::uuid[]) GROUP BY 1, 2""", (todo,))
+            product: Dict[Optional[str], bool] = {}
+            for eid, type_, n, subj in self._cur.fetchall():
+                self._types_got.setdefault(eid, Counter())[type_] += n
+                if subj:
+                    if type_ not in product:
+                        product[type_] = schemas_type(type_) in PRODUCT_TYPES
+                    if product[type_]:
+                        self._subject_got[eid] = self._subject_got.get(eid, 0) + subj
+            self._counted_ids.update(todo)
+        return ({i: self._types_got[i] for i in ids if i in self._types_got},
+                {i: self._subject_got[i] for i in ids if i in self._subject_got})
+
+    def _ordered_ids(self, where: str, args: Any) -> List[str]:
+        """Entity ids by a condition, in the table's order (the whole book's order: load_book reads it unordered)."""
+        self._cur.execute(f"SELECT id::text FROM mx_entities WHERE {where} ORDER BY ctid", args)
+        got = [i for (i,) in self._cur.fetchall()]
+        self.ents.want(got)
+        return got
+
+    def _names_versions(self, x: Any) -> bool:
+        if not (isinstance(x, str) and _UUID.match(x)):
+            return False
+        self._cur.execute("SELECT EXISTS (SELECT 1 FROM mx_entities WHERE parent = %s::uuid AND level = ANY(%s))",
+                          (x, list(VERSION_LEVELS)))
+        return bool(self._cur.fetchone()[0])
+
+    def version_parents(self) -> Any:
+        got = self.__dict__.get("_version_parents")
+        if got is None:
+            got = self.__dict__["_version_parents"] = _Has(self._names_versions)
+        return got
+
+    def kids(self) -> Dict[str, List[str]]:
+        def read(parents: Sequence[str]) -> Dict[str, List[str]]:
+            ps = [p for p in parents if isinstance(p, str) and _UUID.match(p)]
+            out: Dict[str, List[str]] = {}
+            for x in self._ordered_ids("parent = ANY(%s::uuid[]) AND level = ANY(%s)", (ps, list(VERSION_LEVELS))) if ps else []:
+                out.setdefault(self.ents[x].parent, []).append(x)
+            return out
+        got = self.__dict__.get("_kids")
+        if got is None:
+            got = self.__dict__["_kids"] = _Reads(read)
+        return got
+
+    def families(self) -> Dict[str, List[str]]:
+        def read(keys: Sequence[str]) -> Dict[str, List[str]]:
+            out: Dict[str, List[str]] = {}
+            for x in self._ordered_ids("key = ANY(%s) AND level = 'family'", (list(keys),)):
+                out.setdefault(self.ents[x].key, []).append(x)
+            return out
+        got = self.__dict__.get("_families")
+        if got is None:
+            got = self.__dict__["_families"] = _Reads(read)
+        return got
+
+    def alias_keys(self, root: str) -> List[str]:
+        ids = [i for i in self._leading_to(root) if _UUID.match(i)]
+        self._cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE entity_id = ANY(%s::uuid[])", (ids,))
+        return [k for k, eid in self._cur.fetchall() if self.root(eid) == root]
+
+    def with_parent_in(self, root: str) -> List[str]:
+        ids = [i for i in self._leading_to(root) if _UUID.match(i)]
+        return [x for x in self._ordered_ids("parent = ANY(%s::uuid[])", (ids,))
+                if self.root(self.ents[x].parent) == root] if ids else []
+
+    def by_squashed_key(self, forms: Iterable[str]) -> List[str]:
+        forms = sorted(set(forms))
+        return self._ordered_ids(f"{N.SQUASH_SQL} = ANY(%s)", (forms,)) if forms else []
+
+    def first_with_key(self, key: str) -> Optional[str]:
+        got = self._ordered_ids("key = %s", (key,))
+        return got[0] if got else None
+
+    def keys_around(self, key: str) -> List[str]:
+        like = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + " %"
+        starts = [" ".join(key.split(" ")[:i]) for i in range(1, len(key.split(" ")))]
+        return [x for x in self._ordered_ids("key LIKE %s ESCAPE '\\' OR key = ANY(%s)", (like, starts))
+                if (k := self.ents[x].key) and (k.startswith(key + " ") or key.startswith(k + " "))]
+
+    def _ents_of(self, ids: Sequence[str]) -> Dict[str, Ent]:
+        b = Book()
+        ids = [i for i in ids if isinstance(i, str) and _UUID.match(i)]
+        if ids:
+            read_ents(self._cur, b, ids)
+        return b.ents
+
+    def _aliases_of(self, keys: Sequence[str]) -> Dict[str, str]:
+        self._cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE key = ANY(%s)", (list(keys),))
+        return dict(self._cur.fetchall())
+
+    def prime(self, ids: Iterable[Optional[str]] = (), keys: Iterable[Optional[str]] = ()) -> None:
+        ids = list(ids)
+        self.ents.want(ids + [self.root(i) for i in ids])
+        self.alias.want(keys)
+
+    def maker_roots(self) -> Set[str]:
+        self._cur.execute("SELECT DISTINCT maker FROM mx_entities WHERE maker IS NOT NULL AND maker <> ''")
+        keys = {N.key(m) for (m,) in self._cur.fetchall()}
+        self.alias.want(k for k in keys if k)
+        return {r for r in (self.root(self.by_key(k)) for k in keys) if r}
+
+    def _leading_to(self, root: str) -> List[str]:
+        """Every id the merges lead to `root` (root's own included), entity or not."""
+        into = self._into()
+        seen, todo, out = {root}, [root], []
+        while todo:
+            x = todo.pop()
+            if self.root(x) == root:
+                out.append(x)
+            for y in into.get(x, ()):
+                if y not in seen:
+                    seen.add(y)
+                    todo.append(y)
+        return out
+
+    def name_forms(self, keep: Any) -> NameForms:
+        """As Book.name_forms, read per root and per form (migration 0127's indexes on names.SQUASH_SQL)."""
+        cur, of_memo, roots_memo = self._cur, {}, {}
+
+        def of(root: Optional[str]) -> Set[str]:
+            if root not in of_memo:
+                ids = [i for i in self._leading_to(root) if _UUID.match(i)] if root else []
+                cur.execute("""SELECT key FROM mx_entity_aliases WHERE entity_id = ANY(%(ids)s::uuid[])
+                               UNION ALL SELECT key FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])""", {"ids": ids})
+                of_memo[root] = {N.squash(k) for (k,) in cur.fetchall()} if ids else set()
+            return of_memo[root]
+
+        def roots(form: str) -> Set[str]:
+            if form not in roots_memo:
+                got: Set[str] = set()
+                if form:
+                    cur.execute(f"""SELECT entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = %(f)s
+                                    UNION SELECT id::text FROM mx_entities WHERE {N.SQUASH_SQL} = %(f)s""", {"f": form})
+                    got = {r for r in (self.root(i) for (i,) in cur.fetchall()) if r}
+                roots_memo[form] = {r for r in got if keep(r)}
+            return roots_memo[form]
+
+        return NameForms(of, roots)
+
+
+def lazy_book(cur: Any) -> LazyBook:
+    """A page's book (LazyBook): what it is asked, read when asked."""
+    return LazyBook(cur)
 
 
 def pair(a: str, b: str) -> Tuple[str, str]:

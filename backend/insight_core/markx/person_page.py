@@ -46,7 +46,7 @@ def entity_keys(book: I.Book, root: str, members: Set[str]) -> Set[str]:
     person the surname of a two-word-or-more name (5+ letters)."""
     names = {book.ents[m].name for m in members if m in book.ents}
     keys = {N.squash(book.ents[m].key) for m in members if m in book.ents}
-    keys |= {N.squash(k) for k, e in book.alias.items() if book.root(e) == root}
+    keys |= {N.squash(k) for k in book.alias_keys(root)}
     keys |= {N.squash(N.key(n)) for n in names}
     from insight_core.markx import schemas
     if schemas.entity_type(book.ents[root].type) == "person":

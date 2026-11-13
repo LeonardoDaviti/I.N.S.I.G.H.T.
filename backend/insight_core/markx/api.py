@@ -821,7 +821,7 @@ def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
     if found is None or not ids:
         raise HTTPException(status_code=404, detail="No such entity or source")
     with transaction() as cur:
-        book = identity.load_book(cur)
+        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:
@@ -846,7 +846,7 @@ def mx_entity_handle(entity_id: str, body: EntityHandleIn):
     if found is None:
         raise HTTPException(status_code=404, detail="No such entity")
     with transaction() as cur:
-        book = identity.load_book(cur, counts=False)
+        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:

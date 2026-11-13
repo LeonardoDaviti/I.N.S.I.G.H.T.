@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
@@ -188,6 +188,11 @@ def named_now(cur: Any, book: I.Book) -> Set[str]:
     got = getattr(book, "_named_now", None)
     if got is not None:
         return got
+    if isinstance(book, I.LazyBook):   # v10.17 (0186): a page asks it of a few roots: answered per root, not a read
+        got = I._Has(lambda root: bool(_names_now(cur, book, [root])),   # of every current mention (830k on the
+                     lambda roots: _names_now(cur, book, roots))          # server); `want` asks many at once
+        book._named_now = got   # type: ignore[attr-defined]
+        return got
     cur.execute("SELECT post_id::text, guide, n, entity_id::text, by_name FROM mx_mentions_now WHERE guide = ANY(%s) "
                 "AND (entity_id IS NOT NULL OR by_name IS NOT NULL)", (_guide(),))
     got = set()
@@ -198,6 +203,36 @@ def named_now(cur: Any, book: I.Book) -> Set[str]:
             got.add(book.root(book.by_key(N.key(by))))
     book._named_now = got   # type: ignore[attr-defined]
     return got
+
+
+def _names_now(cur: Any, book: Any, roots: Sequence[Optional[str]]) -> Set[str]:
+    """The `roots` in named_now's set (a page's book): a current mention linked or pinned into the cluster, or a
+    current mention's `by` one of its aliases."""
+    roots = {r for r in roots if r}
+    lead = {i: r for r in roots for i in book._leading_to(r) if I._UUID.match(i)}
+    if not lead:
+        return set()
+    cur.execute("""SELECT post_id::text, guide, n, entity_id::text FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""", (_guide(), sorted(lead)))
+    out = {r for p, g, n, e in cur.fetchall() if (r := book.root(book.pins.get((p, g, n), e))) in roots}
+    pinned = [k for k, e in book.pins.items() if book.root(e) in roots - out]
+    if pinned:
+        cur.execute("""SELECT post_id::text, guide, n FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id IS NOT NULL
+                          AND (post_id, guide, n) IN (SELECT * FROM unnest(%s::uuid[], %s::text[], %s::int[]))""",
+                    (_guide(), [p for p, _g, _n in pinned], [g for _p, g, _n in pinned], [n for _p, _g, n in pinned]))
+        out |= {book.root(book.pins[(p, g, n)]) for p, g, n in cur.fetchall()}
+    rest = roots - out
+    if rest:
+        by = book.__dict__.get("_by_keys")
+        if by is None:   # the keys of the current mentions' `by` names (the documents' publishers), read once a request
+            cur.execute("SELECT DISTINCT by_name FROM mx_mentions_now WHERE guide = ANY(%s) AND by_name IS NOT NULL",
+                        (_guide(),))
+            by = book.__dict__["_by_keys"] = {k for k in (N.key(b) for (b,) in cur.fetchall()) if k}
+        ids = sorted(i for i, r in lead.items() if r in rest)
+        cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE key = ANY(%s) AND entity_id = ANY(%s::uuid[])",
+                    (sorted(by), ids))
+        out |= {r for k, e in cur.fetchall() if (r := book.root(e)) in rest}
+    return out
 
 
 def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any]]:
@@ -273,15 +308,15 @@ def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -
     out: List[Dict[str, Any]] = []
     for owner in sorted({o for o in owners if o}, key=str.casefold):
         forms = set(N.handle_forms(owner)) | {N.squash(owner.casefold())}
-        ids = sorted(x for x, ent in book.ents.items() if book.root(x) == x and ent.type in ("org", "person")
-                     and ent.status != "not_entity" and ent.sq in forms)
+        ids = sorted(x for x in book.by_squashed_key(forms) if book.root(x) == x   # v10.17 (0186): by the index
+                     and book.ents[x].type in ("org", "person") and book.ents[x].status != "not_entity")
         out.append({"name": owner, "id": ids[0] if ids else None,
                     "agrees": R.owner_agrees(owner, stated, N.squash)})
     return out
 
 
 def _members(book: I.Book, root: str) -> Set[str]:
-    return {e for e in book.ents if book.root(e) == root}
+    return set(book.cluster(root))   # v10.17 (0186): the entities whose merges lead to root, not a walk of the book
 
 
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
@@ -291,7 +326,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): what the page asks of the book, not the whole book
     if entity_id not in book.ents:
         return None
     root = book.root(entity_id)
@@ -399,8 +434,8 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     fam_root = root if e.level in ("family", "thing") else (_family_of(book, root) or {}).get("id")
     versions = []
     if fam_root:
-        kids = [x for x, ent in book.ents.items() if ent.parent and book.root(ent.parent) == fam_root
-                and book.root(x) == x and ent.status != "not_entity"]
+        kids = [x for x in book.with_parent_in(fam_root)   # v10.17 (0186): asked of the book, not walked
+                if book.root(x) == x and book.ents[x].status != "not_entity"]
         versions = sorted(({"id": x, "name": book.label(x), "version": book.ents[x].version,
                             "variant": book.ents[x].variant, "level": book.ents[x].level} for x in kids),
                           key=lambda v: (tuple((0, x, "") if isinstance(x, int) else (1, 0, str(x))
@@ -576,12 +611,15 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
 
 def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict[str, Any]:
     guide = _guide()
-    book = book or I.load_book(cur)
+    book = book or I.lazy_book(cur)   # v10.17 (0186): what the queue's items ask of the book
     cur.execute("""SELECT id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at,
                           created_at FROM mx_entity_queue WHERE closed_at IS NULL
                     ORDER BY answer IS NOT NULL, answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at""")
     rows = cur.fetchall()
+    book.prime(ids=[x for r in rows for x in (r[2], r[3]) if x])
     named = named_now(cur, book)   # 0138: an item about an entity no current reading names waits, unshown
+    if isinstance(named, I._Has):
+        named.want({book.root(x) for r in rows if r[8] is None for x in (r[2], r[3]) if x})
     open_rows = [r for r in rows if r[8] is None and all(book.root(x) in named for x in (r[2], r[3]) if x)]
     done_rows = [r for r in rows if r[8] is not None][:history]
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
@@ -623,7 +661,7 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
     """{mention n: the entity it shows under (root, through pins)} for the post page's panel."""
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the merges and pins, not the whole book
     cur.execute("SELECT n, entity_id::text, guide FROM mx_mentions_now WHERE post_id = %s", (post_id,))   # 0133
     return {n: book.root(book.pins.get((post_id, g, n), eid)) if eid else None for n, eid, g in cur.fetchall()}
 
@@ -639,7 +677,8 @@ def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str,
     rows = cur.fetchall()
     if not rows:
         return {}
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the surging entities' clusters, not the whole book
+    book.prime(ids=[eid for eid, _d, _v, _p in rows])
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for eid, day, voices, pid in rows:
         root = book.root(eid) or eid
