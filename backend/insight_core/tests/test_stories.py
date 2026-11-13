@@ -599,7 +599,7 @@ class DiscoverServiceTests(unittest.TestCase):
     def test_suggested_then_hidden(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for n in range(3):
-                source = insert_scratch_source(cur)
+                source = insert_scratch_source(cur, enabled=True)   # on: your sources (issue 0200)
                 url = f"https://voice{n}-{self.mark}.test/p"
                 html = "".join(f'<a href="https://{self.site}/2026/10/the-story-{k}">The story {k}</a>' for k in range(2))
                 cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, content_html, published_at) "

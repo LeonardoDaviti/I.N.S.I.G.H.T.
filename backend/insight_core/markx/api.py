@@ -673,14 +673,15 @@ class FlagIn(BaseModel):
     note: Optional[str] = None
 
 
-# 0182: the queue is built by insight-ingestion's jobs process after each decision run and kept (labels.keep); these
-# routes read only the kept queue (labels.kept), never a reading of their own. Not kept yet (the first start after a
+# 0182: the queue is built by insight-ingestion's jobs process after a decision run and kept (labels.keep); these
+# routes read only the kept queue (labels.kept), never a reading of their own. 0199: opening one while the newest
+# run's queue is not kept asks for it (labels.ask): the jobs process builds a run's queue only once it is wanted. Not kept yet (the first start after a
 # deploy): "building": true, and the item routes answer 503 until the jobs process has built it (its next pass).
 BUILDING = "The labels queue is being built after the last decision run; it shows within a few minutes"
 
 
 def _kept_or_503(cur: Any) -> "labels.Kept":
-    q = labels.kept(cur)
+    q = labels.ask(cur, labels.kept(cur))
     if q.key is None and q.building:
         raise HTTPException(status_code=503, detail=BUILDING)
     return q
@@ -689,14 +690,14 @@ def _kept_or_503(cur: Any) -> "labels.Kept":
 @router.get("/labels")
 def mx_labels_queue():
     with transaction() as cur:
-        q = labels.kept(cur)
+        q = labels.ask(cur, labels.kept(cur))
         return {**labels.queue_view(cur, q), "building": q.building}
 
 
 @router.get("/labels/precision")
 def mx_labels_precision(labeller: str = Query("owner", min_length=1, max_length=40)):
     with transaction() as cur:
-        q = labels.kept(cur)
+        q = labels.ask(cur, labels.kept(cur))
         return {**labels.precision(cur, q, labeller=labeller), "building": q.building}
 
 

@@ -213,23 +213,26 @@ class TheJobsKeepNews(_World):
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)
         self.assertEqual(jobs.due(states, t0, kept_missing=["news", "labels"]), "news")
         states["news"]["started_at"] = t0 - timedelta(seconds=30)
+        self.assertIsNone(jobs.due(states, t0, kept_missing=["news", "labels"]))          # 0199: Labels not asked for
+        states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
         self.assertEqual(jobs.due(states, t0, kept_missing=["news", "labels"]), "labels")
         self.assertIsNone(jobs.due(states, t0, kept_missing=["news"]))
         self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])   # a new run: at once
+        states["labels"]["wanted_at"] = None
+        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])   # Labels: when wanted
 
     def test_a_view_built_only_when_wanted_is_one_policy(self):
-        """A view whose policy is "wanted" is built (after a run or not) only when its job was wanted since its last
-        build: the same after-run step, no second path."""
+        """0199: the Labels queue's policy is "wanted": built (after a run or not) only when its job was wanted since
+        its last build (labels.ask's mark): the same after-run step, no second path."""
         t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
         states = {j: {"job": j, "wanted_at": None, "started_at": t0 - timedelta(hours=1), "stage": None,
                       "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
-        views = (jobs.KEPT_VIEWS[0], jobs.KeptView("labels", jobs.KEPT_VIEWS[1].missing, when="wanted"))
-        with mock.patch.object(jobs, "KEPT_VIEWS", views):
-            self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])
-            states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
-            self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])
-            self.assertEqual(jobs.due(states, t0, kept_missing=["labels"]), "labels")
+        self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS], [("news", "always"), ("labels", "wanted")])
+        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])
+        states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
+        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])
+        self.assertEqual(jobs.due(states, t0, kept_missing=["labels"]), "labels")
 
 
 class TheEntityPageKept(_World):

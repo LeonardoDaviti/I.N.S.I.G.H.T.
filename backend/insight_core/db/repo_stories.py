@@ -59,12 +59,34 @@ def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[s
     return account_key(url) if url else None
 
 
+# Switched off (issue 0200, v10.17.1): a source the owner switched off (sources.enabled false) never feeds a
+# suggestion. Its posts are no evidence for any list that proposes something to follow, read or join (Discover's
+# sites, accounts, pages and archives, its main-source rows, a track's Discover, joined items and source
+# suggestions, the scout's and research's channels, the voices' suggestions), and its address is never proposed (it
+# stays followed: a site or account it holds is not suggested either). Its stored posts keep their places in News,
+# stories and Classics, where they still count as voices: membership is not a suggestion. The one rule, in SQL
+# (`suggestable_sql`) and in Python (`switched_off`, SourceFacts.suggestable); every list asks it, none restates it.
+_SUGGESTABLE = "enabled"   # of a sources row: the owner has not switched it off
+
+
+def suggestable_sql(source_id: str) -> str:
+    """The rule as a SQL condition on a source id column (`p.source_id`): true when its posts may feed a suggestion."""
+    return f"({source_id} IN (SELECT id FROM sources WHERE {_SUGGESTABLE}))"
+
+
+def switched_off(cur: Cursor) -> Set[str]:
+    """The ids of the sources whose posts feed no suggestion (suggestable_sql's complement)."""
+    cur.execute(f"SELECT id::text FROM sources WHERE NOT ({_SUGGESTABLE})")
+    return {r[0] for r in cur.fetchall()}
+
+
 class SourceFacts:
     """What the rules need of every source: its kind, its own site, its publication and its name."""
 
     def __init__(self, cur: Cursor) -> None:
         cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
         rows = cur.fetchall()
+        self.off: Set[str] = switched_off(cur)
         cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         self._read(rows, cur.fetchall())
         from insight_core.db.repo_voices import counted
@@ -73,12 +95,15 @@ class SourceFacts:
 
     @classmethod
     def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]],
-           links: Iterable[Tuple[str, str]] = (), voices: Optional[Dict[str, str]] = None) -> "SourceFacts":
+           links: Iterable[Tuple[str, str]] = (), voices: Optional[Dict[str, str]] = None,
+           off: Iterable[str] = ()) -> "SourceFacts":
         """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
         posts)), as read from the database, and which source links which (`links`: (linking, linked), as
         _linked reads them for the pairs that may be one owner): the rules' stamp reads its sample so
-        (utils/stamps.py). `voices`: source -> its confirmed voice (issue 0132 A; the sample has none)."""
+        (utils/stamps.py). `voices`: source -> its confirmed voice (issue 0132 A; the sample has none). `off`: the
+        sources switched off (switched_off)."""
         facts = cls.__new__(cls)
+        facts.off = {str(i) for i in off}
         facts._read(list(rows), list(hosts))
         facts.voice_of = dict(voices or {})
         facts._own(links)
@@ -176,6 +201,11 @@ class SourceFacts:
             source_id: sum(n for host, n in pairs if site_of(host) == self.site[source_id]) / sum(n for _, n in pairs)
             for source_id, pairs in hosts.items() if sum(n for _, n in pairs)
         }
+
+    def suggestable(self, source_id: Optional[str]) -> bool:
+        """Whether a source's posts may feed a suggestion (issue 0200: not switched off). A post of no source (an
+        outside page, a Reddit author's) is judged by the source that carried it, so None is suggestable."""
+        return source_id is None or str(source_id) not in self.off
 
     def own_site(self, source_id: str) -> str:
         return self.site.get(source_id) or self.handle_site.get(source_id) or ""

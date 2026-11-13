@@ -37,6 +37,7 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_linked import _followed, _own_pages, linked_not_stored
 from insight_core.db.repo_operations import SystemSettingsRepository
+from insight_core.db.repo_stories import suggestable_sql
 from insight_core.utils import originals_rules as rules
 from insight_core.utils import entity_originals as E
 from insight_core.utils.addresses import host_of, site_of
@@ -118,6 +119,22 @@ class _NeverFront:
         return default if got is None else got
 
 
+class _Steps:
+    """Wall seconds of a run's steps, in order (plan, collect, lookup, backfill, suppliers): the backfill's page reads
+    wait out their host's gap (gates) and E.PAGE_DELAY_S, so most of a long hook is waiting, which this tells apart."""
+
+    def __init__(self) -> None:
+        import time
+        self._t = time.monotonic()
+        self.seconds: Dict[str, float] = {}
+
+    def step(self, name: str) -> None:
+        import time
+        t = time.monotonic()
+        self.seconds[name] = round(t - self._t, 1)
+        self._t = t
+
+
 class OriginalsService:
     def __init__(self, db_url: str, *, saved: Any = None, gates: Any = None,
                  budget: Optional[Callable[[Any, datetime], float]] = None,
@@ -136,6 +153,7 @@ class OriginalsService:
         """Settle, then ask: 0114's early fetches, then (when on) 0123's collections and 0138's entity originals, and
         (when its switch is on) 0138's title lookups, within the credit."""
         now = self.clock()
+        clock = _Steps()   # v10.18 (0199): each step's seconds in the summary (the server's hourly hook took ~6.5 min)
         with db.transaction(self.db_url) as cur:
             settled = self.settle(cur, now)
             on = collect_on(cur)
@@ -164,7 +182,9 @@ class OriginalsService:
                             + self.plan_missed(cur, now, kind_of) + self.plan_classics(cur, now, kind_of))
                 taken = {c["url"] for c in collects + entities}   # asked above under the credit (0123, B)
                 backfill = [c for c in backfill if c["url"] not in taken and not taken.add(c["url"])]   # once each
+        clock.step("plan")
         collected = await self._collect(collects + entities, http, left, now) if collects or entities else []
+        clock.step("collect")
         made = sum(c["requests"] for c in collected)
         looked: List[Dict[str, Any]] = []
         if looking and lookups:
@@ -173,7 +193,9 @@ class OriginalsService:
         if made:
             with db.transaction(self.db_url) as cur:
                 spend(cur, made)
+        clock.step("lookup")
         stored = await self._collect(backfill, http, allowance, now, pause=E.PAGE_DELAY_S) if backfill else []
+        clock.step("backfill")
         try:
             with db.transaction(self.db_url) as cur:
                 supplying = self.keep_suppliers(cur, now)
@@ -181,11 +203,12 @@ class OriginalsService:
         except Exception:  # noqa: BLE001 - derived, for Discover; the next run makes it again
             logger.exception("Originals: the supplying sites were not kept")
             supplying = None
+        clock.step("suppliers")
         summary = {"settled": settled, "credit": round(credit, 2), "fetch_linked": len(asked),
                    "linked_wanted": len(linked), "collect_on": on, "collect": collected,
                    "entity_wanted": len(entities), "lookup_on": looking, "lookup": looked, "cap": self.cap,
                    "entity_wait_hours": round(max(waits).total_seconds() / 3600, 1) if waits else None,
-                   "suppliers": supplying, "classics_on": storing, "backfill": stored}
+                   "suppliers": supplying, "classics_on": storing, "backfill": stored, "seconds": clock.seconds}
         if asked or collected or looked or stored:
             logger.info("Originals: %s", summary)
         return summary
@@ -350,8 +373,9 @@ class OriginalsService:
                               {pairing.ordinary_date('p')}, m.by_name, m.type
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.type = ANY(%s) AND m.entity_id IS NOT NULL
-                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s""",
-                    (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since))
+                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s
+                          AND (NOT %s OR {suggestable_sql("p.source_id")})""",   # 0200: Discover's Pages are suggestions
+                    (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since, listing))
         rows = cur.fetchall()
         if not rows:
             return [], []
@@ -597,17 +621,19 @@ class OriginalsService:
         return out
 
     @staticmethod
-    def longreads(cur: Any) -> Dict[str, List[str]]:
+    def longreads(cur: Any, *, suggesting: bool = False) -> Dict[str, List[str]]:
         """F1: the curated long-reads you opened or kept: {post: its outside article pages}. A post is one when its own
         text is LONGREAD_CHARS+ long, Mark X reads it as commentary or a roundup (its reading's kind), and it cites
-        LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's)."""
+        LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's).
+        `suggesting` (Discover's citations, issue 0200): only the posts of sources not switched off."""
         cur.execute(f"""
             WITH yours AS (SELECT post_id FROM post_interactions WHERE interaction_type IN ('opened', 'reading_session')
                            UNION SELECT post_id FROM post_reader_state WHERE starred_at IS NOT NULL)
             SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p JOIN yours y ON y.post_id = p.id
              WHERE char_length(COALESCE(p.content, '')) >= %s
-               AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))""",
-                    (E.LONGREAD_CHARS, list(E.LONGREAD_KINDS)))
+               AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))
+               AND (NOT %s OR {suggestable_sql("p.source_id")})""",
+                    (E.LONGREAD_CHARS, list(E.LONGREAD_KINDS), suggesting))
         posts = dict(cur.fetchall())
         if not posts:
             return {}
@@ -690,7 +716,7 @@ class OriginalsService:
     def keep_cited(self, cur: Any) -> int:
         """F3: each site (Discover's address key) the long-reads you opened cite: {key: {n, posts}} kept for Discover
         (`longread_citations`), the keys cited twice or more. Returns how many."""
-        found = self.longreads(cur)
+        found = self.longreads(cur, suggesting=True)
         kept = DiscoverRepository.kept(cur) or {}
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
         by: Dict[str, Dict[str, Any]] = {}

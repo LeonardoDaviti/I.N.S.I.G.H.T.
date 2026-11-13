@@ -423,10 +423,29 @@ def navigation(groups: Sequence[Group], links: Iterable[Tuple[str, str, Optional
 def link_words(content_html: Optional[str], content: Optional[str], url: Optional[str]) -> List[Tuple[str, str, str]]:
     """The post's links as (normalized address, absolute url, link words), each address once, its first link's words:
     the addresses post_refs keeps (utils/post_refs.refs_of), so a row can be marked by its address."""
-    from urllib.parse import urljoin
-    from insight_core.utils.post_refs import _END, _MID, _OPEN, marked_text
-    from insight_core.utils.url_normalization import normalize_url
+    from insight_core.utils.post_refs import marked_text
+    return _link_words(*marked_text(content_html, content), url)
+
+
+def navigation_links(content_html: Optional[str], content: Optional[str], url: Optional[str]
+                     ) -> List[Tuple[str, str, str]]:
+    """`link_words`' entries whose words are navigation (`is_navigation`): what the series pass reads of a post.
+    v10.18 (0199): a post none of whose links' words is navigation (most of what NAV_PREFILTER lets through) is told
+    from its marked text alone, every link's words in one pass, before any address is made; the pass made every
+    link's address and searched the text once per link for the few it kept (23 s of a 60 s story job at server
+    scale). A text holding a marker character of its own is read the long way, so the answer is link_words' always."""
+    from insight_core.utils.post_refs import _OPEN, MARK, marked_text
     text, hrefs = marked_text(content_html, content)
+    if text.count(_OPEN) == len(hrefs) and not any(is_navigation(" ".join(m.group(2).split()))
+                                                   for m in MARK.finditer(text)):
+        return []
+    return [entry for entry in _link_words(text, hrefs, url) if is_navigation(entry[2])]
+
+
+def _link_words(text: str, hrefs: Sequence[str], url: Optional[str]) -> List[Tuple[str, str, str]]:
+    from urllib.parse import urljoin
+    from insight_core.utils.post_refs import _END, _MID, _OPEN
+    from insight_core.utils.url_normalization import normalize_url
     out, seen = [], set()
     for k, href in enumerate(hrefs):
         try:

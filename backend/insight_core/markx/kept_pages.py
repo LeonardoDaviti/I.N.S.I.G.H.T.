@@ -1,5 +1,5 @@
 """Kept pages (issue 0198): a page's answer kept as the bytes the API sends, with the stamp of the inputs it was built
-from (migration 0135, mx_kept_pages).
+from (migration 0136, mx_kept_pages).
 
 A page that changes only when a job writes its inputs is built once and sent many times: the owning module says what
 the page reads (its `stamp`: a sha256 of a few indexed reads, taken in the request's own transaction) and builds it

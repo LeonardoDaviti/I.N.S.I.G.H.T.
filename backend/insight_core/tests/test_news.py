@@ -154,6 +154,15 @@ class NameTests(unittest.TestCase):
         self.assertIn("v4.1 flash 1017", found)
         self.assertTrue(all("slug" in ids for ids in found.values()), found)
 
+    def test_phrases_among_is_the_phrases_wanted(self):
+        """0199: the incremental judge's phrases are made only from runs that may say a wanted name; the same set."""
+        from insight_core.utils.news_rules import phrases_among
+        titles = ["org/Model-V4.1-Flash-1017 · Weights", "GPT-6.1 Terra and GPT 6.1 terra", "-- Nov 2026 --",
+                  "Meta VR Glasses are here", "", None, "Opus 5.5: the review"]
+        wanted = {"flash 1017", "v4.1 flash 1017", "gpt 6.1 terra", "gpt 6.1", "vr glasses", "opus 5.5", "nothing here"}
+        for t in titles:
+            self.assertEqual(phrases_among(t, wanted), phrases(t) & wanted, t)
+
     def test_a_date_is_no_name(self):
         # Issue 0111: "<month> <year>" surged and joined a column's dated issue with an unrelated question
         # (the three date surges on the server's copy, all three of unrelated posts).
@@ -809,7 +818,7 @@ class DiscoverClassicsTests(unittest.TestCase):
         many, few = f"many-{self.mark}.test", f"few-{self.mark}.test"
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for n in range(4):
-                source = insert_scratch_source(cur)
+                source = insert_scratch_source(cur, enabled=True)   # on: your sources (issue 0200)
                 url = f"https://voice{n}-{self.mark}.test/p"
                 html = "".join(f'<a href="https://{many}/2026/10/the-story-{k}">Story {k}</a>' for k in range(2))
                 if n < 3:

@@ -769,7 +769,16 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
                                            WHERE {pairing.ordinary_date('p')} >= %s)""",
                 (since,))
     rows = cur.fetchall()
-    cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")
+    if memo is None:
+        # v10.18 (0199): a reading with no incremental state (the Labels queue's, labels.population) reads only the
+        # candidate pairs the window below keeps (their first post in it, the other stored): every pair's posts and
+        # every embedding pair's cosine were read before (452k pairs, 23.7 s a reading at server scale) for the few
+        # of its 30 days. The same items, proved on the scale copy (issue 0199).
+        cur.execute(f"""SELECT c.a::text, c.b::text, c.source, c.score FROM mx_candidates c JOIN posts pa ON pa.id = c.a
+                         WHERE c.kind = 'post_post' AND c.source <> 'link' AND {pairing.ordinary_date('pa')} >= %s
+                           AND EXISTS (SELECT 1 FROM posts pb WHERE pb.id = c.b)""", (since,))
+    else:
+        cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")
     pairs: Dict[Tuple[str, str], Optional[float]] = {}
     for a, b, source, score in embed.current_candidates(cur, cur.fetchall()):   # by the vectors now (embed text v2)
         cos = float(score) if source == "embedding" and score is not None else None

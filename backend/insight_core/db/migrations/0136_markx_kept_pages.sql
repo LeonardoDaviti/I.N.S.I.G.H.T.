@@ -1,4 +1,4 @@
--- 0135_markx_kept_pages.sql (Stealth v10.17.1, issue 0198: pages that only change when a job runs are kept)
+-- 0136_markx_kept_pages.sql (Stealth v10.17.2, issue 0198: pages that only change when a job runs are kept)
 --
 -- mx_kept_pages: a page's answer as the API sends it (the JSON's bytes), with the stamp of the inputs it was built
 -- from (markx/kept_pages.py). The API sends the kept bytes while the page's stamp, read again at the request, is the

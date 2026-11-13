@@ -47,7 +47,7 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_label_queue_items", "mx_label_queues",   # 0182
              "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",   # 0181
              "mx_unit_types", "mx_unit_type_asks",   # 0181 round 2 (0125)
-             "mx_kept_pages")   # 0198 (0135)
+             "mx_kept_pages")   # 0198 (0136)
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
@@ -129,9 +129,11 @@ class _Api(unittest.TestCase):
         clear_tables(self.cur, MX_TABLES)
         self.cur.execute("DELETE FROM mx_inc_state")   # 0183: no pass's kept stamp (an empty table's) carries over
         self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
-        self.source = insert_scratch_source(self.cur, platform="telegram",
+        # on: a source switched off feeds no suggestion (issue 0200); these stand for the sources you follow
+        self.source = insert_scratch_source(self.cur, platform="telegram", enabled=True,
                                             settings_json=json.dumps({"display_name": "Example Channel"}))
-        self.other = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Site"}))
+        self.other = insert_scratch_source(self.cur, platform="rss", enabled=True,
+                                           settings_json=json.dumps({"display_name": "Example Site"}))
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = ANY(%s::uuid[])", ([self.source, self.other],))
         status, body = call("POST", "/api/markx/token")
         self.assertEqual(status, 200, body)

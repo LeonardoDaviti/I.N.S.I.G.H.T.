@@ -409,12 +409,25 @@ def queue(cur: Any, *, settings: Settings = Settings(), now: Optional[datetime] 
 
 
 def missing(cur: Any, settings: Settings = Settings()) -> bool:
-    """Whether the newest decision run has no kept queue of this code's stamp (the jobs process builds it then)."""
+    """Whether the newest decision run has no kept queue of this code's stamp. v10.18 (0199), 0198: the jobs process
+    builds it then only when it is wanted (its policy in jobs.KEPT_VIEWS: when="wanted"; the mark is `ask`'s), so a run
+    nobody labels after costs no build (~35 s and 1.3 GB on the server, after each of ~11 runs an hour); at most one
+    build a run, as before."""
     last = repo.last_run(cur)
     if last is None:
         return False
     cur.execute("SELECT 1 FROM mx_label_queues WHERE run_id = %s AND stamp = %s", (last["id"], stamp(settings)))
     return cur.fetchone() is None
+
+
+def ask(cur: Any, q: "Kept") -> "Kept":
+    """0199: the API's side: a page read `q` (kept) while the newest run's queue is not kept marks it wanted, one
+    short statement in the request's transaction (jobs.want: mx_jobs 'labels' wanted_at, written once until a build
+    starts and clears it; the one mark the jobs process's "wanted" policy reads). The API never builds (0182)."""
+    if q.building and q.run is not None:
+        from insight_core.markx import jobs
+        jobs.want(cur, "labels")
+    return q
 
 
 def keep(cur: Any, *, settings: Settings = Settings(), now: Optional[datetime] = None,

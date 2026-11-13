@@ -24,7 +24,7 @@ from typing import Any, Callable, ContextManager, Dict, Iterable, List, Mapping,
 
 from insight_core.db import database as db
 from insight_core.db.repo_operations import SystemSettingsRepository
-from insight_core.db.repo_stories import StoriesRepository
+from insight_core.db.repo_stories import StoriesRepository, switched_off
 from insight_core.db.repo_voices import VoicesRepository, counted
 from insight_core.utils import source_roles
 from insight_core.services import profiles_service
@@ -186,7 +186,8 @@ class VoicesService:
     def shape(self, cur: Any, found: Mapping[str, Any]) -> Dict[str, Any]:
         """What the page shows of kept verdicts, as things stand now: the suggested voices (a pair said not the same
         never joins; a group already one voice is gone), the possible ones and the related ones the owner has not
-        answered."""
+        answered. A source switched off is in none of them (issue 0200), as things stand now (its kept verdicts stay,
+        so switching it on brings them back)."""
         info = found.get("channels", {})
         verdicts = [Verdict(v["a"], v["b"], v["verdict"], v["evidence"], v.get("names", [])) for v in found.get("verdicts", [])]
         verdicts = [v for v in verdicts if v.a in info and v.b in info]
@@ -194,7 +195,8 @@ class VoicesService:
         voice = VoicesRepository.voice_of(cur, ids) if ids else {}
         decided = VoicesRepository.decided_pairs(cur)
         current = {i: voice.get(i) for i in ids if i in voice}
-        info = {i: c for i, c in info.items() if i in voice}   # a source removed since is not suggested
+        off = switched_off(cur)
+        info = {i: c for i, c in info.items() if i in voice and i not in off}   # a source removed or switched off
         verdicts = [v for v in verdicts if v.a in info and v.b in info]
         no = [p for p, kind in decided.items() if kind == "not_same"]
         found_groups = groups(verdicts, joined=current, rejected=no)
@@ -242,9 +244,10 @@ class VoicesService:
         voice_ids = sorted({v for s, v in current.items() if v and s in kept})
         names = {v["id"]: v["name"] for v in VoicesRepository.voices(cur, voice_ids)} if voice_ids else {}
         out: Dict[str, Dict[str, Any]] = {}
+        off = switched_off(cur)
         for sid, entries in kept.items():
-            if sid not in current:
-                continue   # a source removed since
+            if sid not in current or sid in off:
+                continue   # a source removed since, or switched off (issue 0200: nothing is suggested of it)
             vid = current.get(sid)
             if vid and vid in names:
                 subject = {"kind": "voice", "id": vid, "name": names[vid]}

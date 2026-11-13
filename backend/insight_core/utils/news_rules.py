@@ -29,7 +29,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import voice
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, roles, story_times
@@ -149,6 +149,30 @@ def phrases(title: Optional[str]) -> Set[str]:
             for n in range(1, NAME_MAX_WORDS + 1) for i in range(len(run) - n + 1)}
 
 
+def phrases_among(title: Optional[str], wanted: Any, heads: Optional[Set[str]] = None) -> Set[str]:
+    """`phrases(title) & wanted`, made only from the runs that start with a word some wanted name starts with (a
+    phrase starts with its run's first word, so no other can be wanted): v10.18 (0199), the story job's name surges
+    made every 1-3 word run of ~70k titles each hour to keep the few that are names (10 s of a 60 s job at server
+    scale). `heads`: each wanted name's first word (`heads_of(wanted)`), when the caller asks for many titles."""
+    heads = heads_of(wanted) if heads is None else heads
+    words = _lower(_words(title))
+    out: Set[str] = set()
+    for run in (words, " ".join(words).split()):
+        for i, first in enumerate(run):
+            if first.split(" ", 1)[0] not in heads:
+                continue
+            for n in range(1, min(NAME_MAX_WORDS, len(run) - i) + 1):
+                phrase = " ".join(run[i:i + n])
+                if phrase in wanted:
+                    out.add(phrase)
+    return out
+
+
+def heads_of(names_: Iterable[str]) -> Set[str]:
+    """Each name's first word, as `phrases_among` tells a run that may say one."""
+    return {name.split(" ", 1)[0] for name in names_}
+
+
 @dataclass
 class Surge:
     name: str
@@ -184,8 +208,12 @@ def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
                     named[name].append(p)
     # Only the phrases that are such a name are kept (issue 0072: every title's held 128 MB on the lab).
     named = {name: uses for name, uses in named.items() if len(uses) >= NAME_MIN_POSTS}
+    # The incremental judge's few names: only the runs that may say one are made (phrases_among); the whole rebuild's
+    # every name: every run, as before (measured on the scale copy: 4.4 s against 6.7 for 300 names, 7.9 against 6.8
+    # for all 102k). The same phrases either way.
+    heads = heads_of(named) if only is not None else None
     for p in rows:
-        for phrase in phrases(p.title) & named.keys():
+        for phrase in (phrases_among(p.title, named, heads) if heads is not None else phrases(p.title) & named.keys()):
             said[phrase].append(p)
     found = []
     for name, uses in named.items():

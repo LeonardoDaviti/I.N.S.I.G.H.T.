@@ -125,6 +125,40 @@ class ThePlanners(_Posts):
         self.ix_story(*[self.post(old + n * H, f"Gadget 2 news {n}") for n in range(2)])
         self.assertEqual(self.plan("check", tomorrow), 1, "a new story: run, and its check asked")
 
+    def test_another_kinds_tasks_do_not_wake_check_or_cite_and_their_own_do(self):
+        """0199: check stamps only check tasks, cite only cite and entities tasks: a track-like stream of another
+        kind's tasks and answers leaves both skipped (and the skip proved a no-op); one of their own runs them."""
+        W.set_window(self.cur, None)
+        repo.set_setting(self.cur, W.BACKFILL, {"reached": (self.now - 70 * DAYS).date().isoformat()})
+        schemas.set_entities_arm(self.cur, "ent-v4.2", allow_placeholder=True)
+        tasks.set_reading_window(self.cur, None)
+        old = self.now - 60 * DAYS
+        self.ix_story(*[self.post(old + n * H, f"Widget 4 news {n}") for n in range(3)])
+        self.text(self.post(self.now - H, "A study"), CITED)
+        other = self.post(self.now - 2 * H, "Another post")
+        tasks.plan_posts(self.cur, "entities", days=None, now=self.now)
+        for kind in ("check", "cite", "check", "cite"):
+            ent42._not_cue.clear()
+            self.plan(kind)                                         # busy, then no-ops: their stamps kept
+        for kind in ("check", "cite"):
+            ent42._not_cue.clear()
+            self.assertIsNone(self.plan(kind), kind)
+        task, _ = tasks.translate_task(self.cur, other)             # another kind's task, then leased, then answered
+        for status, lease in (("leased", "now() + interval '10 minutes'"), ("answered", "NULL")):
+            self.cur.execute(f"""UPDATE mx_tasks SET status = %s, lease_until = {lease}, leased_by = 'w'
+                                  WHERE id = %s""", (status, task))
+            for kind in ("check", "cite"):
+                ent42._not_cue.clear()
+                self.assertIsNone(self.plan(kind), f"{kind}: another kind's task ({status}) is not its input")
+                ent42._not_cue.clear()
+                self.proved(kind)
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'check' LIMIT 1")
+        self.cur.execute("""UPDATE mx_tasks SET status = 'leased', lease_until = now() + interval '10 minutes',
+                                   leased_by = 'w' WHERE id = %s""", (self.cur.fetchone()[0],))
+        self.assertEqual(self.plan("check"), 0, "its own kind's lease: run")
+        ent42._not_cue.clear()
+        self.assertIsNone(self.plan("cite"), "a check task is not cite's input")
+
     def test_the_check_planner_a_chunk_of_stories_at_a_time_asks_the_same_in_the_same_order(self):
         W.set_window(self.cur, None)
         repo.set_setting(self.cur, W.BACKFILL, {"reached": (self.now - 70 * DAYS).date().isoformat()})

@@ -38,9 +38,21 @@ def table_stamps(cur: Any, tables: Iterable[str]) -> Dict[str, Tuple]:
     update or delete since changes it (a new version has a newer xmin, or, in the same transaction, another ctid)."""
     out = {}
     for t in tables:
-        cur.execute(f"SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint) FROM {t}")
+        name, kinds = of_kinds(t)
+        cur.execute(f"""SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint)
+                          FROM {name}{' WHERE kind = ANY(%s)' if kinds else ''}""", (list(kinds),) if kinds else None)
         out[t] = tuple(None if x is None else int(x) for x in cur.fetchone())
     return out
+
+
+def of_kinds(table: str) -> Tuple[str, Tuple[str, ...]]:
+    """v10.18 (0199): a declared input `table[kind,kind]` is that table's rows of those kinds only (its `kind` column):
+    a pass that reads only its own kind's tasks is not woken by another kind's lease or answer (the worker answers track
+    tasks all day; check and cite read none). (`mx_tasks[check]` -> ("mx_tasks", ("check",))); a plain name: every row."""
+    if not table.endswith("]") or "[" not in table:
+        return table, ()
+    name, kinds = table[:-1].split("[", 1)
+    return name, tuple(k.strip() for k in kinds.split(",") if k.strip())
 
 
 _code: Dict[Tuple[str, ...], str] = {}

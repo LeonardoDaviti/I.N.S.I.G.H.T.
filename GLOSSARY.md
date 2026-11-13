@@ -66,3 +66,9 @@ post date); its own dates are never rewritten.
 as a digest item: the story shows "also in round-ups", and the own round-up (the digest) counts its curators. The
 worker gives each unit a type (the event types, with `promo`), a short headline and whether it only continues the
 unit before; an own round-up keeps the news types. A unit is never a voice, a member, a mention or a News count.
+
+**Switched off** — a source the owner turned off (`sources.enabled` false). It is not fetched, and it never feeds a
+suggestion: its posts are no evidence for Discover, a track's Discover and source suggestions, the scout, the main
+source missing rows or the voices' suggestions, and its address is never proposed (it stays followed). Its stored
+posts keep their places, and their voices, in News, stories and Classics. One rule:
+`backend/insight_core/db/repo_stories.py` (`suggestable_sql`, `switched_off`, `SourceFacts.suggestable`) (0200).
