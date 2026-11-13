@@ -39,7 +39,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import pairing
+from insight_core.markx import pairing, validate
 from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ OLD_SHOWN = 4                 # the question shows the old story's earliest 4 po
 OLD_CHARS = 300               # ... at 300 characters, and each new post at 500 (the lab's render)
 NEW_CHARS = 500
 RUNS = 3
+# 0191: a first answer whose relation settles the candidate alone: never asked a second and third time. On the lab's
+# frozen test set (98 candidates, each run in turn taken as the first) 0 of 294 development decisions changed and 37%
+# of back calls were saved (dev sets: 2 of 198 changed); stopping on `retold` too changed 1 of 294 on test.
+SETTLES = ("unrelated", "related")
 OPEN = 50                     # decide.Config.back_open
 FIRST_SCAN_DAYS = 30          # the first run reads this far back; each next one, from its last run's clock less WINDOW
 MARGIN = timedelta(hours=1)
@@ -375,13 +379,9 @@ def render(members: Sequence[Any], new: Sequence[Any]) -> str:
     return "\n".join(lines)
 
 
-_NUMBERED = re.compile(r"^(\d+)\. \[", re.M)
-
-
 def numbered(input: str) -> int:
-    """How many new posts a back question numbers."""
-    _, _, tail = (input or "").partition("NEW POSTS")
-    return len(_NUMBERED.findall(tail))
+    """How many new posts a back question numbers (validate.back_numbered: 0191, the worker runs the same check)."""
+    return validate.back_numbered(input)
 
 
 def plan(cur: Any, *, open_cap: int = OPEN, now: Optional[datetime] = None, **_kw: Any) -> int:
@@ -431,10 +431,17 @@ def planned(cur: Any, add: Any, link: str, row: str) -> Optional[Tuple[Any, bool
         return None
 
 
+def settles(answer: Optional[Dict[str, Any]]) -> bool:
+    """0191: a first answer that settles its candidate without a second and third run."""
+    return relation(answer) in SETTLES
+
+
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
-    """A back task's valid answer (tasks.record): asked again until it has RUNS valid answers. Whether it reopened."""
-    cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s AND valid", (task["id"],))
-    if cur.fetchone()[0] >= RUNS:
+    """A back task's valid answer (tasks.record): asked again until it has RUNS valid answers, unless its first answer
+    settles it alone (0191). Whether it reopened."""
+    cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task["id"],))
+    got = [r[0] for r in cur.fetchall()]
+    if len(got) >= RUNS or (len(got) == 1 and settles(got[0])):
         return False
     cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL WHERE id = %s", (task["id"],))
     return cur.rowcount == 1
@@ -458,9 +465,11 @@ def relation(answer: Optional[Dict[str, Any]]) -> Optional[str]:
 
 def verdict(answers: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """The first RUNS valid answers' verdict: {relation (the majority's, or unknown when no two agree), runs}; None
-    until RUNS came."""
+    until RUNS came, except a candidate whose first answer settles it alone (0191, SETTLES: its relation, one run)."""
     runs = list(answers)[:RUNS]
     if len(runs) < RUNS:
+        if runs and settles(runs[0]):
+            return {"relation": relation(runs[0]), "runs": [relation(runs[0])]}
         return None
     rels = [relation(a) for a in runs]
     top, n = Counter(rels).most_common(1)[0]

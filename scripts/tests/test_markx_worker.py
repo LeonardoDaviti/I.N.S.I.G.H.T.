@@ -10,6 +10,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -1058,6 +1059,142 @@ class TestWebSearch(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(self.stub.by_status("answered"), [1])
         self.assertEqual(len(self.fake_calls()), 2)
+
+
+class TestCost0191(Base):
+    """0191: thinking effort by kind, the prompt cache, refusals isolated at once and remembered, and the server's
+    own answer checks run by the worker so a refused answer is asked again in the same cycle."""
+
+    def setUp(self):
+        super().setUp()
+        GUIDES.setdefault("cite-v1", {"sha256": hashlib.sha256(b"GUIDE cite-v1").hexdigest(), "body": "GUIDE cite-v1",
+                                      "schema": None})
+        KIND_GUIDE.setdefault("cite", "cite-v1")
+
+    def test_each_kind_asked_at_its_effort_and_effort_overrides_it(self):
+        self.stub.add("entities", 3)
+        self.stub.add("read", 3, start=101)
+        p = self.run_worker("--kinds", "entities,read", "--parallel", "1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        want = W.effort_arg(W.EFFORT)
+        for c in self.fake_calls():
+            kind = "entities" if "GUIDE ent-v3" in c["system"] else "read"
+            self.assertEqual(c["effort"], None if want.get(kind) in (None, "default") else want[kind], kind)
+        self.fake_log.unlink()
+        self.stub.add("read", 2, start=201)
+        p = self.run_worker("--kinds", "read", "--effort", "read=low")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([c["effort"] for c in self.fake_calls()], ["low"])
+        self.assertEqual([e["effort"] for e in self.events("call")][-1], "low")
+
+    def test_a_bad_effort_is_refused(self):
+        p = self.run_worker("--kinds", "read", "--effort", "read=extreme")
+        self.assertEqual(p.returncode, 2)
+
+    def test_the_prompt_cache_setting_goes_to_claude_codes_environment(self):
+        self.stub.add("read", 2)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        modes = W.cache_arg(W.DEFAULT_PROMPT_CACHE)
+        self.assertEqual(self.fake_calls()[0]["cache_env"], W.PROMPT_CACHE[modes.get("read", modes["*"])])
+        for mode in ("off", "default"):
+            self.fake_log.unlink()
+            self.stub.add("read", 1, start=10 if mode == "off" else 20)
+            p = self.run_worker("--kinds", "read", "--prompt-cache", mode)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            env = self.fake_calls()[0]["cache_env"]
+            self.assertEqual(env.get("DISABLE_PROMPT_CACHING"), "1" if mode == "off" else None, mode)
+
+    def test_the_prompt_cache_by_kind(self):
+        self.assertEqual(W.cache_arg("off,relate=default"), {"*": "off", "relate": "default"})
+        self.assertEqual(W.cache_arg("relate=5m"), {"*": "default", "relate": "5m"})
+        for bad in ("forever", "relate=forever", "=off"):
+            with self.assertRaises(W.argparse.ArgumentTypeError):
+                W.cache_arg(bad)
+        self.stub.add("read", 1)
+        self.stub.add("entities", 1, start=2)
+        p = self.run_worker("--kinds", "read,entities", "--prompt-cache", "off,entities=default", "--parallel", "1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        got = {("ent" if "GUIDE ent-v3" in c["system"] else "read"): c["cache_env"] for c in self.fake_calls()}
+        self.assertEqual(got, {"read": {"DISABLE_PROMPT_CACHING": "1"}, "ent": {}})
+
+    def test_under_the_5_minute_cache_a_kinds_first_call_goes_alone(self):
+        # four merges, one a call, four callers: the first call alone (it writes the guide), then the other three at once
+        self.stub.add("merge", 4)
+        p = self.run_worker("--kinds", "merge", "--parallel", "4", "--prompt-cache", "off,merge=5m",
+                            plan="valid+sleep:0.4")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.fake_calls()
+        self.assertEqual(len(calls), 4)
+        self.assertEqual({c["cache_env"].get("CLAUDE_CODE_PROMPT_CACHE_TTL") for c in calls}, {"5m"})
+        self.assertEqual(len(self.stub.by_status("answered")), 4)
+        starts = sorted(c["t"] for c in calls)   # the first call returned (0.4 s) before any other started
+        self.assertGreaterEqual(starts[1] - starts[0], 0.35, starts)
+        self.assertLess(starts[3] - starts[1], 0.35, starts)   # then the other three at once
+
+    def test_a_calls_cache_and_thinking_tokens_are_logged(self):
+        self.stub.add("read", 4)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        e = self.events("call")[0]
+        self.assertEqual((e["cache_read"], e["cache_write"], e["thinking"]), (2000, 300, 40))
+
+    def test_a_first_refusal_is_halved_at_once_and_the_refused_task_asked_alone_next_time(self):
+        self.stub.add("read", 20)
+        self.stub.tasks["7"]["input"] += " FORBIDDEN"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        sizes = [len(re.findall(r"^### ITEM id: ", c["stdin"], re.M)) for c in self.fake_calls()]
+        self.assertEqual(sizes.count(20), 1, f"the refused batch of 20 is never asked whole again: {sizes}")
+        self.assertLessEqual(len(sizes), 1 + 2 * 5, sizes)
+        self.assertEqual(len(self.stub.by_status("answered")), 19)
+        refused = self.events("refused")
+        self.assertEqual([e["task"] for e in refused], [7])
+        self.assertEqual(refused[0]["platform"], None)   # the stub's input has no "Platform: " line
+        kept = json.loads((self.tmp / "refused.json").read_text())
+        self.assertEqual(list(kept["tasks"]), ["7"])
+        # the next cycle: task 7 again, with 19 new ones: 7 is asked alone, the 19 in one call
+        self.fake_log.unlink()
+        self.stub.add("read", 19, start=101)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = [re.findall(r"^### ITEM id: (\S+)$", c["stdin"], re.M) for c in self.fake_calls()]
+        self.assertEqual(sorted(len(c) for c in calls), [1, 19], calls)
+        self.assertIn(["7"], calls)
+        self.assertTrue(self.events("refused")[-1]["again"])
+
+    def test_an_answer_the_servers_checks_refuse_is_asked_again_in_the_same_cycle(self):
+        self.stub.add("cite", 5)
+        p = self.run_worker("--kinds", "cite", plan="spanbad:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.events("call")
+        self.assertEqual([(e["attempt"], e["size"], e["rule_invalid"]) for e in calls], [(1, 5, 2), (2, 2, None)])
+        self.assertIn("does not occur in the post", calls[0]["invalid_errors"][0])
+        self.assertEqual(self.done()["rule_invalid"], 2)
+        # --no-server-rules: the schema alone (none here), nothing asked again
+        self.fake_log.unlink()
+        self.stub.add("cite", 5, start=11)
+        p = self.run_worker("--kinds", "cite", "--no-server-rules", plan="spanbad:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)
+
+    def test_rule_error_is_the_servers_check_or_no_opinion(self):
+        bad = {"entities": [{"span": "Nowhere Inc", "name": "Nowhere", "type": "org", "role": "subject"}]}
+        good = {"entities": [{"span": "Acme", "name": "Acme", "type": "org", "role": "subject"}]}
+        self.assertIn("does not occur in the post", W.rule_error("entities", bad, "Title: Acme ships"))
+        self.assertIsNone(W.rule_error("entities", good, "Title: Acme ships"))
+        self.assertIsNone(W.rule_error("entities", {"something": "else"}, "Title: Acme"), "unreadable: no opinion")
+        self.assertIsNone(W.rule_error("no-such-kind", good, "Title: Acme"))
+
+    def test_the_servers_checks_need_only_the_standard_library(self):
+        # one source of truth: the worker imports the server's validate.py, so it must stay standard library only
+        # (back's and subtopics' checks import more lazily; the worker has no opinion on those)
+        backend = HERE.parent.parent / "backend"
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from insight_core.markx import validate, schemas; "
+                "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('psycopg', 'fastapi', 'pydantic', 'numpy'));"
+                "print(bad); sys.exit(1 if bad else 0)")
+        p = subprocess.run([sys.executable, "-I", "-c", code, str(backend)], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
 
 class TestLogRotation(unittest.TestCase):

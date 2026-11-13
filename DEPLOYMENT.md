@@ -400,6 +400,29 @@ scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/
 ```
 Start with `--batches 1`, read what was refused (`markx-worker status`), then the last 30 days. It stops cleanly at a usage limit (exit 4) or a sign-in error (exit 5) and hands its tasks back.
 
+**What the worker costs** (issue 0191, v10.17; Haiku 5.5 at list price, $0.10 / M input and $0.50 / M output; on a Claude subscription the same tokens count toward its limits). Measured on one week of the owner's logs (84,820 calls), each kind's answers per new post priced at its cost per answer:
+
+| kind | answers per new post | $ per 1,000 new posts, v10.16 | v10.17 |
+|---|---|---|---|
+| entities | 1.42 | 1.248 | 0.862 |
+| alias | 2.01 | 0.388 | 0.244 |
+| read | 1.00 | 0.352 | 0.293 |
+| cite | 0.29 | 0.347 | 0.231 |
+| relate | 0.77 | 0.128 | 0.116 |
+| track | 0.49 | 0.107 | 0.070 |
+| back | 0.21 | 0.063 | 0.040 |
+| collide | 0.18 | 0.060 | 0.029 |
+| pair | 0.24 | 0.056 | 0.036 |
+| read3 | 0.07 | 0.048 | 0.048 |
+| perspective | 0.01 | 0.038 | 0.033 |
+| connect | 0.12 | 0.038 | 0.023 |
+| join | 0.10 | 0.028 | 0.017 |
+| merge | 0.06 | 0.027 | 0.018 |
+| other kinds (each under $3 a week) | | 0.039 | 0.027 |
+| **total** | | **2.97** | **2.09** |
+
+Run the worker from INSIGHT's checkout (it imports the server's answer checks from `backend/insight_core/markx/validate.py`, so an answer the server would refuse is asked again in the same cycle). Its cost settings, each measured per kind on the lab's labelled sets and overridable: `--effort` (Claude Code's thinking effort; default `entities=medium,cite=low,alias=low,alias2=low`), `--prompt-cache` (off for most kinds: Claude Code's 1-hour cache bills every prompt at 2x and calls of distinct items never read it back; the 5-minute cache for the one-item-a-call kinds, whose first call of a cycle goes alone so the others read its guide; Claude Code's default for relate, back, read3 and websearch), `--no-server-rules` (the schema alone). A post the API's classifier refuses is isolated at once and asked alone from then on (`refused.json` beside the spool).
+
 **Workers that survive a reboot (issue 0188), only if you want them on a schedule.** The worker is run by hand
 by default; `contrib/systemd/` has *user* units for the device that runs it:
 - `markx-worker.service`: one cycle, with the arguments in `~/.config/insight/markx-worker.env`

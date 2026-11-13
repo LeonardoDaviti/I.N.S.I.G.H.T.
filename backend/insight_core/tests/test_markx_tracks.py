@@ -188,6 +188,18 @@ class AFolder(_Tracks):
         self.assertEqual((body["track"]["version"], body["track"]["excludes"]), (2, "cloud GPUs"))
         listed = {t["id"]: t for t in call("GET", "/api/markx/tracks")[1]}
         self.assertTrue(listed[self.folder]["topic"])
+        # 0191: an edit that changes no word keeps the version (and its history pass); the text shown follows it
+        self.cur.execute("UPDATE mx_tracks SET history_done_at = now() WHERE folder_id = %s", (self.folder,))
+        _, body = call("PUT", f"/api/markx/tracks/{self.folder}", body={"description": "cheap local AI setups.",
+                                                                         "excludes": "Cloud GPUs"})
+        self.assertEqual((body["track"]["version"], body["track"]["description"], body["track"]["excludes"]),
+                         (2, "cheap local AI setups.", "Cloud GPUs"))
+        self.assertIsNotNone(tracks.get(self.cur, self.folder)["history_done_at"], "the history pass is not restarted")
+        _, body = call("PUT", f"/api/markx/tracks/{self.folder}", body={"description": "Cheap local AI rigs",
+                                                                         "excludes": "Cloud GPUs"})
+        self.assertEqual(body["track"]["version"], 3)                         # a word changed: a new version
+        self.assertIsNone(tracks.get(self.cur, self.folder)["history_done_at"])
+        self.assertEqual(tracks.material(" Cheap, local AI\nsetups! "), "cheap local ai setups")
 
 
 class Planning(_Tracks):

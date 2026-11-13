@@ -51,6 +51,10 @@ GAP_DAYS = 30                 # the older post at least this far back (G2)
 RELATE_DAYS = 180             # same-subject candidates: the older post at most this far back (G2: meaningful within 90)
 RELATE_COS = 0.75             # ... at this cosine or more (G2's source b)
 RELATE_RUNS = 3               # the judge asked three times a pair, the majority
+# 0191: a first answer that settles its pair alone: never asked a second and third time (on the lab's 320 labelled pairs,
+# each run in turn taken as the first, 0 of 960 meaningful decisions changed; 9% of relate calls saved). Stopping on
+# `background` too saved 45% but lost 20 of 279 meaningful edges, so it is not done.
+RELATE_SETTLES = ("unrelated",)
 RELATE_OPEN = 100             # the planner's cap (decide.Config.relate_open)
 RULE_OTHER, RULE_OWN, RULE_NEXT = "author_link_other", "author_link_own", "entity_next_version"
 RULE_SERIES, NEXT_IN_SERIES = "series", "next_in_series"   # 0134: a same-source link that is series navigation
@@ -547,9 +551,14 @@ def plan(cur: Any, *, open_cap: int = RELATE_OPEN, now: Optional[datetime] = Non
 
 def verdict(answers: Sequence[Tuple[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
     """The settled verdict of a pair's first RELATE_RUNS valid answers [(call id, answer)], oldest first: the relation
-    two or more agree on (p: their share, call: the first of them), else "unknown"; None until RELATE_RUNS came."""
+    two or more agree on (p: their share, call: the first of them), else "unknown"; None until RELATE_RUNS came, except
+    a pair whose first answer settles it alone (0191, RELATE_SETTLES: that relation, p None, one run)."""
     runs = list(answers)[:RELATE_RUNS]
     if len(runs) < RELATE_RUNS:
+        if runs and settles(runs[0][1]):
+            rel = str(runs[0][1].get("relation"))
+            reason = str(runs[0][1].get("reason") or "")
+            return {"relation": rel, "p": None, "call": runs[0][0], "runs": [rel], "reasons": [reason], "reason": reason}
         return None
     rels = [str(a.get("relation")) for _, a in runs]
     top, n = Counter(rels).most_common(1)[0]
@@ -593,11 +602,17 @@ def verdicts(cur: Any, pairs: Optional[Sequence[Tuple[str, str]]] = None, *,
     return out
 
 
+def settles(answer: Optional[Dict[str, Any]]) -> bool:
+    """0191: a first answer that settles its pair without a second and third run."""
+    return isinstance(answer, dict) and str(answer.get("relation")) in RELATE_SETTLES
+
+
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
-    """A relate task's valid answer (tasks.record): asked again until it has RELATE_RUNS valid answers. Whether it
-    was opened again."""
-    cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s AND valid", (task["id"],))
-    if cur.fetchone()[0] >= RELATE_RUNS:
+    """A relate task's valid answer (tasks.record): asked again until it has RELATE_RUNS valid answers, unless its
+    first answer settles it alone (0191). Whether it was opened again."""
+    cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task["id"],))
+    got = [r[0] for r in cur.fetchall()]
+    if len(got) >= RELATE_RUNS or (len(got) == 1 and settles(got[0])):
         return False
     cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL WHERE id = %s", (task["id"],))
     return cur.rowcount == 1

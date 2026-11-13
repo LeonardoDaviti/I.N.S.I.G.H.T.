@@ -1758,6 +1758,13 @@ def vote(rels: Sequence[str]) -> str:
     return top if n * 2 > len(rels) else "same"
 
 
+def one_thing(answer: Dict[str, Any], n: int) -> bool:
+    """0191: a collision answer that calls every mention pair the same thing (no split, no part, nothing unclear): it
+    settles the key alone. On the lab's four labelled collision sets (364 keys, each run in turn taken as the first)
+    5 of 1,092 split decisions changed, all toward fewer splits (precision 21/33 -> 20/28), and 43% of calls were saved."""
+    return all(v == "same" for v in pairrel(answer, n).values())
+
+
 def split_of(answers: Sequence[Dict[str, Any]], n: int) -> Optional[Dict[str, Any]]:
     """The split two of the runs make (a mention pair most runs call different), or None. The proposal: the senses of
     the first run that splits, with the pairs the majority calls different."""
@@ -2280,8 +2287,10 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             continue
         from insight_core.markx import validate
         n = validate.collide_mentions(text)
-        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already
-        settled = len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)
+        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already;
+        # 0191: a first run that finds one thing (every pair the same, nothing unclear) is never asked again
+        settled = (len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)) \
+            or (len(calls) == 1 and one_thing(calls[0][1], n))
         if len(calls) < COLLIDE_RUNS and not settled:
             if status == "answered" and _savepoint(cur, "UPDATE mx_tasks SET status = 'open', lease_until = NULL, "
                                                         "leased_by = NULL WHERE id = %s AND status = 'answered'", (tid,)):

@@ -61,6 +61,7 @@ import logging
 import math
 import os
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -160,15 +161,30 @@ def _clean(s: Optional[str], limit: int = 2000) -> Optional[str]:
     return s[:limit] or None
 
 
+def material(text: Optional[str]) -> str:
+    """0191: what a description says, for "did it change": its words, folded (NFKC, case), without punctuation or
+    spacing. An edit that changes none of them (a comma, a capital, a line break) is not a new version."""
+    return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", text or "").casefold()))
+
+
 def set_topic(cur: Cursor, folder_id: Any, *, description: Optional[str], excludes: Optional[str] = None
               ) -> Dict[str, Any]:
     """Describe a track (or change it): a new description or excludes is a new version (its posts judged again, the
     history pass started again, the description embedded again; the old verdicts kept). An empty description makes it
-    a plain folder again (its rows kept). KeyError: no such folder."""
+    a plain folder again (its rows kept). 0191: an edit that changes no word (material: punctuation, case, spacing)
+    keeps the version and its history pass; only the text shown (and its vector) follows it. KeyError: no such
+    folder."""
     cur.execute("SELECT 1 FROM folders WHERE id = %s", (str(folder_id),))
     if cur.fetchone() is None:
         raise KeyError(folder_id)
     description, excludes = _clean(description), _clean(excludes)
+    cur.execute("SELECT description, excludes FROM mx_tracks WHERE folder_id = %s", (str(folder_id),))
+    was = cur.fetchone()
+    if (was is not None and description and was[0] and (was[0], was[1]) != (description, excludes)
+            and (material(was[0]), material(was[1])) == (material(description), material(excludes))):
+        cur.execute("UPDATE mx_tracks SET description = %s, excludes = %s, updated_at = now() WHERE folder_id = %s",
+                    (description, excludes, str(folder_id)))
+        return get(cur, folder_id)
     cur.execute("""INSERT INTO mx_tracks (folder_id, description, excludes) VALUES (%s, %s, %s)
                    ON CONFLICT (folder_id) DO UPDATE
                       SET description = EXCLUDED.description, excludes = EXCLUDED.excludes,

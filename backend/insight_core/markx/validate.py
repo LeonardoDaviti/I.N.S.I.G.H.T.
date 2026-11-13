@@ -361,10 +361,19 @@ def _stance(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_BACK_NUMBERED = re.compile(r"^(\d+)\. \[", re.M)
+
+
+def back_numbered(input: str) -> int:
+    """How many new posts a back question numbers (back.numbered; here so this module needs only the standard library,
+    0191: the worker imports it)."""
+    _, _, tail = (input or "").partition("NEW POSTS")
+    return len(_BACK_NUMBERED.findall(tail))
+
+
 def _back(a: Dict[str, Any], input: str) -> Optional[str]:
     """0136: each verdict names one of the question's new posts, once."""
-    from insight_core.markx import back
-    n = back.numbered(input)
+    n = back_numbered(input)
     seen = set()
     for p in a["posts"]:
         if not 1 <= p["n"] <= n:
