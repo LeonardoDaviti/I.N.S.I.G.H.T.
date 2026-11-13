@@ -303,6 +303,22 @@ class NewsStoriesTests(unittest.TestCase):
                                      mentions=set())]
         self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
 
+    def test_stories_that_agree_join_even_when_the_surges_first_story_refuses(self):
+        """0204: one IPO in 4 rows. The surge's first post was a release story's (its main name another), which the
+        IPO stories each refused; joining each post to the first only left the connected IPO stories apart."""
+        def run(prefix, n, title, start):
+            return [post(f"{prefix}{k}", f"{prefix}s{k}", hours=start + k, title=f"{title} {k}") for k in range(n)]
+        rel = run("r", 6, "Acme Vela 6 is out", 0)          # main name: vela 6 (its lead says acme too)
+        ipo1 = run("i", 6, "Acme IPO roadshow", 1)          # main name: acme
+        ipo2 = run("j", 6, "Acme IPO price range", 2)
+        st = [Story(id=x, first_at=ps[0].t, posts=ps, voices=0, roles={}, reasons={}, mentions=set())
+              for x, ps in (("R", rel), ("I", ipo1), ("J", ipo2))]
+        found = [Surge("vela 6", rel[0].t, [p.id for p in rel], 0),
+                 Surge("acme", rel[0].t, [p.id for p in rel[:1] + ipo1 + ipo2], 0)]
+        rows = news(rel + ipo1 + ipo2, st, found, judged={frozenset(("I", "J")), frozenset(("R", "I"))})
+        got = sorted(sorted(p.id for p in r.posts)[0] for r in rows)
+        self.assertEqual(got, ["i0", "r0"], "the two IPO stories one row; the release its own")
+
     def test_a_story_needs_two_independent_voices(self):
         posts = [post("a", "s1", text_hash="h", chars=200, title="One two three four five"),
                  post("b", "tg", kind="telegram", hours=1, text_hash="h", chars=200)]

@@ -420,8 +420,14 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for surge in found:
         members = [pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
                    and holds(pid, surge.name)]
-        for pid in members[1:]:
-            join(pid, members[0], surge.name)
+        # each post tries every group the surge has reached so far, not only its first post's (0204: when the first
+        # post's story refuses, a star at it left the stories that agree with each other apart: one IPO in 4 rows)
+        reached: List[str] = []
+        for pid in members:
+            for other in reached:
+                join(pid, other, surge.name)
+            if uf.find(pid) not in {uf.find(r) for r in reached}:
+                reached.append(pid)
         for pid in members:
             joined_by.setdefault(pid, surge.name)
     groups: Dict[str, List[StoryPost]] = defaultdict(list)
