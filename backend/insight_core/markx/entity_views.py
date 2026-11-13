@@ -327,6 +327,102 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                 loose_limit: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """The entity's page. Issue 0195: `stories_limit` story blocks and `loose_limit` loose posts are listed (None:
     all), `stories_total` and `loose_total` count them all; the timeline and the sample read every story."""
+    got = _entity_page(cur, entity_id, now=now, by_limit=by_limit, offer_sample=offer_sample, replies=replies,
+                       stories_limit=stories_limit, loose_limit=loose_limit)
+    return None if got is None else got[0]
+
+
+# ---- the kept page (issue 0198) ------------------------------------------------------------------------------
+
+ENTITY_PAGES = 300   # the kept entity pages: the newest built stay (a cache: the rest are built again when opened)
+
+
+def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[Any]]]:
+    """(the newest decision run's id, what an entity's page reads that changes between runs), or None for the second
+    when there is no run or no such entity; a few indexed reads. Besides the run (stories, memberships, connections,
+    surges, the entity book, the queue, its timeline):
+      - the cluster's current mentions (count, newest), read through its merges;
+      - the old stories offered to label and their labels (person_page.offer; the page's own offers too);
+      - Mark IX's story job's last pass (a post in no Mark X story shows its Mark IX story);
+      - what the owner changed (kept_pages.owner_marks: labels, merges, pins, sources, handles, fixes).
+    The page's clock (a new day; an old story's edge) is its kept row's `until`. A worker's other answers and new
+    posts by its sources or citing its handles are read by the next decision run (each answer asks for one; one runs
+    at least hourly): the kept page shows them from that run on."""
+    from insight_core.markx import kept_pages, repo
+    last = repo.last_run(cur)
+    if last is None:
+        return None, None
+    book = I.lazy_book(cur)
+    if entity_id not in book.ents:
+        return str(last["id"]), None
+    root = book.root(entity_id)
+    members = sorted(_members(book, root))
+    cur.execute("""SELECT count(*), max(s.at) FROM mx_mentions m      -- mx_mentions_now, with its set's change time
+                     JOIN mx_mention_sets s ON s.post_id = m.post_id AND s.guide = m.guide
+                    WHERE m.entity_id = ANY(%s::uuid[])""", (members,))
+    mentions = list(cur.fetchone())
+    cur.execute("""SELECT (SELECT json_build_array(count(*), max(offered_at)) FROM mx_story_samples),
+                          (SELECT json_build_array(count(*), max(created_at)) FROM mx_story_sample_labels),
+                          (SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories')""")
+    samples, sample_labels, story_job = cur.fetchone()
+    return str(last["id"]), [root, members, mentions, sample_labels, story_job, kept_pages.owner_marks(cur), samples]
+
+
+def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None, replies: bool = False,
+                     stories_limit: Optional[int] = None, loose_limit: Optional[int] = None,
+                     now: Optional[datetime] = None) -> Optional[bytes]:
+    """GET /api/markx/entities/{id}: the page's bytes (kept_pages.encode of `entity_page` with its sample offered),
+    the kept ones while its inputs (`page_inputs`) and its clock (`until`) are the same, else built as before and kept
+    (the newest ENTITY_PAGES pages stay). Kept only when the inputs read after the build are the ones read before
+    (but the offers it made itself): a page built while an input changed is answered, not kept. None: no such
+    entity."""
+    import logging
+    import time
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    key = f"{entity_id}?by={by_limit}&replies={int(bool(replies))}&stories={stories_limit}&loose={loose_limit}"
+    run, parts = page_inputs(cur, entity_id)
+    if parts is not None:
+        got = kept_pages.get(cur, "entity", key, run, kept_pages.stamp("entity", key, parts), now=now)
+        if got is not None:
+            return got
+    t0 = time.monotonic()
+    built = _entity_page(cur, entity_id, now=now, by_limit=by_limit, offer_sample=True, replies=replies,
+                         stories_limit=stories_limit, loose_limit=loose_limit)
+    if built is None:
+        return None
+    page, until = built
+    body = kept_pages.encode(page)
+    seconds = round(time.monotonic() - t0, 2)
+    if parts is not None:
+        run_after, after = page_inputs(cur, entity_id)
+        if run_after == run and after is not None and after[:-1] == parts[:-1]:
+            try:
+                with cur.connection.transaction():
+                    kept_pages.put(cur, "entity", key, run, kept_pages.stamp("entity", key, after), body,
+                                   seconds=seconds, until=until, replace_older=True)
+                    kept_pages.prune_rows(cur, "entity", ENTITY_PAGES)
+            except Exception:   # noqa: BLE001 - a cache: the page is answered all the same
+                logging.getLogger(__name__).exception("Mark X: keeping the entity page %s failed", entity_id)
+    return body
+
+
+def _until(now: datetime, every: Sequence[Dict[str, Any]], offer_sample: bool) -> datetime:
+    """When the page's clock next changes what it shows: the next day (its surges are read by day, its offers counted
+    a day), or the moment an old story becomes old enough to be offered (person_page.offer's edge)."""
+    from insight_core.markx.story_window import RECENT
+    day = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    edge = now - timedelta(days=RECENT)
+    crossing = [b["first_at"] + timedelta(days=RECENT) for b in every
+                if offer_sample and b["mark"] == "x" and b["first_at"] is not None and b["first_at"] >= edge]
+    return min([day, *crossing])
+
+
+def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
+                 by_limit: Optional[int] = None, offer_sample: bool = False,
+                 replies: bool = False, stories_limit: Optional[int] = None,
+                 loose_limit: Optional[int] = None) -> Optional[Tuple[Dict[str, Any], datetime]]:
+    """(`entity_page`, when its clock next changes it: `_until`), or None."""
     from insight_core.markx import person_page as PP
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
@@ -465,7 +561,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
-    return {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
+    page = {"entity": _ent_view(book, root), "asked": entity_id, "redirected": root != entity_id,
             "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
             **original(cur, book, root),   # 0138: its original first, and its other addresses
             "aliases": sorted(book.ents[m].name for m in members),
@@ -489,6 +585,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": queue_about(cur, book, root)}
+    return page, _until(now, every, offer_sample)
 
 
 def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:

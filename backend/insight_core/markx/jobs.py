@@ -40,8 +40,17 @@ at 101% CPU and every /api/* request timed out.
     and a transaction of its own (a failure never touches the run, which is committed already), and on any pass that
     finds the newest run's queue not kept for this code (the first start after a deploy; a failed build is tried
     again after its backoff). v10.18 (0199): only when wanted: a Labels page opened while the newest run's queue is
-    not kept marks it (labels.ask, labels.missing), so a run nobody labels after costs no build. It is a whole decision reading (labels.population): it was built in insight-api before,
+    not kept marks it (labels.ask: jobs.want), and the view's policy (KEPT_VIEWS, when="wanted") builds it only then,
+    so a run nobody labels after costs no build. It is a whole decision reading (labels.population): it was built in insight-api before,
     whose RSS then stayed at the build's high-water mark. The API reads only the kept queue (labels.kept).
+  - **Mark X News is kept here too** (0198, the job "news"): its two views (news.keep_pages) built in the same
+    after-run step as the Labels queue, and again when what the page reads between runs changed (a label, a
+    sectioning or placement, a headline answered, Mark IX's News), at most every REBUILD_GAP seconds. The API sends
+    the kept view while its inputs are the same, else builds the page as before (never stale, never fails).
+  - **One mechanism, a policy per view** (0198): `KEPT_VIEWS` lists the kept views (`KeptView`: its job, how the
+    runner tells it is missing, `when` it is built: "always" or only when "wanted", and how often `between_runs`);
+    `due` and the after-run step (`Runner._after_run`) both ask `kept_due`, and the views due are built one after the
+    other in one process.
   - **A job that keeps failing backs off** (0188): mx_jobs.failures counts its failed runs in a row (a run that
     raised, stopped over LIMIT, was killed at HARD_LIMIT, crashed, or was found dead); the next try waits
     GAP x 2^failures seconds after the failed run's end, at most MAX_BACKOFF (6 hours), and goes on at that pace;
@@ -62,6 +71,7 @@ import multiprocessing
 import threading
 import time
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -80,11 +90,44 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan", "labels")
+JOBS = ("candidates", "decide", "plan", "labels", "news")
+REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 MAX_BACKOFF = 6 * 3600.0         # 0188: a failing job is tried at least every 6 hours, never more often than its backoff
 FAILING_AFTER = 3                # 0188: this many failed runs in a row show the job as failing
 SKIPPABLE = ("graph", "back", "later", "entities", "surges", "perspectives_plan")   # 0188: stages a run may defer
+
+
+@dataclass(frozen=True)
+class KeptView:
+    """0182, 0198: a view the jobs process keeps: one mechanism (the after-run step, `due`'s kept views), a policy per
+    view.
+      - `job`: its Jobs method and its mx_jobs row (its state, backoff and record);
+      - `missing(cur, now)`: whether it is not kept for its inputs now (the runner asks it at every look);
+      - `when`: "always" (built after each decision run and whenever missing) or "wanted" (built only when its job is
+        wanted since its last build: mx_jobs.wanted_at, set by `want(cur, job)`; the build's start clears it);
+      - `between_runs`: None (missing between runs means a new run or a deploy: built at once), or the seconds a view
+        whose inputs change between runs waits from its last build's start before it is built again."""
+    job: str
+    missing: Callable[[Any, datetime], bool]
+    when: str = "always"
+    between_runs: Optional[float] = None
+
+
+def _news_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.markx import news
+    return news.kept_missing(cur, now)
+
+
+def _labels_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.markx import labels
+    return labels.missing(cur)
+
+
+# the kept views, built in this order in one process after a decision run (News first: a page the owner waits on)
+KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP),    # 0198
+              KeptView("labels", _labels_missing, when="wanted"))           # 0182; 0199: when a Labels page asked
+KEPT = tuple(v.job for v in KEPT_VIEWS)
 
 
 class TooLong(Exception):
@@ -408,6 +451,31 @@ class Jobs:
                                 **{k: v for k, v in out.items() if k != "seconds"}})
         return out
 
+    def news(self) -> Optional[Dict[str, Any]]:
+        """0198: Mark X News' views not kept for their inputs, built and kept (news.keep_pages) in one REPEATABLE READ
+        transaction of its own; a failure is recorded and the job tried again after its backoff (the API builds the
+        page meanwhile, as before). Its seconds and this process's peak memory are recorded with it."""
+        import resource
+
+        from insight_core.markx import decide, news as mx_news
+
+        def peak() -> float:
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0      # KiB on Linux
+        t0 = time.monotonic()
+        self._begin("news", "building")
+        try:
+            with decide.snapshot(self.db_url) as cur:
+                out = mx_news.keep_pages(cur, now=self.clock())
+        except Exception as exc:
+            log.exception("Mark X News: keeping the page failed; tried again later")
+            self._finish("news", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            return None
+        seconds = round(time.monotonic() - t0, 1)
+        log.info("Mark X News: the views %s of run %s kept in %.1f s (peak %.0f MB)", out.get("built"), out.get("run"),
+                 seconds, peak())
+        self._finish("news", {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1), **out})
+        return out
+
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
         stage logged with its duration; a failed or stopped run is wanted again."""
@@ -481,13 +549,14 @@ class Jobs:
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
-        labels_missing: bool = False, run_gap: float = RUN_GAP) -> Optional[str]:
+        kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
     one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
     arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that long
     ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows.
-    0182: then the Labels queue ("labels") when the newest run's is not kept (`labels_missing`).
+    0182, 0198: then a kept view (`KEPT_VIEWS`) not kept for its inputs (`kept_missing`) that its policy lets start
+    (`_kept_may`).
     0188: a job whose last runs failed first waits out its backoff (`held`: GAP x 2^failures after the failed run's
     end, at most MAX_BACKOFF), whatever else makes it due."""
     p = states.get("plan") or {}
@@ -502,17 +571,34 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
             return "decide"
         if since is None or since >= every:
             return "decide"
-    if labels_missing and states["candidates"]["stage"] is None and _labels_may(states.get("labels") or {}, now, gap):
-        return "labels"
+    if states["candidates"]["stage"] is None:
+        for v in KEPT_VIEWS:
+            if v.job in kept_missing and _kept_may(v, states.get(v.job) or {}, now, gap):
+                return v.job
     if states["candidates"]["wanted_at"] is not None and not held(states["candidates"], now, gap):
         return "candidates"
     return None
 
 
-def _labels_may(s: Dict[str, Any], now: datetime, gap: float) -> bool:
-    """A labels build may start: not running, and not waiting out a failed build's backoff (0188; was: GAP after its
-    start, every time)."""
-    return s.get("stage") is None and not held(s, now, gap)
+def _kept_may(view: KeptView, s: Dict[str, Any], now: datetime, gap: float, *, after_run: bool = False) -> bool:
+    """A missing kept view's build may start (`s`: its job's state): not running, not waiting out a failed build's
+    backoff (0188; was: GAP after its start, every time), wanted when its policy says "wanted"; between runs (not
+    `after_run`), a view with `between_runs` at most that often from its last build's start."""
+    if s.get("stage") is not None or held(s, now, gap):
+        return False
+    if view.when == "wanted" and s.get("wanted_at") is None:
+        return False
+    started = s.get("started_at")
+    return (after_run or view.between_runs is None or started is None
+            or (now - started).total_seconds() >= view.between_runs)
+
+
+def kept_due(states: Dict[str, Dict[str, Any]], missing: Iterable[str], now: datetime, gap: float = GAP, *,
+             after_run: bool = False) -> List[str]:
+    """The kept views to build now, in KEPT_VIEWS' order: missing and let start by their policy (`_kept_may`)."""
+    missing = set(missing)
+    return [v.job for v in KEPT_VIEWS
+            if v.job in missing and _kept_may(v, states.get(v.job) or {}, now, gap, after_run=after_run)]
 
 
 def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HARD_LIMIT + STALE_MARGIN) -> List[str]:
@@ -524,11 +610,12 @@ def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HA
             and (now - s["stage_at"]).total_seconds() > after]
 
 
-def _job_main(db_url: str, job: str) -> None:
-    """A child process: one job, then exit (what it read goes back to the OS)."""
+def _job_main(db_url: str, *names: str) -> None:
+    """A child process: its jobs, one after the other, then exit (what they read goes back to the OS)."""
     from insight_core.logs.core.logger_config import setup_logging
     setup_logging(debug_mode=False)
-    getattr(Jobs(db_url), job)()
+    for job in names:
+        getattr(Jobs(db_url), job)()
 
 
 class Runner:
@@ -553,19 +640,22 @@ class Runner:
             cur.execute("SELECT now()")
             self._db_now = cur.fetchone()[0]
             self._busy = mark_ix_busy(cur)
-            self._labels_missing = self._missing(cur)
+            self._kept_missing = self._missing(cur, self._db_now)
             return state(cur)
 
     @staticmethod
-    def _missing(cur: Any) -> bool:
-        """0182: whether the newest decision run's Labels queue is not kept (False when that can't be told)."""
-        try:
-            from insight_core.markx import labels
-            with cur.connection.transaction():
-                return labels.missing(cur)
-        except Exception:
-            log.exception("Mark X jobs: could not tell whether the labels queue is kept")
-            return False
+    def _missing(cur: Any, now: datetime) -> List[str]:
+        """0182, 0198: the kept views (`KEPT_VIEWS`) not kept for their inputs now (a view that can't be told is not
+        listed)."""
+        out = []
+        for v in KEPT_VIEWS:
+            try:
+                with cur.connection.transaction():
+                    if v.missing(cur, now):
+                        out.append(v.job)
+            except Exception:
+                log.exception("Mark X jobs: could not tell whether the %s view is kept", v.job)
+        return out
 
     def recover(self) -> None:
         """At the runner's start: a run a restart ended mid-way shows no stage, and its job is wanted again."""
@@ -605,52 +695,61 @@ class Runner:
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
-                      plan_every=self.plan_every, labels_missing=self._labels_missing, run_gap=self.run_gap)
+                      plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap)
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
                 self._told = self._busy
             if job is None:
                 return None
-            self._run(job)
+            if job in KEPT:     # 0198: every kept view due now, in one process
+                self._run(*kept_due(states, self._kept_missing, self._db_now, self.gap))
+            else:
+                self._run(job)
             if job == "decide":
-                self._labels_after()
+                self._after_run()
             return job
         except Exception:
             log.exception("Mark X jobs: the tick failed")
             return None
 
-    def _run(self, job: str) -> None:
+    def _run(self, *names: str) -> None:
+        if not names:
+            return
         if self.spawn:
-            self._in_own_process(job)
+            self._in_own_process(*names)
         else:
-            getattr(Jobs(self.db_url, clock=self.clock), job)()
+            for job in names:
+                getattr(Jobs(self.db_url, clock=self.clock), job)()
 
-    def _labels_after(self) -> None:
-        """0182: right after a decision run, its Labels queue in a process of its own (when the run left a new one to
-        build: a failed or skipped run leaves none). Never raises into the tick."""
+    def _after_run(self) -> None:
+        """0182, 0198, the one after-run step: right after a decision run, the kept views it left missing that their
+        policy builds now (`kept_due(..., after_run=True)`: News always, then the Labels queue), in one process of
+        their own (a failed or skipped run leaves none to build). Never raises into the tick."""
         try:
             states = self._states()
-            if self._labels_missing and states["labels"]["stage"] is None:
-                self._run("labels")
+            self._run(*kept_due(states, self._kept_missing, self._db_now, self.gap, after_run=True))
         except Exception:
-            log.exception("Mark X jobs: the labels queue after the decision run failed")
+            log.exception("Mark X jobs: keeping the views after the decision run failed")
 
-    def _in_own_process(self, job: str) -> None:
-        process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, job),
-                                                               name=f"markx-{job}", daemon=True)
+    def _in_own_process(self, *names: str) -> None:
+        what = "+".join(names)
+        process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, *names),
+                                                               name=f"markx-{what}", daemon=True)
         process.start()
         process.join(self.hard_limit)
         if process.is_alive():
             process.kill()
             process.join(10)
-            log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", job, self.hard_limit)
-            self._dead(job, f"killed after {self.hard_limit:.0f} s", always=True)
+            log.error("Mark X jobs: the %s run was killed after %.0f s; its transaction rolled back", what, self.hard_limit)
+            for job in names:   # several: the one shown running is recorded (one not begun is simply due again)
+                self._dead(job, f"killed after {self.hard_limit:.0f} s", always=len(names) == 1)
         elif process.exitcode:
             # v10.13.9: a crash (an OOM kill's -9, a segfault) is a killed run: recorded, wanted again, its stage
             # cleared. Before, it only logged and the stage stayed set, so due() waited for it until a restart.
-            log.error("Mark X jobs: the %s run ended with exit code %s", job, process.exitcode)
-            self._dead(job, f"exited with code {process.exitcode}")
+            log.error("Mark X jobs: the %s run ended with exit code %s", what, process.exitcode)
+            for job in names:
+                self._dead(job, f"exited with code {process.exitcode}")
 
     def _dead(self, job: str, error: str, *, always: bool = False) -> None:
         """A run whose process ended without finishing: {"ok": False, error, the stage it was in}, wanted again, no

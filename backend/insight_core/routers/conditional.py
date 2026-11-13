@@ -14,7 +14,8 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Tuple
 Scope = Dict[str, Any]
 Message = Dict[str, Any]
 
-POLLED = ("/api/feed/unread-counts", "/api/operations/running", "/api/operations/overview", "/api/sources/health")
+POLLED = ("/api/feed/unread-counts", "/api/operations/running", "/api/operations/overview", "/api/sources/health",
+          "/api/markx/news")   # 0198: a kept page (1.7 MB): an unchanged one is a 304
 
 
 def etag_of(body: bytes) -> str:

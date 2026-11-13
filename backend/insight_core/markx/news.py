@@ -177,9 +177,10 @@ def _signature(rows: Iterable[Dict[str, Any]]) -> Set[str]:
 
 
 def last_written(cur: Any) -> Optional[str]:
-    """The newest run that wrote News rows."""
-    cur.execute("""SELECT n.run_id::text FROM mx_news n JOIN mx_runs r ON r.id = n.run_id
-                    GROUP BY n.run_id, r.started_at, r.finished_at
+    """The newest run that wrote News rows. 0198: the runs newest first, each asked whether it has a row (by
+    mx_news' (run_id, first_at) index), not every row of every run grouped (keep everything: ~100k rows on the server,
+    read on every page load and every look of the jobs runner)."""
+    cur.execute("""SELECT r.id::text FROM mx_runs r WHERE EXISTS (SELECT 1 FROM mx_news n WHERE n.run_id = r.id)
                     ORDER BY r.started_at DESC, r.finished_at DESC NULLS LAST LIMIT 1""")
     row = cur.fetchone()
     return row[0] if row else None
@@ -599,6 +600,98 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
             "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
             "items": items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, items)}
+
+
+# ---- the kept page (issue 0198) ------------------------------------------------------------------------------
+
+VIEWS = {"differences": True, "all": False}   # the kept views: key -> only_differences
+KEEP_RUNS = 3                                  # the newest runs whose kept views stay (a cache: pruned)
+RECENT = timedelta(hours=48)                   # rank_key's "last 48 hours first"
+
+
+def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
+    """(the newest decision run's id, the stamp of what `page` reads at `now`), or (None, None) before any run; a
+    few indexed reads (kept_pages.stamp). In it:
+      - the newest run: every row, story, membership, headline, surge, fold rule and entity the run wrote;
+      - the rows of the newest written run that are in the page's window and in its last 48 hours (the run's rows are
+        fixed and both bounds only move forward, so the same counts are the same rows in the same order);
+      - Mark IX's News of the window (its rows' ids, voices and starts, its posts' rows), hashed: its story job writes
+        them between Mark X's runs;
+      - the newest sectioning, the placements into it and whether a sections question waits (news_sections.view);
+      - the answered headline questions (a row's own headline is read from its answer);
+      - what the owner changed (kept_pages.owner_marks: labels, merges, pins, sources, handles, fixes).
+    A worker's other answers (fold, check, reading, entities) are read by the next decision run, which each of them
+    asks for (api.post_answers): the page shows them from that run on."""
+    from insight_core.markx import kept_pages, repo
+    from insight_core.utils.news_rules import NEWS_DAYS
+    last = repo.last_run(cur)
+    if last is None:
+        return None, None
+    written = last_written(cur)
+    since = now - timedelta(days=NEWS_DAYS)
+    cur.execute("""SELECT count(*) FILTER (WHERE first_at >= %s), count(*) FILTER (WHERE first_at >= %s)
+                     FROM mx_news WHERE run_id = %s""", (since, now - RECENT, written))
+    rows = list(cur.fetchone())
+    cur.execute("""SELECT (SELECT md5(string_agg(id::text || ':' || voices || ':' || extract(epoch FROM first_at),
+                                                 ',' ORDER BY id))
+                             FROM news_stories WHERE first_at >= %(since)s),
+                          (SELECT md5(string_agg(np.post_id::text || ':' || np.news_id::text, ',' ORDER BY np.post_id))
+                             FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id
+                            WHERE ns.first_at >= %(since)s)""", {"since": since})
+    ix = list(cur.fetchone())
+    cur.execute("""SELECT s.call_id::text, s.at,
+                          (SELECT json_build_array(count(*), max(p.at)) FROM mx_news_placements p
+                            WHERE p.base_call = s.call_id)
+                     FROM mx_news_sections s ORDER BY s.at DESC, s.call_id DESC LIMIT 1""")
+    sections = list(cur.fetchone() or ())
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_news_section_asks a JOIN mx_tasks t ON t.id = a.task_id
+                                   WHERE t.status IN ('open', 'leased'))""")
+    sections.append(bool(cur.fetchone()[0]))
+    cur.execute("SELECT count(*), max(answered_at) FROM mx_tasks WHERE kind = 'headline' AND status = 'answered'")
+    heads = list(cur.fetchone())
+    return str(last["id"]), kept_pages.stamp("news", written, rows, ix, sections, heads, kept_pages.owner_marks(cur))
+
+
+def _view_key(only_differences: bool) -> str:
+    return "differences" if only_differences else "all"
+
+
+def kept_page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = None) -> Optional[bytes]:
+    """The page's kept answer (the bytes `page` would answer now), or None: none kept for these inputs yet (the first
+    start, a run whose views are being built, an input changed since): the caller builds the page then."""
+    from insight_core.markx import kept_pages
+    run, st = page_inputs(cur, now or datetime.now(timezone.utc))
+    return kept_pages.get(cur, "news", _view_key(only_differences), run, st)
+
+
+def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
+    """Whether a view has no kept answer for its inputs now (the jobs process builds them then)."""
+    from insight_core.markx import kept_pages
+    run, st = page_inputs(cur, now or datetime.now(timezone.utc))
+    return any(not kept_pages.has(cur, "news", key, run, st) for key in VIEWS)
+
+
+def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """In the jobs process (jobs.Jobs.news), in one snapshot: each view not kept for its inputs built by `page` and
+    kept (kept_pages.encode: the bytes the route answers); the views of all but the newest KEEP_RUNS runs pruned."""
+    import time
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    run, st = page_inputs(cur, now)
+    if run is None:
+        return {"run": None, "built": []}
+    out: Dict[str, Any] = {"run": run, "built": [], "bytes": {}, "build_seconds": {}}
+    for key, only in VIEWS.items():
+        if kept_pages.has(cur, "news", key, run, st):
+            continue
+        t0 = time.monotonic()
+        body = kept_pages.encode(page(cur, only_differences=only, now=now))
+        seconds = round(time.monotonic() - t0, 2)
+        kept_pages.put(cur, "news", key, run, st, body, seconds=seconds)
+        out["built"].append(key)
+        out["bytes"][key], out["build_seconds"][key] = len(body), seconds
+    out["pruned"] = kept_pages.prune_runs(cur, "news", KEEP_RUNS)
+    return out
 
 
 def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:

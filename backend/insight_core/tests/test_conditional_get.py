@@ -75,7 +75,7 @@ class ConditionalGets(unittest.TestCase):
 
     def test_the_polled_paths_are_the_apps_routes(self):
         import main
-        routes = {getattr(r, "path", None) for r in main.app.routes}
+        routes = set(main.app.openapi()["paths"])   # an included router's routes too (0198: Mark X News)
         self.assertTrue(set(POLLED) <= routes, set(POLLED) - routes)
 
 
