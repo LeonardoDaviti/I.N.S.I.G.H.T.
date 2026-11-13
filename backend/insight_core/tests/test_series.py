@@ -235,6 +235,24 @@ class Navigation(unittest.TestCase):
                          [("https://b.test/2026/05/part-one", "https://b.test/2026/05/part-one", "the previous part"),
                           ("https://o.test/x", "https://o.test/x?utm_source=y", "a page")])
 
+    def test_navigation_links_are_link_words_navigation_entries(self):
+        """0199: the pass's fast read keeps exactly link_words' entries with navigation words, a text holding a marker
+        character of its own too (read the long way), and none when no link's words are navigation."""
+        base = "https://b.test/2026/06/part-two"
+        cases = [
+            '<p>See <a href="/2026/05/part-one">the previous part</a> and <a href="/x">a page</a>, '
+            '<a href="/2026/05/part-one">part 1</a></p>',
+            '<p><a href="/a">a page</a> and <a href="mailto:x@y.z">previous part</a> <a href="/b">Part 2</a></p>',
+            '<p>No navigation: <a href="/a">one</a>, <a href="/b">two</a></p>',
+            '<p>A stray \ue0003\ue001 marker <a href="/a">previous part</a></p>',
+            None,
+        ]
+        for html in cases:
+            want = [e for e in series.link_words(html, "plain https://b.test/c previous part", base)
+                    if series.is_navigation(e[2])]
+            self.assertEqual(series.navigation_links(html, "plain https://b.test/c previous part", base), want)
+        self.assertEqual(series.navigation_links(cases[2], None, base), [])
+
 
 @requires_db
 class ThePass(unittest.TestCase):

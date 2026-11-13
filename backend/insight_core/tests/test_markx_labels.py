@@ -165,6 +165,18 @@ class Labels(unittest.TestCase):
         D.run(self.cur, now=self.now)
         return a, b, c, d, e
 
+    def test_the_reading_reads_only_the_window_s_candidate_pairs_and_the_queue_is_the_same(self):
+        """0199: labels' reading (decide.load with no incremental state) reads only the candidate pairs its window
+        keeps; a pair whose first post is older than the window changes neither the reading's posts nor the queue."""
+        import dataclasses
+        self.scene()
+        before = [dataclasses.asdict(i) for i in L.population(self.cur, now=self.now)]
+        old_a, old_b = self.post(-40 * 24, "An old post"), self.post(-40 * 24 + 1, "Another old post")
+        repo.add_candidate(self.cur, kind="post_post", a=old_a, b=old_b, source="embedding", score=0.9)
+        world = D.load(self.cur, self.now, D.Config())
+        self.assertNotIn(old_a, world.posts)
+        self.assertEqual([dataclasses.asdict(i) for i in L.population(self.cur, now=self.now)], before)
+
     def test_the_queue_offers_the_run_s_decisions_blind_and_keeps_every_answer(self):
         a, b, c, d, e = self.scene()
         q = L.queue(self.cur, now=self.now)
@@ -285,6 +297,8 @@ class Labels(unittest.TestCase):
         q = L.kept(self.cur)
         self.assertTrue(q.building)
         self.assertIsNone(q.key)
+        self.assertFalse(L.missing(self.cur))                                        # 0199: not kept, nobody asked
+        L.ask(self.cur, q)                                                           # a Labels page opened
         self.assertTrue(L.missing(self.cur))
         view = L.queue_view(self.cur, q)
         self.assertEqual((view["total"], view["next"], view["run"]), (0, [], q.run))
@@ -297,7 +311,7 @@ class Labels(unittest.TestCase):
         self.assertEqual((q.key, q.order), (first.key, first.order))                  # the last kept one meanwhile
         with mock.patch.object(L, "stamp", lambda settings=L.Settings(): "another code"):
             self.assertIsNone(L.kept(self.cur).key)                                  # another code's is never read
-            self.assertTrue(L.missing(self.cur))
+            self.assertTrue(L.missing(self.cur))                                     # asked above, not built since
 
     def test_the_items_of_older_queues_are_pruned_and_their_headers_kept(self):
         self.scene()
@@ -411,6 +425,7 @@ class Routes(unittest.TestCase):
         self.assertEqual(status, 503)
         self.cur.execute("SELECT count(*) FROM mx_label_queues")
         self.assertEqual(self.cur.fetchone()[0], 0)                                  # nothing built in the API
+        self.assertTrue(L.missing(self.cur), "0199: opening it asked the jobs process for it")
         self.keep()
         status, body = call("GET", "/api/markx/labels")
         self.assertEqual((status, body["building"], body["next"]), (200, False, [str(self.task)]))

@@ -754,10 +754,13 @@ def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None
 # a day (now - days: a post that leaves the window adds no question, and an age is only a new task's priority), so the
 # window's length in days is in their key. track's bar and windows move with the clock itself (the share of the last
 # 30 days' posts a probe passes): it has no declaration and always runs.
+# v10.18 (0199): of mx_tasks, only the kinds each reads (unchanged.of_kinds): check its own (tasks.add's lookup);
+# cite its own and the ent-v4.2 entities tasks it plans from (ent42.plan). Another kind's lease or answer (the track
+# answers that stream all day) no longer wakes them.
 _TEXT = ("posts", "post_parts", "post_links", "sources")
 BACKGROUND_INPUTS = {
-    "check": _TEXT + ("story_posts", "mx_readings", "mx_tasks", "mx_settings", "mx_guides"),
-    "cite": _TEXT + ("mx_tasks", "mx_plan_marks", "mx_settings", "mx_guides"),
+    "check": _TEXT + ("story_posts", "mx_readings", "mx_tasks[check]", "mx_settings", "mx_guides"),
+    "cite": _TEXT + ("mx_tasks[cite,entities]", "mx_plan_marks", "mx_settings", "mx_guides"),
 }
 _PLANNER_CODE = ("insight_core.markx.tasks", "insight_core.markx.plan_marks", "insight_core.markx.ent42",
                  "insight_core.markx.story_window", "insight_core.markx.pairing", "insight_core.markx.schemas",

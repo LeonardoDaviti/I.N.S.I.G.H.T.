@@ -118,6 +118,22 @@ class _NeverFront:
         return default if got is None else got
 
 
+class _Steps:
+    """Wall seconds of a run's steps, in order (plan, collect, lookup, backfill, suppliers): the backfill's page reads
+    wait out their host's gap (gates) and E.PAGE_DELAY_S, so most of a long hook is waiting, which this tells apart."""
+
+    def __init__(self) -> None:
+        import time
+        self._t = time.monotonic()
+        self.seconds: Dict[str, float] = {}
+
+    def step(self, name: str) -> None:
+        import time
+        t = time.monotonic()
+        self.seconds[name] = round(t - self._t, 1)
+        self._t = t
+
+
 class OriginalsService:
     def __init__(self, db_url: str, *, saved: Any = None, gates: Any = None,
                  budget: Optional[Callable[[Any, datetime], float]] = None,
@@ -136,6 +152,7 @@ class OriginalsService:
         """Settle, then ask: 0114's early fetches, then (when on) 0123's collections and 0138's entity originals, and
         (when its switch is on) 0138's title lookups, within the credit."""
         now = self.clock()
+        clock = _Steps()   # v10.18 (0199): each step's seconds in the summary (the server's hourly hook took ~6.5 min)
         with db.transaction(self.db_url) as cur:
             settled = self.settle(cur, now)
             on = collect_on(cur)
@@ -164,7 +181,9 @@ class OriginalsService:
                             + self.plan_missed(cur, now, kind_of) + self.plan_classics(cur, now, kind_of))
                 taken = {c["url"] for c in collects + entities}   # asked above under the credit (0123, B)
                 backfill = [c for c in backfill if c["url"] not in taken and not taken.add(c["url"])]   # once each
+        clock.step("plan")
         collected = await self._collect(collects + entities, http, left, now) if collects or entities else []
+        clock.step("collect")
         made = sum(c["requests"] for c in collected)
         looked: List[Dict[str, Any]] = []
         if looking and lookups:
@@ -173,7 +192,9 @@ class OriginalsService:
         if made:
             with db.transaction(self.db_url) as cur:
                 spend(cur, made)
+        clock.step("lookup")
         stored = await self._collect(backfill, http, allowance, now, pause=E.PAGE_DELAY_S) if backfill else []
+        clock.step("backfill")
         try:
             with db.transaction(self.db_url) as cur:
                 supplying = self.keep_suppliers(cur, now)
@@ -181,11 +202,12 @@ class OriginalsService:
         except Exception:  # noqa: BLE001 - derived, for Discover; the next run makes it again
             logger.exception("Originals: the supplying sites were not kept")
             supplying = None
+        clock.step("suppliers")
         summary = {"settled": settled, "credit": round(credit, 2), "fetch_linked": len(asked),
                    "linked_wanted": len(linked), "collect_on": on, "collect": collected,
                    "entity_wanted": len(entities), "lookup_on": looking, "lookup": looked, "cap": self.cap,
                    "entity_wait_hours": round(max(waits).total_seconds() / 3600, 1) if waits else None,
-                   "suppliers": supplying, "classics_on": storing, "backfill": stored}
+                   "suppliers": supplying, "classics_on": storing, "backfill": stored, "seconds": clock.seconds}
         if asked or collected or looked or stored:
             logger.info("Originals: %s", summary)
         return summary
