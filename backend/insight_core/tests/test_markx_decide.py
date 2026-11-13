@@ -909,7 +909,7 @@ class Snapshot(unittest.TestCase):
         self.assertIn("back", out["deferred"])
         self.assertIn("could not serialize", out["deferred"]["back"])
         self.assertIsNone(out["back"])
-        self.assertIn("later", out)                                 # the stages after it ran
+        self.assertIn("news", out)                                  # the stages after it ran
         self.cur.execute("SELECT count(*), max(counts->'run'->>'kind') FROM mx_runs WHERE finished_at IS NOT NULL")
         self.assertEqual(self.cur.fetchone(), (1, "full"))         # the run committed, its decisions kept
         self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE valid_to IS NULL")

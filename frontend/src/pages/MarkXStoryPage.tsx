@@ -7,7 +7,6 @@ import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { MemberLine, StorySheet } from '../components/markx/MarkXPerspectives';
 import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how the story is built
 import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
-import { StoryLater } from '../components/markx/MarkXLater';   // 0163: later developments
 import { AlsoInRoundups } from '../components/markx/MarkXRoundup';   // 0181: also in round-ups
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
@@ -64,7 +63,6 @@ export default function MarkXStoryPage() {
               <ul className="mt-1">{rest.map((m) => <MemberLine key={m.post} story={d.story.id} line={m} posts={d.posts} now={now} />)}</ul>
             </details>
           ) : null}
-          <StoryLater storyId={d.story.id} />
         </div>
       </PageHeader>
     </Page>

@@ -1,5 +1,5 @@
 """A thing's timeline (issue 0165 C-D): one dated line of what INSIGHT holds about an entity, read only from stored rows
-(posts, mentions, merges, stories, Later rows, back-in-the-news rows; nothing fetched).
+(posts, mentions, merges, stories, back-in-the-news rows; nothing fetched).
 
 `of_entity` (the entity page's Timeline block, shown when it has 2+ dated events), each event {at, kind, post, ...}:
   - `birth`: the oldest post naming it or any earlier name (as which name);
@@ -11,7 +11,7 @@
     first post, how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an
     outside mention though it names it otherwise;
   - `story`: each Mark X or Mark IX story it is in, at its first post;
-  - `later`: 0163's later developments (judged development); `back`: 0136's back in the news (judged development).
+  - `back`: 0136's back in the news (judged development). (0163's `later` rows left the line with Later, 0203.)
 Each event has its importance (`rank`); the TOP most important (birth, renames, the first and last release, the first
 outside mention, stories, then the rest) are `top` (shown by default); "all" shows every one, oldest first.
 
@@ -232,7 +232,6 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         if s.get("first_at"):
             out.append(_event("story", s["first_at"], None, story=s["story"], mark=s["mark"],
                               headline=s.get("headline"), voices=s.get("voices")))
-    out += _later(cur, root)
     out += _back(cur, set(rows))
     return out
 
@@ -266,20 +265,6 @@ def _linking_back(cur: Any, posts: Set[str]) -> Dict[str, Tuple[datetime, str]]:
                     WHERE x.valid_to IS NULL AND x.a_kind = 'post' AND x.b_kind = 'post'
                       AND x.b = ANY(%s::uuid[]) AND NOT x.a = ANY(%s::uuid[])""", (sorted(posts), sorted(posts)))
     return {pid: (at, src) for pid, at, src in cur.fetchall()}
-
-
-def _later(cur: Any, root: str) -> List[Dict[str, Any]]:
-    from insight_core.markx import later
-    try:
-        got = later.of_entity(cur, root)
-    except Exception:   # noqa: BLE001 - a view never fails for want of it
-        return []
-    out = []
-    for it in got["items"]:
-        if it.get("verdict") == "development" and it.get("at"):
-            at = datetime.fromisoformat(it["at"]) if isinstance(it["at"], str) else it["at"]
-            out.append(_event("later", at, it.get("post"), story=it.get("story"), headline=it.get("headline")))
-    return out
 
 
 def _back(cur: Any, posts: Set[str]) -> List[Dict[str, Any]]:

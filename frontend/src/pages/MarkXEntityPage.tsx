@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
-import { EntityLater } from '../components/markx/MarkXLater';   // 0163: later developments
 import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
@@ -331,7 +330,6 @@ export default function MarkXEntityPage() {
             </section>
           ) : null}
           {d.timeline ? <Timeline timeline={d.timeline} /> : null}{/* 0165 C */}
-          <EntityLater entityId={e.id} />
           {d.published?.length ? (
             <section aria-label="Published">
               <h2 className={H2}>Published</h2>

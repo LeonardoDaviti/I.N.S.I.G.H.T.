@@ -1,10 +1,10 @@
 """0180 (Stealth v10.16)'s routes: the anchors engine in Shadow (no bearer: the app's own; 404 when Mark X is off, as
 every /api/markx path). Included into markx/api.py's router.
 
-GET  /api/markx/anchors/compare?which=later|back   the old engine's rows against the anchors engine's
+GET  /api/markx/anchors/compare?which=back         the old engine's rows against the anchors engine's
                                                     (markx/anchors.compare): {which, counts, only_old, only_new, both,
                                                     shown}
-GET  /api/markx/anchors/shown                       {engine: old | anchors}: whose rows the Back and Later pages show
+GET  /api/markx/anchors/shown                       {engine: old | anchors}: whose rows the Back page shows
 POST /api/markx/anchors/shown {engine}              set it (old by default)
 """
 from __future__ import annotations
@@ -22,10 +22,10 @@ class ShownIn(BaseModel):
 
 
 @router.get("/anchors/compare")
-def mx_anchors_compare(which: str = "later"):
+def mx_anchors_compare(which: str = "back"):
     from insight_core.markx.api import transaction
-    if which not in ("back", "later"):
-        raise HTTPException(status_code=400, detail="which: back or later")
+    if which != "back":
+        raise HTTPException(status_code=400, detail="which: back (Later developments were dropped, 0203)")
     with transaction() as cur:
         return anchors.compare(cur, which)
 
