@@ -12,8 +12,10 @@ at 101% CPU and every /api/* request timed out.
       - the candidate finder, when vectors arrived (the posts waiting in mx_candidate_posts) and before every
         decision run (also the posts whose entities were written since its last run);
       - the decision run: SETTLE seconds after work arrived (answers, vectors, POST /api/markx/decide, the API
-        start's story job), at most one every GAP seconds (a steady stream of uploads can't push it back, nor run it
-        back to back), and every EVERY seconds.
+        start's story job), at most one every RUN_GAP seconds (a steady stream of uploads can't push it back, nor run
+        it back to back), and every EVERY seconds. v10.18 (0199): RUN_GAP 15 minutes (was GAP's 5): a worker's answers
+        stream in all day, and every run they started cost ~145 s and a ~35 s Labels build on the server (~11 an hour,
+        ~60% of a core); the same decisions for the same inputs, at most 15 minutes after the answers instead of 5.
   - **The order of runs** (0121 Decided 3): no decision run while Mark IX's story job holds its lock or a rule
     change's rebuild is in progress or due (`mark_ix_busy`): it waits, then runs once. Nor while the candidate finder
     runs; and a run whose own candidate finder failed doesn't run on candidates that aren't there: both wait.
@@ -66,7 +68,8 @@ log = logging.getLogger(__name__)
 
 POLL = 30.0                      # seconds between the runner's looks (work is picked up within this)
 SETTLE = 60.0                    # a decision run waits this long after work arrived, so a burst of uploads is one run
-GAP = 300.0                      # and at most one starts every 5 minutes while uploads stream in (0112 Decided 12)
+GAP = 300.0                      # a failed job's backoff unit (0188: GAP x 2^failures)
+RUN_GAP = 900.0                  # 0199: at most one decision run starts every 15 minutes while uploads stream in (was GAP)
 EVERY = 3600.0                   # and runs at least hourly
 LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries (Decided 12)
 ENTITY_BUDGET = 45.0             # 0128: the entities stage's own seconds, outside LIMIT; its full pass resumes next run
@@ -476,9 +479,9 @@ class Jobs:
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
-        labels_missing: bool = False) -> Optional[str]:
+        labels_missing: bool = False, run_gap: float = RUN_GAP) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
-    one started (or never ran), never within GAP seconds of the last start, never while Mark IX is `busy` (why, from
+    one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
     arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that long
     ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows.
@@ -491,7 +494,7 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
         return "plan"
     d = states["decide"]
     since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
-    if busy is None and states["candidates"]["stage"] is None and (since is None or since >= gap) \
+    if busy is None and states["candidates"]["stage"] is None and (since is None or since >= run_gap) \
             and not held(d, now, gap):
         if d["wanted_at"] is not None and (now - d["wanted_at"]).total_seconds() >= settle:
             return "decide"
@@ -532,8 +535,10 @@ class Runner:
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
                  on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
-                 gap: float = GAP, hard_limit: float = HARD_LIMIT, plan_every: Optional[float] = PLAN_EVERY) -> None:
+                 gap: float = GAP, hard_limit: float = HARD_LIMIT, plan_every: Optional[float] = PLAN_EVERY,
+                 run_gap: float = RUN_GAP) -> None:
         self.db_url, self.clock, self.spawn = db_url, clock, spawn
+        self.run_gap = run_gap
         self.plan_every = plan_every
         self.on = on or enabled
         self.settle, self.every, self.gap, self.hard_limit = settle, every, gap, hard_limit
@@ -598,7 +603,7 @@ class Runner:
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
-                      plan_every=self.plan_every, labels_missing=self._labels_missing)
+                      plan_every=self.plan_every, labels_missing=self._labels_missing, run_gap=self.run_gap)
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)

@@ -30,7 +30,7 @@ def _states(**over):
 
 class Due(unittest.TestCase):
     def test_a_decision_run_waits_for_work_to_settle(self):
-        recent = {"started_at": T0 - timedelta(minutes=10)}
+        recent = {"started_at": T0 - timedelta(minutes=16)}
         self.assertIsNone(jobs.due(_states(decide={**recent, "wanted_at": T0 - timedelta(seconds=20)}), T0))
         self.assertEqual(jobs.due(_states(decide={**recent, "wanted_at": T0 - timedelta(seconds=61)}), T0), "decide")
 
@@ -40,7 +40,7 @@ class Due(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide={"started_at": T0 - timedelta(minutes=61)}), T0), "decide")
 
     def test_new_vectors_run_the_candidate_finder(self):
-        recent = {"started_at": T0 - timedelta(minutes=10)}
+        recent = {"started_at": T0 - timedelta(minutes=10)}   # within RUN_GAP: the candidates run between two runs
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
 
 
@@ -108,7 +108,7 @@ class TheOrderOfRuns(unittest.TestCase):
     it depended on had finished."""
 
     def test_no_decision_run_while_mark_ix_is_busy_it_waits_then_runs_once(self):
-        wanted = {"started_at": T0 - timedelta(minutes=10), "wanted_at": T0 - timedelta(minutes=2)}
+        wanted = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
         self.assertIsNone(jobs.due(_states(decide=wanted), T0, busy="Mark IX's story job is running"))
         self.assertIsNone(jobs.due(_states(), T0, busy="a rule change's rebuild is in progress"))   # nor the first
         self.assertEqual(jobs.due(_states(decide=wanted, candidates={"wanted_at": T0}), T0, busy="rebuild"),
@@ -342,7 +342,7 @@ class TheRunner(_Api):
         """New vectors: the run finds their candidates first; when that fails, no decision runs on candidates that
         aren't there, and both are wanted again."""
         self.runner().tick()
-        self.cur.execute("UPDATE mx_jobs SET started_at = now() - interval '10 minutes' WHERE job = 'decide'")
+        self.cur.execute("UPDATE mx_jobs SET started_at = now() - interval '16 minutes' WHERE job = 'decide'")
         pid = self.post()
         with self.conn.transaction():
             jobs.note_posts(self.cur, [pid])
@@ -405,15 +405,19 @@ class TheRunner(_Api):
 
 
 class TheLimitAndTheStages(_Api):
-    """0112 Decided 12: at most one run per 5 minutes, a 120 s limit between stages, stage logs, the running state."""
+    """0112 Decided 12: at most one run per RUN_GAP (15 minutes since 0199; 5 before), a 120 s limit between stages,
+    stage logs, the running state."""
 
-    def test_uploads_streaming_in_start_at_most_one_run_per_five_minutes(self):
-        recent = {"started_at": T0 - timedelta(minutes=4), "wanted_at": T0 - timedelta(minutes=3)}
+    def test_uploads_streaming_in_start_at_most_one_run_per_fifteen_minutes(self):
+        self.assertEqual(jobs.RUN_GAP, 900.0)
+        recent = {"started_at": T0 - timedelta(minutes=14), "wanted_at": T0 - timedelta(minutes=3)}
         self.assertIsNone(jobs.due(_states(decide=recent), T0))                       # wanted, settled, but too soon
-        later = {"started_at": T0 - timedelta(minutes=5, seconds=1), "wanted_at": T0 - timedelta(minutes=3)}
+        later = {"started_at": T0 - timedelta(minutes=15, seconds=1), "wanted_at": T0 - timedelta(minutes=3)}
         self.assertEqual(jobs.due(_states(decide=later), T0), "decide")
+        self.assertIsNone(jobs.due(_states(decide={"started_at": T0 - timedelta(minutes=6)}), T0),
+                          "nothing wanted: the hourly run only")
         # a stream that keeps marking can't push the run back: the first mark's time stays
-        streaming = {"started_at": T0 - timedelta(minutes=6), "wanted_at": T0 - timedelta(minutes=2)}
+        streaming = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
         self.assertEqual(jobs.due(_states(decide=streaming), T0), "decide")
         # the candidates still run between two decision runs
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
@@ -704,7 +708,7 @@ class ADeadRun(_Api):
         self.assertIsNone(s["candidates"]["stage"])
         self.assertIsNotNone(s["candidates"]["wanted_at"])
         self.assertIn("inside the decide run", s["candidates"]["last"]["error"])
-        self.assertEqual(jobs.due(s, datetime.now(timezone.utc) + timedelta(minutes=10)), "decide", "nothing waits")
+        self.assertEqual(jobs.due(s, datetime.now(timezone.utc) + timedelta(minutes=16)), "decide", "nothing waits")
 
     def test_a_run_that_recorded_its_end_keeps_its_record(self):
         jobs.Jobs(db_url())._finish("decide", {"ok": True, "seconds": 1.0})
