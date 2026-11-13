@@ -573,6 +573,30 @@ def _unit_types(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_SECTION_KEY = re.compile(r"^\[(s\d{1,2})\] ", re.M)
+
+
+def _news_place(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0197: every new row the question shows (its "[r<n>] ..." lines) placed exactly once, into a section it shows (its
+    "[s<n>] ..." lines) or "new"; no other key."""
+    rows, sections = set(_ROW_KEY.findall(input or "")), set(_SECTION_KEY.findall(input or ""))
+    seen: set = set()
+    for n, p in enumerate(a["placements"]):
+        k, s = p["row_id"], p["section"]
+        if k not in rows:
+            return f"placements[{n}] names {k}, not a new row of the question"
+        if k in seen:
+            return f"{k} is placed twice"
+        seen.add(k)
+        if s != "new" and s not in sections:
+            return f"placements[{n}]: {s} is not a section of the question (one of them, or \"new\")"
+    missing = sorted(rows - seen, key=lambda k: int(k[1:]))
+    if missing:
+        more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        return f"{', '.join(missing[:3])}{more} not placed: every new row exactly once"
+    return None
+
+
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -586,6 +610,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "websearch": _websearch,                    # 0171
           "source_judge": _source_judge,              # 0173
           "news_sections": _news_sections,            # 0174
+          "news_place": _news_place,                  # 0197
           "unit_types": _unit_types,                  # 0181
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 

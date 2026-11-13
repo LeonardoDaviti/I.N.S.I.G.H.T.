@@ -993,6 +993,40 @@ class TestNewsSections(Base):
         self.assertEqual(sizes, [1, 1])
 
 
+class TestNewsPlace(Base):
+    """0197: the new rows' placement (news-place-v1) is a default kind right after News' sections, one question a call,
+    with no tool; a server older than the worker (no news_place yet) has it skipped, the others go on."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["news_place"] = "news-place-v1"
+        self.addCleanup(KIND_GUIDE.pop, "news_place")
+        self.stub.guides["news-place-v1"] = guide("news-place-v1", "GUIDE news-place-v1")
+
+    def test_news_place_is_a_default_kind_after_the_sections_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds.index("news_place"), kinds.index("news_sections") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["news_place"], 1)
+        argv = W.claude_argv("claude", "haiku", "S", "news_place")
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+
+    def test_questions_asked_one_a_call(self):
+        self.stub.add("news_place", 2, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 2)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sizes, [1, 1])
+
+    def test_an_older_server_skips_it(self):
+        self.stub.add("read", 5)
+        self.stub.unknown_kinds = {"news_place"}
+        p = self.run_worker("--kinds", "news_place,read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 5)
+        self.assertEqual([e["kind"] for e in self.events("kind-unknown")], ["news_place"])
+
+
 WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
               "properties": {"candidates": {"type": "array", "maxItems": 15, "items": {
                   "type": "object", "required": ["url", "why"],

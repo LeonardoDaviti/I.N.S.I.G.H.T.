@@ -87,9 +87,10 @@ class MigrationTests(_Rollback):
                          | {"mx_happenings"}                                          # 0118 (0175)
                          | {"mx_label_queues", "mx_label_queue_items"}               # 0124 (0182)
                          | {"mx_roundups", "mx_units", "mx_attach", "mx_roundup_issues"}   # 0123 (0181)
-                         | {"mx_unit_types", "mx_unit_type_asks"}
-                         | {"mx_counts", "mx_counts_delta"}                               # 0132 (0195)
-                         | {"mx_track_places", "mx_track_places_state", "mx_track_changes"})   # 0133 (0195)                          # 0125 (0181)
+                         | {"mx_unit_types", "mx_unit_type_asks"}                           # 0125 (0181)
+                         | {"mx_counts", "mx_counts_delta"}                                 # 0132 (0195)
+                         | {"mx_track_places", "mx_track_places_state", "mx_track_changes"}   # 0133 (0195)
+                         | {"mx_news_placements", "mx_news_place_asks"})                    # 0134 (0197)
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -113,7 +114,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 77)       # 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
+        self.assertEqual(self.cur.fetchone()[0], 79)       # 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")

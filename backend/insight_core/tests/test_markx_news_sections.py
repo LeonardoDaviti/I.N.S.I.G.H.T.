@@ -81,6 +81,66 @@ class TheChecks(unittest.TestCase):
         self.assertIn('"row_ids"', body)
 
 
+PLACE_TEXT = ("SECTIONS: 3, each with its most important headlines\n[s1] Releases | e.g. \"A\"\n[s2] Deals\n[s3] Research\n\n"
+              "NEW ROWS: 3, most important first\n[r1] One | 2 voices\n[r2] Two | 1 voice\n[r3] Three | 2 voices")
+
+
+def placed(*pairs):
+    return {"placements": [{"row_id": r, "section": s} for r, s in pairs]}
+
+
+class ThePlacementChecks(unittest.TestCase):
+    """0197: every new row placed once, into a section the question shows or "new"."""
+
+    def check(self, a):
+        return validate.check("news_place", a, PLACE_TEXT, "news-place-v1")[1]
+
+    def test_every_row_once_into_a_known_section_or_new(self):
+        self.assertIsNone(self.check(placed(("r1", "s2"), ("r2", "new"), ("r3", "s1"))))
+
+    def test_wrong_answers_are_refused(self):
+        self.assertIn("r3 not placed", self.check(placed(("r1", "s2"), ("r2", "new"))))
+        self.assertIn("r2 is placed twice", self.check(placed(("r1", "s2"), ("r2", "s1"), ("r2", "s3"), ("r3", "s1"))))
+        self.assertIn("s4 is not a section", self.check(placed(("r1", "s4"), ("r2", "s1"), ("r3", "s1"))))
+        self.assertIn("names r4", self.check(placed(("r1", "s1"), ("r2", "s1"), ("r3", "s1"), ("r4", "s1"))))
+        self.assertIsNotNone(self.check(placed(("r1", "other"), ("r2", "s1"), ("r3", "s1"))))     # the schema
+
+    def test_an_answer_reads_back_to_rows_and_titles(self):
+        self.assertEqual(S.placements_of(placed(("r2", "new"), ("r1", "s3")), ["id1", "id2"], ["A", "B", "C"]),
+                         [("id2", None), ("id1", "C")])
+
+    def test_the_guide_is_sphere_agnostic(self):
+        body = schemas.guide_body("news-place-v1")
+        self.assertNotIn(" AI", body)
+        self.assertIn('"placements"', body)
+
+
+class WhenAPlacementIsAsked(unittest.TestCase):
+    ROWS = [f"row{k}" for k in range(10)]
+
+    def ask(self, status="answered", rows=None):
+        return {"row_ids": rows or self.ROWS[:9], "asked_at": NOW - timedelta(minutes=5), "status": status}
+
+    def due(self, asks=None, waiting=False, last=None, rows=None, new=("row9",)):
+        return S.place_due([self.ask()] if asks is None else asks, waiting, last, rows or self.ROWS, list(new), NOW)
+
+    def test_new_rows_with_the_full_sectioning_not_due(self):
+        self.assertEqual(self.due(), (True, "1 new rows"))                      # 1 of 9: 11%, the full one 5 min ago
+
+    def test_nothing_new(self):
+        self.assertFalse(self.due(new=())[0])
+
+    def test_never_while_a_full_sectioning_waits_or_is_due(self):
+        self.assertEqual(self.due(asks=[self.ask("open"), self.ask()])[1], "a sectioning is waiting")
+        self.assertEqual(self.due(rows=self.ROWS + ["a", "b"], new=("row9", "a", "b"))[1], "a full sectioning is due")
+        self.assertFalse(self.due(asks=[])[0])                                   # never sectioned
+
+    def test_one_waiting_and_ten_minutes(self):
+        self.assertEqual(self.due(waiting=True)[1], "one is waiting")
+        self.assertFalse(self.due(last=NOW - timedelta(minutes=9))[0])
+        self.assertTrue(self.due(last=NOW - timedelta(minutes=11))[0])
+
+
 class WhenItIsAsked(unittest.TestCase):
     ROWS = [f"row{k}" for k in range(10)]
 
@@ -248,6 +308,101 @@ class Sections(_Api):
             status, work = self.lease("news_sections")
         self.assertEqual((status, [t["kind"] for t in work["tasks"]]), (200, ["news_sections"]))
         self.assertIn("news-sections-v1", work["guides"])
+
+    def place(self):
+        with self.conn.transaction():
+            return S.place(self.cur)
+
+    def place_task(self):
+        self.cur.execute("SELECT id::text, input, priority, a::text FROM mx_tasks WHERE kind = 'news_place' "
+                         "ORDER BY created_at DESC LIMIT 1")
+        return self.cur.fetchone()
+
+    def page_sections(self):
+        status, page = call("GET", "/api/markx/news", query={"all": 1})
+        self.assertEqual(status, 200)
+        return page["sections"]
+
+    def test_a_new_row_is_placed_into_its_section(self):
+        """0197: one new row of 8 (12.5%: no full sectioning) is asked alone with the sections and their examples,
+        and the page shows it in the section answered."""
+        ps = self.posts(8)
+        self.sectioned(ps)
+        extra = self.post(title="Late deal signed")
+        run = self.news_run(ps + [extra])
+        self.assertEqual(self.page_sections()["new"], [extra])
+        self.assertEqual(self.plan(), 0)                                                   # the full one: not due
+        self.assertEqual(self.place(), 1)
+        tid, text, priority, a = self.place_task()
+        self.assertEqual((priority, a), (S.PRIORITY, run))
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "SECTIONS: 3, each with its most important headlines")
+        self.assertEqual(lines[1], '[s1] Releases | e.g. "Item 0 happened"; "Item 1 happened"; "Item 2 happened"')
+        self.assertEqual(lines[3], '[s3] Research | e.g. "Item 6 happened"; "Item 7 happened"')
+        self.assertEqual(lines[5:], ["NEW ROWS: 1, most important first", "[r1] Late deal signed | 2 voices"])
+        self.assertEqual(self.place(), 0)                                                  # one waiting
+        self.lease("news_place")
+        got = self.answer((tid, placed(("r1", "s2"))))
+        self.assertEqual(got[1]["valid"], 1, got)
+        sec = self.page_sections()
+        self.assertEqual(sec["new"], [])
+        self.assertEqual([(g["title"], g["rows"]) for g in sec["groups"]],
+                         [("Releases", ps[0:3]), ("Deals", ps[3:6] + [extra]), ("Research", ps[6:8])])
+        self.cur.execute("UPDATE mx_news_place_asks SET asked_at = asked_at - interval '11 minutes'")
+        self.assertEqual(self.place(), 0)                                                  # nothing left to place
+
+    def test_a_row_answered_new_stays_new_and_is_not_asked_again(self):
+        ps = self.posts(8)
+        self.sectioned(ps)
+        extra = self.post(title="Something else entirely")
+        self.news_run(ps + [extra])
+        self.assertEqual(self.place(), 1)
+        self.lease("news_place")
+        self.assertEqual(self.answer((self.place_task()[0], placed(("r1", "new"))))[1]["valid"], 1)
+        self.assertEqual(self.page_sections()["new"], [extra])
+        self.cur.execute("UPDATE mx_news_place_asks SET asked_at = asked_at - interval '11 minutes'")
+        self.assertEqual(self.place(), 0)
+
+    def test_a_full_sectioning_supersedes_the_placements(self):
+        ps = self.posts(8)
+        self.sectioned(ps)
+        extra = self.post(title="Late deal signed")
+        self.news_run(ps + [extra])
+        self.place()
+        self.lease("news_place")
+        self.answer((self.place_task()[0], placed(("r1", "s2"))))
+        # the next sections question shows the placed row in its section ...
+        more = self.posts(2)
+        self.cur.execute("UPDATE mx_news_section_asks SET asked_at = asked_at - interval '31 minutes'")
+        self.news_run(ps + [extra] + more, scores={more[0]: 1000, more[1]: 999})        # 3 new of 8: 37%
+        self.assertEqual(self.place(), 0)                                                  # the full one is due
+        self.assertEqual(self.plan(), 1)
+        tid, text = self.the_task()[:2]
+        late = next(ln for ln in text.splitlines() if "Late deal signed" in ln)
+        self.assertTrue(late.endswith("| last: s2"), late)
+        self.assertEqual(self.place(), 0)                                                  # never while it waits
+        # ... and its answer replaces them (r1-r2 the two new rows, r3-r10 the eight, r11 the placed one)
+        self.lease("news_sections")
+        self.assertTrue(text.splitlines()[-1].startswith("[r11] Late deal signed"))
+        self.assertEqual(self.answer((tid, answer(("Fresh", ["r1", "r2"]), ("Releases", ["r3", "r4", "r5"]),
+                                                  ("Deals", ["r6", "r7", "r8"]),
+                                                  ("Research", ["r9", "r10", "r11"]))))[1]["valid"], 1)
+        sec = self.page_sections()
+        self.assertEqual([(g["title"], g["rows"]) for g in sec["groups"]],
+                         [("Fresh", more), ("Releases", ps[0:3]), ("Deals", ps[3:6]), ("Research", ps[6:8] + [extra])])
+        self.assertEqual(sec["new"], [])
+        # a row added after it is placed against it
+        later = self.post(title="Later item")
+        self.news_run(ps + [extra] + more + [later], scores={more[0]: 1000, more[1]: 999})
+        self.cur.execute("UPDATE mx_news_place_asks SET asked_at = asked_at - interval '11 minutes'")
+        self.assertEqual(self.place(), 1)
+        self.cur.execute("SELECT a.base_call::text = (SELECT call_id::text FROM mx_news_sections WHERE task_id = %s LIMIT 1),"
+                         " a.row_ids FROM mx_news_place_asks a WHERE a.task_id = %s", (tid, self.place_task()[0]))
+        self.assertEqual(self.cur.fetchone(), (True, [later]))
+
+    def test_never_without_a_sectioning(self):
+        self.news_run(self.posts(8))
+        self.assertEqual(self.place(), 0)
 
     def test_untitled_rows_get_their_headline_asked_first(self):
         ps = self.posts(3)

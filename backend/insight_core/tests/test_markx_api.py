@@ -39,6 +39,7 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_research_pairs", "mx_research_findings", "mx_research_runs",   # 0162
              "mx_scout_items", "mx_scout_candidates", "mx_scout_runs", "mx_source_provenance",   # 0148
              "mx_source_judgements",   # 0173
+             "mx_news_placements", "mx_news_place_asks",   # 0197
              "mx_news_sections", "mx_news_section_asks",   # 0174
              "mx_plan_marks", "mx_embed_skips",   # v10.14; 0110
              "mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans",   # 0168
