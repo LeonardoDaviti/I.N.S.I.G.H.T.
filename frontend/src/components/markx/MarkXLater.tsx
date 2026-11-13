@@ -24,7 +24,6 @@ export interface MarkxLaterStory {
 export interface MarkxLaterPrecision { labelled: number; development: number; precision: number | null }
 export interface MarkxStoryLater {
   stories: MarkxLaterStory[]; items: MarkxLaterRow[]; counts: Record<string, number>; precision: MarkxLaterPrecision;
-  news: boolean;
 }
 export interface MarkxEntityLater { entity: string | null; items: MarkxLaterRow[]; counts: Record<string, number> }
 

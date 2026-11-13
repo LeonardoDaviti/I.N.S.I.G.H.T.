@@ -1,10 +1,10 @@
 {
   "gzipBytes": {
-    "feed": 178044,
-    "post": 318357,
-    "markx": 186206,
-    "markxEntity": 173981,
-    "markxStory": 169612
+    "feed": 177418,
+    "post": 317947,
+    "markx": 185287,
+    "markxEntity": 172913,
+    "markxStory": 168547
   },
   "ceilingBase": {
     "release": "v9.8",

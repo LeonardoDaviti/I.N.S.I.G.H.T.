@@ -32,7 +32,7 @@ from insight_core.tests._db import db_url, delete_scratch_sources, requires_test
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.addresses import is_tweet
-from insight_core.utils.discover_rules import (address_stamp, discover_address, find_platforms, is_roundup, is_self_link,
+from insight_core.utils.discover_rules import (address_stamp, discover_address, find_platforms, is_self_link,
                                                place_kind, platform_rows, score, suggestions)
 from insight_core.utils.story_rules import StoryPost
 from insight_core.utils.tree_rules import origin_title
@@ -54,7 +54,7 @@ def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
 
 def reference_discover(url: str):
     """Discover as 0050/0051 computed it: every kept link read into Python and walked; with 0067's
-    roundups (discover_rules.is_roundup over each post's links and the stored post each is) and tweet
+    roundups (v10.17, 0190: the posts markx/units.py tags a round-up, mx_roundups) and tweet
     mirrors (TWEET_HREF in every post's HTML); and 0080's: the platforms the data finds, no voice for a
     self-link or Saved's, a reference or a paper source no suggestion, its sources counted as Discover
     names them (a Reddit source once), titles never a slug, ranked by discover_rules.score."""
@@ -86,8 +86,8 @@ def reference_discover(url: str):
         cur.execute("SELECT content_html FROM posts WHERE content_html IS NOT NULL")
         mirrors = {host.lower() for (html,) in cur.fetchall() for host, *_ in re.findall(TWEET_HREF, html)}
         stored_titles = DiscoverRepository.stored_titles(cur, sorted({link["url"] for link in links}))
-    roundups = {post_id for post_id, its in post_links.items()
-                if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
+        cur.execute("SELECT post_id::text FROM mx_roundups WHERE roundup")
+        roundups = {r[0] for r in cur.fetchall()}
     kind = sources.kind
     voiceless = [kind.get(link["source_id"]) == "saved" or is_self_link(link["url"], sources.selves(link["source_id"]))
                  for link in links]

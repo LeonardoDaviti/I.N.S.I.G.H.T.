@@ -1,0 +1,20 @@
+# The embedder for the worker's embed kind: llama.cpp's llama-server with BGE-M3, as a systemd *user* unit on the
+# device. Restarted when it fails; started at boot once enabled (with lingering, before you log in).
+#   cp contrib/systemd/llama-server.service ~/.config/systemd/user/
+#   printf 'LLAMA_SERVER=/usr/local/bin/llama-server\nEMBED_GGUF=/home/<you>/models/bge-m3-q8_0.gguf\nEMBED_PORT=8091\n' \
+#     > ~/.config/insight/llama-server.env
+#   systemctl --user daemon-reload && systemctl --user enable --now llama-server.service
+# Only when you ask it: the embedder holds its model in memory while it runs (systemctl --user stop llama-server).
+[Unit]
+Description=INSIGHT embedder (llama-server, BGE-M3)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/insight/llama-server.env
+ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$EMBED_GGUF" --embedding --pooling cls -c 8192 -b 8192 -ub 8192 --host 127.0.0.1 --port "${EMBED_PORT:-8091}"'
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=default.target

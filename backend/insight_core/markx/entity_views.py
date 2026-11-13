@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
 from insight_core.markx import surges as S
+from insight_core.markx import pairing
 
 WINDOW_DAYS = 30
 LIST_LIMIT = 200
@@ -45,15 +46,15 @@ def _rows(cur: Any, guide: List[str], since: Optional[datetime], entity_ids: Opt
     guide)."""
     where, params = ["m.guide = ANY(%s)", "m.entity_id IS NOT NULL"], [guide]
     if since is not None:
-        where.append("COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s")
-        params.append(since)
+        where.append(pairing.post_date_within("p", "%s::timestamptz"))
+        params += [since, since]
     if entity_ids is not None:
         where.append("(m.entity_id = ANY(%s::uuid[]) OR (m.post_id, m.guide, m.n) IN "
                      "(SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[])))")
         ids = sorted(set(entity_ids))
         params += [ids, ids]
     cur.execute(f"""SELECT m.post_id::text, m.n, m.role, m.entity_id::text,
-                           COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.source_id::text,
+                           {pairing.post_date('p')}, p.source_id::text,
                            rs.read_at IS NOT NULL, m.guide
                       FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                       LEFT JOIN post_reader_state rs ON rs.post_id = m.post_id
@@ -610,8 +611,8 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
     ids = sorted(set(eids))
     if not ids:
         return {}
-    cur.execute("""SELECT DISTINCT ON (m.entity_id, m.post_id) m.entity_id::text, m.post_id::text, m.span, m.role,
-                          COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+    cur.execute(f"""SELECT DISTINCT ON (m.entity_id, m.post_id) m.entity_id::text, m.post_id::text, m.span, m.role,
+                          {pairing.post_date('p')}
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                     WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[])""", (guide, ids))
     by: Dict[str, List[Tuple]] = defaultdict(list)

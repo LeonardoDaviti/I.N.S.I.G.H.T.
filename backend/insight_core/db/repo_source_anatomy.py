@@ -2,8 +2,8 @@
 every method takes the caller's cursor.
 
 One query per column group, each grouped by source, each counting all time and since `since`
-(the last 30 days) by a post's date as the feed sorts it (COALESCE(surfaced_at, published_at,
-fetched_at)). A source with nothing in a group has no row in it; the caller reads that as zero.
+(the last 30 days) by a post's date as the feed sorts it (Pairing's ordinary date: surfaced, else published, else
+fetched). A source with nothing in a group has no row in it; the caller reads that as zero.
 """
 from __future__ import annotations
 
@@ -14,9 +14,10 @@ from psycopg import Cursor
 
 from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_OUTCOME_KEY
 from insight_core.ingestion.kinds.saved import PLATFORM as SAVED_PLATFORM
+from insight_core.markx import pairing
 
 # A post's date as the feed sorts it.
-POST_DATE = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+POST_DATE = pairing.ordinary_date("p")
 RECENT = f"{POST_DATE} >= %(since)s"
 
 Counts = Dict[str, Tuple[int, ...]]
@@ -55,7 +56,7 @@ class SourceAnatomyRepository:
                 SELECT DISTINCT ON (sp.story_id) sp.post_id
                 FROM story_posts sp JOIN posts p ON p.id = sp.post_id
                 ORDER BY sp.story_id, (sp.role = 'report') DESC, COALESCE(sp.position, 0),
-                         COALESCE(p.published_at, p.fetched_at), p.id
+                         {pairing.ix_date('p')}, p.id
             )
             SELECT p.source_id, count(DISTINCT sp.story_id), count(DISTINCT sp.story_id) FILTER (WHERE {RECENT}),
                    count(l.post_id), count(l.post_id) FILTER (WHERE {RECENT})

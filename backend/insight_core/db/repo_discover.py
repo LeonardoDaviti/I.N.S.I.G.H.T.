@@ -30,9 +30,9 @@ Measured on a copy of the lab (41.7k posts, 138.6k kept links, 2026-10-31): the 
 a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.56 s and 9 MB,
 with the same list in the same order.
 
-Issue 0067: each voice also says whether it links a key only in roundups (posts of 3+ anchors,
-discover_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
-are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
+Issue 0067: each voice also says whether it links a key only in roundups (v10.17, 0190: the posts markx/units.py
+tags a round-up, the one predicate; 3+ anchors before), which Discover's order weighs half; the other pages
+of a host where tweets are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
 (system_settings `discover_counts`): the story job counts them after it fills the addresses, and
 an open reads them while their stamp (the rules, the last story run, the sources with posts) holds.
 Hidden and followed keys are left out when read, so hiding or following needs no recount.
@@ -49,12 +49,12 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.markx import pairing, units
 from insight_core.utils.addresses import host_of
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, ORIGIN_MIN_VOICES, OWNER_DEPTH,
                                                Origin, Platforms, address_stamp, discover_address, discover_article,
                                                find_platforms)
-from insight_core.utils.story_rules import ROUNDUP_ANCHORS
 from insight_core.utils.url_normalization import TWEET_SHAPE
 
 LOCK_KEY = "insight.discover_addresses"
@@ -118,16 +118,9 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses, bu
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
-roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (discover_rules.is_roundup): each
-    SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
-    WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster;
-      AND (%(keys)s::text[] IS NULL OR pl.post_id IN (SELECT post_id FROM linked))   -- for a few keys, those)
-      AND (pl.target_url !~ %(home)s                                        -- a home page no post is at
-           OR EXISTS (SELECT 1 FROM posts tp WHERE tp.normalized_url = pl.target_url))
-      AND (pl.target_url IS DISTINCT FROM p.normalized_url                  -- and the post itself (the
-           OR p.id <> (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url   -- first stored
-                       ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1))           -- at its address)
-    GROUP BY pl.post_id HAVING count(*) >= %(roundup_anchors)s
+roundup AS MATERIALIZED (         -- the linking posts that are round-ups (markx/units.py owns the predicate,
+    SELECT DISTINCT l.post_id FROM linked l   -- GLOSSARY "Round-up"; v10.17, 0190: 3+ anchors before)
+    WHERE """ + units.roundup_sql("l.post_id") + """
 ),
 author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it (post_parts, issue 0076)
     SELECT pp.post_id AS id, pp.author FROM post_parts pp
@@ -185,7 +178,7 @@ HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
 # The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
 _COUNT_RULES = {"home": HOME, "depth": OWNER_DEPTH,
-                "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
+                "min_voices": DISCOVER_MIN_VOICES,
                 "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
 
 # The platform rule's links (issue 0080, discover_rules.platform_rows in SQL): every kept link but Saved's,
@@ -216,8 +209,8 @@ GROUP BY 1, 2
 
 # Each suggestion's activity (issue 0080: Discover's order): when your sources last linked it, and how many
 # of the posts linking it you opened or read.
-_ACTIVITY = """
-SELECT d.key, max(COALESCE(p.published_at, p.fetched_at)),
+_ACTIVITY = f"""
+SELECT d.key, max({pairing.ix_date('p')}),
        count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
            SELECT 1 FROM post_interactions i WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session')))
 FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND NOT pl.boilerplate
@@ -465,7 +458,7 @@ class DiscoverRepository:
         stored: Dict[str, List[str]] = defaultdict(list)
         for sid, url in cur.fetchall():
             stored[sid].append(url)
-        cur.execute("SELECT source_id::text, max(COALESCE(published_at, fetched_at)) FROM posts WHERE source_id = ANY(%s::uuid[]) "
+        cur.execute(f"SELECT source_id::text, max({pairing.ix_date('')}) FROM posts WHERE source_id = ANY(%s::uuid[]) "
                     "GROUP BY 1", (ids,))
         newest = dict(cur.fetchall())
         out = {}
@@ -501,11 +494,13 @@ class DiscoverRepository:
         SystemSettingsRepository.upsert(cur, READS_KEY, reads)
 
     @staticmethod
-    def base() -> str:
+    def base(cur: Cursor) -> str:
         """What the counts are counted by, a story run aside: the rules (issue 0072: while they hold, a story
         run counts again only the keys its posts link; a source whose facts change has its posts queued, so
-        the keys they link are among those)."""
-        return hashlib.sha1(json.dumps([_COUNTS, _COUNT_RULES, ADDRESS_RULES]).encode()).hexdigest()[:16]
+        the keys they link are among those) and the round-up tags (units.tags_stamp, 0190: a post tagged since
+        moves the voices that link only in round-ups, whatever keys a run's posts link)."""
+        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES, units.tags_stamp(cur)]
+        return hashlib.sha1(json.dumps(what).encode()).hexdigest()[:16]
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
@@ -515,7 +510,7 @@ class DiscoverRepository:
         same counts."""
         cur.execute(f"SELECT {DISCOVER_AT} FROM system_settings WHERE key = 'stories'")
         row = cur.fetchone()
-        what = json.dumps([_COUNTS, _COUNT_RULES, ADDRESS_RULES, row[0] if row else None, facts])
+        what = json.dumps([DiscoverRepository.base(cur), row[0] if row else None, facts])
         return hashlib.sha1(what.encode()).hexdigest()[:16]
 
     @staticmethod
@@ -543,7 +538,7 @@ class DiscoverRepository:
     @staticmethod
     def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:
         """Each source's first post (published, else fetched): how far back it holds."""
-        cur.execute("SELECT source_id, min(COALESCE(published_at, fetched_at)) FROM posts "
+        cur.execute(f"SELECT source_id, min({pairing.ix_date('')}) FROM posts "
                     "WHERE source_id = ANY(%s::uuid[]) GROUP BY 1", (sorted(source_ids),))
         return {str(source_id): first for source_id, first in cur.fetchall() if first}
 
@@ -655,15 +650,15 @@ def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> Lis
         ids = [sid for sid, s in facts.site.items() if s and (s == key or s == site or site_of(s) == site_of(site))
                and sid in created and created[sid] >= at]
         for sid in ids:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT count(*) FROM posts p
-                 WHERE p.source_id = %(s)s AND COALESCE(p.published_at, p.fetched_at) >= %(at)s
+                 WHERE p.source_id = %(s)s AND {pairing.ix_date('p')} >= %(at)s
                    AND (EXISTS (SELECT 1 FROM mx_entity_addresses a WHERE a.url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM stories st WHERE st.origin_url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM story_originals o WHERE o.url = p.normalized_url))
                    AND NOT EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
                                     WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
-                                      AND COALESCE(q.published_at, q.fetched_at) < COALESCE(p.published_at, p.fetched_at))""",
+                                      AND {pairing.ix_date('q')} < {pairing.ix_date('p')})""",
                         {"s": sid, "at": created[sid]})
             out.append({"key": key, "source_id": sid, "name": facts.name.get(sid, ""),
                         "followed_at": created[sid].isoformat(), "originals_first": cur.fetchone()[0]})

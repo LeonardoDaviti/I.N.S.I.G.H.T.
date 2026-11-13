@@ -28,9 +28,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from insight_core.markx import tasks, tracks
+from insight_core.markx import pairing, tasks, tracks
 
-DATE = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+DATE = pairing.ordinary_date("p")
 
 
 def _post(cur: Any, post_id: str, folder: str) -> Optional[Dict[str, Any]]:
@@ -90,8 +90,8 @@ def find_post(cur: Any, ref: str) -> Optional[str]:
             return row[0]
     if not ref:
         return None
-    cur.execute("""SELECT id::text FROM posts WHERE url = %s OR normalized_url = %s
-                    ORDER BY COALESCE(surfaced_at, published_at, fetched_at) DESC LIMIT 1""", (ref, normalize_url(ref)))
+    cur.execute(f"""SELECT id::text FROM posts WHERE url = %s OR normalized_url = %s
+                    ORDER BY {pairing.ordinary_date('')} DESC LIMIT 1""", (ref, normalize_url(ref)))
     row = cur.fetchone()
     return row[0] if row else None
 

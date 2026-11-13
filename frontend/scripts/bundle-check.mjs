@@ -2,7 +2,8 @@
 //   node scripts/bundle-check.mjs           fail when a route (the feed, the post, Mark X's page, an entity's, a
 //                                           story's) grew >1% over its baseline (gzip), went over its ceiling (110% of
 //                                           its base: v9.8's for the feed and the post, v10.17's for Mark X's, issue
-//                                           0195), or the studio is not lazy; a route with no baseline yet is not checked
+//                                           0195), or the build holds the dev-only studio or blog (0190); a route with
+//                                           no baseline yet is not checked
 //   node scripts/bundle-check.mjs --update  record the current sizes as the release's baseline (say why in the commit);
 //                                           a route's ceiling base, once recorded, is never touched
 // Rules: src/lib/bundleBudget.ts. Node >= 22.18 strips the TypeScript types.
@@ -40,4 +41,4 @@ if (problems.length) {
 const delta = (route) => (saved.gzipBytes[route] === undefined ? 'no baseline yet'
   : `${(((bytes[route] - saved.gzipBytes[route]) / saved.gzipBytes[route]) * 100).toFixed(2)}% against ${saved.gzipBytes[route]}`);
 console.log(`bundle check (gzip): ${Object.keys(ROUTES).map((route) => `${route} ${bytes[route]} bytes (${delta(route)})`).join(', ')}; `
-  + 'the studio is its own chunk');
+  + 'no dev-only studio or blog');

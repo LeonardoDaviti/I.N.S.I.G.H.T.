@@ -381,7 +381,8 @@ class FetchStateRepository:
 
     def last_post_at(self, cur: Cursor, source_id: str) -> Optional[datetime]:
         """When its newest post was published (surfaced, else fetched, if undated): health's last_post_at."""
-        cur.execute("SELECT max(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts WHERE source_id = %s",
+        # Issue 0195: the source's kept statistics (read live while its posts changed), as source health reads them.
+        cur.execute(f"SELECT x.last_post_at FROM ({repo_post_stats.stats_sql('WHERE s.id = %s')}) x",
                     (str(source_id),))
         row = cur.fetchone()
         return row[0] if row else None

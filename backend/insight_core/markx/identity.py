@@ -72,6 +72,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from psycopg import errors as psycopg_errors
 
 from insight_core.markx import names as N
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -794,11 +795,11 @@ def _mentions(cur: Any, guide: Any, *, unlinked: bool, limit: Optional[int] = No
     params: List[Any] = [guide] + ([list(posts)] if posts is not None else []) + ([limit] if limit else [])
     cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.span, m.name, m.type, m.role, m.maker, m.family, m.version,
                            m.variant, m.size, m.build, m.entity_id::text,
-                           COALESCE(p.published_at, p.fetched_at), m.ref, m.by_name, m.call_id::text
+                           {pairing.ix_date('p')}, m.ref, m.by_name, m.call_id::text
                       FROM mx_mentions_now m LEFT JOIN posts p ON p.id = m.post_id
                      WHERE m.guide = ANY(%s) {"AND m.entity_id IS NULL AND m.name_key <> ''" if unlinked else ""}
                            {"AND m.post_id = ANY(%s::uuid[])" if posts is not None else ""}
-                     ORDER BY COALESCE(p.published_at, p.fetched_at) DESC NULLS LAST, m.post_id, m.n
+                     ORDER BY {pairing.ix_date('p')} DESC NULLS LAST, m.post_id, m.n
                      {"LIMIT %s" if limit else ""}""", params)
     return [Mention(p, g, n, span or "", name or "", t, r, mk,
                     {"family": fam, "version": v, "variant": var, "size": sz, "build": bd}, e, at, ref, by, call)

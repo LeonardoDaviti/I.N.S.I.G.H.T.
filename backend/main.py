@@ -163,6 +163,8 @@ def _cors_origins() -> list[str]:
             origins.append(origin)
     return origins
 
+# Issue 0188: a request's statements end after 30 s (database.RequestTimeouts); added first, so it is innermost.
+app.add_middleware(database.RequestTimeouts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -304,6 +306,9 @@ class SystemStatus(BaseModel):
     folders: List[FolderStatus] = []
     recent_jobs: List[JobStatus] = []
     source_health_summary: Dict[str, int] = {}
+    # Issue 0188: what `healthy` is computed from (reasons, warnings, checks), and the biggest tables' sizes
+    health: Dict[str, Any] = {}
+    table_sizes: List[Dict[str, Any]] = []
 
 
 class ArchiveRequest(BaseModel):
@@ -1725,9 +1730,12 @@ def get_status():
     svc = services()
     ops = svc.operations
     health_summary = ops.get_source_health()["summary"]
+    health = ops.system_health(failing_sources=sources_failing(health_summary))   # issue 0188: no literal True
     return {
         "success": True,
-        "healthy": True,
+        "healthy": health["healthy"],
+        "health": health,
+        "table_sizes": ops.table_sizes(),
         "generated_at": datetime.now().isoformat(),
         "corpus": {**ops.get_database_counts(), "total_sources": len(svc.sources.get_all_sources()),
                    **ops.get_corpus_freshness()},

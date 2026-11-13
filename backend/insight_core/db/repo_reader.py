@@ -7,7 +7,7 @@ a keyset cursor and a view (a stream, or one group per source).
 Read state lives in the `post_reader_state` projection (0020). `post_interactions` stays the
 audit log; a list query cannot aggregate it per row cheaply.
 
-Every feed is ordered by the sort key `(COALESCE(surfaced_at, published_at, fetched_at), id)`
+Every feed is ordered by the sort key `(pairing.ordinary_date, id)` (surfaced, else published, else fetched)
 descending, which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort
 node). surfaced_at (0037, issue 0039) is set only for a page that was new to you long after its
 date, or a watched page that changed: it sorts at when it reached you, every other post as before;
@@ -48,6 +48,7 @@ from insight_core.utils.post_links import source_kind
 from insight_core.utils.story_rules import confirmed, named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.post_fields import SAVED_KEY, STORY_ONLY_KEY, TITLE_TEXT_CHARS
+from insight_core.markx import pairing
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -61,7 +62,7 @@ DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-ti
 EXCERPT_CHARS = 280
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
-SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+SORT_KEY = pairing.ordinary_date("p")
 # "Unread" as an anti-join, not `rs.read_at IS NULL` on the LEFT JOIN: the planner
 # estimates a null-extended LEFT JOIN column at ~0 rows, gives up on the LIMIT, and
 # seq-scans + sorts posts. The anti-join keeps the posts_feed_order_idx Index Scan.
@@ -100,7 +101,7 @@ _EVERY_SOURCE_FILTERS = ("later", "history")
 
 
 # A story's posts, first posted first (its lead: the first report shown, else the first share).
-_STORY_RANK = "COALESCE({p}.published_at, {p}.fetched_at), {p}.id"
+_STORY_RANK = pairing.IX_DATE + ", {p}.id"   # Mark IX's time
 # A story post's place in its story's order (issue 0072 D: a date alone counts as that day's earliest
 # timed post), then the time: compares two posts of one story ({sp}: story_posts' or news_posts' row).
 _ORDER_RANK = "COALESCE({sp}.position, 0), " + _STORY_RANK
@@ -598,12 +599,12 @@ class ReaderRepository:
         # its address, `url`, is the compared one, without the token).
         with_origin = [story["id"] for story in stories.values() if story["origin"] is not None]
         if with_origin:
-            cur.execute("""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
+            cur.execute(f"""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
                            FROM story_posts sp JOIN stories st ON st.id = sp.story_id
                            JOIN post_links pl ON pl.post_id = sp.post_id AND pl.target_url = st.origin_url
                            JOIN posts p ON p.id = sp.post_id
                            WHERE sp.story_id = ANY(%s::uuid[]) AND pl.shared_url IS NOT NULL
-                           ORDER BY sp.story_id, COALESCE(p.published_at, p.fetched_at), p.id""", (with_origin,))
+                           ORDER BY sp.story_id, {pairing.ix_date('p')}, p.id""", (with_origin,))
             shared = {str(story_id): url for story_id, url in cur.fetchall()}
             for story in stories.values():
                 if story["origin"] is not None:

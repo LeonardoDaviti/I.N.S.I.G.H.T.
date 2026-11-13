@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, Sequence
 from psycopg import Cursor
 
 from insight_core.db.repo_posts import PAGE_READ_KEY
+from insight_core.markx import pairing
 from insight_core.utils.post_fields import MOVED_KEY
 
 PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
@@ -27,7 +28,7 @@ REFRESH_LOCK = 0x5050_0195
 # Each kept column, as the expression over the source `s` that defines it (read live while a source is changed).
 COLUMNS: Dict[str, str] = {
     "post_count": "(SELECT count(*) FROM posts p WHERE p.source_id = s.id)",
-    "last_post_at": """(SELECT max(COALESCE(p.surfaced_at, p.published_at, p.fetched_at)) FROM posts p
+    "last_post_at": f"""(SELECT max({pairing.ordinary_date('p')}) FROM posts p
                          WHERE p.source_id = s.id)""",
     "page_reads": f"""(SELECT COALESCE(jsonb_agg(r.page_read ORDER BY r.fetched_at DESC), '[]'::jsonb)
                          FROM (SELECT p.metadata -> '{PAGE_READ_KEY}' AS page_read, p.fetched_at
@@ -39,10 +40,10 @@ COLUMNS: Dict[str, str] = {
                          ORDER BY p.fetched_at DESC LIMIT 1)""",
     "moved": f"""(SELECT array_agg(r.moved) FROM (SELECT p.metadata ->> '{MOVED_KEY}' AS moved FROM posts p
                    WHERE p.source_id = s.id
-                   ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                   ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                    LIMIT {MOVED_NEWEST}) r)""",
-    "latest_at": "(SELECT max(COALESCE(p.published_at, p.fetched_at)) FROM posts p WHERE p.source_id = s.id)",
-    "oldest_at": "(SELECT min(COALESCE(p.published_at, p.fetched_at)) FROM posts p WHERE p.source_id = s.id)",
+    "latest_at": f"(SELECT max({pairing.ix_date('p')}) FROM posts p WHERE p.source_id = s.id)",
+    "oldest_at": f"(SELECT min({pairing.ix_date('p')}) FROM posts p WHERE p.source_id = s.id)",
     "latest_fetch_at": "(SELECT max(p.fetched_at) FROM posts p WHERE p.source_id = s.id)",
 }
 
