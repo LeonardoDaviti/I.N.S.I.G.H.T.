@@ -51,7 +51,7 @@ SOURCE_NAME = ("COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(
 
 @lru_cache(maxsize=1024)
 def own_account(platform: Optional[str], handle: Optional[str]) -> str:
-    """The X account a source follows ("badlogicgames"), else ""."""
+    """The X account a source follows ("oddlogic_games"), else ""."""
     from insight_core.db.repo_stories import source_account
     account = source_account(platform, handle) or ""
     return account[len("x.com/"):] if account.startswith("x.com/") else ""
@@ -147,7 +147,7 @@ def tweet_account(author: Optional[str]) -> Optional[str]:
 def repost_of(platform: Optional[str], handle: Optional[str], author: Optional[str],
               reposted_by: Optional[Sequence[str]]) -> Optional[Dict[str, Any]]:
     """A row its source reposted (issue 0066): {by, author}, `by` the other accounts of yours that
-    reposted it, never the row's own source (issue 0070: "badlogicgames ↻ from @thsottiaux"). None
+    reposted it, never the row's own source (issue 0070: "oddlogic_games ↻ from @tl_codex"). None
     when the row's source didn't repost it (its author's own tweet, the others said in its story).
     Who wrote it is `original_author`; `by` is who else reposted it."""
     own = own_account(platform, handle)
