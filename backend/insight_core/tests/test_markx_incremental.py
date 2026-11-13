@@ -148,7 +148,7 @@ class Incremental(unittest.TestCase):
         self.assertGreater(self.cur.fetchone()[0], 0)                   # the answers changed stories
 
     def test_a_full_reading_holds_no_text_and_reads_a_page_at_a_time(self):
-        """0201: a full reading reads every post's text to make its rules' posts, a page (TEXT_PAGE) at a time, and
+        """0204: a full reading reads every post's text to make its rules' posts, a page (TEXT_PAGE) at a time, and
         keeps none of them nor any reading: the questions' renders read what they show. Its decisions are the same
         whatever the page (the full run of a page of 1 and of 1000 write the same rows)."""
         self.scene()

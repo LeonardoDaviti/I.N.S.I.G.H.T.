@@ -807,7 +807,7 @@ class Surges(_Db):
         self.assertEqual(got[acme][0]["via"][0]["name"], "Nimbus 5")
         self.assertEqual(got[book.by_key("nimbus 5")][0]["via"], [])
         self.assertNotIn(book.by_key("nimbus 4"), got)
-        # 0201: the stage reads a page's book (the entities its days credit), which counts as the whole book does
+        # 0204: the stage reads a page's book (the entities its days credit), which counts as the whole book does
         guide = schemas.mention_guides()
         self.assertEqual(S.count(self.cur, I.lazy_book(self.cur), None, T0.date() - D, guide),
                          S.count(self.cur, I.load_book(self.cur), None, T0.date() - D, guide))

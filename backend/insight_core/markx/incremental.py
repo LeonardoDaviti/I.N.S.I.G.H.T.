@@ -61,7 +61,7 @@ NIGHTLY_HOUR = 4                                                   # server time
 HUB, HUB_MIN = 0.25, 40                                            # a closure over this share of 40+ stories: flagged
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
-TEXT_PAGE = 2000                                                   # 0201: the posts whose texts a reading reads at once
+TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
 # The modules whose code makes what the state keeps (the rules' posts, the renders, near-copies, News' rows): any
 # change to them makes the next run full (a deploy then starts from a full run, as before 0169).
 CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "insight_core.markx.tasks",
@@ -330,7 +330,7 @@ def stamps_of(cur: Any, state: State, ids: Iterable[str]) -> Dict[str, str]:
 def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict[str, Any], "LazyReadings"]:
     """The world's posts as the rules read them (decide.Post), their texts and their readings, both read on use. A
     post's rules' Post is kept by its stamp: read again (its text) only when the stamp changed or it is new (a full
-    reading: every post's), a page at a time; none of those texts is kept (v10.17.2, 0201)."""
+    reading: every post's), a page at a time; none of those texts is kept (v10.17.2, 0204)."""
     from insight_core.markx import decide, tasks
     from insight_core.markx.plan_marks import execute
     ids = sorted(set(ids))

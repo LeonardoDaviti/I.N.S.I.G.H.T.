@@ -23,7 +23,7 @@ CHUNK = 2000
 
 
 def _names(book: I.Book, roots: Set[Optional[str]]) -> Dict[str, Set[str]]:
-    """{root: the name keys that name it: its members' own keys and every alias of them}, of `roots` (v10.17.2, 0201:
+    """{root: the name keys that name it: its members' own keys and every alias of them}, of `roots` (v10.17.2, 0204:
     the roots the run's mentions name, not every root of the book at each run)."""
     out: Dict[str, Set[str]] = defaultdict(set)
     for eid, e in book.ents.items():
@@ -39,7 +39,7 @@ def _names(book: I.Book, roots: Set[Optional[str]]) -> Dict[str, Set[str]]:
 
 def _makers(book: I.Book, root: str) -> Set[str]:
     """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity). Its
-    members are its cluster (v10.17, 0186: not a walk of the book; v10.17.2, 0201: no book.members() of every root)."""
+    members are its cluster (v10.17, 0186: not a walk of the book; v10.17.2, 0204: no book.members() of every root)."""
     out: Set[str] = set()
     for eid in book.cluster(root):
         e = book.ents[eid]

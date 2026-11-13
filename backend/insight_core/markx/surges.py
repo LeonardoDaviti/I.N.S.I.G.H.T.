@@ -91,7 +91,7 @@ def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]
           book: Optional[I.Book] = None) -> Dict[str, Any]:
     """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now
     (its entities, names, merges and pins; no mention count is read), else a page's book is read here (v10.17.2,
-    0201: the entities the days' mentions credit, not the whole book)."""
+    0204: the entities the days' mentions credit, not the whole book)."""
     from insight_core.markx import schemas
     guide = schemas.mention_guides()   # 0133: the current set
     book = I.lazy_book(cur) if book is None else book
