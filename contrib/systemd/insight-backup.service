@@ -1,0 +1,19 @@
+# A backup of INSIGHT on the server (scripts/backup: the database -Fc, the secrets volume, .env) into
+# <checkout>/backups, keeping the newest INSIGHT_BACKUPS_KEEP (5). A *system* unit: it runs docker as root.
+# The backup holds secrets (the credentials key, .env): it is written 700/600, owned by root.
+#   sudo cp contrib/systemd/insight-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl edit insight-backup.service     # set WorkingDirectory= to your checkout (see below)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now insight-backup.timer
+# Cron instead: 30 3 * * * cd /path/to/checkout && ./scripts/backup >> backups/backup.log 2>&1   (root's crontab)
+[Unit]
+Description=INSIGHT backup (database, secrets volume, .env)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# Your checkout (the directory holding docker-compose.yml)
+WorkingDirectory=/opt/insight
+ExecStart=/bin/sh -c 'exec ./scripts/backup'
+Nice=10
+IOSchedulingClass=idle

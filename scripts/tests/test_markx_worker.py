@@ -1060,5 +1060,37 @@ class TestWebSearch(Base):
         self.assertEqual(len(self.fake_calls()), 2)
 
 
+class TestLogRotation(unittest.TestCase):
+    """v10.17: the JSON-lines log rotates by size and keeps a few old files; every line lands in one of them."""
+
+    def test_rotates_and_keeps(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "log.jsonl"
+            log = W.Log(str(path), quiet=True, max_bytes=300, keep=2)
+            for i in range(40):
+                log("tick", n=i)
+            files = sorted(p.name for p in Path(d).iterdir() if not p.name.endswith(".lock"))
+            self.assertEqual(files, ["log.jsonl", "log.jsonl.1", "log.jsonl.2"])
+            for name in files:
+                self.assertLessEqual((Path(d) / name).stat().st_size, 300 + 100)
+                for line in (Path(d) / name).read_text().splitlines():
+                    self.assertEqual(json.loads(line)["event"], "tick")
+            last = [json.loads(x)["n"] for x in path.read_text().splitlines()]
+            self.assertEqual(last[-1], 39)
+
+    def test_two_writers_lose_no_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "log.jsonl"
+            logs = [W.Log(str(path), quiet=True, max_bytes=10_000_000) for _ in range(2)]
+            threads = [threading.Thread(target=lambda lg=lg, k=k: [lg("w", k=k, n=i) for i in range(200)])
+                       for k, lg in enumerate(logs)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            lines = [json.loads(x) for x in path.read_text().splitlines()]
+            self.assertEqual(len(lines), 400)
+
+
 if __name__ == "__main__":
     unittest.main()

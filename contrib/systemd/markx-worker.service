@@ -1,0 +1,21 @@
+# One Mark X worker cycle (scripts/markx-worker), as a systemd *user* unit on the device that runs the worker.
+# Install: DEPLOYMENT.md, "Workers that survive a reboot". The worker is run by hand unless you enable the timer.
+#   cp contrib/systemd/markx-worker.{service,timer} ~/.config/systemd/user/
+#   cp contrib/systemd/markx-worker.env.example ~/.config/insight/markx-worker.env   # then edit it
+#   systemctl --user daemon-reload
+#   systemctl --user start markx-worker.service          # one cycle now
+[Unit]
+Description=INSIGHT Mark X worker: one cycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/insight/markx-worker.env
+# The worker keeps its state (log.jsonl, the spool, the GGUF hash memo) in ~/.local/state/insight/markx-worker.
+ExecStart=/bin/sh -c 'exec "$MARKX_WORKER" cycle $MARKX_ARGS'
+# 3 server unreachable, 4 Claude usage limit: expected stops, the next timer run tries again.
+SuccessExitStatus=3 4
+# A cycle never runs longer than this (its calls have their own --timeout).
+TimeoutStartSec=4h
+Nice=10

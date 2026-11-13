@@ -681,6 +681,20 @@ def briefings(cur: Any) -> Dict[str, Any]:
     return {"day": day, "briefings": out}
 
 
+WORKER_STALE_DAYS = 3     # 0188: a worker silent this long shows as stale (the overview, /api/status's warnings)
+
+
+def workers_view(contacts: Dict[str, datetime], now: datetime,
+                 leased: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+    """Each worker that called or holds leases: {worker, last_contact, leased, stale (silent for more than
+    WORKER_STALE_DAYS, or no contact on record)}."""
+    leased = leased or {}
+    limit = timedelta(days=WORKER_STALE_DAYS)
+    return [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, 0),
+             "stale": contacts.get(w) is None or now - contacts[w] > limit}
+            for w in sorted(set(contacts) | set(leased))]
+
+
 def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     """The worker's side: the queue by kind, answers per day, tokens and their API cost, failures, last contacts, the
     last decision run."""
@@ -702,8 +716,7 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     invalid = [{"kind": k, "error": e, "at": at} for k, e, at in cur.fetchall()]
     cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
     leased = {w: (k, until) for w, k, until in cur.fetchall()}
-    workers = [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, (0, None))[0]}
-               for w in sorted(set(contacts) | set(leased))]
+    workers = workers_view(contacts, datetime.now(timezone.utc), leased={w: k for w, (k, _) in leased.items()})
     run = repo.last_run(cur)
     return {"queue": queue, "days": days,
             "tokens": {"calls": n, "tokens_in": int(ti), "tokens_out": int(to), "paid_usd": round(float(cost), 4),
