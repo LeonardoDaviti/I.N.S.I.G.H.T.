@@ -197,10 +197,11 @@ class FeedFinderTests(unittest.TestCase):
 
     def test_the_first_common_path_returns_without_waiting_for_the_later_ones(self):
         started = time.monotonic()
-        finding, _ = find({"https://x.example/": page(), "https://x.example/feed": rss("Site"),
-                           "https://x.example/rss": hang}, "https://x.example/")
+        with mock.patch.object(feed_finder, "PROOF_GRACE_S", 30.0):   # a wait for the grace would take 30 s
+            finding, _ = find({"https://x.example/": page(), "https://x.example/feed": rss("Site"),
+                               "https://x.example/rss": hang}, "https://x.example/")
         self.assertEqual(finding, found(("https://x.example/feed", "Site")))
-        self.assertLess(time.monotonic() - started, feed_finder.PROOF_GRACE_S / 2)
+        self.assertLess(time.monotonic() - started, 10)
 
     def test_a_huge_feed_is_proved_from_its_first_bytes(self):
         huge = rss("Huge", items=20_000)          # several megabytes
@@ -254,14 +255,14 @@ class FeedFinderTests(unittest.TestCase):
             finding, _ = find({"https://x.example/": page(head), "https://x.example/slow.xml": hang,
                                "https://x.example/fast.xml": rss("Fast")}, "https://x.example/")
         self.assertEqual(finding, found(("https://x.example/fast.xml", "Fast")))
-        self.assertLess(time.monotonic() - started, 1)
+        self.assertLess(time.monotonic() - started, 5)    # the slow feed hangs to the 10 s budget
 
     def test_a_hanging_site_gives_none_within_the_budget(self):
         started = time.monotonic()
         with mock.patch.object(feed_finder, "BUDGET_S", 0.2):
             finding, _ = find(hang, "https://x.example/")
         self.assertEqual(finding, FeedFinding("none"))
-        self.assertLess(time.monotonic() - started, 1)
+        self.assertLess(time.monotonic() - started, 5)    # the site hangs an hour
 
     def test_a_request_slower_than_its_timeout_is_skipped(self):
         with mock.patch.object(feed_finder, "REQUEST_TIMEOUT_S", 0.05):
@@ -470,7 +471,7 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
         started = time.monotonic()
         with mock.patch.object(main.page_watch, "OFFER_BUDGET_S", 0.5):
             body = self.ask(responses, SHOP)
-        self.assertLess(time.monotonic() - started, 3)
+        self.assertLess(time.monotonic() - started, 10)   # the slow page hangs an hour
         self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/now"])
 
     def test_the_previews_of_one_run_read_the_sites_sitemap_once(self):

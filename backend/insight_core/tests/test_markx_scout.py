@@ -258,8 +258,8 @@ class _Scout(_Api):
         with self.conn.transaction():
             return scout.start(self.cur, self.folder, trigger=trigger)
 
-    def advance(self, run_id, reader):
-        return asyncio.run(scout.advance(db_url(), run_id, reader=reader))
+    def advance(self, run_id, reader, now=None):
+        return asyncio.run(scout.advance(db_url(), run_id, reader=reader, now=now))
 
     def cands(self, run_id):
         self.cur.execute("SELECT finder, key, state, address FROM mx_scout_candidates WHERE run_id = %s ORDER BY rank",
@@ -529,11 +529,16 @@ class CostGuard(_Scout):
         self.assertEqual([c["finder"] for c in picked], ["match", "match", "shape", "match"])
 
     def test_two_advances_never_read_one_run_at_once(self):
+        # Both claims on one clock (v10.17): NOW is the module's import time, and the second advance read the wall
+        # clock, so a suite that reached this test over scout.CLAIM (20 min) after importing it found the claim
+        # expired and the advance claimed the run (a failure only under load).
         self.in_post(links=["https://makers.example/blog/a-printed-hinge"])
         run = self.start()
         with self.conn.transaction():
             self.assertTrue(scout.claim(self.cur, run["id"], NOW))
-        self.assertFalse(self.advance(run["id"], StubReader())["claimed"])
+        self.assertFalse(self.advance(run["id"], StubReader(), now=lambda: NOW + timedelta(minutes=1))["claimed"])
+        self.assertTrue(self.advance(run["id"], StubReader(), now=lambda: NOW + scout.CLAIM + timedelta(minutes=1))["claimed"],
+                        "a claim ends after scout.CLAIM")
 
 
 if __name__ == "__main__":

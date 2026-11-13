@@ -311,8 +311,11 @@ class TheStackDump(unittest.TestCase):
             self.assertEqual(p.stdout.readline().strip(), "ready")
             time.sleep(0.5)
             os.kill(p.pid, signal.SIGUSR1)
-            time.sleep(1)
-            text = open(os.path.join(tmp, W.STACKS)).read()
+            text, end = "", time.monotonic() + 20   # the stacks written within 20 s (a fixed 1 s failed under load)
+            while "stuck_in_a_loop" not in text and time.monotonic() < end:
+                time.sleep(0.2)
+                path = os.path.join(tmp, W.STACKS)
+                text = open(path).read() if os.path.exists(path) else ""
             self.assertIn("stuck_in_a_loop", text)
             self.assertEqual(p.poll(), None, "the process keeps running")
 
