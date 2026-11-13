@@ -763,9 +763,9 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     their stamps and a text or reading is read only when used (incremental.world)."""
     from insight_core.markx import embed, incremental, tasks
     since = now - timedelta(days=config.days)
-    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
-                                           WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s)""",
+                                           WHERE {pairing.ordinary_date('p')} >= %s)""",
                 (since,))
     rows = cur.fetchall()
     cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")

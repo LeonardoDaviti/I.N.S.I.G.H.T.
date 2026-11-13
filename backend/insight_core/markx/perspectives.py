@@ -63,7 +63,7 @@ class Member:
     src: str                  # the source's id
     src_name: str
     kind: str
-    at: datetime              # COALESCE(surfaced_at, published_at, fetched_at)
+    at: datetime              # its own date (Pairing's ordinary date: the frozen port's input)
     published: Optional[datetime]
     title: str
     text: str

@@ -88,7 +88,7 @@ def fresh_sql(alias: str = "p", since: str = "%(fresh)s") -> str:
     """The fresh lane's condition over posts `alias`, `since` the lane's start (now - FRESH_HOURS): fetched or surfaced
     since then, and dated (surfaced, published, fetched) within FRESH_DATED_DAYS."""
     return (f"(GREATEST({alias}.fetched_at, {alias}.surfaced_at) >= {since} "
-            f"AND COALESCE({alias}.surfaced_at, {alias}.published_at, {alias}.fetched_at) "
+            f"AND {pairing.ordinary_date(alias)} "
             f">= {since}::timestamptz + make_interval(hours => {FRESH_HOURS}) - make_interval(days => {FRESH_DATED_DAYS}))")
 
 
@@ -166,10 +166,10 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
     if not ids:
         return {}
     cur.execute(
-        """SELECT p.id, s.platform, s.handle_or_url,
+        f"""SELECT p.id, s.platform, s.handle_or_url,
                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                            s.handle_or_url),
-                  p.source_id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), COALESCE(pp.title, p.title),
+                  p.source_id, {pairing.ordinary_date('p')}, COALESCE(pp.title, p.title),
                   p.content, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.quoted,
                   p.language_code, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''),
                   NULLIF(btrim(p.metadata->'forwarded_from'->>'username'), '')
@@ -640,17 +640,17 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     for _page in range(SCAN_PAGES):
         rows = plan_marks.execute(cur,
             f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
+                                        - {pairing.ordinary_date('p')})) / 86400))::int,
+                      {pairing.ordinary_date('p')}, {plan_marks.STAMP}
                  FROM posts p
-                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND (%(fresh)s::timestamptz IS NULL OR {fresh_sql()})
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
-                       OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
-                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                       OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
+                ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit, "fresh": fetched_since,
              "at": after[0] if after else None, "id": after[1] if after else None})
@@ -689,10 +689,10 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
         threads = Config().check_threads
     certain = CERTAIN - {"thread"} if threads else CERTAIN
     cur.execute(
-        """SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
+        f"""SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
             WHERE %(days)s::int IS NULL
                OR sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
-                                   WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                   WHERE {pairing.ordinary_date('p')}
                                          >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))""",
         {"now": now, "days": days})
     stories: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
@@ -1044,11 +1044,11 @@ def plan_stance(cur: Cursor, *, now: Optional[datetime] = None, limit: int = PLA
     cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = 'stance' AND a IS NOT NULL
                     AND created_at >= date_trunc('month', %s::timestamptz)""", (now,))
     asked = {r[0] for r in cur.fetchall()}
-    cur.execute("""SELECT p.id::text, p.source_id::text, COALESCE(p.title, ''), COALESCE(p.content, ''), p.author,
+    cur.execute(f"""SELECT p.id::text, p.source_id::text, COALESCE(p.title, ''), COALESCE(p.content, ''), p.author,
                           p.reposted_by, (p.metadata ? 'forwarded_from')
                      FROM posts p
                     WHERE p.source_id = ANY(%s::uuid[])
-                      AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
+                      AND {pairing.ordinary_date('p')} >= %s
                       AND length(COALESCE(p.title, '')) + length(COALESCE(p.content, '')) >= %s
                     ORDER BY p.id""",
                 ([s for s in srcs if s not in asked and srcs[s].kind != "reddit"], now - timedelta(days=STANCE_DAYS),
@@ -1094,9 +1094,9 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
         f"""WITH few AS (SELECT s.id FROM sources s
                           WHERE s.platform <> 'saved'
                             AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id AND EXISTS ({done})) < %(below)s),
-                 last AS (SELECT p.id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at) AS at,
+                 last AS (SELECT p.id, {pairing.ordinary_date('p')} AS at,
                                  row_number() OVER (PARTITION BY p.source_id ORDER BY
-                                                    COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC) AS k
+                                                    {pairing.ordinary_date('p')} DESC, p.id DESC) AS k
                             FROM posts p WHERE p.source_id IN (SELECT id FROM few))
             SELECT l.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now()) - l.at)) / 86400))::int
               FROM last l
@@ -1147,16 +1147,16 @@ def plan_windows(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, n
         days = reading_window(cur)
     rows = plan_marks.execute(cur,
         f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
+                                    - {pairing.ordinary_date('p')})) / 86400))::int,
                   {plan_marks.STAMP}
              FROM posts p
-            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+            WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND octet_length(p.content) > %(chars)s   -- bytes: a toasted text is not decompressed
               AND (SELECT count(*) FROM mx_tasks t                -- its first window's task only (no input read)
                     WHERE t.a = p.id AND t.kind = 'entities' AND t.guide = %(guide)s) = 1
               AND {plan_marks.unmarked()}
-            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+            ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
             LIMIT %(limit)s""",
         {"now": now, "days": days, "chars": chars, "guide": guide, "kind": WINDOWS_MARK, "limit": limit})
     posts = load_posts(cur, [r[0] for r in rows])

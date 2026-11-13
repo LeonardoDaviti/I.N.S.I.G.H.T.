@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from insight_core.markx import repo
+from insight_core.markx import pairing, repo
 
 KEY = "story_window_days"            # mx_settings: the owner's story window (int days, or null: every post)
 PREVIOUS = "story_window_previous"   # mx_settings: the window set before "everything" (the fallback's)
@@ -137,7 +137,7 @@ def next_since(cur: Any, now: datetime) -> Optional[datetime]:
 
 
 def oldest_post(cur: Any) -> Optional[datetime]:
-    cur.execute("SELECT min(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts")
+    cur.execute(f"SELECT min({pairing.ordinary_date('')}) FROM posts")
     return cur.fetchone()[0]
 
 
@@ -176,8 +176,8 @@ def advance(cur: Any, now: datetime, *, waiting_old: int, candidates_left: int,
         return {"reached": state.get("reached"), "done": False, "stepped": False, "held": held}
     if not done and waiting_old == 0 and candidates_left == 0:
         target = current - timedelta(days=STEP_DAYS)
-        cur.execute("SELECT max(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts "
-                    "WHERE COALESCE(surfaced_at, published_at, fetched_at) < %s", (current,))
+        cur.execute(f"SELECT max({pairing.ordinary_date('')}) FROM posts "
+                    f"WHERE {pairing.ordinary_date('')} < %s", (current,))
         newest_before = cur.fetchone()[0]           # a step with no post: on to the next post's week (no empty runs)
         if newest_before is not None and newest_before.astimezone(timezone.utc).date() < target:
             target = newest_before.astimezone(timezone.utc).date() - timedelta(days=STEP_DAYS - 1)

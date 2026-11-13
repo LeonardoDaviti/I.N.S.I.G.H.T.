@@ -49,6 +49,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.markx import pairing
 from insight_core.utils.addresses import host_of
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, ORIGIN_MIN_VOICES, OWNER_DEPTH,
@@ -216,8 +217,8 @@ GROUP BY 1, 2
 
 # Each suggestion's activity (issue 0080: Discover's order): when your sources last linked it, and how many
 # of the posts linking it you opened or read.
-_ACTIVITY = """
-SELECT d.key, max(COALESCE(p.published_at, p.fetched_at)),
+_ACTIVITY = f"""
+SELECT d.key, max({pairing.ix_date('p')}),
        count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
            SELECT 1 FROM post_interactions i WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session')))
 FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND NOT pl.boilerplate
@@ -465,7 +466,7 @@ class DiscoverRepository:
         stored: Dict[str, List[str]] = defaultdict(list)
         for sid, url in cur.fetchall():
             stored[sid].append(url)
-        cur.execute("SELECT source_id::text, max(COALESCE(published_at, fetched_at)) FROM posts WHERE source_id = ANY(%s::uuid[]) "
+        cur.execute(f"SELECT source_id::text, max({pairing.ix_date('')}) FROM posts WHERE source_id = ANY(%s::uuid[]) "
                     "GROUP BY 1", (ids,))
         newest = dict(cur.fetchall())
         out = {}
@@ -543,7 +544,7 @@ class DiscoverRepository:
     @staticmethod
     def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:
         """Each source's first post (published, else fetched): how far back it holds."""
-        cur.execute("SELECT source_id, min(COALESCE(published_at, fetched_at)) FROM posts "
+        cur.execute(f"SELECT source_id, min({pairing.ix_date('')}) FROM posts "
                     "WHERE source_id = ANY(%s::uuid[]) GROUP BY 1", (sorted(source_ids),))
         return {str(source_id): first for source_id, first in cur.fetchall() if first}
 
@@ -655,15 +656,15 @@ def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> Lis
         ids = [sid for sid, s in facts.site.items() if s and (s == key or s == site or site_of(s) == site_of(site))
                and sid in created and created[sid] >= at]
         for sid in ids:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT count(*) FROM posts p
-                 WHERE p.source_id = %(s)s AND COALESCE(p.published_at, p.fetched_at) >= %(at)s
+                 WHERE p.source_id = %(s)s AND {pairing.ix_date('p')} >= %(at)s
                    AND (EXISTS (SELECT 1 FROM mx_entity_addresses a WHERE a.url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM stories st WHERE st.origin_url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM story_originals o WHERE o.url = p.normalized_url))
                    AND NOT EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
                                     WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
-                                      AND COALESCE(q.published_at, q.fetched_at) < COALESCE(p.published_at, p.fetched_at))""",
+                                      AND {pairing.ix_date('q')} < {pairing.ix_date('p')})""",
                         {"s": sid, "at": created[sid]})
             out.append({"key": key, "source_id": sid, "name": facts.name.get(sid, ""),
                         "followed_at": created[sid].isoformat(), "originals_first": cur.fetchone()[0]})

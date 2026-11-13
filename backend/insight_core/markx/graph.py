@@ -27,7 +27,7 @@ valid_to, never deleted):
      post GAP_DAYS back or more; the predecessor's earliest NEXT_VERSION_POSTS posts. rule `entity_next_version`,
      evidence both entity keys. It replaces any judge call of next_version on that pair.
 
-Dates are G2's: COALESCE(published_at, surfaced_at, fetched_at).
+Dates are G2's: published first (Pairing's `published_date`, 0128's published).
 """
 from __future__ import annotations
 
@@ -42,6 +42,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urljoin
 
 from psycopg import errors as psycopg_errors
+
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -70,12 +72,11 @@ BEFORE_SHOWN = 10
 EXCERPT = 1100                # G2's render: 1,100 characters a post
 ANCHOR = 300
 DOCS_SHOWN = 4
-POST_DATE = "COALESCE({p}.published_at, {p}.surfaced_at, {p}.fetched_at)"
 MODEL = "bge-m3"
 
 
 def _date(alias: str = "p") -> str:
-    return POST_DATE.format(p=alias)
+    return pairing.published_date(alias)   # G2's dates: 0128's published
 
 
 def _savepoint(cur: Any, fn, *args, **kw):
