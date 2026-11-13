@@ -72,6 +72,20 @@ class Rules(unittest.TestCase):
         self.assertEqual((qs["check:E:e"].side, qs["check:E:e"].roundup), (("f",), True))
         self.assertNotIn("check:A:a", {q.tid for q in self.plan()})   # a first post that is no roundup: never
 
+    def test_a_connection_holds_only_while_the_members_it_was_asked_about_stay(self):
+        """0204: a connection carries the members its question showed; once they left the story it joins (its id
+        now holds other posts), it is no longer found, so it closes and the pair is asked again over the members now."""
+        c = {"a_kind": "story", "a": "S1", "b_kind": "story", "b": "S2", "shown": {"a": ["p1", "p2"], "b": ["q1"]}}
+        self.assertTrue(D.holds(c, {"S1": {"p1", "p2", "p3"}, "S2": {"q1"}}))
+        self.assertFalse(D.holds(c, {"S1": {"p3", "p4"}, "S2": {"q1"}}), "S1's id now holds other posts")
+        self.assertFalse(D.holds(c, {"S1": {"p1", "p2"}}), "S2 gone")
+        late = {"a_kind": "post", "a": "x", "b_kind": "story", "b": "S2", "shown": {"b": ["q1"]}}
+        self.assertTrue(D.holds(late, {"S2": {"q1"}}))
+        self.assertTrue(D.holds({"a_kind": "story", "a": "S1", "b_kind": "story", "b": "S2"}, {}), "no record: as before")
+        posts = {p.id: p for p in (post("a", "s1"), post("b", "s2", 1), post("e", "s3", 2), post("f", "s4", 3))}
+        out = D.decide(posts, {"A": story("a", "b"), "E": story("e", "f")}, [])
+        self.assertEqual(D.members_of(out, {"A": "S1", "E": "S2"}), {"S1": {"a", "b"}, "S2": {"e", "f"}})
+
     def test_a_member_joined_by_thread_is_checked_but_not_in_the_prototypes_config(self):
         self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "citation"), D.Member("c", "report", "thread")]
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})

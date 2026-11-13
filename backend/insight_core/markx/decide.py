@@ -409,6 +409,7 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
                     if not (rel == "same_event" and pa >= config.tau_merge):
                         relation = {"development": "follows_up", "reaction": "background"}.get(rel, "related")
                         connections.append({"a_kind": "post", "a": q.post, "b_kind": "story", "b": key,
+                                            "shown": {"b": list(q.side)},
                                             "relation": relation, "p": pa, "call": v.call, "tid": q.tid,
                                             "reason": v.reason, "late": True})
                         log.append({"tid": q.tid, "change": "late_connection", "story": key, "post": q.post,
@@ -451,6 +452,7 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
             log.append({"tid": q.tid, "change": "development_link", "story": q.story, "other": q.other,
                         "p_about": pa, "cos": q.cos, "reason": v.reason, "call": v.call})
             connections.append({"a_kind": "story", "a": q.story, "b_kind": "story", "b": q.other,
+                                "shown": {"a": list(q.side), "b": list(q.side_b)},
                                 "relation": "development", "p": pa, "call": v.call, "tid": q.tid, "reason": v.reason})
         elif rel == "same_event" and pa >= config.tau_merge:
             x, y = find(g(q.story)), find(g(q.other))
@@ -1100,18 +1102,21 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
 def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]], scope: Set[str],
                         now: datetime) -> Counter:
     """The run's typed connections become the current ones touching `scope` (its stories and posts): new ones open,
-    the ones no longer found close (valid_to)."""
+    the ones no longer found close (valid_to). 0204: each carries the members its question showed (evidence `shown`):
+    one found again over other members is closed and opened anew with them."""
     from insight_core.markx import repo
     counts: Counter = Counter()
     want = {(c["a_kind"], c["a"], c["b_kind"], c["b"], c["relation"]): c for c in wanted_rows}
     # 0131: the graph's edges between two posts are markx/graph.py's (its own stage), never closed here
-    cur.execute("""SELECT a_kind, a::text, b_kind, b::text, relation, p, call_id::text, rule FROM mx_connections
+    cur.execute("""SELECT a_kind, a::text, b_kind, b::text, relation, p, call_id::text, rule, evidence->'shown'
+                     FROM mx_connections
                     WHERE valid_to IS NULL AND (a = ANY(%(s)s::uuid[]) OR b = ANY(%(s)s::uuid[]))
                       AND NOT (a_kind = 'post' AND b_kind = 'post')""", {"s": sorted(scope)})
     have = {tuple(r[:5]): r for r in cur.fetchall()}
 
     def same(c: Dict[str, Any], r: Tuple) -> bool:
-        return _p(c.get("p")) == _p(r[5]) and (c.get("call") or None) == (r[6] or None)
+        return (_p(c.get("p")) == _p(r[5]) and (c.get("call") or None) == (r[6] or None)
+                and (c.get("shown") or None) == (r[8] or None))
     for k, r in have.items():
         if k not in want or not same(want[k], r):
             repo.close_connection(cur, a_kind=k[0], a=k[1], b_kind=k[2], b=k[3], relation=k[4], at=now)
@@ -1120,7 +1125,8 @@ def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]]
         if k not in have or not same(c, have[k]):
             repo.open_connection(cur, a_kind=k[0], a=k[1], b_kind=k[2], b=k[3], relation=k[4], run_id=run_id,
                                  p=_p(c.get("p")), call_id=c.get("call"), rule=c.get("rule"),
-                                 evidence={"reason": c.get("reason"), "question": c.get("tid")}, at=now)
+                                 evidence={"reason": c.get("reason"), "question": c.get("tid"),
+                                           **({"shown": c["shown"]} if c.get("shown") else {})}, at=now)
             counts["opened"] += 1
     return counts
 
@@ -1139,14 +1145,16 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
     newest; the rest wait for later runs."""
     from insight_core.markx import incremental, tasks
     rows: List[Dict[str, Any]] = []
+    members = members_of(out, ids)
 
     def sid(key: str) -> Optional[str]:
         return ids.get(out.final.get(key, key))
     for c in out.connections:
         a = sid(c["a"]) if c["a_kind"] == "story" else c["a"]
         b = sid(c["b"]) if c["b_kind"] == "story" else c["b"]
-        if a and b and a != b and c.get("call"):
-            rows.append(dict(c, a=a, b=b))
+        row = dict(c, a=a, b=b)
+        if a and b and a != b and c.get("call") and holds(row, members):
+            rows.append(row)
     groups = {k: sorted((p for p in out.about[k] if p in world.posts), key=lambda p: _at_key(world.posts, p))
               for k in news_keys}
     found = pairing.story_pairs(cur, config.connected(), groups, world.posts)   # voices, bar, days: Pairing's
@@ -1170,8 +1178,29 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             continue
         rows.append({"a_kind": "story", "a": ids[x0], "b_kind": "story", "b": ids[y0],
                      "relation": CONNECT_RELATIONS[v.relation], "p": v.p, "call": v.call, "reason": v.reason,
-                     "tid": f"connect:{x0}:{y0}"})
+                     "tid": f"connect:{x0}:{y0}",
+                     "shown": {"a": groups[x0][:tasks.CONNECT_MEMBERS], "b": groups[y0][:tasks.CONNECT_MEMBERS]}})
     return rows
+
+
+def members_of(out: Outcome, ids: Dict[str, str]) -> Dict[str, Set[str]]:
+    """{Mark X story id: its member posts in this run} (the run's stories, by the ids persist gave them)."""
+    got: Dict[str, Set[str]] = defaultdict(set)
+    for key, ms in out.about.items():
+        if key in ids:
+            got[ids[key]] |= set(ms)
+    return dict(got)
+
+
+def holds(c: Dict[str, Any], members: Dict[str, Set[str]]) -> bool:
+    """0204: a connection holds while the members its question showed are still members of the stories it joins (a
+    story id whose members moved keeps none of its old answers: 16 of 94 same-event story connections on the server
+    were about members those stories no longer hold). One with no record of what it showed holds as before."""
+    for end in ("a", "b"):
+        shown = (c.get("shown") or {}).get(end)
+        if c.get(f"{end}_kind") == "story" and shown and not set(shown) <= members.get(c[end], set()):
+            return False
+    return True
 
 
 def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, news_keys: Sequence[str]) -> int:
