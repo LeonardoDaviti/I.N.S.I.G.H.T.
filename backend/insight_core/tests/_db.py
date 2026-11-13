@@ -76,6 +76,16 @@ def clear_tables(cur, tables, *, cascade: bool = False) -> None:
                          UNION SELECT c.conrelid FROM pg_constraint c JOIN reach r ON c.confrelid = r.rel AND c.contype = 'f')
                        SELECT rel::regclass::text FROM reach""", (names,))
         names = list(dict.fromkeys(names + [r[0] for r in cur.fetchall()]))
+    # A table with an HNSW index is truncated all the same: a DELETE leaves its rows in the graph until a vacuum, and
+    # an index scan that meets them returns fewer live neighbours (test_markx_storage's nearest lost one after other
+    # modules' vectors were deleted). Few tables (mx_embeddings, mx_entity_vectors), none referenced by a key.
+    cur.execute("""SELECT DISTINCT i.indrelid::regclass::text FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                     JOIN pg_am a ON a.oid = c.relam
+                    WHERE a.amname = 'hnsw' AND i.indrelid = ANY(%s::regclass[])""", (names,))
+    graphs = [r[0] for r in cur.fetchall()]
+    if graphs:
+        cur.execute("TRUNCATE " + ", ".join(graphs))
+        names = [n for n in names if n not in graphs]
     cur.execute("SET session_replication_role = replica")
     try:
         for name in names:

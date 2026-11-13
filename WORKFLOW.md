@@ -69,9 +69,10 @@ JOBS=6 scripts/test-backend.sh                                    # once, before
   migrations), not a database migrated from nothing; every run (every shard) still has a database of its own, so
   runs at once never share rows.
 - `JOBS=n` splits the whole suite by module into n shards, each in its own container and database, the slowest
-  modules dealt first (by the last run's times). The result line counts the modules and tests. Each module is
-  imported just before it runs (a module-level `NOW = datetime.now()` is never the suite's start; `DISCOVER=1` runs
-  the old single `unittest discover`).
+  modules dealt first (by the last run's times). The result line counts the modules and tests; a failed shard's log
+  stays in `~/.cache/insight-prep/shards/<pid>/`. Within a shard the modules are imported first and run in name
+  order, as `unittest discover` did (some tests mix several modules' import-time `NOW`, some read what earlier
+  modules left); `DISCOVER=1` runs the old single `unittest discover`.
 - A run's databases are dropped in the background when it ends, and a run first removes what ended runs left
   behind: their test containers and `insight_run_<time>_<pid>_*test` databases (on both servers) once the pid is gone
   and they are 10 minutes old and unused, or anything of theirs over `CLEAN_HOURS` (6) old (`CLEAN_ORPHANS=0` skips,

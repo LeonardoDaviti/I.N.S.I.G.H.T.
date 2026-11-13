@@ -198,9 +198,9 @@ if [ -z "${TEST_DATABASE_URL:-}" ] && [ "${NO_TEMPLATE:-0}" != "1" ]; then TEMPL
 
 # The whole suite (no arguments) in JOBS shards at once (default 1): the modules dealt out, the slowest first (by the
 # last run's times when known), each shard its own database and container; a shard's output is printed when it
-# failed. A shard imports each module just before it runs it, so a module-level clock (NOW = datetime.now() at
-# import) is never the suite's start, up to an hour stale by the time a late module ran under `discover` (v10.17:
-# test_markx_scout's claim test failed only under load that way).
+# failed. A shard imports its modules first and runs them in name order, as `unittest discover` did: tests mix the
+# module-level clocks of several modules (NOW = datetime.now() at import; test_markx_later failed when each module was
+# imported just before it ran), and some read what earlier modules left. A shard is short, so its clocks are fresh.
 if [ "$#" -eq 0 ] && [ -z "${TEST_DATABASE_URL:-}" ] && [ "${DISCOVER:-0}" != "1" ]; then
   TIMES="${XDG_CACHE_HOME:-$HOME/.cache}/insight-prep/test-times.tsv"
   mkdir -p "$(dirname "$TIMES")"; touch "$TIMES"
@@ -215,14 +215,20 @@ if [ "$#" -eq 0 ] && [ -z "${TEST_DATABASE_URL:-}" ] && [ "${DISCOVER:-0}" != "1
       { best = 0; for (i = 1; i < n; i++) if (load[i] < load[best]) best = i
         load[best] += $2; list[best] = list[best] " insight_core.tests." $1 }
       END { for (i = 0; i < n; i++) print list[i] }')
+  # each shard's modules in name order, as `unittest discover` ran them: some tests read what earlier modules left in the
+  # database or the process (the HNSW neighbours of test_markx_storage, the children test_api_watchdog lists, the tied
+  # rows of test_markx_event_types) and failed when the slowest modules ran first in one shard (measured)
+  for i in "${!shards[@]}"; do shards[$i]="$(tr ' ' '\n' <<<"${shards[$i]}" | grep . | LC_ALL=C sort | paste -sd ' ' - || true)"; done
+  mapfile -t shards < <(printf '%s\n' "${shards[@]}" | grep . || true)   # no empty shard (more JOBS than modules)
   echo "==> ${#shards[@]} shards from template ${TEMPLATE:-none}"
   # one process a shard, its modules one after another; a line for each module: tests, seconds, result
   SHARD_PY='
 import sys, time, unittest
 failed = 0
-for m in sys.argv[1:]:
+suites = [(m, unittest.defaultTestLoader.loadTestsFromName(m)) for m in sys.argv[1:]]   # all imported first, as discover
+for m, suite in suites:
     t = time.monotonic()
-    r = unittest.TextTestRunner(stream=sys.stdout, verbosity=1).run(unittest.defaultTestLoader.loadTestsFromName(m))
+    r = unittest.TextTestRunner(stream=sys.stdout, verbosity=1).run(suite)
     bad = len(r.failures) + len(r.errors) + len(r.unexpectedSuccesses)
     failed += bad
     print("MODULE %s %d %.1f %s" % (m, r.testsRun, time.monotonic() - t, "FAILED" if bad else "OK"), flush=True)
