@@ -29,13 +29,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
-from insight_core.markx import event_types, folds
+from insight_core.markx import event_types, folds, pairing
 
-PUBLISHED = "COALESCE(p.published_at, p.surfaced_at, p.fetched_at)"
+PUBLISHED = pairing.published_date("p")
 JOIN_HOURS = 24          # a leak this close before its release, with no coverage of its own, joins the release
 CAME_TRUE_DAYS = 30      # a leak story is linked to a release at most this long after its first post
-LEAK = folds.LEAK
-NEWS_TYPES = folds.NEWS_TYPES
+LEAK = event_types.LEAK
+NEWS_TYPES = event_types.NEWS_TYPES
 CONNECTED = ("development", "follows_up", "same_event")
 # A shared main subject alone as the "came true" evidence. Off (measured 2026-11-07, 0128): on the lab's unseen rumour
 # set it linked 0 of 5 right (run 1; runs 2-3: 0/2, 0/2; dev 0/1, 4/4, 0/0): a later post on the same subject is

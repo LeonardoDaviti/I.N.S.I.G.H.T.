@@ -23,7 +23,7 @@ only read, and the row never enters Mark IX's News.
   3. **The row** (`page`): each candidate judged development, with the owner's label (development / retold /
      related / unrelated) and the running precision of those labels.
 
-Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (the lab's).
+Dates are Pairing's post date (`pairing.post_date`, 0166; a round-up's issue time since 0181).
 
 0180 (anchors): the gates above are Pairing's `develops` row, read here. This module's rows are engine 'old'; the
 anchors engine (markx/anchors.py: Mark IX and Mark X stories, a happening's H hits first) writes engine 'anchors'

@@ -38,11 +38,11 @@ nothing here reaches any News.
      `development` shows as one.
   D. **Shown** on the story's page ("Later") and the subject's entity page ("Later developments"), newest first,
      with the owner's label buttons: the current RULE's rows, an older rule's only with `all` (kept, never deleted;
-     neither counted nor in the precision otherwise). Not on News: NEWS_KEY (an mx_settings flag, off) is what will
-     gate it once measured.
+     neither counted nor in the precision otherwise). Not on News (v10.17 deleted the unread NEWS_KEY flag: a News
+     path is built when it is measured).
   Also: a long-lived story's back trigger may fire again AGAIN after its last mx_back window (back.stories).
 
-Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (back's).
+Dates are Pairing's post date (back's: pairing.post_date, a round-up's issue time included).
 
 0180 (anchors): the type lists, the share and the quiet rule are Pairing's `develops` row (`specific` asks it). This
 module's rows are engine 'old'; the anchors engine (markx/anchors.py: the anchor's happening first, then `mains` /
@@ -80,16 +80,9 @@ PER_RUN = 5000                    # ... and every run at most this many posts, o
 MARGIN = timedelta(hours=1)
 SETTLE = 500                      # the answered rows a run stores verdicts of, at most
 SINCE_KEY = "later_since"
-NEWS_KEY = "later_news"           # 0163 D: Later on News, off until measured (nothing reads it as on yet)
 LABELS = back.LABELS
 ANSWERS = back.ANSWERS
 TRIG_ORDER = ("E", "L")
-
-
-def on_news(cur: Any) -> bool:
-    """Whether Later rows may reach News (NEWS_KEY; off by default, and nothing shows them there yet)."""
-    from insight_core.markx import repo
-    return bool(repo.get_setting(cur, NEWS_KEY, default=False))
 
 
 # ---- entities through the merges ----------------------------------------------------------------------------
@@ -705,7 +698,7 @@ def of_story(cur: Any, story_id: str, *, all: bool = False) -> Dict[str, Any]:
         rows = cur.fetchall()
     items, counts = _items(cur, rows)
     return {"stories": stories, "items": items, "counts": counts, "precision": precision(cur, all=all, engine=engine),
-            "news": on_news(cur), "rule": RULE, "engine": engine}
+            "rule": RULE, "engine": engine}
 
 
 def of_entity(cur: Any, entity_id: str, *, limit: int = 200, all: bool = False) -> Dict[str, Any]:
@@ -749,6 +742,6 @@ def follow(cur: Any, *, story: str, following: bool, note: Optional[str] = None)
     return {"story": story, "following": following}
 
 
-__all__ = ["AGAIN", "LONG_TYPES", "MAIN_SHARE", "NEWS_KEY", "QUIET_DAYS", "QUIET_MAX", "RULE", "find", "follow", "label",
-           "long_lived", "of_entity", "of_story", "on_news", "page_key", "plan", "precision", "quiet", "settle",
+__all__ = ["AGAIN", "LONG_TYPES", "MAIN_SHARE", "QUIET_DAYS", "QUIET_MAX", "RULE", "find", "follow", "label",
+           "long_lived", "of_entity", "of_story", "page_key", "plan", "precision", "quiet", "settle",
            "specific", "stage", "stopped", "write"]

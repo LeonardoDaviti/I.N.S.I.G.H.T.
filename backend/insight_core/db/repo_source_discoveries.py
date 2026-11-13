@@ -19,12 +19,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from psycopg import Cursor
+from insight_core.markx import pairing
 
 LIMIT = 50
 
-_LINKED = """
+_LINKED = f"""
 SELECT d.key, min(d.site), bool_or(d.platform), count(DISTINCT d.url),
-       count(DISTINCT d.url) FILTER (WHERE d.article), min(COALESCE(p.published_at, p.fetched_at)), min(p.fetched_at)
+       count(DISTINCT d.url) FILTER (WHERE d.article), min({pairing.ix_date('p')}), min(p.fetched_at)
 FROM posts p
 JOIN post_links pl ON pl.post_id = p.id AND NOT pl.boilerplate
 JOIN discover_addresses d ON d.url = pl.target_url   -- one row an address (whichever rules wrote it)
@@ -44,15 +45,15 @@ ORDER BY o.asked_at DESC
 LIMIT %(limit)s
 """
 
-_FIRST_NAMED = """
+_FIRST_NAMED = f"""
 WITH mine AS (
   SELECT DISTINCT m.entity_id FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
   WHERE p.source_id = %(source)s AND m.entity_id IS NOT NULL),
 firsts AS (
-  SELECT DISTINCT ON (m.entity_id) m.entity_id, m.post_id, p.source_id, COALESCE(p.published_at, p.fetched_at) AS at
+  SELECT DISTINCT ON (m.entity_id) m.entity_id, m.post_id, p.source_id, {pairing.ix_date('p')} AS at
   FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
   WHERE m.entity_id IN (SELECT entity_id FROM mine)
-  ORDER BY m.entity_id, COALESCE(p.published_at, p.fetched_at), p.id)
+  ORDER BY m.entity_id, {pairing.ix_date('p')}, p.id)
 SELECT e.id::text, e.name, e.type, f.post_id::text, f.at, t.title
 FROM firsts f JOIN mx_entities e ON e.id = f.entity_id LEFT JOIN posts t ON t.id = f.post_id
 WHERE f.source_id = %(source)s AND e.status <> 'not_entity'

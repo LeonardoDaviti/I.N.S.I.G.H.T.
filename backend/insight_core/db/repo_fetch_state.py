@@ -23,6 +23,7 @@ from insight_core.ingestion.http import Validators
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus, Trigger
 from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 if TYPE_CHECKING:
     from insight_core.ingestion.schedule import FetchDecision
@@ -379,7 +380,7 @@ class FetchStateRepository:
 
     def last_post_at(self, cur: Cursor, source_id: str) -> Optional[datetime]:
         """When its newest post was published (surfaced, else fetched, if undated): health's last_post_at."""
-        cur.execute("SELECT max(COALESCE(surfaced_at, published_at, fetched_at)) FROM posts WHERE source_id = %s",
+        cur.execute(f"SELECT max({pairing.ordinary_date('')}) FROM posts WHERE source_id = %s",
                     (str(source_id),))
         row = cur.fetchone()
         return row[0] if row else None
@@ -500,7 +501,7 @@ class FetchStateRepository:
                    s.mean_gap_seconds, s.cadence_sample_size, s.cadence_tier,
                    s.cadence_computed_at, s.fetch_interval_hours_override, s.created_at,
                    (SELECT count(*) FROM posts p WHERE p.source_id = s.id) AS post_count,
-                   (SELECT max(COALESCE(p.surfaced_at, p.published_at, p.fetched_at)) FROM posts p
+                   (SELECT max({pairing.ordinary_date('p')}) FROM posts p
                      WHERE p.source_id = s.id) AS last_post_at,
                    COALESCE((
                        SELECT json_agg(json_build_object('id', f.id, 'name', f.name)
@@ -520,7 +521,7 @@ class FetchStateRepository:
                      WHERE p.source_id = s.id AND p.metadata ->> 'audience' = 'only_paid'
                      ORDER BY p.fetched_at DESC LIMIT 1) AS paid_preview,
                    (SELECT array_agg(r.moved) FROM (SELECT p.metadata ->> '{MOVED_KEY}' AS moved FROM posts p
-                     WHERE p.source_id = s.id ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                     WHERE p.source_id = s.id ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                      LIMIT {MOVED_NEWEST}) r) AS moved,
                    {state_columns}
             FROM sources s

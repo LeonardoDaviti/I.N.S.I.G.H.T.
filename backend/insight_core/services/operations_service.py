@@ -32,6 +32,7 @@ from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.env import env_float
 from insight_core.utils.json_safe import iso, json_safe
 from insight_core.utils.originals_rules import COLLECT_CHOSEN, classics_setting, collect_setting, lookup_setting
+from insight_core.markx import pairing
 
 
 # Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
@@ -1048,10 +1049,10 @@ class OperationsService:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT
-                      MAX(COALESCE(published_at, fetched_at)) AS latest,
-                      MIN(COALESCE(published_at, fetched_at)) AS oldest,
+                      MAX({pairing.ix_date('')}) AS latest,
+                      MIN({pairing.ix_date('')}) AS oldest,
                       MAX(fetched_at) AS latest_fetch,
                       COUNT(*) FILTER (WHERE fetched_at >= now() - interval '24 hours') AS last_24h
                     FROM posts
