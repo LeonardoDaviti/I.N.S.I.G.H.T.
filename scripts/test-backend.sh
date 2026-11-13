@@ -36,11 +36,10 @@ else
   built=0
 fi
 
-# run-tests.sh reads .env next to it; link one in for this run when the checkout has none (removed after)
-linked=0
-if [ ! -e .env ]; then ln -s "$(realpath "$ENV_FILE")" .env; linked=1; fi
-cleanup() { if [ "$linked" = 1 ]; then rm -f .env; fi; }   # an if, never a failing && as the trap's last status
-trap cleanup EXIT
+# run-tests.sh reads ENV_FILE (v10.17: a .env linked into the checkout for the run and removed after raced between
+# runs at once in one checkout: "ln: failed to create symbolic link '.env': File exists", and the first to end took
+# the others' .env away)
+export ENV_FILE="$(realpath "$ENV_FILE")"
 
 if [ "$built" = 1 ]; then
   echo "==> ${TEST_IMAGE} (this tree, built already)"

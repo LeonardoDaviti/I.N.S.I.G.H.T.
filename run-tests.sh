@@ -20,10 +20,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-if [ ! -f .env ]; then
-  echo "error: .env not found next to run-tests.sh" >&2
+# the .env to run with: ENV_FILE, else the one next to this script (scripts/test-backend.sh passes ENV_FILE, so runs
+# at once in one checkout never link or remove a shared .env)
+ENV_FILE="${ENV_FILE:-.env}"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "error: $ENV_FILE not found (a .env next to run-tests.sh, or ENV_FILE)" >&2
   exit 1
 fi
+ENV_FILE="$(realpath "$ENV_FILE")"
 
 IMAGE="${TEST_IMAGE:-insight-backend:latest}"
 NETWORK=insight_insight-network
@@ -76,7 +80,7 @@ template_db() {
     admin "DROP DATABASE IF EXISTS $building" >/dev/null 2>&1
     admin "CREATE DATABASE $building" >/dev/null
     local out
-    if ! out="$(docker run --rm --network "$NETWORK" --env-file .env -e DATABASE_URL="$SERVER/$building" -w /app "$IMAGE" \
+    if ! out="$(docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e DATABASE_URL="$SERVER/$building" -w /app "$IMAGE" \
                 python -m insight_core.db.migrate 2>&1)"; then
       echo "$out" | tail -30 >&2
       admin "DROP DATABASE IF EXISTS $building" >/dev/null || true
@@ -178,7 +182,7 @@ new_db() {   # new_db <name>: a fresh database for a run, migrated (from the tem
   if [ "${NO_TEMPLATE:-0}" = "1" ]; then
     admin "CREATE DATABASE $name" >/dev/null
     echo "==> migrating ${name}" >&2
-    docker run --rm --network "$NETWORK" --env-file .env -e DATABASE_URL="$SERVER/$name" -w /app "$IMAGE" python -m insight_core.db.migrate >&2
+    docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e DATABASE_URL="$SERVER/$name" -w /app "$IMAGE" python -m insight_core.db.migrate >&2
   else
     # synchronous_commit off for the run's database (a setting of the database, not copied from the template): the
     # suites commit often, and each commit waited for its WAL flush on a disk other copies keep busy
@@ -190,7 +194,7 @@ new_db() {   # new_db <name>: a fresh database for a run, migrated (from the tem
 in_image() {   # in_image <db url> cmd...
   local url="$1"; shift
   docker run --rm --network "$NETWORK" --label "insight.test-pid=$$" --label "insight.test-started=$(date +%s)" \
-    --env-file .env -e DATABASE_URL="$url" -e ADMIN_DATABASE_URL="$SERVER/postgres" -e DB_HOST="$DBHOST" \
+    --env-file "$ENV_FILE" -e DATABASE_URL="$url" -e ADMIN_DATABASE_URL="$SERVER/postgres" -e DB_HOST="$DBHOST" \
     -w /app "$IMAGE" "$@"
 }
 

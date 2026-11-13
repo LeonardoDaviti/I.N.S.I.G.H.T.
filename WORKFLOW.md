@@ -97,6 +97,16 @@ SQL, hashed), the checks' code, the cases file, the image and `--now`. A second 
 runs only the head side. `--no-cache` runs the base again (and replaces the entry). The report says when the base
 came from the cache.
 
+## Measured (2026-11-13, v10.17; the machine shared with ~6 other agents' suites)
+
+| what | before | after |
+|---|---|---|
+| a usable copy of lab / server1105 / mxreal | 8 min 47 s / 15 min 37 s / 15 min 56 s (template copy, migrations, backfills on insight-db) | 0.6 s / 0.55 s / 0.6 s (a clone of the prepared copy, scratch server; 3 suites running) |
+| a server-scale copy | hours, rebuilt by hand from scripts lost in /tmp | `build scale` once, then a clone |
+| one 15-test module | 29 s to 7 min 41 s (template build, drop waiting for checkpoints) | 7.4 s |
+| the whole suite | 152 min 22 s (one discover on insight-db; 1 failure) | 8 min 49 s (one shard), 3 min 18 s (`JOBS=6`), scratch server |
+| the real-data check | 2,019 s (v10.15), 1,675 s fresh | 919 s with the base side from the cache |
+
 ## Nothing durable in /tmp
 
 A reboot wipes `/tmp`. Scripts you will run again go in `scripts/` (committed) or `plan/research/` (private);
