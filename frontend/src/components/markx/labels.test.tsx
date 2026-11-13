@@ -50,6 +50,21 @@ describe('the labels tab (issue 0086 F)', () => {
     expect(await screen.findByText('Are STORY A and STORY B the same event?')).toBeInTheDocument();
   });
 
+  it('says the queue is being built until insight-ingestion has kept it (0182)', async () => {
+    const getMarkxLabels = vi.fn().mockResolvedValue({ ...QUEUE, total: 0, next: [], features: [], pools: {}, building: true });
+    const getMarkxLabelItem = vi.fn();
+    renderWithProviders(<MarkXLabels />, { api: makeFakeApi({ getMarkxLabels, getMarkxLabelItem }) });
+    expect(await screen.findByText('The queue is being built')).toBeInTheDocument();
+    expect(getMarkxLabelItem).not.toHaveBeenCalled();
+  });
+
+  it('shows the last kept queue while the newest run\'s is built (0182)', async () => {
+    const getMarkxLabels = vi.fn().mockResolvedValue({ ...QUEUE, building: true });
+    renderWithProviders(<MarkXLabels />, { api: makeFakeApi({ getMarkxLabels, getMarkxLabelItem: vi.fn().mockResolvedValue(ITEM) }) });
+    expect(await screen.findByText(/Headline: Acme released Widget 4/)).toBeInTheDocument();
+    expect(screen.getByText(/The last decision run's queue is being built/)).toBeInTheDocument();
+  });
+
   it('shows each feature with its bar, dev and test, and the re-picked bar', async () => {
     const s = (precision: number | null, labelled: number): MarkxStat => ({ labelled, right: Math.round((precision ?? 0) * labelled),
       precision, lo: precision === null ? null : precision - 0.2, hi: precision === null ? null : Math.min(1, precision + 0.05),
