@@ -67,7 +67,7 @@ class TheDevelopsRow(unittest.TestCase):
 
 
 class _Anchors(_Later):
-    shadow = True        # the anchors engine runs beside the old one (its default)
+    shadow = True        # the anchors engine runs beside the old one (turned on: off by default since v10.17)
 
     def read(self, post, action, actors, obj, names, numbers=()):
         """A read-v2 reading of the post and its ent-v3 mentions [(name, type, role)], recorded as the worker's
@@ -358,6 +358,14 @@ class Shadow(_Anchors):
     def test_off(self):
         self.world()
         repo.set_setting(self.cur, anchors.SHADOW_KEY, False)
+        with self.conn.transaction():
+            self.assertEqual(back.stage(self.cur, now=NOW, open_cap=0)["anchors"], {"off": True})
+
+    def test_off_by_default(self):
+        """v10.17 (0190): with no setting the anchors engine does not run (0180: 20% against an 85% bar)."""
+        self.world()
+        self.cur.execute("DELETE FROM mx_settings WHERE key = %s", (anchors.SHADOW_KEY,))
+        self.assertFalse(anchors.shadow_on(self.cur))
         with self.conn.transaction():
             self.assertEqual(back.stage(self.cur, now=NOW, open_cap=0)["anchors"], {"off": True})
 

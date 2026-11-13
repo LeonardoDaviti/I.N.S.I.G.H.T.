@@ -36,7 +36,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from insight_core.markx import decide, repo, schemas
+from insight_core.markx import decide, pairing, repo, schemas
 
 
 @dataclass(frozen=True)
@@ -190,7 +190,7 @@ def _times(cur: Any, ids: Iterable[Any]) -> Dict[str, datetime]:
     ids = sorted({str(i) for i in ids if i})
     if not ids:
         return {}
-    cur.execute("SELECT id::text, COALESCE(surfaced_at, published_at, fetched_at) FROM posts WHERE id = ANY(%s::uuid[])",
+    cur.execute(f"SELECT id::text, {pairing.ordinary_date('')} FROM posts WHERE id = ANY(%s::uuid[])",
                 (ids,))
     return dict(cur.fetchall())
 

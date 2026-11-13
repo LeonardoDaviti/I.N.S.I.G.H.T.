@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import source_role as R
+from insight_core.markx import pairing, source_role as R
 from insight_core.utils import byline, voice
 
 log = logging.getLogger(__name__)
@@ -222,7 +222,7 @@ def voices_exist(cur: Any) -> bool:
     return _exists(cur, "voices") and _exists(cur, "sources", "voice_id")
 
 
-AT = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+AT = pairing.ordinary_date("p")   # a post's own date (0190)
 
 
 def is_repost(s: Src, title: Optional[str], author: Optional[str], reposted_by: Any, forwarded: Any = False) -> bool:
@@ -298,7 +298,7 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
         for k, n in c.items():
             if s.kind == "site" and tot and n / tot >= 0.5 and not k.startswith(("x.com/", "t.me/", "youtube.com/")):
                 s.keys.add(k)
-    cur.execute("""SELECT source_id::text, count(*), min(COALESCE(published_at, fetched_at)),
+    cur.execute(f"""SELECT source_id::text, count(*), min({pairing.ix_date("")}),
                           count(DISTINCT NULLIF(btrim(COALESCE(metadata->>'author_display_name', metadata->>'author_name',
                                                                metadata->>'primary_author', metadata->>'author', '')), ''))
                      FROM posts WHERE source_id = ANY(%s::uuid[]) GROUP BY 1""", (ids,))

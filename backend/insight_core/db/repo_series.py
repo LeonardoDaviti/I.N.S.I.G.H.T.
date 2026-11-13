@@ -29,6 +29,7 @@ from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils import series as rule
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ LOCK_KEY = "insight.series"
 MARGIN = timedelta(hours=1)
 HEAD = 600                       # the text's start the rule reads for a post with no title (the lab's)
 PARTS_SHOWN = 50                 # a series' parts on the line
-POST_DATE = "COALESCE(p.published_at, p.fetched_at)"
+POST_DATE = pairing.ix_date("p")
 
 
 class SeriesRepository:

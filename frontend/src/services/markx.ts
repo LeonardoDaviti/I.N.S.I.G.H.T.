@@ -201,7 +201,11 @@ export interface MarkxJob {
   stage_at: string | null;
   wanted_at: string | null;
   finished_at: string | null;
-  last: { ok?: boolean; error?: string; seconds?: number } | null;
+  last: { ok?: boolean; error?: string; seconds?: number; skip_next?: string } | null;
+  /** 0188: failed runs in a row, shown failing from 3 on, and the next try after its backoff (absent from an older API). */
+  failures?: number;
+  failing?: boolean;
+  retry_at?: string | null;
 }
 
 export interface MarkxOverview {
@@ -211,7 +215,8 @@ export interface MarkxOverview {
     tokens: { calls: number; tokens_in: number; tokens_out: number; paid_usd: number; api_usd: number };
     failed: { kind: string; error: string | null; tasks: number }[];
     invalid: { kind: string; error: string | null; at: string }[];
-    workers: { worker: string; last_contact: string | null; leased: number }[];
+    /** stale (0188): silent for over 3 days (absent from an older API). */
+    workers: { worker: string; last_contact: string | null; leased: number; stale?: boolean }[];
     last_run: { id: string; started_at: string; finished_at: string | null; code_version: string | null;
       counts: Record<string, unknown> | null } | null;
     /** Mark X's jobs, run by insight-ingestion (issue 0112 Decided 10, 12); absent from an older API. */

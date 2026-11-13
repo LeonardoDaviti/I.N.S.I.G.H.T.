@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
+from insight_core.markx import pairing
 
 BY_TYPES = ("person", "org")
 NOT_A_SELF = ("reddit", "hn", "saved")       # a platform of many voices, or the owner's saved pages
@@ -137,7 +138,7 @@ def by_posts(cur: Any, source_ids: Iterable[str]) -> Dict[str, Tuple[datetime, s
     ids = sorted(set(source_ids))
     if not ids:
         return {}
-    cur.execute("""SELECT p.id::text, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.source_id::text,
+    cur.execute(f"""SELECT p.id::text, {pairing.ordinary_date('p')}, p.source_id::text,
                           rs.read_at IS NOT NULL
                      FROM posts p LEFT JOIN post_reader_state rs ON rs.post_id = p.id
                     WHERE p.source_id = ANY(%s::uuid[])""", (ids,))

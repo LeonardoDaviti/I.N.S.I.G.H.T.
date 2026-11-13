@@ -39,7 +39,11 @@ export function DecisionJob({ job }: { job: MarkxJob | undefined }) {
   } else {
     if (job.wanted_at) lines.push('A decision run is asked for: it starts within a few minutes.');
     if (job.last && job.last.ok === false && job.last.error) {
-      lines.push(`The last decision run stopped: ${job.last.error}. It runs again within 5 minutes.`);
+      // 0188: a failed run is tried again after its backoff (10 minutes, doubling up to 6 hours)
+      const retry = job.retry_at ? `It runs again after ${postBylineTime(job.retry_at)}` : 'It runs again within 5 minutes';
+      const skip = job.last.skip_next ? `, without its ${job.last.skip_next} stage once` : '';
+      lines.push(`The last decision run stopped: ${job.last.error}. ${retry}${skip}.`);
+      if (job.failing) lines.push(`Failing: ${job.failures} runs in a row stopped. It keeps trying, at most 6 hours apart.`);
     }
   }
   if (!lines.length) return null;
@@ -411,6 +415,7 @@ export function MarkXWorker() {
                   <li key={w.worker} className="border-t border-line py-1.5">
                     <span className="text-fg">{w.worker}</span> · last contact {w.last_contact ? postBylineTime(w.last_contact) : 'not since the start'}
                     {w.leased ? ` · ${plural(w.leased, 'task')} leased` : ''}
+                    {w.stale ? <span className="text-fg"> · stale: silent for over 3 days</span> : null}
                   </li>
                 ))}
               </ul>

@@ -6,6 +6,11 @@ first needed, and its module is named where one owns it.
 **Pairing** — the module that decides which pairs of posts (or of stories) may ever be compared, for each relation
 (`backend/insight_core/markx/pairing.py`). Every candidate source and every gate before a judge lives behind it.
 
+**Post date** — which time of a post a query reads, one of four, all Pairing's (never an inline `COALESCE`): the
+*post date* (Mark X's time: a round-up's issue time, else its own date), the *ordinary date* (its own: surfaced, else
+published, else fetched: the feed, the planners, a task's input), the *published date* (0128's order of a story's
+lines) and *Mark IX's time* (published, else fetched).
+
 **Relation** — a question a judge may later be asked about a pair: *same story* (one story? the join, pair and
 merge questions), *connected* (a typed link between two stories), *develops* (a later post follows up an
 anchor) or *attach* (a round-up's item carries a stored post: a digest item, never a voice). Each relation has one
@@ -36,7 +41,8 @@ language.
 
 **Event type** — what kind of happening a post reports, whichever read guide said it: a closed type (and who tells
 it), and the happening group of its main action. Read only through the event-type seam
-(`backend/insight_core/markx/event_types.py`), never from a reading's raw fields. A post's happening key is stored
+(`backend/insight_core/markx/event_types.py`), never from a reading's raw fields; the type lists (News types, leak,
+announced, a unit's news types) are made there from the closed types. A post's happening key is stored
 (`mx_happenings`) with the inputs it was computed from, and computed again when they move.
 
 **Party** — an entity a happening is between: the thing released, the two companies in a deal, the company that
@@ -50,7 +56,8 @@ stage of one happening is a development, not a new happening.
 for an anchor's follow-ups: its happening first, its subject second. In Shadow beside the old engines (0180).
 
 **Round-up** — a post that carries many separate items: a daily digest, a link list, a long newsletter. Its reading
-says so, or it has a digest's shape and its source's posts mostly have it (`backend/insight_core/markx/units.py`). A
+says so, or it has a digest's shape and its source's posts mostly have it (`backend/insight_core/markx/units.py`:
+`roundup_sql`, which Discover reads too). A
 round-up its reading names is never compared as a whole; its items (units) are never voices. Its time is its issue's: its latest attached item's (Pairing's
 post date); its own dates are never rewritten.
 

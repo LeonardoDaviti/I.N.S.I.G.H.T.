@@ -33,8 +33,9 @@ from insight_core.utils.addresses import host_of, site_of
 from insight_core.utils.linked_rules import OwnPages, own_links, signature_links
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
-POST_DATE = "COALESCE(p.published_at, p.fetched_at)"
+POST_DATE = pairing.ix_date("p")
 HTML_BATCH = 500
 LAST = datetime.max.replace(tzinfo=timezone.utc)
 PageKey = Tuple[str, str, str]   # OwnPages.same_page: (source, path, query)

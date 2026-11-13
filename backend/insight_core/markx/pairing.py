@@ -14,10 +14,11 @@ The interface (what a caller must know):
     two stories (by their centroids, their first posts within the story window).
   - `policy(relation, **overrides)`: the row, with a caller's overrides (decide.Config's bars).
   - `attach_targets(cur, units)` and `attaches(policy, ...)`: the attach relation (0181) for round-up items.
-  - the basics every module reads the same way: `post_date` (the post's date: a round-up's issue time when its items
-    are known, else when it surfaced, else published, else fetched), `page_key` and its lower layer `page_address`
-    (a page's compared form), `document_key` (a document page's key). Who a post counts as, and how many voices
-    posts are, is Voice's (utils/voice.py, Policy.MARKX; issue 0189): every gate here asks it.
+  - the basics every module reads the same way: the dates (`post_date`: the post's date, a round-up's issue time
+    when its items are known, else when it surfaced, else published, else fetched; `ordinary_date`, `published_date`
+    and `ix_date`: the post's own, 0128's published and Mark IX's time; see "the dates" below), `page_key` and its
+    lower layer `page_address` (a page's compared form), `document_key` (a document page's key). Who a post counts
+    as, and how many voices posts are, is Voice's (utils/voice.py, Policy.MARKX; issue 0189): every gate here asks it.
 
 The sources (adapters; each idempotent, each writes only mx_candidates):
   - `embedding`: a post's nearest posts by cosine among other sources' voices within the window, at the cosine bar,
@@ -66,11 +67,28 @@ log = logging.getLogger(__name__)
 MODEL = "bge-m3"
 POST_POST, STORY_STORY = "post_post", "story_story"
 SAME_STORY, CONNECTED, DEVELOPS, ATTACH = "same_story", "connected", "develops", "attach"
-HAPPENING_KEY = "pairing_happening"   # mx_settings: the happening source on (off by default, until E1 sets its bars)
+# An experiment (0166, 0175; kept as one in v10.17's 0190): the happening source runs only while this mx_settings flag
+# is on (off by default): E1 measured its company groups (deal, funding, legal, people), the other groups are
+# unmeasured, and nothing turns it on but the owner. Its key is stored either way (mx_happenings, for anchors).
+HAPPENING_KEY = "pairing_happening"
 
-# ---- the basics ------------------------------------------------------------------------------------------
-
+# ---- the dates (v10.17, 0190: one owner per decision) ---------------------------------------------------------
+# Every SQL date of a post is one of these four meanings, named here and nowhere else (tests/test_dates_owner.py
+# fails on an inline COALESCE of a post's dates outside this module):
+#   - `post_date`: Mark X's time of a post, what a Mark X comparison reads (windows, timelines, an entity's
+#     mentions): a round-up's issue time when its items are known (0181), else its own date.
+#   - `ordinary_date`: the post's own date (surfaced, else published, else fetched): the feed's sort key (indexed:
+#     posts_feed_order_idx, posts_source_feed_order_idx, 0037), the planners' and the lease's order and reading windows
+#     (0176), every task input (0128: a changed input is a new question), and what the issue time is made from.
+#   - `published_date`: 0128's "published" (published, else surfaced, else fetched): the order and times a story's
+#     lines are shown in (a News row, the folds, the story page) and graph's G2.
+#   - `ix_date`: Mark IX's time (published, else fetched; StoryPost.t, 0111's News window, Discover, the source and
+#     fetch statistics).
+# They differ only on a round-up with an issue time (post_date) and on a post with surfaced_at (49,384 posts on the
+# 2026-11-05 copy: 211 issue times, 51 surfaced_at).
 ORDINARY_DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"   # a post's own time
+PUBLISHED_DATE = "COALESCE({p}.published_at, {p}.surfaced_at, {p}.fetched_at)"  # 0128's published order
+IX_DATE = "COALESCE({p}.published_at, {p}.fetched_at)"                          # Mark IX's time
 # 0181: a round-up's time is its issue's (mx_roundups.issue_at: its latest attached item's time within ISSUE_REACH of
 # its own date), when its items are known; every other post's (and a round-up's with no such item) is its own time.
 # The issue times are read once a query (an InitPlan: one object of a few hundred rows, by a partial index) and looked
@@ -81,16 +99,53 @@ POST_DATE = ("COALESCE(((SELECT jsonb_object_agg(r_.post_id, r_.issue_at) FROM m
              + ORDINARY_DATE + ")")   # Mark X's time of a post
 
 
+def _alias(alias: str) -> str:
+    """'p' -> 'p.', '' -> '' (a query over posts with no alias)."""
+    return f"{alias}." if alias else ""
+
+
+def _form(template: str, alias: str) -> str:
+    return template.replace("{p}.", _alias(alias))
+
+
 def post_date(alias: str = "p") -> str:
     """The post's date as SQL: a round-up's issue time when its items are known (0181); else when INSIGHT first saw
-    it surface, else its published time, else its fetch. Never a rewrite of the post's own dates."""
+    it surface, else its published time, else its fetch. Never a rewrite of the post's own dates. Needs an alias
+    (the issue time is looked up by the post's id)."""
+    if not alias:
+        raise ValueError("post_date needs the posts alias")
     return POST_DATE.format(p=alias)
 
 
+def post_date_within(alias: str, lo: str, hi: Optional[str] = None) -> str:
+    """A window over Mark X's time as SQL: `post_date` at `lo` or later (and at `hi` or earlier), the same bounds
+    widened by the issue reach tested on the post's own date first, so the feed's index on `ordinary_date` finds the
+    rows (a round-up's issue time is within the attach row's `issue_reach` of its own date: units._times) and the post
+    date, which no index holds, is computed only for those. The same rows as `post_date` alone. `lo` / `hi`: SQL,
+    each written twice, in the order lo, lo, hi, hi (a positional %s takes its value twice)."""
+    reach = f"make_interval(secs => {int(POLICIES[ATTACH].issue_reach.total_seconds())})"
+    own, at = ordinary_date(alias), post_date(alias)
+    parts = [f"{own} >= ({lo}) - {reach}", f"{at} >= ({lo})"]
+    if hi is not None:
+        parts += [f"{own} <= ({hi}) + {reach}", f"{at} <= ({hi})"]
+    return "(" + " AND ".join(parts) + ")"
+
+
 def ordinary_date(alias: str = "p") -> str:
-    """The post's own date as SQL (surfaced, else published, else fetched), round-up or not: what the issue time of a
-    round-up is computed from (units.py), never what a consumer compares."""
-    return ORDINARY_DATE.format(p=alias)
+    """The post's own date as SQL (surfaced, else published, else fetched), round-up or not: the feed's indexed sort
+    key, the planners' and the lease's order and windows, a task's input, and what the issue time of a round-up is
+    computed from (units.py). `alias` '' for a query over posts with no alias."""
+    return _form(ORDINARY_DATE, alias)
+
+
+def published_date(alias: str = "p") -> str:
+    """0128's published time as SQL (published, else surfaced, else fetched): the order a story's lines are shown in."""
+    return _form(PUBLISHED_DATE, alias)
+
+
+def ix_date(alias: str = "p") -> str:
+    """Mark IX's time as SQL (published, else fetched): StoryPost.t's, News's window, Discover's and the statistics'."""
+    return _form(IX_DATE, alias)
 
 
 SOCIAL = {"t.me", "x.com", "twitter.com", "youtube.com", "reddit.com", "instagram.com", "facebook.com", "linkedin.com",

@@ -48,7 +48,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas, scout_reads
+from insight_core.markx import pairing, repo, schemas, scout_reads
 
 log = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ def linked(cur: Cursor, key: str, site: str, now: datetime) -> Dict[str, Any]:
     """How many of your (on) sources' posts link the key's addresses: {sources, posts, recent, names}."""
     cur.execute(f"""SELECT p.source_id::text, COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                            count(DISTINCT pl.post_id),
-                           count(DISTINCT pl.post_id) FILTER (WHERE COALESCE(p.published_at, p.fetched_at) > %(since)s)
+                           count(DISTINCT pl.post_id) FILTER (WHERE {pairing.ix_date('p')} > %(since)s)
                       FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN sources s ON s.id = p.source_id
                      WHERE NOT pl.boilerplate AND s.enabled AND pl.target_site = %(site)s AND {_on_key('pl.target_url')}
                        AND NOT {_on_key('s.handle_or_url')}
@@ -288,7 +288,7 @@ def repeats(cur: Cursor, items: Sequence[Dict[str, Any]], key: str, site: str, n
                 hits.setdefault(urls[url], set()).add(name)
     if titles:
         cur.execute(f"""SELECT p.title, {name_sql()} FROM posts p JOIN sources s ON s.id = p.source_id
-                         WHERE s.enabled AND p.title IS NOT NULL AND COALESCE(p.published_at, p.fetched_at) > %(since)s
+                         WHERE s.enabled AND p.title IS NOT NULL AND {pairing.ix_date('p')} > %(since)s
                            AND length(p.title) >= 20 AND NOT {_on_key('s.handle_or_url')}""",
                     {"since": now - timedelta(days=REPEAT_DAYS), "key": key})
         for title, name in cur.fetchall():

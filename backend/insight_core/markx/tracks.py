@@ -67,7 +67,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import finders, repo, schemas, tasks
+from insight_core.markx import finders, pairing, repo, schemas, tasks
 
 log = logging.getLogger(__name__)
 
@@ -108,11 +108,9 @@ LABELS = ("in", "out")
 ANSWERS = LABELS + ("undo",)
 SECTION_ITEMS = 60             # items a section shows (newest first; its count says how many)
 DISCOVER_ITEMS = 100
-DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"
-
-
 def _date(p: str = "p") -> str:
-    return DATE.format(p=p)
+    """A folder's post date: the post's own (Pairing's ordinary date), as the feed shows it."""
+    return pairing.ordinary_date(p)
 
 
 def tasks_per_run() -> int:

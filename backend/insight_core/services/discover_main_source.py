@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.markx import event_types
 from insight_core.utils.addresses import PLATFORM_SITES, host_of, is_tweet, publication_of, site_of, tweet_author
 from insight_core.utils.discover_rules import CHECK_DAYS, PLACE_TESTS
 from insight_core.utils.entity_originals import CODE_SITES, MODEL_HUBS, RELEASE, WORK
@@ -77,8 +78,7 @@ KEY = "discover_main_source"      # system_settings: {"tests": {channel key: {la
 HIDE_PREFIX = "main:"             # a row's key in discover_hidden (Not interested), apart from Discover's own keys
 WITHIN_DAYS = 30
 MIN_VOICES = 2
-ANNOUNCED = frozenset({"model_release", "product_release", "research_result", "business_event", "incident",
-                       "public_statement", "promotion_event"})
+ANNOUNCED = event_types.ANNOUNCED  # the seam's list (0190): a happening its actor announces, never a lawsuit's
 ACTOR_TYPES = ("org", "person")
 ACTOR_ROLES = ("subject", "actor")
 ADDRESS_KINDS = (RELEASE, WORK)

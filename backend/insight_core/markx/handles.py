@@ -51,6 +51,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from insight_core.markx import pairing
 
 from insight_core.utils import byline
 
@@ -381,8 +382,8 @@ def scan_posts(cur: Any, post_ids: Sequence[str]) -> Dict[str, int]:
     out = Counter({"posts": 0, "refs": 0, "pairs": 0})
     if not ids:
         return dict(out)
-    cur.execute("""SELECT p.id::text, p.source_id::text, s.platform, s.handle_or_url, p.title, p.content, p.author,
-                          p.content_hash, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), pp.quoted,
+    cur.execute(f"""SELECT p.id::text, p.source_id::text, s.platform, s.handle_or_url, p.title, p.content, p.author,
+                          p.content_hash, {pairing.ordinary_date('p')}, pp.quoted,
                           p.metadata->'forwarded_from'->>'username'
                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                     WHERE p.id = ANY(%s::uuid[])""", (ids,))

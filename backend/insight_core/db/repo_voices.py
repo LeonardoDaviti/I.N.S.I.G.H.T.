@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 
 from psycopg import Cursor
 
+from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
 from insight_core.utils import byline
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.post_links import source_kind
@@ -335,7 +336,7 @@ class VoicesRepository:
             f"""SELECT s.voice_id::text, s.id::text, {DISPLAY_NAME}, s.platform, s.handle_or_url, s.enabled, s.in_main_digest,
                        COALESCE(NULLIF(s.settings->>'priority', '')::numeric, 999),
                        (SELECT count(*) FROM posts p WHERE p.source_id = s.id),
-                       (SELECT max(COALESCE(p.published_at, p.fetched_at)) FROM posts p WHERE p.source_id = s.id)
+                       (SELECT max({ix_date("p")}) FROM posts p WHERE p.source_id = s.id)
                 FROM sources s WHERE s.voice_id = ANY(%s::uuid[])""", (ids,))
         channels: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for vid, sid, name, platform, handle, enabled, digest, priority, posts, last in cur.fetchall():
@@ -384,13 +385,13 @@ class VoicesRepository:
         within = timedelta(hours=ALSO_WITHIN_HOURS)
         cur.execute(
             f"""WITH page AS (
-                  SELECT p.id, p.source_id, s.voice_id, COALESCE(p.published_at, p.fetched_at) AS t, p.normalized_url,
+                  SELECT p.id, p.source_id, s.voice_id, {ix_date("p")} AS t, p.normalized_url,
                          p.content_hash, p.title, left(p.content, 4000) AS content
                   FROM posts p JOIN sources s ON s.id = p.source_id JOIN voices v ON v.id = s.voice_id
                   WHERE p.id = ANY(%(ids)s::uuid[]) AND {LIVE})
                 SELECT pg.id::text, pg.t, pg.content_hash, pg.title, pg.content,
                        q.id::text, q.source_id::text, {display_name('qs')}, qs.platform, q.title, q.url,
-                       COALESCE(q.published_at, q.fetched_at), q.content_hash, left(q.content, 4000),
+                       {ix_date("q")}, q.content_hash, left(q.content, 4000),
                        EXISTS (SELECT 1 FROM post_links l WHERE l.post_id = pg.id AND l.target_url = q.normalized_url)
                        OR EXISTS (SELECT 1 FROM post_links l WHERE l.post_id = q.id AND l.target_url = pg.normalized_url),
                        CASE %(kind)s WHEN 'all' THEN qs.in_main_digest
@@ -401,7 +402,7 @@ class VoicesRepository:
                 FROM page pg
                 JOIN sources qs ON qs.voice_id = pg.voice_id AND qs.id <> pg.source_id
                 JOIN posts q ON q.source_id = qs.id
-                 AND COALESCE(q.published_at, q.fetched_at) BETWEEN pg.t - %(within)s AND pg.t + %(within)s""",
+                 AND {ix_date("q")} BETWEEN pg.t - %(within)s AND pg.t + %(within)s""",
             {"ids": ids, "kind": scope_kind, "scope": scope_id, "within": within})
         lines: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         hidden: Set[str] = set()

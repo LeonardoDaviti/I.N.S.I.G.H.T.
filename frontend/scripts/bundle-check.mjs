@@ -1,6 +1,7 @@
 // The reader's download budget (Design Studio D8, issue 0061), run after `vite build`.
 //   node scripts/bundle-check.mjs           fail when the feed or the post route grew >1% over its baseline (gzip),
-//                                           went over its ceiling (110% of the v9.8 base), or the studio is not lazy
+//                                           went over its ceiling (110% of the v9.8 base), or the build holds
+//                                           the dev-only studio or blog (0190)
 //   node scripts/bundle-check.mjs --update  record the current sizes as the release's baseline (say why in the commit);
 //                                           the ceiling base is never touched
 // Rules: src/lib/bundleBudget.ts. Node >= 22.18 strips the TypeScript types.
@@ -37,5 +38,5 @@ if (problems.length) {
 const delta = (route) => (((bytes[route] - saved.gzipBytes[route]) / saved.gzipBytes[route]) * 100).toFixed(2);
 console.log(
   `bundle check (gzip): the feed route is ${bytes.feed} bytes (${delta('feed')}% against ${saved.gzipBytes.feed}), `
-  + `the post route ${bytes.post} (${delta('post')}% against ${saved.gzipBytes.post}); the studio is its own chunk`,
+  + `the post route ${bytes.post} (${delta('post')}% against ${saved.gzipBytes.post}); no dev-only studio or blog`,
 );

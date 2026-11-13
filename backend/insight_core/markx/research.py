@@ -56,6 +56,7 @@ from psycopg import Cursor
 
 from insight_core.markx import repo, schemas, scout, tasks
 from insight_core.markx import research_web as W
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -220,7 +221,7 @@ def _post_rows(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
     if not ids:
         return []
     from insight_core.utils import byline
-    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), COALESCE(p.surfaced_at, p.published_at, p.fetched_at),
+    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), {pairing.ordinary_date('p')},
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.url, s.id::text,
                            {byline.COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
@@ -407,9 +408,9 @@ def near_copies(cur: Cursor, run: Dict[str, Any]) -> int:
     rare = sorted(set(words), key=lambda w: (-len(w), w))[:NEAR_WORDS]
     if len(rare) < 3:
         return 0
-    cur.execute("""SELECT id::text FROM posts WHERE search_vector @@ websearch_to_tsquery('russian', %s)
-                     AND COALESCE(surfaced_at, published_at, fetched_at) >= %s
-                   ORDER BY COALESCE(surfaced_at, published_at, fetched_at) DESC LIMIT 200""",
+    cur.execute(f"""SELECT id::text FROM posts WHERE search_vector @@ websearch_to_tsquery('russian', %s)
+                     AND {pairing.ordinary_date('')} >= %s
+                   ORDER BY {pairing.ordinary_date('')} DESC LIMIT 200""",
                 (" OR ".join(rare), _now() - timedelta(days=NEAR_DAYS)))
     ids = [r for (r,) in cur.fetchall()]
     seed = tasks.Post(id="seed", kind="site", source="", source_id="", at=_now(), title="", text=text)
@@ -439,8 +440,8 @@ def around(cur: Cursor, run: Dict[str, Any]) -> int:
     if not mine:
         return 0
     at = _now() if run["seed_kind"] == "post" else run["created_at"]
-    cur.execute("""SELECT id::text FROM posts WHERE source_id = ANY(%s::uuid[])
-                     AND COALESCE(surfaced_at, published_at, fetched_at) BETWEEN %s AND %s""",
+    cur.execute(f"""SELECT id::text FROM posts WHERE source_id = ANY(%s::uuid[])
+                     AND {pairing.ordinary_date('')} BETWEEN %s AND %s""",
                 (mine, at - AROUND, at + AROUND))
     n = 0
     for row in _post_rows(cur, [r for (r,) in cur.fetchall()]):

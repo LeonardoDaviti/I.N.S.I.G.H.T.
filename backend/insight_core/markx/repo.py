@@ -155,19 +155,20 @@ def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minute
     """One lease query: every task (`lane` None), the fresh lane's only (True) or every other (False)."""
     if limit <= 0:
         return []
-    fresh_sql = """(t.kind = ANY(%(fresh)s) AND f.id IS NOT NULL
+    from insight_core.markx import pairing   # pairing imports this module
+    fresh_sql = f"""(t.kind = ANY(%(fresh)s) AND f.id IS NOT NULL
                     AND GREATEST(f.fetched_at, f.surfaced_at) >= now() - make_interval(hours => %(hours)s)
-                    AND COALESCE(f.surfaced_at, f.published_at, f.fetched_at) >= now() - make_interval(days => %(dated)s))"""
+                    AND {pairing.ordinary_date('f')} >= now() - make_interval(days => %(dated)s))"""
     where = "" if lane is None else f"AND {'' if lane else 'NOT '}COALESCE({fresh_sql}, false)"
     join = "LEFT JOIN posts f ON t.kind = ANY(%(fresh)s) AND f.id = t.a" if lane is not None else ""
     cur.execute(f"""WITH picked AS (
                      SELECT t.id,
                             (p.id IS NOT NULL AND %(days)s::int IS NOT NULL
-                             AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                             AND {pairing.ordinary_date('p')}
                                  < now() - make_interval(days => %(days)s)) AS outside,
                             CASE WHEN p.id IS NULL OR t.priority < 0 THEN t.priority
-                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - COALESCE(p.surfaced_at,
-                                                  p.published_at, p.fetched_at))) / 86400))::int END AS rank
+                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - {pairing.ordinary_date('p')}))
+                                                  / 86400))::int END AS rank
                        FROM mx_tasks t
                        LEFT JOIN posts p ON t.kind = ANY(%(windowed)s) AND p.id = t.a
                        {join}

@@ -24,6 +24,7 @@ from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.db.repo_stories import StoriesRepository
+from insight_core.markx import pairing
 
 # metadata key of a body read from the article page (ingestion/full_text.py)
 FULL_TEXT_FLAG = "full_content_fetched"
@@ -234,10 +235,10 @@ class PostsRepository:
     # Locked on the source and title, as _other_form locks the address.
     _TITLE_LOCK_SQL = ("SELECT pg_advisory_xact_lock(hashtextextended("
                        "'insight.post-title:' || %(source_id)s::text || post_title_key(%(title)s::text), 0))")
-    _ELSEWHERE_SQL = """
+    _ELSEWHERE_SQL = f"""
         SELECT id, length(content) FROM posts
          WHERE source_id = %(source_id)s::uuid AND album_of IS NULL
-           AND COALESCE(published_at, fetched_at) BETWEEN COALESCE(%(published_at)s::timestamptz, now()) - interval '1 day'
+           AND {pairing.ix_date('')} BETWEEN COALESCE(%(published_at)s::timestamptz, now()) - interval '1 day'
                                                       AND COALESCE(%(published_at)s::timestamptz, now()) + interval '1 day'
            AND post_title_key(title) = post_title_key(%(title)s::text)
            AND normalized_url IS DISTINCT FROM %(normalized_url)s::text AND NOT platform_post_address(normalized_url)

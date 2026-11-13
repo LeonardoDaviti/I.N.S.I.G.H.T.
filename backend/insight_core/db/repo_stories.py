@@ -23,6 +23,7 @@ from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
                                             Edge, Story, source_site)
+from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
 from insight_core.utils import voice as voice_keys
 from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
@@ -367,15 +368,15 @@ class StoriesRepository:
         on the platforms (`html_sources`)."""
         PostPartsRepository.write_missing(cur, ids)
         cur.execute(
-            """
-            SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
+            f"""
+            SELECT p.id, p.source_id, {ix_date("p")}, p.title, p.content_hash,
                    length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
                    pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
                    CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END,
                    p.metadata ->> %(moved)s
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
-            WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
+            WHERE {ix_date("p")} IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
               AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
                                                          WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
@@ -739,8 +740,8 @@ class StoriesRepository:
     @staticmethod
     def timeline(cur: Cursor, source_id: str, start: datetime, end: datetime) -> List[str]:
         """The posts of a source posted between `start` and `end`."""
-        cur.execute("SELECT id::text FROM posts WHERE source_id = %s "
-                    "AND COALESCE(published_at, fetched_at) BETWEEN %s AND %s", (source_id, start, end))
+        cur.execute(f"SELECT id::text FROM posts WHERE source_id = %s "
+                    f"AND {ix_date('')} BETWEEN %s AND %s", (source_id, start, end))
         return [r[0] for r in cur.fetchall()]
 
     @staticmethod
