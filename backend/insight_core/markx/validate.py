@@ -537,6 +537,33 @@ def _news_sections(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_UNIT_KEY = re.compile(r"^\[(u\d{1,3})\] ", re.M)
+
+
+def _unit_types(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0181: every item the question shows (its "[u<n>] ..." lines) answered exactly once, no other key; a headline
+    of one line and at most UNIT_HEADLINE_WORDS words (+2, as headlines have)."""
+    shown = _UNIT_KEY.findall(input or "")
+    keys = set(shown)
+    seen: set = set()
+    for n, u in enumerate(a["units"]):
+        k = u["key"]
+        if k not in keys:
+            return f"units[{n}] names {k}, not an item of the question"
+        if k in seen:
+            return f"{k} is answered twice"
+        seen.add(k)
+        head = u["headline"].strip()
+        if not head or "\n" in head:
+            return f"{k}: a headline is one line, not empty"
+        if len(head.split()) > schemas.UNIT_HEADLINE_WORDS + 2:
+            return f"{k}: the headline has more than {schemas.UNIT_HEADLINE_WORDS} words"
+    missing = [k for k in shown if k not in seen]
+    if missing:
+        return f"{', '.join(missing[:3])} not answered: every item once"
+    return None
+
+
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -550,6 +577,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "websearch": _websearch,                    # 0171
           "source_judge": _source_judge,              # 0173
           "news_sections": _news_sections,            # 0174
+          "unit_types": _unit_types,                  # 0181
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

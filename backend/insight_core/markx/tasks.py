@@ -957,6 +957,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "news_sections":           # 0174: Mark X News' titled sections
         from insight_core.markx import news_sections
         news_sections.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "unit_types":              # 0181: a round-up's items: type, headline, continues
+        from insight_core.markx import units
+        units.after_types(cur, task, call_id, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])

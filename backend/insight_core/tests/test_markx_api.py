@@ -43,7 +43,8 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_plan_marks", "mx_embed_skips",   # v10.14; 0110
              "mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans",   # 0168
              "mx_happenings",   # 0175
-             "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues")   # 0181
+             "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",   # 0181
+             "mx_unit_types", "mx_unit_type_asks")   # 0181 round 2 (0125)
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,

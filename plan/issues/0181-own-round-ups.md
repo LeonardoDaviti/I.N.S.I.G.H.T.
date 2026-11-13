@@ -72,7 +72,7 @@ closed day (local midnight to midnight) and each closed week (local Monday to Mo
 after its period closes (`ISSUE_SETTLE`: a digest of a day arrives the next morning; its items' times put it in its
 day), at the offset in mx_settings `roundup_tz_offset_minutes` (default 240, the owner's UTC+4; `GET|POST
 /api/markx/roundups/settings`). Built by the candidates job's step (`jobs._issues_step` → `units.issues_step`: the last
-7 closed days and 4 closed weeks with no issue yet), inside that job's own spawned process, never in the API. A
+7 closed days and 2 closed weeks with no issue yet), inside that job's own spawned process, never in the API. A
 period waits while a post dated from 2 days before it on was never split (a first backfill still under way, newest
 first): its issue is written once, so never from a half-split copy. A past issue is never changed: `build_issue(..., rebuild=True)` (by hand) writes a new version row of the same period, and
 readers read the newest version. `GET /api/markx/roundups/issues` gives the latest daily and weekly (with their items)
@@ -93,8 +93,9 @@ A unit is never a voice, a member, a mention, a News count or a corroboration: n
 but units.py, and Pairing reads only `mx_roundups.issue_at` (its post date) and posts (its attach source). Tests
 (`tests/test_markx_units.py`):
 
-- a scan of the code: no module but units.py and pairing.py names the units tables (the migration aside), and
-  pairing's only one is `mx_roundups` (the issue time);
+- a scan of the code: no module but units.py and pairing.py names the units tables (the migrations aside), and
+  pairing's only one is `mx_roundups` (the issue time); event_types.py names only `mx_unit_types` (round 2: the
+  items' types, read by units.py through the seam);
 - on the seeded world of 0166 plus three round-ups whose items link its posts: two rounds of the decision run (tasks,
   memberships, connections, News rows with voices, reports, shares and mentions, back rows, later rows) and the
   anchors' voices are the same with every unit and attach row as with none;
@@ -105,6 +106,44 @@ pages), the issue time and every Pairing caller's identical result for ordinary 
 digest (curators, own-source curation, only in round-ups, signatures), the stored issues (periods at the offset, built
 once after settling, a rebuild a new version, the boundary a setting) and migration 0123. The frontend:
 `components/markx/roundup.test.tsx`.
+
+### 6. Round 2 (owner's review of 13 Nov: two dailies and a weekly read)
+
+The weekly's top was good; the dailies were not: non-news items (an essayist's "N years ago" back-references, the
+author's book ads and event dates, a newsletter's fun extras), fragments (a release note's second paragraph as its own
+item; a newsletter's numbered story shown by its sub-sentence, its bold headline lost) and an arbitrary order (most
+daily items have one curator). Fixed as classes, no site named in code:
+
+- **Types and headlines by the worker** (kind `unit_types`, guide unit-types-v1, migration 0125): each item of a
+  recent round-up (TYPE_DAYS = 16 back) is asked, UNITS_PER_QUESTION = 20 a question in the round-up's order (the item
+  before the first shown for context), its type, a headline of at most 14 words and whether it only `continues` the
+  item before it. The types are read-v3's for one item through the event-type seam (`schemas.UNIT_TYPES`,
+  `event_types.UNIT_NEWS`, `event_types.of_units`), with the owner's `promo` (an ad; the author's own book, talk,
+  event dates, sign-up; a bare link said nothing about) in place of `promotion_event`, and no `digest`. A new question
+  kind rather than read-v3 extended: read-v3 reads one post whole (its reading, entities' main, origin); an item needs
+  only a type and a headline, and twenty of them share one round-up's context. Keyed by the item's words (sha256 of its
+  text: `mx_unit_type_asks`, `mx_unit_types`; the first answer stays), so a new split of the same words (any code
+  change re-splits) is never asked again. Planned by the units step (`units.backfill` → `plan_types`, at most
+  TYPE_PLAN_MAX = 60 questions a run), in the candidates job's process; the answer is stored by `tasks.record`
+  (`units.after_types`, a few rows, as every kind's answer is). The worker asks one question a call
+  (`unit_types=1` in its PER_CALL; the owner's worker needs `unit_types` in its --kinds).
+- **An issue keeps news only**: an item typed outside UNIT_NEWS (model, product, research, business, policy/legal,
+  incident, public statement, leak/rumour) or that `continues` the item before it is left out and counted
+  (`left_out` on the issue: {type: n}); an untyped item is kept and counted (`untyped`). The headline is the Mark X
+  story's, else the worker's, else the attached post's title, else the item's lead. A settled period waits up to
+  TYPE_WAIT = 18 h (from its settling, or from when its round-ups' items were last asked) for its items' types.
+- **Splitter, paragraph items** (`lines`): when leads (a paragraph whose first words are a link or bold) open half the
+  paragraphs that link, an item starts at a lead (its bold line its headline, numbering dropped), at a heading over
+  plain paragraphs (the heading its headline) or at a plain paragraph with a link of its own after an item that has
+  one; its <br> lines (a story's sentence and "+" related links) and the following paragraphs with no link continue
+  it. A short bold paragraph with no link is a label (a heading). Whether a later paragraph with a link of its own is
+  more of the last item ("This release also adds …", "The 2.1 release notes list …") is meaning: the type question's
+  `continues`. Fixtures of both shapes (a numbered newsletter, release notes) in the tests.
+- **Ranking**: what INSIGHT holds as a story or 2+ curators carry first (by curators, issues, latest); then
+  single-curator items attached to a stored post; then single-curator items attached to nothing, SOLO_PER_SOURCE = 5
+  a round-up source (`capped` counts the rest: in a daily most items are single-curator and one 40-item round-up
+  would fill the issue with its own list; on the server copy's 2 Nov daily 3 sources gave 85 of 100 rows). Inside the
+  last two tiers the round-ups' own order (an item's place: editors lead with what matters).
 
 ## Measured (the local scratch copy: 49,384 posts, 5,344 read; private rows in the notes)
 
@@ -128,12 +167,45 @@ once after settling, a rebuild a new version, the boundary a setting) and migrat
   its callers' queries: back's recent posts 30 ms before, 22 ms after; the Posts window 33 → 21 ms; newest-first 2,000
   ordered by the date 1.7 → 23 ms (the expression index no longer applies; once a candidates run).
 
+### Round 2, measured (a clone of the server copy the owner's three issues were built on; private rows in the notes)
+
+- **The same three issues rebuilt** (two dailies, 2 and 3 Nov local, and the week of 26 Oct), every post split with
+  this code and every item typed by Haiku through the worker's own call (`claude -p`, one question a call):
+  - daily 2 Nov: 107 items read; 45 news; left out 21 other, 6 promo, 9 opinion, 1 community post, 25 that
+    continue the item before (20 of them an essay's citation paragraphs); 24 news items over the per-source cap;
+    21 shown. Before: 100 shown, 33 of them an essayist's back-references and bare citation links, 26 a numbered
+    newsletter's sub-sentences, related links and extras.
+  - daily 3 Nov: 72 read; 24 news; left out 29 promo (the author's books, talks and event dates), 11 other, 4
+    continue, 2 opinion, 2 community; 5 capped; 19 shown.
+  - week of 26 Oct: 731 read; 94 shown, its top unchanged in kind (stories and two-curator items first).
+- **Both dailies read end to end** (40 items shown): 39 are news items with a readable headline (97.5%); the one
+  not: an interview link typed `public_statement`. Every headline says the happening (a numbered newsletter's item
+  shows its bold line's story, not its sub-sentence). Over the cap and so not shown: 29 real news items (most of one
+  40-item release digest and half a numbered newsletter's ten).
+- **The type question, 40 items read blind** (random over all 1,788 answered items): 37 right (92.5%). Wrong: a
+  job posting typed `business_event` (kept as news); an item reporting a new study typed `opinion_analysis`; a quote
+  reporting incidents typed `opinion_analysis` with a headline that missed them. `continues` on the release digest:
+  "This release also adds …", "The 2.1 release notes …", a compaction paragraph of the item before: all three
+  `continues`; "Also out: <a tool> v0.3.1" a separate `product_release`.
+- **Cost**: 132 questions for 16 days of round-ups (TYPE_DAYS), about 8 a day; 1,788 items, 13.5 items a question;
+  4,231 tokens in and 2,466 out a question, 13.5 s; $0.0017 a question by Claude Code's count ($0.23 for the 16
+  days, about $0.014 a day). A first run's backlog: 132 questions, TYPE_PLAN_MAX (60) a candidates run. Answers: 132
+  of 132 valid within two tries under the final guide (the first wording's single-object answer was missed one time
+  in seven without the question's `id`; the guide now asks for it).
+- **Memory and time** (each in a spawned child as the jobs runner does): planning the questions of 16 days 3.1 s, peak
+  RSS 45 MB (41 MB of it imports); a catch-up of 7 days and 2 weeks of issues 19.5 s on a loaded machine (load 13),
+  peak 49 MB; three issues rebuilt 5.2 s, 47 MB. A normal run builds 0-2 issues.
+
 ## Not measured
 
 - The server's data (never touched): the copy's newest posts are of 5 Nov; only one large digest source; curators of
   2+ are rare on the copy (one row in a week), so the curator ranking is untested at scale.
 - Long newsletters the reading names but whose HTML gives no items (24 split by the reading's own items): read only
   inside the 40.
+- A newsletter whose lead story's title is a plain paragraph (no heading, no bold) after an intro that links: the
+  lead's paragraphs join the intro item (its link comes after them), so its own item is only "Here's how …". Seen once
+  on the copy; the type question reads the joined item as a whole.
+- The type question's accuracy on round-ups in Russian (2 of the 40 read, both right) and on sources not on the copy.
 - "Only in round-ups" is exact by construction on the copy's posts; whether those items matter to the owner is his.
 - A round-up tagged by its shape alone (255 of 370) is still a whole post to Pairing's same-story gates (they exclude
   only a reading's `roundup`), so it can stay a story's member and voice as before this slice; its issue time (made
@@ -144,4 +216,6 @@ once after settling, a rebuild a new version, the boundary a setting) and migrat
 
 - News rows "also in round-ups" (news.py, after slice M).
 - Units into Pairing's same-story sources (a unit's text embedded and paired like a post; a happening key for an item).
+- The cap's size (SOLO_PER_SOURCE = 5) is a reading choice, not measured against the owner's taste: a daily shows
+  about 20 items; the left-out news is counted on the issue (`capped`).
 - A rebuild of a past issue from the page (today by hand: `units.build_issue(cur, span, start, rebuild=True)`).
