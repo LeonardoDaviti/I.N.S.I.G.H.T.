@@ -29,7 +29,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import voice
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, roles, story_times
@@ -51,6 +51,12 @@ NEWS_KEEP = timedelta(days=30)      # the story job writes News for the stories 
 NEWS_EDGE = timedelta(hours=48)
 SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first (0077)
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
+# A row grows only by what holds against a story's core (0203, measured on the server's Mark X News of 2026-11-14:
+# one row had chained 57 stories through names their side posts said). A story's core names: its lead's, or those
+# at least CORE_SHARE of its posts say ...
+CORE_SHARE = 0.5
+# ... and two stories of LARGE_POSTS+ posts each join only by each one's main name (Mark X: and the judge's link).
+LARGE_POSTS = 5
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
 MENTION_WEIGHT = 0.5                # the prototype's, not measured
 NAME_WINDOW = timedelta(hours=48)   # a name surges within 48 hours ...
@@ -307,17 +313,84 @@ def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: 
     return reports, len(best) - reports, mentions
 
 
-def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge]) -> List[NewsStory]:
-    """0050's stories joined by the surging names, those with 2+ voices, first first."""
+def _said(story: Story, found: Sequence[Surge]) -> Dict[str, Set[str]]:
+    mine = {p.id for p in story.posts}
+    said: Dict[str, Set[str]] = defaultdict(set)
+    for s in found:
+        said[s.name] |= mine & set(s.posts)
+    return said
+
+
+def core_names(story: Story, found: Sequence[Surge]) -> Set[str]:
+    """The surging names a story is about (0203): those its lead's title says, or at least CORE_SHARE of its posts'
+    titles say, the most specific of them (a name inside another core name is none). A name one roundup or one reply
+    in it says is no name of the story."""
+    ids = [p.id for p in story.posts]
+    if not ids:
+        return set()
+    said = _said(story, found)
+    core = {name for name, ps in said.items() if ids[0] in ps or len(ps) >= CORE_SHARE * len(ids)}
+    # the most specific only: "gemini 4 carbon", never "gemini" inside it (another release of the family says that)
+    return {c for c in core if not any(o != c and f" {c} " in f" {o} " for o in core)}
+
+
+def main_name(story: Story, found: Sequence[Surge]) -> Optional[str]:
+    """The core name most of a story's posts say (then the longest): what a release story is about, not its maker's
+    name its lead also says ("Acme releases Vela 5.2": vela 5.2, not acme)."""
+    core = core_names(story, found)
+    if not core:
+        return None
+    said = _said(story, found)
+    return max(core, key=lambda c: (len(said[c]), len(c), c))
+
+
+def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge], *,
+         judged: Optional[Iterable[FrozenSet[str]]] = None) -> List[NewsStory]:
+    """0050's stories joined by the surging names, those with 2+ voices, first first.
+
+    A row grows only by what holds against each story's core (0203: one Mark X row chained 57 stories, 397 posts,
+    through names their side posts said): a surging name joins a story's post only when the name says one of the
+    story's core names (`core_names`), and a post in several stories is in its first story's row only. Two large
+    stories (LARGE_POSTS+ posts each) are joined only by a name that says each one's main name (`main_name`), and with
+    `judged` (Mark X: the story pairs its judge connected, as development, follow-up or the same event) only when the
+    judge connected them too; None (Mark IX: no judge), by their main names alone."""
     by_id = {p.id: p for p in posts}
     uf = _UnionFind()
     for p in posts:
         uf.find(p.id)
     story_of: Dict[str, Story] = {}
+    large: Dict[str, Set[str]] = {}            # a group's root -> its large stories
+    pairs = None if judged is None else {frozenset(x) for x in judged}
     for story in stories:
         for p in story.posts:
+            if p.id in story_of:
+                continue                       # a post in several stories: its first story's (0203)
             uf.union(p.id, story.id)
             story_of[p.id] = story
+        if len(story.posts) >= LARGE_POSTS:
+            large[uf.find(story.id)] = {story.id}
+    cores = {story.id: core_names(story, found) for story in stories}
+    mains = {story.id: main_name(story, found) for story in stories}
+
+    def says_main(name: str, group: Set[str]) -> bool:
+        return any(mains.get(x) and f" {mains[x]} " in f" {name} " for x in group)
+
+    def join(a: str, b: str, name: str) -> None:
+        ra, rb = uf.find(a), uf.find(b)
+        if ra == rb:
+            return
+        la, lb = large.get(ra, set()), large.get(rb, set())
+        if la and lb:
+            # two large stories: the name must be each one's main name, and (Mark X) the judge must have connected them
+            if not (says_main(name, la) and says_main(name, lb)):
+                return
+            if pairs is not None and not any(frozenset((x, y)) in pairs for x in la for y in lb):
+                return
+        uf.union(a, b)
+        both = la | lb
+        large.pop(ra, None), large.pop(rb, None)
+        if both:
+            large[uf.find(a)] = both
     joined_by: Dict[str, str] = {}
     # A post two surging names say joins the one it says first, with the names inside that one or
     # around it, never another (issue 0070): "Вышел Grok-4.7… как будто чуть лучше Sol" is Grok 4.7's,
@@ -338,10 +411,17 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     def nested(a: str, b: str) -> bool:
         return f" {a} " in f" {b} " or f" {b} " in f" {a} "
 
+    def holds(pid: str, name: str) -> bool:
+        """Whether the name may join this post: a post of no story always; a story's post when the name says one of
+        the story's core names ("claude vela 5" holds for "vela 5"; "gemini" never for "gemini 4 carbon")."""
+        story = story_of.get(pid)
+        return story is None or any(f" {c} " in f" {name} " for c in cores.get(story.id, ()))
+
     for surge in found:
-        members = [pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)]
+        members = [pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
+                   and holds(pid, surge.name)]
         for pid in members[1:]:
-            uf.union(pid, members[0])
+            join(pid, members[0], surge.name)
         for pid in members:
             joined_by.setdefault(pid, surge.name)
     groups: Dict[str, List[StoryPost]] = defaultdict(list)

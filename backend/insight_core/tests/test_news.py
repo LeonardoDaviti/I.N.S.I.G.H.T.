@@ -26,9 +26,9 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.classic_rules import Citation, classics
-from insight_core.utils.news_rules import lead, main_story, names, news, phrases, score, surges, tally
+from insight_core.utils.news_rules import Surge, core_names, lead, main_story, names, news, phrases, score, surges, tally
 from insight_core.utils.post_links import is_reference
-from insight_core.utils.story_rules import StoryPost, group
+from insight_core.utils.story_rules import Story, StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -245,6 +245,63 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual([p.id for p in story.posts], ["a", "b", "c"])
         self.assertEqual((story.reports, story.shares, story.mentions, story.score), (3, 0, 0, 3.0))
         self.assertEqual(story.names, {"a": "steam frame", "b": "steam frame", "c": "steam frame"})
+
+    def runaway(self):
+        """0203: the shape of the server's runaway Mark X row (2026-11-14: 57 stories, 397 posts in one row), with
+        invented names: three judged stories, each about its own happening, whose side posts say another's surging
+        name (a digest in the release story names the CEO; a reaction in the other release story too), a post that is
+        in two stories, and a loose post about the CEO."""
+        def run(prefix, n, title, start, extra=()):
+            ps = [post(f"{prefix}{k}", f"{prefix}s{k}", hours=start + k, title=f"{title} {k}") for k in range(n)]
+            return ps + [post(pid, src, hours=start + n, title=t) for pid, src, t in extra]
+        vela = run("v", 6, "Vela 5.2 is out", 0, [("vx", "vxs", "Orin Kade has thoughts on it")])
+        nimbus = run("n", 5, "Nimbus 4 ships", 1, [("nx", "digest", "[Digest] Orin Kade resigns after 33 years")])
+        kade = run("k", 6, "Orin Kade resigns as CEO", 2)
+        both = post("kb", "kbs", hours=9, title="Nimbus 4 and the CEO news")   # a member of two stories
+        loose = post("l1", "loose", hours=10, title="Orin Kade out at Acme")
+        posts = vela + nimbus + kade + [both, loose]
+
+        def story(sid, ps):
+            return Story(id=sid, first_at=ps[0].t, posts=ps, voices=0, roles={}, reasons={}, mentions=set())
+        stories = [story("A", vela), story("B", nimbus + [both]), story("C", kade + [both])]
+        surge = lambda name, ps: Surge(name, ps[0].t, [p.id for p in ps], 0)
+        found = [surge("vela 5.2", vela[:6]), surge("nimbus 4", nimbus[:5] + [both]),
+                 surge("orin kade", [vela[-1], nimbus[-1]] + kade + [loose])]
+        return posts, stories, found
+
+    def test_a_row_grows_only_by_what_holds_against_each_storys_core(self):
+        posts, stories, found = self.runaway()
+        rows = news(posts, stories, found, judged=set())
+        got = sorted(sorted(p.id for p in r.posts) for r in rows)
+        self.assertEqual(len(rows), 3, "three happenings, three rows: no chain through the side posts")
+        kade = next(r for r in got if "k0" in r)
+        self.assertIn("l1", kade, "a loose post joins the story its name is the core of")
+        self.assertIn("kb", kade + next(r for r in got if "n0" in r))
+        self.assertNotIn("vx", kade, "a side post's name never pulls its story into another row")
+        self.assertNotIn("nx", kade)
+        self.assertEqual(sum(len(r) for r in got), len(posts), "a post in two stories is in one row")
+        self.assertEqual(core_names(stories[2], found), {"orin kade"})
+        self.assertEqual(core_names(stories[0], found), {"vela 5.2"}, "one side post makes no core name")
+        tips = post("l2", "tips", hours=11, title="Vela tips and tricks")
+        v = stories[0].posts
+        short = found + [Surge("vela", v[0].t, [p.id for p in v[:6]] + ["l2"], 0)]
+        [a_row] = [r for r in news(posts + [tips], stories, short, judged=set()) if "v0" in {p.id for p in r.posts}]
+        self.assertNotIn("l2", {p.id for p in a_row.posts}, "a shorter name inside a core name holds for nothing")
+
+    def test_two_large_stories_with_one_core_name_join_only_when_the_judge_connected_them(self):
+        a = [post(f"a{k}", f"as{k}", hours=k, title=f"Nimbus 4 ships {k}") for k in range(5)]
+        b = [post(f"b{k}", f"bs{k}", hours=20 + k, title=f"Nimbus 4 hands on {k}") for k in range(5)]
+        stories = [Story(id=x, first_at=ps[0].t, posts=ps, voices=0, roles={}, reasons={}, mentions=set())
+                   for x, ps in (("A", a), ("B", b))]
+        found = [Surge("nimbus 4", a[0].t, [p.id for p in a + b], 0)]
+        self.assertEqual(len(news(a + b, stories, found)), 1, "Mark IX (no judge): a name core to both joins them")
+        self.assertEqual(len(news(a + b, stories, found, judged=set())), 2,
+                         "Mark X: two large stories the judge never connected stay apart")
+        self.assertEqual(len(news(a + b, stories, found, judged={frozenset(("A", "B"))})), 1,
+                         "... and join once the judge connected them")
+        small = stories[:1] + [Story(id="B", first_at=b[0].t, posts=b[:2], voices=0, roles={}, reasons={},
+                                     mentions=set())]
+        self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
 
     def test_a_story_needs_two_independent_voices(self):
         posts = [post("a", "s1", text_hash="h", chars=200, title="One two three four five"),
@@ -555,8 +612,9 @@ class NewsJobTests(unittest.TestCase):
 
     def test_a_story_joined_by_another_name_never_leads(self):
         """Issue 0111: a row's lead comes from its main 0050 story (the most voices), or from a story or
-        post joined to it by that story's own name; a thread joined by a name the main story says in
-        passing never titles the row, even with an origin of its own."""
+        post joined to it by that story's own name. 0203: a name the main story says in passing (one of its three
+        posts, not its lead) is none of its core names, so the thread about that other name is a row of its own; it
+        never titles the main story's row."""
         main, side = f"Zork{self.mark[:4]} 9", f"Quux{self.mark[:4]} 7"
         page = f"https://paper-{self.mark}.test/2026/10/the-paper"
         a, b, c, d, e = (self._source(n) for n in ("Alpha", "Beta", "Gamma", "Delta", "Epsilon"))
@@ -570,10 +628,10 @@ class NewsJobTests(unittest.TestCase):
         self.cur.execute("SELECT parent_reason FROM story_posts WHERE post_id = %s", (thread,))
         self.assertEqual(self.cur.fetchall(), [(None,)], "the bench thread roots a story of its own")
         [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == first]
-        self.assertEqual(item["story"]["voices"], 5, "one row, by the names")
+        self.assertEqual(item["story"]["voices"], 3, "the main story's row: a name said in passing joins nothing")
         self.assertEqual(item["id"], first, "the main story's first report, not the other story's origin")
-        [delta] = [i for i in self.news.news_on(self.cur, f"source:{d}")["items"] if i["story"]["id"] == first]
-        self.assertEqual(delta["id"], thread, "on its own source's News a source's post still leads")
+        [delta] = [i for i in self.news.news_on(self.cur, f"source:{d}")["items"] if i["id"] == thread]
+        self.assertNotEqual(delta["story"]["id"], first, "the bench thread is a row of its own")
 
     def test_one_owners_channels_are_one_news_voice(self):
         """Issue 0111: a person's blog and video channel (the blog links the channel's videos, the channel's

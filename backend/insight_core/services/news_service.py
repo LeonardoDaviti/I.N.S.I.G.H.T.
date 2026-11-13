@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
 
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
@@ -73,16 +73,18 @@ class NewsService:
 
     @staticmethod
     def rows(*, posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-             since: datetime) -> List[Any]:
+             since: datetime, judged: Optional[Iterable[FrozenSet[str]]] = None) -> List[Any]:
         """A full run's News rows, written by no one here (`refresh` writes them; Mark X writes its own, issue 0086
         E): the stories begun since `since` and the posts of no story posted since, joined by the surging names. A
         row is in the window by its first post (issue 0111): those of NEWS_EDGE before are read too, and a row they
-        begin is no row of the window (the one stored stays as it was)."""
+        begin is no row of the window (the one stored stays as it was). `judged`: Mark X's story pairs its judge
+        connected (news_rules.news: two large stories are joined by a name only when connected)."""
         edge = since - NEWS_EDGE
         shown = [s for s in stories if s.first_at >= edge]
         in_story = {p.id for s in stories for p in s.posts}
         ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= edge}
-        return [s for s in news([p for p in posts if p.id in ids], shown, found) if s.first_at >= since]
+        return [s for s in news([p for p in posts if p.id in ids], shown, found, judged=judged)
+                if s.first_at >= since]
 
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
