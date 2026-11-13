@@ -22,16 +22,19 @@ The split: an item's day is its newest post's; the newest `test_share` of the qu
 a label keeps the split it was given. Precision is counted per pool (post-stratified: each labelled item weighs its
 pool's size over the pool's labelled count), with a Wilson 95% interval on the Kish effective count; each feature's
 bar is swept on dev and reported on test.
+
+Where it is built (0182): insight-ingestion's jobs process builds the newest decision run's queue after each run and
+keeps it (`keep`: mx_label_queues, mx_label_queue_items); the API reads only the kept queue (`kept`), never
+`population`, and says "being built" until it is kept.
 """
 from __future__ import annotations
 
 import hashlib
 import math
-import threading
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from insight_core.markx import decide, repo, schemas
 
@@ -113,6 +116,49 @@ class Queue:
         if self.cut is None or item.day is None:
             return "dev"
         return "test" if item.day.date().isoformat() >= self.cut else "dev"
+
+    def sizes(self) -> Counter:
+        """(pool, split) -> population."""
+        size: Counter = Counter()
+        for it in self.items.values():
+            size[(it.pool, self.split_of(it))] += 1
+        return size
+
+    def bar_of(self, feature: str) -> Optional[float]:
+        """The feature's bar: the first item's of the population that has one."""
+        return next((it.bar for it in self.items.values() if it.feature == feature and it.bar is not None), None)
+
+    def ensure(self, cur: Any, ids: Iterable[str]) -> None:
+        """These items in `items` when the queue has them (a queue built here holds every item already)."""
+
+
+@dataclass
+class Kept(Queue):
+    """A queue the jobs process built and kept (mx_label_queues, 0182): its header read whole, its items only as a
+    page needs them (`ensure`): the queued ones, one item, the labelled ones. Never a reading of its own."""
+    key: Optional[str] = None                                  # mx_label_queues.id (None: nothing kept yet)
+    building: bool = False                                     # the newest run's queue is not kept yet
+    size: Counter = field(default_factory=Counter)             # (pool, split) -> population
+    bars: Dict[str, Optional[float]] = field(default_factory=dict)
+    absent: set = field(default_factory=set)                   # ids asked for that the queue doesn't hold
+
+    def sizes(self) -> Counter:
+        return self.size
+
+    def bar_of(self, feature: str) -> Optional[float]:
+        return self.bars.get(feature)
+
+    def ensure(self, cur: Any, ids: Iterable[str]) -> None:
+        want = sorted({str(i) for i in ids if i} - set(self.items) - self.absent)
+        if not want or self.key is None:
+            return
+        cur.execute("""SELECT id::text, feature, post::text, day, p, bar, relation, reason, accepted, pool, weight_hint,
+                              queued FROM mx_label_queue_items WHERE queue_id = %s AND id = ANY(%s::uuid[]) ORDER BY seq""",
+                    (self.key, [i for i in want if _is_uuid(i)]))
+        for iid, feature, post, day, p, bar, relation, reason, accepted, pool, weight_hint, queued in cur.fetchall():
+            self.items[iid] = Item(id=iid, feature=feature, post=post, day=day, p=p, bar=bar, relation=relation,
+                                   reason=reason, accepted=accepted, pool=pool, weight_hint=weight_hint, queued=queued)
+        self.absent |= set(want) - set(self.items)
 
 
 # ---- the decisions, read without writing --------------------------------------------------------------
@@ -313,27 +359,139 @@ def build(items: Sequence[Item], settings: Settings = Settings(), run: Optional[
     return q
 
 
-# ---- the queue a page reads (cached per decision run) ---------------------------------------------------
+# ---- the queue, built by the jobs process and kept (0182) ------------------------------------------------
+#
+# The queue is a whole decision reading (`population`): on a server-sized copy a 2.4 GB peak of Python allocations.
+# It was built in insight-api on the first open after each run, and the API's RSS stayed at that high-water mark.
+# insight-ingestion's jobs process builds it after each decision run (jobs.Jobs.labels, its own process and
+# transaction) and keeps it in mx_label_queues; the API reads only what is kept (`kept`), never `population`.
 
-_cache: Dict[str, Queue] = {}
-_lock = threading.Lock()
+KEEP_ITEMS = 3      # the newest queues whose items are kept (every header is kept: what it held, its size, its cost)
 
 
-def queue(cur: Any, *, settings: Settings = Settings(), now: Optional[datetime] = None, fresh: bool = False) -> Queue:
-    """The queue for the newest decision run (computed once a run; nothing is written)."""
+def _is_uuid(value: str) -> bool:
+    import uuid
+    try:
+        uuid.UUID(value)
+        return True
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+_stamps: Dict[str, str] = {}
+
+
+def stamp(settings: Settings = Settings()) -> str:
+    """The code a kept queue was built by: the decision reading's (decide's version, incremental.code_stamp), this
+    module's and the guides', and the settings. A queue of another stamp is never read: after a deploy that changes
+    any of them the queue is built again."""
+    key = repr(sorted(settings.as_dict().items()))
+    if key not in _stamps:
+        import importlib
+        from insight_core.markx import incremental
+        h = hashlib.sha256(f"{decide.CODE_VERSION}\0{incremental.code_stamp()}\0".encode())
+        for name in ("insight_core.markx.labels", "insight_core.markx.schemas"):
+            with open(importlib.import_module(name).__file__, "rb") as f:
+                h.update(name.encode() + b"\0" + f.read() + b"\0")
+        h.update(key.encode())
+        _stamps[key] = h.hexdigest()
+    return _stamps[key]
+
+
+def queue(cur: Any, *, settings: Settings = Settings(), now: Optional[datetime] = None) -> Queue:
+    """The queue for the newest decision run, read now: a whole decision reading (nothing is written). The one place
+    a queue is built: `keep` (the jobs process) calls it, and the tests; a page reads only the kept queue (`kept`)."""
     last = repo.last_run(cur)
     run = str(last["id"]) if last else None
     if run is None:
         return Queue(run=None)
-    key = f"{run}:{hash(settings)}"
-    with _lock:
-        if not fresh and key in _cache:
-            return _cache[key]
-    q = build(population(cur, now=now), settings, run=run)
-    with _lock:
-        _cache.clear()
-        _cache[key] = q
-    return q
+    return build(population(cur, now=now), settings, run=run)
+
+
+def missing(cur: Any, settings: Settings = Settings()) -> bool:
+    """Whether the newest decision run has no kept queue of this code's stamp (the jobs process builds it then)."""
+    last = repo.last_run(cur)
+    if last is None:
+        return False
+    cur.execute("SELECT 1 FROM mx_label_queues WHERE run_id = %s AND stamp = %s", (last["id"], stamp(settings)))
+    return cur.fetchone() is None
+
+
+def keep(cur: Any, *, settings: Settings = Settings(), now: Optional[datetime] = None,
+         peak: Optional[Callable[[], float]] = None) -> Dict[str, Any]:
+    """In the jobs process: the newest decision run's queue (`queue`), kept in the caller's transaction, header and
+    items; the items of the queues older than the newest KEEP_ITEMS are pruned (their headers stay). Nothing when
+    there is no run or its queue is kept already. `peak()`: the process's peak memory in MB, recorded with it."""
+    import time
+    last = repo.last_run(cur)
+    if last is None:
+        return {"kept": None, "why": "no decision run yet"}
+    run, st = str(last["id"]), stamp(settings)
+    cur.execute("SELECT id::text FROM mx_label_queues WHERE run_id = %s AND stamp = %s", (run, st))
+    got = cur.fetchone()
+    if got:
+        return {"kept": got[0], "run": run, "already": True}
+    t0 = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+    q = queue(cur, settings=settings, now=now)
+    seconds = round(time.monotonic() - t0, 2)
+    key = _store(cur, q, stamp=st, settings=settings, read_at=now, seconds=seconds,
+                 peak_mb=round(peak(), 1) if peak else None)
+    pruned = prune(cur)
+    # the pages read items by key: planned on fresh statistics (before autovacuum's, the copy read 40 ms an item)
+    cur.execute("ANALYZE mx_label_queue_items")
+    return {"kept": key, "run": run, "items": len(q.items), "queued": len(q.order), "seconds": seconds,
+            **({"pruned": pruned} if pruned else {})}
+
+
+def _store(cur: Any, q: Queue, *, stamp: str, settings: Settings, read_at: datetime, seconds: Optional[float],
+           peak_mb: Optional[float]) -> str:
+    import json
+    sizes = [[pool, split, n] for (pool, split), n in sorted(q.sizes().items())]
+    bars = {f: q.bar_of(f) for f in ORDER if any(it.feature == f for it in q.items.values())}
+    cur.execute("""INSERT INTO mx_label_queues (run_id, stamp, settings, read_at, cut, queued, pools, sizes, bars, items,
+                                                seconds, peak_mb)
+                   VALUES (%s, %s, %s::jsonb, %s, %s, %s::uuid[], %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s)
+                   RETURNING id::text""",
+                (q.run, stamp, json.dumps(settings.as_dict()), read_at, q.cut, list(q.order), json.dumps([[p, n] for p, n in q.pools.items()]),
+                 json.dumps(sizes), json.dumps(bars), len(q.items), seconds, peak_mb))
+    key = cur.fetchone()[0]
+    with cur.copy("""COPY mx_label_queue_items (queue_id, id, seq, feature, post, day, p, bar, relation, reason,
+                                                accepted, pool, weight_hint, queued) FROM STDIN""") as copy:
+        for seq, it in enumerate(q.items.values()):
+            copy.write_row((key, it.id, seq, it.feature, it.post, it.day, it.p, it.bar, it.relation, it.reason,
+                            it.accepted, it.pool, it.weight_hint, it.queued))
+    return key
+
+
+def prune(cur: Any, keep_items: int = KEEP_ITEMS) -> int:
+    """The items of every queue but the newest `keep_items` (by when built) go; their headers stay. How many queues."""
+    cur.execute("""UPDATE mx_label_queues SET items_kept = false
+                    WHERE id IN (SELECT id FROM mx_label_queues WHERE items_kept ORDER BY built_at DESC, id OFFSET %s)
+                   RETURNING id""", (keep_items,))
+    ids = [r[0] for r in cur.fetchall()]
+    if ids:
+        cur.execute("DELETE FROM mx_label_queue_items WHERE queue_id = ANY(%s::uuid[])", (ids,))
+    return len(ids)
+
+
+def kept(cur: Any, settings: Settings = Settings()) -> Kept:
+    """The queue a page reads: the newest kept queue of this code's stamp, never a reading of its own. `building` when
+    the newest decision run's queue is not kept yet (the jobs process builds it on its next pass): the newest kept
+    one is read meanwhile if there is one, else nothing (`key` None, no items). No decision run: run None."""
+    last = repo.last_run(cur)
+    if last is None:
+        return Kept(run=None)
+    newest = str(last["id"])
+    cur.execute("""SELECT id::text, run_id::text, cut, queued::text[], pools, sizes, bars FROM mx_label_queues
+                    WHERE stamp = %s AND items_kept ORDER BY run_id = %s DESC, built_at DESC, id LIMIT 1""",
+                (stamp(settings), newest))
+    row = cur.fetchone()
+    if row is None:
+        return Kept(run=newest, building=True)
+    key, run, cut, order, pools, sizes, bars = row
+    return Kept(run=run, key=key, cut=cut, order=list(order or []), pools=Counter({p: n for p, n in pools or []}),
+                size=Counter({(p, s): n for p, s, n in sizes or []}), bars=dict(bars or {}), building=run != newest)
 
 
 # ---- labels ------------------------------------------------------------------------------------------
@@ -358,6 +516,7 @@ def latest(cur: Any, *, labeller: Optional[str] = "owner", kinds: Optional[Seque
 def label(cur: Any, q: Queue, item_id: str, answer: str, *, note: Optional[str] = None,
           labeller: str = "owner") -> Dict[str, Any]:
     """Store one answer to a queue item (a new row, whatever came before) and give back its verdict."""
+    q.ensure(cur, [item_id])
     it = q.items.get(item_id)
     if it is None:
         raise KeyError(item_id)
@@ -413,6 +572,7 @@ def verdict(it: Item) -> Dict[str, Any]:
 def item_view(cur: Any, q: Queue, item_id: str, labeller: str = "owner") -> Optional[Dict[str, Any]]:
     """An item as the page shows it: the question, the evidence (the task's input, as the judge saw it), the answers;
     its verdict only once it has a label."""
+    q.ensure(cur, [item_id])
     it = q.items.get(item_id)
     if it is None:
         return None
@@ -440,6 +600,7 @@ def queue_view(cur: Any, q: Queue, labeller: str = "owner") -> Dict[str, Any]:
     """The queue's state: per feature its items and how many are answered, the next unanswered items, the cut."""
     done = latest(cur, labeller=labeller, kinds=sorted({f.item_kind for f in FEATURES.values()}))
     answered = {a for (_k, a) in done}
+    q.ensure(cur, q.order)
     per: Dict[str, Counter] = defaultdict(Counter)
     for i in q.order:
         it = q.items[i]
@@ -520,6 +681,7 @@ def _stat(rows: Sequence[Tuple[Item, str, float]], accepted_side: bool, bar: Opt
 def answers_of(cur: Any, q: Queue, labeller: str = "owner") -> Tuple[Dict[str, Tuple[str, str]], int]:
     """({item: (its newest answer, its split)} for the queue's items, how many labels name no item of it now)."""
     got = latest(cur, labeller=labeller, kinds=sorted({f.item_kind for f in FEATURES.values()}))
+    q.ensure(cur, [a for (_kind, a) in got])
     out, stale = {}, 0
     for (kind, a), row in got.items():
         it = q.items.get(a)
@@ -534,9 +696,7 @@ def score(q: Queue, answers: Dict[str, Tuple[str, str]], settings: Settings = Se
     """Each feature's precision on `answers` ({item: (answer, split)}; unsure left out): at its bar on dev, test and
     both, with the share right on its rejected side too; the bar swept on dev and test; the re-picked bar (the lowest
     whose dev precision reaches `settings.target`; for checks, which take out below their bar, the highest)."""
-    size: Counter = Counter()                                   # (pool, split) -> population
-    for it in q.items.values():
-        size[(it.pool, q.split_of(it))] += 1
+    size = q.sizes()                                            # (pool, split) -> population
     labelled: Dict[Tuple[str, str], List[Tuple[Item, str]]] = defaultdict(list)
     for iid, (ans, split) in answers.items():
         it = q.items.get(iid)
@@ -558,7 +718,7 @@ def score(q: Queue, answers: Dict[str, Tuple[str, str]], settings: Settings = Se
         if not pop:
             continue
         feat = FEATURES[f]
-        bar = next((it.bar for it in q.items.values() if it.feature == f and it.bar is not None), None)
+        bar = q.bar_of(f)
         splits = {name: {"acted": _stat(rows(f, sp), True), "rejected": _stat(rows(f, sp), False)}
                   for name, sp in (("dev", "dev"), ("test", "test"), ("all", None))}
         sweep, repick = [], None

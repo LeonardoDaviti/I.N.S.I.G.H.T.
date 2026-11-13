@@ -1,6 +1,8 @@
 """Mark X Shadow's labels (issue 0086 F): the queue (near a bar, every merge, a weighted sample of the rest), the dev and
 test split by date, each feature's precision with its bar and interval, one answer a new row, the one tap on Mark X News
-members, and the routes. Synthetic data only; the DB tests run on a database whose name ends in _test."""
+members, and the routes. 0182: the queue is built by the jobs process and kept; the routes read only the kept queue
+(never `population`), and answer "being built" until it is kept. Synthetic data only; the DB tests run on a database
+whose name ends in _test."""
 from __future__ import annotations
 
 import json
@@ -165,7 +167,7 @@ class Labels(unittest.TestCase):
 
     def test_the_queue_offers_the_run_s_decisions_blind_and_keeps_every_answer(self):
         a, b, c, d, e = self.scene()
-        q = L.queue(self.cur, now=self.now, fresh=True)
+        q = L.queue(self.cur, now=self.now)
         by = {(it.feature, it.post): it for it in q.items.values()}
         self.assertEqual(set(by), {("check", b), ("check", c), ("pair", e)})
         self.assertEqual(by[("check", c)].pool, "check:near")         # p 0.25 by the 0.30 bar: taken out
@@ -202,11 +204,46 @@ class Labels(unittest.TestCase):
         self.assertEqual(L.precision(self.cur, q, labeller="claude")["features"][0]["labelled"], 0)
         # Mark IX drops c from its story: the question is no longer asked, and its label still counts ("earlier")
         self.cur.execute("DELETE FROM story_posts WHERE post_id = %s", (c,))
-        q2 = L.queue(self.cur, now=self.now, fresh=True)
+        q2 = L.queue(self.cur, now=self.now)
         self.assertEqual(q2.items[it.id].pool, "check:earlier")
         self.assertNotIn(it.id, q2.order)
         check = next(f for f in L.precision(self.cur, q2)["features"] if f["feature"] == "check")
         self.assertEqual((check["labelled"], check["splits"]["all"]["acted"]["precision"]), (1, 1.0))
+
+    def test_the_kept_queue_reads_as_the_built_one(self):
+        """0182: the queue kept by the jobs process (labels.keep, then labels.kept) is the queue built in place: the same
+        items with the same fields, the same order, pools, cut, views and precision numbers, before and after labels."""
+        self.scene()
+        built = L.queue(self.cur, now=self.now)
+        out = L.keep(self.cur, now=self.now, peak=lambda: 12.5)
+        self.assertEqual((out["items"], out["queued"]), (len(built.items), len(built.order)))
+        self.assertEqual(L.keep(self.cur, now=self.now)["already"], True)          # once a run and code stamp
+        self.assertFalse(L.missing(self.cur))
+
+        def same(kept):
+            self.assertFalse(kept.building)
+            self.assertEqual((kept.run, kept.order, kept.cut, dict(kept.pools)),
+                             (built.run, built.order, built.cut, dict(built.pools)))
+            self.assertEqual(list(kept.pools), list(built.pools))                   # and in the same order
+            self.assertEqual(L.queue_view(self.cur, kept), L.queue_view(self.cur, built))
+            for i in built.items:
+                self.assertEqual(L.item_view(self.cur, kept, i), L.item_view(self.cur, built, i))
+            fields = lambda it: {k: v for k, v in vars(it).items() if k != "rank"}
+            kept.ensure(self.cur, built.items)
+            self.assertEqual({i: fields(it) for i, it in kept.items.items()},
+                             {i: fields(it) for i, it in built.items.items()})
+            for labeller in ("owner", "claude"):
+                self.assertEqual(L.precision(self.cur, kept, labeller=labeller),
+                                 L.precision(self.cur, built, labeller=labeller))
+        same(L.kept(self.cur))
+        for n, i in enumerate(built.order):
+            L.label(self.cur, L.kept(self.cur), i, ("same_event", "different", "related")[n % 3])
+        L.label(self.cur, built, built.order[0], "unsure", labeller="claude")
+        same(L.kept(self.cur))
+        self.cur.execute("SELECT seconds, peak_mb, items, items_kept FROM mx_label_queues")
+        seconds, peak_mb, n, items_kept = self.cur.fetchone()
+        self.assertEqual((peak_mb, n, items_kept), (12.5, len(built.items), True))
+        self.assertIsNotNone(seconds)
 
     def test_the_answers_are_read_in_sql_as_python_read_them(self):
         """0182: the population reads of an answer only the verdict's fields and whether `entities` names anything,
@@ -241,6 +278,46 @@ class Labels(unittest.TestCase):
                 self.assertEqual((it.p, it.relation, it.reason), (round(v.p, 4), v.relation, v.reason), ids[i])
         self.assertEqual(sum(it.feature == "connect" for it in got.values()), len(verdicts))
 
+    def test_being_built_until_the_newest_run_s_queue_is_kept(self):
+        self.assertIsNone(L.kept(self.cur).run)                                      # no run: nothing to label
+        self.assertFalse(L.missing(self.cur))
+        self.scene()
+        q = L.kept(self.cur)
+        self.assertTrue(q.building)
+        self.assertIsNone(q.key)
+        self.assertTrue(L.missing(self.cur))
+        view = L.queue_view(self.cur, q)
+        self.assertEqual((view["total"], view["next"], view["run"]), (0, [], q.run))
+        L.keep(self.cur, now=self.now)
+        first = L.kept(self.cur)
+        self.assertFalse(first.building)
+        D.run(self.cur, now=self.now + H)                                            # a newer run: its queue not kept yet
+        q = L.kept(self.cur)
+        self.assertTrue(q.building)
+        self.assertEqual((q.key, q.order), (first.key, first.order))                  # the last kept one meanwhile
+        with mock.patch.object(L, "stamp", lambda settings=L.Settings(): "another code"):
+            self.assertIsNone(L.kept(self.cur).key)                                  # another code's is never read
+            self.assertTrue(L.missing(self.cur))
+
+    def test_the_items_of_older_queues_are_pruned_and_their_headers_kept(self):
+        self.scene()
+        built = L.queue(self.cur, now=self.now)
+        keys = []
+        for n in range(L.KEEP_ITEMS + 2):
+            run = repo.start_run(self.cur, code_version="test", config={})
+            built.run = str(run)
+            keys.append(L._store(self.cur, built, stamp=L.stamp(), settings=L.Settings(), read_at=self.now,
+                                 seconds=1.0, peak_mb=None))
+            L.prune(self.cur)
+        self.cur.execute("SELECT id::text, items_kept, items FROM mx_label_queues ORDER BY built_at")
+        rows = self.cur.fetchall()
+        self.assertEqual([r[0] for r in rows], keys)
+        self.assertEqual([r[1] for r in rows], [False, False] + [True] * L.KEEP_ITEMS)
+        self.assertEqual({r[2] for r in rows}, {len(built.items)})                    # each header keeps its size
+        self.cur.execute("SELECT DISTINCT queue_id::text FROM mx_label_queue_items")
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, set(keys[2:]))
+        self.assertEqual(L.kept(self.cur).key, keys[-1])
+
     def test_one_tap_on_a_news_member_is_a_label_and_ok_takes_it_back(self):
         a, b, c, d, e = self.scene()
         self.cur.execute("SELECT story_id::text, reason FROM mx_story_posts WHERE post_id = %s AND valid_to IS NULL", (e,))
@@ -267,7 +344,7 @@ class Labels(unittest.TestCase):
         before = checksums(self.cur)
         self.cur.execute("SELECT count(*) FROM mx_tasks")
         tasks_before = self.cur.fetchone()[0]
-        q = L.queue(self.cur, now=self.now, fresh=True)
+        q = L.queue(self.cur, now=self.now)
         for i in q.order:
             L.label(self.cur, q, i, "same_event")
         L.precision(self.cur, q)
@@ -302,16 +379,47 @@ class Routes(unittest.TestCase):
             repo.add_call(self.cur, task_id=self.task, executor="claude-code", model="haiku", valid=True,
                           answer={"relation": "same_event", "confidence": 62, "reason": "the same release"})
             repo.answer_task(self.cur, self.task)
+            self.run = repo.start_run(self.cur, code_version="test", config={})
+            repo.finish_run(self.cur, self.run, counts={})
         self.post = str(uuid.uuid4())
         self.q = L.build([L.Item(id=str(self.task), feature="join", post=self.post, day=T, p=0.62, bar=0.6,
-                                 relation="same_event", reason="the same release", accepted=True)])
-        patcher = mock.patch.object(L, "queue", lambda cur, **kw: self.q)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+                                 relation="same_event", reason="the same release", accepted=True)], run=str(self.run))
+        # 0182: the API never builds the queue: every builder fails the test if a route calls it
+        for name in ("population", "build", "queue", "keep"):
+            patcher = mock.patch.object(L, name, side_effect=AssertionError(f"the API called labels.{name}"))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ("load", "think"):
+            patcher = mock.patch.object(D, name, side_effect=AssertionError(f"the API called decide.{name}"))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def keep(self):
+        with self.conn.transaction():
+            L._store(self.cur, self.q, stamp=L.stamp(), settings=L.Settings(), read_at=T, seconds=0.1, peak_mb=None)
+
+    def test_being_built_until_the_jobs_process_keeps_it(self):
+        status, body = call("GET", "/api/markx/labels")
+        self.assertEqual((status, body["building"], body["run"], body["total"], body["next"]),
+                         (200, True, str(self.run), 0, []))
+        status, body = call("GET", "/api/markx/labels/precision")
+        self.assertEqual((status, body["building"], body["features"]), (200, True, []))
+        status, body = call("GET", f"/api/markx/labels/items/{self.task}")
+        self.assertEqual(status, 503)
+        self.assertIn("being built", body["detail"])
+        status, body = call("POST", "/api/markx/labels", body={"item": str(self.task), "answer": "same_event"})
+        self.assertEqual(status, 503)
+        self.cur.execute("SELECT count(*) FROM mx_label_queues")
+        self.assertEqual(self.cur.fetchone()[0], 0)                                  # nothing built in the API
+        self.keep()
+        status, body = call("GET", "/api/markx/labels")
+        self.assertEqual((status, body["building"], body["next"]), (200, False, [str(self.task)]))
 
     def test_the_tab_s_routes(self):
+        self.keep()
         status, body = call("GET", "/api/markx/labels")
-        self.assertEqual((status, body["total"], body["done"], body["next"]), (200, 1, 0, [str(self.task)]))
+        self.assertEqual((status, body["total"], body["done"], body["next"], body["building"]),
+                         (200, 1, 0, [str(self.task)], False))
         status, body = call("GET", f"/api/markx/labels/items/{self.task}")
         self.assertEqual(status, 200)
         self.assertIsNone(body["verdict"])

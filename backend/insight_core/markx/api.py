@@ -78,7 +78,10 @@ POST /api/markx/decide             asks for a decision run: {"wanted": true, "jo
 S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
 --------------------------------------------------------------------------------------------------------------
 GET /api/markx/labels                  the queue (markx/labels.py): {run, cut, total, done, features [{feature, name,
-                                       total, done, population}], next [item ids], answered [item ids], pools}
+                                       total, done, population}], next [item ids], answered [item ids], pools,
+                                       building}; 0182: the queue the jobs process kept after the decision run (never
+                                       built here); building: the newest run's is not kept yet (meanwhile the last kept
+                                       one, or none: total 0, and the item routes answer 503)
 GET /api/markx/labels/items/{id}       one item: {id, feature, name, question, answers, evidence (the judge's input),
                                        extracted (entities), day, split, pool, position, label, verdict}; the verdict
                                        is null until the item has a label
@@ -663,23 +666,38 @@ class FlagIn(BaseModel):
     note: Optional[str] = None
 
 
+# 0182: the queue is built by insight-ingestion's jobs process after each decision run and kept (labels.keep); these
+# routes read only the kept queue (labels.kept), never a reading of their own. Not kept yet (the first start after a
+# deploy): "building": true, and the item routes answer 503 until the jobs process has built it (its next pass).
+BUILDING = "The labels queue is being built after the last decision run; it shows within a few minutes"
+
+
+def _kept_or_503(cur: Any) -> "labels.Kept":
+    q = labels.kept(cur)
+    if q.key is None and q.building:
+        raise HTTPException(status_code=503, detail=BUILDING)
+    return q
+
+
 @router.get("/labels")
 def mx_labels_queue():
     with transaction() as cur:
-        return labels.queue_view(cur, labels.queue(cur))
+        q = labels.kept(cur)
+        return {**labels.queue_view(cur, q), "building": q.building}
 
 
 @router.get("/labels/precision")
 def mx_labels_precision(labeller: str = Query("owner", min_length=1, max_length=40)):
     with transaction() as cur:
-        return labels.precision(cur, labels.queue(cur), labeller=labeller)
+        q = labels.kept(cur)
+        return {**labels.precision(cur, q, labeller=labeller), "building": q.building}
 
 
 @router.get("/labels/items/{item_id}")
 def mx_labels_item(item_id: str):
     found = _uuid(item_id)
     with transaction() as cur:
-        got = labels.item_view(cur, labels.queue(cur), str(found)) if found else None
+        got = labels.item_view(cur, _kept_or_503(cur), str(found)) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such item in the queue")
     return got
@@ -689,7 +707,9 @@ def mx_labels_item(item_id: str):
 def mx_labels_answer(body: LabelIn):
     found = _uuid(body.item)
     with transaction() as cur:
-        q = labels.queue(cur)
+        q = _kept_or_503(cur)
+        if found is not None:
+            q.ensure(cur, [str(found)])
         if found is None or str(found) not in q.items:
             raise HTTPException(status_code=404, detail="No such item in the queue")
         try:
