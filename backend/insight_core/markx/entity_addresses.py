@@ -22,22 +22,26 @@ MARGIN = timedelta(minutes=2)
 CHUNK = 2000
 
 
-def _names(book: I.Book) -> Dict[str, Set[str]]:
-    """{root: the name keys that name it: its members' own keys and every alias of them}."""
+def _names(book: I.Book, roots: Set[Optional[str]]) -> Dict[str, Set[str]]:
+    """{root: the name keys that name it: its members' own keys and every alias of them}, of `roots` (v10.17.2, 0201:
+    the roots the run's mentions name, not every root of the book at each run)."""
     out: Dict[str, Set[str]] = defaultdict(set)
     for eid, e in book.ents.items():
-        out[book.root(eid)].add(e.key)
+        r = book.root(eid)
+        if r in roots:
+            out[r].add(e.key)
     for k, eid in book.alias.items():
-        out[book.root(eid)].add(k)
+        r = book.root(eid)
+        if r in roots:
+            out[r].add(k)
     return out
 
 
-def _makers(book: I.Book, root: str, members: Optional[Dict[str, Set[str]]] = None) -> Set[str]:
-    """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity).
-    `members` (book.members(), v10.13.9): read once for many roots (each root walked every entity before)."""
+def _makers(book: I.Book, root: str) -> Set[str]:
+    """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity). Its
+    members are its cluster (v10.17, 0186: not a walk of the book; v10.17.2, 0201: no book.members() of every root)."""
     out: Set[str] = set()
-    ids = members.get(root, ()) if members is not None else book.cluster(root)   # v10.17 (0186): not a walk
-    for eid in ids:
+    for eid in book.cluster(root):
         e = book.ents[eid]
         if e.maker:
             out.add(N.key(e.maker))
@@ -155,8 +159,7 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
     if not rows:
         return empty
     book = book if book is not None else I.load_book(cur)
-    names = _names(book)
-    members = book.members()
+    names = _names(book, {book.root(book.pins.get((r[0], r[1], r[2]), r[3])) for r in rows})
     makers: Dict[str, Set[str]] = {}
     have = {r[0] for r in rows}
     head = sorted(have & first)
@@ -179,7 +182,7 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
             if root not in book.ents or book.ents[root].status == "not_entity":
                 continue
             if root not in makers:
-                makers[root] = _makers(book, root, members)
+                makers[root] = _makers(book, root)   # its cluster (0186: not a walk), not book.members()
             for kind, url, rule, owner in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
                                                  links=links[pid], titles=titles, documents=docs.get(pid, 0),
                                                  names=names.get(root, set()), makers=makers[root]):

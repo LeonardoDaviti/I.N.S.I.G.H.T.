@@ -147,6 +147,29 @@ class Incremental(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM mx_story_posts WHERE valid_to IS NULL AND reason LIKE 'judge:%%'")
         self.assertGreater(self.cur.fetchone()[0], 0)                   # the answers changed stories
 
+    def test_a_full_reading_holds_no_text_and_reads_a_page_at_a_time(self):
+        """0201: a full reading reads every post's text to make its rules' posts, a page (TEXT_PAGE) at a time, and
+        keeps none of them nor any reading: the questions' renders read what they show. Its decisions are the same
+        whatever the page (the full run of a page of 1 and of 1000 write the same rows)."""
+        self.scene()
+        memo = I.State(db="test", key="k", full=True)
+        I.refresh(self.cur, memo)
+        world = D.load(self.cur, self.now, D.Config(), memo=memo)
+        self.assertGreater(len(world.posts), 5)
+        self.assertEqual((len(memo.texts), len(memo.readings)), (0, 0))
+        self.assertEqual(memo.report["texts_loaded"], len(world.posts))
+        rows = []
+        for page in (1, 1000):
+            self.cur.execute("SAVEPOINT page")
+            with unittest.mock.patch.object(I, "TEXT_PAGE", page):
+                out = self.go(full=True)
+            self.cur.execute("""SELECT post_id::text, role, reason FROM mx_story_posts WHERE valid_to IS NULL
+                                 ORDER BY 1, 2, 3""")
+            rows.append((self.cur.fetchall(), out["tasks_added"]))
+            self.cur.execute("ROLLBACK TO SAVEPOINT page")
+        self.assertEqual(rows[0], rows[1])
+        self.assertTrue(rows[0][0])
+
     def test_the_dirty_set_is_the_tasks_answered_since_and_the_closure_their_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()

@@ -64,7 +64,6 @@ import random
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from functools import cached_property
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -154,7 +153,7 @@ def second_agrees(second: Optional[Dict[str, Any]]) -> bool:
 
 # ---- what identity knows: entities, aliases, redirects, pins ------------------------------------------
 
-@dataclass
+@dataclass(slots=True)   # v10.17.2 (0201): no __dict__ an entity (below)
 class Ent:
     id: str
     type: Optional[str]
@@ -174,24 +173,37 @@ class Ent:
     haiku: Dict[str, Any] = field(default_factory=dict)       # the fields as Haiku gave them (majority mention)
     shown_name: Optional[str] = None     # 0164: the name and type it is shown under (a root's, chosen by evidence;
     shown_type: Optional[str] = None     # entity_repair.shown); None: `name` / `type`. Never decide identity.
-
     # v10.13.9: worked out once an entity (its name, type, maker and fields never change once made); a pair's rules
-    # read them many times (the decisions spent most of their time parsing the same names again)
-    @cached_property
+    # read them many times (the decisions spent most of their time parsing the same names again). v10.17.2 (0201):
+    # kept in slots: a cached_property gave each entity a __dict__ of its own (~730 B: 75 MB of a 103k-entity book)
+    _hk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
+    _pk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
+    _sq: Optional[str] = field(default=None, init=False, repr=False, compare=False)
+    _grams: Optional[Set[str]] = field(default=None, init=False, repr=False, compare=False)
+
+    @property
     def hk(self) -> Tuple:
-        return N.fields_key(self.haiku, self.maker)
+        if self._hk is None:
+            self._hk = N.fields_key(self.haiku, self.maker)
+        return self._hk
 
-    @cached_property
+    @property
     def pk(self) -> Tuple:
-        return N.fields_key(N.parse(self.name, self.type, self.maker), self.maker)
+        if self._pk is None:
+            self._pk = N.fields_key(N.parse(self.name, self.type, self.maker), self.maker)
+        return self._pk
 
-    @cached_property
+    @property
     def sq(self) -> str:
-        return N.squash(self.key)
+        if self._sq is None:
+            self._sq = N.squash(self.key)
+        return self._sq
 
-    @cached_property
+    @property
     def grams(self) -> Set[str]:
-        return N.grams(self.sq)
+        if self._grams is None:
+            self._grams = N.grams(self.sq)
+        return self._grams
 
 
 class Redirects(dict):
@@ -786,7 +798,7 @@ def pair(a: str, b: str) -> Tuple[str, str]:
 
 # ---- linking ---------------------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)   # v10.17.2 (0201): no __dict__ a mention (a full pass reads ~840k at the server's size)
 class Mention:
     post_id: str
     guide: str
@@ -802,10 +814,13 @@ class Mention:
     ref: Optional[str] = None        # 0133: the citation rule's identifier (arXiv, DOI, a document link)
     by_name: Optional[str] = None    # 0133: a document's publisher or author, as written
     call_id: Optional[str] = None
+    _key: Optional[str] = field(default=None, init=False, repr=False, compare=False)
 
-    @cached_property
+    @property
     def key(self) -> str:
-        return N.key(self.name)
+        if self._key is None:
+            self._key = N.key(self.name)
+        return self._key
 
 
 def _mentions(cur: Any, guide: Any, *, unlinked: bool, limit: Optional[int] = None,
@@ -1250,8 +1265,8 @@ def _index(book: Book, name: str, empty: Any, add: Any) -> Any:
 def _string_add(index: Any, e: Ent) -> None:
     by_gram, by_sq = index
     by_sq[e.sq].append(e.id)
-    for g in e.grams:
-        by_gram[g].append(e.id)
+    for g in N.grams(e.sq):   # v10.17.2 (0201): not kept on every live entity (e.grams): only the seeds' and their
+        by_gram[g].append(e.id)   # candidates' are (pool_strings), ~1 KB an entity held to the run's end before
 
 
 def _strings(book: Book):
