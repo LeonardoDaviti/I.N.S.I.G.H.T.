@@ -65,8 +65,14 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
                        AND {day} >= %s
                        {f"AND {day} = ANY(%s::date[])" if day_list is not None else ""}""",
                 (guide, since, day_list) if day_list is not None else (guide, since))
+    rows = cur.fetchall()
+    # v10.17.2 (0201): what the credits ask of the book, read ahead in one go (a page's book, identity.lazy_book,
+    # reads it now; a whole book holds it already)
+    book.prime(ids=[book.pins.get((r[0], r[6], r[5]), r[2]) for r in rows],
+               keys=[k for r in rows if r[1] == "subject"
+                     for k in (N.key(r[3]), N.key(r[4]), N.fields_key({"family": r[4]}, r[3])[0]) if k])
     acc: Dict[Tuple[str, date], Dict[str, Any]] = {}
-    for pid, role, eid, maker, family, n, g, day, src, platform, handle in cur.fetchall():
+    for pid, role, eid, maker, family, n, g, day, src, platform, handle in rows:
         eid = book.pins.get((pid, g, n), eid)
         if book.ents.get(book.root(eid) or "") and book.ents[book.root(eid)].status == "not_entity":
             continue
@@ -84,10 +90,11 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
 def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30,
           book: Optional[I.Book] = None) -> Dict[str, Any]:
     """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now
-    (its entities, names, merges and pins; no mention count is read), else read here."""
+    (its entities, names, merges and pins; no mention count is read), else a page's book is read here (v10.17.2,
+    0201: the entities the days' mentions credit, not the whole book)."""
     from insight_core.markx import schemas
     guide = schemas.mention_guides()   # 0133: the current set
-    book = I.load_book(cur, counts=False) if book is None else book   # v10.16: the counts were never read here
+    book = I.lazy_book(cur) if book is None else book
     since = (now.astimezone(timezone.utc) - timedelta(days=window_days)).date()
     acc = count(cur, book, days, since, guide)
     want: Dict[Tuple[str, date], Dict[str, Any]] = {}

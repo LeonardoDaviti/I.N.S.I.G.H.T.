@@ -50,7 +50,7 @@ import math
 import re
 import struct
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -446,44 +446,53 @@ def same_vector(cur: Cursor, pairs: Iterable[Tuple[str, str, float]]) -> Set[Tup
 
 
 def current_candidates(cur: Cursor, rows: Sequence[Tuple[Any, Any, str, Optional[float]]], model: str = MODEL
-                       ) -> List[Tuple[Any, Any, str, Optional[float]]]:
+                       ) -> Iterator[Tuple[Any, Any, str, Optional[float]]]:
     """mx_candidates rows (a, b, source, score) as the posts' current vectors have them: an `embedding` row whose
     post's vector was set aside and not replaced (a text that said nothing, embed text v1) is dropped, a row of two
     current vectors carries their cosine now (a vector replaced since moved) and is dropped when they are one vector
     (same_vector).
     The rows themselves are kept (never deleted). A dropped row whose post already has an answered pair or join
-    stays as it was, so no story it made changes silently."""
-    emb = [(str(a), str(b)) for a, b, src, _ in rows if src == "embedding"]
+    stays as it was, so no story it made changes silently.
+
+    v10.17.2 (0201): each embedding row's cosine is read by its place among them (not keyed by its two posts), and the
+    rows are given back one at a time, in order: a decision run's ~450k pairs were held three times at once (the
+    rows, their cosines by (a, b), the list given back)."""
+    emb = [k for k, (_a, _b, src, _s) in enumerate(rows) if src == "embedding"]
     if not emb:
-        return list(rows)
-    cur.execute("""SELECT k.a::text, k.b::text, 1 - (x.v <=> y.v)
-                     FROM unnest(%s::uuid[], %s::uuid[]) AS k(a, b)
+        return iter(rows)
+    cur.execute("""SELECT k.i, 1 - (x.v <=> y.v)
+                     FROM unnest(%s::uuid[], %s::uuid[]) WITH ORDINALITY AS k(a, b, i)
                      JOIN mx_embeddings x ON x.post_id = k.a AND x.model = %s
                      JOIN mx_embeddings y ON y.post_id = k.b AND y.model = %s""",
-                ([a for a, _ in emb], [b for _, b in emb], model, model))
-    now = {(a, b): float(c) for a, b, c in cur.fetchall()}
-    ids = sorted({p for ab in emb if ab not in now for p in ab})
+                ([str(rows[k][0]) for k in emb], [str(rows[k][1]) for k in emb], model, model))
+    now: Dict[int, float] = {}            # the row's index in `rows` -> its cosine now
+    for i, c in cur:
+        now[emb[i - 1]] = float(c)
+
+    def ab(k: int) -> Tuple[str, str]:
+        return str(rows[k][0]), str(rows[k][1])
+    ids = sorted({p for k in emb if k not in now for p in ab(k)})
     cur.execute("""SELECT s.post_id::text FROM mx_embeddings s
                     WHERE s.model = %s AND s.post_id = ANY(%s::uuid[])
                       AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = s.post_id AND e.model = %s)""",
                 (SET_ASIDE, ids, model))
     aside = {r[0] for r in cur.fetchall()}
-    gone = ({ab for ab in emb if ab[0] in aside or ab[1] in aside}
-            | same_vector(cur, [(a, b, c) for (a, b), c in now.items()]))
+    one = same_vector(cur, [(*ab(k), c) for k, c in now.items() if c >= IDENTICAL])
+    gone = {ab(k) for k in emb if ab(k)[0] in aside or ab(k)[1] in aside or (k in now and ab(k) in one)}
     if gone:
-        ids = sorted({p for ab in gone for p in ab})
+        ids = sorted({p for pair_ in gone for p in pair_})
         cur.execute("""SELECT DISTINCT unnest(ARRAY[a, b])::text FROM mx_tasks
                         WHERE kind IN ('pair', 'join') AND status = 'answered'
                           AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""", (ids, ids))
         asked = {r[0] for r in cur.fetchall()}
-        gone = {ab for ab in gone if not (ab[0] in asked or ab[1] in asked)}
-    out = []
-    for a, b, src, score in rows:
-        ab = (str(a), str(b))
-        if src == "embedding":
-            if ab in gone:
-                continue
-            if ab in now:
-                score = round(now[ab], 4)
-        out.append((a, b, src, score))
-    return out
+        gone = {pair_ for pair_ in gone if not (pair_[0] in asked or pair_[1] in asked)}
+
+    def given() -> Iterator[Tuple[Any, Any, str, Optional[float]]]:
+        for k, (a, b, src, score) in enumerate(rows):
+            if src == "embedding":
+                if gone and ab(k) in gone:
+                    continue
+                if k in now:
+                    score = round(now[k], 4)
+            yield a, b, src, score
+    return given()

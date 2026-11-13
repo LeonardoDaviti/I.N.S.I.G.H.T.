@@ -61,6 +61,7 @@ NIGHTLY_HOUR = 4                                                   # server time
 HUB, HUB_MIN = 0.25, 40                                            # a closure over this share of 40+ stories: flagged
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
+TEXT_PAGE = 2000                                                   # 0201: the posts whose texts a reading reads at once
 # The modules whose code makes what the state keeps (the rules' posts, the renders, near-copies, News' rows): any
 # change to them makes the next run full (a deploy then starts from a full run, as before 0169).
 CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "insight_core.markx.tasks",
@@ -250,11 +251,13 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
     """Every judge task's (status, valid calls) in one query, against what the last run saw (mx_inc_tasks): those that
     changed are the dirty tasks (reported only when the state is trusted). The table stamps say which of Mark IX's
     tables changed. Then the kept inputs and near-copies (a trusted state only) and the answers of the tasks they
-    name, in one query (a full reading: every answer)."""
-    cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, COALESCE(c.n, 0), t.a::text, t.b::text,
-                          s.status, s.n
+    name, in one query (a full reading: every answer).
+
+    v10.17.2 (0201): each task's calls are counted by its own (mx_calls_task_idx), not by grouping every valid call
+    of every kind (~1M on the server, mostly reads and entities: 0.84 s a run at server scale, now 0.03 s)."""
+    cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n
                      FROM mx_tasks t
-                     LEFT JOIN (SELECT task_id, count(*) n FROM mx_calls WHERE valid GROUP BY task_id) c ON c.task_id = t.id
+                     CROSS JOIN LATERAL (SELECT count(*) n FROM mx_calls c WHERE c.task_id = t.id AND c.valid) c
                      LEFT JOIN mx_inc_tasks s ON s.task_id = t.id
                     WHERE t.kind = ANY(%s)""", (list(KINDS),))
     index, keys, was, dirty, posts = {}, {}, {}, [], set()
@@ -326,8 +329,8 @@ def stamps_of(cur: Any, state: State, ids: Iterable[str]) -> Dict[str, str]:
 
 def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict[str, Any], "LazyReadings"]:
     """The world's posts as the rules read them (decide.Post), their texts and their readings, both read on use. A
-    post's rules' Post is kept by its stamp: read again (its text) only when the stamp changed or it is new. A full
-    reading reads every text and reading at once."""
+    post's rules' Post is kept by its stamp: read again (its text) only when the stamp changed or it is new (a full
+    reading: every post's), a page at a time; none of those texts is kept (v10.17.2, 0201)."""
     from insight_core.markx import decide, tasks
     from insight_core.markx.plan_marks import execute
     ids = sorted(set(ids))
@@ -358,25 +361,26 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
     else:
         stamps_of(cur, state, ids)
         stale = [i for i in ids if i in state.stamp]
-    got = tasks.load_posts(cur, stale)
-    for pid in stale:
-        p = got.get(pid)
-        if p is None:
-            continue
-        rules[pid] = decide.Post(pid, p.voice, p.kind, p.at, tasks.words(p))   # 0168 E: the voice it counts as
-        state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
-        state.texts[pid] = p
+    for k in range(0, len(stale), TEXT_PAGE):   # v10.17.2 (0201): a page of texts at a time, none kept (below)
+        part = stale[k:k + TEXT_PAGE]
+        got = tasks.load_posts(cur, part)
+        for pid in part:
+            p = got.get(pid)
+            if p is None:
+                continue
+            rules[pid] = decide.Post(pid, p.voice, p.kind, p.at, tasks.words(p))   # 0168 E: the voice it counts as
+            state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
+        state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
-    state.report["texts_loaded"] += len(got)
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
     cur.execute("""SELECT post_id::text, xmin::text || ctid::text, reading->'kind', reading->'events' FROM mx_readings
                     WHERE guide = %s AND post_id = ANY(%s::uuid[])""", (GUIDE, ids))   # as tasks.readings(ids)
     for pid, stamp, kind, events in cur.fetchall():
         state.read_stamp[pid], state.kinds[pid], state.events[pid] = stamp, kind, events
-    texts, readings = LazyTexts(cur, state), LazyReadings(cur, state)
-    if state.full:
-        readings.prefetch(state.kinds)
-    return texts, state.rules, readings
+    # v10.17.2 (0201): the texts and readings are read when a render shows them (`rendered`: its posts' in one query),
+    # on a full reading too: it held every post's text and reading for the whole reading (130k posts, ~2.7 GB at
+    # server scale, the full run's peak), of which the questions show a few thousand
+    return LazyTexts(cur, state), state.rules, LazyReadings(cur, state)
 
 
 def _stamp_expr() -> str:

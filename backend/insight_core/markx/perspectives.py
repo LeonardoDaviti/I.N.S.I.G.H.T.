@@ -887,7 +887,8 @@ def one(cur: Any, story_id: str, st: Story, ask: Any, *, run_id: Any, mhash: str
 def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int] = None,
           book: Any = None) -> Dict[str, Any]:
     """B1-B5 over the News window's stories of MIN_VOICES or more voices (`limit`: at most that many stories built).
-    `book`: the entity book as it is now (its entities, names, merges and pins), else read here when needed."""
+    `book`: the entity book as it is now (its entities, names, merges and pins), else a page's book read here when
+    needed (identity.lazy_book)."""
     from insight_core.markx import identity
     stories = news_stories(cur, now)
     out: Counter = Counter()
@@ -906,8 +907,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
     if not eligible:
         return dict(out)
     waiting = entities_waiting(cur, sorted({p for ms in eligible.values() for p in ms}))
-    book = identity.load_book(cur, counts=False) if book is None else book   # v10.16: Makers reads no mention count
+    # v10.17.2 (0201): a page's book (the entities the stories' members name, not the whole book), read ahead as a
+    # News page reads it (Makers.prepare)
+    book = identity.lazy_book(cur) if book is None else book
     makers = Makers(book, mentions_of(cur, sorted({p for ms in eligible.values() for p in ms})))
+    makers.prepare({p: posts[p] for ms in eligible.values() for p in ms if p in posts})
     built = 0
     for sid in sorted(eligible, key=lambda s: (-len(eligible[s]), s)):
         ms = eligible[sid]
