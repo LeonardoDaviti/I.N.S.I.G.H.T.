@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.utils.byline import RT_BY_TAG
+
 VERSION = 2                   # a bump recomputes every source's series (series_service); 2: 0137's shapes
 WINDOW = 60                   # fix 4: days between two parts (was 45)
 K_WINDOW = 120                # issue-style numbers: days between two issues
@@ -130,7 +132,7 @@ class Group:
 def clean_title(p: Post) -> str:
     t = p.title or (p.head or "")[:200]
     t = re.sub(r"\s*\[\.\.\.\]\s*$", "", t)
-    t = re.sub(r"^(RT by @\w+:|R to @\w+:)\s*", "", t)
+    t = re.sub("^(?:" + RT_BY_TAG + r"|R to @\w+:)\s*", "", t)   # Byline's tag, any space after it
     return " ".join(t.split())[:200]
 
 

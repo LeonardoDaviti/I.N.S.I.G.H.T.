@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote
 
 from insight_core.utils.post_fields import display_title
+from insight_core.utils import voice
 from insight_core.utils.addresses import bare
 from insight_core.utils.post_links import titled_link_text
 
@@ -226,8 +227,6 @@ def origin_title(url: str, posts: Sequence[StoryPost], *, slug: bool = True) -> 
     7. else None: the reader shows the address.
     Without `slug` (Discover's lines, issue 0080), step 5 is skipped: a title rebuilt from the address
     is never shown."""
-    from insight_core.utils.story_rules import count_voices   # story_rules imports this module
-
     quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
     shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.link_post
                      and {target for target, _ in p.links} == {url})
@@ -241,8 +240,9 @@ def origin_title(url: str, posts: Sequence[StoryPost], *, slug: bool = True) -> 
         if text and not re.match(r"https?://", text):
             said[text.casefold()].append(p)
     form = {key: Counter(" ".join(p.link_texts[url].split()) for p in ps).most_common(1)[0][0] for key, ps in said.items()}
-    by_use = sorted(said, key=lambda key: (-count_voices(said[key]), -len(said[key]), key))
-    agreed = [key for key in by_use if count_voices(said[key]) >= 2 and titled_link_text(form[key])]
+    heard = {key: voice.count(ps, voice.Policy.STORIES_IX) for key, ps in said.items()}
+    by_use = sorted(said, key=lambda key: (-heard[key], -len(said[key]), key))
+    agreed = [key for key in by_use if heard[key] >= 2 and titled_link_text(form[key])]
     words = _slug_words(url)
     tokens = _TOKENS.findall(" ".join(words).casefold())
     confirmed = [key for key in by_use if len(tokens) >= 2 and _TOKENS.findall(key) == tokens]

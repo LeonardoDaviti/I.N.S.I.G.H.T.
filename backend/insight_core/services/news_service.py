@@ -28,6 +28,7 @@ from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository, story_voices
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import page_titles
+from insight_core.utils import voice
 from insight_core.utils.addresses import paper_id
 from insight_core.utils.paging import page_of
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
@@ -204,9 +205,9 @@ class NewsService:
         for row in rows:
             if row["post_id"] not in authors:
                 authors[row["post_id"]] = row["author"]
-            voice = self._voice(sources, row["source_id"], authors[row["post_id"]])
+            key = self._voice(sources, row["source_id"], authors[row["post_id"]])
             target = aliases.get(row["target"], row["target"])
-            out.append(Citation(voice=voice, name=sources.voice_name(voice, row["source_id"]),
+            out.append(Citation(voice=key, name=sources.voice_name(key, row["source_id"]),
                                 source_id=row["source_id"], t=row["t"], target=target,
                                 stored=row["stored"] if target == row["target"] else at.get(target), text=row["text"]))
         stored = {}
@@ -216,8 +217,7 @@ class NewsService:
 
     @staticmethod
     def _voice(sources: SourceFacts, source_id: str, author: Optional[str]) -> str:
-        return StoryPost(id="", source_id=source_id, kind=sources.kind.get(source_id, "site"),
-                         own_site=sources.publication(source_id), t=datetime.min, author=author).voice
+        return voice.key(sources.kind.get(source_id, "site"), source_id, sources.publication(source_id), author)
 
     # ---- News ---------------------------------------------------------------------------
 
@@ -357,7 +357,7 @@ class NewsService:
         out = []
         for c in own:
             out.append({"name": c["name"], "at": c["at"]})
-            if name and str(c.get("voice", "")).startswith("reddit:"):
+            if name and voice.is_poster(str(c.get("voice", ""))):
                 out[-1]["place"] = name
         return out + [{"name": c["name"], "at": c["at"]} for c in citers if c not in own]
 

@@ -49,7 +49,6 @@ MODEL = pairing.MODEL
 POST_POST, STORY_STORY = pairing.POST_POST, pairing.STORY_STORY
 SPECIFIC_TYPES = pairing.SPECIFIC_TYPES
 ROUNDUP_ANCHORS = pairing.ROUNDUP_ANCHORS
-NOT_VOICE = tuple(pairing.NOT_VOICE)
 ENTITY_GUIDE = "ent-v3"       # 0133: the default arm; the subjects are read from the current set (mx_mentions_now)
 Posts = pairing.Posts
 document_key = pairing.document_key

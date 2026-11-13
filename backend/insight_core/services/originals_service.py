@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from insight_core.db import database as db
+from insight_core.utils import voice
 from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_linked import _followed, _own_pages, linked_not_stored
@@ -567,7 +568,7 @@ class OriginalsService:
                     fronts.setdefault(url, root)
         if not fronts:
             return []
-        cur.execute("""SELECT l.target_url, count(DISTINCT p.source_id) FROM post_links l JOIN posts p ON p.id = l.post_id
+        cur.execute(f"""SELECT l.target_url, {voice.count_sql("p.source_id")} FROM post_links l JOIN posts p ON p.id = l.post_id
                          JOIN sources s ON s.id = p.source_id
                         WHERE l.target_url = ANY(%s) AND NOT l.boilerplate AND s.platform <> 'saved' GROUP BY 1""",
                     (sorted(fronts),))

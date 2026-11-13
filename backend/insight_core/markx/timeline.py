@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 TOP = 8
 BEFORE = 3
@@ -223,7 +224,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
         for month, ps in sorted(months.items()):
             out.append(_event("outside", rows[ps[0]]["at"], ps[0], month=month, n=len(ps),
-                              sources=len({rows[p]["source"] for p in ps})))
+                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX)))
     out = _dedupe(out)
     if light:
         return out

@@ -23,6 +23,7 @@ from insight_core.markx import identity as I
 from insight_core.markx import names as N
 from insight_core.markx import surges as S
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 WINDOW_DAYS = 30
 LIST_LIMIT = 200
@@ -404,7 +405,8 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     def head(sid: str, ps: List[str], mark: str, headline: Optional[str]) -> Dict[str, Any]:
         """A block's own fields (what the order, the timeline and the sample read), without its posts' lines."""
         return {"story": sid, "mark": mark, "headline": headline,
-                "voices": len({source_of(p) for p in ps if source_of(p)}),
+                "voices": voice.count((voice.Said(source_of(p), (posts.get(p) or {}).get("kind")) for p in ps
+                                       if source_of(p)), voice.Policy.MARKX),   # 0189: a saved page is none
                 "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps)}
     # (head, the block's arguments) of every story; the blocks listed are built in full, the rest only headed
     specs = [(head(sid, ps, "x", heads.get(sid)), (sid, ps, "x"), {"headline": heads.get(sid)})

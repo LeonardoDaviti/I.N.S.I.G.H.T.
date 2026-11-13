@@ -42,6 +42,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import back, pairing
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ class Anchor:
 
     @property
     def voices(self) -> int:
-        return pairing.voices((p.src, "saved" if p.saved else None) for p in self.members)
+        return voice.count((voice.Said(p.src, "saved" if p.saved else None) for p in self.members), voice.Policy.MARKX)
 
 
 def _members(cur: Any, sql: str, params: Sequence[Any] = ()) -> Tuple[Dict[str, List[Any]], Dict[str, Optional[str]]]:

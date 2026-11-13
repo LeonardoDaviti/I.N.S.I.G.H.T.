@@ -37,7 +37,7 @@ from insight_core.ingestion.runner import IngestionRunner
 from insight_core.ingestion.schedule import Availability
 from insight_core.ingestion.source_doctor import SourceDoctor, silent_beyond_rhythm, where_it_went
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
-from insight_core.markx import pairing, tasks
+from insight_core.utils import byline, voice
 from insight_core.scripts import repair_source_names
 from insight_core.services.operations_service import OperationsService, silent_fields, summarize_health
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
@@ -435,11 +435,11 @@ class TelegramForwardTests(unittest.TestCase):
                                         ("src-forwarder", "rss", "https://telegram.local/rss/chan_one?limit=50", "Chan")],
                                        []).of_account)
         fwd = telegram_rss.forwarded_from({"url": "https://t.me/Other_Chan/77", "title": "Other Channel"})
-        account = tasks.author_account("telegram", fwd["name"], fwd["username"])
+        account = byline.author_account("telegram", fwd["name"], fwd["username"])
         self.assertEqual(account, "t.me/other_chan")
-        self.assertEqual(pairing.counted_voice("src-forwarder", account, followed), "src-bridge")
+        self.assertEqual(voice.counted_source("src-forwarder", account, followed), "src-bridge")
         stranger = telegram_rss.forwarded_from({"url": "https://t.me/stranger/1", "title": "Stranger"})
-        self.assertEqual(pairing.counted_voice("src-forwarder", tasks.author_account("telegram", stranger["name"],
+        self.assertEqual(voice.counted_source("src-forwarder", byline.author_account("telegram", stranger["name"],
                                                                                      stranger["username"]), followed),
                          "src-forwarder")
 

@@ -16,9 +16,9 @@ The interface (what a caller must know):
   - `attach_targets(cur, units)` and `attaches(policy, ...)`: the attach relation (0181) for round-up items.
   - the basics every module reads the same way: the dates (`post_date`: the post's date, a round-up's issue time
     when its items are known, else when it surfaced, else published, else fetched; `ordinary_date`, `published_date`
-    and `ix_date`: the post's own, 0128's published and Mark IX's time; see "the dates" below), `is_voice` and
-    `voices` (a saved post is no voice; voices are distinct sources), `page_key` and its lower layer `page_address` (a page's compared form),
-    `document_key` (a document page's key).
+    and `ix_date`: the post's own, 0128's published and Mark IX's time; see "the dates" below), `page_key` and its
+    lower layer `page_address` (a page's compared form), `document_key` (a document page's key). Who a post counts
+    as, and how many voices posts are, is Voice's (utils/voice.py, Policy.MARKX; issue 0189): every gate here asks it.
 
 The sources (adapters; each idempotent, each writes only mx_candidates):
   - `embedding`: a post's nearest posts by cosine among other sources' voices within the window, at the cosine bar,
@@ -59,6 +59,7 @@ from urllib.parse import urlsplit
 from psycopg import Cursor
 
 from insight_core.markx import repo, schemas
+from insight_core.utils import voice
 from insight_core.utils.post_links import is_home, source_kind
 
 log = logging.getLogger(__name__)
@@ -145,41 +146,6 @@ def published_date(alias: str = "p") -> str:
 def ix_date(alias: str = "p") -> str:
     """Mark IX's time as SQL (published, else fetched): StoryPost.t's, News's window, Discover's and the statistics'."""
     return _form(IX_DATE, alias)
-
-
-NOT_VOICE = frozenset({"saved"})      # a post the owner saved is no independent voice
-
-
-def is_voice(kind: Optional[str]) -> bool:
-    return kind not in NOT_VOICE
-
-
-def voices(items: Iterable[Tuple[Any, Optional[str]]]) -> int:
-    """How many voices (source, kind) items are: their distinct sources, saved posts not counted."""
-    return len({source for source, kind in items if is_voice(kind)})
-
-
-def counted_voice(source_id: str, author_account: Optional[str], of_account: Mapping[str, str]) -> str:
-    """The voice a post counts as, Mark IX's rule (StoryPost.author_source, issue 0068): a post its feed carries but
-    another account wrote (an X repost; a Telegram forward naming its channel) counts as that account's source when
-    one of the sources follows that account (`of_account`: SourceFacts.of_account, account -> the first source by id
-    following it, `followed_accounts`); a stranger's post stays the feed's own voice. A quote or a reply is the feed's
-    own post: its quoted or replied-to account never adds a voice."""
-    return (of_account.get(author_account) if author_account else None) or source_id
-
-
-def followed_accounts(cur: Any) -> Dict[str, str]:
-    """Every source's account -> the source following it, as Mark IX reads it (SourceFacts.of_account: its own rule
-    over every source's platform and handle, the first by id; issue 0068)."""
-    from insight_core.db.repo_stories import SourceFacts
-    cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), "
-                "handle_or_url) FROM sources")
-    return dict(SourceFacts.of(cur.fetchall(), []).of_account)
-
-
-def independent(source_a: Any, kind_a: Optional[str], source_b: Any, kind_b: Optional[str]) -> bool:
-    """Two posts are independent voices: both voices, of different sources."""
-    return is_voice(kind_a) and is_voice(kind_b) and source_a != source_b
 
 
 SOCIAL = {"t.me", "x.com", "twitter.com", "youtube.com", "reddit.com", "instagram.com", "facebook.com", "linkedin.com",
@@ -445,7 +411,8 @@ def story_pairs(cur: Any, pol: Policy, groups: Dict[str, Sequence[str]], posts: 
     """{(x, y): centroid cosine} (x < y) of the stories `groups` (key: its posts, earliest first) of `min_voices`+
     voices, at the story bar, their first posts within the story window. `posts`: id -> .source, .kind, .at."""
     groups = {k: ps for k, ps in groups.items()
-              if ps and voices((posts[p].source, posts[p].kind) for p in ps if p in posts) >= pol.min_voices}
+              if ps and voice.count((voice.Said(posts[p].source, posts[p].kind) for p in ps if p in posts),
+                                    voice.Policy.MARKX) >= pol.min_voices}
     first = {k: posts[ps[0]].at for k, ps in groups.items()}
     return {(x, y): c for (x, y), c in centroid_cosines(cur, groups, pol.story_cosine).items()
             if pol.story_within(first[x], first[y])}
@@ -551,7 +518,7 @@ class Posts:
         self._storied.update(ids)
 
     def voice(self, pid: str) -> bool:
-        return pid in self.at and is_voice(self.kind[pid])
+        return pid in self.at and voice.is_voice(self.kind[pid])
 
     def independent(self, a: str, b: str) -> bool:
         return self.voice(a) and self.voice(b) and self.source[a] != self.source[b]

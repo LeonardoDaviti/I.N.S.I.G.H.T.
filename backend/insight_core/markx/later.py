@@ -60,6 +60,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import back, pairing
 from insight_core.markx.back import _date, norm
+from insight_core.utils import voice
 
 KIND = back.KIND
 RULE = 2                          # v10.13.12's tightened rule; the rows v10.13.11's loose one found are rule 1 (0103)
@@ -219,16 +220,18 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
     where, params = ("WHERE sp.story_id = ANY(%s::uuid[])", (list(story_ids),)) if story_ids is not None else ("", ())
     if story_ids is not None and not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url
-                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id {where}""",
+    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
+                           s.platform = 'saved'
+                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
+                      JOIN sources s ON s.id = p.source_id {where}""",
                 params)
     by: Dict[str, List[Any]] = defaultdict(list)
     origin: Dict[str, Optional[str]] = {}
-    for sid, pid, src, at, url, o in cur.fetchall():
+    for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(back._P(pid, src, at, url, False))
+            by[sid].append(back._P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
             origin[sid] = o
-    by = {sid: ms for sid, ms in by.items() if len({m.src for m in ms}) >= back.MIN_SOURCES}
+    by = {sid: ms for sid, ms in by.items() if back.sources(ms) >= back.MIN_SOURCES}
     return mains(cur, by, origin, ids=ids, with_pages=with_pages)
 
 
@@ -395,7 +398,8 @@ def quiet(namings: Sequence[Tuple[datetime, str, str]], at: datetime, post: str,
     [(date, post, source)]; `post` itself and the posts of `skip`, the story's members, not counted)."""
     lo = bisect.bisect_left(namings, (at - timedelta(days=QUIET_DAYS),))
     hi = bisect.bisect_left(namings, (at,))
-    return len({src for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip}) <= QUIET_MAX
+    return voice.count((voice.Said(src) for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip),
+                       voice.Policy.MARKX) <= QUIET_MAX
 
 
 def _rank(s: Long) -> Tuple:

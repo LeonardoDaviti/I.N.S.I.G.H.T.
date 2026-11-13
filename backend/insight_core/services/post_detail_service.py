@@ -16,7 +16,8 @@ from insight_core.ingestion import full_text
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_post_refs import PostRefsRepository
-from insight_core.db.repo_reader import ReaderRepository, repost_of, voice_sources
+from insight_core.db.repo_reader import ReaderRepository, voice_sources
+from insight_core.utils.byline import repost_of
 from insight_core.utils.byline import of_row as byline_of
 from insight_core.services.news_service import NewsService
 from insight_core.db.repo_post_parts import body, shown_title

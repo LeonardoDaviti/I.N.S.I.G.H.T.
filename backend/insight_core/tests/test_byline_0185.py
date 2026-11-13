@@ -16,9 +16,9 @@ import psycopg  # noqa: E402
 
 from insight_core.db.repo_reader import _ITEM_COLUMNS, _item, repost_of  # noqa: E402
 from insight_core.db.repo_stories import source_account  # noqa: E402
-from insight_core.markx import news, pairing, tasks  # noqa: E402
+from insight_core.markx import news, tasks  # noqa: E402
 from insight_core.tests._db import db_url, requires_test_db  # noqa: E402
-from insight_core.utils import byline as B  # noqa: E402
+from insight_core.utils import byline as B, voice  # noqa: E402
 
 NITTER = "https://nitter.local/{}/rss"
 
@@ -147,12 +147,12 @@ class SeededWorld(unittest.TestCase):
         self.assertEqual(voices, {
             self.own: self.s_feed, self.rt_followed: self.s_acme, self.rt_stranger: self.s_feed,
             self.quote: self.s_feed, self.fwd_followed: self.s_other, self.fwd_stranger: self.s_chan})
-        # the same as Pairing's rule asked directly over the stored fields, never the byline's words
-        followed = pairing.followed_accounts(self.cur)
+        # the same as Voice's rule asked directly over the stored fields, never the byline's words
+        followed = voice.followed_accounts(self.cur)
         for pid, p in loaded.items():
-            account = tasks.author_account(p.kind, p.by, self.other if pid == self.fwd_followed else
-                                           f"stranger{self.sfx}" if pid == self.fwd_stranger else None)
-            direct = pairing.counted_voice(p.source_id, account, followed) if account else p.source_id
+            account = B.author_account(p.kind, p.by, self.other if pid == self.fwd_followed else
+                                       f"stranger{self.sfx}" if pid == self.fwd_stranger else None)
+            direct = voice.counted_source(p.source_id, account, followed) if account else p.source_id
             self.assertEqual(voices[pid], direct, pid)
         self.assertEqual(len(set(voices.values())), 4, "4 voices over 6 posts: 2 strangers' posts stay their feeds'")
 

@@ -67,11 +67,12 @@ CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "
                 "insight_core.markx.news", "insight_core.markx.pairing", "insight_core.markx.plan_marks",
                 "insight_core.utils.post_parts", "insight_core.utils.post_links", "insight_core.utils.news_rules",
                 "insight_core.utils.story_rules", "insight_core.services.news_service",
-                "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news")
+                "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news",
+                "insight_core.utils.voice", "insight_core.utils.byline")
 
 # The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
 # as that author), so the first run after it is full and writes every post again.
-STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (pairing.counted_voice)
+STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (voice.counted_source, then pairing's)
 
 _code: Optional[str] = None
 
@@ -90,10 +91,10 @@ def code_stamp() -> str:
 
 
 def accounts_stamp(cur: Any) -> str:
-    """The sha256 of which source follows which account (pairing.followed_accounts): a repost's voice depends on it
+    """The sha256 of which source follows which account (voice.followed_accounts): a repost's voice depends on it
     and no post's stamp says so, so it is in the state's key (a change makes the next run full)."""
-    from insight_core.markx import pairing
-    return _sha(json.dumps(sorted(pairing.followed_accounts(cur).items())))
+    from insight_core.utils import voice
+    return _sha(json.dumps(sorted(voice.followed_accounts(cur).items())))
 
 
 def _sha(text: str) -> str:

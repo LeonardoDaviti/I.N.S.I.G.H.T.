@@ -25,6 +25,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 TAGS = ("NEW", "MERGED", "SPLIT", "CHANGED", "SAME")
 HAIKU_PER_MILLION = (0.10, 0.50)     # 0086 H: Haiku 5.5, $ per million tokens in and out (what the API would cost)
@@ -652,12 +653,13 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
     out = {}
     for name, days in (("today", 1), ("week", 7)):
         cur.execute(f"""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
-                              (array_agg(m.type))[1], count(DISTINCT m.post_id), count(DISTINCT p.source_id),
+                              (array_agg(m.type))[1], count(DISTINCT m.post_id), {voice.count_sql("p.source_id", "s.platform")},
                               (array_agg(DISTINCT m.post_id::text))[1:5], (array_agg(m.version ORDER BY m.version))[1]
-                         FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                         FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.role = 'subject'
                           AND {pairing.post_date_within('p', '%(since)s')}
-                        GROUP BY 1, 2 ORDER BY count(DISTINCT p.source_id) DESC, count(DISTINCT m.post_id) DESC, 1
+                        GROUP BY 1, 2 ORDER BY {voice.count_sql("p.source_id", "s.platform")} DESC,
+                                 count(DISTINCT m.post_id) DESC, 1
                         LIMIT %(limit)s""",
                     {"since": now - timedelta(days=days), "limit": limit})
         rows = cur.fetchall()

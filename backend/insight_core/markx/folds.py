@@ -149,7 +149,7 @@ def read3_input(p: Any, *, url: Optional[str], repost: Optional[Mapping[str, Any
 
 def _extras(cur: Any, ids: Sequence[str]) -> Dict[str, Tuple[Optional[str], Optional[dict]]]:
     """{post: (its url, its repost {by, author} or None)} as the reader names a repost (issue 0066)."""
-    from insight_core.db.repo_reader import repost_of
+    from insight_core.utils.byline import repost_of
     if not ids:
         return {}
     cur.execute("""SELECT p.id::text, p.url, s.platform, s.handle_or_url, p.author, p.reposted_by

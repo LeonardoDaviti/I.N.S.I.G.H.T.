@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from insight_core.markx import pairing, repo, tasks, units, validate
+from insight_core.utils import voice
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -655,7 +656,8 @@ class NeverAVoice(_World):
             members = {m.id for m in a.members}
             self.assertNotIn(self.digest, {m.src for m in a.members})
             if members & targets:
-                self.assertEqual(a.voices, pairing.voices((m.src, "saved" if m.saved else None) for m in a.members))
+                self.assertEqual(a.voices, voice.count((voice.Said(m.src, "saved" if m.saved else None)
+                                                        for m in a.members), voice.Policy.MARKX))
 
 
 class PostDateIdentity(_World):

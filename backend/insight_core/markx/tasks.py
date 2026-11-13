@@ -28,9 +28,9 @@ exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits
 a card, a headline or a briefing reads it: "Author: @acme (a post by @acme shared by <feed>)", members as
 "[a post by @acme shared by <feed>, x, ...]", so a story never reads "<feed> announces" for another account's post.
 It counts as its author's voice (`voices`) only when one of the sources follows that author, as Mark IX counts it
-(pairing.counted_voice); a stranger's post its feed carries stays the feed's voice. The sameness questions
-(check, join, pair, merge, connect) are unchanged: they ask whether two posts tell one story, not who said it (and are
-not asked again).
+(Voice's rule, utils/voice.py: voice.counted_source); a stranger's post its feed carries stays the feed's voice. The
+sameness questions (check, join, pair, merge, connect) are unchanged: they ask whether two posts tell one story, not
+who said it (and are not asked again).
 
 Who creates which tasks: `plan_posts` (read, entities: the newest posts of the last 30 days first,
 corrections 8) and `plan_checks` (check: Mark IX's uncertain members) here, called when the worker asks
@@ -50,8 +50,8 @@ from uuid import UUID
 from psycopg import Cursor
 
 from insight_core.markx import pairing, plan_marks, repo, schemas
-from insight_core.utils import byline
-from insight_core.utils.byline import original_author  # noqa: F401 - 0168 E's rule lives in Byline (issue 0185)
+from insight_core.utils import byline, voice
+from insight_core.utils.byline import author_account, original_author  # 0168 E's rule lives in Byline (0185, 0189)
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -63,7 +63,6 @@ READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
 STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
 CARD_MEMBERS, HEADLINE_MEMBERS, CONNECT_MEMBERS, BRIEFING_POSTS = 8, 6, 5, 4
 PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
-NOT_VOICE = pairing.NOT_VOICE   # Pairing's voice rule (0166)
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
 PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
@@ -138,6 +137,7 @@ class Post:
     lang: Optional[str] = None
     by: Optional[str] = None  # 0168 E: a repost's (or a Telegram forward's) original author ("@acme"), not the feed's
     counts_as: Optional[str] = None   # v10.15: the source its author is, when one of the sources follows the author
+                                      # (voice.counted_source); Voice counts a Post by Policy.MARKX
 
     @property
     def iso(self) -> str:
@@ -151,9 +151,9 @@ class Post:
 
     @property
     def voice(self) -> str:
-        """The voice it counts as (pairing.counted_voice, Mark IX's rule): a repost's original author when one of the
-        sources follows that author, else its own source. `by` is the credit a render shows, whoever the author."""
-        return self.counts_as or self.source_id
+        """The voice it counts as (Voice's MARKX rule): a repost's original author when one of the sources follows
+        that author, else its own source. `by` is the credit a render shows, whoever the author."""
+        return voice.voice_of(self, voice.Policy.MARKX)
 
 
 def _squash(s: Optional[str]) -> str:
@@ -185,8 +185,8 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
         by = original_author(kind, platform, handle, author, forwarded, owns)
         account = author_account(kind, by, forwarded_user)
         if account and followed is None:
-            followed = pairing.followed_accounts(cur)
-        counts = pairing.counted_voice(str(source_id), account, followed or {}) if account else None
+            followed = voice.followed_accounts(cur)
+        counts = voice.counted_source(str(source_id), account, followed or {}) if account else None
         out[str(pid)] = Post(id=str(pid), kind=kind, source=name or "", source_id=str(source_id),
                              at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang,
                              by=by, counts_as=counts if counts != str(source_id) else None)
@@ -196,18 +196,6 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
         if str(pid) in out:
             out[str(pid)].links.append((url, anchor))
     return out
-
-
-def author_account(kind: str, by: Optional[str], forwarded_user: Optional[str] = None) -> Optional[str]:
-    """The account (Mark IX's form, repo_stories.source_account's) of a repost's original author: x.com/<user> for an
-    X repost, t.me/<channel> for a Telegram forward whose header names the channel; None otherwise (a forward by name
-    alone names no account)."""
-    from insight_core.utils.addresses import x_account
-    if kind == "x" and by:
-        return x_account(by.lstrip("@"))
-    if kind == "telegram" and by and forwarded_user:
-        return "t.me/" + forwarded_user.lstrip("@").lower()
-    return None
 
 
 def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:
@@ -256,8 +244,8 @@ def near_copies(members: Sequence[Post]) -> set:
 
 
 def voices(posts: Iterable[Post]) -> int:
-    """Distinct voices (Post.voice: a repost counts as its author only when a source follows the author)."""
-    return pairing.voices((p.voice, p.kind) for p in posts)
+    """Distinct voices (Voice's MARKX rule: a repost counts as its author only when a source follows the author)."""
+    return voice.count(posts, voice.Policy.MARKX)
 
 
 def _cut(text: str, n: int) -> str:
@@ -484,7 +472,8 @@ def connect_input(members_a: Sequence[Post], members_b: Sequence[Post]) -> str:
     prototype showed the members nearest the story's centroid; until S2's vectors, the earliest."""
     def one(tag: str, ps: Sequence[Post]) -> str:
         ps = _earliest(ps)
-        n = pairing.voices((p.source_id, p.kind) for p in ps)   # by source, as before 0168 (not asked again)
+        # by source, as before 0168 (not asked again)
+        n = voice.count((voice.Said(p.source_id, p.kind) for p in ps), voice.Policy.MARKX)
         lines = [f"STORY {tag} — first seen {ps[0].iso[:10]}; {n} sources", "Members (earliest first):"]
         lines += [_member_line(p, 300, p.iso[:10]) for p in ps[:CONNECT_MEMBERS]]
         return "\n".join(lines)
@@ -728,7 +717,7 @@ def _checks_of(stories: Sequence[List[Tuple[str, str, Optional[str]]]], posts: D
         reports = {p for p, role, _ in ms if role == "report"}
         copies = near_copies(members)
         for p in members[1:]:
-            if p.kind in NOT_VOICE or p.id in copies:
+            if not voice.is_voice(p.kind) or p.id in copies:
                 continue
             roundup = kinds.get(p.id) == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
@@ -772,7 +761,8 @@ BACKGROUND_INPUTS = {
 }
 _PLANNER_CODE = ("insight_core.markx.tasks", "insight_core.markx.plan_marks", "insight_core.markx.ent42",
                  "insight_core.markx.story_window", "insight_core.markx.pairing", "insight_core.markx.schemas",
-                 "insight_core.markx.repo", "insight_core.utils.post_parts", "insight_core.utils.post_links")
+                 "insight_core.markx.repo", "insight_core.utils.post_parts", "insight_core.utils.post_links",
+                 "insight_core.utils.voice", "insight_core.utils.byline")
 
 
 def background_inputs(cur: Cursor, kind: str, now: datetime) -> Tuple[Sequence[str], Any]:

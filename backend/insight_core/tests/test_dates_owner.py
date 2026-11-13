@@ -12,9 +12,6 @@ OWNER = ROOT / "markx" / "pairing.py"
 # over lines (a call split across lines counts). An assignment's COALESCE(%(new)s, published_at, ...) is a write.
 _COL = r"(?:\w+\.|\{\w*\}\.?)?(?:surfaced_at|published_at|fetched_at)"
 INLINE = re.compile(r"COALESCE\([^()]*?" + _COL + r"\s*,\s*" + _COL + r"\b", re.S)
-# The Voice slice's files (built beside v10.17's 0190): their Mark IX times move to pairing.ix_date when it merges.
-# The counts are pinned, so a new inline date there fails too.
-WAITING = {"db/repo_stories.py": 3, "db/repo_voices.py": 4, "markx/source_stats.py": 2}
 
 
 def _inline(path: Path) -> int:
@@ -29,7 +26,7 @@ class NoInlineDates(unittest.TestCase):
             if rel.startswith("tests/") or path == OWNER:
                 continue
             n = _inline(path)
-            if n != WAITING.get(rel, 0):
+            if n:   # 0189's merge moved the Voice slice's last nine to pairing.ix_date / ordinary_date
                 found[rel] = n
         self.assertEqual(found, {}, "a post's date is pairing.post_date / ordinary_date / published_date / ix_date "
                                     "(markx/pairing.py, 'the dates'), never an inline COALESCE")
