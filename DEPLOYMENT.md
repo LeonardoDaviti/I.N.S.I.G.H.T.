@@ -426,6 +426,47 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
 
 **Updating to v10.0.2 (issue 0112 Decided 10-13):** `./update` rebuilds both images; migration 0070 adds `mx_jobs`, `mx_candidate_posts` and `mx_workers` (Mark X tables only). Mark X's jobs move to `insight-ingestion` by themselves; nothing to set. Remove `API_WORKERS=1` from `.env` if it is there, so the API runs its two processes.
 
+## Health, timeouts, memory and logs (issue 0188)
+- **`GET /api/status`'s `healthy` is computed**, with its `health.reasons` (what makes it false), `health.warnings`
+  (shown, never false alone) and `health.checks` (the numbers read):
+  - the newest successful ingestion run is older than the fetch interval plus two ticks, or the scheduler's next tick
+    is two ticks overdue;
+  - the scheduler's or Mark X's loop stopped beating (`/app/logs/runtime/heartbeat-*`, written every 30 s by the
+    scheduler and after each Mark X look);
+  - with Mark X on: a job failing (3 failed runs in a row), or no decision run finished in 2 hours;
+  - warnings: failing sources; Mark X workers silent for over 3 days (also marked "stale" on the /markx page).
+  `table_sizes` lists the 15 biggest tables (with indexes and TOAST). Nothing is pruned: everything is kept.
+- **insight-ingestion's healthcheck** runs `python -I insight_core/utils/heartbeat.py`: unhealthy when the
+  scheduler's heartbeat is over 3 minutes old (or Mark X's over 2000 s). Docker restarts nothing for that; it shows.
+- **A Mark X job that fails backs off** (`mx_jobs.failures`, migration 0129): 10 minutes after the first failure,
+  doubling, at most 6 hours apart, and keeps trying; from 3 in a row it is "failing" (/markx, `/api/status`).
+  A decision run over its limit twice in a row in the same late stage (graph, back, later, entities, surges,
+  perspectives) skips that stage once and is logged so; the run after tries it again.
+- **Database timeouts** (`db/database.py`, by role): in insight-ingestion a statement ends after 14 minutes (under a
+  job's 15-minute kill) and a transaction idle for 16 minutes is ended; in the API a request's statements end after
+  30 s (`INSIGHT_DB_REQUEST_TIMEOUT_MS`, 0 turns it off; deleting a source is allowed the default 5 minutes), its
+  background work keeps 5 minutes, an idle transaction ends after 2 minutes. Every connection checks its client
+  every 10 s, so a killed job's statement ends and its locks are freed.
+- **Logs:** each container's own log (`docker logs`) is capped at 5 x `INSIGHT_DOCKER_LOG_SIZE` (20m). The files in
+  `/app/logs` (both containers, every process) rotate at 10 MB, 3 kept, by whichever process finds one full, under a
+  lock, so no line is lost; the worker's `log.jsonl` rotates at 10 MB, 4 kept.
+- **Memory** (`mem_limit`, each from `.env`): past its limit the kernel ends a process of that container only. In
+  insight-ingestion that is a Mark X job's process (the largest), recorded as a failed run and backed off, never
+  Postgres. The limits sit above the measured peaks, so a normal run is never ended:
+
+  | container | limit | measured |
+  |---|---|---|
+  | insight-ingestion | 12g (`INSIGHT_INGESTION_MEM_LIMIT`) | 7.0-7.75 GiB spikes in decision runs on the server (0183); a decision run 1.2-1.6 GB on a 95k-entity copy (the server has ~250k) |
+  | insight-api | 10g (`INSIGHT_API_MEM_LIMIT`) | 2.3 GB average, 3.2 GB at most on the server before 0186; an export's process peak 7.5 GB on the 0186 copy |
+  | insight-db | 6g (`INSIGHT_DB_MEM_LIMIT`) | its page cache is reclaimed under the limit, never killed for |
+  | insight-frontend | 256m | nginx serving files |
+
+  If the server's corpus grows and a container is ended at its limit (`docker inspect insight-ingestion` shows
+  `OOMKilled`, or a Mark X run "exited with code -9"), raise its limit in `.env` and `./update`.
+- **Minimum host**, from those numbers: 16 GB of RAM for a server-sized corpus (ingestion's peak ~8 GB, the API ~3 GB,
+  Postgres and the page cache the rest); 4 cores (a decision run uses one; the API two processes; Postgres the
+  rest). A small corpus runs in far less: the limits are ceilings, not reservations.
+
 ## When the API stops answering (issue 0117)
 Docker restarts nothing for being unhealthy: `restart: unless-stopped` acts only when the process exits. On 5 Nov the API answered nothing for over 20 minutes until the owner looked.
 
