@@ -52,21 +52,21 @@ def linker(pid, source, url, text, *, hours=0.0, text_hash=None, kind="telegram"
 
 class RepostVoiceRulesTests(unittest.TestCase):
     def test_a_reposter_is_a_share_voice_and_makes_a_story(self):
-        [story] = group([tweet("t", "badlogic", "badlogicgames", reposters=["steipete"])])
+        [story] = group([tweet("t", "badlogic", "oddlogic_games", reposters=["toolsmith_pete"])])
         self.assertEqual((story.voices, [p.id for p in story.posts]), (2, ["t"]),
                          "one tweet your two sources pushed is a story of 2 voices")
-        self.assertEqual(group([tweet("t", "badlogic", "badlogicgames")]), [], "no reposter: no story")
+        self.assertEqual(group([tweet("t", "badlogic", "oddlogic_games")]), [], "no reposter: no story")
 
     def test_a_reposter_with_its_own_post_in_the_story_is_one_voice(self):
-        quote = StoryPost(id="q", source_id="steipete", kind="x", own_site="x.com", home_site="x.com",
-                          t=NOON + timedelta(minutes=5), url=f"https://x.com/steipete/status/{ID + 1}", author="steipete",
-                          quoted=f"https://x.com/badlogicgames/status/{ID}",
-                          links=[(f"https://x.com/badlogicgames/status/{ID}", "t")])
-        [story] = group([tweet("t", "badlogic", "badlogicgames", reposters=["steipete"]), quote])
+        quote = StoryPost(id="q", source_id="toolsmith_pete", kind="x", own_site="x.com", home_site="x.com",
+                          t=NOON + timedelta(minutes=5), url=f"https://x.com/toolsmith_pete/status/{ID + 1}", author="toolsmith_pete",
+                          quoted=f"https://x.com/oddlogic_games/status/{ID}",
+                          links=[(f"https://x.com/oddlogic_games/status/{ID}", "t")])
+        [story] = group([tweet("t", "badlogic", "oddlogic_games", reposters=["toolsmith_pete"]), quote])
         self.assertEqual(story.voices, 2)
 
     def test_news_counts_a_reposter_as_a_share_each_voice_once(self):
-        t = tweet("t", "badlogic", "badlogicgames", reposters=["steipete", "akhaliq"])
+        t = tweet("t", "badlogic", "oddlogic_games", reposters=["toolsmith_pete", "paperfeed"])
         self.assertEqual(tally([t], roles([t]), []), (1, 2, 0), "1 report, 2 shares")
         [found] = news([t], group([t]), [])
         self.assertEqual((found.reports, found.shares, found.score), (1, 2, 2.0), "a share is 1/2")
@@ -171,7 +171,7 @@ class ReadingGapsJobTests(unittest.TestCase):
     def _story_and_roundups(self):
         page = f"https://openai-{self.mark}.test/index/introducing-terra"
         link = f'<p><a href="{page}">Introducing GPT-6.1 Terra</a></p>'
-        a, b = self._source("data_secrets"), self._source("Simon Willison")
+        a, b = self._source("data_whispers"), self._source("Simon Willison")
         self.a = self._post(a, f"https://a-{self.mark}.test/1", "Вышла Terra", hours=6, html=link)
         self.b = self._post(b, f"https://b-{self.mark}.test/1", "Terra notes", hours=5, html=link)
         lw, smol = self._source("LessWrong"), self._source("Smol")
@@ -233,17 +233,17 @@ class ReadingGapsJobTests(unittest.TestCase):
     # ---- 3. a repost by one of your sources is its voice ----------------------------------------
 
     def test_a_tweet_your_other_source_reposted_is_a_story_and_the_reader_names_who(self):
-        author, by = f"badlogic{self.mark}", f"steipete{self.mark}"
-        own, steipete = self._x(author), self._x(by)
+        author, by = f"badlogic{self.mark}", f"toolsmith_pete{self.mark}"
+        own, toolsmith_pete = self._x(author), self._x(by)
         t = self._tweet(own, author, ID, "how i work with agents in 2026")
-        again = self._tweet(steipete, author, ID, f"RT by @{by}: how i work with agents in 2026")
+        again = self._tweet(toolsmith_pete, author, ID, f"RT by @{by}: how i work with agents in 2026")
         self.assertEqual(t, again)
         self._regroup()
         self.cur.execute("SELECT st.voices FROM story_posts sp JOIN stories st ON st.id = sp.story_id WHERE sp.post_id = %s", (t,))
         self.assertEqual(self.cur.fetchone(), (2,), "the author and the reposter: 2 voices")
         story = self._row(t)["story"]
         self.assertEqual(([s["id"] for s in story["sources"]], story["reposted_by"], story["posts"]),
-                         ([own, steipete], [by], []), "covered by 2, and who reposted it")
+                         ([own, toolsmith_pete], [by], []), "covered by 2, and who reposted it")
         self.assertEqual(self.service.regroup(self.cur)["changed"], 0, "a second run changes nothing")
         self.assertEqual(PostDetailService.story(self.cur, t)["voices"], 2, "the post page shows it")
 
@@ -255,32 +255,32 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.cur.execute("SELECT 1 FROM story_posts WHERE post_id = %s", (t,))
         self.assertIsNone(self.cur.fetchone(), "no story: one voice")
         # Read by the job: the author's own source is never a reposter, whatever reposted_by holds.
-        other, third = self._x(f"akhaliq{self.mark}"), self._x(f"third{self.mark}")
+        other, third = self._x(f"paperfeed{self.mark}"), self._x(f"third{self.mark}")
         row = {"id": t, "source_id": third, "t": self.now, "title": "x", "content_hash": None, "text_chars": 0,
                "html": None, "shown_title": "x", "reply_to": None, "quoted": None, "quoted_words": {}, "poster": None, "words": 0,
                "url": f"https://x.com/{author}/status/{ID}", "updated": False, "author": author,
-               "links": [], "link_texts": {}, "reposted_by": [author, f"akhaliq{self.mark}", f"third{self.mark}"]}
+               "links": [], "link_texts": {}, "reposted_by": [author, f"paperfeed{self.mark}", f"third{self.mark}"]}
         self.assertEqual(StoriesService._story_post(row, SourceFacts(self.cur)).reposters, (other,))
 
     def test_a_reposter_of_a_tweet_its_own_source_stored_adds_no_voice(self):
-        author, by = f"badlogic{self.mark}", f"steipete{self.mark}"
-        steipete = self._x(by)
-        t = self._tweet(steipete, author, ID, f"RT by @{by}: how i work with agents in 2026")
+        author, by = f"badlogic{self.mark}", f"toolsmith_pete{self.mark}"
+        toolsmith_pete = self._x(by)
+        t = self._tweet(toolsmith_pete, author, ID, f"RT by @{by}: how i work with agents in 2026")
         self._regroup()
         self.cur.execute("SELECT 1 FROM story_posts WHERE post_id = %s", (t,))
-        self.assertIsNone(self.cur.fetchone(), "steipete's own repost is its post's voice, no second one")
+        self.assertIsNone(self.cur.fetchone(), "toolsmith_pete's own repost is its post's voice, no second one")
 
     def test_a_repost_of_an_author_you_follow_is_the_authors_report_and_the_reposters_share(self):
-        """x-repost-followed-author on the lab: one row, held by steipete's source (it saved it first)."""
-        author, by = f"badlogic{self.mark}", f"steipete{self.mark}"
-        steipete, own = self._x(by), self._x(author)
-        t = self._tweet(steipete, author, ID, f"RT by @{by}: how i work with agents in 2026")
+        """x-repost-followed-author on the lab: one row, held by toolsmith_pete's source (it saved it first)."""
+        author, by = f"badlogic{self.mark}", f"toolsmith_pete{self.mark}"
+        toolsmith_pete, own = self._x(by), self._x(author)
+        t = self._tweet(toolsmith_pete, author, ID, f"RT by @{by}: how i work with agents in 2026")
         self._regroup()
         self.cur.execute("SELECT st.voices, ns.reports, ns.shares, ns.score FROM story_posts sp JOIN stories st ON st.id = sp.story_id"
                          " LEFT JOIN news_posts np ON np.post_id = sp.post_id LEFT JOIN news_stories ns ON ns.id = np.news_id"
                          " WHERE sp.post_id = %s", (t,))
-        self.assertEqual(self.cur.fetchone(), (2, 1, 1, 1.5), "badlogicgames' report, steipete's share: 1 + 1/2")
-        self.assertEqual([s["id"] for s in self._row(t)["story"]["sources"]], [steipete, own])
+        self.assertEqual(self.cur.fetchone(), (2, 1, 1, 1.5), "oddlogic_games' report, toolsmith_pete's share: 1 + 1/2")
+        self.assertEqual([s["id"] for s in self._row(t)["story"]["sources"]], [toolsmith_pete, own])
 
     # ---- 1. a thread's replies read as posts ---------------------------------------------------
 
@@ -304,9 +304,9 @@ class HostingPlatformTests(unittest.TestCase):
     section says; an ordinary subdomain is its site's."""
 
     def test_a_platform_subdomain_is_its_own_site_an_ordinary_one_is_not(self):
-        self.assertEqual([site_of(h) for h in ("karpathy.github.io", "www.lilianweng.github.io", "herman.bearblog.dev",
+        self.assertEqual([site_of(h) for h in ("nnteacher.github.io", "www.lilianweng.github.io", "herman.bearblog.dev",
                                                "blog.x.com", "blog.ncase.me", "news.bbc.co.uk", "github.io")],
-                         ["karpathy.github.io", "lilianweng.github.io", "herman.bearblog.dev",
+                         ["nnteacher.github.io", "lilianweng.github.io", "herman.bearblog.dev",
                           "x.com", "ncase.me", "bbc.co.uk", "github.io"])
         self.assertEqual(site_of("gwern.substack.com"), "substack.com", "Substack is not in the list (measured; see the issue)")
 
@@ -316,7 +316,7 @@ class HostingPlatformTests(unittest.TestCase):
         def blog(pid, host, hours):
             return StoryPost(id=pid, source_id=pid, kind="site", own_site=site_of(host), t=NOON + timedelta(hours=hours),
                              url=f"https://{host}/{pid}", links=[(page, None)])
-        [story] = group([blog("k", "karpathy.github.io", 0), blog("l", "lilianweng.github.io", 1)])
+        [story] = group([blog("k", "nnteacher.github.io", 0), blog("l", "lilianweng.github.io", 1)])
         self.assertEqual(story.voices, 2)
         self.assertEqual(group([blog("a", "blog.ncase.me", 0), blog("b", "ncase.me", 1)]), [], "one writer: one voice, no story")
 

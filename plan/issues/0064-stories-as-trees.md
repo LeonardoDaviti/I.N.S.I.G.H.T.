@@ -5,7 +5,7 @@ Status: **built, not deployed** (2026-10-31; spec 2026-10-31) for v9.9 (owner, 2
 ## The case (the lab, the server's data)
 - **A story is a flat list today.** "Covered by" lists the other posts with "first" and "share", but not who each one came from.
 - **GPT-6.1 Terra is two rows of one article.** OpenAI News' own post (26 Oct) and Hacker News' (26 Oct 18:01) share an address with different titles.
-  - data_secrets, Simon Willison and LessWrong link that address, and every link resolves to HN's row, the first seen.
+  - data_whispers, Simon Willison and LessWrong link that address, and every link resolves to HN's row, the first seen.
   - OpenAI's post, the origin, is in no story.
   - Three posts share an address this way on the lab copy.
 - **Time alone is unreliable.** Of 1,248 citations between stored posts, the linked post is earlier in 80%. In 20% it's later, which is impossible. The causes:
@@ -57,7 +57,7 @@ Status: **built, not deployed** (2026-10-31; spec 2026-10-31) for v9.9 (owner, 2
   - one parent per post;
   - the reason recorded.
 - **On a copy of the lab:**
-  - the case `openai-terra-same-address` passes: OpenAI's post is the origin, HN, data_secrets and Simon Willison are its children, and LessWrong sits under them;
+  - the case `openai-terra-same-address` passes: OpenAI's post is the origin, HN, data_whispers and Simon Willison are its children, and LessWrong sits under them;
   - every passing case in `plan/research/lab/cases.json` still passes;
   - record how many stories become trees deeper than one level, and how parents split by reason (`address`, `citation`, `copy`, `time`, `none`).
 - **Frontend:** tests and screens of the tree in the feed row and on the post page, light and dark, wide and narrow.
@@ -110,11 +110,11 @@ Status: **built, not deployed** (2026-10-31; spec 2026-10-31) for v9.9 (owner, 2
 `insight_lab` copied by `pg_dump` into a `_test` database, migration 0044, then a full job.
 
 - **Lab cases:**
-  - `openai-terra-same-address` **passes**: OpenAI's post (26 Oct, 00:00, a date alone) is the origin and leads the Main feed row. Hacker News is under it by `address`; data_secrets and Simon Willison by `citation`.
+  - `openai-terra-same-address` **passes**: OpenAI's post (26 Oct, 00:00, a date alone) is the origin and leads the Main feed row. Hacker News is under it by `address`; data_whispers and Simon Willison by `citation`.
   - **LessWrong is not in the story.** Its two posts (AI #192 and Against Moloch #49) are roundups of 233 and 30 links, with Terra at link 59 and link 2. So they're mentions (`story_mentions`), not members, as 0050 decided. The spec's "LessWrong sits under them" isn't built.
   - **Every passing case still passes:**
     - `kimi-k31-pro`: 8 posts, 7 voices;
-    - `cloudflare-yandex-outage`: Cloudflare is the origin, @denissexy under it by citation;
+    - `cloudflare-yandex-outage`: Cloudflare is the origin, @dennis_it under it by citation;
     - `search-kimi-31`: row 24 newest first, folded, Simon in its line;
     - `lime-paper-origin`: still the 2-source story;
     - `internal-link`: untouched.
@@ -140,9 +140,9 @@ Status: **built, not deployed** (2026-10-31; spec 2026-10-31) for v9.9 (owner, 2
   | address | 2 | 0.1% |
 
 - **Examples:**
-  - **Claude Fable 5:** root `anthropic.com/news/claude-fable-5-mythos-5`, "Claude Fable 5", linked by 14. ai_newz, denissexy, seeallochnaya, LessWrong, data_secrets, abstractDL, Simon Willison, Epoch AI and others hang from it by citation. Daring Fireball's DMA post hangs from it with `none`, and @steipete sits under Daring Fireball by citation (depth 2).
-  - **GPT-6.1 Terra:** OpenAI News → Hacker News (`address`), data_secrets and Simon Willison (`citation`).
-  - **Ghostty leaves GitHub:** mitchellh.com's post (a date alone) → @steipete and Mat Duggan; Andrew Nesbitt's "A GitHub for maintainers" under Duggan (depth 2).
+  - **Claude Fable 5:** root `anthropic.com/news/claude-fable-5-mythos-5`, "Claude Fable 5", linked by 14. ai_dispatch, dennis_it, seeall_notes, LessWrong, data_whispers, abstract_nets, Simon Willison, Epoch AI and others hang from it by citation. Daring Fireball's DMA post hangs from it with `none`, and @toolsmith_pete sits under Daring Fireball by citation (depth 2).
+  - **GPT-6.1 Terra:** OpenAI News → Hacker News (`address`), data_whispers and Simon Willison (`citation`).
+  - **Ghostty leaves GitHub:** mitchellh.com's post (a date alone) → @toolsmith_pete and Mat Duggan; Andrew Nesbitt's "A GitHub for maintainers" under Duggan (depth 2).
   - **Kimi K3.1 Pro:** root `kimi.ai/blog/kimi-k3-1-pro`, "Introducing Kimi K3.1 Pro", linked by 8.
   - **Gemini 4 Carbon:** Google's post (linked by 3) is the root, not the benchmark page it links (linked by 2). This was wrong until the origin was chosen first, by in-degree.
 - A random sample of 25 outside-page origins: model cards, papers, announcements and articles; 9 of 25 have a title from link words, the rest show the address.
@@ -150,8 +150,8 @@ Status: **built, not deployed** (2026-10-31; spec 2026-10-31) for v9.9 (owner, 2
 ## Left open
 - **LessWrong is a mention, not a member** of the Terra story (see above). Showing a roundup that mentions a story in its tree would be a new decision.
 - **Trees are shallow:** most posts link the origin page directly, so 4 stories of 575 go deeper than one level. A post that links both the origin page and another citer goes under the page: in-degree comes first, as revised.
-- **Citation outranks copy, as the spec orders them:** a Telegram forward that also carries the origin's link hangs from the page, not from the post it copies (toshoseti under the Fable page, not under denissexy).
-  - **Decided (owner, 2026-10-31): the link wins.** Measured on the lab: 129 posts have both a citation and a copy parent. In 124 the copied post links the same page, so the choice is only "beside the original" or "under it" (80 exact text copies, 39 title-only). The other 5 are one post both linked and copied (Simon Willison), so they agree. Example: Talkie (ai_newz 19:06, denissexy 19:07, toshoseti 20:02, one text, one Hugging Face link). All three stay beside each other under the page. Who forwarded whom is attribution, which is Mark X's.
+- **Citation outranks copy, as the spec orders them:** a Telegram forward that also carries the origin's link hangs from the page, not from the post it copies (tosho_nets under the Fable page, not under dennis_it).
+  - **Decided (owner, 2026-10-31): the link wins.** Measured on the lab: 129 posts have both a citation and a copy parent. In 124 the copied post links the same page, so the choice is only "beside the original" or "under it" (80 exact text copies, 39 title-only). The other 5 are one post both linked and copied (Simon Willison), so they agree. Example: Talkie (ai_dispatch 19:06, dennis_it 19:07, tosho_nets 20:02, one text, one Hugging Face link). All three stay beside each other under the page. Who forwarded whom is attribution, which is Mark X's.
 - **Origin titles from link words are sometimes poor:** "Регистрация здесь, не пропустите" and "Событие №2 (Технологический меч)" pass 0051's rule. Reading the page's own title would need a fetch.
 - **An outside origin's line names its host** (`anthropic.com`), not a source's name: a page outside INSIGHT has no source.
 - **On a phone the lines are tight:** a deep line's title can shrink to a few letters, as in 0050's flat list. The indent is halved below sm.

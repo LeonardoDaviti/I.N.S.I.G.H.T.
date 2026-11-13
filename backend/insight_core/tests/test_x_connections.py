@@ -55,47 +55,47 @@ def cite(user, n):
 
 class AddressTests(unittest.TestCase):
     def test_every_form_of_a_tweet_is_one_address(self):
-        forms = [f"https://nitter.local/Extraltodeus/status/{ID}#m", f"https://x.com/extraltodeus/status/{ID}?s=20&t=abc",
-                 f"https://twitter.com/Extraltodeus/status/{ID}", f"https://mobile.twitter.com/Extraltodeus/status/{ID}",
-                 f"https://xcancel.com/Extraltodeus/status/{ID}?s=46", f"https://fxtwitter.com/Extraltodeus/status/{ID}/photo/1",
-                 f"http://nitter.net/Extraltodeus/status/{ID}/history", f"https://vxtwitter.com/Extraltodeus/status/{ID}"]
-        self.assertEqual({normalize_url(url) for url in forms}, {f"https://x.com/extraltodeus/status/{ID}"})
+        forms = [f"https://nitter.local/Modelwright/status/{ID}#m", f"https://x.com/modelwright/status/{ID}?s=20&t=abc",
+                 f"https://twitter.com/Modelwright/status/{ID}", f"https://mobile.twitter.com/Modelwright/status/{ID}",
+                 f"https://xcancel.com/Modelwright/status/{ID}?s=46", f"https://fxtwitter.com/Modelwright/status/{ID}/photo/1",
+                 f"http://nitter.net/Modelwright/status/{ID}/history", f"https://vxtwitter.com/Modelwright/status/{ID}"]
+        self.assertEqual({normalize_url(url) for url in forms}, {f"https://x.com/modelwright/status/{ID}"})
 
     def test_only_the_shape_is_a_tweet(self):
         self.assertEqual(normalize_url("https://twitter.com/op/status/176767"), "https://x.com/op/status/176767",
                          "an id under 15 digits is no tweet's address by shape (the host alias still applies)")
-        self.assertEqual(normalize_url("https://nitter.local/karpathy"), "https://nitter.local/karpathy")
+        self.assertEqual(normalize_url("https://nitter.local/nn_teacher"), "https://nitter.local/nn_teacher")
         self.assertEqual(normalize_url(f"https://example.com/status/{ID}"), f"https://example.com/status/{ID}")
 
     def test_a_tweets_links_to_other_tweets_are_kept_through_your_own_nitter(self):
-        html = (f'<p>see <a href="https://nitter.local/karpathy/status/{ID + 1}#m">this</a>'
-                f' and <a href="https://nitter.local/karpathy">karpathy</a>'
-                f' and <a href="https://nitter.local/badlogicgames/status/{ID}#m">me</a></p>{cite("hvent90", ID + 2)}')
-        links = extract_links(html, f"https://nitter.local/badlogicgames/status/{ID}#m", "x")
+        html = (f'<p>see <a href="https://nitter.local/nn_teacher/status/{ID + 1}#m">this</a>'
+                f' and <a href="https://nitter.local/nn_teacher">nn_teacher</a>'
+                f' and <a href="https://nitter.local/oddlogic_games/status/{ID}#m">me</a></p>{cite("hvent_dev", ID + 2)}')
+        links = extract_links(html, f"https://nitter.local/oddlogic_games/status/{ID}#m", "x")
         self.assertEqual([link.url for link in links],
-                         [f"https://x.com/karpathy/status/{ID + 1}", f"https://x.com/hvent90/status/{ID + 2}"],
+                         [f"https://x.com/nn_teacher/status/{ID + 1}", f"https://x.com/hvent_dev/status/{ID + 2}"],
                          "a profile is still the platform, and a tweet never links itself")
-        self.assertEqual(quoted_tweet(html), f"https://x.com/hvent90/status/{ID + 2}")
-        on_a_blog = extract_links(f'<a href="https://xcancel.com/sama/status/{ID}?s=46">x</a>', "https://blog.test/a", "site")
-        self.assertEqual([link.url for link in on_a_blog], [f"https://x.com/sama/status/{ID}"])
+        self.assertEqual(quoted_tweet(html), f"https://x.com/hvent_dev/status/{ID + 2}")
+        on_a_blog = extract_links(f'<a href="https://xcancel.com/lab_sam/status/{ID}?s=46">x</a>', "https://blog.test/a", "site")
+        self.assertEqual([link.url for link in on_a_blog], [f"https://x.com/lab_sam/status/{ID}"])
 
     def test_a_repost_names_its_author_and_who_reposted_it(self):
-        fields = build_post_fields({"url": f"https://nitter.local/badlogicgames/status/{ID}#m",
-                                    "title": "RT by @steipete: how i work with agents in 2026."})
-        self.assertEqual((fields["author"], fields["reposted_by"], fields["url_host"]), ("badlogicgames", ["steipete"], "x.com"))
-        own = build_post_fields({"url": f"https://nitter.local/sama/status/{ID}#m", "title": "RT by @sama: mine"})
-        self.assertEqual((own["author"], own["reposted_by"]), ("sama", []), "an author reposting itself is no one else")
+        fields = build_post_fields({"url": f"https://nitter.local/oddlogic_games/status/{ID}#m",
+                                    "title": "RT by @toolsmith_pete: how i work with agents in 2026."})
+        self.assertEqual((fields["author"], fields["reposted_by"], fields["url_host"]), ("oddlogic_games", ["toolsmith_pete"], "x.com"))
+        own = build_post_fields({"url": f"https://nitter.local/lab_sam/status/{ID}#m", "title": "RT by @lab_sam: mine"})
+        self.assertEqual((own["author"], own["reposted_by"]), ("lab_sam", []), "an author reposting itself is no one else")
         self.assertEqual(build_post_fields({"url": "https://blog.test/a", "title": "A"})["author"], None)
-        self.assertEqual(display_title("RT by @steipete: how i work with agents in 2026.", "how i work"),
+        self.assertEqual(display_title("RT by @toolsmith_pete: how i work with agents in 2026.", "how i work"),
                          "how i work with agents in 2026.", "who reposted it is said beside the title")
 
     def test_a_repost_line_names_its_source_once(self):
-        # Issue 0070: "badlogicgames ↻ from @thsottiaux", not "badlogicgames · ↻ @badlogicgames, from @thsottiaux".
-        nitter = "https://nitter.local/badlogicgames/rss"
-        self.assertEqual(repost_of("rss", nitter, "thsottiaux", ["badlogicgames"]), {"by": [], "author": "thsottiaux"})
-        self.assertEqual(repost_of("rss", nitter, "thsottiaux", ["BadlogicGames", "steipete"]),
-                         {"by": ["steipete"], "author": "thsottiaux"})
-        self.assertIsNone(repost_of("rss", "https://nitter.local/thsottiaux/rss", "thsottiaux", ["steipete"]),
+        # Issue 0070: "oddlogic_games ↻ from @tl_codex", not "oddlogic_games · ↻ @oddlogic_games, from @tl_codex".
+        nitter = "https://nitter.local/oddlogic_games/rss"
+        self.assertEqual(repost_of("rss", nitter, "tl_codex", ["oddlogic_games"]), {"by": [], "author": "tl_codex"})
+        self.assertEqual(repost_of("rss", nitter, "tl_codex", ["Oddlogic_games", "toolsmith_pete"]),
+                         {"by": ["toolsmith_pete"], "author": "tl_codex"})
+        self.assertIsNone(repost_of("rss", "https://nitter.local/tl_codex/rss", "tl_codex", ["toolsmith_pete"]),
                           "the author's own row: the reposters are said in its story")
         self.assertIsNone(repost_of("rss", nitter, None, None))
 
@@ -104,8 +104,8 @@ class XRulesTests(unittest.TestCase):
     # ---- reposts --------------------------------------------------------------------------------
 
     def test_a_repost_stored_apart_hangs_from_its_original_and_is_a_share(self):
-        original = tweet("bg", "bg-src", "badlogicgames", n=ID)
-        repost = tweet("sp", "sp-src", "badlogicgames", n=ID, minutes=40, reposted=True)
+        original = tweet("bg", "bg-src", "oddlogic_games", n=ID)
+        repost = tweet("sp", "sp-src", "oddlogic_games", n=ID, minutes=40, reposted=True)
         [story] = group([original, repost])
         self.assertEqual(parents(story), {"bg": (None, None), "sp": ("bg", "repost")})
         self.assertEqual(story.roles, {"bg": "report", "sp": "share"})
@@ -114,24 +114,24 @@ class XRulesTests(unittest.TestCase):
     # ---- quotes ---------------------------------------------------------------------------------
 
     def test_a_quote_hangs_from_the_stored_tweet_it_quotes_whatever_the_source(self):
-        quoted_url = f"https://x.com/hvent90/status/{ID}"
-        shared = tweet("rt", "bg-src", "hvent90", n=ID, reposted=True)   # badlogicgames' repost of hvent90
-        quote = tweet("q", "bg-src", "badlogicgames", n=ID + 9, minutes=131, quoted=quoted_url, links=[(quoted_url, "rt")])
+        quoted_url = f"https://x.com/hvent_dev/status/{ID}"
+        shared = tweet("rt", "bg-src", "hvent_dev", n=ID, reposted=True)   # oddlogic_games' repost of hvent_dev
+        quote = tweet("q", "bg-src", "oddlogic_games", n=ID + 9, minutes=131, quoted=quoted_url, links=[(quoted_url, "rt")])
         [story] = group([shared, quote])
         self.assertEqual(parents(story), {"rt": (None, None), "q": ("rt", "quote")})
         self.assertIn("quote", story.reasons["q"])
 
     def test_a_quote_of_a_tweet_not_stored_hangs_from_it_as_the_outside_origin(self):
         quoted_url = f"https://x.com/elonmusk/status/{ID}"
-        a = tweet("a", "a-src", "sama", n=ID + 1, quoted=quoted_url, links=[(quoted_url, None)])
-        b = tweet("b", "b-src", "karpathy", n=ID + 2, minutes=30, quoted=quoted_url, links=[(quoted_url, None)])
+        a = tweet("a", "a-src", "lab_sam", n=ID + 1, quoted=quoted_url, links=[(quoted_url, None)])
+        b = tweet("b", "b-src", "nn_teacher", n=ID + 2, minutes=30, quoted=quoted_url, links=[(quoted_url, None)])
         [story] = group([a, b])
         self.assertEqual(story.origin_url, quoted_url)
         self.assertEqual(parents(story), {"a": (quoted_url, "quote"), "b": (quoted_url, "quote")})
 
     def test_a_quote_does_not_make_a_tweet_a_roundup(self):
         page, docs, quoted_url = "https://hf.test/unsloth/glm-gguf", "https://unsloth.test/docs/glm", f"https://x.com/u/status/{ID}"
-        quote = tweet("q", "dh", "danielhanchen", n=ID + 1, quoted=quoted_url,
+        quote = tweet("q", "dh", "finetune_dan", n=ID + 1, quoted=quoted_url,
                       links=[(docs, None), (page, None), (quoted_url, None)])
         blog = StoryPost(id="kc", source_id="kc-src", kind="site", own_site="kaitchup.test", t=NOON + timedelta(hours=30),
                          url="https://kaitchup.test/glm", links=[(page, None)])
@@ -141,10 +141,10 @@ class XRulesTests(unittest.TestCase):
     # ---- threads --------------------------------------------------------------------------------
 
     def test_three_replies_to_itself_are_a_thread(self):
-        posts = [tweet("t0", "bg", "badlogicgames", n=ID),
-                 tweet("t1", "bg", "badlogicgames", n=ID + 1, minutes=5, reply_to="badlogicgames"),
-                 tweet("t2", "bg", "badlogicgames", n=ID + 2, minutes=10, reply_to="badlogicgames"),
-                 tweet("t3", "bg", "badlogicgames", n=ID + 3, minutes=15, reply_to="BadLogicGames")]
+        posts = [tweet("t0", "bg", "oddlogic_games", n=ID),
+                 tweet("t1", "bg", "oddlogic_games", n=ID + 1, minutes=5, reply_to="oddlogic_games"),
+                 tweet("t2", "bg", "oddlogic_games", n=ID + 2, minutes=10, reply_to="oddlogic_games"),
+                 tweet("t3", "bg", "oddlogic_games", n=ID + 3, minutes=15, reply_to="Oddlogic_games")]
         [story] = group(posts)
         self.assertEqual(parents(story), {"t0": (None, None), "t1": ("t0", "thread"), "t2": ("t1", "thread"),
                                           "t3": ("t2", "thread")})
@@ -164,33 +164,33 @@ class XRulesTests(unittest.TestCase):
         self.assertEqual(story.voices, 1)
 
     def test_tweets_of_one_second_follow_their_ids(self):
-        posts = [tweet("z0", "pa", "predict_addict", n=ID),
-                 tweet("a2", "pa", "predict_addict", n=ID + 2, reply_to="predict_addict"),
-                 tweet("a1", "pa", "predict_addict", n=ID + 1, reply_to="predict_addict")]
+        posts = [tweet("z0", "pa", "forecast_fan", n=ID),
+                 tweet("a2", "pa", "forecast_fan", n=ID + 2, reply_to="forecast_fan"),
+                 tweet("a1", "pa", "forecast_fan", n=ID + 1, reply_to="forecast_fan")]
         self.assertEqual(threads(posts), {"a1": "z0", "a2": "a1"})
         [story] = group(posts)
         self.assertEqual((story.id, parents(story)["z0"]), ("z0", (None, None)), "the first tweet is the thread's root")
 
     def test_a_reply_to_someone_else_makes_no_thread(self):
-        posts = [tweet("t0", "bg", "badlogicgames", n=ID),
-                 tweet("r", "bg", "badlogicgames", n=ID + 1, minutes=5, reply_to="hvent90"),
-                 tweet("t2", "bg", "badlogicgames", n=ID + 2, minutes=10, reply_to="badlogicgames")]
+        posts = [tweet("t0", "bg", "oddlogic_games", n=ID),
+                 tweet("r", "bg", "oddlogic_games", n=ID + 1, minutes=5, reply_to="hvent_dev"),
+                 tweet("t2", "bg", "oddlogic_games", n=ID + 2, minutes=10, reply_to="oddlogic_games")]
         self.assertEqual(threads(posts), {}, "nor does a reply to itself that follows it")
         self.assertEqual(group(posts), [])
 
     def test_a_reply_more_than_24_hours_after_the_post_before_starts_nothing(self):
-        posts = [tweet("t0", "bg", "badlogicgames", n=ID),
-                 tweet("t1", "bg", "badlogicgames", n=ID + 1, minutes=24 * 60 + 1, reply_to="badlogicgames"),
-                 tweet("t2", "bg", "badlogicgames", n=ID + 2, minutes=24 * 60 + 5, reply_to="badlogicgames")]
+        posts = [tweet("t0", "bg", "oddlogic_games", n=ID),
+                 tweet("t1", "bg", "oddlogic_games", n=ID + 1, minutes=24 * 60 + 1, reply_to="oddlogic_games"),
+                 tweet("t2", "bg", "oddlogic_games", n=ID + 2, minutes=24 * 60 + 5, reply_to="oddlogic_games")]
         self.assertEqual(threads(posts), {"t2": "t1"}, "24 hours of the previous post in the chain, not of its first")
 
     def test_a_thread_never_starts_at_a_repost_of_another_account(self):
-        posts = [tweet("own", "pk", "pankajkumar_dev", n=ID),
+        posts = [tweet("own", "pk", "ravi_codes", n=ID),
                  tweet("rt", "pk", "someone", n=ID - 5, minutes=10, reposted=True),
-                 tweet("r1", "pk", "pankajkumar_dev", n=ID + 1, minutes=11, reply_to="pankajkumar_dev")]
+                 tweet("r1", "pk", "ravi_codes", n=ID + 1, minutes=11, reply_to="ravi_codes")]
         self.assertEqual(threads(posts), {}, "its parent is not known: not the repost, not the post before it")
-        self_repost = [tweet("rt", "pk", "pankajkumar_dev", n=ID), tweet("r1", "pk", "pankajkumar_dev", n=ID + 1,
-                                                                          minutes=1, reply_to="pankajkumar_dev")]
+        self_repost = [tweet("rt", "pk", "ravi_codes", n=ID), tweet("r1", "pk", "ravi_codes", n=ID + 1,
+                                                                          minutes=1, reply_to="ravi_codes")]
         self.assertEqual(threads(self_repost), {"r1": "rt"}, "an author reposting its own tweet: its own post")
 
     # ---- a thread follows the tweet it quotes (issue 0103) ----------------------------------------
@@ -289,22 +289,22 @@ class XJobTests(unittest.TestCase):
         return self.service.regroup(self.cur)
 
     def test_a_tweet_two_of_your_sources_repost_is_one_row_that_keeps_both(self):
-        steipete, akhaliq = self._x(f"steipete{self.mark}"), self._x(f"akhaliq{self.mark}")
+        toolsmith_pete, paperfeed = self._x(f"toolsmith_pete{self.mark}"), self._x(f"paperfeed{self.mark}")
         author = f"Badlogic{self.mark}"
-        first = self._save(steipete, author, ID, f"RT by @steipete{self.mark}: how i work with agents in 2026.")
-        again = self._save(akhaliq, author, ID, f"RT by @akhaliq{self.mark}: how i work with agents in 2026.")
+        first = self._save(toolsmith_pete, author, ID, f"RT by @toolsmith_pete{self.mark}: how i work with agents in 2026.")
+        again = self._save(paperfeed, author, ID, f"RT by @paperfeed{self.mark}: how i work with agents in 2026.")
         self.assertEqual(first, again)
         self.cur.execute("SELECT normalized_url, author, reposted_by FROM posts WHERE id = %s", (first,))
         self.assertEqual(self.cur.fetchone(), (f"https://x.com/{author.lower()}/status/{ID}", author,
-                                               sorted([f"akhaliq{self.mark}", f"steipete{self.mark}"])))
+                                               sorted([f"paperfeed{self.mark}", f"toolsmith_pete{self.mark}"])))
         items, _ = ReaderRepository(unread_window_days=None).list_posts(self.cur, FeedQuery(limit=100), now=self.now)
         [row] = [i for i in items if i["id"] == first]
-        # The row is steipete's: it names the other reposter, never its own source again (issue 0070).
-        self.assertEqual(row["repost"], {"by": [f"akhaliq{self.mark}"], "author": author})
+        # The row is toolsmith_pete's: it names the other reposter, never its own source again (issue 0070).
+        self.assertEqual(row["repost"], {"by": [f"paperfeed{self.mark}"], "author": author})
         self.assertEqual(row["title"], "how i work with agents in 2026.")
 
     def test_two_copies_of_one_tweet_join_by_their_address(self):
-        user = f"sama{self.mark}"
+        user = f"lab_sam{self.mark}"
         own = self._save(self._x(user), user, ID, "who is running the bigger scam")
         df = insert_scratch_source(self.cur, in_main_digest=True)
         for page in ("a", "b"):   # Daring Fireball publishes on its own site, and links a tweet now and then
@@ -336,12 +336,12 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(set(marked), {root, *replies}, "opening the thread marks its posts read")
 
     def test_a_replys_quote_of_its_own_thread_is_no_card(self):
-        # Issue 0070: pankajkumar_dev's replies each quote the thread's first tweet; it is read once.
+        # Issue 0070: ravi_codes's replies each quote the thread's first tweet; it is read once.
         user = f"ann{self.mark}"
         source = self._x(user)
         root = self._save(source, user, ID, "Model Y leaks: codenamed Q")
         quote = (f'<p>Its out guys.<br>\n</p><p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n'
-                 f'<hr/>\n<blockquote>\n<b>Pankaj</b>\n<p>Model Y leaks</p>\n<footer>\n— <cite>'
+                 f'<hr/>\n<blockquote>\n<b>Ravi</b>\n<p>Model Y leaks</p>\n<footer>\n— <cite>'
                  f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
         reply = self._save(source, user, ID + 1, f"R to @{user}: Its out guys.", minutes=5, html=quote)
         self._regroup()
@@ -461,11 +461,11 @@ class MigrationTests(unittest.TestCase):
             cur = conn.cursor()
             mark = uuid.uuid4().hex[:8]
             source = insert_scratch_source(cur)
-            cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s", (f"https://nitter.local/akhaliq{mark}/rss", source))
+            cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s", (f"https://nitter.local/paperfeed{mark}/rss", source))
             rows = {}
             for name, url, title in [
                 ("repost", f"https://nitter.local/Clement{mark}/status/{ID}#m", f"RT by @gg{mark}: We crossed $100M"),
-                ("own", f"https://nitter.local/akhaliq{mark}/status/{ID + 1}#m", "a paper"),
+                ("own", f"https://nitter.local/paperfeed{mark}/status/{ID + 1}#m", "a paper"),
                 ("blog", f"https://blog-{mark}.test/a", "A post"),
             ]:
                 cur.execute("""INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, links_scanned_at, content_html)
@@ -480,8 +480,8 @@ class MigrationTests(unittest.TestCase):
                             " FROM posts WHERE id = ANY(%s)", (list(rows.values()),))
                 got = {r[0]: r[1:] for r in cur.fetchall()}
                 self.assertEqual(got[rows["repost"]], (f"https://x.com/clement{mark}/status/{ID}",) * 2
-                                 + ("x.com", f"Clement{mark}", sorted([f"akhaliq{mark}", f"gg{mark}"]), False))
-                self.assertEqual(got[rows["own"]][3:5], (f"akhaliq{mark}", None), "its own tweet: no one reposted it")
+                                 + ("x.com", f"Clement{mark}", sorted([f"paperfeed{mark}", f"gg{mark}"]), False))
+                self.assertEqual(got[rows["own"]][3:5], (f"paperfeed{mark}", None), "its own tweet: no one reposted it")
                 self.assertEqual(got[rows["blog"]][3:], (None, None, True), "a post linking a tweet is read again")
             cur.execute("SELECT read_at IS NOT NULL, starred_at IS NOT NULL FROM post_reader_state WHERE post_id = %s",
                         (rows["repost"],))

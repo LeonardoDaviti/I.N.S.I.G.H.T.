@@ -35,14 +35,14 @@ But many real analyst workflows are not date-first.
 
 Sometimes the user wants:
 
-- everything Andrej Karpathy has been developing across several posts
+- everything Andrew Tutor has been developing across several posts
 - recurring threads from one research lab or one blog
 - a thematic digest for one watchlist
 - a focused brief on one source bundle or monitor
 
 Your example is exactly right:
 
-- one source: `Andrej Karpathy`
+- one source: `Andrew Tutor`
 - several posts across time
 - repeated discussion of `autoresearch`
 - desire to merge these into one coherent tracked thread
@@ -231,7 +231,7 @@ Vertical briefing should borrow more from **weekly topic briefing** than from **
 
 When this feature is done well, the user should be able to ask:
 
-- What has Karpathy been focused on over the last 30 days?
+- What has Tutor been focused on over the last 30 days?
 - Which recurring thread matters most in this source?
 - Show me the evolution of one source-specific theme over time.
 - Summarize one source without flattening everything into a generic recap.
@@ -513,7 +513,7 @@ Objective:
 
 Examples:
 
-- Karpathy vs Simon Willison on coding agents
+- Tutor vs Simon Willison on coding agents
 - one watchlist vs another
 - official sources vs commentary sources
 

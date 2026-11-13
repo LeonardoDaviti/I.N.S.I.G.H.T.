@@ -94,7 +94,7 @@ feed).
 - The 11 feeds that answered 200 with the same body ignore what was sent: 4 sent only
   Last-Modified (feeds.feedburner.com, oldvcr.blogspot.com, research.google/blog/rss, vas3k.blog;
   research.google is also the big sites' one 200), 2 are Apache `-gzip` ETags (aresluna.org,
-  daringfireball.net), 5 ignore their own ETag (jyn.dev, mariozechner.at, matduggan.com,
+  daringfireball.net), 5 ignore their own ETag (jyn.dev, marioz.example, matduggan.com,
   nvidianews.nvidia.com, downtowndougbrown.com). The 6 with a changed body carry per-request
   content under a new weak ETag (garymarcus, guzey and lcamtuf on substack.com, dwarkesh.com,
   oneusefulthing.org, timsh.org). All 17 work as today.

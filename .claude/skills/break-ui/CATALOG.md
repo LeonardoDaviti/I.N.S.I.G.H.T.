@@ -12,7 +12,7 @@
 | Missing title | `""` / `null` (Telegram posts often have no title) | Empty heading line, "undefined" |
 | Unbreakable token | `https://github.com/anthropics/claude-code/releases/tag/v2.4.0-beta.17+build.20261009` | Runs past container edge |
 | Long source name | `r/MachineLearning — Discussion & Research (Daily Megathread Archive)` | Pushes trailing actions off-row |
-| Handle-only source | `@karpathy`, `t.me/s/ai_newz` | Initials/avatars from non-word characters |
+| Handle-only source | `@nn_teacher`, `t.me/s/ai_dispatch` | Initials/avatars from non-word characters |
 | Non-Latin | `Нейросети и машинное обучение`, `人工智能前沿`, `ภาษาไทย`, `Tiếng Việt có dấu` | Clipped diacritics; width assumptions |
 | RTL | `الذكاء الاصطناعي` | Mirrored layout, punctuation at wrong end |
 | Emoji-first | `🚀 Launch day` , `👨‍👩‍👧 family` (ZWJ cluster) | Broken initials, grapheme splitting |

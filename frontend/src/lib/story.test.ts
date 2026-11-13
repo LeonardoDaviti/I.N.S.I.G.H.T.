@@ -15,10 +15,10 @@ test('one voice copied by others reads "also shared by", never "covered by 1" (i
 
 test('coveredBy names two sources, then counts the rest', () => {
   assert.equal(coveredBy(story(['Anthropic', 'Simon Willison'])), 'covered by 2 · Anthropic, Simon Willison');
-  assert.equal(coveredBy(story(['Anthropic', 'Simon Willison', 'https://tg.i-c-a.su/rss/denissexy?limit=50', 'B'])),
+  assert.equal(coveredBy(story(['Anthropic', 'Simon Willison', 'https://tg.i-c-a.su/rss/dennis_it?limit=50', 'B'])),
     'covered by 4 · Anthropic, Simon Willison, +2');
   // A source that reposted a tweet another source holds is a voice the names may not reach.
-  assert.equal(coveredBy({ ...story(['steipete']), voices: 2 }), 'covered by 2 · steipete, +1');
+  assert.equal(coveredBy({ ...story(['toolsmith_pete']), voices: 2 }), 'covered by 2 · toolsmith_pete, +1');
 });
 
 test('the names are the voices counted: a Reddit author in its subreddit, a copy once (issue 0082)', () => {
@@ -42,8 +42,8 @@ test('suggestionReason says how many of your sources link it, who, and how many 
 
 test('a story, a suggestion and a classic name a source without a display name by its address (server data)', () => {
   // The backend sends the address when a source has no display name, or an empty one.
-  assert.equal(coveredBy(story(['https://github.com/anthropics/claude-code/commits.atom', 'https://danluu.com/atom.xml'])),
-    'covered by 2 · anthropics/claude-code, danluu.com');
+  assert.equal(coveredBy(story(['https://github.com/anthropics/claude-code/commits.atom', 'https://danlunotes.com/atom.xml'])),
+    'covered by 2 · anthropics/claude-code, danlunotes.com');
   assert.equal(suggestionReason({
     key: 'metr.org', url: 'https://metr.org', voices: 2, article_count: 1, link_count: 2,
     voice_names: ['https://www.reddit.com/r/LocalLLaMA/.rss', 'http://antirez.com/rss'], articles: [],
@@ -99,9 +99,9 @@ test('storyTree: an outside page origin heads the list, its citers under it', ()
 // ---- X: reposts, quotes and threads (issue 0066) ------------------------------------------------
 
 test('a thread is one item: "Thread · 6 posts", its replies a list in their order, a quote of it under its root', () => {
-  // badlogicgames, 27 Oct: "software is dead. sad." and five replies to itself, two of them in one hour's tie.
+  // oddlogic_games, 27 Oct: "software is dead. sad." and five replies to itself, two of them in one hour's tie.
   const thread = {
-    id: 't0', voices: 1, first: 't0', sources: [{ id: 'bg', name: 'badlogicgames' }], parent_id: null, parent_reason: null, thread: true,
+    id: 't0', voices: 1, first: 't0', sources: [{ id: 'bg', name: 'oddlogic_games' }], parent_id: null, parent_reason: null, thread: true,
     posts: [sp('t1', 8, 't0', 'thread'), sp('t2', 9, 't1', 'thread'), sp('t3', 9, 't2', 'thread'), sp('t4', 9, 't3', 'thread'),
       sp('t5', 10, 't4', 'thread'), sp('giraffe', 11, 't0', 'quote')],
   };
@@ -128,28 +128,28 @@ test('storyTree: no tree (before the job drew it, News) lists the posts flat, as
 // ---- what reading v9.9 would show (issue 0068) -------------------------------------------------------
 
 test('storyTree: a line at the deepest indent names its parent, which a phone shows instead of more indent (Ghostty)', () => {
-  // mitchellh.com's post, @steipete and Mat Duggan under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.
+  // mitchellh.com's post, @toolsmith_pete and Mat Duggan under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.
   const ghostty = {
     id: 'mitchell', voices: 4, first: 'mitchell', sources: [], parent_id: null, parent_reason: null,
-    posts: [sp('steipete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation'), sp('nesbitt', 5, 'duggan', 'citation')],
+    posts: [sp('toolsmith_pete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation'), sp('nesbitt', 5, 'duggan', 'citation')],
   };
   const unders = (tree: ReturnType<typeof storyTree>) => tree.map((l) => (l.kind === 'post' || l.kind === 'self' ? l.under : null));
   assert.deepEqual(unders(storyTree({ ...ghostty, posts: [sp('mitchell', 0, null, null), ...ghostty.posts], parent_id: 'mitchell',
-    parent_reason: 'citation' }, 'steipete', at(2))), [undefined, undefined, undefined, 'duggan'],
-  'opened on @steipete: only Nesbitt, at the second level, names Duggan');
+    parent_reason: 'citation' }, 'toolsmith_pete', at(2))), [undefined, undefined, undefined, 'duggan'],
+  'opened on @toolsmith_pete: only Nesbitt, at the second level, names Duggan');
   assert.deepEqual(unders(storyTree({ ...ghostty, parent_id: 'duggan', parent_reason: 'citation',
-    posts: [sp('mitchell', 0, null, null), sp('steipete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation')] },
+    posts: [sp('mitchell', 0, null, null), sp('toolsmith_pete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation')] },
   'nesbitt', at(5), 'Andrew Nesbitt')), [undefined, undefined, undefined, 'duggan'], 'this post at the second level names its parent too');
   assert.deepEqual(unders(storyTree(ghostty, 'mitchell', at(0))), [undefined, undefined, undefined],
     'on the origin row the list is one level less deep: nothing to name');
 });
 
 test('storyTree: who reposted a tweet is a line under it, the row’s own at the top (issue 0068)', () => {
-  const tweet = { ...sp('tweet', 2, 'origin', 'citation'), reposted_by: ['steipete', 'badlogicgames'] };
-  const story = { id: 'origin', voices: 4, first: 'origin', sources: [], parent_id: null, parent_reason: null, reposted_by: ['akhaliq'],
+  const tweet = { ...sp('tweet', 2, 'origin', 'citation'), reposted_by: ['toolsmith_pete', 'oddlogic_games'] };
+  const story = { id: 'origin', voices: 4, first: 'origin', sources: [], parent_id: null, parent_reason: null, reposted_by: ['paperfeed'],
     posts: [tweet, sp('simon', 3, 'origin', 'citation')] };
-  assert.deepEqual(lines(storyTree(story, 'origin', at(0))), ['↻ akhaliq', 'tweet', '↻ steipete,badlogicgames', 'simon']);
+  assert.deepEqual(lines(storyTree(story, 'origin', at(0))), ['↻ paperfeed', 'tweet', '↻ toolsmith_pete,oddlogic_games', 'simon']);
   assert.deepEqual(lines(storyTree({ id: 'a', voices: 2, sources: [], posts: [{ ...sp('b', 2, null, null), reposted_by: ['x'] }] }, 'a')),
     ['b', '↻ x'], 'flat (News) too');
-  assert.equal(repostedBy(['steipete', 'badlogicgames']), '↻ reposted by @steipete, @badlogicgames');
+  assert.equal(repostedBy(['toolsmith_pete', 'oddlogic_games']), '↻ reposted by @toolsmith_pete, @oddlogic_games');
 });

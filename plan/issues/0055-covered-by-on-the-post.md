@@ -35,7 +35,7 @@ Status: **built, not deployed** (2026-10-31) for v9.8 (owner, 2026-10-31: "when 
   - Frontend `PostDetailPage.story.test.tsx`: the list with `first`, `share` and read and unread entries, placed after the text; `this post was first`; an entry opens its post; an opened post reads as read in a cached post's list; nothing for a post in no story.
   - Suites, both issues together: backend **999 tests OK**; frontend typecheck, lint, **181 node + 645 vitest tests**, build OK.
 - **Bundle:** the reader's initial JS is **479,685 bytes**, unchanged (+0 on the 479,685 before this issue; 0.97% against the 475,065 baseline).
-- **Lab case `kimi-k31-pro` passes** (on `insight_lab`, read only): Simon's post shows its 7 other posts, 7 voices, Russian and English: ai_newz (first), data_secrets, seeallochnaya, countwithsasha, denissexy (share), two r/LocalLLaMA posts (one a share). @data_secrets's post shows Simon's among its 7. The story lookup takes 1.4 ms a post (500 posts in stories).
+- **Lab case `kimi-k31-pro` passes** (on `insight_lab`, read only): Simon's post shows its 7 other posts, 7 voices, Russian and English: ai_dispatch (first), data_whispers, seeall_notes, countwithkim, dennis_it (share), two r/LocalLLaMA posts (one a share). @data_whispers's post shows Simon's among its 7. The story lookup takes 1.4 ms a post (500 posts in stories).
 - **Screens** (Design Studio frames, light and dark, 1400 and 390; not committed): `~/.cache/insight-checks/0055-0057-shots/story.*.png`.
 
 ## Left open

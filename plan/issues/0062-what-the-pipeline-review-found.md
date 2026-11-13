@@ -8,12 +8,12 @@ Found by running the whole update and the recurring work on a fresh copy of the 
 - **The case:**
   - OpenAI News' "Introducing GPT-6.1 Terra" (published 26 Oct 00:00) and Hacker News' "GPT-6.1 Terra" (26 Oct 18:01) are the same article, at `openai.com/index/introducing-gpt-6-1-terra`.
   - Their titles differ, so 0049 rightly keeps two rows.
-  - data_secrets, Simon Willison and LessWrong (twice) link that address. Every link resolves to **one** stored post, the first seen, which is HN's.
+  - data_whispers, Simon Willison and LessWrong (twice) link that address. Every link resolves to **one** stored post, the first seen, which is HN's.
   - So HN's story has 3 sources, and OpenAI's own post, the original, sits alone with no "covered by". Three posts share an address this way on the lab copy.
 - **Decided:**
   - Posts of different sources with the same normalized address join one story, with a new reason, `address`. They're the same page.
   - When one of them is from the site the address belongs to (OpenAI's post on openai.com), it's the story's origin and leads, whatever the dates.
-- **Done when:** the case `openai-terra-same-address` passes. OpenAI's post leads a story with HN, data_secrets, Simon Willison and LessWrong.
+- **Done when:** the case `openai-terra-same-address` passes. OpenAI's post leads a story with HN, data_whispers, Simon Willison and LessWrong.
 
 ## 2. Teasers are tried again
 - **The case:**

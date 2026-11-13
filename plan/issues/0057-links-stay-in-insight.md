@@ -3,7 +3,7 @@
 Status: **built, not deployed** (2026-10-31) for v9.8 (owner, 2026-10-31: "can we replace links in the post with the links of the post from our insight, because I don't want to leave platform").
 
 ## The case
-- **Example:** data_secrets' post `t.me/data_secrets/10206` links `t.me/data_secrets/9951`, which INSIGHT has stored. Clicking it leaves INSIGHT for Telegram.
+- **Example:** data_whispers' post `t.me/data_whispers/10206` links `t.me/data_whispers/9951`, which INSIGHT has stored. Clicking it leaves INSIGHT for Telegram.
 - **The class:** every link in a post's text to a page INSIGHT has stored (an earlier post from the same channel, a blog post your sources cite, a classic).
 - **A catch:** links back into the post's own platform (Telegram to Telegram) are not kept in 0050's post links, so the lookup can't rely on them.
 
@@ -42,7 +42,7 @@ Status: **built, not deployed** (2026-10-31) for v9.8 (owner, 2026-10-31: "can w
   - Frontend `PostDetailPage.story.test.tsx`: an internal link navigates inside INSIGHT and opens the post; ↗ opens the original in a new tab; a link to a page INSIGHT doesn't have and a post without internal links work as before.
   - Suites (with 0055): backend 999 OK; frontend 181 node + 645 vitest, typecheck, lint, build OK.
 - **Bundle:** the reader's initial JS stays **479,685 bytes** (+0).
-- **Lab case `internal-link` passes** (on `insight_lab`, read only): `t.me/data_secrets/10206` maps `https://t.me/data_secrets/9951` to the stored post.
+- **Lab case `internal-link` passes** (on `insight_lab`, read only): `t.me/data_whispers/10206` maps `https://t.me/data_whispers/9951` to the stored post.
   - Over the latest 3,000 posts, 407 link a stored post (722 links), 560 of them to the post's own site (LessWrong, Nitter, METR, Telegram channels, blogs).
   - A sample of 15 was right every time, including `#block-element` and `#m` fragments.
   - The lookup takes 0.4 to 0.8 ms a post.

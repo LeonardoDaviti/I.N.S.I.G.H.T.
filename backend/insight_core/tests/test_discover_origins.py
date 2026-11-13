@@ -40,10 +40,10 @@ class PlatformPostTests(unittest.TestCase):
         self.assertEqual(discover_address("https://x.com/i/status/2111872584338018562")[0], None, "names no account")
 
     def test_a_telegram_post_is_an_article_of_its_channel(self):
-        self.assertEqual(discover_address("https://t.me/denissexy/11744"), ("t.me/denissexy", "t.me", True))
-        self.assertTrue(discover_article("https://t.me/denissexy/11744"))
-        self.assertFalse(discover_article("https://example.com/denissexy/11744"), "only on a platform")
-        self.assertFalse(discover_article("https://t.me/denissexy"))
+        self.assertEqual(discover_address("https://t.me/dennis_it/11744"), ("t.me/dennis_it", "t.me", True))
+        self.assertTrue(discover_article("https://t.me/dennis_it/11744"))
+        self.assertFalse(discover_article("https://example.com/dennis_it/11744"), "only on a platform")
+        self.assertFalse(discover_article("https://t.me/dennis_it"))
 
     def test_a_page_that_names_no_account_reads_its_first_segment_without_its_query(self):
         self.assertEqual(discover_address("https://youtube.com/watch?v=abc"), (None, "youtube.com", True))
@@ -58,12 +58,12 @@ class OriginsTests(unittest.TestCase):
             root("https://youtube.com/watch?v=def", source="s-yt"),             # a stored video: its channel's
             root("https://openai.com/index/gpt-6", days=20),                    # a place a source holds, not stored
             root("https://openai.com/index/gpt-5", source="s-openai", own=True),  # its own post
-            root("https://x.com/sama/status/2111872584338018562"),              # an account a source holds
+            root("https://x.com/lab_sam/status/2111872584338018562"),              # an account a source holds
         ]
-        found = origins(roots, followed={"openai.com"}, held={"openai.com/index": "s-openai", "x.com/sama": "s-sama"})
+        found = origins(roots, followed={"openai.com"}, held={"openai.com/index": "s-openai", "x.com/lab_sam": "s-lab_sam"})
         self.assertEqual(sorted(found.suggest), ["github.com/openai", "qwen.ai"])
         self.assertEqual({k: [r.url for r in v] for k, v in found.missing.items()},
-                         {"s-openai": ["https://openai.com/index/gpt-6"], "s-sama": ["https://x.com/sama/status/2111872584338018562"]})
+                         {"s-openai": ["https://openai.com/index/gpt-6"], "s-lab_sam": ["https://x.com/lab_sam/status/2111872584338018562"]})
         self.assertEqual({k: len(v) for k, v in found.unnamed.items()}, {"youtube.com/watch": 1})
 
     def test_a_site_you_follow_is_never_suggested_its_other_sections_are_missed_by_its_source(self):
@@ -318,7 +318,7 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertNotIn(f"x.com/rep{m}", self._keys(result), "its own posts are no repost")
 
     def test_one_linker_and_one_repost_are_not_enough(self):
-        """Extraltodeus on the lab: one source links the tweet, one reposts it."""
+        """Modelwright on the lab: one source links the tweet, one reposts it."""
         m = self.mark
         [(source, host)] = self._voices(1)
         self._post(source, f"https://{host}/p/t", [f"https://x.com/Extra{m}/status/2111872584338018562",

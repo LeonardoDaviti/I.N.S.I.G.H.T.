@@ -54,7 +54,7 @@ const TEMPLATES: Template[] = [
     variableName: 'username',
     variableLabel: 'Channel Username',
     placeholder: 'Enter channel username...',
-    helperText: 'Creates a source like https://telegram.local/rss/seeallochnaya?limit=50',
+    helperText: 'Creates a source like https://telegram.local/rss/seeall_notes?limit=50',
     buildHandle: (value) => `https://telegram.local/rss/${value.replace(/^@/, '').trim()}?limit=50`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     fetchDelay: 5,

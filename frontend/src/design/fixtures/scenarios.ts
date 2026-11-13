@@ -114,7 +114,7 @@ const SCENARIOS: FrameScenario[] = [
     routes: (now) => withSite(now, (s) => ({ ...s, items: [...storyTreeItems(now), ...s.items] })),
     setup: async (frame) => {
       await frame.click('button[aria-controls$="-story"]', /covered by 4 · OpenAI/);
-      await frame.click('button[aria-controls$="-story"]', /covered by 4 · ai_newz/);
+      await frame.click('button[aria-controls$="-story"]', /covered by 4 · ai_dispatch/);
       await frame.click('button[aria-controls$="-story"]', /covered by 4 · mitchellh/);
     },
   },
@@ -270,7 +270,7 @@ const SCENARIOS: FrameScenario[] = [
 function discoverOrigins(): FixtureRoute[] {
   const story = (url: string, title: string | null, voices: number) => ({ url, title, voices, stored: false });
   const article = (url: string, title: string | null, linked_by: string[]) => ({ url, title, linked_by });
-  const voices = ['denissexy', 'Simon Willison', 'data_secrets', 'ai_newz', 'seeallochnaya', 'Lesswrong', 'Epoch AI'];
+  const voices = ['dennis_it', 'Simon Willison', 'data_whispers', 'ai_dispatch', 'seeall_notes', 'Lesswrong', 'Epoch AI'];
   return [{
     path: '/api/sources/suggested',
     respond: () => ({
@@ -380,7 +380,7 @@ function worstSiteJobs(s: Site, now: Date): Site {
     sources_with_new: 9,
     posts_inserted: 41,
     failures: [
-      { source_id: sourceId('s-newz'), display_name: 'ai_newz', stage: 'connector', error: 'FloodWaitError: A wait of 1260 seconds is required (caused by GetHistoryRequest)' },
+      { source_id: sourceId('s-newz'), display_name: 'ai_dispatch', stage: 'connector', error: 'FloodWaitError: A wait of 1260 seconds is required (caused by GetHistoryRequest)' },
       { source_id: 's-dense-6', display_name: 'Lil’Log', stage: 'fetch', error: LONG_ERROR },
       { source_id: 's-dense-35', display_name: 'Linus Tech Tips', stage: 'save', error: 'deadlock detected' },
     ],

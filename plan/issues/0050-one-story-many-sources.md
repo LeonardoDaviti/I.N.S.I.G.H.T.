@@ -79,7 +79,7 @@ A story is a group of posts from 2+ sources.
 
 ### 6. Discover
 - **A candidate is a site or account that 3+ of your voices link,** in 2+ article-like pages (a date in the path, or a slug of 4+ words) that make 40%+ of its links, and that you don't follow.
-- **On a platform, the unit is the account,** not the site: `x.com/karpathy`, `github.com/openai`, `huggingface.co/blog`. A host is a platform when your links to it reach 8+ different first path segments and none of them holds half. This is measured, not a list.
+- **On a platform, the unit is the account,** not the site: `x.com/nn_teacher`, `github.com/openai`, `huggingface.co/blog`. A host is a platform when your links to it reach 8+ different first path segments and none of them holds half. This is measured, not a list.
 - **Each suggestion says why:** "linked by 6 of your sources (Simon Willison, …), 9 articles", with those articles one click away.
 - **Following goes through the feed finder** and page watching (`source-adding-rule`), like every other way of adding a source. Nothing is fetched until you click.
 - **"Not interested"** hides a suggestion for good. A source you removed (Tidy up, 0046) is never suggested again.
@@ -134,7 +134,7 @@ A story is a group of posts from 2+ sources.
   - On a platform (a host whose links reach 8+ first path segments, none half: measured) the unit is the account, and only the account you follow is followed. A source's account comes from its address, read by the kinds' own parsers: a Telegram bridge feed (`tg.i-c-a.su/rss/<channel>`, `telegram.local/rss/<channel>`) or channel is `t.me/<channel>`, a Nitter feed `x.com/<user>`, a subreddit `reddit.com/r/<sub>`, a YouTube channel `youtube.com/channel/<id>`, any other address the account its path is under (`github.com/<owner>`). Following one channel hides no other. Off a platform the unit stays the site.
   - A removed source (any delete, Tidy up included) is never suggested again: a website by its site, any source by its account.
 - **UI** (design decision 035; `pages/reader.md`, `pages/sources.md`):
-  - A folded row has one quiet line under its excerpt, `▸ covered by 4 · Anthropic News, @denissexy, +2`, which opens the story's other posts (unread dot, source, title linking to the post, `· share`, date).
+  - A folded row has one quiet line under its excerpt, `▸ covered by 4 · Anthropic News, @dennis_it, +2`, which opens the story's other posts (unread dot, source, title linking to the post, `· share`, date).
   - Sources gets a `suggested` tab: each site or account with `linked by 7 of your sources (…) · 32 articles` opening its most linked articles, **Follow…** (Add source opened on its address: the feed finder and page watching) and **Not interested**.
 - **Tests:**
   - Backend: `test_stories.py` (31): links; each joining rule with a must-join and a must-not; one place never joining itself through links; a Reddit cross-post as one story of one voice; citations; home pages; roundups and mentions; roles; Discover's filters, platform accounts, following one channel hiding no other, a source's account from its address; the saver; backfill and signatures; stories, roles and reasons; a second run (full and windowed) changing nothing; a frozen story; the folded feed and the lead; History not folding; read propagation; mark-through; row counts; a removed source; the Discover service. Plus the runner calling the job, and 0049's table check knowing the derived tables. **Suite: 913 tests, OK** (after merging main at e49b520).
@@ -182,7 +182,7 @@ Measured in the lab on a copy of the server's 41,543 posts (`backups/lab/`, `ins
 - **Two bugs, fixed:**
   - one LessWrong link whose "port" was a sentence made the URL parser raise, and the whole story job stopped: no stories at all on the server;
   - a cited stored post with a one-segment address (`blog.cloudflare.com/yandex-outage`) was taken for a profile page, so citations of it never joined.
-- **The Cloudflare scenario passes:** adding the Cloudflare blog folds @denissexy's post (2.8 h later, citation) under Cloudflare's "Yandex outage" post. Every check a–g held.
+- **The Cloudflare scenario passes:** adding the Cloudflare blog folds @dennis_it's post (2.8 h later, citation) under Cloudflare's "Yandex outage" post. Every check a–g held.
 - **Stories:** 572, about 2% of Main-feed rows folded.
   - Joins through links, text, titles and citations are precise.
   - Joins through a roundup's first link are right about 85% of the time (34 of 40 sampled). The errors are multi-topic digests (AINews "not much happened today", weekly digests, "Links (N)").

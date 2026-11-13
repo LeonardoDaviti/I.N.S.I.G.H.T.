@@ -115,7 +115,7 @@ export function worstHealthRows(now: Date = new Date()): SourceHealthRow[] {
     }, now),
     healthRow({
       source_id: 'w-telegram-unavailable',
-      display_name: 'ai_newz',
+      display_name: 'ai_dispatch',
       platform: 'telegram',
       kind: 'telegram_mtproto',
       status: 'unavailable',

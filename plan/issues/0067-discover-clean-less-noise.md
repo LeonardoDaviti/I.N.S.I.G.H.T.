@@ -6,10 +6,10 @@ Status: **built, not deployed** (2026-10-31, branch `issue-0067-discover-clean`;
 - **Two digests carry most of "linked by" for X accounts.**
   - Smol AI News: 15,116 tweet links in 224 posts (about 67 a post), to 3,036 accounts.
   - LessWrong (Zvi's weekly roundups): 8,379 tweet links in 516 posts, to 2,707 accounts.
-  - The next source, predict_addict, has 1,109.
+  - The next source, forecast_fan, has 1,109.
 - **309 of the 467 X accounts (66%)** reach the 3-source bar only because Smol and LessWrong are two of the three. For sites it's 152 of 596 (26%).
 - **Discover counts a roundup's every link as a full voice.** Stories already treat a roundup differently: a post with 3+ anchors joins only its first link (0050). News counts a roundup mention at ½ (0051).
-- **A cut is wrong.** Counting those two sources at ½ as a *bar* drops 250 X accounts, including real ones: @vllm_project, @ollama, @togethercompute, @danluu, @peterwildeford, @TheZvi.
+- **A cut is wrong.** Counting those two sources at ½ as a *bar* drops 250 X accounts, including real ones: @vllm_project, @ollama, @togethercompute, @dan_lu_notes, @peterwildford, @TheZed.
 - **0065's Left open:** misreadings that show as noise.
   - `openai.com/ru-RU` (3) and `help.openai.com/en` (2): a language segment is read as a section.
   - `nitter.net` (2): its `t.co` and `i/article` pages aren't tweets, so they're counted under the mirror's host as a site.
@@ -93,46 +93,46 @@ Status: **built, not deployed** (2026-10-31, branch `issue-0067-discover-clean`;
     - `openai.com`: 2 stories. One is `openai.com/ru-RU/codex`, a page right under the language, so it keeps the language as its section. The other is `openai.com/supply/co-lab/work-louder`, which the ru-RU section's suggestion used to hide. With no main section, 0065 suggests the site, as with huggingface.co.
   - **The ru-RU index pages:** openai.com/ru-RU's 2 `/index` stories moved to OpenAI News' archive: **39 stories (was 37), 38 older (was 36)**.
   - **nitter.net's 2 stories** (`nitter.net/t.co/…`, `nitter.net/i/article/…`): each place has 1, under the 2 needed for the "pages that name no account" line.
-  - **Reproduced from The case:** 309 of 467 X accounts (66%) and 152 of 596 others (26%) reach the bar only with Smol and LessWrong. They all still pass: @vllm_project #602→#557, @ollama #606→#559, @togethercompute #608→#560, @danluu #603→#558, @peterwildeford #604→#693, @TheZvi #613→#697.
+  - **Reproduced from The case:** 309 of 467 X accounts (66%) and 152 of 596 others (26%) reach the bar only with Smol and LessWrong. They all still pass: @vllm_project #602→#557, @ollama #606→#559, @togethercompute #608→#560, @dan_lu_notes #603→#558, @peterwildford #604→#693, @TheZed #613→#697.
 - **The order:**
   - Of the 962 suggestions with no story and no classic, the **125 linked by 3+ voices outside roundups are #1–#361**. The **148 carried by Smol's and LessWrong's roundups and one more are #593–#962**: every one of the first ranks above every one of the second.
-  - The voices most often only in roundups: LessWrong (673 of 763 keys), Smol (600 of 600), DeepLearning.AI The Batch (316 of 317), substack.com (191 of 211), tedium.co (100 of 100), gwern.net (89 of 89), danluu.com (88 of 94), dwarkesh.com (84 of 84).
-- **The 34 X accounts that started stories** still rank by stories first (#5, #6, #18, #19, #39, …). Among accounts with the same stories, some swap places by the weight (@openaidevs and @trq212, both 1 story and 11 voices).
-- **Top 30, before:** huggingface.co 39, arxiv.org 25, anthropic.com/news 16, qwen.ai 7, x.com/claudeai 6, x.com/openai 6, reuters.com 5, claude.com 5, github.com/openai 5, z.ai 5, ai.meta.com 4, cursor.com 4, transformer-circuits.pub 3, theinformation.com 3, habr.com 3, openai.com/ru-RU 3, bloomberg.com 2, theverge.com 2, x.com/artificialanlys 2, x.com/thsottiaux 2, research.meta.ai 2, stratechery.com 2, gist.github.com/karpathy 2, mistral.ai 2, thinkingmachines.ai 2, 9to5mac.com 2, deepmind.google/models 2, github.com/deepseek-ai 2, github.com/ggml-org 2, help.openai.com/en 2 (stories started).
-- **Top 30, after:** #1–#15 the same; then bloomberg.com 2, theverge.com 2, x.com/artificialanlys 2, x.com/thsottiaux 2, research.meta.ai 2, stratechery.com 2, gist.github.com/karpathy 2, mistral.ai 2, **openai.com 2**, thinkingmachines.ai 2, deepmind.google/models 2, github.com/deepseek-ai 2, github.com/ggml-org 2, **help.openai.com/articles 2**, mastodon.social 2.
-  - 9to5mac.com went from #26 to #31: Jeff Geerling and Daring Fireball link it in their own posts, seeallochnaya and Tedium only in roundups.
+  - The voices most often only in roundups: LessWrong (673 of 763 keys), Smol (600 of 600), DeepLearning.AI The Batch (316 of 317), substack.com (191 of 211), tedium.co (100 of 100), gwern.net (89 of 89), danlunotes.com (88 of 94), dwarkesh.com (84 of 84).
+- **The 34 X accounts that started stories** still rank by stories first (#5, #6, #18, #19, #39, …). Among accounts with the same stories, some swap places by the weight (@openaidevs and @trq313, both 1 story and 11 voices).
+- **Top 30, before:** huggingface.co 39, arxiv.org 25, anthropic.com/news 16, qwen.ai 7, x.com/claudeai 6, x.com/openai 6, reuters.com 5, claude.com 5, github.com/openai 5, z.ai 5, ai.meta.com 4, cursor.com 4, transformer-circuits.pub 3, theinformation.com 3, habr.com 3, openai.com/ru-RU 3, bloomberg.com 2, theverge.com 2, x.com/model_metrics 2, x.com/tl_codex 2, research.meta.ai 2, stratechery.com 2, gist.github.com/nn_teacher 2, mistral.ai 2, thinkingmachines.ai 2, 9to5mac.com 2, deepmind.google/models 2, github.com/deepseek-ai 2, github.com/ggml-org 2, help.openai.com/en 2 (stories started).
+- **Top 30, after:** #1–#15 the same; then bloomberg.com 2, theverge.com 2, x.com/model_metrics 2, x.com/tl_codex 2, research.meta.ai 2, stratechery.com 2, gist.github.com/nn_teacher 2, mistral.ai 2, **openai.com 2**, thinkingmachines.ai 2, deepmind.google/models 2, github.com/deepseek-ai 2, github.com/ggml-org 2, **help.openai.com/articles 2**, mastodon.social 2.
+  - 9to5mac.com went from #26 to #31: Jeff Geerling and Daring Fireball link it in their own posts, seeall_notes and Tedium only in roundups.
   - The top is ranked by stories, so the weight shows lower down.
 - **The 15 that moved most** (all up, voices as the card names them, own posts first; each now has 3 voices):
 
   | change | key | was | now | voices |
   |---|---|---|---|---|
-  | +588 | x.com/_lyraaaa_ | #1049 | #461 | data_secrets, predict_addict, steipete |
-  | +526 | x.com/neuralink | #986 | #460 | Lesswrong, seeallochnaya, steipete |
-  | +493 | rb.ru | #952 | #459 | ai_newz, data_secrets, neuraldeep |
-  | +456 | blog.jetbrains.com | #914 | #458 | badlogicgames, denissexy, toshoseti |
-  | +450 | androidauthority.com | #907 | #457 | denissexy, Daring Fireball, neuraldeep |
-  | +449 | x.com/foxnews | #905 | #456 | denissexy, Daring Fireball, predict_addict |
-  | +440 | meetup.com | #895 | #455 | Lesswrong, Tom Renner, llm_under_hood |
-  | +415 | x.com/feross | #1054 | #639 | karpathy, neuraldeep, Lesswrong |
-  | +414 | x.com/axiommathai | #1052 | #638 | akhaliq, gordic_aleksa, Smol |
-  | +390 | cepr.org | #1027 | #637 | Lesswrong, turboproject, theworldisnoteasy |
-  | +365 | x.com/unitreerobotics | #1001 | #636 | ai_newz, denissexy, Smol |
-  | +363 | x.com/superwhisper | #998 | #635 | akhaliq, steipete, Smol |
-  | +358 | x.com/robinebers | #991 | #633 | _philschmid, steipete, Smol |
-  | +358 | x.com/rohanvarma | #992 | #634 | sama, steipete, Smol |
-  | +357 | x.com/reflection_ai | #989 | #632 | akhaliq, danielhanchen, Lesswrong |
+  | +588 | x.com/_lyrabird_ | #1049 | #461 | data_whispers, forecast_fan, toolsmith_pete |
+  | +526 | x.com/neuralink | #986 | #460 | Lesswrong, seeall_notes, toolsmith_pete |
+  | +493 | rb.ru | #952 | #459 | ai_dispatch, data_whispers, neural_dive |
+  | +456 | blog.jetbrains.com | #914 | #458 | oddlogic_games, dennis_it, tosho_nets |
+  | +450 | androidauthority.com | #907 | #457 | dennis_it, Daring Fireball, neural_dive |
+  | +449 | x.com/foxnews | #905 | #456 | dennis_it, Daring Fireball, forecast_fan |
+  | +440 | meetup.com | #895 | #455 | Lesswrong, Tom Renner, llm_in_garage |
+  | +415 | x.com/ferris_js | #1054 | #639 | nn_teacher, neural_dive, Lesswrong |
+  | +414 | x.com/axiommathai | #1052 | #638 | paperfeed, gpu_alex, Smol |
+  | +390 | cepr.org | #1027 | #637 | Lesswrong, turbo_bench, theworldishard |
+  | +365 | x.com/unitreerobotics | #1001 | #636 | ai_dispatch, dennis_it, Smol |
+  | +363 | x.com/superwhisper | #998 | #635 | paperfeed, toolsmith_pete, Smol |
+  | +358 | x.com/robin_ebb | #991 | #633 | _modelnotes, toolsmith_pete, Smol |
+  | +358 | x.com/ravi_varan | #992 | #634 | lab_sam, toolsmith_pete, Smol |
+  | +357 | x.com/reflection_ai | #989 | #632 | paperfeed, finetune_dan, Lesswrong |
 
   LessWrong is an ordinary voice where a LessWrong post that isn't a roundup links the place.
 - **The most down:** each has 3 voices, every one only in roundups.
 
   | change | key | was | now | voices |
   |---|---|---|---|---|
-  | −292 | x.com/_nathancalvin | #607 | #899 | Lesswrong, Smol, technology review |
-  | −280 | x.com/s_oheigeartaigh | #620 | #900 | The Batch, Lesswrong, Smol |
-  | −278 | x.com/andymasley | #623 | #901 | Lesswrong, Simon Willison, Smol |
+  | −292 | x.com/_natecal | #607 | #899 | Lesswrong, Smol, technology review |
+  | −280 | x.com/s_ohaire | #620 | #900 | The Batch, Lesswrong, Smol |
+  | −278 | x.com/andy_essays | #623 | #901 | Lesswrong, Simon Willison, Smol |
   | −278 | transformernews.ai | #624 | #902 | Knowingless, Lesswrong, Nintil |
   | −278 | discuss.python.org | #626 | #904 | Hacker News, Simon Willison, nesbitt.io |
-  | −260 | x.com/johnschulman2 | #650 | #910 | Dwarkesh Patel Blog, Lesswrong, Smol |
+  | −260 | x.com/johnrl2 | #650 | #910 | Dwarkesh Patel Blog, Lesswrong, Smol |
 
 - **Identity:** an open with the counts kept by the job and an open after deleting them (a fresh count) give byte-identical JSON.
   - Against the Python walk over every link, every one of the 942 suggestions it finds is in the list. The 168 that differ are all X accounts, which the walk misses because it counts no reposts. The 720 with no story and no difference are in the walk's order.
@@ -148,13 +148,13 @@ Status: **built, not deployed** (2026-10-31, branch `issue-0067-discover-clean`;
   - **Rarer opens:**
     - with no kept counts (after the deploy, before the first story run): 2.32–2.39 s, once, the full mirror scan included. The backend's start runs the story job, which usually pays it;
     - with an older stamp (a source with posts removed, or the job's Discover step failed): 1.12–1.14 s.
-- **Lab cases:** `discover-roundups-weigh-half` **passes** (its `now` recorded). `discover-anthropic-news-section` (#3, 16 stories) and `discover-x-accounts` (@elonmusk, @OpenAI, @bcherny, @gdb, @claudeai with the same voices as main on this copy; Extraltodeus not suggested) pass. `discover-openai-archive` passes with 39 and 38 (its `now` updated).
+- **Lab cases:** `discover-roundups-weigh-half` **passes** (its `now` recorded). `discover-anthropic-news-section` (#3, 16 stories) and `discover-x-accounts` (@elonmusk, @OpenAI, @bchernov, @gdb, @claudeai with the same voices as main on this copy; Modelwright not suggested) pass. `discover-openai-archive` passes with 39 and 38 (its `now` updated).
   - The story, search and reader cases are untouched: the stories didn't change (0 rows) and that code wasn't edited.
 
 ## Left open
 - **The open after a source with posts is removed, or after a failed Discover step, is slower than main** (1.12–1.14 s against 0.70–0.77 s): it counts with the roundups (+~0.2 s) and writes the kept value. It is rare: adding or following a source changes nothing until its posts are read by a story run.
 - **The story job is ~1 s longer each run.** It recounts after every run, because the stamp holds the last run.
-- **An essay with many links is a roundup too:** gwern.net 89 of 89 keys, dwarkesh.com 84 of 84, danluu.com 88 of 94, by the same 3-anchor rule stories use (e.g. @johnschulman2 −260: Dwarkesh Patel Blog, Lesswrong, Smol). The spec chose the stories' rule; telling a digest from an essay is meaning (Mark X).
+- **An essay with many links is a roundup too:** gwern.net 89 of 89 keys, dwarkesh.com 84 of 84, danlunotes.com 88 of 94, by the same 3-anchor rule stories use (e.g. @johnrl2 −260: Dwarkesh Patel Blog, Lesswrong, Smol). The spec chose the stories' rule; telling a digest from an essay is meaning (Mark X).
 - **substack.com is one voice** for every Substack source (`site:substack.com`, 0050's voice by site): seen here (191 keys), not changed.
 - **`help.openai.com/articles`:** the key drops the language, so Follow… starts the finder at `https://help.openai.com/articles`, not `/en/articles`. Whether the site sends it on wasn't checked: nothing is fetched.
 - **A language with only a page under it stays the section** (`openai.com/ru-RU/codex` is in `/ru-RU`, `developers.googleblog.com/en/x` in `/en`), which keeps `/ai/<page>`-like sections right. Follow…'s own section reading (`where_linked`) doesn't skip languages.

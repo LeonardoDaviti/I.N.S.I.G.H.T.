@@ -407,7 +407,7 @@ class SourceAdapterTests(unittest.TestCase):
                                     "publishDate": "March 1st, 2026",
                                     "slug": "ai-and-machine-learning-monthly-newsletter-february-2026",
                                     "tags": [{"label": "A.I. & ML Monthly"}],
-                                    "author": {"authorName": "Daniel Bourke", "authorSlug": "daniel-bourke"},
+                                    "author": {"authorName": "Dan Burke", "authorSlug": "dan-burke"},
                                     "heroImage": {
                                         "gatsbyImageData": {
                                             "images": {

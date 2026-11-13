@@ -59,7 +59,7 @@ Sources find you through the people you already read.
 
 **Signals, collected at save time:**
 - Telegram: "Forwarded from @channel" and `t.me/<channel>` links in posts.
-- X through Nitter: quoted or linked statuses from other accounts. For example, `nitter.local/badlogicgames/status/…` in a post suggests `@badlogicgames`.
+- X through Nitter: quoted or linked statuses from other accounts. For example, `nitter.local/oddlogic_games/status/…` in a post suggests `@oddlogic_games`.
 - Reddit: links to blogs and articles in posts and comments.
 - Blogs: outbound links to other blogs, from the link graph in §4.
 - Saved pages from §3: a page you saved by hand suggests its own site.

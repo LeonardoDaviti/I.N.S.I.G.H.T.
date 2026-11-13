@@ -541,7 +541,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     # whose first link joins no story, is a member of the story its first link into a story is the
     # origin of, when it links that story twice or more (the origin and a page or post of the
     # story's) and links no other story. r/LocalLLaMA's "mistralai/Mistral-Large-4-1T-A52B · Hugging
-    # Face" lists GGUFs, then Mistral's announcement (the origin) and the model page akhaliq links.
+    # Face" lists GGUFs, then Mistral's announcement (the origin) and the model page paperfeed links.
     # An article or a digest with links stays a roundup: measured on the lab, websites' were mostly
     # essays and digests building on the story (Mark X tells those apart by meaning).
     story_of = {node: uf.find(node) for node in uf.parent if is_story(members[uf.find(node)])}

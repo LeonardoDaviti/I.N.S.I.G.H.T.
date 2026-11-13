@@ -28,7 +28,7 @@ const ROWS = [
     all: gives({ posts: 900, read: 31, stories: 15, first: 6, classics: 7, links: 2100 }),
   }),
   anatomyRow('tg', {
-    display_name: null, address: 'https://tg.i-c-a.su/rss/denissexy?limit=50', kind: 'telegram', validators: null,
+    display_name: null, address: 'https://tg.i-c-a.su/rss/dennis_it?limit=50', kind: 'telegram', validators: null,
     last_outcome: 'error', last_error: 'HTTP 404', recent: gives({ posts: 12 }), all: gives({ posts: 12 }),
   }),
 ];
@@ -71,7 +71,7 @@ describe('Sources → ingestion → sources (issue 0054)', () => {
   it('shows how each source is read and what it gave, the most posts first, all time on hover', async () => {
     setup();
     await screen.findByRole('table');
-    expect(names()).toEqual(['Simon Willison’s Weblog', '@denissexy (no name of its own)', 'Few Posts']);
+    expect(names()).toEqual(['Simon Willison’s Weblog', '@dennis_it (no name of its own)', 'Few Posts']);
     const simon = screen.getAllByRole('row')[2];
     const cells = within(simon).getAllByRole('cell').map((cell) => cell.textContent);
     expect(cells).toEqual(['Simon Willison’s Weblog', 'Feed', 'on', '—', 'yes', '6h', '3h', '40', '4', '2', '1', '1', '80']);
@@ -88,9 +88,9 @@ describe('Sources → ingestion → sources (issue 0054)', () => {
     expect(names()[0]).toBe('Few Posts');
     expect(screen.getByRole('button', { name: 'Sort by Stories, descending' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(screen.getByRole('button', { name: 'Sort by Stories, descending' }));
-    expect(names()[0]).toBe('@denissexy (no name of its own)');
+    expect(names()[0]).toBe('@dennis_it (no name of its own)');
     await userEvent.click(screen.getByRole('button', { name: 'Sort by Source' }));
-    expect(names()).toEqual(['@denissexy (no name of its own)', 'Few Posts', 'Simon Willison’s Weblog']);
+    expect(names()).toEqual(['@dennis_it (no name of its own)', 'Few Posts', 'Simon Willison’s Weblog']);
     expect(screen.getByRole('button', { name: 'Sort by Source, ascending' }).closest('th')).toHaveAttribute('aria-sort', 'ascending');
   });
 

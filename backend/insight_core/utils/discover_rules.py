@@ -687,7 +687,7 @@ def order(found: Iterable[Mapping]) -> List[Mapping]:
 
 @dataclass
 class Suggestion:
-    key: str                         # a site (openai.com) or a platform account (x.com/karpathy)
+    key: str                         # a site (openai.com) or a platform account (x.com/nn_teacher)
     voices: List[str]                # the voices that link it
     articles: List[str]              # its article-like addresses linked
     links: int                       # every address of it linked

@@ -102,7 +102,7 @@ Rows are the results after folding (every post, newest first). Times are the med
 | 14 | `"claude opus"` | `'claud' <-> 'opus'` | 863 | 864 | 0 | 1 (0) | 97% → 97% | 851 | 79 / 38 |
 | 15 | `"kimi k3.1 pro"` | `'kimi' <-> 'k3.1' <-> 'pro'` | 22 | 22 | 0 | 0 | | 18 | 17 / 17 |
 | 16 | `simon willison` | `'simon' & 'willison'` | 697 | 697 | 0 | 0 | | 692 | 25 / 18 |
-| 17 | `karpathy` | `'karpathi'` | 779 | 779 | 0 | 0 | | 769 | 46 / 18 |
+| 17 | `nn_teacher` | `'karpathi'` | 779 | 779 | 0 | 0 | | 769 | 46 / 18 |
 | 18 | `dario amodei` | `'dario' & 'amodei'` | 255 | 255 | 0 | 0 | | 252 | 74 / 29 |
 | 19 | `tailscale` | `'tailscal'` | 62 | 62 | 0 | 0 | | 62 | 56 / 29 |
 | 20 | `нейросети` | `'нейросет'` | 665 | 665 | 0 | 0 | | 652 | 28 / 17 |

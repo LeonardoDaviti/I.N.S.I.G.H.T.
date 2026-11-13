@@ -61,7 +61,7 @@ const NAMED: NamedSource[] = [
   { slug: 's-latent', name: 'Latent Space', platform: 'substack', kind: 'substack', tracks: [TRACKS.ai] },
   { slug: 's-hn', name: 'Hacker News: Front Page', platform: 'rss', kind: 'generic_rss', tracks: [] },
   { slug: 's-llama', name: 'r/LocalLLaMA', platform: 'reddit', kind: 'generic_rss', tracks: [TRACKS.ai] },
-  { slug: 's-newz', name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', tracks: [TRACKS.ai] },
+  { slug: 's-newz', name: 'ai_dispatch', platform: 'telegram', kind: 'telegram_mtproto', tracks: [TRACKS.ai] },
   { slug: 's-arxiv-cl', name: 'arXiv cs.CL', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
   { slug: 's-arxiv-lg', name: 'arXiv cs.LG', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
   { slug: 's-papers', name: 'Two Minute Papers', platform: 'youtube', kind: 'youtube_channel', tracks: [TRACKS.research] },
@@ -119,11 +119,11 @@ function realisticItems(now: Date): FeedItem[] {
 /** Filler names for a dense source list: what a 90-source install looks like. */
 const DENSE_NAMES = [
   'Stratechery', 'Import AI', 'The Gradient', 'Ahead of AI', 'Interconnects', 'One Useful Thing', 'Lil’Log',
-  'Chip Huyen', 'Eugene Yan', 'Hamel Husain', 'Jay Alammar', 'Sebastian Raschka', 'Andrej Karpathy', 'Distill',
+  'Chip Huyen', 'Eugene Yan', 'Hamel Husain', 'Jay Alammar', 'Sebastian Raschka', 'Neural Notes', 'Distill',
   'BAIR Blog', 'Google DeepMind Blog', 'OpenAI News', 'Meta AI Blog', 'Hugging Face Blog', 'PyTorch Blog',
   'r/MachineLearning', 'r/singularity', 'r/virtualreality', 'r/robotics', 'arXiv cs.CV', 'arXiv cs.RO',
   'arXiv cs.AI', 'arXiv stat.ML', 'Yannic Kilcher', 'AI Explained', 'Machine Learning Street Talk', 'Lex Fridman',
-  'MKBHD', 'Tested', 'Linus Tech Tips', 'Mixed News', 'XR Today', 'Auganix', 'The Robot Report', 'Robohub',
+  'MKBHD', 'Tested', 'Linus Tech Tips', 'Mixed News', 'XR Today', 'Augmentix', 'The Robot Report', 'Robohub',
 ];
 
 function denseRows(now: Date): SourceHealthRow[] {

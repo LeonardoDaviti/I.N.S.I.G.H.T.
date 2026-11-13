@@ -71,12 +71,12 @@ def _registry(http=None) -> KindRegistry:
 
 # (platform, handle_or_url) -> kind name, copied from Mark VIII classify_source outputs.
 PARITY_ROWS = [
-    ("rss", "https://tg.i-c-a.su/rss/denissexy?limit=50", "telegram_rss"),
-    ("rss", "https://telegram.local/rss/denissexy", "telegram_rss"),
-    ("rss", "http://127.0.0.1:9504/rss/denissexy", "telegram_rss"),
-    ("telegram", "https://tg.i-c-a.su/rss/ai_newz", "telegram_rss"),
-    ("rss", "https://nitter.local/karpathy/rss", "nitter_rss"),
-    ("rss", "https://nitter.net/karpathy/rss", "nitter_rss"),
+    ("rss", "https://tg.i-c-a.su/rss/dennis_it?limit=50", "telegram_rss"),
+    ("rss", "https://telegram.local/rss/dennis_it", "telegram_rss"),
+    ("rss", "http://127.0.0.1:9504/rss/dennis_it", "telegram_rss"),
+    ("telegram", "https://tg.i-c-a.su/rss/ai_dispatch", "telegram_rss"),
+    ("rss", "https://nitter.local/nn_teacher/rss", "nitter_rss"),
+    ("rss", "https://nitter.net/nn_teacher/rss", "nitter_rss"),
     ("reddit", "r/LocalLLaMA", "reddit_subreddit"),
     ("reddit", "https://www.reddit.com/r/LocalLLaMA/.rss", "reddit_subreddit"),
     ("rss", "https://www.reddit.com/r/smartglasses/.rss", "generic_rss"),
@@ -108,7 +108,7 @@ class KindResolutionTests(unittest.TestCase):
 
     def test_intentional_divergence_bare_telegram_handle_is_mtproto(self):
         """Intentional divergence: Mark VIII returned generic_rss (and failed as an RSS URL)."""
-        self.assertEqual(_registry().resolve(_src("telegram", "ai_newz")).name, "telegram_mtproto")
+        self.assertEqual(_registry().resolve(_src("telegram", "ai_dispatch")).name, "telegram_mtproto")
 
     def test_every_kind_is_registered_once(self):
         names = [kind.name for kind in _registry().kinds]
@@ -150,7 +150,7 @@ class KindResolutionTests(unittest.TestCase):
         cases = [
             (_src("reddit", "r/LocalLLaMA"), "platform:reddit"),
             (_src("rss", "https://www.reddit.com/r/x/.rss"), "reddit.com"),
-            (_src("telegram", "ai_newz"), "platform:telegram"),
+            (_src("telegram", "ai_dispatch"), "platform:telegram"),
             (_src("rss", "https://tg.i-c-a.su/rss/a?limit=50"), "tg.i-c-a.su"),
             (_src("rss", "https://www.github.com/a.atom"), "github.com"),
         ]
@@ -331,13 +331,13 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(http.sleeper.calls, [kind.profile.page_delay_s] * 2)
 
     async def test_sponsored_items_are_skipped_and_urls_canonical(self):
-        url = "https://tg.i-c-a.su/rss/denissexy"
-        http = FakeHttp({"https://tg.i-c-a.su/rss/denissexy/1": _telegram_page("denissexy", 11277, 1, sponsored=True)})
+        url = "https://tg.i-c-a.su/rss/dennis_it"
+        http = FakeHttp({"https://tg.i-c-a.su/rss/dennis_it/1": _telegram_page("dennis_it", 11277, 1, sponsored=True)})
         posts = await TelegramRssKind(http).fetch_latest(_src("rss", url), 1)
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["external_id"], "11277")
-        self.assertEqual(posts[0]["url"], "https://t.me/denissexy/11277")
-        self.assertEqual(posts[0]["media_urls"], ["https://tg.i-c-a.su/media/denissexy/11277.jpg"])
+        self.assertEqual(posts[0]["url"], "https://t.me/dennis_it/11277")
+        self.assertEqual(posts[0]["media_urls"], ["https://tg.i-c-a.su/media/dennis_it/11277.jpg"])
 
     async def test_the_bridge_media_tag_is_stripped_from_titles(self):
         url = "https://telegram.local/rss/chan"
@@ -390,7 +390,7 @@ def _nitter_page(first_id: int, count: int = 20) -> str:
     items = "".join(
         f"<item><title>Tweet {i}</title><description>Tweet {i}</description>"
         f"<pubDate>Mon, 03 Mar 2025 10:00:00 +0000</pubDate>"
-        f"<link>https://nitter.local/karpathy/status/{i}#m</link></item>"
+        f"<link>https://nitter.local/nn_teacher/status/{i}#m</link></item>"
         for i in range(first_id, first_id - count, -1))
     return f'<?xml version="1.0"?><rss version="2.0"><channel>{items}</channel></rss>'
 
@@ -438,7 +438,7 @@ class StartCheckpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(youtube.calls, [("archive", "UCx", 106)], "to the channel's end, from video 106")
 
     async def test_nitter_jumps_by_date_to_the_day_after_the_oldest_tweet(self):
-        checkpoint = await NitterRssKind(FakeHttp()).start_checkpoint(_src("rss", "https://nitter.local/karpathy/rss"),
+        checkpoint = await NitterRssKind(FakeHttp()).start_checkpoint(_src("rss", "https://nitter.local/nn_teacher/rss"),
                                                                       STORED)
         self.assertEqual(checkpoint["search_until"], "2025-03-04", "until is exclusive: 3 Mar is read again")
         self.assertIsNone(checkpoint["cursor"])
@@ -451,8 +451,8 @@ class StartCheckpointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NitterSearchPagerTests(unittest.IsolatedAsyncioTestCase):
-    SOURCE = _src("rss", "https://nitter.local/karpathy/rss")
-    SEARCH = "https://nitter.local/karpathy/search/rss?f=tweets&q=&until=2025-03-04"
+    SOURCE = _src("rss", "https://nitter.local/nn_teacher/rss")
+    SEARCH = "https://nitter.local/nn_teacher/search/rss?f=tweets&q=&until=2025-03-04"
 
     def _http(self):
         return FakeHttp({
@@ -484,9 +484,9 @@ class NitterSearchPagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pages[0].checkpoint["search_until"], "2025-03-04")
 
     async def test_the_live_fetch_stays_on_the_feed(self):
-        http = FakeHttp({"https://nitter.local/karpathy/rss": (_nitter_page(1000), {})})
+        http = FakeHttp({"https://nitter.local/nn_teacher/rss": (_nitter_page(1000), {})})
         await NitterRssKind(http).fetch_latest(self.SOURCE, 20)
-        self.assertEqual(http.requests, ["https://nitter.local/karpathy/rss"])
+        self.assertEqual(http.requests, ["https://nitter.local/nn_teacher/rss"])
 
 
 class NitterKindTests(unittest.TestCase):
@@ -576,7 +576,7 @@ class TelegramKindTests(unittest.TestCase):
         self.assertEqual((profile.page_delay_s, profile.batch_size, profile.batch_cooldown_s), (1, 10, 18))
 
     def test_without_credentials_even_force_is_unavailable(self):
-        source = _src("telegram", "ai_newz")
+        source = _src("telegram", "ai_dispatch")
         kind = _registry().resolve(source)
         decision = decide_fetch(
             cadence_stats({**source, "post_count": 0}, None),
@@ -591,7 +591,7 @@ class TelegramKindTests(unittest.TestCase):
     def test_fetch_without_an_open_session_is_unavailable(self):
         # The B8 behaviour tests (session lifecycle, flood wait, archive) are in test_telegram_kind.py.
         with self.assertRaises(KindUnavailable):
-            asyncio.run(TelegramKind().fetch_latest(_src("telegram", "ai_newz"), 5))
+            asyncio.run(TelegramKind().fetch_latest(_src("telegram", "ai_dispatch"), 5))
 
     def test_importing_kinds_does_not_import_connectors_or_telethon(self):
         script = (
@@ -600,7 +600,7 @@ class TelegramKindTests(unittest.TestCase):
             "from insight_core.ingestion.kinds import KindRegistry\n"
             "from insight_core.ingestion.http import KindHttp\n"
             "r = KindRegistry.default(KindHttp(), object())\n"
-            "k = r.resolve({'platform': 'telegram', 'handle_or_url': 'ai_newz'})\n"
+            "k = r.resolve({'platform': 'telegram', 'handle_or_url': 'ai_dispatch'})\n"
             "assert k.name == 'telegram_mtproto' and k.profile.requires == 'telegram_creds'\n"
             "bad = [m for m in sys.modules if m == 'telethon' or m.startswith('telethon.') "
             "or m.startswith('insight_core.' 'connectors')]\n"
@@ -699,7 +699,7 @@ class ParsingTests(unittest.TestCase):
         self.assertGreater(len(parsing.strip_html(extracted)), 500)
 
     def test_origin_resolution_uses_source_host(self):
-        self.assertEqual(parsing.origin_from_source("https://tg.i-c-a.su/rss/denissexy?limit=50", "x"),
+        self.assertEqual(parsing.origin_from_source("https://tg.i-c-a.su/rss/dennis_it?limit=50", "x"),
                          "https://tg.i-c-a.su")
         self.assertEqual(parsing.origin_from_source("@handle", "https://fallback.local"),
                          "https://fallback.local")

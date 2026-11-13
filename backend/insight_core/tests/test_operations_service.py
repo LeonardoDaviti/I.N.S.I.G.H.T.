@@ -35,7 +35,7 @@ class OperationsServiceTests(unittest.TestCase):
             "success": True,
             "rows": [
                 {"source_id": "source-1", "display_name": "PewDiePie", "status": "error"},
-                {"source_id": "source-2", "display_name": "karpathy", "status": "deferred"},
+                {"source_id": "source-2", "display_name": "nn_teacher", "status": "deferred"},
             ],
             "summary": {"due_now": 0, "deferred": 1, "backoff": 0, "unavailable": 0, "errors": 1, "silent": 0},
         }

@@ -251,7 +251,7 @@ describe('a template with a field shows what is already added (issue 0035)', () 
         existingAddresses={[
           'https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml',
           'https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml',
-          'https://nitter.local/karpathy/rss',
+          'https://nitter.local/nn_teacher/rss',
         ]}
         onClose={vi.fn()}
         onAdd={vi.fn()}
@@ -261,7 +261,7 @@ describe('a template with a field shows what is already added (issue 0035)', () 
     await userEvent.click(within(dialog()).getByRole('button', { name: 'GitHub Trending' }));
     expect(within(dialog()).getByText('Added: All languages, Python')).toBeInTheDocument();
     await userEvent.click(within(dialog()).getByRole('button', { name: 'Nitter' }));
-    expect(within(dialog()).getByText('Added: karpathy')).toBeInTheDocument();
+    expect(within(dialog()).getByText('Added: nn_teacher')).toBeInTheDocument();
     await userEvent.click(within(dialog()).getByRole('button', { name: 'Telegram RSS' }));
     expect(within(dialog()).queryByText(/^Added:/)).toBeNull();
     // Without onAddMany there is no several mode.
