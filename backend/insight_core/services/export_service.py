@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 import threading
 import time
 import zipfile
@@ -32,6 +31,7 @@ from psycopg import IsolationLevel, sql
 
 from insight_core.db import database as db
 from insight_core.db.repo_operations import SystemSettingsRepository
+from insight_core.services.api_watchdog import shared_dir
 from insight_core.db.import_export import (BOOKKEEPING, CHUNK, FORMAT, FORMAT_VERSION, MIGRATIONS_DIR,
                                            sequences, tables_in_load_order)
 
@@ -145,7 +145,9 @@ def live_bytes(cur: Any, tables: List[str]) -> int:
 
 # An export's progress, as GET /api/export/progress/<token> reads it, is also kept in a file per token here
 # (issue 0112 Decided 11): with two API processes the progress is asked of the one that isn't streaming.
-PROGRESS_DIR = os.path.join(os.getenv("INSIGHT_RUNTIME_DIR") or os.path.join(tempfile.gettempdir(), "insight-runtime"),
+# v10.17 (0188): in the logs volume (INSIGHT_LOG_DIR, /app/logs in the containers), never /tmp: the app's working
+# state lives on a volume. INSIGHT_RUNTIME_DIR still overrides it.
+PROGRESS_DIR = os.path.join(os.getenv("INSIGHT_RUNTIME_DIR") or os.path.join(shared_dir(), "runtime"),
                             "export-progress")
 PUBLISH_EVERY = 1.0               # seconds between two writes of a running export's progress file
 

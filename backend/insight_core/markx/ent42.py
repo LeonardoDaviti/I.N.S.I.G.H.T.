@@ -22,7 +22,7 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Sequence
 
-from insight_core.markx import plan_marks, repo, schemas, tasks
+from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
@@ -291,17 +291,17 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
     for _page in range(tasks.SCAN_PAGES):
         rows = plan_marks.execute(cur,
             f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
+                                        - {pairing.ordinary_date('p')})) / 86400))::int,
+                      {pairing.ordinary_date('p')}, {plan_marks.STAMP}
                  FROM posts p
-                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s AND t.a = p.id)
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
-                       OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
-                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                       OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
+                ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "main": GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})

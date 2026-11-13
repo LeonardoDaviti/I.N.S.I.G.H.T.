@@ -68,7 +68,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import finders, repo, schemas, tasks
+from insight_core.markx import finders, pairing, repo, schemas, tasks
 
 log = logging.getLogger(__name__)
 
@@ -109,11 +109,9 @@ LABELS = ("in", "out")
 ANSWERS = LABELS + ("undo",)
 SECTION_ITEMS = 60             # items a section shows (newest first; its count says how many)
 DISCOVER_ITEMS = 100
-DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"
-
-
 def _date(p: str = "p") -> str:
-    return DATE.format(p=p)
+    """A folder's post date: the post's own (Pairing's ordinary date), as the feed shows it."""
+    return pairing.ordinary_date(p)
 
 
 def tasks_per_run() -> int:
@@ -938,12 +936,15 @@ def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[d
     for t in described(cur):
         if folder_id is not None and t["folder_id"] != str(folder_id):
             continue
-        got = placed(cur, t)["items"]
+        from insight_core.markx import track_kept
+        kept = track_kept.suggestible(cur, t)   # issue 0195: the kept placement's suggestible items, else placed live
+        got = kept if kept is not None else [it for it in placed(cur, t)["items"]
+                                             if (it["verdict"] or it["label"] == "in") and it["label"] != "out"
+                                             and not it["active"]]
         c: Counter = Counter()
         names = {}
         for it in got:
-            if (it["verdict"] or it["label"] == "in") and it["label"] != "out" and not it["active"] \
-                    and it["at"] and it["at"] >= now - timedelta(days=SUGGEST_DAYS):
+            if it["at"] and it["at"] >= now - timedelta(days=SUGGEST_DAYS):
                 c[it["source_id"]] += 1
                 names[it["source_id"]] = it["source"]
         for sid, n in c.most_common():
@@ -990,7 +991,10 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     if not is_topic(t):
         return {"track": base, "sections": [], "discover": [], "counts": {}, "calibration": None, "suggestions": [],
                 "examples": {"in": [], "out": []}, "subtopics": [], "footer": None, "prefilter": None}
-    got = placed(cur, t)
+    from insight_core.markx import track_kept
+    got = track_kept.placed(cur, t)   # issue 0195: the kept placement (its shown items filled below), else live
+    kept = got is not None
+    got = got if kept else placed(cur, t)
     items, cal = got["items"], got["calibration"]
     subs = subtopics(cur, folder_id)
     groups: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
@@ -998,6 +1002,12 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
         if it["place"] in ("track", "joined"):
             groups[assign(subs, it["subtopic"])].append(it)
     epoch = datetime.min.replace(tzinfo=timezone.utc)
+    if kept:   # the items the page shows get their title, address, source and why
+        track_kept.fill(cur, t, [it for g in groups.values()
+                                 for it in sorted(g, key=lambda it: it["at"] or epoch, reverse=True)[:SECTION_ITEMS]]
+                        + sorted((it for it in items if it["place"] == "discover"),
+                                 key=lambda it: (-it["rank"], -(it["confidence"] or 0),
+                                                 -(it["at"] or epoch).timestamp()))[:DISCOVER_ITEMS])
     sections = []
     for s in sorted(subs, key=lambda s: -len(groups.get(s["id"], []))):
         its = sorted(groups.get(s["id"], []), key=lambda it: it["at"] or epoch, reverse=True)

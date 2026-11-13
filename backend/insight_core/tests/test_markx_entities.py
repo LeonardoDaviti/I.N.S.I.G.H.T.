@@ -584,6 +584,31 @@ class Merging(_Db):
         q = entity_views.queue(self.cur)["open"]
         self.assertEqual([i["reason"] for i in q], ["handle_extra_word"])
 
+    def test_the_queue_answers_its_open_items_a_page_at_a_time(self):
+        # Issue 0195: 12,572 open items answered 28.9 MB in 14.7 s; a page is the whole queue's top items.
+        for n, (x, y) in enumerate([("Acme", "AcmeAI"), ("Borealis", "BorealisHQ"), ("Corvid", "CorvidLabs")]):
+            a, b = self.post(n, T0 + n * H), self.post((n + 3) % 5, T0 + n * H)
+            self.mentions(a, (x, "org", "subject"))
+            self.mentions(b, (y, "org", "subject", None, None, "@" + y.lower()))
+        self.stage()
+        for _ in range(3):
+            self.answer_task("alias", {"relation": "same", "confidence": 0.95})
+        self.stage(since=self.since)
+        whole = entity_views.queue(self.cur)
+        self.assertEqual(len(whole["open"]), 3)
+        self.assertNotIn("next_offset", whole)
+        first = entity_views.queue(self.cur, limit=2)
+        self.assertEqual((first["open"], first["next_offset"], first["counts"]), (whole["open"][:2], 2, whole["counts"]))
+        rest = entity_views.queue(self.cur, limit=2, offset=2)
+        self.assertEqual((rest["open"], rest["next_offset"]), (whole["open"][2:], None))
+        self.assertEqual({k: v for k, v in first.items() if k not in ("open", "next_offset")},
+                         {k: v for k, v in whole.items() if k != "open"})
+        # the entity page's questions: the open items naming it, as the whole queue shows them
+        root = whole["open"][1]["a"]["id"]
+        page = entity_views.entity_page(self.cur, root)
+        self.assertEqual(page["queue"], [q for q in whole["open"] if root in (q["a"]["id"], (q.get("b") or {}).get("id"))])
+        self.assertTrue(page["queue"])
+
     def _queued_below_the_bar(self):
         ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(8)]
         for p in ps[:4]:
@@ -813,6 +838,10 @@ class Pages(_Db):
         self.assertEqual(len(page["loose"]), 3)
         self.assertEqual(page["loose"][0]["roles"], ["mention"])
         self.assertEqual(len(page["sources"]), 3)
+        # issue 0195: the loose posts and the story blocks listed are capped; the totals count them all
+        capped = entity_views.entity_page(self.cur, self.entity_of(ps[0]), now=T0 + D, loose_limit=2, stories_limit=1)
+        self.assertEqual((capped["loose"], capped["loose_total"]), (page["loose"][:2], 3))
+        self.assertEqual({k: v for k, v in capped.items() if k != "loose"}, {k: v for k, v in page.items() if k != "loose"})
 
     def test_a_family_page_lists_its_versions_and_a_merged_id_opens_its_cluster(self):
         v = {"family": "Orbit", "version": "6.1", "variant": "Terra", "size": None, "build": None}

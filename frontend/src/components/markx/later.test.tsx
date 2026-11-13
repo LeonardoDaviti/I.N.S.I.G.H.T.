@@ -20,7 +20,6 @@ const PAGE: MarkxStoryLater = {
     { ...ROW, id: 'l3', post: 'p3', title: 'Just in', verdict: null, runs: [] }],
   counts: { candidates: 3, development: 1, retold: 1, waiting: 1 },
   precision: { labelled: 0, development: 0, precision: null },
-  news: false,
 };
 
 afterEach(() => vi.restoreAllMocks());

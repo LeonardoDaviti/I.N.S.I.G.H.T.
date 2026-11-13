@@ -24,6 +24,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from insight_core.markx import pairing
 
 TAGS = ("NEW", "MERGED", "SPLIT", "CHANGED", "SAME")
 HAIKU_PER_MILLION = (0.10, 0.50)     # 0086 H: Haiku 5.5, $ per million tokens in and out (what the API would cost)
@@ -122,7 +123,7 @@ def window_posts(cur: Any, since: datetime) -> Set[str]:
     Reading from `since` only, Mark X's row began inside where Mark IX's didn't, and was tagged NEW with no answer
     (0124, the v10.0.2 review's W5)."""
     from insight_core.utils.news_rules import NEWS_EDGE
-    cur.execute("SELECT id::text FROM posts WHERE COALESCE(published_at, fetched_at) >= %s", (since - NEWS_EDGE,))
+    cur.execute(f"SELECT id::text FROM posts WHERE {pairing.ix_date('')} >= %s", (since - NEWS_EDGE,))
     return {r[0] for r in cur.fetchall()}
 
 
@@ -429,7 +430,7 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     if not ids:
         return {}
     cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text, {byline.SOURCE_NAME},
-                           COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.url, {byline.COLUMNS}
+                           {pairing.published_date('p')}, p.url, {byline.COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
     owns: Dict[Any, str] = {}
@@ -650,14 +651,15 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
     now = now or datetime.now(timezone.utc)
     out = {}
     for name, days in (("today", 1), ("week", 7)):
-        cur.execute("""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
+        cur.execute(f"""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
                               (array_agg(m.type))[1], count(DISTINCT m.post_id), count(DISTINCT p.source_id),
                               (array_agg(DISTINCT m.post_id::text))[1:5], (array_agg(m.version ORDER BY m.version))[1]
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                         WHERE m.role = 'subject'
-                          AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
-                        GROUP BY 1, 2 ORDER BY count(DISTINCT p.source_id) DESC, count(DISTINCT m.post_id) DESC, 1 LIMIT %s""",
-                    (now - timedelta(days=days), limit))
+                          AND {pairing.post_date_within('p', '%(since)s')}
+                        GROUP BY 1, 2 ORDER BY count(DISTINCT p.source_id) DESC, count(DISTINCT m.post_id) DESC, 1
+                        LIMIT %(limit)s""",
+                    {"since": now - timedelta(days=days), "limit": limit})
         rows = cur.fetchall()
         posts = _posts(cur, {p for r in rows for p in (r[6] or [])})
         out[name] = [{"key": k, "version": shown or v or None, "name": n, "type": t, "posts": np_, "voices": nv,
@@ -681,6 +683,20 @@ def briefings(cur: Any) -> Dict[str, Any]:
     return {"day": day, "briefings": out}
 
 
+WORKER_STALE_DAYS = 3     # 0188: a worker silent this long shows as stale (the overview, /api/status's warnings)
+
+
+def workers_view(contacts: Dict[str, datetime], now: datetime,
+                 leased: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+    """Each worker that called or holds leases: {worker, last_contact, leased, stale (silent for more than
+    WORKER_STALE_DAYS, or no contact on record)}."""
+    leased = leased or {}
+    limit = timedelta(days=WORKER_STALE_DAYS)
+    return [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, 0),
+             "stale": contacts.get(w) is None or now - contacts[w] > limit}
+            for w in sorted(set(contacts) | set(leased))]
+
+
 def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     """The worker's side: the queue by kind, answers per day, tokens and their API cost, failures, last contacts, the
     last decision run."""
@@ -692,8 +708,8 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     days = [{"day": d, "calls": n, "valid": v, "tokens_in": int(ti), "tokens_out": int(to),
              "api_usd": round(int(ti) * HAIKU_PER_MILLION[0] / 1e6 + int(to) * HAIKU_PER_MILLION[1] / 1e6, 4)}
             for d, n, v, ti, to in cur.fetchall()]
-    cur.execute("SELECT count(*), COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), COALESCE(sum(cost_usd), 0) FROM mx_calls")
-    n, ti, to, cost = cur.fetchone()
+    from insight_core.markx import kept_counts
+    n, ti, to, cost = kept_counts.call_totals(cur)   # issue 0195: kept, not summed over every call per request
     cur.execute("""SELECT kind, last_error, count(*) FROM mx_tasks WHERE status = 'failed'
                     GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 20""")
     failed = [{"kind": k, "error": e, "tasks": c} for k, e, c in cur.fetchall()]
@@ -702,8 +718,7 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     invalid = [{"kind": k, "error": e, "at": at} for k, e, at in cur.fetchall()]
     cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
     leased = {w: (k, until) for w, k, until in cur.fetchall()}
-    workers = [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, (0, None))[0]}
-               for w in sorted(set(contacts) | set(leased))]
+    workers = workers_view(contacts, datetime.now(timezone.utc), leased={w: k for w, (k, _) in leased.items()})
     run = repo.last_run(cur)
     return {"queue": queue, "days": days,
             "tokens": {"calls": n, "tokens_in": int(ti), "tokens_out": int(to), "paid_usd": round(float(cost), 4),

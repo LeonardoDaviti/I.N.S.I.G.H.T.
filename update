@@ -1,5 +1,85 @@
 #!/usr/bin/env bash
+# ./update                      pull, build, list the pending migrations, restart (DEPLOYMENT.md, "Updating")
+# ./update --refresh            the same, pulling fresh base images (python, node, nginx)
+# ./update --rollback <tag>     no pull, no build: start the images an earlier update tagged <tag>
+#                               (a version, e.g. v10.16, or a commit); `./update --images` lists them
+# ./update --images             the tagged images kept for a rollback
+#
+# Environment (or .env):
+#   INSIGHT_BACKUP_ON_UPDATE=1  take a backup (scripts/backup: the database, -Fc) before the new code migrates;
+#                               a failed backup stops the update. Off by default.
+#   INSIGHT_BACKUPS_KEEP=5      backups kept in ./backups (scripts/backup)
+#   INSIGHT_IMAGES_KEEP=3       tagged builds kept for a rollback (each tagged by version and by commit)
 set -euo pipefail
+cd "$(dirname "$0")"
+
+# A setting from the environment, else from .env, else the default.
+setting() {
+  local name="$1" default="$2" value="${!1:-}"
+  if [[ -z "$value" && -f .env ]]; then
+    value="$(grep -E "^${name}=" .env | tail -n1 | cut -d= -f2- | tr -d '"'"'" || true)"
+  fi
+  echo "${value:-$default}"
+}
+
+REPOS=(insight-backend insight-frontend)
+
+images() {
+  for repo in "${REPOS[@]}"; do
+    sudo docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}  {{.ID}}  {{.CreatedSince}}' | grep -v ':latest ' || true
+  done
+}
+
+# The built images tagged with the version and the commit (cheap: tags, no copy), so a rollback has them; the
+# tags of builds older than the newest INSIGHT_IMAGES_KEEP are removed (their layers go once nothing uses them).
+tag_images() {
+  local version="$1" commit="$2" keep repo ids id
+  keep="$(setting INSIGHT_IMAGES_KEEP 3)"
+  for repo in "${REPOS[@]}"; do
+    sudo docker tag "$repo:latest" "$repo:$version"
+    sudo docker tag "$repo:latest" "$repo:$commit"
+    # image ids newest first (docker lists by creation), one line per id
+    ids="$(sudo docker image ls "$repo" --format '{{.ID}}' | awk '!seen[$0]++')"
+    for id in $(echo "$ids" | tail -n +"$((keep + 1))"); do
+      for tag in $(sudo docker image ls "$repo" --format '{{.ID}} {{.Tag}}' | awk -v id="$id" '$1 == id && $2 != "latest" && $2 != "<none>" {print $2}'); do
+        sudo docker rmi "$repo:$tag" >/dev/null 2>&1 || true
+      done
+    done
+  done
+  echo "==> images tagged $version and $commit (./update --rollback $version)"
+}
+
+if [[ "${1:-}" == "--images" ]]; then
+  images
+  exit 0
+fi
+
+if [[ "${1:-}" == "--rollback" ]]; then
+  tag="${2:-}"
+  if [[ -z "$tag" ]]; then
+    echo "usage: ./update --rollback <version or commit>; the tagged images:" >&2
+    images >&2
+    exit 2
+  fi
+  for repo in "${REPOS[@]}"; do
+    if ! sudo docker image inspect "$repo:$tag" >/dev/null 2>&1; then
+      echo "refused: no image $repo:$tag (./update --images lists them); nothing changed" >&2
+      exit 1
+    fi
+  done
+  for repo in "${REPOS[@]}"; do
+    sudo docker tag "$repo:$tag" "$repo:latest"
+  done
+  sudo docker compose up -d --no-build --remove-orphans
+  cat <<EOF
+==> running the images tagged $tag. The source tree is unchanged: the next ./update builds the pulled code again.
+The database keeps whatever the newer code migrated. If the older code needs the database as it was, restore the
+backup taken before that update (scripts/backup or INSIGHT_BACKUP_ON_UPDATE=1; DEPLOYMENT.md, "Backups"):
+  ls backups/                                  # the backups, by UTC time
+  ./scripts/backup --restore backups/<when>    # stops the API and ingestion, empties the database, restores, starts
+EOF
+  exit 0
+fi
 
 git pull
 # The build stamp the Ingestion tab shows (issue 0020). sudo resets the environment,
@@ -16,9 +96,21 @@ if [[ "${1:-}" == "--refresh" ]]; then pull=(--pull); fi
 # that took INSIGHT offline for the whole 1-3 minute build. `up -d` then recreates only the
 # containers whose image or config changed, so the site is down only while they restart.
 sudo --preserve-env=INSIGHT_VERSION,INSIGHT_COMMIT,INSIGHT_COMMIT_DATE docker compose build "${pull[@]}" backend ingestion frontend
+# v10.17 (0188): the build tagged by version and commit too, for ./update --rollback.
+version="$(grep -oE 'v[0-9]+(\.[0-9]+)*' VERSION | head -n1 || true)"
+tag_images "${version:-$INSIGHT_COMMIT}" "$INSIGHT_COMMIT"
 # The migrations the new code runs at its start, listed before they run (issue 0071), so a
 # migration that rewrites rows is seen first. Read-only; a failure to list doesn't stop the update.
 echo "==> migrations"
 sudo docker compose run --rm --no-deps -T backend python insight_core/db/migrate.py --pending \
   || echo "(could not list the pending migrations)"
+# v10.17 (0188): opt-in, a backup before the new code migrates; one that fails stops the update here, while the
+# old containers still serve.
+if [[ "$(setting INSIGHT_BACKUP_ON_UPDATE 0)" == "1" ]]; then
+  echo "==> backup (INSIGHT_BACKUP_ON_UPDATE=1)"
+  if ! ./scripts/backup; then
+    echo "refused: the backup failed; nothing restarted (the old version still runs)" >&2
+    exit 1
+  fi
+fi
 sudo docker compose up -d --remove-orphans

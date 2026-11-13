@@ -215,19 +215,49 @@ class ServerAuth(Exception):
 # ---------------------------------------------------------------------------------------------- the log
 
 class Log:
-    def __init__(self, path, quiet=False):
+    """The JSON-lines log (--log). v10.17: rotated by size, so a worker run by a timer for months never fills the
+    disk: past `max_bytes` the file becomes log.jsonl.1 (.1 -> .2 ...), and the `keep` newest old files stay. Two
+    worker processes may share the file (an embed cycle beside a read cycle): each write and rotation holds an
+    exclusive flock on log.jsonl.lock, so a line is never written to a file another process is renaming."""
+    MAX_BYTES = 10 * 1024 * 1024
+    KEEP = 4
+
+    def __init__(self, path, quiet=False, max_bytes=None, keep=None):
         self.path = Path(path) if path else None
         self.quiet = quiet
+        self.max_bytes = self.MAX_BYTES if max_bytes is None else max_bytes
+        self.keep = self.KEEP if keep is None else keep
         self.lock = threading.Lock()
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _rotate(self):
+        if self.keep < 1:
+            self.path.unlink(missing_ok=True)
+            return
+        for n in range(self.keep - 1, 0, -1):
+            older = self.path.with_name(f"{self.path.name}.{n}")
+            if older.exists():
+                os.replace(older, self.path.with_name(f"{self.path.name}.{n + 1}"))
+        os.replace(self.path, self.path.with_name(f"{self.path.name}.1"))
+
+    def _write(self, line):
+        import fcntl
+        with open(self.path.with_name(self.path.name + ".lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.max_bytes and self.path.exists() and self.path.stat().st_size >= self.max_bytes:
+                    self._rotate()
+                with self.path.open("a") as f:
+                    f.write(line)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def __call__(self, event, **rec):
         rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": event, **rec}
         with self.lock:
             if self.path:
-                with self.path.open("a") as f:
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                self._write(json.dumps(rec, ensure_ascii=False) + "\n")
             if not self.quiet:
                 brief = " ".join(f"{k}={v}" for k, v in rec.items() if k not in ("at", "event") and v is not None)
                 print(f"markx-worker {event} {brief}", file=sys.stderr, flush=True)
@@ -1241,7 +1271,7 @@ def main(argv=None):
     common.add_argument("--server", required=True, help="INSIGHT's address, e.g. http://<server>:5173")
     common.add_argument("--token-file", required=True, help="a file holding the bearer token")
     common.add_argument("--worker", default=socket.gethostname(), help="this worker's name (default: the host)")
-    common.add_argument("--log", default=str(state_dir() / "log.jsonl"), help="JSON-lines log ('' for none)")
+    common.add_argument("--log", default=str(state_dir() / "log.jsonl"), help="JSON-lines log ('' for none; rotated past 10 MB, 4 old files kept)")
     common.add_argument("--quiet", action="store_true", help="no log lines on stderr")
     c = sub.add_parser("cycle", parents=[common], help="lease, ask Haiku, post")
     c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")

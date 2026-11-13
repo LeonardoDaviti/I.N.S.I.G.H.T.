@@ -223,6 +223,16 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
         logger.exception("Cadence refresh failed (continuing with stored tiers)")
 
 
+async def _heartbeat() -> None:
+    """Issue 0188: the scheduler's event loop answers: a heartbeat every BEAT_SECONDS (utils/heartbeat.py), read by
+    the container's healthcheck and /api/status. A task of its own, so a long ingestion tick doesn't read as a dead
+    loop; a loop blocked by a stuck call does."""
+    from insight_core.utils import heartbeat
+    while True:
+        heartbeat.beat("scheduler")
+        await asyncio.sleep(heartbeat.BEAT_SECONDS)
+
+
 async def main() -> None:
     from insight_core.db.ensure_db import ensure_database
     from insight_core.ingestion import run_ingestion
@@ -231,6 +241,8 @@ async def main() -> None:
     from insight_core.services.source_fetch_service import archive_service
 
     setup_logging(debug_mode=False)
+    from insight_core.db import database
+    database.use_role("jobs")   # issue 0188: the job timeouts, here and in the job processes it spawns
     db_url = ensure_database()
     os.environ["DATABASE_URL"] = db_url
     operations_service = OperationsService(db_url)
@@ -287,6 +299,8 @@ async def main() -> None:
     # Mark X's jobs (0112 Decided 10): the candidate finder and the decision run, here and never in the API, each
     # in a process of its own; the API only marks that work arrived. Nothing when INSIGHT_MARKX is off.
     from insight_core.markx.jobs import Runner as MarkxJobs
+    from insight_core.utils import heartbeat
+    heartbeat.clear("markx")   # issue 0188: written again only while its loop runs (none when Mark X is off)
     markx_jobs = MarkxJobs(db_url)
     try:
         markx_jobs.start()
@@ -312,6 +326,7 @@ async def main() -> None:
     archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
     last_archive_poll = 0.0
     loop = asyncio.get_running_loop()
+    beating = loop.create_task(_heartbeat())   # issue 0188: what the container's healthcheck reads
 
     while RUNNING:
         now = datetime.now(timezone.utc)
@@ -339,6 +354,7 @@ async def main() -> None:
         # Sleep in 1s steps so SIGTERM is honoured promptly.
         await asyncio.sleep(1)
 
+    beating.cancel()
     markx_jobs.stop.set()
     source_stats.stop.set()
     logger.info("Scheduler stopped")

@@ -449,8 +449,8 @@ def pairs(cur: Any, posts: Any, new: Iterable[str]) -> int:
                                           ORDER BY h.id DESC LIMIT 1) h ON true
                      WHERE r.guide = %s AND COALESCE(r.kind, '') <> 'roundup'
                        AND (h.version IS DISTINCT FROM %s OR h.read_group = ANY(%s))
-                       AND {pairing.post_date()} BETWEEN %s AND %s""",
-                (READING_GUIDE, version(), _pool_groups({k.group for k in mine.values()}), lo, hi))
+                       AND {pairing.post_date_within('p', '%s::timestamptz', '%s::timestamptz')}""",
+                (READING_GUIDE, version(), _pool_groups({k.group for k in mine.values()}), lo, lo, hi, hi))
     pool = keys(cur, [r[0] for r in cur.fetchall()])
     posts.load(pool)
     index: Dict[Tuple[str, FrozenSet[str]], List[str]] = defaultdict(list)

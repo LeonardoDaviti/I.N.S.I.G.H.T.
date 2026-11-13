@@ -11,6 +11,7 @@ import { ApiError } from '../../lib/apiError';
 import type { Api } from '../../services/api';
 import type { MarkxJob, MarkxNews, MarkxOverview, MarkxPostPanel } from '../../services/markx';
 import { DecisionJob, MarkXWorker } from './MarkXOverview';
+import { postBylineTime } from '../../lib/dates';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
@@ -157,6 +158,25 @@ describe('the decision job', () => {
       'A decision run is asked for: it starts within a few minutes.',
       'The last decision run stopped: over 120 s (174 s): stopped before questions and decisions. It runs again within 5 minutes.',
     ]);
+  });
+
+  it('says when a failed run is tried again, the stage it skips, and a failing job (0188)', () => {
+    const retry = '2026-11-13T15:20:00+00:00';
+    renderWithProviders(<DecisionJob job={job({ last: { ok: false, error: 'over 120 s (190 s): stopped before back', skip_next: 'graph' },
+      failures: 3, failing: true, retry_at: retry })} />, { api: makeFakeApi({}) });
+    const lines = screen.getAllByRole('status').map((el) => el.textContent);
+    expect(lines[0]).toContain(`It runs again after ${postBylineTime(retry)}, without its graph stage once.`);
+    expect(lines[1]).toBe('Failing: 3 runs in a row stopped. It keeps trying, at most 6 hours apart.');
+  });
+
+  it('marks a worker silent for days as stale (0188)', async () => {
+    const data = overview({ decide: job({}), candidates: job({}) });
+    data.worker.workers = [{ worker: 'laptop', last_contact: now, leased: 0, stale: false },
+      { worker: 'desk', last_contact: '2026-11-01T10:00:00+00:00', leased: 0, stale: true }];
+    renderWithProviders(<MarkXWorker />, { api: makeFakeApi({ getMarkxOverview: vi.fn(async () => data), setMarkxReadingWindow: vi.fn(),
+      runMarkxDecisions: vi.fn() }) });
+    expect(await screen.findByText(/stale: silent for over 3 days/)).toBeInTheDocument();
+    expect(screen.getAllByText(/stale: silent/)).toHaveLength(1);
   });
 
   it('says nothing of the last run when it ended well', () => {

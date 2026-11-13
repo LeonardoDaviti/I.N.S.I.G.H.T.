@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# scripts/backup                    a backup in ./backups/<UTC time>/ (DEPLOYMENT.md, "Backups"):
+#                                     insight.dump   the database, pg_dump -Fc (custom format, compressed)
+#                                     secrets.tar    the insight_secrets volume (the key that decrypts Connections)
+#                                     env            a copy of .env
+#                                   then only the newest INSIGHT_BACKUPS_KEEP (default 5) backups are kept.
+# scripts/backup --restore <dir>    the database from <dir>/insight.dump, into a database emptied first; the API
+#                                   and ingestion are stopped meanwhile and started again after.
+#
+# secrets.tar and env hold secrets (the credentials key, the database password, API keys): the backup directory
+# is made 700 and its files 600. Copy backups off the machine only to a place as private as the machine itself.
+#
+# Run from anywhere; it works on the checkout it is in, through the running insight-db container (sudo docker,
+# as ./update). A failed step exits non-zero and leaves no half backup behind.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+DB=insight-db
+DOCKER=(sudo docker)
+if [[ "$(id -u)" == "0" ]] || docker info >/dev/null 2>&1; then DOCKER=(docker); fi
+
+setting() {
+  local name="$1" default="$2" value="${!1:-}"
+  if [[ -z "$value" && -f .env ]]; then
+    value="$(grep -E "^${name}=" .env | tail -n1 | cut -d= -f2- | tr -d '"'"'" || true)"
+  fi
+  echo "${value:-$default}"
+}
+
+# The volume holding the secrets: compose prefixes it with the project's name.
+secrets_volume() {
+  local name
+  name="$("${DOCKER[@]}" inspect insight-api --format '{{range .Mounts}}{{if eq .Destination "/app/secrets"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || true)"
+  if [[ -z "$name" ]]; then
+    name="$("${DOCKER[@]}" volume ls --format '{{.Name}}' | grep -E '(^|_)insight_secrets$' | head -n1 || true)"
+  fi
+  echo "$name"
+}
+
+# tar runs in the app's own image (no other image is pulled)
+TAR_IMAGE=insight-backend:latest
+
+restore() {
+  local dir="${1:-}"
+  if [[ -z "$dir" || ! -f "$dir/insight.dump" ]]; then
+    echo "usage: scripts/backup --restore backups/<when>   (a directory holding insight.dump)" >&2
+    exit 2
+  fi
+  local name
+  name="$("${DOCKER[@]}" exec "$DB" sh -c 'echo "$POSTGRES_DB"')"
+  echo "This replaces the database '$name' with $dir/insight.dump: every change since that backup is lost."
+  read -r -p "Type the database's name to go on: " answer
+  if [[ "$answer" != "$name" ]]; then
+    echo "refused: nothing changed" >&2
+    exit 1
+  fi
+  "${DOCKER[@]}" compose stop backend ingestion
+  "${DOCKER[@]}" exec "$DB" sh -c 'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+  "${DOCKER[@]}" exec -i "$DB" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' < "$dir/insight.dump"
+  "${DOCKER[@]}" compose up -d --no-build
+  echo "==> restored $dir/insight.dump. The secrets key and .env are not touched; if they were lost too:"
+  echo "    .env:    cp $dir/env .env"
+  echo "    secrets: sudo docker run --rm --entrypoint tar -v $(secrets_volume):/s -v \"\$PWD/$dir\":/b $TAR_IMAGE -xf /b/secrets.tar -C /s"
+}
+
+if [[ "${1:-}" == "--restore" ]]; then
+  restore "${2:-}"
+  exit 0
+fi
+
+keep="$(setting INSIGHT_BACKUPS_KEEP 5)"
+if ! [[ "$keep" =~ ^[0-9]+$ ]] || (( keep < 1 )); then
+  echo "INSIGHT_BACKUPS_KEEP=$keep refused: a number of backups, 1 or more" >&2
+  exit 2
+fi
+mkdir -p backups
+chmod 700 backups
+when="$(date -u +%Y-%m-%dT%H%M%SZ)"
+out="backups/$when"
+part="$out.part"
+rm -rf "$part"
+umask 077
+mkdir -p "$part"
+trap 'rm -rf "$part"' EXIT
+
+echo "==> backup: the database"
+"${DOCKER[@]}" exec "$DB" sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$part/insight.dump"
+# an empty or truncated dump is no backup: pg_restore must be able to list it
+"${DOCKER[@]}" exec -i "$DB" pg_restore --list < "$part/insight.dump" >/dev/null
+
+volume="$(secrets_volume)"
+if [[ -n "$volume" ]]; then
+  echo "==> backup: the secrets volume ($volume) - holds the credentials key"
+  "${DOCKER[@]}" run --rm --entrypoint tar -v "$volume":/s:ro -v "$PWD/$part":/b "$TAR_IMAGE" -cf /b/secrets.tar -C /s .
+else
+  echo "(no insight_secrets volume found on insight-api: secrets.tar skipped)"
+fi
+if [[ -f .env ]]; then
+  cp .env "$part/env"
+fi
+# files written by a container belong to root: hand them to whoever runs this, private
+if [[ "${DOCKER[0]}" == "sudo" ]]; then sudo chown -R "$(id -u):$(id -g)" "$part"; fi
+chmod 700 "$part"
+chmod 600 "$part"/*
+mv "$part" "$out"
+trap - EXIT
+
+echo "==> backup: $out ($(du -sh "$out" | cut -f1)). WARNING: secrets.tar and env hold secrets; keep them private."
+# the newest $keep backups stay (names sort by time); older ones go
+ls -1d backups/*/ 2>/dev/null | sed 's#/$##' | grep -v '\.part$' | sort | head -n -"$keep" | while read -r old; do
+  rm -rf "$old"
+  echo "    removed the old backup $old"
+done

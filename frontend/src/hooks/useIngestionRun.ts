@@ -9,6 +9,7 @@ import { errorMessage, isAbortError } from '../lib/apiError';
 import { summarizeRunReport } from '../lib/runReport';
 import { sourcesIngestionHref } from '../lib/ingestionNavigation';
 import { UNREAD_COUNTS_KEY } from './useFeed';
+import { RUNNING_JOBS_KEY } from './useOperations';
 import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 
 /** What a fetch run targets (the UI side of the backend's SourceSelector). */
@@ -33,9 +34,9 @@ function contextLine(target: IngestionTarget): string | null {
   return target.name || null;
 }
 
-/** Query keys a finished run makes stale. Never `['feed']`: the reader shows a
- *  "N new posts" pill instead of reordering what is on screen (spec §F.3). */
-export const INGESTION_INVALIDATES = [UNREAD_COUNTS_KEY, SOURCES_HEALTH_KEY] as const;
+/** Query keys a finished run makes stale (the running jobs too, issue 0195: the top bar's sign ends at once).
+ *  Never `['feed']`: the reader shows a "N new posts" pill instead of reordering what is on screen (spec §F.3). */
+export const INGESTION_INVALIDATES = [UNREAD_COUNTS_KEY, SOURCES_HEALTH_KEY, RUNNING_JOBS_KEY] as const;
 
 /**
  * Start a fetch run, poll its job, toast the run report and refresh the counts

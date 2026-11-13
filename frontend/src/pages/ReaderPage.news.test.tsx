@@ -187,6 +187,19 @@ describe('News and Classics on a source page (issue 0077)', () => {
 });
 
 describe('Classics (issue 0051)', () => {
+  it('come a page at a time: Load more asks for the next with its cursor and appends (issue 0195)', async () => {
+    const getClassics = vi.fn()
+      .mockResolvedValueOnce({ success: true, classics: [classic({})], next_cursor: '100' })
+      .mockResolvedValueOnce({ success: true, classics: [classic({ url: 'https://arxiv.org/abs/2001.08361', title: 'Scaling Laws' })], next_cursor: null });
+    render(base({ getClassics }), '/?view=classics');
+    const list = await screen.findByRole('list', { name: 'Classics' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(2));
+    expect(getClassics).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: '100' }));
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
   it('lists who cited each and when, cited again first as the API orders it', async () => {
     const getClassics = vi.fn().mockResolvedValue({ success: true, classics: [
       classic({ url: 'https://arxiv.org/abs/2001.08361', title: 'Scaling Laws for Neural Language Models', cited_again: true }),

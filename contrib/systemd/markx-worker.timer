@@ -1,0 +1,15 @@
+# Runs markx-worker.service hourly; a run missed while the device was off or asleep runs at the next boot
+# (Persistent=true). Shipped disabled: the worker runs by hand unless you choose otherwise.
+#   systemctl --user enable --now markx-worker.timer      # only if you want it on a schedule
+#   systemctl --user disable --now markx-worker.timer     # back to by hand
+# A cycle still running when the timer fires is not started twice (a oneshot unit is active until it ends).
+[Unit]
+Description=INSIGHT Mark X worker: a cycle every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

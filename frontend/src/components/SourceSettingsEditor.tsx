@@ -9,7 +9,7 @@ import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { HEALTH_STATUS_LABELS, backoffLabel, formatDue } from '../lib/sourceSchedule';
 import { dueLabel } from '../lib/schedulerStatus';
-import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperations';
+import { useRunningJobs, useSchedulerConfig } from '../hooks/useOperations';
 import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -126,7 +126,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const scheduler = useSchedulerConfig();
   const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
   // The server's jobs too: a fetch started before this sheet opened (or elsewhere) still shows.
-  const jobs = useOperationsOverview().data?.jobs;
+  const jobs = useRunningJobs().data?.jobs;
   const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
   // The Saved source (issue 0031) is never fetched: no fetch, cadence, archive or delay to set.

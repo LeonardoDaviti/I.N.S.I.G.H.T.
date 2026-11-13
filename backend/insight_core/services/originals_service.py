@@ -42,6 +42,7 @@ from insight_core.utils.addresses import host_of, site_of
 from insight_core.utils.discover_rules import (app_address, archive_address, discover_address, document_address,
                                               reference_address)
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 logger = logging.getLogger("insight.originals")
 
@@ -344,11 +345,11 @@ class OriginalsService:
         from insight_core.markx import entity_addresses as EA, identity as I, schemas
         from insight_core.markx.pairing import SPECIFIC_TYPES
         since = now - E.TRIGGER_WITHIN
-        cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, p.source_id::text,
-                              COALESCE(p.surfaced_at, p.published_at, p.fetched_at), m.by_name, m.type
+        cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, p.source_id::text,
+                              {pairing.ordinary_date('p')}, m.by_name, m.type
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.type = ANY(%s) AND m.entity_id IS NOT NULL
-                          AND s.platform <> 'saved' AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s""",
+                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s""",
                     (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since))
         rows = cur.fetchall()
         if not rows:
@@ -658,13 +659,13 @@ class OriginalsService:
         # A post listing ROUNDUP_ANCHORS+ links is about its first only (Mark IX's rule, story_rules.ROUNDUP_ANCHORS):
         # measured on the server's copy, a meetups list's 60 event pages were half of what was wanted without it.
         from insight_core.utils.story_rules import ROUNDUP_ANCHORS
-        cur.execute("""SELECT target_url, source_id FROM (
+        cur.execute(f"""SELECT target_url, source_id FROM (
                            SELECT pl.target_url, p.source_id::text AS source_id, pl.position,
                                   count(*) OVER (PARTITION BY pl.post_id) AS links,
                                   min(pl.position) OVER (PARTITION BY pl.post_id) AS first
                              FROM post_links pl JOIN posts p ON p.id = pl.post_id
                             WHERE NOT pl.boilerplate AND pl.kind = 'link'
-                              AND COALESCE(p.published_at, p.fetched_at) >= %s) x
+                              AND {pairing.ix_date('p')} >= %s) x
                         WHERE links < %s OR position = first""", (now - E.MISSED_WITHIN, ROUNDUP_ANCHORS))
         want: Dict[str, str] = {}
         from insight_core.utils.addresses import is_tweet

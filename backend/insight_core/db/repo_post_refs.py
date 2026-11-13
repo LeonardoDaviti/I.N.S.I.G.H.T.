@@ -26,12 +26,13 @@ from insight_core.utils.addresses import host_of
 from insight_core.utils.post_refs import PostRef, refs_of, shown_reason
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 REFS_BATCH = 500
 # The caps of the Connected groups (0125 decision 2, the default): each group says how many more it has.
 EARLIER_SHOWN, LATER_SHOWN, OUTSIDE_SHOWN = 10, 10, 5
 GROUPS = ("earlier", "later", "outside")
-POST_DATE = "COALESCE(p.published_at, p.fetched_at)"
+POST_DATE = pairing.ix_date("p")
 
 
 class PostRefsRepository:

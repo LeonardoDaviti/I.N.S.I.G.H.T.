@@ -673,7 +673,7 @@ class StoriesService:
         selves = {i: sorted(sources.selves(i)) for i in sources.kind}
         ask = dict(kinds=sources.kind, own_sites=own_sites, accounts=accounts, shown=DISCOVER_ARTICLES_SHOWN, selves=selves)
         facts = sorted((i, sources.kind[i], own_sites[i], accounts.get(i, ""), selves[i]) for i in sources.site)
-        stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base()
+        stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
         kept = DiscoverRepository.kept(cur)
         if kept and kept["stamp"] == stamp:
             return kept

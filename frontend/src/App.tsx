@@ -14,11 +14,13 @@ const ReaderPage = lazy(() => import('./pages/ReaderPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
-const BlogPage = lazy(() => import('./pages/BlogPage'));
 const SavePage = lazy(() => import('./pages/SavePage'));
-// Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
-const DesignStudio = lazy(() => import('./design/DesignStudio'));
-const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
+// Dev-only (v10.17, issue 0190): the blog and the Design Studio are never in the production bundle. Vite makes
+// `import.meta.env.DEV` false in `vite build`, so these imports are dead code there and their chunks are not built
+// (scripts/bundle-check.mjs fails if one is); `npm run dev` serves them as before.
+const BlogPage = import.meta.env.DEV ? lazy(() => import('./pages/BlogPage')) : null;
+const DesignStudio = import.meta.env.DEV ? lazy(() => import('./design/DesignStudio')) : null;
+const DesignFrame = import.meta.env.DEV ? lazy(() => import('./design/frame/FrameApp')) : null;
 // Mark X Shadow's page (issue 0086 E): its own chunk, so the feed and the post route don't grow for it.
 const MarkXPage = lazy(() => import('./pages/MarkXPage'));
 const MarkXEntityPage = lazy(() => import('./pages/MarkXEntityPage'));   // 0119 A3
@@ -90,8 +92,9 @@ function TrackRedirect() {
  * The app is feed / sources / post. `/tracks/:id` redirects to the reader
  * scoped to the track (Design Studio D5). The retired analysis paths (briefings,
  * stories, inbox, experts, the tracks list; issue 0005) land on the feed, replacing
- * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/markx` is Mark X Shadow's page, while it is on (issue 0086 E). `/design/*` is the Design
- * Studio, reached from ⌘K only.
+ * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/markx` is Mark X Shadow's page, while it is on (issue 0086 E). In dev only (`npm run dev`;
+ * absent from the production bundle, 0190): `/blog`, the engineering blog, and `/design/*`, the Design Studio, reached
+ * from ⌘K only.
  */
 export function AppRoutes() {
   return (
@@ -106,9 +109,9 @@ export function AppRoutes() {
       <Route path="/settings/sources" element={<SourcesConfig />} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
       <Route path="/save" element={<SavePage />} />
-      <Route path="/blog" element={<BlogPage />} />
-      <Route path="/blog/:slug" element={<BlogPage />} />
-      <Route path="/design/*" element={<DesignStudio />} />
+      {BlogPage && <Route path="/blog" element={<BlogPage />} />}
+      {BlogPage && <Route path="/blog/:slug" element={<BlogPage />} />}
+      {DesignStudio && <Route path="/design/*" element={<DesignStudio />} />}
       <Route path="/markx" element={<MarkXRoute />} />
       <Route path="/markx/entities/:entityId" element={<MarkXRoute page="entity" />} />
       <Route path="/markx/stories/:storyId" element={<MarkXRoute page="story" />} />
@@ -131,7 +134,7 @@ function App() {
   // The Design Studio's chromeless frame (`/design/frame/:page/:state`, D4): its
   // own router, providers and fixture fetch, so it replaces the app, not a route in it.
   // The prefix is inlined (design/frame/frameUrl.ts FRAME_PREFIX) to keep the reader's JS lean (D8).
-  if (window.location.pathname.startsWith('/design/frame/')) {
+  if (DesignFrame && window.location.pathname.startsWith('/design/frame/')) {
     return <Suspense fallback={null}><DesignFrame /></Suspense>;
   }
   return (

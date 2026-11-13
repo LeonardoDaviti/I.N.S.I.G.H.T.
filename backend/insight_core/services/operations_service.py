@@ -82,6 +82,8 @@ HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
 # "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
 FAILING_STATUSES = (HealthStatus.ERROR, HealthStatus.BACKOFF)
 OVERVIEW_HEALTH_ROWS = 8
+# The recent jobs the overview and the top bar's running sign list (the scheduler writes ~4-6 rows per cycle).
+OVERVIEW_JOBS = 50
 
 
 def empty_health_summary() -> Dict[str, int]:
@@ -384,6 +386,12 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         if row.get("silent"):
             summary["silent"] += 1   # silent far beyond its rhythm (issue 0178), whatever its status
     return summary
+
+
+def _ago(span: timedelta) -> str:
+    """A span for a health reason: minutes under 2 hours, else hours."""
+    seconds = span.total_seconds()
+    return f"{seconds / 60:.0f} minutes" if seconds < 7200 else f"{seconds / 3600:.1f} hours"
 
 
 def sources_failing(summary: Dict[str, int]) -> int:
@@ -900,11 +908,16 @@ class OperationsService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return {"success": True, **background_work(cur, stories_key=SETTINGS_KEY, stories_lock=LOCK_KEY)}
 
+    def running(self) -> Dict[str, Any]:
+        """What runs now, for the top bar's sign on every page (issue 0195): the recent jobs only, the same list the
+        overview carries (the running fetch and an hour's failed one are read from it), without source health."""
+        return {"success": True, "jobs": self.list_recent_jobs(OVERVIEW_JOBS)}
+
     def get_operations_overview(self) -> Dict[str, Any]:
         # The SQL projection above is what fixed the memory, not this limit, so keep
         # enough history for the alerts panel to still catch a stale failure.
         # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
-        jobs = self.list_recent_jobs(50)
+        jobs = self.list_recent_jobs(OVERVIEW_JOBS)
         health = self.get_source_health()
         summary = health["summary"]
         counts = self.get_database_counts()
@@ -938,43 +951,120 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
+        """{total_posts, enabled_sources}: the posts summed over each source's kept statistics (issue 0195), not a
+        count of every post."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      (SELECT COUNT(*) FROM posts) AS total_posts,
-                      (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
-                    """
-                )
-                row = cur.fetchone()
+                total = repo_post_stats.corpus(cur)["total_posts"]
+                cur.execute("SELECT COUNT(*) FROM sources WHERE enabled = TRUE")
+                enabled = cur.fetchone()[0]
 
         return {
-            "total_posts": int(row[0] or 0),
-            "enabled_sources": int(row[1] or 0),
+            "total_posts": int(total or 0),
+            "enabled_sources": int(enabled or 0),
         }
 
+    # ------------------------------------------------------------------ the system's health (issue 0188)
+
+    def system_health(self, now: Optional[datetime] = None, *, failing_sources: Optional[int] = None) -> Dict[str, Any]:
+        """/api/status's `healthy`, from real checks (was a literal True). {healthy, reasons (what makes it
+        unhealthy), warnings (shown, never unhealthy alone), checks (the numbers read)}:
+          - ingestion: the newest successful ingestion run is older than the fetch interval plus two ticks (every
+            source is due within the interval, so a run must have happened), or the scheduler's next tick is two
+            ticks overdue (its loop stopped);
+          - the scheduler's and Mark X's loops (utils/heartbeat.py, the logs volume): a heartbeat past its limit;
+          - Mark X (when on): a job failing (markx/jobs.py: FAILING_AFTER failed runs in a row), or the newest
+            finished decision run older than 2 x jobs.EVERY;
+          - warnings: failing sources (a source failing is the site's trouble, not the system's), workers silent
+            for more than WORKER_STALE_DAYS (markx/news.py).
+        Each check that cannot be read is a reason of its own."""
+        from insight_core.utils import heartbeat
+        now = now or datetime.now(timezone.utc)
+        reasons: List[str] = []
+        warnings: List[str] = []
+        checks: Dict[str, Any] = {}
+        try:
+            config = self.get_scheduler_config()
+            interval = timedelta(hours=float(config.get("interval_hours") or 20))
+            tick = timedelta(minutes=float(config.get("ingest_tick_minutes") or 60))
+            last_ok = self.latest_successful_job_finished_at("ingestion_run")
+            state = self.get_scheduler_state() or {}
+            next_tick = state.get("next_tick_at")
+            next_tick = datetime.fromisoformat(next_tick) if isinstance(next_tick, str) else next_tick
+            checks["ingestion"] = {"last_success_at": iso(last_ok), "next_tick_at": iso(next_tick),
+                                   "limit_hours": round((interval + 2 * tick).total_seconds() / 3600, 2)}
+            if last_ok is None:
+                reasons.append("no ingestion run has succeeded yet")
+            elif now - last_ok > interval + 2 * tick:
+                reasons.append(f"the last successful ingestion run finished {_ago(now - last_ok)} ago")
+            if next_tick is not None and now - next_tick > 2 * tick:
+                reasons.append(f"the scheduler's next tick is {_ago(now - next_tick)} overdue")
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"could not read the ingestion state ({type(exc).__name__})")
+        ages = heartbeat.ages(now.timestamp())
+        checks["heartbeats"] = {k: None if v is None else round(v) for k, v in ages.items()}
+        reasons.extend(heartbeat.stale(now.timestamp(), required=()))
+        try:
+            self._markx_health(now, reasons, warnings, checks)
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"could not read Mark X's jobs ({type(exc).__name__})")
+        if failing_sources:
+            warnings.append(f"{failing_sources} sources failing")
+        return {"healthy": not reasons, "reasons": reasons, "warnings": warnings, "checks": checks}
+
+    def _markx_health(self, now: datetime, reasons: List[str], warnings: List[str], checks: Dict[str, Any]) -> None:
+        from insight_core.markx import api as markx_api, jobs, news as markx_news
+        if not markx_api.enabled():
+            checks["markx"] = None
+            return
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            view = jobs.view(cur)
+            cur.execute("SELECT max(finished_at) FROM mx_runs")
+            last_run = cur.fetchone()[0]
+            stale_workers = [w["worker"] for w in markx_news.workers_view(markx_api.contacts(cur), now) if w["stale"]]
+        checks["markx"] = {"jobs": {job: {k: v.get(k) for k in ("failures", "failing", "retry_at", "finished_at")}
+                                    | {"ok": (v.get("last") or {}).get("ok")} for job, v in view.items()},
+                           "last_decision_run_at": iso(last_run)}
+        for job, v in view.items():
+            if v["failing"]:
+                error = (v.get("last") or {}).get("error") or "no error recorded"
+                reasons.append(f"Mark X's {job} job failed {v['failures']} times in a row ({str(error)[:120]})")
+        if last_run is None or (now - last_run).total_seconds() > 2 * jobs.EVERY:
+            reasons.append("no Mark X decision run has finished" if last_run is None
+                           else f"the last Mark X decision run finished {_ago(now - last_run)} ago")
+        if stale_workers:
+            warnings.append(f"Mark X workers silent for over {markx_news.WORKER_STALE_DAYS} days: "
+                            + ", ".join(stale_workers))
+
+    def table_sizes(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Issue 0188: the biggest tables with their indexes and TOAST (pg_total_relation_size), largest first;
+        reported only: nothing is pruned (the owner keeps everything)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("""SELECT c.relname, pg_total_relation_size(c.oid), c.reltuples::bigint
+                             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE c.relkind IN ('r', 'p', 'm') AND n.nspname = current_schema()
+                            ORDER BY 2 DESC LIMIT %s""", (limit,))
+            return [{"table": name, "bytes": int(size), "rows_estimate": max(int(rows), 0)}
+                    for name, size, rows in cur.fetchall()]
+
     def get_corpus_freshness(self) -> Dict[str, Any]:
-        """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
+        """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
+        last-24h volume (by the fetched_at index)."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      MAX(COALESCE(published_at, fetched_at)) AS latest,
-                      MIN(COALESCE(published_at, fetched_at)) AS oldest,
-                      MAX(fetched_at) AS latest_fetch,
-                      COUNT(*) FILTER (WHERE fetched_at >= now() - interval '24 hours') AS last_24h
-                    FROM posts
-                    """
-                )
-                row = cur.fetchone()
+                corpus = repo_post_stats.corpus(cur)
+                cur.execute("SELECT COUNT(*) FROM posts WHERE fetched_at >= now() - interval '24 hours'")
+                last_24h = cur.fetchone()[0]
 
         return {
-            "latest_post_at": iso(row[0]),
-            "oldest_post_at": iso(row[1]),
-            "latest_fetch_at": iso(row[2]),
-            "posts_last_24h": int(row[3] or 0),
+            "latest_post_at": iso(corpus["latest_at"]),
+            "oldest_post_at": iso(corpus["oldest_at"]),
+            "latest_fetch_at": iso(corpus["latest_fetch_at"]),
+            "posts_last_24h": int(last_24h or 0),
         }
 
     # ------------------------------------------------------------------ source health

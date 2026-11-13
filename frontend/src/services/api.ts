@@ -7,7 +7,7 @@ import type {
   MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
   MarkxPrecision, MarkxSettings,
 } from './markx';
-import type { MarkxEntityAnswer, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
+import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
 
@@ -183,7 +183,8 @@ export interface Classic {
   citers: { name: string; at: string; place?: string | null }[];
   read_at: string | null; later_at: string | null;
 }
-export interface ClassicsResponse { success: true; classics: Classic[]; }
+/** GET /api/classics: a page of them (issue 0195: 100 a page); next_cursor asks the next, null at the end. */
+export interface ClassicsResponse { success: true; classics: Classic[]; next_cursor?: string | null; }
 export interface StoryVoice { id: string; name: string; place?: string | null; with?: { id: string; name: string }[]; }
 /** One story, many sources (issue 0050). `sources` in the order they covered it. */
 export interface FeedStory {
@@ -783,6 +784,11 @@ export interface BackgroundWorkResponse extends Envelope {
   links: BackgroundProgress;
 }
 
+/** GET /api/operations/running (issue 0195): the recent jobs, newest first, as the overview lists them. */
+export interface RunningJobsResponse extends Envelope {
+  jobs?: JobRun[];
+}
+
 export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
@@ -1334,11 +1340,11 @@ export function createApi() {
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
     /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. */
-    getNews: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
-      request<FeedPage>(`/api/news?scope=${enc(scope)}`, { signal }),
+    getNews: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
+      request<FeedPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
-    getClassics: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
-      request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}`, { signal }),
+    getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
+      request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
     /** Hide a classic: "I know it" and "not for me"; it never comes back. */
     hideClassic: (url: string) => request<Envelope>('/api/classics/hide', { method: 'POST', body: { url } }),
     /** Show one source in the Main feed (true) or leave it out (false). */
@@ -1376,6 +1382,8 @@ export function createApi() {
     fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
       runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
     getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
+    /** What runs now (issue 0195): the overview's recent jobs without its source health. */
+    getRunningJobs: () => request<RunningJobsResponse>('/api/operations/running'),
     getBackgroundWork: () => request<BackgroundWorkResponse>('/api/operations/background'),
     getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
     getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
@@ -1474,12 +1482,17 @@ export function createApi() {
         { method: 'POST', body: { story, post, answer } }),
     // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
-    /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too. */
-    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean) => {
-      const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : ''].filter(Boolean).join('&');
+    /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too.
+     *  Issue 0195: `limits`, the stories and the posts in no story listed (the API's 50 and 100 by default). */
+    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean, limits?: MarkxEntityLimits) => {
+      const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : '',
+        limits?.stories !== undefined ? `stories_limit=${limits.stories}` : '',
+        limits?.loose !== undefined ? `loose_limit=${limits.loose}` : ''].filter(Boolean).join('&');
       return request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${q ? `?${q}` : ''}`);
     },
-    getMarkxEntityQueue: () => request<MarkxEntityQueue>('/api/markx/entities/queue'),
+    /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. */
+    getMarkxEntityQueue: (limit?: number) =>
+      request<MarkxEntityQueue>(`/api/markx/entities/queue${limit !== undefined ? `?limit=${limit}` : ''}`),
     answerMarkxEntity: (item: string, answer: MarkxEntityAnswer) =>
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
     undoMarkxMerge: (redirect: string) =>

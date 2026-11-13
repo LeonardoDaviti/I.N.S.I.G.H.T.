@@ -461,7 +461,7 @@ class TheStage(_Later):
         self.assertEqual(self.cur.fetchone(), ("development", ["development", "development", "retold"]))
         self.assertEqual(page["stories"], [{"story": sid, "headline": "Acme released Widget 4.1", "long_lived": True,
                                             "following": True, "subjects": [{"id": e, "name": "Widget 4.1"}]}])
-        self.assertFalse(page["news"])
+        self.assertNotIn("news", page)                                            # v10.17: no unread News flag
         status, ent = call("GET", f"/api/markx/entities/{e}/later")
         self.assertEqual((status, [r["id"] for r in ent["items"]], ent["counts"]), (200, [row["id"]], {"candidates": 1, "development": 1}))
         status, got = call("POST", "/api/markx/labels/later", body={"row": row["id"], "answer": "retold"})

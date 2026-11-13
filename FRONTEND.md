@@ -2,7 +2,7 @@
 
 React 19, TypeScript, Vite, Tailwind and TanStack Query. The UI is monochrome and dark by
 default. The design rules (principles, tokens, component inventory, page docs)
-live in `frontend/src/design/docs`, shown at `/design`; this file is the how-to. Never introduce colour fills, gradients,
+live in `frontend/src/design/docs`, shown at `/design` (in `npm run dev`); this file is the how-to. Never introduce colour fills, gradients,
 pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyph`).
 
 ## The places
@@ -21,7 +21,9 @@ The app is a reader. The top bar reads `feed / sources / blog`:
   Discover is `components/sources/SuggestedSources.tsx` (`?tab=suggested`, its old name, still
   opens it). Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not
   a page.
-- **blog** (`/blog`) and the Design Studio (`/design/*`, from ⌘K).
+- **blog** (`/blog`) and the Design Studio (`/design/*`, from ⌘K): dev-only (`npm run dev`). A production
+  build leaves them out, with their nav word and ⌘K entries (`import.meta.env.DEV`, issue 0190); the
+  bundle check fails if one of their modules is built.
 
 - Routes: `App.tsx` has the route table. `/ingestion/:tab` redirects to
   `/settings/sources?tab=ingestion` (`sourcesIngestionHref`; the old tab becomes `&sub=`).
