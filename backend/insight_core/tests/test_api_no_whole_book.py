@@ -36,7 +36,6 @@ JOBS = {
     ("markx/perspectives.py", "stage"),
     ("markx/surges.py", "stage"),
     ("markx/handles.py", "main"),
-    ("markx/components.py", "preview"),   # 0165's measurement before the switch: run by hand, no route
 }
 
 

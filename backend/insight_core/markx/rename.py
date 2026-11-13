@@ -43,8 +43,11 @@ THINGS = ("model", "product", "software", "project", "dataset")
 
 
 def config() -> Dict[str, Any]:
-    from insight_core.markx import components
-    return components.config()
+    """entity_bands.json `timeline`: the rename questions' switch and bars."""
+    from insight_core.markx import identity as I
+    got = I.bands().get("timeline") or {}
+    return {"renames": bool(got.get("renames", True)), "rename_cap": int(got.get("rename_cap", 200)),
+            "rename_overlap_days": int(got.get("rename_overlap_days", 7))}
 
 
 def address(u: Optional[str]) -> Optional[str]:
