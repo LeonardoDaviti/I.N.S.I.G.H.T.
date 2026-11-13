@@ -165,13 +165,15 @@ def sources(members: Iterable[_P]) -> int:
 def stories(cur: Any, now: datetime) -> Dict[str, Story]:
     """Mark IX's stories of 2+ sources that may fire by `now` and never did, with their subjects and pages (hubs not
     yet taken out)."""
-    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url
-                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id""")
+    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
+                           s.platform = 'saved'
+                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
+                      JOIN sources s ON s.id = p.source_id""")
     by: Dict[str, List[_P]] = defaultdict(list)
     origin: Dict[str, Optional[str]] = {}
-    for sid, pid, src, at, url, o in cur.fetchall():
+    for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(_P(pid, src, at, url, False))
+            by[sid].append(_P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
             origin[sid] = o
     out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if sources(ms) >= MIN_SOURCES}
     cur.execute("SELECT story::text, max(window_at) FROM mx_back WHERE engine = %s GROUP BY story", (ENGINE,))

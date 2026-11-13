@@ -398,7 +398,8 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             got = cur.fetchone()
             orig = {**orig, "title": origin_title, "stored": got[0] if got else None}
         return {"story": sid, "mark": mark, "headline": headline,
-                "voices": voice.count((voice.Said(source_of(p)) for p in ps if source_of(p)), voice.Policy.MARKX),
+                "voices": voice.count((voice.Said(source_of(p), (posts.get(p) or {}).get("kind")) for p in ps
+                                       if source_of(p)), voice.Policy.MARKX),   # 0189: a saved page is none
                 "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps),
                 "original": orig, "posts": [line(p) for p in ordered]}
     blocks = [block(sid, ps, "x", headline=heads.get(sid)) for sid, ps in x_members.items() if ps]

@@ -278,7 +278,8 @@ def held(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
         addresses += own
         cur.execute("""SELECT count(DISTINCT story_id) FROM mx_story_posts WHERE post_id = ANY(%s::uuid[])""", (posts,))
         stories = cur.fetchone()[0]
-        cur.execute(f"SELECT {voice.count_sql('source_id')} FROM posts WHERE id = ANY(%s::uuid[])", (posts,))
+        cur.execute(f"SELECT {voice.count_sql('p.source_id', 's.platform')} FROM posts p "
+                    "JOIN sources s ON s.id = p.source_id WHERE p.id = ANY(%s::uuid[])", (posts,))
         voices = cur.fetchone()[0]
         e = book.ents[root]
         find(cur, run, "held", f"entity:{root}", {

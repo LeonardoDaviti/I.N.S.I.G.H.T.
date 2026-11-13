@@ -220,14 +220,16 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
     where, params = ("WHERE sp.story_id = ANY(%s::uuid[])", (list(story_ids),)) if story_ids is not None else ("", ())
     if story_ids is not None and not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url
-                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id {where}""",
+    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
+                           s.platform = 'saved'
+                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
+                      JOIN sources s ON s.id = p.source_id {where}""",
                 params)
     by: Dict[str, List[Any]] = defaultdict(list)
     origin: Dict[str, Optional[str]] = {}
-    for sid, pid, src, at, url, o in cur.fetchall():
+    for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(back._P(pid, src, at, url, False))
+            by[sid].append(back._P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
             origin[sid] = o
     by = {sid: ms for sid, ms in by.items() if back.sources(ms) >= back.MIN_SOURCES}
     return mains(cur, by, origin, ids=ids, with_pages=with_pages)

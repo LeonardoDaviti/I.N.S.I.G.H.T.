@@ -203,5 +203,20 @@ class BuiltVoices(unittest.TestCase):
         self.assertFalse(any(x["joins"] for x in built.leaks_inside([release, leak, other])))
 
 
+class StoryGates(unittest.TestCase):
+    """back's and later's "Mark IX story of 2+ sources" gate counts voices: a saved page is none (0189's second fix)."""
+
+    def test_a_thread_and_a_saved_page_are_one_voice(self):
+        from insight_core.markx import back
+        thread = [back._P("a", "s1", T0, None, False), back._P("b", "s1", T0, None, False)]
+        self.assertEqual(back.sources(thread + [back._P("c", "s9", T0, None, True)]), 1)
+        self.assertEqual(back.sources(thread + [back._P("c", "s9", T0, None, False)]), 2)
+
+    def test_the_sql_count_drops_a_saved_page(self):
+        self.assertEqual(voice.count_sql("p.source_id"), "count(DISTINCT p.source_id)")
+        self.assertEqual(voice.count_sql("p.source_id", "s.platform"),
+                         "count(DISTINCT p.source_id) FILTER (WHERE s.platform IS DISTINCT FROM 'saved')")
+
+
 if __name__ == "__main__":
     unittest.main()
