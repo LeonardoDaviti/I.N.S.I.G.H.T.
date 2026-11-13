@@ -105,6 +105,7 @@ came from the cache.
 | a server-scale copy | hours, rebuilt by hand from scripts lost in /tmp | `build scale` once, then a clone |
 | one 15-test module | 29 s to 7 min 41 s (template build, drop waiting for checkpoints) | 7.4 s |
 | the whole suite | 152 min 22 s (one discover on insight-db; 1 failure) | 8 min 49 s (one shard), 3 min 18 s (`JOBS=6`), scratch server |
+| whole suites at once | 46 min each with ~6 at once on insight-db, one hit a 1 h timeout (reported) | three at once: 9 min 53 s to 10 min 4 s each, all OK |
 | the real-data check | 2,019 s (v10.15), 1,675 s fresh | 919 s with the base side from the cache |
 
 ## Nothing durable in /tmp
