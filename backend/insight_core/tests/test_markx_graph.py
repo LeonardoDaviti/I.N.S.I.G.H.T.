@@ -52,6 +52,17 @@ class TheKind(unittest.TestCase):
         v = graph.verdict([("c1", answer("background")), ("c2", answer("builds_on")), ("c3", answer("follows_up"))])
         self.assertEqual((v["relation"], v["p"]), ("unknown", None))
 
+    def test_a_first_unrelated_settles_the_pair_alone(self):
+        # 0191: ask once; a second and third time only when the first is not "unrelated"
+        v = graph.verdict([("c1", answer("unrelated", "Different events."))])
+        self.assertEqual((v["relation"], v["p"], v["call"], v["runs"], v["reason"]),
+                         ("unrelated", None, "c1", ["unrelated"], "Different events."))
+        self.assertIsNone(graph.verdict([("c1", answer("background"))]))
+        self.assertIsNone(graph.verdict([("c1", answer("builds_on"))]))
+        # three runs already asked keep their majority, whatever the first said
+        v = graph.verdict([("c1", answer("unrelated")), ("c2", answer("builds_on")), ("c3", answer("builds_on"))])
+        self.assertEqual((v["relation"], v["p"]), ("builds_on", 0.6667))
+
     def test_the_input_is_g2s_render(self):
         p = tasks.Post(id="1", kind="site", source="Example Site", source_id="s", at=NOW, title="Widget 4.1",
                        text="word " * 400)
@@ -266,6 +277,15 @@ class TheJudge(_Graph):
         self.assertEqual(call("GET", f"/api/markx/posts/{newer}")[1]["before"][0]["label"], "wrong")
         self.assertEqual(call("POST", "/api/markx/labels/edge", body={"newer": newer, "older": older, "answer": "maybe"})[0], 400)
         self.assertEqual(call("POST", "/api/markx/labels/edge", body={"newer": older, "older": newer, "answer": "right"})[0], 404)
+
+    def test_a_first_unrelated_is_asked_once_and_makes_no_edge(self):
+        self.same_subject()
+        self.stage()
+        tid, statuses = self.answer_runs("relate", ["unrelated"])
+        self.assertEqual(statuses, ["answered"])                       # 0191: never asked again
+        out = self.stage()
+        self.assertEqual(self.edges(), [])
+        self.assertEqual(out["relate"]["settled"], 1)
 
     def test_a_split_is_unknown_and_makes_no_edge(self):
         self.same_subject()

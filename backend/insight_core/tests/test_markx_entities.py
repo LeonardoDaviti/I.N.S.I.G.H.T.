@@ -715,6 +715,35 @@ class CollisionsAgree(_Db):
         self.assertEqual((out["collide"]["asked_again"], out["collide"]["one_thing"]), (0, 1))
 
 
+    def test_a_first_run_that_finds_one_thing_settles_it_alone(self):
+        # 0191: the second and third runs are asked only when the first finds a split, a part or an unclear mention
+        ps = [self.post(n, T0 + n * H) for n in range(2)]
+        self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[1], ("Luma", "product", "subject", "Orbit"))
+        self.stage()
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'collide'")
+        tid, = self.cur.fetchone()
+        repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                      answer={"senses": [{"m": [1, 2], "what": "one model"}]})
+        repo.answer_task(self.cur, tid)
+        out = self.stage(since=self.since)
+        self.assertEqual((out["collide"]["asked_again"], out["collide"]["one_thing"]), (0, 1))
+        self.assertEqual(self.cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (tid,)).fetchone()[0], "answered")
+
+    def test_a_first_run_with_an_unclear_mention_is_asked_again(self):
+        ps = [self.post(n, T0 + n * H) for n in range(2)]
+        self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[1], ("Luma", "product", "subject", "Orbit"))
+        self.stage()
+        self.cur.execute("SELECT id FROM mx_tasks WHERE kind = 'collide'")
+        tid, = self.cur.fetchone()
+        repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                      answer={"senses": [{"m": [1], "what": "one model"}], "unclear": [2]})
+        repo.answer_task(self.cur, tid)
+        out = self.stage(since=self.since)
+        self.assertEqual(out["collide"]["asked_again"], 1)
+
+
 class Anchors(_Db):
     def test_an_address_names_a_thing_only_by_its_whole_name(self):
         """A short name inside a longer repository name is no anchor (the scratch copy: a maker's model merged into
