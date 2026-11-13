@@ -1636,7 +1636,7 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
     """0201: a `same` still queued after both opinions and the chain guard, for a reason the config's `third` row
     names (a weak first answer, a chain, a held version), is asked alias-v2 (each side's facts, accounts and four
     posts). Its `same` at >= its bar merges ('third'; past the chain guard's two-groups rule, never past MAX_CLUSTER
-    names); its `different` at >= its bar keeps the pair apart; anything else stays queued with it. Returns the
+    names); its not-`same` keeps the pair apart where the reason held has a measured row (`apart`, by reason); anything else stays queued with it. Returns the
     decisions still to ask."""
     cfg = bands().get("third") or {}
     if not cfg.get("on"):
@@ -1659,11 +1659,18 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
         if a.get("relation") == "same" and conf >= float(cfg.get("same_min_conf", 1.01)) and \
                 book.cluster_size(book.root(d.pair[0])) + book.cluster_size(book.root(d.pair[1])) <= MAX_CLUSTER:
             d.tier, d.reason, d.conf, d.call_id, d.judge = "auto", "third", conf, call, dict(a)
-        elif a.get("relation") in (cfg.get("apart_relations") or ()) and conf >= float(cfg.get("apart_min_conf", 1.01)):
+        elif a.get("relation") in (apart_cfg(cfg, d).get("relations") or ()) \
+                and conf >= float(apart_cfg(cfg, d).get("min_conf", 1.01)):
             d.tier, d.reason, d.conf, d.call_id, d.judge = "apart", "third", conf, call, dict(a)
         else:
             d.judge = dict(d.judge, third=a)
     return need
+
+
+def apart_cfg(cfg: Dict[str, Any], d: Decision) -> Dict[str, Any]:
+    """When the unsure queue's answer keeps a pair apart, by the reason it was held for (`third.apart`, measured per
+    class): {relations, min_conf}; none: never."""
+    return (cfg.get("apart") or {}).get(d.reason) or {}
 
 
 def third_kind(d: Decision) -> str:

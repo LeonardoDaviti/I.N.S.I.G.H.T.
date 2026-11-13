@@ -771,7 +771,7 @@ class TheUnsureQueue(_Db):
         saved = dict(I._BANDS) or dict(I.bands())
         I._BANDS.clear()
         I._BANDS.update(dict(saved, third={"on": True, "reasons": ["chain"], "same_min_conf": 0.8,
-                                           "apart_min_conf": 0.9, "apart_relations": ["different"]}))
+                                           "apart": {"chain": {"relations": ["different"], "min_conf": 0.9}}}))
         self.addCleanup(lambda: (I._BANDS.clear(), I._BANDS.update(saved)))
 
     def _decision(self):
@@ -804,6 +804,15 @@ class TheUnsureQueue(_Db):
         d.reason, d.reasons = "below_bar", ("below_bar",)
         self.assertEqual((I.third(book, [d], {}), I.third_kind(d)), ([d], "alias4"))
         self.assertEqual((I.model_for("alias4"), I.model_for("alias3")), ("sonnet", None))
+        I._BANDS["third"]["apart"] = {"below_bar": {"relations": ["different", "part"], "min_conf": 0.7}}
+        I.third(book, [d], {("a", "b"): [("c4", {"relation": "part", "confidence": 0.75})]})
+        self.assertEqual((d.tier, d.reason), ("apart", "third"))          # the weak class's measured apart row
+        book, d = self._decision()
+        d.reason, d.reasons = "below_bar", ("below_bar",)
+        I.third(book, [d], {("a", "b"): [("c4", {"relation": "part", "confidence": 0.65})]})
+        self.assertEqual(d.tier, "queue")                                   # below its bar: stays
+        book, d = self._decision()
+        d.reason, d.reasons = "below_bar", ("below_bar",)
         d.ask2 = True
         self.assertEqual(I.third(book, [d], {}), [])
         d.ask2, d.second = False, {"relation": "part", "confidence": 0.9}

@@ -162,3 +162,66 @@ read. The deterministic sub-classes are too small and mixed to reach the bar:
 
 So **no normaliser was built**. A judge does better: Haiku's alias-v2 on these 40 says `same` >= 0.85 on 25, 24 of
 them right (96%, Wilson low 80.5%), close to the bar but short. Sonnet, measured the same way, is the next step.
+
+## Round 4 (2026-11-14): version-held with Sonnet; Sonnet's apart on the weak class
+
+**Version-held with Sonnet** (alias4's question and model), blind on 60 fresh items, 43 of them labelled the same
+thing:
+
+| Class | n | right | precision | Wilson 95% | automatic? |
+|---|---|---|---|---|---|
+| `same` >= 0.9 | 28 | 28 | 100% | 87.9-100% | no (short of the bound; about 8 more right answers would pass it) |
+| `same` >= 0.8 | 45 | 42 | 93.3% | 82.1-97.7% | no |
+| not-`same` (any) | 11 | 11 | 100% | 74.1-100% | no |
+
+The three wrong merges: a product and its "for Business" tier; a report and its 2025 edition; a game and its Switch 2
+edition. All are editions, which is what the version guard is for. So the class stays yours. Asking it with Sonnet
+would cost about 10 $ per 1,000 (0.62 $ for these 60).
+
+**Sonnet's apart on the weak class.** All 40 of Sonnet's not-`same` answers among 160 fresh weak items were labelled
+blind, and pooled with the 120 before:
+
+| Sonnet's not-`same` | n | right | Wilson 95% |
+|---|---|---|---|
+| any confidence | 68 | 60 | 78.5-93.9% |
+| **>= 0.7** | **36** | **36** | **90.4-100%** → **on** (`third.apart.below_bar`) |
+| >= 0.8 | 24 | 24 | 86.2-100% |
+
+Every wrong apart was at 0.5-0.65. For example: a company and its predecessor's name; a benchmark and the index
+computed on it; one event series under two names; a campaign and its election.
+
+## Handoff: the queue after every switch
+
+The server's open queue as read on 2026-11-14: 13,368 distinct items. Estimates use each class's measured rates.
+The first full pass needs the worker run by hand (`alias`, `alias2`, `alias3`, `alias4` kinds) through a few decision
+runs: 2,000 open items are decided again each run.
+
+| Class | Items | Closes (already one / owner) | Merges | Apart | Stays yours | What decides |
+|---|---|---|---|---|---|---|
+| already one cluster | 1,253 | 1,253 | | | | the backlog pass |
+| a name rule's pair of two types | 304 | | ~60 | ~175 | ~70 | Haiku `different` >= 0.8; two `same` >= 0.85 |
+| held for type, Haiku `same` | ~105 | | ~70 | | ~35 | the second opinion (88/89) |
+| chain-held (chain, or two agreeing opinions blocked) | ~1,350 | | ~1,180 | | ~170 | alias3, Haiku `same` >= 0.8 (76/77) |
+| weak first `same` (< 0.85, no second) | 5,277 | | ~3,000 | ~840 | ~1,440 | alias4, Sonnet `same` >= 0.8 (67/68), not-`same` >= 0.7 (36/36) |
+| `same` >= 0.85 held below_bar (second asked or answered) | ~2,200 | | some, where the second agrees | | ~1,000 (the second disagrees) | the existing second opinion |
+| version-held | ~1,900 | | a few (version_year / version_one_side with an agreeing second) | | ~1,900 | the version guard; Sonnet short of the bar |
+| paren, fields_parser, maker_unstated, handle_extra_word | ~360 | | some (second opinion) | | ~150 | as before |
+| collision splits | 1,887 | | | | 1,887 until the facts `split` is switched on (54/54 measured) | 0184 |
+| renames | 69 | | | | 69 | the owner, by design |
+| **total** | **13,368** | **~1,250** | **~4,300+** | **~1,000** | **~6,700** | |
+
+**Cost of the one-off first pass:**
+
+| Item | Estimate |
+|---|---|
+| Sonnet for the weak class: 5,277 × ~9 $ per 1,000 | **~47 $** |
+| Haiku's alias3 for the chain class | ~0.75 $ |
+| Haiku's alias / alias2 for the rule-proposed and type-held pairs | ~0.10 $ |
+| The version class, if it is switched on later with Sonnet: ~1,900 × ~10 $ per 1,000 | ~20 $ (off now) |
+
+Round 3's "~67 $" applied Sonnet's rate to all ~7,500 below_bar items. Only the 5,277 weak ones with no second
+opinion are asked. After the backlog, new items arrive at the decision runs' rate and cost the same per item.
+
+**Not done.** The version class (Sonnet at >= 0.9 needs about 8 more right answers to decide). The owner's share of
+the `same` >= 0.85 items whose second opinion disagrees (never measured with a third judge). The collision splits (0184,
+behind the facts switch). Every Haiku and Sonnet call in rounds 1-4 together: about 3.5 $.
