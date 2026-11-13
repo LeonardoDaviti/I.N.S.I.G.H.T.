@@ -1,5 +1,6 @@
 // Tracks as topics (issue 0145, Mark X): their calls and shapes, beside createApi's, as the smart archiver's are.
 import { request } from '../lib/request';
+import type { Byline } from '../lib/byline';
 
 export type TrackLabel = 'in' | 'out';
 export type TrackPlace = 'track' | 'joined' | 'discover' | 'out';
@@ -10,6 +11,8 @@ export interface TrackItem {
   url: string | null;
   at: string | null;
   source: string | null;
+  /** Who wrote it, via whom (issue 0185). */
+  byline?: Byline | null;
   source_id: string;
   confidence: number | null;
   /** The judge's sub-topic words for it. */
@@ -86,6 +89,37 @@ export type SubtopicEdit =
   | { action: 'lock' | 'unlock'; id: string }
   | { action: 'add'; name: string; definition?: string };
 
+/** Where one post stands in a track and why (issue 0185, GET /tracks/{id}/why): stored rows only. */
+export type TrackWhyState = 'in' | 'joined' | 'discover' | 'out' | 'waiting' | 'not_asked';
+export type TrackWhyReason = 'not_a_topic' | 'labelled' | 'outside_window' | 'not_planned' | 'not_embedded' | 'no_profile'
+  | 'history_pending' | 'below_bar';
+export interface TrackWhy {
+  track: string;
+  post: string;
+  state: TrackWhyState;
+  origin: 'active' | 'passive';
+  reason?: TrackWhyReason;
+  label?: TrackLabel | null;
+  verdict?: boolean | null;
+  confidence?: number | null;
+  why?: string | null;
+  subtopic?: string | null;
+  found_by?: string[];
+  version?: number;
+  /** false: the verdict was asked under an older description. */
+  current?: boolean;
+  /** The current description's question is open while an older verdict stands. */
+  waiting_again?: boolean;
+  shown?: boolean;
+  /** Discover: its place among the Discover items, and how many the page shows. */
+  position?: number;
+  of?: number;
+  cut?: number;
+  section_items?: number;
+  days?: number;
+  bar?: number | null;
+}
+
 const base = (id: string) => `/api/markx/tracks/${encodeURIComponent(id)}`;
 
 export const tracksApi = {
@@ -99,4 +133,6 @@ export const tracksApi = {
   activate: (id: string, sourceId: string) =>
     request<{ added: boolean }>(`${base(id)}/sources/${encodeURIComponent(sourceId)}`, { method: 'POST' }),
   suggestions: () => request<TrackSuggestion[]>('/api/markx/tracks/suggestions'),
+  /** Issue 0185: a post (its id, its INSIGHT link or its address) in this track, and why. */
+  why: (id: string, post: string) => request<TrackWhy>(`${base(id)}/why?post=${encodeURIComponent(post)}`),
 };

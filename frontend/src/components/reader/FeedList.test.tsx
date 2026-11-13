@@ -491,7 +491,8 @@ describe('FeedList', () => {
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
       feedItem({ id: ID(1), title: 'software is dead. sad.', source_id: 'bg', source_display_name: 'badlogicgames', story: thread }),
       feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
-        repost: { by: [], author: 'badlogicgames' } }),
+        repost: { by: [], author: 'badlogicgames' },
+        byline: { author: '@badlogicgames', via: 'steipete', quoting: null } }),
     ])) });
     const toggle = await screen.findByRole('button', { name: 'Thread · 3 posts' });
     // On a phone a story's line may take two lines, so the names show (issue 0073).

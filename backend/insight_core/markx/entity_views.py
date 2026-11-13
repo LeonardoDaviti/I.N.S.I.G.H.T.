@@ -174,7 +174,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
                       "reports": len(a["reports"]), "mentions": len(a["posts"]) - len(a["reports"]),
                       "last_at": last, "last_seen": _when(last, now),
                       "stories": [{"id": s, "headline": heads.get(s)} for s, _ in sids.most_common(3)],
-                      "newest": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at")},
+                      "newest": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "byline")},
                                   "read": read} for p, (_at, read) in newest[eid]],
                       "surges": surge.get(eid, [])[:3]})
     return {"window_days": WINDOW_DAYS, "total": len(agg), "items": items, "accuracy": ACCURACY,
@@ -227,7 +227,7 @@ def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any
             now[pid].append({"id": root if root in book.ents else None,
                              "name": book.label(root) if root in book.ents else name, "type": schemas_type(type_)})
     posts = _posts(cur, pids)
-    out = [{**{k: (posts.get(pid) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "url")},
+    out = [{**{k: (posts.get(pid) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")},
             "id": pid, "guide": guide, "span": span, "now": now.get(pid, [])} for pid, guide, span in rows]
     out.sort(key=lambda x: (x["at"] is None, -(x["at"].timestamp() if x["at"] else 0), x["id"]))
     return out
@@ -347,7 +347,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     def line(pid: str) -> Dict[str, Any]:
         p = posts.get(pid) or {"id": pid}
         ln = lines.get(pid) or {"roles": set(), "read": None, "as": set()}
-        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")},
+        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")},
                 "roles": sorted(ln["roles"]), "read": ln["read"], "named": sorted(x for x in ln["as"] if x),
                 "about": pid in lines}
 
@@ -570,7 +570,7 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
         by[eid].append((role != "subject", -at.timestamp(), pid, span, role))
     pick = {eid: sorted(xs)[:n] for eid, xs in by.items()}
     posts = _posts(cur, {x[2] for xs in pick.values() for x in xs})
-    return {eid: [{**{k: (posts.get(x[2]) or {}).get(k) for k in ("id", "title", "source", "at")},
+    return {eid: [{**{k: (posts.get(x[2]) or {}).get(k) for k in ("id", "title", "source", "at", "byline")},
                    "span": x[3], "role": x[4]} for x in xs] for eid, xs in pick.items()}
 
 

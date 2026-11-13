@@ -43,6 +43,7 @@ from insight_core.utils.env import env_int
 from insight_core.utils.json_safe import iso
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
+from insight_core.utils.byline import of_row as byline_of, original_author, own_account
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.story_rules import confirmed, named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
@@ -271,20 +272,14 @@ def _excerpt(content: str | None) -> str:
     return clean_text(content)[:EXCERPT_CHARS]
 
 
-@lru_cache(maxsize=1024)
-def _own_account(platform: str | None, handle: str | None) -> str:
-    """The X account a source follows ("badlogicgames"), else ""."""
-    account = source_account(platform, handle) or ""
-    return account[len("x.com/"):] if account.startswith("x.com/") else ""
-
-
 def repost_of(platform: str | None, handle: str | None, author: str | None,
               reposted_by: Sequence[str] | None) -> Dict[str, Any] | None:
     """A row its source reposted (issue 0066): {by, author}, `by` the other accounts of yours that
     reposted it, never the row's own source (issue 0070: "badlogicgames ↻ from @thsottiaux"). None
-    when the row's source didn't repost it (its author's own tweet, the others said in its story)."""
-    own = _own_account(platform, handle)
-    if not author or not own or own not in [a.lower() for a in reposted_by or ()]:
+    when the row's source didn't repost it (its author's own tweet, the others said in its story).
+    Who wrote it is Byline's rule (issue 0185: byline.original_author); `by` is who else reposted it."""
+    own = own_account(platform, handle)
+    if not original_author("x", platform, handle, author, None) or own not in [a.lower() for a in reposted_by or ()]:
         return None
     return {"by": [a for a in reposted_by or () if a.lower() != own], "author": author}
 
@@ -353,7 +348,8 @@ _ITEM_COLUMNS = f"""
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
-    pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved'
+    pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved',
+    NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''), pp.quoted
 """
 
 
@@ -395,6 +391,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "repost": repost_of(platform, row[20], row[18], row[19]),
         # A page you saved that is a followed source's post (issue 0122): "<source> · saved by you".
         "saved_by_you": bool(row[23]),
+        # Who wrote it, via whom, quoting whom (issue 0185: Byline).
+        "byline": byline_of(row[5], platform, row[20], row[18], row[24], row[25]),
     }
 
 
@@ -524,7 +522,9 @@ class ReaderRepository:
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
                    p.reposted_by, p.author, s.handle_or_url, (SELECT pp.quote_only FROM post_parts pp WHERE pp.post_id = p.id),
-                   COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content)
+                   COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content),
+                   NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''),
+                   (SELECT pp.quoted FROM post_parts pp WHERE pp.post_id = p.id)
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -543,7 +543,7 @@ class ReaderRepository:
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
              origin_linked_by, reposted_by, author, handle, quotes, address, position, voice, content_hash,
-             text_chars) in cur.fetchall():
+             text_chars, forwarded, quoted_tweet) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -576,7 +576,7 @@ class ReaderRepository:
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
-                    "repost": repost, **parent,
+                    "repost": repost, "byline": byline_of(name, platform, handle, author, forwarded, quoted_tweet), **parent,
                 })
             else:
                 story.update(parent)

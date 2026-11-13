@@ -3,6 +3,7 @@
  * Types only, so the reader's bundle carries none of it (the page and the panel are their own chunks).
  */
 
+import type { Byline } from '../lib/byline';
 export type MarkxTag = 'NEW' | 'MERGED' | 'SPLIT' | 'CHANGED' | 'SAME';
 
 /** Why a post is in a Mark X story: the rule (Mark IX's link evidence) or the judge's relation, p and words. */
@@ -24,6 +25,8 @@ export interface MarkxLine {
   id: string;
   title: string | null;
   source: string | null;
+  /** Who wrote it, via whom (issue 0185). */
+  byline?: Byline | null;
   kind: string | null;
   at: string | null;
   url?: string | null;
@@ -65,6 +68,7 @@ export interface MarkxLeftOut {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind: string | null;
   at: string | null;
   /** The newest check of it, when one was asked. */
@@ -157,7 +161,7 @@ export interface MarkxTimelineEvent {
   rank: number;
   /** One of the 8 most important (shown before "all"). */
   top?: boolean;
-  post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null } | null;
+  post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null; byline?: Byline | null } | null;
   /** The name it was written as (birth, release), its earlier name (earlier_name), its name now (renamed). */
   name?: string | null;
   /** Other reasons the same post is on the line (the birth may be the maker's release, the first outside mention). */
@@ -185,6 +189,7 @@ export interface MarkxBefore {
   at: string | null;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   label: 'right' | 'wrong' | null;
 }
 
@@ -215,7 +220,7 @@ export interface MarkxOverview {
   briefing: { day: string | null; briefings: { created_at: string; guide: string | null;
     lines: { text: string; keys: string[]; stories: string[]; rows?: string[] }[] }[] };
   entities: Record<'today' | 'week', { key: string; version: string | null; name: string; type: string | null; posts: number;
-    voices: number; examples: { id: string | null; title: string | null; source: string | null }[] }[]>;
+    voices: number; examples: { id: string | null; title: string | null; source: string | null; byline?: Byline | null }[] }[]>;
   /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
   reading_window: { days: number | null; default: number };
   /** 0144: how far back the decision run makes Mark X's own stories (absent from an older API). */
@@ -398,6 +403,7 @@ export interface MarkxEntityPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind?: string | null;
   at: string | null;
   url?: string | null;
@@ -529,6 +535,7 @@ export interface MarkxOlderPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   at: string | null;
   url: string | null;
   guide: string;
@@ -552,7 +559,7 @@ export interface MarkxEntityGroup {
 
 export interface MarkxQueueSide extends MarkxEntityRef {
   root: string;
-  posts: { id: string; title: string | null; source: string | null; at: string | null; span: string; role: string | null }[];
+  posts: { id: string; title: string | null; source: string | null; byline?: Byline | null; at: string | null; span: string; role: string | null }[];
   group?: MarkxEntityGroup;
 }
 
@@ -669,6 +676,7 @@ export interface MarkxStoryPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind: string | null;
   at: string;
   url: string | null;

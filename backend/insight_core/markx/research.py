@@ -219,12 +219,15 @@ def resolve_entities(cur: Cursor, book: Any, kind: str, seed: str, links: Sequen
 def _post_rows(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
     if not ids:
         return []
-    cur.execute("""SELECT p.id::text, COALESCE(pp.title, p.title), COALESCE(p.surfaced_at, p.published_at, p.fetched_at),
-                          COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.url, s.id::text
-                     FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
-                    WHERE p.id = ANY(%s::uuid[])""", (list(ids),))
-    rows = [{"post_id": i, "title": t, "at": _iso(at), "source": s, "url": u, "source_id": sid}
-            for i, t, at, s, u, sid in cur.fetchall()]
+    from insight_core.utils import byline
+    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), COALESCE(p.surfaced_at, p.published_at, p.fetched_at),
+                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.url, s.id::text,
+                           {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (list(ids),))
+    # issue 0185: each row's byline (who wrote it, via whom)
+    rows = [{"post_id": i, "title": t, "at": _iso(at), "source": s, "url": u, "source_id": sid, "byline": byline.of_row(s, *by)}
+            for i, t, at, s, u, sid, *by in cur.fetchall()]
     return sorted(rows, key=lambda r: r["at"] or "", reverse=True)
 
 

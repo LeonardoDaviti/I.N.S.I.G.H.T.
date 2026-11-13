@@ -10,7 +10,7 @@ import { ExternalLink } from '../ui/TextLink';
 import { FOCUS_RING } from '../states';
 import { feedDateLabel, feedFullTime } from '../../lib/dates';
 import { middleTruncate } from '../../lib/format';
-import { sourceLabel } from '../../lib/sourceLabel';
+import { bylineName, bylineText } from '../../lib/byline';
 import { LINE_NAME, LINE_TITLE } from '../../lib/story';
 import { SAVE_PATH } from '../../lib/savePage';
 
@@ -196,7 +196,7 @@ function StoredRow({ row, now }: { row: ConnectedRow; now: Date }) {
   return (
     <li>
       <div className="flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap">
-        <span className={LINE_NAME} title={sourceLabel(row.source ?? '')}>{middleTruncate(sourceLabel(row.source ?? ''), 32)}</span>
+        <span className={LINE_NAME} title={bylineText(row.byline, row.source ?? '')}>{middleTruncate(bylineName({ byline: row.byline, source_display_name: row.source ?? '' }), 32)}</span>
         <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
         <Link to={`/posts/${encodeURIComponent(row.post_id ?? '')}`} dir="auto"
           className={`${LINE_TITLE} rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}>

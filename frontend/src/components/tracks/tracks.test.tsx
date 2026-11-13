@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 
 import TrackTopic from './TrackTopic';
 import TrackSourceLines from './TrackSourceLines';
-import { footerLine, foundByLine, joinLine, precisionLine, rankWords, suggestionLine } from './trackWords';
+import { footerLine, foundByLine, joinLine, precisionLine, rankWords, suggestionLine, whyLine } from './trackWords';
 import { tracksApi, type TrackItem, type TrackPage } from '../../services/tracks';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
@@ -69,6 +69,38 @@ describe('found by (0147)', () => {
     expect(within(discover).getByText(/confidence 70%/)).toHaveAttribute('title', 'found by: words, source');
     const storage = screen.getByRole('region', { name: 'Wall storage' });
     expect(within(storage).getAllByText(/Example Channel/)[0]).not.toHaveAttribute('title');
+  });
+});
+
+describe('why a post is or is not in the track (0185)', () => {
+  const base = { track: 'f1', post: 'p7', origin: 'passive' as const };
+  it('says each stored state in words', () => {
+    expect(whyLine({ ...base, state: 'out', verdict: false, confidence: 0.84, why: 'A printer review.', current: true }))
+      .toBe('Out: Haiku says it doesn’t belong (confidence 84%): “A printer review.”');
+    expect(whyLine({ ...base, state: 'discover', verdict: true, confidence: 0.6, why: 'A cable tray.', position: 140, of: 300,
+      cut: 100, shown: false, current: true }))
+      .toBe('In Discover, 140 of 300: Haiku says it belongs (confidence 60%), but its source is not in this track: “A cable tray.” — below the Discover cut (the page shows 100)');
+    expect(whyLine({ ...base, state: 'in', origin: 'active', verdict: true, confidence: 0.9, why: null, current: false }))
+      .toBe('In: Haiku says it belongs (confidence 90%) — judged under an earlier description');
+    expect(whyLine({ ...base, state: 'not_asked', reason: 'below_bar', bar: 0.47 }))
+      .toBe('Not asked: its source is not in this track, and the finders did not put it up (bar 0.47)');
+    expect(whyLine({ ...base, state: 'not_asked', reason: 'not_embedded' })).toBe('Not asked: not embedded yet, so no finder could read it');
+    expect(whyLine({ ...base, state: 'not_asked', origin: 'active', reason: 'outside_window', days: 30 }))
+      .toBe('Not asked: its source is in this track, but it is older than the reading window (30 days)');
+    expect(whyLine({ ...base, state: 'waiting' })).toBe('Asked, waiting for Haiku’s answer');
+    expect(whyLine({ ...base, state: 'out', label: 'out', reason: 'labelled' })).toBe('Out: your ✗');
+  });
+
+  it('asks for a pasted post and shows the line', async () => {
+    vi.spyOn(tracksApi, 'page').mockResolvedValue(PAGE);
+    const why = vi.spyOn(tracksApi, 'why').mockResolvedValue({ ...base, state: 'out', verdict: false, confidence: 0.84,
+      why: 'A printer review.', current: true });
+    renderWithProviders(<TrackTopic folderId="f1" />, { api: makeFakeApi({}) });
+    const form = await screen.findByRole('form', { name: 'Why is a post not here?' });
+    await userEvent.type(within(form).getByLabelText('A post’s link or address'), 'https://blog.example/a-review');
+    await userEvent.click(within(form).getByRole('button', { name: 'Why not here?' }));
+    expect(why).toHaveBeenCalledWith('f1', 'https://blog.example/a-review');
+    expect(await within(form).findByText(/^Out: Haiku says it doesn’t belong/)).toBeInTheDocument();
   });
 });
 

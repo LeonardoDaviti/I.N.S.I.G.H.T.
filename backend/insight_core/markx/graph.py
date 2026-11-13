@@ -766,6 +766,7 @@ def before(cur: Any, post_id: str, *, shown: int = BEFORE_SHOWN) -> Dict[str, An
         items.append({"post_id": b, "relation": e["relation"], "rule": e["rule"], "p": e["p"],
                       "reason": _shown(e, p.get("title")), "uncertain": e["rule"] is None,
                       "at": at.isoformat() if at else None, "title": p.get("title") or None, "source": p.get("source"),
+                      "byline": p.get("byline"),
                       "label": marks.get(b)})
     items.sort(key=lambda r: (r["at"] or "", r["post_id"]))
     return {"items": items[:shown], "more": max(0, len(items) - shown)}

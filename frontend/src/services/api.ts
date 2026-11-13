@@ -2,6 +2,7 @@
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
+import type { Byline } from '../lib/byline';
 import type {
   MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
   MarkxPrecision, MarkxSettings,
@@ -76,6 +77,8 @@ export interface Post {
   internal_links?: Record<string, string>;
   /** A repost (issue 0066): who reposted it, and its author; null when none. */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
   /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
   counts?: Counts | null;
   /** A link post's page (issue 0072): its title when known, and the stored post at it. */
@@ -87,6 +90,7 @@ export interface Post {
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
+export type { Byline };
 export interface Counts { points: number; comments: number; }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
@@ -148,6 +152,8 @@ export interface FeedItem {
   news?: NewsScore | null;
   /** A repost (issue 0066); null or absent when none. */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
   /** A Hacker News item's points and comments (issue 0070): "1,675 points · 1,628 comments". */
   counts?: Counts | null;
   /** A page you saved that is its source's post (issue 0122): "<source> · saved by you". */
@@ -234,6 +240,8 @@ export interface StoryPost {
   reposted_by?: string[] | null;
   /** A tweet its source reposted (issue 0070): the line names its author, "@danintheory · … · ↻ sama". */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */
@@ -1578,6 +1586,8 @@ export interface ConnectedRow {
   address?: string;
   host?: string;
   source: string | null;
+  /** Who wrote it, via whom (issue 0185); stored rows only. */
+  byline?: Byline | null;
   source_id?: string;
   date: string | null;
   title: string | null;
@@ -1859,7 +1869,7 @@ export const telegramBridge = async (): Promise<string | null> =>
 // owner's label on each. Read by components/markx/MarkXBack.tsx (the Mark X chunk).
 export type MarkxBackLabel = 'development' | 'retold' | 'related' | 'unrelated';
 export interface MarkxBackPost {
-  id: string; n: number; title: string | null; source: string | null; at: string | null; url: string | null;
+  id: string; n: number; title: string | null; source: string | null; byline?: Byline | null; at: string | null; url: string | null;
   trig: string[]; verdict: MarkxBackLabel | null; about: string | null;
 }
 export interface MarkxBackRow {

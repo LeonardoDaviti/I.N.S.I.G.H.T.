@@ -6,6 +6,7 @@ import { Button, ExternalLink, Page, PageHeader, TextLink, Textarea } from '../c
 import { ErrorState, LoadingState } from '../components/states';
 import { folderReadPath } from '../lib/feedContext';
 import { plural } from '../lib/format';
+import { bylineText } from '../lib/byline';
 import { scoutLine, unreadLine } from '../services/scout';
 import {
   accountLine, referencesLine, researchApi, researchHref, seedWords, statusLine,
@@ -30,7 +31,7 @@ function PostRow({ p }: { p: ResearchPostRow }) {
   return (
     <li className="py-1 text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
       <TextLink to={`/posts/${encodeURIComponent(p.post_id)}`}>{p.title || '(no title)'}</TextLink>
-      <span className="text-fg-3">{[p.source, p.at ? new Date(p.at).toLocaleDateString() : null, p.why].filter(Boolean).map((x) => ` · ${x}`).join('')}</span>
+      <span className="text-fg-3">{[bylineText(p.byline, p.source), p.at ? new Date(p.at).toLocaleDateString() : null, p.why].filter(Boolean).map((x) => ` · ${x}`).join('')}</span>
       <New on={p.new} />
     </li>
   );

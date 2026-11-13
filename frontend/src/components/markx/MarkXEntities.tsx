@@ -11,6 +11,7 @@ import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
+import { bylineText } from '../../lib/byline';
 
 export const ENTITIES_KEY = ['markx-entities'] as const;
 export const QUEUE_KEY = ['markx-entity-queue'] as const;
@@ -42,7 +43,7 @@ export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Dat
     <li className={`min-w-0 truncate text-[0.8125rem] ${post.read ? 'text-fg-3' : 'text-fg-2'}`} data-read={post.read || undefined}>
       <TextLink to={`/posts/${encodeURIComponent(post.id)}`} muted>{post.title || '(no title)'}</TextLink>
       <span className="text-fg-3">
-        {post.source ? ` · ${post.source}` : ''}{post.at ? ` · ${postBylineTime(post.at, now)}` : ''}
+        {post.source ? ` · ${bylineText(post.byline, post.source)}` : ''}{post.at ? ` · ${postBylineTime(post.at, now)}` : ''}
         {post.roles?.length ? ` · ${post.roles.join(', ')}` : ''}{post.read ? ' · read' : ''}
       </span>
     </li>
@@ -174,7 +175,7 @@ function Side({ side }: { side: MarkxQueueSide }) {
         {side.posts.map((p) => (
           <li key={p.id} className="min-w-0 truncate text-[0.8125rem] text-fg-2">
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
-            <span className="text-fg-3"> · {p.source} · “{p.span}”</span>
+            <span className="text-fg-3"> · {bylineText(p.byline, p.source)} · “{p.span}”</span>
           </li>
         ))}
       </ul>

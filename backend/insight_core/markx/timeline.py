@@ -312,7 +312,7 @@ def _shown(cur: Any, evs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for e in evs:
         p = posts.get(e["post"]) if e.get("post") else None
         out.append({**{k: v for k, v in e.items() if k != "post"},
-                    "post": {k: p.get(k) for k in ("id", "title", "source", "kind", "url")} if p else None})
+                    "post": {k: p.get(k) for k in ("id", "title", "source", "kind", "url", "byline")} if p else None})
     return out
 
 

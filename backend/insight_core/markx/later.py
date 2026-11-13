@@ -663,7 +663,8 @@ def _items(cur: Any, rows: Sequence[Tuple]) -> Tuple[List[Dict[str, Any]], Dict[
         counts[verdict or "waiting"] += 1
         p = shown.get(pid) or {}
         items.append({"id": lid, "story": story, "headline": (shown.get(story) or {}).get("title"), "post": pid,
-                      "title": p.get("title"), "url": p.get("url"), "source": p.get("source"), "at": back._iso(at),
+                      "title": p.get("title"), "url": p.get("url"), "source": p.get("source"), "byline": p.get("byline"),
+                      "at": back._iso(at),
                       "days_after": max(0, (at - last).days), "trig": list(trig), "entity": ent,
                       "entity_name": names.get(ent), "verdict": verdict, "runs": list(runs or []),
                       "label": marks.get(lid), "rule": rule})

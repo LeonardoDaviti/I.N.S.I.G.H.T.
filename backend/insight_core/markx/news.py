@@ -422,19 +422,20 @@ def briefing(cur: Any, *, ask: Any, now: datetime, hour: int, limit: int) -> Dic
 
 def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """The page's post lines: title (the one every page shows), source, platform, time (published: built.PUBLISHED,
-    0128; a saved page by its own date)."""
+    0128; a saved page by its own date), and its byline (issue 0185: who wrote it, via whom, quoting whom)."""
+    from insight_core.utils import byline
     from insight_core.utils.post_links import source_kind
     ids = sorted(set(ids))
     if not ids:
         return {}
-    cur.execute("""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text,
-                          COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
-                                   s.handle_or_url),
-                          s.platform, s.handle_or_url, COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.url
-                     FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
-                    WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text, {byline.SOURCE_NAME},
+                           COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.url, {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    owns: Dict[Any, str] = {}
     return {pid: {"id": pid, "title": title or "", "source_id": sid, "source": name or "", "kind": source_kind(platform, handle),
-                  "at": at, "url": url} for pid, title, sid, name, platform, handle, at, url in cur.fetchall()}
+                  "at": at, "url": url, "byline": byline.of_row(name, platform, handle, author, fwd, quoted, owns=owns)}
+            for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in cur.fetchall()}
 
 
 def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -546,7 +547,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
         w = why.get((story, pid)) if story else None
         nid = ix_of.get(pid)
         ix = ({"row": nid, "title": ix_titles.get(nid), "same_row": nid in row_ids} if nid else None)
-        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")}, "why": w, "ix": ix}
+        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")}, "why": w, "ix": ix}
 
     items = []
     for r in shown:
@@ -560,7 +561,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                 if pid in mine:
                     continue
                 p = posts.get(pid) or {"id": pid}
-                removed.append({**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")},
+                removed.append({**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")},
                                 "check": checks.get(pid), "now_in": x_of.get(pid),
                                 "mention": next((w for (s, q), w in why.items() if q == pid and w["role"] != "member"), None)})
         items.append({"id": str(r["id"]), "tag": r["tag"], "headline": heads[str(r["id"])], "first_at": r["first_at"],
@@ -577,7 +578,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     gone = []
     for nid in sorted(gone_rows, key=lambda n: -(ix_meta.get(n) or {}).get("voices", 0)):
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),
-                     "posts": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at")},
+                     "posts": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "byline")},
                                 "check": checks.get(p),
                                 "mention": next((w for (s, q), w in why.items() if q == p and w["role"] != "member"), None)}
                                for p in sorted(ix_rows[nid])]})
@@ -660,7 +661,7 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
         rows = cur.fetchall()
         posts = _posts(cur, {p for r in rows for p in (r[6] or [])})
         out[name] = [{"key": k, "version": shown or v or None, "name": n, "type": t, "posts": np_, "voices": nv,
-                      "examples": [{k2: (posts.get(p) or {}).get(k2) for k2 in ("id", "title", "source")} for p in (ps or [])]}
+                      "examples": [{k2: (posts.get(p) or {}).get(k2) for k2 in ("id", "title", "source", "byline")} for p in (ps or [])]}
                      for k, v, n, t, np_, nv, ps, shown in rows]
     return out
 

@@ -145,6 +145,12 @@ class PostRefsRepository:
                 else:
                     kept.append(r)
             groups[g] = kept
+        # issue 0185: each stored row's byline (who wrote it, via whom), one query
+        from insight_core.utils.byline import bylines
+        stored = [r for rows in (groups["earlier"], groups["later"], navigation) for r in rows if r.get("post_id")]
+        bys = bylines(cur, [r["post_id"] for r in stored])
+        for r in stored:
+            r["byline"] = bys.get(r["post_id"])
         caps = {"earlier": EARLIER_SHOWN, "later": LATER_SHOWN, "outside": OUTSIDE_SHOWN}
         out: Dict[str, Any] = {"more": {}}
         for group, rows in groups.items():
