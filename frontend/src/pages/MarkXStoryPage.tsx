@@ -8,6 +8,7 @@ import { MemberLine, StorySheet } from '../components/markx/MarkXPerspectives';
 import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how the story is built
 import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
 import { StoryLater } from '../components/markx/MarkXLater';   // 0163: later developments
+import { AlsoInRoundups } from '../components/markx/MarkXRoundup';   // 0181: also in round-ups
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 
@@ -45,6 +46,7 @@ export default function MarkXStoryPage() {
             <EmptyState title="Not judged yet"
               description="Perspectives are asked for stories of 3 or more sources in the News window, after the worker answers." />
           ) : null}
+          <AlsoInRoundups roundups={d.roundups} />
           <BuiltSection built={built} posts={d.posts} />
           {d.sheet ? <StorySheet sheet={d.sheet} posts={d.posts} /> : null}
           {worth.length ? (
