@@ -61,7 +61,10 @@ class Table(unittest.TestCase):
         self.assertTrue(pairing.independent("s1", "telegram", "s2", "site"))
         self.assertFalse(pairing.independent("s1", "telegram", "s1", "site"))
         self.assertFalse(pairing.independent("s1", "saved", "s2", "site"))
-        self.assertEqual(pairing.post_date("x"), "COALESCE(x.surfaced_at, x.published_at, x.fetched_at)")
+        self.assertEqual(pairing.ordinary_date("x"), "COALESCE(x.surfaced_at, x.published_at, x.fetched_at)")
+        # 0181: a round-up's issue time first, else that same expression (tests/test_markx_units.py: identical dates)
+        self.assertTrue(pairing.post_date("x").endswith(", COALESCE(x.surfaced_at, x.published_at, x.fetched_at))"))
+        self.assertIn("mx_roundups", pairing.post_date("x"))
         self.assertEqual(pairing.page_address("https://www.example.com/a/B/"), "example.com/a/b")
         self.assertEqual(pairing.page_key("https://www.example.com/a/B/"), "example.com/a/b")
 
