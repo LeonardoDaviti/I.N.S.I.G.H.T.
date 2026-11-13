@@ -258,7 +258,7 @@ class Jobs:
         """v10.13.2/4: the kinds a lease no longer plans (tasks.BACKGROUND_PLANNED), each in its own transaction before
         the decision run and outside its budget, so they are planned even while a decision run fails. Never fails the
         run: {kind: {added, seconds} | {planned: "by the lease"} | {error}}."""
-        from insight_core.markx import tasks
+        from insight_core.markx import tasks, unchanged
         out: Dict[str, Any] = {}
         for kind in tasks.BACKGROUND_PLANNED:
             t = time.monotonic()
@@ -267,12 +267,17 @@ class Jobs:
                     if not tasks.planned_in_background(cur, kind, self.clock()):
                         out[kind] = {"planned": "by the lease"}
                         continue
-                    added = tasks.PLANNERS[kind](cur)
+                    # 0183: skipped while what it reads is as it was at its last pass that planned nothing
+                    added = unchanged.run(cur, "plan:" + kind, *tasks.background_inputs(cur, kind, self.clock()),
+                                          lambda: tasks.PLANNERS[kind](cur))
             except Exception as exc:
                 log.exception("Mark X jobs: planning %s failed", kind)
                 out[kind] = {"error": str(exc)[:300]}
                 continue
             seconds = round(time.monotonic() - t, 1)
+            if added is None:
+                out[kind] = {"unchanged": True, "seconds": seconds}
+                continue
             log.info("Mark X jobs: %d %s tasks planned in %.1f s", added, kind, seconds)
             out[kind] = {"added": added, "seconds": seconds}
         return out

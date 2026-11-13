@@ -1331,6 +1331,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
+    incremental.release(memo)           # 0183: the texts and readings the stages above read, let go
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage, identity
     # v10.16: the entity book is read once for the entities stage, and once after it (its entities, names, merges and
@@ -1342,6 +1343,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     days = set()                        # deferred: it linked nothing, no day to recount; and no "entities" counts,
     if got is not None:                 # so the next run resumes a full pass from the last finished run's record
         counts["entities"], days = got
+    book = None                         # 0183: the stage's book let go before the next is read (was: both held to the end)
     book_now = identity.load_book(cur, counts=False)
     mark("surges")                      # 0119 A2
     counts["surges"] = guarded("surges", lambda: entity_stage.surges(cur, now=now, run_id=run_id, days=days,

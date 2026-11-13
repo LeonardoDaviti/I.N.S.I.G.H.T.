@@ -122,6 +122,7 @@ class _Api(unittest.TestCase):
         self.cur = self.conn.cursor()
         # a scratch _test database: each test starts from empty mx_* tables and no worker token
         self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        self.cur.execute("DELETE FROM mx_inc_state")   # 0183: no pass's kept stamp (an empty table's) carries over
         self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
         self.source = insert_scratch_source(self.cur, platform="telegram",
                                             settings_json=json.dumps({"display_name": "Example Channel"}))

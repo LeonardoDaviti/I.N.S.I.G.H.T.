@@ -50,6 +50,8 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
+from insight_core.markx.unchanged import table_stamps   # 0183: one table stamp for every pass
+
 log = logging.getLogger(__name__)
 
 KINDS = ("check", "join", "pair", "merge", "card", "headline", "connect", "briefing")   # the tasks a run reads
@@ -241,16 +243,6 @@ def nightly_due(cur: Any, now: datetime) -> bool:
     return last is None or last < mark
 
 
-def table_stamps(cur: Any, tables: Iterable[str]) -> Dict[str, Tuple]:
-    """Each table's rows, newest row version and a sum of its row versions' hashes (transaction and place): any insert,
-    update or delete since changes it (a new version has a newer xmin, or, in the same transaction, another ctid)."""
-    out = {}
-    for t in tables:
-        cur.execute(f"SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint) FROM {t}")
-        out[t] = tuple(None if x is None else int(x) for x in cur.fetchone())
-    return out
-
-
 # ---- the dirty set -----------------------------------------------------------------------------------------
 
 def refresh(cur: Any, state: State) -> Dict[str, Any]:
@@ -427,6 +419,14 @@ class LazyTexts(Mapping):
     def items(self):   # every text: read at once
         self.load(self.state.rules)
         return [(i, self.state.texts[i]) for i in self.state.rules if i in self.state.texts]
+
+
+def release(state: State) -> None:
+    """0183: the texts and readings this run read, let go once the reading is done (the decision run's stages after
+    News read neither; were held to the run's end, beside the entity book: a full run's every text). A text or reading
+    used after is read again, from the run's one snapshot."""
+    state.texts.clear()
+    state.readings.clear()
 
 
 class LazyReadings(Mapping):
