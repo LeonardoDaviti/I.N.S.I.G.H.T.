@@ -137,6 +137,7 @@ def start_once() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
+    freeze_start()  # issue 0202: the start's objects out of the GC's reach, so the idle collection is cheap
     if os.getenv("INSIGHT_API_SUPERVISED") != "1":
         start_once()
     # Mark X's jobs never run here (0112 Decided 10): insight-ingestion runs them (markx/jobs.py).
@@ -177,6 +178,9 @@ app.add_middleware(
 # Issue 0195: the polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
 from insight_core.routers.conditional import ConditionalGet  # noqa: E402
 app.add_middleware(ConditionalGet)
+# Issue 0202: the outermost; when the process is idle, the memory its requests freed goes back to the OS.
+from insight_core.utils.idle_trim import IdleTrim, freeze_start  # noqa: E402
+app.add_middleware(IdleTrim)
 
 
 # ============= ERRORS =============

@@ -62,6 +62,9 @@ services:
       INSIGHT_LOG_DIR: /app/logs
       # glibc: cap per-thread arenas and keep the trim threshold static, so freed
       # pages actually return to the OS instead of being pinned by fragmentation.
+      # Issue 0202: 2 arenas measured 222 MB a process after a session (glibc's default: 279). The threshold
+      # returns only the top of the main heap; each API process also collects and trims when it is idle
+      # (utils/idle_trim.py; INSIGHT_API_TRIM=off switches that off).
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
     env_file:

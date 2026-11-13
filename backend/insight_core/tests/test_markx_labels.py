@@ -29,6 +29,12 @@ def item(n, feature="join", p=0.9, accepted=True, relation="same_event", bar=0.6
                   relation=relation, accepted=accepted)
 
 
+
+def _wanted(cur) -> bool:
+    """0199, 0198: the Labels queue is wanted (labels.ask's mark, which the jobs process's policy reads)."""
+    from insight_core.markx import jobs
+    return jobs.state(cur)["labels"]["wanted_at"] is not None
+
 class Queue(unittest.TestCase):
     """The pure parts: the pools, the sample and its order, the cut, the precision arithmetic."""
 
@@ -297,9 +303,10 @@ class Labels(unittest.TestCase):
         q = L.kept(self.cur)
         self.assertTrue(q.building)
         self.assertIsNone(q.key)
-        self.assertFalse(L.missing(self.cur))                                        # 0199: not kept, nobody asked
+        self.assertTrue(L.missing(self.cur))                                         # not kept,
+        self.assertFalse(_wanted(self.cur))                                          # 0199: nobody asked
         L.ask(self.cur, q)                                                           # a Labels page opened
-        self.assertTrue(L.missing(self.cur))
+        self.assertTrue(_wanted(self.cur))
         view = L.queue_view(self.cur, q)
         self.assertEqual((view["total"], view["next"], view["run"]), (0, [], q.run))
         L.keep(self.cur, now=self.now)
@@ -425,7 +432,8 @@ class Routes(unittest.TestCase):
         self.assertEqual(status, 503)
         self.cur.execute("SELECT count(*) FROM mx_label_queues")
         self.assertEqual(self.cur.fetchone()[0], 0)                                  # nothing built in the API
-        self.assertTrue(L.missing(self.cur), "0199: opening it asked the jobs process for it")
+        self.assertTrue(L.missing(self.cur))
+        self.assertTrue(_wanted(self.cur), "0199: opening it asked the jobs process for it")
         self.keep()
         status, body = call("GET", "/api/markx/labels")
         self.assertEqual((status, body["building"], body["next"]), (200, False, [str(self.task)]))

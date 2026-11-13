@@ -83,23 +83,25 @@ class TheLabelsQueue(unittest.TestCase):
 
     def test_due_when_missing_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
+        asked = {"wanted_at": T0 - timedelta(minutes=1)}                       # 0199: a Labels page asked for it
         self.assertIsNone(jobs.due(_states(decide=recent), T0))
-        self.assertEqual(jobs.due(_states(decide=recent), T0, labels_missing=True), "labels")
-        self.assertEqual(jobs.due(_states(), T0, labels_missing=True), "decide")                # a run first
-        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0, labels_missing=True),
-                         "labels")
+        self.assertIsNone(jobs.due(_states(decide=recent), T0, kept_missing={"labels"}))    # 0199: nobody asked
+        self.assertEqual(jobs.due(_states(decide=recent, labels=asked), T0, kept_missing={"labels"}), "labels")
+        self.assertEqual(jobs.due(_states(labels=asked), T0, kept_missing={"labels"}), "decide")     # a run first
+        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}, labels=asked), T0,
+                                  kept_missing={"labels"}), "labels")
 
     def test_a_failed_build_waits_for_its_backoff(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
         failed = {"started_at": T0 - timedelta(minutes=3), "finished_at": T0 - timedelta(minutes=2),
-                  "last": {"ok": False, "error": "boom"}, "failures": 1}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True))
+                  "last": {"ok": False, "error": "boom"}, "failures": 1, "wanted_at": T0 - timedelta(minutes=2)}
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}))
         failed["finished_at"] = T0 - timedelta(minutes=11)                                    # GAP x 2 after its end
-        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True), "labels")
-        ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}}                   # a newer run's
-        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, labels_missing=True), "labels")
-        running = {"started_at": T0 - timedelta(seconds=40), "stage": "building"}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, labels_missing=True))
+        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}), "labels")
+        ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}, "wanted_at": T0}  # a newer run's
+        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, kept_missing={"labels"}), "labels")
+        running = {"started_at": T0 - timedelta(seconds=40), "stage": "building", "wanted_at": T0}
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, kept_missing={"labels"}))
 
 
 class TheOrderOfRuns(unittest.TestCase):
@@ -262,7 +264,8 @@ class TheRunner(_Api):
         with self.conn.transaction():
             clear_tables(self.cur, "mx_label_queue_items, mx_label_queues")
             self.cur.execute("DELETE FROM mx_jobs WHERE job = 'labels'")
-        self.assertFalse(labels.missing(self.cur))                  # 0199: not kept, but nobody asked
+        self.assertTrue(labels.missing(self.cur))                   # not kept,
+        self.assertIsNone(jobs.state(self.cur)["labels"]["wanted_at"])   # 0199: but nobody asked
         self.assertIsNone(self.runner().tick())
         with self.conn.transaction():
             labels.ask(self.cur, labels.kept(self.cur))              # a Labels page opened: "being built"
