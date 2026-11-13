@@ -11,7 +11,7 @@ import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its t
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
-  MarkxEntityHandles, MarkxSampleAnswer } from '../services/markx';
+  MarkxEntityHandles, MarkxEntityLimits, MarkxSampleAnswer } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
 import { researchStartHref } from '../services/research';
@@ -261,6 +261,9 @@ function Handles({ h, name, onReplies }: { h: MarkxEntityHandles; name: string; 
   );
 }
 
+/** How many more stories and posts in no story one Show more asks for (issue 0195: the API's pages). */
+const ENTITY_MORE = { stories: 50, loose: 100 } as const;
+
 export default function MarkXEntityPage() {
   const { entityId = '' } = useParams();
   const api = useApi();
@@ -269,8 +272,11 @@ export default function MarkXEntityPage() {
   const [byLimit, setByLimit] = useState<number | undefined>(undefined);
   const [mentionsOpen, setMentionsOpen] = useState(false);
   const [replies, setReplies] = useState(false);   // 0168: the replies to its handles, hidden by default
-  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null, replies],
-    queryFn: () => (replies ? api.getMarkxEntity(entityId, byLimit, true)
+  // Issue 0195: the API lists the first 50 stories and 100 posts in no story; Show more asks for more.
+  const [limits, setLimits] = useState<MarkxEntityLimits | undefined>(undefined);
+  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null, replies, limits ?? null],
+    queryFn: () => (limits ? api.getMarkxEntity(entityId, byLimit, replies || undefined, limits)
+      : replies ? api.getMarkxEntity(entityId, byLimit, true)
       : byLimit === undefined ? api.getMarkxEntity(entityId) : api.getMarkxEntity(entityId, byLimit)), staleTime: 30_000,
     placeholderData: (previous, last) => (last?.queryKey[1] === entityId ? previous : undefined) });
   const refresh = () => void client.invalidateQueries({ queryKey: ['markx-entity', entityId] });
@@ -354,6 +360,11 @@ export default function MarkXEntityPage() {
           ) : null}
           {d.sample?.length ? <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} /> : null}
           {d.stories.map((s) => <StoryBlock key={s.story} s={s} />)}
+          {d.stories_total !== undefined && d.stories_total > d.stories.length ? (
+            <button type="button" className="text-[0.8125rem] text-fg underline-offset-2 hover:underline"
+                    onClick={() => setLimits({ ...limits, stories: d.stories.length + ENTITY_MORE.stories })}>
+              Show more stories · {d.stories_total - d.stories.length} more</button>
+          ) : null}
           {d.by && (d.by.sources.length || d.by.proposed.length) ? (
             <section aria-label={`By ${e.name}`}>
               <h2 className={H2}>By {e.name} · {plural(d.by.posts, 'post')}</h2>
@@ -376,6 +387,11 @@ export default function MarkXEntityPage() {
                         onClick={() => setByLimit(counts.by)}>Show all {plural(counts.by, 'post')} in no story</button>
               ) : null}
             </section>
+          ) : null}
+          {d.loose_total !== undefined && d.loose_total > d.loose.length ? (
+            <button type="button" className="text-[0.8125rem] text-fg underline-offset-2 hover:underline"
+                    onClick={() => setLimits({ ...limits, loose: d.loose.length + ENTITY_MORE.loose })}>
+              Show more posts in no story · {d.loose_total - d.loose.length} more</button>
           ) : null}
           {d.handles?.known.length ? <Handles h={d.handles} name={e.name} onReplies={() => setReplies(true)} /> : null}
           {group(0).length || group(2).length || group(3).length ? (
