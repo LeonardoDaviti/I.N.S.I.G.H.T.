@@ -39,7 +39,8 @@ at 101% CPU and every /api/* request timed out.
   - **The Labels tab's queue is built here** (0182, the job "labels"): right after each decision run, in a process
     and a transaction of its own (a failure never touches the run, which is committed already), and on any pass that
     finds the newest run's queue not kept for this code (the first start after a deploy; a failed build is tried
-    again after GAP seconds). It is a whole decision reading (labels.population): it was built in insight-api before,
+    again after its backoff). v10.18 (0199): only when wanted: a Labels page opened while the newest run's queue is
+    not kept marks it (labels.ask, labels.missing), so a run nobody labels after costs no build. It is a whole decision reading (labels.population): it was built in insight-api before,
     whose RSS then stayed at the build's high-water mark. The API reads only the kept queue (labels.kept).
   - **A job that keeps failing backs off** (0188): mx_jobs.failures counts its failed runs in a row (a run that
     raised, stopped over LIMIT, was killed at HARD_LIMIT, crashed, or was found dead); the next try waits
@@ -397,7 +398,8 @@ class Jobs:
                 out = mx_labels.keep(cur, now=self.clock(), peak=peak)
         except Exception as exc:
             log.exception("Mark X labels: building the queue failed; tried again later")
-            self._finish("labels", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            self._finish("labels", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
+                         again=True)   # 0199: still wanted (its start cleared the mark), tried after its backoff
             return None
         seconds = round(time.monotonic() - t0, 1)
         log.info("Mark X labels: the queue of run %s kept in %.1f s (%s items, peak %.0f MB)", out.get("run"), seconds,

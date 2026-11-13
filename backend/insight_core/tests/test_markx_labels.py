@@ -285,6 +285,8 @@ class Labels(unittest.TestCase):
         q = L.kept(self.cur)
         self.assertTrue(q.building)
         self.assertIsNone(q.key)
+        self.assertFalse(L.missing(self.cur))                                        # 0199: not kept, nobody asked
+        L.ask(self.cur, q)                                                           # a Labels page opened
         self.assertTrue(L.missing(self.cur))
         view = L.queue_view(self.cur, q)
         self.assertEqual((view["total"], view["next"], view["run"]), (0, [], q.run))
@@ -297,7 +299,7 @@ class Labels(unittest.TestCase):
         self.assertEqual((q.key, q.order), (first.key, first.order))                  # the last kept one meanwhile
         with mock.patch.object(L, "stamp", lambda settings=L.Settings(): "another code"):
             self.assertIsNone(L.kept(self.cur).key)                                  # another code's is never read
-            self.assertTrue(L.missing(self.cur))
+            self.assertTrue(L.missing(self.cur))                                     # asked above, not built since
 
     def test_the_items_of_older_queues_are_pruned_and_their_headers_kept(self):
         self.scene()
@@ -411,6 +413,7 @@ class Routes(unittest.TestCase):
         self.assertEqual(status, 503)
         self.cur.execute("SELECT count(*) FROM mx_label_queues")
         self.assertEqual(self.cur.fetchone()[0], 0)                                  # nothing built in the API
+        self.assertTrue(L.missing(self.cur), "0199: opening it asked the jobs process for it")
         self.keep()
         status, body = call("GET", "/api/markx/labels")
         self.assertEqual((status, body["building"], body["next"]), (200, False, [str(self.task)]))

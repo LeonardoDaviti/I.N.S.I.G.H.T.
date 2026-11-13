@@ -220,6 +220,8 @@ class TheRunner(_Api):
         apart, the run stays committed and ok, and the build runs again on a later pass."""
         from insight_core.markx import labels
         self.post()
+        with self.conn.transaction():
+            jobs.want(self.cur, "labels")                            # 0199: a Labels page asked for it
         self.assertEqual(self.runner().tick(), "decide")
         s = jobs.state(self.cur)
         self.assertTrue(s["decide"]["last"]["ok"])
@@ -235,6 +237,7 @@ class TheRunner(_Api):
         # a failed build: the next run is kept, ok, and its queue missing until a later pass builds it
         with self.conn.transaction():
             self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '2 hours' WHERE job = 'decide'")
+            jobs.want(self.cur, "labels")
         with mock.patch.object(labels, "population", side_effect=RuntimeError("boom")), \
                 self.assertLogs(jobs.log, "ERROR"):
             self.assertEqual(self.runner().tick(), "decide")
@@ -259,9 +262,33 @@ class TheRunner(_Api):
         with self.conn.transaction():
             clear_tables(self.cur, "mx_label_queue_items, mx_label_queues")
             self.cur.execute("DELETE FROM mx_jobs WHERE job = 'labels'")
+        self.assertFalse(labels.missing(self.cur))                  # 0199: not kept, but nobody asked
+        self.assertIsNone(self.runner().tick())
+        with self.conn.transaction():
+            labels.ask(self.cur, labels.kept(self.cur))              # a Labels page opened: "being built"
         self.assertTrue(labels.missing(self.cur))
         self.assertEqual(self.runner().tick(), "labels")
         self.assertFalse(labels.missing(self.cur))
+
+    def test_a_run_nobody_labels_after_builds_no_queue_and_one_opened_builds_it_once(self):
+        """0199: after a run the queue is built only when a Labels page asked for it, at most once a run."""
+        from insight_core.markx import labels
+        self.post()
+        self.assertEqual(self.runner().tick(), "decide")
+        self.cur.execute("SELECT count(*) FROM mx_label_queues")
+        self.assertEqual(self.cur.fetchone()[0], 0)                 # nobody asked: no build
+        self.assertIsNone(self.runner().tick())
+        with self.conn.transaction():
+            q = labels.ask(self.cur, labels.kept(self.cur))
+        self.assertTrue(q.building)
+        self.assertEqual(self.runner().tick(), "labels")
+        with self.conn.transaction():
+            q = labels.ask(self.cur, labels.kept(self.cur))         # kept now: asks nothing
+        self.assertFalse(q.building)
+        self.assertIsNone(jobs.state(self.cur)["labels"]["wanted_at"])
+        self.assertIsNone(self.runner().tick())
+        self.cur.execute("SELECT count(*) FROM mx_label_queues")
+        self.assertEqual(self.cur.fetchone()[0], 1)
 
     def test_vectors_alone_run_the_candidate_finder(self):
         self.runner().tick()                                        # the first decision run
