@@ -389,6 +389,9 @@ class _FakeSourcesService:
     def get_all_sources_with_settings(self):
         return self.sources
 
+    def list_sources(self):   # the catalog reads the list's settings (issue 0195)
+        return self.sources
+
 
 class ArchiveCatalogTests(unittest.TestCase):
     def test_entries_carry_kind_backlog_eta_and_when_measured(self):

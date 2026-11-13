@@ -321,7 +321,10 @@ def _members(book: I.Book, root: str) -> Set[str]:
 
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                 by_limit: Optional[int] = None, offer_sample: bool = False,
-                replies: bool = False) -> Optional[Dict[str, Any]]:
+                replies: bool = False, stories_limit: Optional[int] = None,
+                loose_limit: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """The entity's page. Issue 0195: `stories_limit` story blocks and `loose_limit` loose posts are listed (None:
+    all), `stories_total` and `loose_total` count them all; the timeline and the sample read every story."""
     from insight_core.markx import person_page as PP
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
@@ -395,16 +398,25 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             cur.execute("SELECT id::text FROM posts WHERE normalized_url = %s LIMIT 1", (normalize_url(orig["url"]) or orig["url"],))
             got = cur.fetchone()
             orig = {**orig, "title": origin_title, "stored": got[0] if got else None}
+        return {**head(sid, ps, mark, headline), "original": orig, "posts": [line(p) for p in ordered]}
+
+    def head(sid: str, ps: List[str], mark: str, headline: Optional[str]) -> Dict[str, Any]:
+        """A block's own fields (what the order, the timeline and the sample read), without its posts' lines."""
         return {"story": sid, "mark": mark, "headline": headline,
                 "voices": len({source_of(p) for p in ps if source_of(p)}),
-                "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps),
-                "original": orig, "posts": [line(p) for p in ordered]}
-    blocks = [block(sid, ps, "x", headline=heads.get(sid)) for sid, ps in x_members.items() if ps]
+                "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps)}
+    # (head, the block's arguments) of every story; the blocks listed are built in full, the rest only headed
+    specs = [(head(sid, ps, "x", heads.get(sid)), (sid, ps, "x"), {"headline": heads.get(sid)})
+             for sid, ps in x_members.items() if ps]
     for sid, st in ix_stories.items():
         rp = posts.get(st["root"]) or {}
-        blocks.append(block(sid, st["posts"], "ix", headline=st["origin_title"] or rp.get("title"),
-                            root_post=st["root"], origin_url=st["origin_url"], origin_title=st["origin_title"]))
-    blocks.sort(key=lambda b: (-b["voices"], -b["newest"].timestamp(), b["story"]))
+        kw = {"headline": st["origin_title"] or rp.get("title"), "root_post": st["root"],
+              "origin_url": st["origin_url"], "origin_title": st["origin_title"]}
+        specs.append((head(sid, st["posts"], "ix", kw["headline"]), (sid, st["posts"], "ix"), kw))
+    specs.sort(key=lambda x: (-x[0]["voices"], -x[0]["newest"].timestamp(), x[0]["story"]))
+    every = [h for h, _a, _k in specs]
+    listed = specs if stories_limit is None else specs[:stories_limit]
+    blocks = [block(*args, **kw) for _h, args, kw in listed]
     in_story = set(x_of) | set(ix_of)
     # 0144 B4: the loose posts by role: subject and actor, then by, then the other roles, then mentions
     loose_all = sorted((p for p in lines if p not in in_story),
@@ -459,19 +471,21 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "versions": versions, "posts": len(lines), "voices": len(sources),
             "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
                            for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
-            "timeline": TL.of_entity(cur, book, root, stories=blocks),   # 0165 C
-            "stories": blocks, "loose": [line(p) for p in loose], "loose_counts": groups_n,   # 0144 B2-B4
+            "timeline": TL.of_entity(cur, book, root, stories=every),   # 0165 C
+            "stories": blocks, "loose": [line(p) for p in (loose if loose_limit is None else loose[:loose_limit])],
+            "loose_counts": groups_n,   # 0144 B2-B4
+            "stories_total": len(every), "loose_total": len(loose),   # issue 0195
             "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
             "handles": {"known": known,
                         "posts": len([p for p, r in cited.items() if r["role"] != "reply" or replies]),
                         "replies": hidden_replies, "replies_shown": replies},   # 0168
-            "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in blocks if b["mark"] == "x"}, now)
+            "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in every if b["mark"] == "x"}, now)
             if offer_sample else [],                                                                  # 0144 C
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
             **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
-            "queue": [q for q in queue(cur, book=book)["open"] if root in (q["a"]["id"], (q.get("b") or {}).get("id"))]}
+            "queue": queue_about(cur, book, root)}
 
 
 def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:
@@ -609,7 +623,33 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
                    "span": x[3], "role": x[4]} for x in xs] for eid, xs in pick.items()}
 
 
-def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict[str, Any]:
+def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
+          joins: Dict[str, Any]) -> Dict[str, Any]:
+    """One queue row as the queue shows it (`ex`: its entities' examples; `joins`: join()'s cache)."""
+    qid, kind, a, b, proposal, reason, conf, ev, ans, at, created = r
+    ev = ev or {}
+    return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
+            "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
+            "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
+            "band": I.band_of(conf) if kind == "alias" else None,   # 0130 A1: the measured band it falls in
+            "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
+                         "reasons": ev.get("reasons"), "second": ev.get("second"),      # 0130 A2
+                         "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
+                         "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
+                                      for m in ev.get("mentions") or []],
+                         "split_runs": ev.get("split_runs"), "runs": ev.get("runs"),
+                         "asked_because": ev.get("asked_because"),   # 0165 B: why a rename was asked
+                         # 0168 C: a handle question's (or a handle-named alias's) pairs
+                         **({k: ev.get(k) for k in ("platform", "handle", "display", "pairs", "total", "first",
+                                                    "last", "alias_of", "named_by_handle")}
+                            if ev.get("handle") else {})}}
+
+
+def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: Optional[int] = None,
+          offset: int = 0) -> Dict[str, Any]:
+    """The review queue: {open, answered, merges, counts, accuracy}. Issue 0195: with `limit`, `open` is the page of
+    `limit` open items from `offset` (counts.open still counts every open item) and `next_offset` the next page's
+    (None at the end); only the shown items are built."""
     guide = _guide()
     book = book or I.lazy_book(cur)   # v10.17 (0186): what the queue's items ask of the book
     cur.execute("""SELECT id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at,
@@ -622,27 +662,15 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
         named.want({book.root(x) for r in rows if r[8] is None for x in (r[2], r[3]) if x})
     open_rows = [r for r in rows if r[8] is None and all(book.root(x) in named for x in (r[2], r[3]) if x)]
     done_rows = [r for r in rows if r[8] is not None][:history]
+    open_total = len(open_rows)
+    if limit is not None:
+        open_rows = open_rows[offset:offset + limit]
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
     joins: Dict[str, Any] = {}
 
     def item(r) -> Dict[str, Any]:
-        qid, kind, a, b, proposal, reason, conf, ev, ans, at, created = r
-        ev = ev or {}
-        return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
-                "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
-                "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
-                "band": I.band_of(conf) if kind == "alias" else None,   # 0130 A1: the measured band it falls in
-                "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
-                             "reasons": ev.get("reasons"), "second": ev.get("second"),      # 0130 A2
-                             "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
-                             "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
-                                          for m in ev.get("mentions") or []],
-                             "split_runs": ev.get("split_runs"), "runs": ev.get("runs"),
-                             "asked_because": ev.get("asked_because"),   # 0165 B: why a rename was asked
-                             # 0168 C: a handle question's (or a handle-named alias's) pairs
-                             **({k: ev.get(k) for k in ("platform", "handle", "display", "pairs", "total", "first",
-                                                        "last", "alias_of", "named_by_handle")}
-                                if ev.get("handle") else {})}}
+        return _item(cur, book, r, ex, joins)
+
     cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.automatic, r.at, r.undone_at, r.evidence,
                           r.kind FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
     merges = [{"id": rid, "from": {"id": f, "name": book.ents[f].name if f in book.ents else None},
@@ -655,8 +683,28 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
     cur.execute("""SELECT answer, count(*) FROM mx_entity_queue WHERE answer IS NOT NULL GROUP BY 1""")
     answered = dict(cur.fetchall())
     return {"open": [item(r) for r in open_rows], "answered": [item(r) for r in done_rows], "merges": merges,
-            "counts": {"open": len(open_rows), "answered": answered, "automatic_merges": auto_live,
-                       "automatic_undone": auto_undone}, "accuracy": ACCURACY}
+            "counts": {"open": open_total, "answered": answered, "automatic_merges": auto_live,
+                       "automatic_undone": auto_undone}, "accuracy": ACCURACY,
+            **({} if limit is None else {"next_offset": offset + limit if offset + limit < open_total else None})}
+
+
+def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
+    """The open items whose side `a` or `b` is `root` itself, as queue()'s `open` shows them: the entity page's
+    questions (issue 0195: only these are built, not every open item of the queue)."""
+    guide = _guide()
+    cur.execute("""SELECT id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at,
+                          created_at FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
+                      AND (a = %s::uuid OR b = %s::uuid)
+                    ORDER BY confidence DESC NULLS LAST, created_at""", (root, root))
+    rows = cur.fetchall()
+    book.prime(ids=[x for r in rows for x in (r[2], r[3]) if x])
+    named = named_now(cur, book)
+    if isinstance(named, I._Has):
+        named.want({book.root(x) for r in rows for x in (r[2], r[3]) if x})
+    mine = [r for r in rows if all(book.root(x) in named for x in (r[2], r[3]) if x)]
+    ex = _examples(cur, {x for r in mine for x in (r[2], r[3]) if x}, guide)
+    joins: Dict[str, Any] = {}
+    return [_item(cur, book, r, ex, joins) for r in mine]
 
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:

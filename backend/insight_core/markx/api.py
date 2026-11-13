@@ -759,10 +759,12 @@ def mx_entities():
 
 
 @router.get("/entities/queue")
-def mx_entity_queue():
+def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    """Issue 0195: `limit` open items (50) from `offset`; `next_offset` the next page's, null at the end (12,572 open
+    items answered 28.9 MB in 14.7 s on the server)."""
     from insight_core.markx import entity_views
     with transaction() as cur:
-        return entity_views.queue(cur)
+        return entity_views.queue(cur, limit=limit, offset=offset)
 
 
 @router.post("/entities/queue/{item_id}")
@@ -794,14 +796,16 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False):
+def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False,
+                   stories_limit: int = Query(50, ge=1, le=100000), loose_limit: int = Query(100, ge=1, le=100000)):
     """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
-    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too."""
+    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too.
+    Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:
-        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True,
-                                       replies=replies) if found else None
+        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True, replies=replies,
+                                       stories_limit=stories_limit, loose_limit=loose_limit) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got

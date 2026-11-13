@@ -170,6 +170,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Issue 0195: the polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
+from insight_core.routers.conditional import ConditionalGet  # noqa: E402
+app.add_middleware(ConditionalGet)
 
 
 # ============= ERRORS =============
@@ -1066,28 +1069,34 @@ async def save_page(request: SavePageRequest, background_tasks: BackgroundTasks)
                                        after_fetch=request.after_fetch)
 
 
+NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top rows the whole list began with
+
+
 @app.get("/api/news")
 @error_detail("load News")
-async def get_news(scope: str = "all"):
+async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
     counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
     and `news` {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions,
     score}, recent first, then by score, then the newest. On one source (issue 0077) also the
-    stories its roundups mention, and `news.scope_role`: origin | report | share | mention."""
-    return await asyncio.to_thread(services().news.news, scope)
+    stories its roundups mention, and `news.scope_role`: origin | report | share | mention.
+    Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end."""
+    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor)
 
 
 @app.get("/api/classics")
 @error_detail("load Classics")
-async def get_classics(scope: str = "all"):
+async def get_classics(scope: str = "all", limit: int = Query(CLASSICS_PAGE, ge=1, le=1000),
+                       cursor: str | None = None):
     """Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope
     among them, that you did not hide. Cited again this week first, then most voices, then cited
     longest. {classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again,
     citers [{name, at}], read_at, later_at}]}; on one source also its own pages, each with
     `scope_role`: origin (its own post) | report (it cites it), issue 0077. Nothing is fetched: an outside page is read
-    through Save any page (POST /api/saved), on click."""
-    return await asyncio.to_thread(services().news.classics, scope)
+    through Save any page (POST /api/saved), on click. Issue 0195: `limit` a page (100) from `cursor`; `next_cursor`
+    names the next page, null at the end."""
+    return await asyncio.to_thread(services().news.classics, scope, limit=limit, cursor=cursor)
 
 
 @app.post("/api/classics/hide")
