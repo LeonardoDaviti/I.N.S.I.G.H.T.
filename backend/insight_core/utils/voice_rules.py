@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from urllib.parse import unquote, urlsplit
 
 from insight_core.utils.addresses import PLATFORM_SITES, publication_of, site_of
+from insight_core.utils.byline import RT_BY_TAG
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
 from insight_core.utils.source_roles import FOCUSED_SHARE, Focus, Official, name_tokens
 
@@ -132,7 +133,7 @@ def site_label(host: str) -> str:
 def shingles(title: Optional[str], text: Optional[str]) -> Optional[Set[int]]:
     """A post's 5-word shingles (hashed), addresses and a retweet's "RT by @x:" aside; None under COPY_MIN_WORDS words."""
     joined = f"{title or ''} {text or ''}"
-    joined = re.sub(r"^RT by @\w+:\s*", "", joined)
+    joined = re.sub("^" + RT_BY_TAG + r"\s*", "", joined)   # Byline's tag, any space after it
     words = WORD.findall(URL.sub(" ", joined.lower()))
     if len(words) < COPY_MIN_WORDS:
         return None

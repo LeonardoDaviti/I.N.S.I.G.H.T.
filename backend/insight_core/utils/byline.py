@@ -40,7 +40,10 @@ COLUMNS = ("s.platform, s.handle_or_url, p.author, NULLIF(btrim(p.metadata->'for
            "pp.quoted")
 # Nitter's title of a repost: "RT by @user: <text>" (issue 0066). RT_BY_PREFIX is the pattern's text, for a pattern
 # that adds to it (x_articles' prefixes, post_parser's cut).
-RT_BY_PREFIX = r"RT by @(\w+): "
+# RT_BY_TAG is the tag alone, for a reader that cuts it with whatever space follows (voice_rules' shingles, series'
+# titles: `\s*`, where Nitter writes one space).
+RT_BY_TAG = r"RT by @(\w+):"
+RT_BY_PREFIX = RT_BY_TAG + " "
 RT_BY = re.compile("^" + RT_BY_PREFIX)
 SOURCE_NAME = ("COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''), "
                "s.handle_or_url)")

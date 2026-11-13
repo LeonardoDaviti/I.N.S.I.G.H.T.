@@ -40,6 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
@@ -156,6 +157,11 @@ class Story:
         return max(t, self.again) if self.again else t
 
 
+def sources(members: Iterable[_P]) -> int:
+    """How many voices a story's members are (Voice's MARKX rule over their sources)."""
+    return voice.count((voice.Said(m.src, "saved" if m.saved else None) for m in members), voice.Policy.MARKX)
+
+
 def stories(cur: Any, now: datetime) -> Dict[str, Story]:
     """Mark IX's stories of 2+ sources that may fire by `now` and never did, with their subjects and pages (hubs not
     yet taken out)."""
@@ -167,7 +173,7 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
         if at is not None:
             by[sid].append(_P(pid, src, at, url, False))
             origin[sid] = o
-    out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if len({m.src for m in ms}) >= MIN_SOURCES}
+    out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if sources(ms) >= MIN_SOURCES}
     cur.execute("SELECT story::text, max(window_at) FROM mx_back WHERE engine = %s GROUP BY story", (ENGINE,))
     fired = dict(cur.fetchall())
     again = sorted(sid for sid in fired if sid in out)
@@ -251,7 +257,7 @@ def burst(hits: Sequence[Tuple[datetime, str]], src: Dict[str, str]) -> Optional
     """The start of the first WINDOW of `hits` (sorted [(at, post)]) with MIN_SOURCES distinct sources, or None."""
     for a in range(len(hits)):
         end = hits[a][0] + WINDOW
-        if len({src[i] for t, i in hits[a:] if t <= end}) >= MIN_SOURCES:
+        if voice.count((voice.Said(src[i]) for t, i in hits[a:] if t <= end), voice.Policy.MARKX) >= MIN_SOURCES:
             return hits[a][0]
     return None
 
@@ -271,7 +277,8 @@ def candidate(story: Story, hits: Dict[str, Sequence[Tuple[datetime, str]]], src
             if start <= t <= start + WINDOW:
                 by[i].add(k)
                 at[i] = t
-    trig = [k for k in TRIGS if len({src[i] for i in by if k in by[i]}) >= MIN_SOURCES]
+    trig = [k for k in TRIGS if voice.count((voice.Said(src[i]) for i in by if k in by[i]), voice.Policy.MARKX)
+            >= MIN_SOURCES]
     posts = sorted(by, key=lambda i: (-len(by[i] & set(PRIMARY)), at[i], i))[:MAX_POSTS]
     return {"window_at": start, "trig": trig, "posts": posts, "post_trig": {i: sorted(by[i]) for i in posts}}
 

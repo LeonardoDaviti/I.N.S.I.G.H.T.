@@ -60,6 +60,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import back, pairing
 from insight_core.markx.back import _date, norm
+from insight_core.utils import voice
 
 KIND = back.KIND
 RULE = 2                          # v10.13.12's tightened rule; the rows v10.13.11's loose one found are rule 1 (0103)
@@ -228,7 +229,7 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
         if at is not None:
             by[sid].append(back._P(pid, src, at, url, False))
             origin[sid] = o
-    by = {sid: ms for sid, ms in by.items() if len({m.src for m in ms}) >= back.MIN_SOURCES}
+    by = {sid: ms for sid, ms in by.items() if back.sources(ms) >= back.MIN_SOURCES}
     return mains(cur, by, origin, ids=ids, with_pages=with_pages)
 
 
@@ -395,7 +396,8 @@ def quiet(namings: Sequence[Tuple[datetime, str, str]], at: datetime, post: str,
     [(date, post, source)]; `post` itself and the posts of `skip`, the story's members, not counted)."""
     lo = bisect.bisect_left(namings, (at - timedelta(days=QUIET_DAYS),))
     hi = bisect.bisect_left(namings, (at,))
-    return len({src for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip}) <= QUIET_MAX
+    return voice.count((voice.Said(src) for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip),
+                       voice.Policy.MARKX) <= QUIET_MAX
 
 
 def _rank(s: Long) -> Tuple:

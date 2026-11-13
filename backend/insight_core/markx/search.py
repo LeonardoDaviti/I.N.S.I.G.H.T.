@@ -37,6 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from psycopg import Cursor
 
+from insight_core.utils import voice
+
 # The rule that makes a row: a change to what goes in the vector raises it, and the fill remakes every row.
 VERSION = 2   # 2: vector_ix, the layer under the posts' index rule (the words split across both)
 FILL_BATCH = 500
@@ -333,7 +335,7 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
                JOIN mx_entity_redirects r ON r.to_id = members.id AND r.undone_at IS NULL
               WHERE members.depth < 20
         ), counts AS (
-             SELECT mb.root, count(DISTINCT mm.post_id) AS posts, count(DISTINCT p.source_id) AS voices,
+             SELECT mb.root, count(DISTINCT mm.post_id) AS posts, """ + voice.count_sql("p.source_id") + """ AS voices,
                     bool_or(mm.role = ANY(%(roles)s)) AS lead
                FROM (SELECT DISTINCT root, id FROM members) mb
                JOIN mx_mentions_now mm ON mm.entity_id = mb.id

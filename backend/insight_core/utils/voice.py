@@ -155,6 +155,12 @@ def site_key_sql(site: str) -> str:
 POSTER_LIKE = _POSTER + "%%"        # a LIKE pattern (a query with parameters) for a poster's key
 
 
+def count_sql(source: str, platform: Optional[str] = None) -> str:
+    """MARKX's count in a query: the distinct sources (`source`, a column expression); with `platform` (its source's
+    platform column) a saved page's none."""
+    return f"count(DISTINCT {source})" + (f" FILTER (WHERE {platform} IS DISTINCT FROM 'saved')" if platform else "")
+
+
 # ---- what a post counts as -------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -250,4 +256,4 @@ def groups(items: Iterable[Tuple[Any, Optional[str], str]]) -> List[List[Any]]:
 __all__ = ["Policy", "Said", "NOT_VOICE", "voice_of", "count", "others_of", "groups", "is_voice", "independent",
            "counted_source", "followed_accounts", "key", "source_key", "site_key", "poster_key", "confirmed_key",
            "is_confirmed", "poster", "is_poster", "source_of", "is_site", "site_of_key", "owner_of", "channel_key",
-           "channel_of", "story_channel_key", "key_sql", "source_key_sql", "site_key_sql", "POSTER_LIKE"]
+           "channel_of", "story_channel_key", "key_sql", "source_key_sql", "site_key_sql", "POSTER_LIKE", "count_sql"]

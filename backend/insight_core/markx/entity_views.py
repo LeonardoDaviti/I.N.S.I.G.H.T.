@@ -23,6 +23,7 @@ from insight_core.markx import identity as I
 from insight_core.markx import names as N
 from insight_core.markx import surges as S
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 WINDOW_DAYS = 30
 LIST_LIMIT = 200
@@ -397,7 +398,7 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             got = cur.fetchone()
             orig = {**orig, "title": origin_title, "stored": got[0] if got else None}
         return {"story": sid, "mark": mark, "headline": headline,
-                "voices": len({source_of(p) for p in ps if source_of(p)}),
+                "voices": voice.count((voice.Said(source_of(p)) for p in ps if source_of(p)), voice.Policy.MARKX),
                 "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps),
                 "original": orig, "posts": [line(p) for p in ordered]}
     blocks = [block(sid, ps, "x", headline=heads.get(sid)) for sid, ps in x_members.items() if ps]
