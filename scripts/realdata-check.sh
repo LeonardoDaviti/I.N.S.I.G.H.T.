@@ -16,19 +16,27 @@
 #   --titles-only      no story job: snapshot titles, text starts and link titles of both versions over one
 #                      read-only copy (a replay of a title change), no cases or invariants
 #   --keep             keep the scratch copies
+#   --no-cache         run the base side again even when its cached outputs match (and cache the new ones)
 #
-# Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), SCRATCH_A / SCRATCH_B (the
-# scratch copies' names: <db>_check_<pid>_a / _b, one pair per run), PG (postgresql://insight:insight@postgres:5432),
+# Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
+# server; default scripts/scratch-db.sh's), SCRATCH_DB=0 (copies on PG_SRC), SCRATCH_A / SCRATCH_B (the
+# scratch copies' names: <db>_check_<pid>_a / _b, one pair per run),
 # NETWORK (insight_insight-network).
 #
-# Each version's code runs over its own scratch copy (one pg_restore of the dump, then a file copy of it), in a
+# Each version's code runs over its own scratch copy (one pg_restore of the dump, then a template copy of it), in a
 # container of its own, both at once: first what a deploy's first start runs (the incremental job to the end, a
 # rule change's rebuild when the copy's rows are of other rules: issue 0110), then the full job. Nothing is fetched or downloaded. The report (it names the owner's
 # posts) goes to $OUT/<head>-<date>.md, private; its path goes in the merge notes. Exit 1: don't merge.
+#
+# The base side's cache (v10.17): the base side's outputs (job, snapshot, invariants, cases, job checks) are kept in
+# $OUT/base-cache/<key>, the key the base's backend tree, the copy's content (its dump restored as SQL, hashed),
+# the checks' code (the checks package, check_cases.py, check_invariants.py, side.sh: what runs inside the side), the cases file,
+# the image and --now. A run whose key is cached runs only the head side (one scratch copy); --no-cache runs the
+# base again and replaces the entry. A base side that failed is never cached. Not used with --titles-only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE=main; HEAD=""; IMAGE=""; IDENTITY=""; NOW=""; KEEP=0; TITLES_ONLY=0; ALLOW=()
+BASE=main; HEAD=""; IMAGE=""; IDENTITY=""; NOW=""; KEEP=0; TITLES_ONLY=0; NO_CACHE=0; ALLOW=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="$2"; shift 2;;
@@ -38,6 +46,7 @@ while [ $# -gt 0 ]; do
     --allow) ALLOW+=("$2"); shift 2;;
     --now) NOW="$2"; shift 2;;
     --keep) KEEP=1; shift;;
+    --no-cache) NO_CACHE=1; shift;;
     --titles-only) TITLES_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
     -*) echo "unknown option $1" >&2; exit 2;;
@@ -46,7 +55,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "${DB:-}" ] || { echo "usage: scripts/realdata-check.sh [options] <db>" >&2; exit 2; }
 
-PG="${PG:-postgresql://insight:insight@postgres:5432}"
+# <db> is read on insight-db (PG_SRC); the scratch copies are made and checked on the scratch Postgres (PG, v10.17:
+# scripts/scratch-db.sh, started when not running), where a CREATE/DROP DATABASE never waits on the durable server's
+# checkpoints. SCRATCH_DB=0: the copies on insight-db, as before.
+PG_SRC="${PG_SRC:-postgresql://insight:insight@postgres:5432}"
+if [ "${SCRATCH_DB:-1}" = "1" ] && [ -z "${PG:-}" ]; then
+  PG="$("$ROOT/scripts/scratch-db.sh" up)"; PGCONTAINER="${PGCONTAINER:-${SCRATCH_CONTAINER:-insight-scratch-db}}"
+fi
+PG="${PG:-$PG_SRC}"
 NETWORK="${NETWORK:-insight_insight-network}"
 # plan/research/ is private and lives in the main checkout only (a worktree has none): read it there.
 MAIN_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
@@ -74,13 +90,20 @@ REPORT="$OUT/${HEAD_LABEL//\//-}-$STAMP.md"
 RUN_ID="rdc-$$"
 started=$(date +%s)
 say() { echo "==> $(date +%H:%M:%S) $*"; }
-psql_admin() { docker run --rm --network "$NETWORK" "$IMAGE" psql -q -At "$PG/postgres" -c "$1"; }
+# psql in the database container (docker exec, 0.1 s) when it is there; a container of the image (16 s a call on a busy disk) else
+if docker exec "${PGCONTAINER:-insight-db}" true >/dev/null 2>&1; then
+  psql_admin() { docker exec -i "${PGCONTAINER:-insight-db}" psql -q -At -U insight -d postgres -c "$1"; }
+else
+  psql_admin() { docker run --rm --network "$NETWORK" "$IMAGE" psql -q -At "$PG/postgres" -c "$1"; }
+fi
 
 cleanup() {
-  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" >/dev/null 2>&1 || true   # by name only
+  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" "$RUN_ID-hash" >/dev/null 2>&1 || true   # by name only
   if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ]; then
-    psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" >/dev/null 2>&1 || true
-    psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B" >/dev/null 2>&1 || true
+    # detached when it can be: a DROP DATABASE waits for a checkpoint (minutes on a busy disk), and nothing waits on it
+    docker exec -d "${PGCONTAINER:-insight-db}" psql -q -U insight -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH_A WITH (FORCE)" \
+        -c "DROP DATABASE IF EXISTS $SCRATCH_B WITH (FORCE)" >/dev/null 2>&1 \
+      || { psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" >/dev/null 2>&1; psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B" >/dev/null 2>&1; } || true
   fi
   rm -rf "$WORK" || echo "left $WORK (remove it by hand)" >&2
 }
@@ -112,33 +135,72 @@ run_side() {   # run_side <side> <db> [env…]
 
 if [ "$TITLES_ONLY" = "1" ]; then
   say "titles only: both versions read $DB (read-only), no story job"
-  run_side base "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
-  run_side head "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
+  PG="$PG_SRC" run_side base "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
+  PG="$PG_SRC" run_side head "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
   wait
 else
   # ---- scratch copies: one dump, one restore, one template copy --------------------------------
   say "dump $DB (read-only)"
-  docker run --rm --name "$RUN_ID-dump" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" pg_dump -Fc -Z1 -f /work/copy.dump "$PG/$DB"
-  # One restore (its index builds are most of the time), then a file copy of it: no second WAL-logged load.
-  say "restore into $SCRATCH_A"
+  docker run --rm --name "$RUN_ID-dump" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" pg_dump -Fc -Z1 -f /work/copy.dump "$PG_SRC/$DB"
+  # One restore (its index builds are most of the time), then a template copy of it when the base side runs: no second
+  # restore. The copy's content hash (the dump as SQL, less pg_dump's per-run \restrict key) beside it.
+  say "restore into $SCRATCH_B; the copy's content hash"
   psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" ; psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B"
-  psql_admin "CREATE DATABASE $SCRATCH_A"
+  psql_admin "CREATE DATABASE $SCRATCH_B"
+  docker run --rm --name "$RUN_ID-hash" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" \
+    sh -c 'pg_restore -f - /work/copy.dump | grep -v -e "^\\\\restrict " -e "^\\\\unrestrict " | sha256sum | cut -c1-64' > "$WORK/dump.sha" &
+  pid_hash=$!
   docker run --rm --name "$RUN_ID-restore" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" \
-    pg_restore -j 8 --no-owner --no-privileges -d "$PG/$SCRATCH_A" /work/copy.dump 2> "$WORK/restore.log" || true
+    pg_restore -j 8 --no-owner --no-privileges -d "$PG/$SCRATCH_B" /work/copy.dump 2> "$WORK/restore.log" || true
+  wait $pid_hash || { echo "hashing the dump failed" >&2; exit 2; }
   grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error \
     && { echo "restore failed" >&2; exit 2; } || true
-  say "copy $SCRATCH_A to $SCRATCH_B (file copy)"
-  psql_admin "CREATE DATABASE $SCRATCH_B TEMPLATE $SCRATCH_A STRATEGY FILE_COPY"
   rm -f "$WORK/copy.dump"
 
-  say "both versions at once: migrate, full story job, snapshot, invariants, cases, job checks"
-  run_side base "$SCRATCH_A" > "$WORK/base.log" 2>&1 &
-  pid_base=$!
-  run_side head "$SCRATCH_B" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 &
-  pid_head=$!
-  wait $pid_base || true
-  wait $pid_head || true
-  cat "$WORK/base.log" "$WORK/head.log"
+  # the base side's cache key: what its outputs depend on
+  CACHE_DIR="$OUT/base-cache"
+  BASE_TREE="$(git -C "$ROOT" rev-parse "$BASE^{commit}:backend")"
+  CHECKS_SHA="$( (cd "$ROOT" && tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --exclude='__pycache__' -cf - \
+                   backend/insight_core/checks backend/insight_core/scripts/check_cases.py \
+                   backend/insight_core/scripts/check_invariants.py) | sha256sum | cut -c1-64)"
+  CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
+  IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
+  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA image=$IMAGE_ID now=$NOW"
+  KEY="$(echo "$KEY_TEXT" | sha256sum | cut -c1-24)"
+  CACHED=""
+  if [ "$NO_CACHE" != "1" ] && [ -f "$CACHE_DIR/$KEY/key.txt" ] && [ -d "$CACHE_DIR/$KEY/base" ]; then CACHED="$CACHE_DIR/$KEY"; fi
+
+  if [ -n "$CACHED" ]; then
+    say "base side cached ($KEY, from $(cat "$CACHED/at.txt")): only the head side runs"
+    cp -r "$CACHED/base/." "$WORK/base/"
+    cp "$CACHED/base.log" "$WORK/base.log"
+    say "the head version: migrate, full story job, snapshot, invariants, cases, job checks"
+    run_side head "$SCRATCH_B" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 || true
+    cat "$WORK/base.log" "$WORK/head.log"
+  else
+    say "copy $SCRATCH_B to $SCRATCH_A (a template copy)"
+    # WAL_LOG, not FILE_COPY (v10.17): a FILE_COPY waits for a checkpoint first, and with several agents writing a
+    # checkpoint took over 20 minutes (measured 2026-11-13: this copy waited 23 min behind it)
+    psql_admin "CREATE DATABASE $SCRATCH_A TEMPLATE $SCRATCH_B STRATEGY WAL_LOG"
+    say "both versions at once: migrate, full story job, snapshot, invariants, cases, job checks"
+    run_side base "$SCRATCH_A" > "$WORK/base.log" 2>&1 &
+    pid_base=$!
+    run_side head "$SCRATCH_B" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 &
+    pid_head=$!
+    base_ok=1
+    wait $pid_base || base_ok=0
+    wait $pid_head || true
+    cat "$WORK/base.log" "$WORK/head.log"
+    # a base side that ended and failed no step is cached (its outputs, its log)
+    if [ "$base_ok" = 1 ] && ! grep -q "FAILED" "$WORK/base.log" && grep -q "\] .* done$" "$WORK/base.log"; then
+      mkdir -p "$CACHE_DIR"
+      tmp="$(mktemp -d "$CACHE_DIR/.new.XXXXXX")"
+      cp -r "$WORK/base" "$tmp/base"; cp "$WORK/base.log" "$tmp/base.log"
+      echo "$KEY_TEXT" > "$tmp/key.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp/at.txt"; echo "$BASE" > "$tmp/base-ref.txt"
+      rm -rf "$CACHE_DIR/$KEY"; mv "$tmp" "$CACHE_DIR/$KEY"
+      say "base side cached as $KEY"
+    fi
+  fi
 fi
 
 say "report"
@@ -150,7 +212,9 @@ docker run --rm --name "$RUN_ID-report" --network "$NETWORK" -v "$WORK/trees/hea
 verdict=$?
 set -e
 elapsed=$(( $(date +%s) - started ))
-{ cat "$WORK/report.md"; echo; echo "Took ${elapsed} s ($(( elapsed / 60 )) min $(( elapsed % 60 )) s), image $IMAGE."; } > "$REPORT"
+cache_note=""
+[ -n "${CACHED:-}" ] && cache_note=" The base side's outputs came from the cache ($KEY, made $(cat "$CACHED/at.txt"))."
+{ cat "$WORK/report.md"; echo; echo "Took ${elapsed} s ($(( elapsed / 60 )) min $(( elapsed % 60 )) s), image $IMAGE.$cache_note"; } > "$REPORT"
 mkdir -p "${REPORT%.md}"
 for side in base head; do
   for f in deploy.json invariants.json jobs.json cases.json job.json; do
