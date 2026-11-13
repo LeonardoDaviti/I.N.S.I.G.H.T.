@@ -62,6 +62,39 @@ class Supervisor(unittest.TestCase):
         self.assertEqual(s.dump_stacks(lambda: [21, 22], kill=lambda pid, sig: sent.append((pid, sig))), [21, 22])
         self.assertEqual(sent, [(21, signal.SIGUSR1), (22, signal.SIGUSR1)])
 
+    def test_the_interrupted_jobs_are_closed_in_a_child_the_supervisor_waits_for(self):
+        """0202: building the services to close them cost the long-lived supervisor ~36 MB for the container's
+        life; a spawned child does it, and the start waits for it."""
+        self.assertIs(S.Supervisor(["uvicorn"]).close_jobs, S.close_interrupted_jobs_in_child)
+        made = []
+
+        class FakeProcess:
+            exitcode = None
+
+            def __init__(self, target, name):
+                made.append((target.__name__, name))
+
+            def start(self):
+                made.append("start")
+
+            def join(self, wait=None):
+                made.append(("join", wait))
+                FakeProcess.exitcode = 0
+
+            def is_alive(self):
+                return False
+
+        ctx = mock.Mock(Process=FakeProcess)
+        with mock.patch.object(S.multiprocessing, "get_context", return_value=ctx) as get:
+            self.assertEqual(S.close_interrupted_jobs_in_child(wait=7), 0)
+        get.assert_called_once_with("spawn")
+        self.assertEqual(made, [("_close_jobs_main", "api-close-jobs"), "start", ("join", 7)])
+
+    def test_a_child_that_cannot_start_never_stops_the_api(self):
+        with mock.patch.object(S.multiprocessing, "get_context", side_effect=OSError("no spawn")), \
+                self.assertLogs(S.logger, "ERROR"):
+            self.assertEqual(S.close_interrupted_jobs_in_child(), -1)
+
     def test_the_start_work_is_the_search_refill_and_the_story_job(self):
         ran = []
         with mock.patch.object(main, "fill_search_vectors", lambda: ran.append("search")), \
@@ -77,8 +110,10 @@ class TheLifespan(unittest.TestCase):
         async def go():
             async with main.lifespan(main.app):
                 pass
-        with mock.patch.object(main, "services"), mock.patch.object(main.database, "close_all"):
+        with mock.patch.object(main, "services"), mock.patch.object(main.database, "close_all"), \
+                mock.patch.object(main, "freeze_start") as freeze:
             asyncio.run(go())
+        freeze.assert_called_once()    # 0202: each process's start objects out of the GC's reach
 
     def test_under_the_supervisor_a_process_starts_nothing(self):
         with mock.patch.dict(os.environ, {S.SUPERVISED: "1"}), mock.patch.object(main, "start_once") as once:

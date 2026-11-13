@@ -6,6 +6,7 @@ must happen once per container start, not once per API process (issue 0112 Decid
 
 - **Before uvicorn serves:** the API's jobs a restart ended are marked interrupted (issue 0070). Done here, once: in
   each API process's start it would also close the other process's running jobs whenever uvicorn replaces a hung one.
+  In a child process waited for (issue 0202), so this process never builds the services: it stays ~24 MB, not ~60.
 - **Then uvicorn**, as a child, with INSIGHT_API_SUPERVISED=1 so main.py's lifespan leaves the start work to this.
 - **The start work, once, in a child process of its own:** the search refill and the start's story job (then Mark
   X's first decision run is asked for), as main.py's lifespan ran them in one process.
@@ -141,6 +142,34 @@ def close_interrupted_jobs() -> int:
         return 0
 
 
+CLOSE_JOBS_WAIT = 120.0    # seconds the start waits for the child closing the interrupted jobs
+
+
+def _close_jobs_main() -> None:
+    from insight_core.logs.core.logger_config import setup_logging
+    setup_logging(debug_mode=False)
+    close_interrupted_jobs()
+
+
+def close_interrupted_jobs_in_child(wait: float = CLOSE_JOBS_WAIT) -> int:
+    """close_interrupted_jobs in a spawned child, waited for (issue 0202): reading them builds the services (~36 MB
+    of imports and a connection pool), which this long-lived process would keep for the container's life. Returns the
+    child's exit code (0: done; it logs what it closed). Never raises: the API starts anyway."""
+    try:
+        from insight_core.scripts.api_supervisor import _close_jobs_main as target   # by its name, also when run as -m
+        process = multiprocessing.get_context("spawn").Process(target=target, name="api-close-jobs")
+        process.start()
+        process.join(wait)
+        if process.is_alive():
+            logger.error("Jobs: closing the interrupted jobs took over %.0f s; starting the API anyway", wait)
+            process.terminate()
+            process.join(5)
+        return process.exitcode if process.exitcode is not None else -1
+    except Exception:  # noqa: BLE001 - the API starts anyway
+        logger.exception("Jobs: could not close the jobs a restart interrupted")
+        return -1
+
+
 def start_work() -> None:
     """The start's background work, once per container (a child process; main.py's functions, as its lifespan ran
     them): the search refill and the story job side by side, then Mark X's first decision run is asked for."""
@@ -158,7 +187,7 @@ class Supervisor:
     """uvicorn as a child, the start work beside it. `spawn_work` and `popen` are the tests' seams."""
 
     def __init__(self, command: Sequence[str], *, popen: Callable[..., subprocess.Popen] = subprocess.Popen,
-                 spawn_work: Optional[Callable[[], object]] = None, close_jobs: Callable[[], int] = close_interrupted_jobs) -> None:
+                 spawn_work: Optional[Callable[[], object]] = None, close_jobs: Callable[[], int] = close_interrupted_jobs_in_child) -> None:
         self.command = list(command)
         self.popen = popen
         self.spawn_work = spawn_work or self._spawn_work
