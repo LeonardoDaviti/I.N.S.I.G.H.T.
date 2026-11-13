@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from insight_core.services import discover_main_source as M
+from insight_core.tests._db import clear_tables
 from insight_core.tests.test_markx_api import _Api, call, reading
 from insight_core.tests.test_markx_folds import read3
 
@@ -287,7 +288,7 @@ class Scanned(_Api):
     def test_lawsuits_regulators_filings_and_scoops_never(self):
         self.event("policy_legal")
         self.assertEqual(self.rows(), [])
-        self.cur.execute("TRUNCATE mx_story_posts, mx_stories CASCADE")
+        clear_tables(self.cur, "mx_story_posts, mx_stories", cascade=True)
         self.event("leak_rumour")
         self.assertEqual(self.rows(), [])
 

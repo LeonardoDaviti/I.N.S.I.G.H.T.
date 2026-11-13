@@ -209,9 +209,8 @@ class _Scout(_Api):
 
     def setUp(self):
         super().setUp()
-        for t in (*SCOUT_TABLES, *TRACK_TABLES):
-            self.cur.execute(f"TRUNCATE {t} CASCADE")
-            self.addCleanup(self.cur.execute, f"TRUNCATE {t} CASCADE")
+        clear_tables(self.cur, (*SCOUT_TABLES, *TRACK_TABLES), cascade=True)
+        self.addCleanup(clear_tables, self.cur, (*SCOUT_TABLES, *TRACK_TABLES), cascade=True)
         self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id",
                          (f"Cool parts {uuid.uuid4().hex[:6]}",))
         self.folder = str(self.cur.fetchone()[0])

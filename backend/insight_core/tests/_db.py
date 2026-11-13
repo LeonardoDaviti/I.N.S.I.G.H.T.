@@ -51,7 +51,7 @@ requires_test_db = unittest.skipUnless(
 )
 
 
-def clear_tables(cur, tables) -> None:
+def clear_tables(cur, tables, *, cascade: bool = False) -> None:
     """Empty these tables, as `TRUNCATE a, b, ...` would (v10.17), by DELETE.
 
     A TRUNCATE gives every table and index a new file, and Postgres syncs each new index to disk at once
@@ -60,15 +60,22 @@ def clear_tables(cur, tables) -> None:
     ~25 s). A DELETE of a test's few rows writes no new file. Foreign keys are not checked while it runs
     (session_replication_role = replica, as TRUNCATE of the whole set checks none among them), so the order of
     `tables` is free; a role that may not set it (not a superuser) falls back to the TRUNCATE.
-    `tables`: names, or one comma-separated string of them."""
+    `tables`: names, or one comma-separated string of them. `cascade`: as TRUNCATE ... CASCADE, every table whose
+    foreign keys reach these (at any depth) is emptied too."""
     names = [t.strip() for t in (tables.split(",") if isinstance(tables, str) else tables) if t.strip()]
     if not names:
         return
     cur.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
     row = cur.fetchone()
     if not (row and row[0]):
-        cur.execute("TRUNCATE " + ", ".join(names))
+        cur.execute("TRUNCATE " + ", ".join(names) + (" CASCADE" if cascade else ""))
         return
+    if cascade:
+        cur.execute("""WITH RECURSIVE reach(rel) AS (
+                         SELECT unnest(%s::regclass[])
+                         UNION SELECT c.conrelid FROM pg_constraint c JOIN reach r ON c.confrelid = r.rel AND c.contype = 'f')
+                       SELECT rel::regclass::text FROM reach""", (names,))
+        names = list(dict.fromkeys(names + [r[0] for r in cur.fetchall()]))
     cur.execute("SET session_replication_role = replica")
     try:
         for name in names:
