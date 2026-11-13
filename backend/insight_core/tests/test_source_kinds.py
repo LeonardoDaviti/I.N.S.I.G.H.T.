@@ -15,7 +15,6 @@ import subprocess
 import sys
 import unittest
 import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -25,7 +24,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.adapters import ADAPTER_CLASSES
 from insight_core.adapters.dario_adapter import DarioAmodeiAdapter
-from insight_core.ingestion.http import HttpError, KindHttp
+from insight_core.ingestion.http import AddressGuard, HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind
 from insight_core.ingestion.kinds import parsing
@@ -707,11 +706,14 @@ class ParsingTests(unittest.TestCase):
 
 
 class KindHttpTests(unittest.TestCase):
-    def test_tls_verification_is_skipped_for_local_hosts_only(self):
-        http = KindHttp(insecure_tls_hosts=set())
-        self.assertTrue(http.should_skip_tls_verify("telegram.local"))
-        self.assertTrue(http.should_skip_tls_verify("nitter.local"))
-        self.assertFalse(http.should_skip_tls_verify("tg.i-c-a.su"))
+    def test_tls_verification_is_skipped_only_for_a_bridge_on_the_lan(self):
+        # issue 0187: no longer every *.local host; a bridge that resolves to a public address is verified
+        guard = KindHttp(guard=AddressGuard(insecure_tls_hosts=set())).guard
+        self.assertTrue(guard.insecure_tls("telegram.local", private=True))
+        self.assertTrue(guard.insecure_tls("nitter.local", private=True))
+        self.assertFalse(guard.insecure_tls("telegram.local", private=False))
+        self.assertFalse(guard.insecure_tls("printer.local", private=True))
+        self.assertFalse(guard.insecure_tls("tg.i-c-a.su", private=False))
 
     def test_sleep_goes_through_the_injected_sleeper(self):
         sleeper = RecordingSleeper()
@@ -722,7 +724,7 @@ class KindHttpTests(unittest.TestCase):
 
     def _failing(self, raised: BaseException) -> HttpError:
         """The HttpError KindHttp.get_text raises when urlopen raises `raised` (no network)."""
-        with mock.patch.object(urllib.request, "urlopen", side_effect=raised):
+        with mock.patch.object(KindHttp, "_open", side_effect=raised):
             with self.assertRaises(HttpError) as ctx:
                 asyncio.run(KindHttp().get_text("https://reddit.com/r/x/.rss"))
         return ctx.exception

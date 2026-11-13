@@ -6,7 +6,6 @@ import io
 import sys
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -288,7 +287,7 @@ class GetStartTests(unittest.TestCase):
             def geturl(self):
                 return "https://x.example/final"
 
-        with mock.patch.object(urllib.request, "urlopen", return_value=Response(b"a" * 100)):
+        with mock.patch.object(KindHttp, "_open", return_value=Response(b"a" * 100)):
             body, final = asyncio.run(KindHttp().get_start("https://x.example/", 10))
         self.assertEqual((body, final), (b"a" * 10, "https://x.example/final"))
 
