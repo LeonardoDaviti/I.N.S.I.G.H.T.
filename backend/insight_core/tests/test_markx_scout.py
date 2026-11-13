@@ -14,7 +14,7 @@ from unittest import mock
 
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.markx import repo, schemas, scout, scout_reads, tasks, tracks, validate
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.tests.test_markx_api import _Api, call
 
@@ -209,9 +209,8 @@ class _Scout(_Api):
 
     def setUp(self):
         super().setUp()
-        for t in (*SCOUT_TABLES, *TRACK_TABLES):
-            self.cur.execute(f"TRUNCATE {t} CASCADE")
-            self.addCleanup(self.cur.execute, f"TRUNCATE {t} CASCADE")
+        clear_tables(self.cur, (*SCOUT_TABLES, *TRACK_TABLES), cascade=True)
+        self.addCleanup(clear_tables, self.cur, (*SCOUT_TABLES, *TRACK_TABLES), cascade=True)
         self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id",
                          (f"Cool parts {uuid.uuid4().hex[:6]}",))
         self.folder = str(self.cur.fetchone()[0])
@@ -258,8 +257,8 @@ class _Scout(_Api):
         with self.conn.transaction():
             return scout.start(self.cur, self.folder, trigger=trigger)
 
-    def advance(self, run_id, reader):
-        return asyncio.run(scout.advance(db_url(), run_id, reader=reader))
+    def advance(self, run_id, reader, now=None):
+        return asyncio.run(scout.advance(db_url(), run_id, reader=reader, now=now))
 
     def cands(self, run_id):
         self.cur.execute("SELECT finder, key, state, address FROM mx_scout_candidates WHERE run_id = %s ORDER BY rank",
@@ -288,7 +287,7 @@ class Triggers(_Scout):
             self.in_post(f"part {k}", at=NOW - k * DAY)
         with self.conn.transaction():
             self.assertEqual(scout.due_weekly(self.cur, NOW), [])            # 5 in in 7 days: not quiet
-        self.cur.execute("TRUNCATE mx_track_items")
+        clear_tables(self.cur, "mx_track_items")
         reader = StubReader()
         with mock.patch.object(scout, "default_reader", return_value=reader), \
                 mock.patch.object(scout, "reads_allowed", return_value=True):
@@ -529,11 +528,16 @@ class CostGuard(_Scout):
         self.assertEqual([c["finder"] for c in picked], ["match", "match", "shape", "match"])
 
     def test_two_advances_never_read_one_run_at_once(self):
+        # Both claims on one clock (v10.17): NOW is the module's import time, and the second advance read the wall
+        # clock, so a suite that reached this test over scout.CLAIM (20 min) after importing it found the claim
+        # expired and the advance claimed the run (a failure only under load).
         self.in_post(links=["https://makers.example/blog/a-printed-hinge"])
         run = self.start()
         with self.conn.transaction():
             self.assertTrue(scout.claim(self.cur, run["id"], NOW))
-        self.assertFalse(self.advance(run["id"], StubReader())["claimed"])
+        self.assertFalse(self.advance(run["id"], StubReader(), now=lambda: NOW + timedelta(minutes=1))["claimed"])
+        self.assertTrue(self.advance(run["id"], StubReader(), now=lambda: NOW + scout.CLAIM + timedelta(minutes=1))["claimed"],
+                        "a claim ends after scout.CLAIM")
 
 
 if __name__ == "__main__":

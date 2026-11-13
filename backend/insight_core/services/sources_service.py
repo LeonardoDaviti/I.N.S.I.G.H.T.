@@ -134,8 +134,9 @@ class SourcesService:
         return {"handle_or_url": old["handle_or_url"], "page_watch": (old.get("settings") or {}).get("page_watch")}
 
     def delete_source(self, source_id: str) -> bool:
-        """Delete source (and cascade delete its posts)."""
-        with db.connection(self.db_url) as conn:
+        """Delete source (and cascade delete its posts). The cascade can run for minutes: the process's statement
+        timeout, not a request's (issue 0188)."""
+        with db.long_statements(), db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 deleted = self.repo.delete_source(cur, source_id)
                 conn.commit()
@@ -230,6 +231,18 @@ class SourcesService:
                 except (TypeError, ValueError):
                     raise ValueError(f"{key} must be a whole number") from None
         return validated
+
+    def name_if_unnamed(self, source_id: str, name: str) -> bool:
+        """Name a source that has no name (issue 0178: what its feed or page calls itself); a name the owner set
+        is never written over. True when it was named."""
+        name = " ".join(str(name or "").split())
+        if not name:
+            return False
+        with db.transaction(self.db_url) as cur:
+            named = self.repo.name_if_unnamed(cur, source_id, name)
+        if named:
+            self.logger.info(f"Named source {source_id}: {name}")
+        return named
 
     def merge_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
         """Merge internal settings payloads, including archive metadata."""

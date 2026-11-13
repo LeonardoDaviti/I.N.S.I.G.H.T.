@@ -30,11 +30,16 @@ def topic_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
     """{folder_id: {unread, discover, count, waiting}} for every track that is a topic."""
     out: Dict[str, Dict[str, int]] = {}
     reader = ReaderRepository()
+    from insight_core.markx import track_kept
     for t in tracks.described(cur):
-        items = tracks.placed(cur, t, shown=False)["items"]   # v10.14: only what a place needs
-        inside = [it["post_id"] for it in items if it["place"] in IN_TRACK]
+        kept = track_kept.counts(cur, t, IN_TRACK)   # issue 0195: the kept placement, else placed live
+        if kept is not None:
+            inside, discover = kept
+        else:
+            items = tracks.placed(cur, t, shown=False)["items"]   # v10.14: only what a place needs
+            inside = [it["post_id"] for it in items if it["place"] in IN_TRACK]
+            discover = sum(1 for it in items if it["place"] == "discover")
         unread = reader.scope_unread(cur, FeedScope("folder", t["folder_id"], tuple(inside))) if inside else 0
-        discover = sum(1 for it in items if it["place"] == "discover")
         out[t["folder_id"]] = {"unread": unread, "discover": discover, "count": unread + discover,
                                "waiting": track_feed.waiting(cur, t)}
     return out

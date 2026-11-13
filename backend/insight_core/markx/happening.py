@@ -7,9 +7,9 @@ participant 8 of 21, so one participant makes no key).
 `key(reading, mentions)` is a pure function of the read-v2 reading's main {action, actors, object, numbers, date} and
 the post's ent-v3 mentions (each {name, span, name_key, type, role, maker, root}: root the entity's root through
 merges and pins, or None while the mention is not linked):
-  - group: the action's group, from read-v2's ACTIONS (schemas.ACTIONS) and a few verbs the model writes outside it
-    (SYNONYMS): release, deal, funding, legal, people, pricing, research, announcement. Announcing or leaking a thing
-    is its release; a people move with no person in it ("B joins A") is a deal. `reported` and `other` name no
+  - group: the action's group, through the event-type seam (markx/event_types.action_group: read-v2's ACTIONS and
+    a few verbs the model writes outside them, SYNONYMS): release, deal, funding, legal, people, pricing, research,
+    announcement. Announcing or leaking a thing is its release; a people move with no person in it ("B joins A") is a deal. `reported` and `other` name no
     happening: no key. (E1: grouping on the verb alone misses happenings read under another verb, a filing read as
     filed, published or announced; the fix is a closed event type in the read guide, never a word list: 0166's next
     step.)
@@ -34,6 +34,15 @@ happening with a `new` post's, of another source and both voices, dated within t
 row: deal 30 days, people 14, legal 7, every other group 72 hours), not already in one Mark IX story; stored as
 mx_candidates (post_post, source 'happening'), a question for the judge, never a rule. Only the groups E1 measured
 are paired (the policy's happening_groups: deal, funding, legal, people); the other groups' keys wait for theirs.
+
+**Stored** (issue 0175, mx_happenings): every read post's key is kept with the basis it was computed from (the code's
+version, the reading's call, each current mention's guide, number and root); `keys(cur, ids)` reads the stored keys and
+computes again only the posts whose basis moved (a new reading or mention set, a merge, a pin, a relink) or that have
+none, so it returns what `compute` (the recompute) returns. A changed key adds a row, old rows stay; readers take the
+newest. Written when a reading or a post's mentions land (`note`, from tasks.record), and by `backfill`, a resumable
+step of the candidates job (posts never keyed by this code, newest first; then the longest-unchecked rows again).
+`stored(cur, ids)` reads the newest rows as they are. The mentions are read in (guide, n) order (0166 read them in the
+table's order, which is the insertion order, n's).
 """
 from __future__ import annotations
 
@@ -44,34 +53,18 @@ from datetime import date, timedelta
 from itertools import combinations
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from insight_core.markx import event_types
+
 THING_TYPES = frozenset({"model", "product", "software", "dataset", "document", "paper"})
 PERSON_TYPES = frozenset({"person"})
 NOT_PARTY_TYPES = frozenset({"place"})       # where it happened is no party to it
 NOT_PARTY_ROLES = frozenset({"venue"})       # nor where it appeared
 MIN_PARTIES = 2
 
-# read-v2's ACTIONS -> (group, stage).
-ACTION_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
-    "released": ("release", "released"), "launched": ("release", "released"), "updated": ("release", "released"),
-    "announced": ("announcement", "announced"), "leaked": ("announcement", "rumored"),
-    "delayed": ("release", None), "priced": ("pricing", "announced"),
-    "acquired": ("deal", "announced"), "raised": ("funding", "closed"), "sued": ("legal", "announced"),
-    "published": ("research", "released"), "found": ("research", None),
-    "reported": (None, None), "other": (None, None),
-}
-# Verbs the model writes outside read-v2's list (seen on the server copy), as their ACTIONS kin.
-SYNONYMS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
-    "introduced": ("release", "released"), "shipped": ("release", "released"), "open-sourced": ("release", "released"),
-    "bought": ("deal", "announced"), "merged": ("deal", "announced"), "sold": ("deal", "announced"),
-    "acquires": ("deal", "announced"), "completed": ("deal", "closed"), "closed": ("deal", "closed"),
-    "invested": ("funding", "closed"),
-    "filed": ("legal", "announced"), "charged": ("legal", "announced"), "ruled": ("legal", "closed"),
-    "fined": ("legal", "closed"), "settled": ("legal", "closed"), "arrested": ("legal", "announced"),
-    "joined": ("people", "announced"), "joins": ("people", "announced"), "hired": ("people", "announced"),
-    "appointed": ("people", "announced"), "left": ("people", "announced"), "resigned": ("people", "announced"),
-    "departed": ("people", "announced"),
-}
-GROUPS = ("release", "deal", "funding", "legal", "people", "pricing", "research", "announcement")
+# The action -> (group, stage) mapping is the event-type seam's (markx/event_types.py, 0175): named here for callers.
+ACTION_GROUPS = event_types.ACTION_GROUPS
+SYNONYMS = event_types.SYNONYMS
+GROUPS = event_types.GROUPS
 MONEY_TOLERANCE = 0.30      # E1: amounts more than ~30% apart are two happenings
 
 
@@ -193,8 +186,7 @@ def _day(s: Any) -> Optional[date]:
 # ---- the key ---------------------------------------------------------------------------------------------------
 
 def _group(action: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    a = (action or "").strip().lower()
-    return ACTION_GROUPS.get(a) or SYNONYMS.get(a) or (None, None)
+    return event_types.action_group(action)
 
 
 def key(reading: Optional[Mapping[str, Any]], mentions: Sequence[Mapping[str, Any]]) -> Optional[Happening]:
@@ -236,35 +228,155 @@ def same(a: Happening, b: Happening, window: timedelta) -> bool:
 READING_GUIDE = "read-v2"
 
 
-def _verbs(groups: Iterable[str]) -> List[str]:
-    """The reading actions whose keys may be of these groups."""
-    gs = set(groups)
-    gs |= ({"announcement"} if "release" in gs else set()) | ({"people"} if "deal" in gs else set())
-    return sorted(a for a, (g, _s) in {**ACTION_GROUPS, **SYNONYMS}.items() if g in gs)
+# ---- stored keys (0175) -----------------------------------------------------------------------------------------
+#
+# mx_happenings (migration 0118) keeps each read post's key with the `basis` it was computed from: the code's version,
+# the reading's call and each current mention's (guide, n, root). A reading is never changed once written and a
+# mention set's rows are written once, so those name every input of `key`; a root moves with a merge, a pin or a
+# relink, and the basis with it. `keys` (every caller's) reads the stored row and computes again only the posts whose
+# basis moved or that have none: what it returns is what `compute` (the recompute) returns, by construction
+# (tests/test_markx_happenings_stored.py). `stored` reads the newest rows as they are, for a reader that can take a key
+# one backfill step old.
+
+KEY_VERSION = "happening-v1"   # bump with any change to what a key is made of outside this module and the seam
+                               # (tasks.name_key, schemas.entity_type, schemas.mention_guides)
+BACKFILL_PAGE = 2000           # read posts never keyed by this code, a candidates run, newest first
+SWEEP_PAGE = 500               # stored rows checked again a run, the longest unchecked first (merges, pins, relinks)
+
+_version: Optional[str] = None
 
 
-def _mentions(cur: Any, ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
-    from insight_core.markx import schemas
+def version() -> str:
+    """KEY_VERSION and the sha256 of this module's and the event-type seam's code: a change keys every post again."""
+    global _version
+    if _version is None:
+        import hashlib
+        h = hashlib.sha256(KEY_VERSION.encode())
+        for path in (__file__, event_types.__file__):
+            with open(path, "rb") as f:
+                h.update(f.read())
+        _version = KEY_VERSION + ":" + h.hexdigest()[:16]
+    return _version
+
+
+def _roots(cur: Any, eids: Iterable[str]) -> Any:
+    """later._Ids with the current redirects reachable from these entities only (its root walk, unchanged)."""
     from insight_core.markx.later import _Ids
+    ids = _Ids.__new__(_Ids)
+    ids.pins, ids.redirect = {}, {}
+    eids = sorted({e for e in eids if e})
+    if eids:
+        cur.execute("""WITH RECURSIVE walk(id) AS (
+                           SELECT unnest(%s::uuid[])
+                           UNION SELECT r.to_id FROM mx_entity_redirects r JOIN walk w ON r.from_id = w.id
+                                  WHERE r.undone_at IS NULL)
+                       SELECT r.from_id::text, r.to_id::text FROM mx_entity_redirects r JOIN walk w ON r.from_id = w.id
+                        WHERE r.undone_at IS NULL""", (eids,))
+        ids.redirect = dict(cur.fetchall())
+    return ids
+
+
+def _inputs(cur: Any, ids: Sequence[str]) -> Tuple[Dict[str, str], Dict[str, List[Dict[str, Any]]]]:
+    """({post: its reading's call} of the posts with a READING_GUIDE reading, {post: its current mentions as `key`
+    reads them, the root resolved (a pin's entity, else the mention's, through the redirects), in (guide, n) order})."""
+    from insight_core.markx import schemas
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     if not ids:
-        return out
-    roots = _Ids(cur)
-    roots.pin(cur, list(ids))
-    cur.execute("""SELECT post_id::text, guide, n, entity_id::text, name, span, name_key, type, role, maker
-                     FROM mx_mentions_now WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""",
-                (list(ids), schemas.mention_guides()))
-    for pid, g, n, eid, name, span, nk, t, role, maker in cur.fetchall():
-        out[pid].append({"name": name, "span": span, "name_key": nk, "type": t, "role": role, "maker": maker,
-                         "root": roots.of(pid, g, n, eid)})
-    return out
+        return {}, out
+    cur.execute("SELECT post_id::text, call_id::text FROM mx_readings WHERE guide = %s AND post_id = ANY(%s::uuid[])",
+                (READING_GUIDE, list(ids)))
+    read = dict(cur.fetchall())
+    if not read:
+        return read, out
+    cur.execute("""SELECT m.post_id::text, m.guide, m.n, COALESCE(pin.entity_id, m.entity_id)::text, m.name, m.span,
+                          m.name_key, m.type, m.role, m.maker
+                     FROM mx_mentions_now m
+                     LEFT JOIN mx_entity_pins pin ON pin.post_id = m.post_id AND pin.guide = m.guide AND pin.n = m.n
+                                                 AND pin.undone_at IS NULL
+                    WHERE m.post_id = ANY(%s::uuid[]) AND m.guide = ANY(%s)
+                    ORDER BY m.post_id, m.guide, m.n""", (sorted(read), schemas.mention_guides()))
+    rows = cur.fetchall()
+    roots = _roots(cur, [r[3] for r in rows])
+    for pid, g, n, eid, name, span, nk, t, role, maker in rows:
+        out[pid].append({"guide": g, "n": n, "name": name, "span": span, "name_key": nk, "type": t, "role": role,
+                         "maker": maker, "root": roots.root(eid)})
+    return read, out
+
+
+def _basis(call: str, mentions: Sequence[Mapping[str, Any]]) -> str:
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps([version(), READING_GUIDE, call, [[m["guide"], m["n"], m["root"]] for m in mentions]])
+                          .encode()).hexdigest()
+
+
+def _row_key(grp: Optional[str], parties_: Sequence[str], stage: Optional[str], at: Optional[date],
+             amounts: Sequence[float]) -> Optional[Happening]:
+    return None if grp is None else Happening(grp, frozenset(parties_), stage, at, tuple(amounts))
+
+
+def _newest(cur: Any, ids: Sequence[str]) -> Dict[str, Tuple]:
+    """{post: (row id, guide, version, basis, read_group, key or None)} of the posts' newest stored rows."""
+    if not ids:
+        return {}
+    cur.execute("""SELECT post_id::text, id, guide, version, basis, read_group, grp, parties, stage, at, money
+                     FROM mx_happenings_now WHERE post_id = ANY(%s::uuid[])""", (list(ids),))
+    return {r[0]: (r[1], r[2], r[3], r[4], r[5], _row_key(*r[6:])) for r in cur.fetchall()}
+
+
+def _write(cur: Any, pid: str, call: str, basis: str, read_group: Optional[str], k: Optional[Happening],
+           was: Optional[Tuple]) -> None:
+    """A changed key (or a post's first): a new row. The same key from a new basis: that row's basis, in place."""
+    if was is not None and was[1] == READING_GUIDE and was[4] == read_group and was[5] == k:
+        cur.execute("""UPDATE mx_happenings SET basis = %s, version = %s, reading_call = %s, checked_at = clock_timestamp()
+                        WHERE id = %s""", (basis, version(), call, was[0]))
+        return
+    cur.execute("""INSERT INTO mx_happenings (post_id, guide, reading_call, version, basis, read_group, grp, parties,
+                                              stage, at, money)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (pid, READING_GUIDE, call, version(), basis, read_group, k.group if k else None,
+                 sorted(k.parties) if k else [], k.stage if k else None, k.date if k else None,
+                 list(k.numbers) if k else []))
 
 
 def keys(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
-    """{post: its happening} of the posts with a reading that names one."""
+    """{post: its happening} of the posts with a reading that names one: the stored key, computed again (and stored)
+    for a post whose basis moved or that has none. Equal to `compute(cur, ids)`."""
+    from insight_core.markx import repo
+    read, ments = _inputs(cur, sorted({str(i) for i in ids}))
+    have = _newest(cur, sorted(read))
+    out: Dict[str, Happening] = {}
+    stale: Dict[str, str] = {}
+    for pid, call in read.items():
+        basis = _basis(call, ments.get(pid, []))
+        was = have.get(pid)
+        if was is not None and was[3] == basis:
+            if was[5] is not None:
+                out[pid] = was[5]
+        else:
+            stale[pid] = basis
+    if stale:
+        readings = {str(k): v["reading"] for k, v in repo.readings(cur, sorted(stale), READING_GUIDE).items()}
+        for pid, basis in stale.items():
+            r = readings[pid]
+            k = key(r, ments.get(pid, []))
+            _write(cur, pid, read[pid], basis, event_types.from_reading(r, READING_GUIDE).group, k, have.get(pid))
+            if k is not None:
+                out[pid] = k
+    return out
+
+
+def note(cur: Any, ids: Iterable[str]) -> None:
+    """A post's reading or its mentions landed (tasks.record): its key stored now."""
+    keys(cur, list(ids))
+
+
+def compute(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
+    """{post: its happening} computed from the readings and the mentions now, nothing read from or written to
+    mx_happenings (0166's `keys`; what `keys` equals)."""
     from insight_core.markx import repo
     readings = {str(k): v["reading"] for k, v in repo.readings(cur, list(ids), READING_GUIDE).items()}
-    ments = _mentions(cur, sorted(readings))
+    _calls, ments = _inputs(cur, sorted(readings))
     out = {}
     for pid, r in readings.items():
         k = key(r, ments.get(pid, []))
@@ -273,8 +385,56 @@ def keys(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
     return out
 
 
+def stored(cur: Any, ids: Iterable[str]) -> Dict[str, Happening]:
+    """{post: its newest stored key}, as stored: a merge, a pin or a relink since is in it once `keys` or `backfill`
+    checked the post."""
+    return {p: v[5] for p, v in _newest(cur, sorted({str(i) for i in ids})).items() if v[5] is not None}
+
+
+def backfill(cur: Any, *, limit: int = BACKFILL_PAGE, sweep: int = SWEEP_PAGE) -> Dict[str, int]:
+    """One resumable step (the candidates job's, each run): `limit` read posts with no stored row by this code, newest
+    first, keyed; then `sweep` stored rows, the longest unchecked first, checked again. {keyed, checked, left}: `left`
+    the read posts still not keyed by this code."""
+    from insight_core.markx import pairing
+    missing = """FROM mx_readings r JOIN posts p ON p.id = r.post_id
+                 LEFT JOIN LATERAL (SELECT h.version FROM mx_happenings h WHERE h.post_id = r.post_id
+                                     ORDER BY h.id DESC LIMIT 1) h ON true
+                WHERE r.guide = %(g)s AND h.version IS DISTINCT FROM %(v)s"""
+    params = {"g": READING_GUIDE, "v": version()}
+    todo: List[str] = []
+    if limit:
+        cur.execute(f"SELECT r.post_id::text {missing} ORDER BY {pairing.post_date()} DESC, r.post_id LIMIT %(n)s",
+                    {**params, "n": limit})
+        todo = [r[0] for r in cur.fetchall()]
+        keys(cur, todo)
+    checked: List[str] = []
+    if sweep:
+        cur.execute("""SELECT post_id::text FROM mx_happenings_now WHERE version = %s AND NOT post_id = ANY(%s::uuid[])
+                        ORDER BY checked_at, post_id LIMIT %s""", (version(), todo, sweep))
+        checked = [r[0] for r in cur.fetchall()]
+        if checked:
+            keys(cur, checked)
+            cur.execute("""UPDATE mx_happenings h SET checked_at = clock_timestamp()
+                             FROM (SELECT DISTINCT ON (post_id) id FROM mx_happenings WHERE post_id = ANY(%s::uuid[])
+                                    ORDER BY post_id, id DESC) n WHERE h.id = n.id""", (checked,))
+    cur.execute(f"SELECT count(*) {missing}", params)
+    return {"keyed": len(todo), "checked": len(checked), "left": cur.fetchone()[0]}
+
+
+# ---- the source --------------------------------------------------------------------------------------------------
+
+def _pool_groups(groups: Iterable[str]) -> List[str]:
+    """The reading groups (event_types' group of the main action) whose keys may be of these groups: an announced
+    thing is a release, a people move with no person a deal."""
+    gs = set(groups)
+    gs |= ({"announcement"} if "release" in gs else set()) | ({"people"} if "deal" in gs else set())
+    return sorted(gs)
+
+
 def pairs(cur: Any, posts: Any, new: Iterable[str]) -> int:
-    """Pairing's `happening` source: post pairs of one happening touching a `new` post (pairing.Posts `posts`)."""
+    """Pairing's `happening` source: post pairs of one happening touching a `new` post (pairing.Posts `posts`). Keys
+    are the stored ones (`keys`); the pool is the read posts in the window whose stored reading group may make a key of
+    these groups, and the read posts not yet keyed by this code (keyed then)."""
     from insight_core.markx import pairing
     pol = posts.pol
     mine = keys(cur, sorted(set(new)))
@@ -285,10 +445,12 @@ def pairs(cur: Any, posts: Any, new: Iterable[str]) -> int:
     span = max(pol.happening_span(k.group) for k in mine.values())
     lo, hi = min(posts.at[p] for p in mine) - span, max(posts.at[p] for p in mine) + span
     cur.execute(f"""SELECT r.post_id::text FROM mx_readings r JOIN posts p ON p.id = r.post_id
+                      LEFT JOIN LATERAL (SELECT h.version, h.read_group FROM mx_happenings h WHERE h.post_id = r.post_id
+                                          ORDER BY h.id DESC LIMIT 1) h ON true
                      WHERE r.guide = %s AND COALESCE(r.kind, '') <> 'roundup'
-                       AND lower(r.reading->'main'->>'action') = ANY(%s)
-                       AND {pairing.post_date()} BETWEEN %s AND %s""",
-                (READING_GUIDE, _verbs({k.group for k in mine.values()}), lo, hi))
+                       AND (h.version IS DISTINCT FROM %s OR h.read_group = ANY(%s))
+                       AND {pairing.post_date_within('p', '%s::timestamptz', '%s::timestamptz')}""",
+                (READING_GUIDE, version(), _pool_groups({k.group for k in mine.values()}), lo, lo, hi, hi))
     pool = keys(cur, [r[0] for r in cur.fetchall()])
     posts.load(pool)
     index: Dict[Tuple[str, FrozenSet[str]], List[str]] = defaultdict(list)

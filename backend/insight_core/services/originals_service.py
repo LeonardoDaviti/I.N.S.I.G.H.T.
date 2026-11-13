@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from insight_core.db import database as db
+from insight_core.utils import voice
 from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_linked import _followed, _own_pages, linked_not_stored
@@ -42,6 +43,7 @@ from insight_core.utils.addresses import host_of, site_of
 from insight_core.utils.discover_rules import (app_address, archive_address, discover_address, document_address,
                                               reference_address)
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 logger = logging.getLogger("insight.originals")
 
@@ -98,6 +100,22 @@ def site_reads(cur: Any) -> Dict[str, rules.SiteReads]:
     """What the server read of each site (Discover's reads): pages read and titled, the follow test."""
     row = SystemSettingsRepository.get(cur, READS_KEY)
     return rules.site_reads_of((row[0] if row else None) or {})
+
+
+class _NeverFront:
+    """{site word: the types of the entities whose key squashes to it, of NEVER_FRONT_TYPES} (E5), asked per word of
+    a page's book (v10.17, 0186: was a walk of the whole book)."""
+
+    def __init__(self, book: Any) -> None:
+        self.book, self.got = book, {}
+
+    def get(self, word: Any, default: Any = None) -> Any:
+        from insight_core.utils import entity_originals as E
+        if word not in self.got:
+            ids = self.book.by_squashed_key([word]) if word else []
+            self.got[word] = {t for t in (self.book.ents[x].type for x in ids) if t in E.NEVER_FRONT_TYPES} or None
+        got = self.got[word]
+        return default if got is None else got
 
 
 class OriginalsService:
@@ -328,11 +346,11 @@ class OriginalsService:
         from insight_core.markx import entity_addresses as EA, identity as I, schemas
         from insight_core.markx.pairing import SPECIFIC_TYPES
         since = now - E.TRIGGER_WITHIN
-        cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, p.source_id::text,
-                              COALESCE(p.surfaced_at, p.published_at, p.fetched_at), m.by_name, m.type
+        cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, p.source_id::text,
+                              {pairing.ordinary_date('p')}, m.by_name, m.type
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.type = ANY(%s) AND m.entity_id IS NOT NULL
-                          AND s.platform <> 'saved' AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s""",
+                          AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s""",
                     (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since))
         rows = cur.fetchall()
         if not rows:
@@ -340,7 +358,8 @@ class OriginalsService:
         cur.execute("""SELECT DISTINCT ON (news_id) post_id::text FROM news_posts
                         ORDER BY news_id, role <> 'report', position NULLS LAST, post_id""")
         leads = {r[0] for r in cur.fetchall()}
-        book = I.load_book(cur)
+        book = I.lazy_book(cur)   # v10.17 (0186): the mentions' entities, not the whole book
+        book.prime(ids=[book.pins.get((pid, guide, n), eid) for pid, guide, n, eid, *_ in rows])
         ents: Dict[str, Dict[str, Any]] = {}
         for pid, guide, n, eid, source, at, by, type_ in rows:
             root = book.root(book.pins.get((pid, guide, n), eid))
@@ -536,15 +555,12 @@ class OriginalsService:
         not stored and not asked, never one whose site word names a product, app, model, org or person (E5); with its
         own pages your posts link (the same host, never another front page), at most WORK_PAGES_MAX, the most linked
         first. The front page first, then its pages; sites by their voices."""
-        from insight_core.markx import entity_addresses as EA, identity as I, names as N
+        from insight_core.markx import entity_addresses as EA, identity as I
         cur.execute("SELECT 1 FROM mx_entity_addresses WHERE kind = 'work' LIMIT 1")
         if cur.fetchone() is None:
             return []
-        book = I.load_book(cur)
-        never: Dict[str, set] = {}
-        for e in book.ents.values():
-            if e.type in E.NEVER_FRONT_TYPES:
-                never.setdefault(N.squash(e.key), set()).add(e.type)
+        book = I.lazy_book(cur)   # v10.17 (0186): the addresses' entities, not the whole book
+        never = _NeverFront(book)
         fronts: Dict[str, str] = {}
         for root, rows in EA.current(cur, book).items():
             for kind, url, _rule, _at, _pid in rows:
@@ -552,7 +568,7 @@ class OriginalsService:
                     fronts.setdefault(url, root)
         if not fronts:
             return []
-        cur.execute("""SELECT l.target_url, count(DISTINCT p.source_id) FROM post_links l JOIN posts p ON p.id = l.post_id
+        cur.execute(f"""SELECT l.target_url, {voice.count_sql("p.source_id")} FROM post_links l JOIN posts p ON p.id = l.post_id
                          JOIN sources s ON s.id = p.source_id
                         WHERE l.target_url = ANY(%s) AND NOT l.boilerplate AND s.platform <> 'saved' GROUP BY 1""",
                     (sorted(fronts),))
@@ -644,13 +660,13 @@ class OriginalsService:
         # A post listing ROUNDUP_ANCHORS+ links is about its first only (Mark IX's rule, story_rules.ROUNDUP_ANCHORS):
         # measured on the server's copy, a meetups list's 60 event pages were half of what was wanted without it.
         from insight_core.utils.story_rules import ROUNDUP_ANCHORS
-        cur.execute("""SELECT target_url, source_id FROM (
+        cur.execute(f"""SELECT target_url, source_id FROM (
                            SELECT pl.target_url, p.source_id::text AS source_id, pl.position,
                                   count(*) OVER (PARTITION BY pl.post_id) AS links,
                                   min(pl.position) OVER (PARTITION BY pl.post_id) AS first
                              FROM post_links pl JOIN posts p ON p.id = pl.post_id
                             WHERE NOT pl.boilerplate AND pl.kind = 'link'
-                              AND COALESCE(p.published_at, p.fetched_at) >= %s) x
+                              AND {pairing.ix_date('p')} >= %s) x
                         WHERE links < %s OR position = first""", (now - E.MISSED_WITHIN, ROUNDUP_ANCHORS))
         want: Dict[str, str] = {}
         from insight_core.utils.addresses import is_tweet

@@ -21,7 +21,8 @@ from insight_core.tests._db import db_url, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils import source_roles as roles
 from insight_core.utils.source_roles import Focus, Mention, Official
-from insight_core.utils.story_rules import count_voices, group
+from insight_core.utils import voice
+from insight_core.utils.story_rules import group
 from insight_core.utils.voice_rules import (Channel, PairCounts, address_key, groups, judge, platform_of, shingles,
                                             site_label)
 
@@ -239,20 +240,20 @@ class CountingTests(unittest.TestCase):
                   post("tweet", "s-x", kind="x", site="x.com", hours=1, links=page, owner="voice:v1")]
         [story] = group(joined)
         self.assertEqual(story.voices, 1, "one confirmed voice")
-        self.assertEqual(count_voices(joined, by_owner=True), 1, "News too")
+        self.assertEqual(voice.count(joined, voice.Policy.NEWS_IX), 1, "News too")
 
     def test_an_owner_told_by_the_data_still_counts_only_in_news(self):
         page = [("https://outside.example/2026/10/a-model-ships-today", None)]
         owned = [post("blog", "s-blog", links=page, owner="source:s-x"),
                  post("tweet", "s-x", kind="x", site="x.com", hours=1, links=page)]
-        self.assertEqual(count_voices(owned), 2, "issue 0111's owners are News's only")
-        self.assertEqual(count_voices(owned, by_owner=True), 1)
+        self.assertEqual(voice.count(owned, voice.Policy.STORIES_IX), 2, "issue 0111's owners are News's only")
+        self.assertEqual(voice.count(owned, voice.Policy.NEWS_IX), 1)
 
     def test_a_reddit_poster_stays_its_own_voice_in_a_story(self):
         page = [("https://outside.example/2026/10/a-model-ships-today", None)]
         posts = [post("x1", "s-x", kind="x", site="x.com", links=page, owner="voice:v1"),
                  post("r1", "s-red", kind="reddit", site="reddit.com", author="zed_q", links=page, owner="voice:v1")]
-        self.assertEqual(count_voices(posts), 2)
+        self.assertEqual(voice.count(posts, voice.Policy.STORIES_IX), 2)
 
     def test_the_rules_stamp_reads_no_voice(self):
         """The deploy regroups nothing: the sample has no confirmed voice, so its owners, prints and stamp are the

@@ -27,8 +27,10 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
+from insight_core.markx import pairing
 
 RULE = "rollup3"
+DATE = pairing.ix_date            # a mention's day: its post's Mark IX time (published, else fetched)
 MIN_VOICES = 3
 PRECISION = "91% (84-95%) on a fresh window, 88% (83-91%) across both (lab, 2026-11-06)"
 
@@ -55,14 +57,13 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
     day_list = sorted({d for d in days if d >= since}) if days is not None else None
     if day_list is not None and not day_list:
         return {}
+    day = f"({DATE('p')} AT TIME ZONE 'UTC')::date"
     cur.execute(f"""SELECT m.post_id::text, m.role, m.entity_id::text, m.maker, m.family, m.n, m.guide,
-                           (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date, p.source_id::text,
-                           s.platform, s.handle_or_url
+                           {day}, p.source_id::text, s.platform, s.handle_or_url
                       FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                      WHERE m.guide = ANY(%s) AND m.role IN ('subject', 'actor') AND m.entity_id IS NOT NULL
-                       AND (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date >= %s
-                       {"AND (COALESCE(p.published_at, p.fetched_at) AT TIME ZONE 'UTC')::date = ANY(%s::date[])"
-                        if day_list is not None else ""}""",
+                       AND {day} >= %s
+                       {f"AND {day} = ANY(%s::date[])" if day_list is not None else ""}""",
                 (guide, since, day_list) if day_list is not None else (guide, since))
     acc: Dict[Tuple[str, date], Dict[str, Any]] = {}
     for pid, role, eid, maker, family, n, g, day, src, platform, handle in cur.fetchall():
@@ -80,11 +81,13 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
     return acc
 
 
-def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30) -> Dict[str, Any]:
-    """Recount the days (None: every day of the window) and write what changed."""
+def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30,
+          book: Optional[I.Book] = None) -> Dict[str, Any]:
+    """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now
+    (its entities, names, merges and pins; no mention count is read), else read here."""
     from insight_core.markx import schemas
     guide = schemas.mention_guides()   # 0133: the current set
-    book = I.load_book(cur)
+    book = I.load_book(cur, counts=False) if book is None else book   # v10.16: the counts were never read here
     since = (now.astimezone(timezone.utc) - timedelta(days=window_days)).date()
     acc = count(cur, book, days, since, guide)
     want: Dict[Tuple[str, date], Dict[str, Any]] = {}

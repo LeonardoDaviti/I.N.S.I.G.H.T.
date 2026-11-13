@@ -55,7 +55,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from psycopg import Cursor
 
 from insight_core.markx import repo, schemas, scout, tasks
+from insight_core.utils import voice
 from insight_core.markx import research_web as W
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -183,7 +185,7 @@ def _spend(cur: Cursor, run: Dict[str, Any], column: str, n: int = 1) -> None:
 
 def _book(cur: Cursor) -> Any:
     from insight_core.markx import identity
-    return identity.load_book(cur)
+    return identity.lazy_book(cur)   # v10.17 (0186): the seed's entities, not the whole book
 
 
 def resolve_entities(cur: Cursor, book: Any, kind: str, seed: str, links: Sequence[str]) -> Tuple[List[str], Optional[str]]:
@@ -204,7 +206,7 @@ def resolve_entities(cur: Cursor, book: Any, kind: str, seed: str, links: Sequen
         return list(dict.fromkeys(r for r in roots if r in book.ents)), None
     if kind == "name":
         key = N.key(seed)
-        found = book.by_key(key) or next((eid for eid, e in book.ents.items() if e.key == key), None)
+        found = book.by_key(key) or book.first_with_key(key)
         root = book.root(found) if found else None
         if root in book.ents:
             return [root], None
@@ -219,12 +221,15 @@ def resolve_entities(cur: Cursor, book: Any, kind: str, seed: str, links: Sequen
 def _post_rows(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
     if not ids:
         return []
-    cur.execute("""SELECT p.id::text, COALESCE(pp.title, p.title), COALESCE(p.surfaced_at, p.published_at, p.fetched_at),
-                          COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.url, s.id::text
-                     FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
-                    WHERE p.id = ANY(%s::uuid[])""", (list(ids),))
-    rows = [{"post_id": i, "title": t, "at": _iso(at), "source": s, "url": u, "source_id": sid}
-            for i, t, at, s, u, sid in cur.fetchall()]
+    from insight_core.utils import byline
+    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), {pairing.ordinary_date('p')},
+                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.url, s.id::text,
+                           {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (list(ids),))
+    # issue 0185: each row's byline (who wrote it, via whom)
+    rows = [{"post_id": i, "title": t, "at": _iso(at), "source": s, "url": u, "source_id": sid, "byline": byline.of_row(s, *by)}
+            for i, t, at, s, u, sid, *by in cur.fetchall()]
     return sorted(rows, key=lambda r: r["at"] or "", reverse=True)
 
 
@@ -262,11 +267,10 @@ def held(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
     book = _book(cur)
     links = seed_links(run["seed_kind"], run["seed"])
     roots, proposed = resolve_entities(cur, book, run["seed_kind"], run["seed"], links)
-    members = book.members()
     addresses: List[str] = list(links)
     counts = {"entities": len(roots), "posts": 0, "linking": 0}
     for root in roots:
-        ids = sorted(members.get(root, {root}))
+        ids = sorted(set(book.cluster(root)) or {root})
         cur.execute("""SELECT DISTINCT post_id::text FROM mx_mentions_now WHERE entity_id = ANY(%s::uuid[])""", (ids,))
         posts = [p for (p,) in cur.fetchall()]
         rows = EA._current(cur, book, [root]).get(root, [])     # (kind, url, rule, first_at, post_id, owner)
@@ -274,7 +278,8 @@ def held(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
         addresses += own
         cur.execute("""SELECT count(DISTINCT story_id) FROM mx_story_posts WHERE post_id = ANY(%s::uuid[])""", (posts,))
         stories = cur.fetchone()[0]
-        cur.execute("SELECT count(DISTINCT source_id) FROM posts WHERE id = ANY(%s::uuid[])", (posts,))
+        cur.execute(f"SELECT {voice.count_sql('p.source_id', 's.platform')} FROM posts p "
+                    "JOIN sources s ON s.id = p.source_id WHERE p.id = ANY(%s::uuid[])", (posts,))
         voices = cur.fetchone()[0]
         e = book.ents[root]
         find(cur, run, "held", f"entity:{root}", {
@@ -284,8 +289,8 @@ def held(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
             "newest": _post_rows(cur, posts)[:HELD_POSTS]})
         counts["posts"] += len(posts)
         key = e.key
-        for other, oe in book.ents.items():          # the names that may be one thing with it (offered only)
-            r = book.root(other)
+        for other in book.keys_around(key) if key else ():   # the names that may be one thing with it (offered only)
+            oe, r = book.ents[other], book.root(other)
             if r == root or r != other or not oe.key or not key:
                 continue
             if oe.key.startswith(key + " ") or key.startswith(oe.key + " "):
@@ -405,9 +410,9 @@ def near_copies(cur: Cursor, run: Dict[str, Any]) -> int:
     rare = sorted(set(words), key=lambda w: (-len(w), w))[:NEAR_WORDS]
     if len(rare) < 3:
         return 0
-    cur.execute("""SELECT id::text FROM posts WHERE search_vector @@ websearch_to_tsquery('russian', %s)
-                     AND COALESCE(surfaced_at, published_at, fetched_at) >= %s
-                   ORDER BY COALESCE(surfaced_at, published_at, fetched_at) DESC LIMIT 200""",
+    cur.execute(f"""SELECT id::text FROM posts WHERE search_vector @@ websearch_to_tsquery('russian', %s)
+                     AND {pairing.ordinary_date('')} >= %s
+                   ORDER BY {pairing.ordinary_date('')} DESC LIMIT 200""",
                 (" OR ".join(rare), _now() - timedelta(days=NEAR_DAYS)))
     ids = [r for (r,) in cur.fetchall()]
     seed = tasks.Post(id="seed", kind="site", source="", source_id="", at=_now(), title="", text=text)
@@ -437,8 +442,8 @@ def around(cur: Cursor, run: Dict[str, Any]) -> int:
     if not mine:
         return 0
     at = _now() if run["seed_kind"] == "post" else run["created_at"]
-    cur.execute("""SELECT id::text FROM posts WHERE source_id = ANY(%s::uuid[])
-                     AND COALESCE(surfaced_at, published_at, fetched_at) BETWEEN %s AND %s""",
+    cur.execute(f"""SELECT id::text FROM posts WHERE source_id = ANY(%s::uuid[])
+                     AND {pairing.ordinary_date('')} BETWEEN %s AND %s""",
                 (mine, at - AROUND, at + AROUND))
     n = 0
     for row in _post_rows(cur, [r for (r,) in cur.fetchall()]):
@@ -1101,7 +1106,7 @@ def view(cur: Cursor, run_id: str) -> Optional[Dict[str, Any]]:
     not_same = [a for a in accounts if a.get("same") == "no"]
     these = None
     if run.get("entity_id"):
-        book = identity.load_book(cur)
+        book = identity.lazy_book(cur)   # v10.17 (0186): the run's entity and its maker, not the whole book
         root = book.root(run["entity_id"])
         maker_root = None
         e = book.ents.get(root)
@@ -1112,7 +1117,7 @@ def view(cur: Cursor, run_id: str) -> Optional[Dict[str, Any]]:
             found = book.by_key(N.key(e.maker))
             maker_root = book.root(found) if found else None
         if maker_root and maker_root in book.ents:
-            by = person_page.by_sources(cur, book, maker_root, book.members().get(maker_root, {maker_root}))
+            by = person_page.by_sources(cur, book, maker_root, set(book.cluster(maker_root)) or {maker_root})
             these = {"entity": {"id": maker_root, "name": book.label(maker_root)}, **by}
     papers = [dict(f["data"], new=f["new"]) for f in got["paper"]]
     pap = {role: [p for p in papers if p.get("role") == role] for role in ("seed", "reference", "citing", "newer")}

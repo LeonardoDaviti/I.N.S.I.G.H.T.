@@ -58,7 +58,7 @@ Issue 0137 (new spheres, round 2):
 - A feed sharing no item with the page's 3+ articles, or whose newest item is 30+ days older than the
   page's newest article, is flagged (`Feed.flag`): the site's feed, not this page's.
 - "none" says why (`reason`): blocked, rate-limited, needs login, gone, server error, empty feed, no
-  bridge, none found.
+  bridge (none configured), bridge did not answer (configured, asked twice: issue 0185), none found.
 """
 from __future__ import annotations
 
@@ -172,6 +172,10 @@ NO_PROFILE = "no such Substack profile"
 # "none" says why (issue 0137 B5), from the address's own answer.
 REASON_BY_STATUS = {401: "needs login", 407: "needs login", 403: "blocked", 429: "rate-limited", 404: "gone", 410: "gone"}
 NONE_FOUND, EMPTY_FEED, NO_BRIDGE, SERVER_ERROR = "none found", "empty feed", "no bridge", "server error"
+# A bridge IS configured but its feed gave nothing readable, asked BRIDGE_TRIES times (timeout, empty or no
+# feed; issue 0185). NO_BRIDGE says only that none is configured.
+BRIDGE_SILENT = "bridge did not answer"
+BRIDGE_TRIES = 2
 
 FEED_ROOTS = {"rss", "feed", "rdf"}
 FEED_SEGMENTS = {"rss", "atom", "feed"}
@@ -348,11 +352,15 @@ class _Search:
         if bridged is not None:
             platform, feed_url = bridged
             if feed_url is None:
-                return FeedFinding("none", reason=NO_BRIDGE)
-            got = await self._sniff(feed_url)
-            if got:
-                return FeedFinding("found", (replace(got[1], url=feed_url),))
-            return FeedFinding("none", reason=self.reason(feed_url) if feed_url in self.statuses else NO_BRIDGE)
+                return FeedFinding("none", reason=NO_BRIDGE)    # none configured: the only NO_BRIDGE
+            for _ in range(BRIDGE_TRIES):
+                got = await self._sniff(feed_url)
+                if got:
+                    return FeedFinding("found", (replace(got[1], url=feed_url),))
+                if 400 <= self.statuses.get(feed_url, 0) < 500:
+                    break                       # the bridge answered: gone, blocked, rate-limited
+            # A configured bridge that gave nothing readable (issue 0185): its answer's reason, else its own.
+            return FeedFinding("none", reason=self.reason(feed_url) if feed_url in self.statuses else BRIDGE_SILENT)
         if kind in BRIDGE_KINDS:
             await self._get(address, FEED_BYTES)
             if address in self.statuses:

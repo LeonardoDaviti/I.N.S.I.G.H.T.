@@ -82,10 +82,13 @@ HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
 # "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
 FAILING_STATUSES = (HealthStatus.ERROR, HealthStatus.BACKOFF)
 OVERVIEW_HEALTH_ROWS = 8
+# The recent jobs the overview and the top bar's running sign list (the scheduler writes ~4-6 rows per cycle).
+OVERVIEW_JOBS = 50
 
 
 def empty_health_summary() -> Dict[str, int]:
-    return {key: 0 for key in HEALTH_SUMMARY_KEYS.values()}
+    """Each status's count, and `silent` (issue 0178): sources silent far beyond their rhythm, not a status."""
+    return {**{key: 0 for key in HEALTH_SUMMARY_KEYS.values()}, "silent": 0}
 
 
 EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
@@ -282,7 +285,49 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # Where its posts now live (issue 0108): {host, followed}; the owner chooses, nothing is switched off.
         "moved_to": source.get("moved_to"),
         **_doctor_fields(state, source.get("handle_or_url")),
+        # Silent far beyond its own rhythm (issue 0178), and where the doctor found it went; None otherwise.
+        "silent": silent_fields(source, state, status, now),
     }
+
+
+def silent_fields(source: Dict[str, Any], state: Optional[FetchStateRow], status: str,
+                  now: datetime) -> Optional[Dict[str, Any]]:
+    """A source silent far beyond its own rhythm (issue 0178, source_doctor.silent_beyond_rhythm): {days,
+    usual_gap_hours, last_post_at, looked_at, moved, replacement}, the doctor's look (looked_at None: not yet, or
+    its kind has no address to move) when it was made since the source's newest post. None when it is not
+    silent, is off, failing (the failure doctor speaks then) or the owner's saved pages, or the owner said it
+    stopped and nothing came since."""
+    from insight_core.ingestion.source_doctor import silent_beyond_rhythm
+
+    if (status in (HealthStatus.ERROR.value, HealthStatus.BACKOFF.value, HealthStatus.DISABLED.value)
+            or source.get("platform") == SAVED_PLATFORM):
+        return None
+    last = source.get("last_post_at")
+    silence = silent_beyond_rhythm(last, source.get("mean_gap_seconds"), source.get("cadence_tier"), now)
+    if silence is None:
+        return None
+    finding = (state.silent_finding if state else None) or {}
+    current = bool(finding) and _same_instant(finding.get("last_post_at"), last)
+    if current and finding.get("stopped"):
+        return None
+    looked = current and finding.get("looked")
+    return {
+        "days": int(silence.total_seconds() // 86400),
+        "usual_gap_hours": float(source["mean_gap_seconds"]) / 3600,
+        "last_post_at": iso(last),
+        "looked_at": iso(state.silent_checked_at) if looked and state else None,
+        "moved": list(finding.get("moved") or []) if looked else [],
+        "replacement": finding.get("replacement") if looked else None,
+    }
+
+
+def _same_instant(stored: Any, value: Optional[datetime]) -> bool:
+    if not stored or value is None:
+        return False
+    try:
+        return datetime.fromisoformat(str(stored)) == value
+    except ValueError:
+        return False
 
 
 def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
@@ -338,7 +383,15 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
             summary[key] += 1
         if status == HealthStatus.BACKOFF:
             summary[HEALTH_SUMMARY_KEYS[HealthStatus.ERROR]] += 1
+        if row.get("silent"):
+            summary["silent"] += 1   # silent far beyond its rhythm (issue 0178), whatever its status
     return summary
+
+
+def _ago(span: timedelta) -> str:
+    """A span for a health reason: minutes under 2 hours, else hours."""
+    seconds = span.total_seconds()
+    return f"{seconds / 60:.0f} minutes" if seconds < 7200 else f"{seconds / 3600:.1f} hours"
 
 
 def sources_failing(summary: Dict[str, int]) -> int:
@@ -855,11 +908,16 @@ class OperationsService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return {"success": True, **background_work(cur, stories_key=SETTINGS_KEY, stories_lock=LOCK_KEY)}
 
+    def running(self) -> Dict[str, Any]:
+        """What runs now, for the top bar's sign on every page (issue 0195): the recent jobs only, the same list the
+        overview carries (the running fetch and an hour's failed one are read from it), without source health."""
+        return {"success": True, "jobs": self.list_recent_jobs(OVERVIEW_JOBS)}
+
     def get_operations_overview(self) -> Dict[str, Any]:
         # The SQL projection above is what fixed the memory, not this limit, so keep
         # enough history for the alerts panel to still catch a stale failure.
         # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
-        jobs = self.list_recent_jobs(50)
+        jobs = self.list_recent_jobs(OVERVIEW_JOBS)
         health = self.get_source_health()
         summary = health["summary"]
         counts = self.get_database_counts()
@@ -893,43 +951,120 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
+        """{total_posts, enabled_sources}: the posts summed over each source's kept statistics (issue 0195), not a
+        count of every post."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      (SELECT COUNT(*) FROM posts) AS total_posts,
-                      (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
-                    """
-                )
-                row = cur.fetchone()
+                total = repo_post_stats.corpus(cur)["total_posts"]
+                cur.execute("SELECT COUNT(*) FROM sources WHERE enabled = TRUE")
+                enabled = cur.fetchone()[0]
 
         return {
-            "total_posts": int(row[0] or 0),
-            "enabled_sources": int(row[1] or 0),
+            "total_posts": int(total or 0),
+            "enabled_sources": int(enabled or 0),
         }
 
+    # ------------------------------------------------------------------ the system's health (issue 0188)
+
+    def system_health(self, now: Optional[datetime] = None, *, failing_sources: Optional[int] = None) -> Dict[str, Any]:
+        """/api/status's `healthy`, from real checks (was a literal True). {healthy, reasons (what makes it
+        unhealthy), warnings (shown, never unhealthy alone), checks (the numbers read)}:
+          - ingestion: the newest successful ingestion run is older than the fetch interval plus two ticks (every
+            source is due within the interval, so a run must have happened), or the scheduler's next tick is two
+            ticks overdue (its loop stopped);
+          - the scheduler's and Mark X's loops (utils/heartbeat.py, the logs volume): a heartbeat past its limit;
+          - Mark X (when on): a job failing (markx/jobs.py: FAILING_AFTER failed runs in a row), or the newest
+            finished decision run older than 2 x jobs.EVERY;
+          - warnings: failing sources (a source failing is the site's trouble, not the system's), workers silent
+            for more than WORKER_STALE_DAYS (markx/news.py).
+        Each check that cannot be read is a reason of its own."""
+        from insight_core.utils import heartbeat
+        now = now or datetime.now(timezone.utc)
+        reasons: List[str] = []
+        warnings: List[str] = []
+        checks: Dict[str, Any] = {}
+        try:
+            config = self.get_scheduler_config()
+            interval = timedelta(hours=float(config.get("interval_hours") or 20))
+            tick = timedelta(minutes=float(config.get("ingest_tick_minutes") or 60))
+            last_ok = self.latest_successful_job_finished_at("ingestion_run")
+            state = self.get_scheduler_state() or {}
+            next_tick = state.get("next_tick_at")
+            next_tick = datetime.fromisoformat(next_tick) if isinstance(next_tick, str) else next_tick
+            checks["ingestion"] = {"last_success_at": iso(last_ok), "next_tick_at": iso(next_tick),
+                                   "limit_hours": round((interval + 2 * tick).total_seconds() / 3600, 2)}
+            if last_ok is None:
+                reasons.append("no ingestion run has succeeded yet")
+            elif now - last_ok > interval + 2 * tick:
+                reasons.append(f"the last successful ingestion run finished {_ago(now - last_ok)} ago")
+            if next_tick is not None and now - next_tick > 2 * tick:
+                reasons.append(f"the scheduler's next tick is {_ago(now - next_tick)} overdue")
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"could not read the ingestion state ({type(exc).__name__})")
+        ages = heartbeat.ages(now.timestamp())
+        checks["heartbeats"] = {k: None if v is None else round(v) for k, v in ages.items()}
+        reasons.extend(heartbeat.stale(now.timestamp(), required=()))
+        try:
+            self._markx_health(now, reasons, warnings, checks)
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"could not read Mark X's jobs ({type(exc).__name__})")
+        if failing_sources:
+            warnings.append(f"{failing_sources} sources failing")
+        return {"healthy": not reasons, "reasons": reasons, "warnings": warnings, "checks": checks}
+
+    def _markx_health(self, now: datetime, reasons: List[str], warnings: List[str], checks: Dict[str, Any]) -> None:
+        from insight_core.markx import api as markx_api, jobs, news as markx_news
+        if not markx_api.enabled():
+            checks["markx"] = None
+            return
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            view = jobs.view(cur)
+            cur.execute("SELECT max(finished_at) FROM mx_runs")
+            last_run = cur.fetchone()[0]
+            stale_workers = [w["worker"] for w in markx_news.workers_view(markx_api.contacts(cur), now) if w["stale"]]
+        checks["markx"] = {"jobs": {job: {k: v.get(k) for k in ("failures", "failing", "retry_at", "finished_at")}
+                                    | {"ok": (v.get("last") or {}).get("ok")} for job, v in view.items()},
+                           "last_decision_run_at": iso(last_run)}
+        for job, v in view.items():
+            if v["failing"]:
+                error = (v.get("last") or {}).get("error") or "no error recorded"
+                reasons.append(f"Mark X's {job} job failed {v['failures']} times in a row ({str(error)[:120]})")
+        if last_run is None or (now - last_run).total_seconds() > 2 * jobs.EVERY:
+            reasons.append("no Mark X decision run has finished" if last_run is None
+                           else f"the last Mark X decision run finished {_ago(now - last_run)} ago")
+        if stale_workers:
+            warnings.append(f"Mark X workers silent for over {markx_news.WORKER_STALE_DAYS} days: "
+                            + ", ".join(stale_workers))
+
+    def table_sizes(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Issue 0188: the biggest tables with their indexes and TOAST (pg_total_relation_size), largest first;
+        reported only: nothing is pruned (the owner keeps everything)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("""SELECT c.relname, pg_total_relation_size(c.oid), c.reltuples::bigint
+                             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE c.relkind IN ('r', 'p', 'm') AND n.nspname = current_schema()
+                            ORDER BY 2 DESC LIMIT %s""", (limit,))
+            return [{"table": name, "bytes": int(size), "rows_estimate": max(int(rows), 0)}
+                    for name, size, rows in cur.fetchall()]
+
     def get_corpus_freshness(self) -> Dict[str, Any]:
-        """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
+        """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
+        last-24h volume (by the fetched_at index)."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      MAX(COALESCE(published_at, fetched_at)) AS latest,
-                      MIN(COALESCE(published_at, fetched_at)) AS oldest,
-                      MAX(fetched_at) AS latest_fetch,
-                      COUNT(*) FILTER (WHERE fetched_at >= now() - interval '24 hours') AS last_24h
-                    FROM posts
-                    """
-                )
-                row = cur.fetchone()
+                corpus = repo_post_stats.corpus(cur)
+                cur.execute("SELECT COUNT(*) FROM posts WHERE fetched_at >= now() - interval '24 hours'")
+                last_24h = cur.fetchone()[0]
 
         return {
-            "latest_post_at": iso(row[0]),
-            "oldest_post_at": iso(row[1]),
-            "latest_fetch_at": iso(row[2]),
-            "posts_last_24h": int(row[3] or 0),
+            "latest_post_at": iso(corpus["latest_at"]),
+            "oldest_post_at": iso(corpus["oldest_at"]),
+            "latest_fetch_at": iso(corpus["latest_fetch_at"]),
+            "posts_last_24h": int(last_24h or 0),
         }
 
     # ------------------------------------------------------------------ source health
@@ -991,6 +1126,21 @@ class OperationsService:
         row = self.get_source_health_row(source_id) if dismissed else None
         if row is None:
             raise LookupError(f"Source {source_id} has no replacement to dismiss")
+        return row
+
+    def source_stopped(self, source_id: str) -> Dict[str, Any]:
+        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts.
+        Nothing is switched off or deleted. The fresh row; LookupError for no such source."""
+        marked = False
+        if self._valid_id(source_id):
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                repo = FetchStateRepository()
+                marked = repo.mark_stopped(cur, source_id, last_post_at=repo.last_post_at(cur, source_id),
+                                           at=self.clock())
+                conn.commit()
+        row = self.get_source_health_row(source_id) if marked else None
+        if row is None:
+            raise LookupError(f"Source {source_id} not found")
         return row
 
     def keep_source(self, source_id: str) -> Dict[str, Any]:

@@ -12,6 +12,7 @@ from typing import Any, Literal, Optional
 
 LIST_CAP = 20                 # every list in a run report payload (OperationsService compaction is a no-op)
 ERROR_CAP = 500               # characters of an error kept in a report
+MAX_FETCH_LIMIT = 500         # posts per source one fetch may ask for (an archive is the way to read more)
 
 
 class Trigger(str, Enum):
@@ -97,6 +98,13 @@ class FetchRequest:
     trigger: Trigger
     force: bool = False              # ignore cadence + backoff (never unavailability)
     limit: Optional[int] = None      # per-source post limit (still floored by profile.min_posts_per_fetch)
+
+    def __post_init__(self) -> None:
+        """A limit is a whole number from 1 to MAX_FETCH_LIMIT (issue 0187: a fetch is not an archive; a request
+        asking a million posts per source ran a million-post fetch). ValueError otherwise (the API's 400)."""
+        if self.limit is not None and (isinstance(self.limit, bool) or not isinstance(self.limit, int)
+                                       or not 1 <= self.limit <= MAX_FETCH_LIMIT):
+            raise ValueError(f"limit must be a whole number from 1 to {MAX_FETCH_LIMIT}")
 
 
 @dataclass(frozen=True)

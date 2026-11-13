@@ -426,7 +426,7 @@ class SearchRouteTests(unittest.TestCase):
     def test_a_story_shows_once_at_its_best_matching_post(self):
         anthropic = self._source(name="Anthropic News", in_main_digest=True)
         simon = self._source(name="Simon Willison", in_main_digest=True)
-        channel = self._source(name="data_secrets", in_main_digest=True)
+        channel = self._source(name="data_whispers", in_main_digest=True)
         # The word in the title counts most: the story's best match is Simon's post.
         report = self._post(anthropic, "A new model today", "Today we release Claude Fable 5.2.", hours_ago=5)
         best = self._post(simon, "Claude Fable 5.2", "My notes.", hours_ago=3)
@@ -442,7 +442,7 @@ class SearchRouteTests(unittest.TestCase):
                 self.assertEqual(lead["story"]["id"], story)
                 self.assertEqual([p["id"] for p in lead["story"]["posts"]], [report, share])
                 self.assertEqual([s["name"] for s in lead["story"]["sources"]],
-                                 ["Anthropic News", "Simon Willison", "data_secrets"])
+                                 ["Anthropic News", "Simon Willison", "data_whispers"])
                 self.assertIsNone(items[0]["story"])
         self.assertEqual(sorted(self.ids("fable", order="best")), sorted([best, alone]))
 

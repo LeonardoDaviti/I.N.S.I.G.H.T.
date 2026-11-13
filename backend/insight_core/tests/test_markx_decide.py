@@ -21,7 +21,7 @@ from psycopg import sql
 from insight_core.markx import decide as D
 from insight_core.markx import news as N
 from insight_core.markx import repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
 T = datetime(2100, 3, 1, 12, tzinfo=timezone.utc)
@@ -361,7 +361,7 @@ class Job(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
@@ -774,8 +774,8 @@ class Snapshot(unittest.TestCase):
         self.cur = self.other.cursor()
         tables = ", ".join(MX_TABLES + ("mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies",
                                         "mx_inc_tasks"))
-        self.cur.execute(f"TRUNCATE {tables}")
-        self.addCleanup(self.cur.execute, f"TRUNCATE {tables}")
+        clear_tables(self.cur, f"{tables}")
+        self.addCleanup(clear_tables, self.cur, f"{tables}")
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
         self.posts, self.sources = [], []
@@ -921,6 +921,18 @@ class Snapshot(unittest.TestCase):
             again = D.run(cur, now=self.now)
         self.assertEqual(again["run"]["kind"], "incremental")
         self.assertNotIn("deferred", again)                          # the next run does the back stage
+
+    def test_a_stage_asked_skipped_is_deferred_and_the_run_kept(self):
+        """0188: jobs.py asks a stage skipped after two runs in a row over the limit in it: deferred, the run kept."""
+        with D.snapshot(db_url()) as cur:
+            out = D.run(cur, now=self.now, skip=["graph", "entities"])
+        self.assertIn("skipped this run", out["deferred"]["graph"])
+        self.assertIn("skipped this run", out["deferred"]["entities"])
+        self.assertIsNone(out["graph"])
+        self.assertNotIn("entities", out)
+        self.assertIn("back", out)                                   # the other stages ran
+        self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
+        self.assertEqual(self.cur.fetchone()[0], 1)
 
 
 class Routes(unittest.TestCase):

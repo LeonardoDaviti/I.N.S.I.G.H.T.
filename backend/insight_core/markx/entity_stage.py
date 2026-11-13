@@ -100,16 +100,17 @@ def addresses_left(cur: Any) -> Optional[str]:
 
 def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[datetime],
              full: Optional[bool] = None, budget: Optional[float] = None,
-             chunk: int = identity.SEED_CHUNK) -> Tuple[Dict[str, Any], Optional[Set[date]]]:
+             chunk: int = identity.SEED_CHUNK, book: Any = None) -> Tuple[Dict[str, Any], Optional[Set[date]]]:
     """(the stage's counts, the days the surges recount: None for every day). `budget`: the stage's own seconds (None:
-    no limit); a full pass past it stops after a chunk and the next run resumes it (a forced `full` starts again)."""
+    no limit); a full pass past it stops after a chunk and the next run resumes it (a forced `full` starts again).
+    `book`: the entity book as the run read it (v10.16: decide.run reads it once), else read here."""
     import time
     deadline = None if budget is None else time.monotonic() + budget
     left = None if full else unfinished(cur)
     whole = bool(full) or left is not None or full_due(cur, now)
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
-    book = identity.load_book(cur)   # read once a run: identity's stage and the addresses share it
+    book = identity.load_book(cur) if book is None else book   # read once a run: identity's stage and the addresses share it
     # 0164: the identity repairs first (the linking then sees them), in their share of the budget
     fixed, book = repairs(cur, book, run_id=run_id, full=whole,
                           deadline=None if budget is None else time.monotonic() + budget * REPAIR_SHARE)
@@ -278,5 +279,5 @@ def renames(cur: Any, book: Any, *, ask: Any, run_id: Any, full: bool, since: Op
 
 
 def surges(cur: Any, *, now: datetime, run_id: Any, days: Optional[Set[date]], since: Optional[datetime],
-           window_days: int = 30) -> Dict[str, Any]:
-    return S.stage(cur, now=now, run_id=run_id, days=days, window_days=window_days)
+           window_days: int = 30, book: Any = None) -> Dict[str, Any]:
+    return S.stage(cur, now=now, run_id=run_id, days=days, window_days=window_days, book=book)

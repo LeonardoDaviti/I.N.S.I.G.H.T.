@@ -69,7 +69,7 @@ test('pressing a column starts it in its own direction; again reverses it', () =
 });
 
 test('a source without a name of its own is named from its address', () => {
-  assert.equal(anatomyName({ display_name: null, address: 'https://tg.i-c-a.su/rss/denissexy?limit=50' }), '@denissexy');
+  assert.equal(anatomyName({ display_name: null, address: 'https://tg.i-c-a.su/rss/dennis_it?limit=50' }), '@dennis_it');
   assert.equal(anatomyName({ display_name: 'Road to VR', address: 'https://www.roadtovr.com/feed/' }), 'Road to VR');
 });
 

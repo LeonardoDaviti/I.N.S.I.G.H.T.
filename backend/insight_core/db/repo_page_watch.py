@@ -19,6 +19,7 @@ from psycopg import Cursor
 from psycopg.types.json import Jsonb
 
 from insight_core.ingestion.kinds.parsing import parse_datetime_value
+from insight_core.markx import pairing
 from insight_core.utils.text_changes import change_summary, meaningful, text_hash
 
 CHECK_MIN = "1 day"
@@ -28,7 +29,7 @@ UPDATE_KEY = "page_update"     # posts.metadata: the last meaningful change, {at
 
 def _next_check(now: str) -> str:
     """The SQL for when a page is next due, given `now`'s SQL; p is the post, w its watch row."""
-    return (f"{now} + LEAST(GREATEST(({now} - COALESCE(w.changed_at, p.published_at, p.fetched_at)) / 2,"
+    return (f"{now} + LEAST(GREATEST(({now} - COALESCE(w.changed_at, {pairing.ix_date('p')})) / 2,"
             f" interval '{CHECK_MIN}'), interval '{CHECK_MAX}')")
 
 

@@ -51,6 +51,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from insight_core.markx import pairing
+
+from insight_core.utils import byline
 
 STAMP = "handles-v1"
 PLATFORMS = ("x", "github", "telegram", "bluesky", "hf")
@@ -133,7 +136,7 @@ NOT_NAMES = {"it", "this", "that", "here", "there", "me", "him", "her", "them", 
              "tweet", "source", "credit", "photo", "video", "image", "pic", "account", "profile", "below", "above"}
 UNIT = re.compile(r"^\d+(?:[a-z]{1,2}|x|px|pm|am)?$", re.I)
 REPLY = re.compile(r"^R to @(\w+): ")
-REPOST = re.compile(r"^RT by @(\w+): ")
+REPOST = byline.RT_BY   # Nitter's "RT by @x: " (Byline's one pattern, issue 0189)
 
 
 @dataclass(frozen=True)
@@ -300,7 +303,10 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
     body = REPOST.sub("", REPLY.sub("", raw_title)) + "\n" + (text or "")
     pairs: List[Pair] = []
     claimed: Set[int] = set()   # an embed's "(@h)" is its embed, not a mention too
-    for m in EMBED.finditer(body):
+    # v10.16: an embed and a pair both hold "(@": a body without one has neither, and PAIR's lazy name tried 80
+    # characters from every position of every body (9 of a scan's 11 s on the scale copy's 2,000 newest posts)
+    paren = "(@" in body
+    for m in EMBED.finditer(body) if paren else ():
         add("x", m.group(2), "embed", pos=m.start(2), body=body)
         claimed.add(m.start(2) - 1)
     for platform, h, form, status, pos in links_in(body):
@@ -323,7 +329,7 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
     for u in links:
         for platform, h, form, status, _pos in links_in(u):
             add(platform, h, form, status=status)
-    for m in PAIR.finditer(body):
+    for m in PAIR.finditer(body) if paren else ():
         name = _clean_name(m.group(1))
         h = m.group(2)
         if name and _ok(at_platform, h.casefold()) and not (at_platform == own_p and h.casefold() == own_h.casefold()):
@@ -376,8 +382,8 @@ def scan_posts(cur: Any, post_ids: Sequence[str]) -> Dict[str, int]:
     out = Counter({"posts": 0, "refs": 0, "pairs": 0})
     if not ids:
         return dict(out)
-    cur.execute("""SELECT p.id::text, p.source_id::text, s.platform, s.handle_or_url, p.title, p.content, p.author,
-                          p.content_hash, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), pp.quoted,
+    cur.execute(f"""SELECT p.id::text, p.source_id::text, s.platform, s.handle_or_url, p.title, p.content, p.author,
+                          p.content_hash, {pairing.ordinary_date('p')}, pp.quoted,
                           p.metadata->'forwarded_from'->>'username'
                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                     WHERE p.id = ANY(%s::uuid[])""", (ids,))

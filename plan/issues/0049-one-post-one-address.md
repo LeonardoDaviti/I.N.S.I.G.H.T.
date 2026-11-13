@@ -13,7 +13,7 @@ source, title and text (the same `content_hash`).
   then never used when saving.
 - **The class, not the site:** any change in how a source writes a link makes a second copy:
   - a fragment;
-  - `utm_` tags (230 preview posts carry them: danielmiessler.com, lexfridman.com);
+  - `utm_` tags (230 preview posts carry them: danielmiessler.com, longform_pod.com);
   - `http` → `https`, `www.`, a trailing slash.
 - One of the doubled pairs has read state on both rows, so the owner can see the same post twice, once read
   and once unread.

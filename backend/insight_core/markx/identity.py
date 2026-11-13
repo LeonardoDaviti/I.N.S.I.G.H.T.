@@ -72,6 +72,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from psycopg import errors as psycopg_errors
 
 from insight_core.markx import names as N
+from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
@@ -280,7 +281,30 @@ class Book:
                 for f in fs:
                     if f:
                         by_form[f].add(r)
-        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))
+        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))   # holds them all
+
+    # v10.17 (0186): what a page asks of the book besides ids and keys, here so a page's book answers them by query
+    def alias_keys(self, root: str) -> List[str]:
+        """The keys of the aliases that lead to `root`."""
+        return [k for k, eid in self.alias.items() if self.root(eid) == root]
+
+    def with_parent_in(self, root: str) -> List[str]:
+        """The entities whose parent leads to `root` (in the book's order)."""
+        return [x for x, e in self.ents.items() if e.parent and self.root(e.parent) == root]
+
+    def by_squashed_key(self, forms: Iterable[str]) -> List[str]:
+        """The entities whose key squashes (names.squash) to one of `forms` (in the book's order)."""
+        forms = set(forms)
+        return [x for x, e in self.ents.items() if e.sq in forms]
+
+    def first_with_key(self, key: str) -> Optional[str]:
+        """The first entity (in the book's order) whose own key is `key`."""
+        return next((x for x, e in self.ents.items() if e.key == key), None)
+
+    def keys_around(self, key: str) -> List[str]:
+        """The entities (in the book's order) whose key starts with `key` and a space, or is the start of `key` before
+        a space ("acme" and "acme widget")."""
+        return [x for x, e in self.ents.items() if e.key and (e.key.startswith(key + " ") or key.startswith(e.key + " "))]
 
     def cluster_size(self, root: str) -> int:
         """len(members()[root]) without walking every entity (v10.13.9: a merge asked it of the whole book each
@@ -442,7 +466,7 @@ class Book:
 
 
 def read_ents(cur: Any, b: "Book", ids: Optional[Iterable[str]] = None) -> None:
-    """Read entities into the book: every one, or (v10.16.1) those of `ids`."""
+    """Read entities into the book: every one, or (v10.16) those of `ids`."""
     cur.execute(f"""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
                           size, build, status, first_seen, shown_name, shown_type FROM mx_entities
                     {"WHERE id = ANY(%s::uuid[])" if ids is not None else ""}""",
@@ -494,9 +518,12 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
 @dataclass(frozen=True)
 class NameForms:
     """`of(root)`: the cluster's squashed names; `roots(form)`: the admitted clusters one of whose names squashes to
-    `form` (Book.name_forms)."""
+    `form` (Book.name_forms). `want_of(roots)` / `want_roots(forms)`: read many ahead in one go (v10.17, 0186: a
+    page's book asked them one query each, ~500 a News load; a whole book holds them all)."""
     of: Any
     roots: Any
+    want_of: Any = lambda _roots: None
+    want_roots: Any = lambda _forms: None
 
 
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -535,13 +562,38 @@ class _Reads(dict):
     __iter__ = __len__ = keys = values = items = _whole
 
 
+class _Has:
+    """A set that answers `x in it` by asking (`has(x)`, remembered; `many(xs) -> the xs in it` answers several in
+    one go, `want(xs)`); it cannot be walked (TypeError)."""
+
+    def __init__(self, has: Any, many: Any = None) -> None:
+        self._has, self._many, self._got = has, many, {}
+
+    def want(self, xs: Iterable[Any]) -> None:
+        todo = sorted({x for x in xs if x is not None and x not in self._got})
+        if todo and self._many is not None:
+            yes = set(self._many(todo))
+            self._got.update({x: x in yes for x in todo})
+
+    def __contains__(self, x: Any) -> bool:
+        if x not in self._got:
+            self._got[x] = bool(self._has(x))
+        return self._got[x]
+
+    def _whole(self, *_a: Any, **_k: Any) -> Any:
+        raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
+
+    __iter__ = __len__ = _whole
+
+
 class LazyBook(Book):
-    """A page's book (v10.16.1, issue 0186): the merges and pins read whole (they are few), each entity and alias read
+    """A page's book (v10.17, issue 0186): the merges and pins read whole (they are few), each entity and alias read
     when first asked (`ents.get(id)`, `id in ents`, `alias.get(key)`; `prime` reads many in one go) and kept for the
-    request. It answers what a whole book answers by id and key (root, label, by_key, cluster, the maker's names);
-    it cannot be walked (iterating `ents` or `alias` raises TypeError) and holds no mention counts (types, subject,
-    mentioned: load_book). A page's request reads a few hundred entities, not the whole book (250k on the server,
-    read in full by every News, post and entity page before)."""
+    request. It answers what a whole book answers by id and key (root, label, by_key, cluster, the maker's names, an
+    entity's mention counts, its versions and families, the entities under a cluster, those of a squashed key); it
+    cannot be walked (iterating `ents`, `alias`, `types` raises TypeError; `members()` too). A page's request reads
+    a few hundred entities, not the whole book (250k on the server, read in full by every News, post and entity page
+    before)."""
 
     def __init__(self, cur: Any) -> None:
         super().__init__()
@@ -552,6 +604,98 @@ class LazyBook(Book):
         self.redirect = Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
         cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
         self.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
+        # the mention counts (load_book's types / subject / mentioned), read per entity asked
+        self._counted_ids: Set[str] = set()
+        self._types_got: Dict[str, Counter] = {}
+        self._subject_got: Dict[str, int] = {}
+        self.types = _Reads(lambda ids: self._counted(ids)[0])
+        self.subject = _Reads(lambda ids: self._counted(ids)[1])
+        pinned = set(self.pins.values())
+        self.mentioned = _Has(lambda x: x in self.types or x in pinned)
+
+    def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
+        todo = [i for i in ids if isinstance(i, str) and _UUID.match(i) and i not in self._counted_ids]
+        if todo:   # as load_book counts them, for these entities
+            self._cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject')
+                                   FROM mx_mentions_now WHERE entity_id = ANY(%s::uuid[]) GROUP BY 1, 2""", (todo,))
+            product: Dict[Optional[str], bool] = {}
+            for eid, type_, n, subj in self._cur.fetchall():
+                self._types_got.setdefault(eid, Counter())[type_] += n
+                if subj:
+                    if type_ not in product:
+                        product[type_] = schemas_type(type_) in PRODUCT_TYPES
+                    if product[type_]:
+                        self._subject_got[eid] = self._subject_got.get(eid, 0) + subj
+            self._counted_ids.update(todo)
+        return ({i: self._types_got[i] for i in ids if i in self._types_got},
+                {i: self._subject_got[i] for i in ids if i in self._subject_got})
+
+    def _ordered_ids(self, where: str, args: Any) -> List[str]:
+        """Entity ids by a condition, in the table's order (the whole book's order: load_book reads it unordered)."""
+        self._cur.execute(f"SELECT id::text FROM mx_entities WHERE {where} ORDER BY ctid", args)
+        got = [i for (i,) in self._cur.fetchall()]
+        self.ents.want(got)
+        return got
+
+    def _names_versions(self, x: Any) -> bool:
+        if not (isinstance(x, str) and _UUID.match(x)):
+            return False
+        self._cur.execute("SELECT EXISTS (SELECT 1 FROM mx_entities WHERE parent = %s::uuid AND level = ANY(%s))",
+                          (x, list(VERSION_LEVELS)))
+        return bool(self._cur.fetchone()[0])
+
+    def version_parents(self) -> Any:
+        got = self.__dict__.get("_version_parents")
+        if got is None:
+            got = self.__dict__["_version_parents"] = _Has(self._names_versions)
+        return got
+
+    def kids(self) -> Dict[str, List[str]]:
+        def read(parents: Sequence[str]) -> Dict[str, List[str]]:
+            ps = [p for p in parents if isinstance(p, str) and _UUID.match(p)]
+            out: Dict[str, List[str]] = {}
+            for x in self._ordered_ids("parent = ANY(%s::uuid[]) AND level = ANY(%s)", (ps, list(VERSION_LEVELS))) if ps else []:
+                out.setdefault(self.ents[x].parent, []).append(x)
+            return out
+        got = self.__dict__.get("_kids")
+        if got is None:
+            got = self.__dict__["_kids"] = _Reads(read)
+        return got
+
+    def families(self) -> Dict[str, List[str]]:
+        def read(keys: Sequence[str]) -> Dict[str, List[str]]:
+            out: Dict[str, List[str]] = {}
+            for x in self._ordered_ids("key = ANY(%s) AND level = 'family'", (list(keys),)):
+                out.setdefault(self.ents[x].key, []).append(x)
+            return out
+        got = self.__dict__.get("_families")
+        if got is None:
+            got = self.__dict__["_families"] = _Reads(read)
+        return got
+
+    def alias_keys(self, root: str) -> List[str]:
+        ids = [i for i in self._leading_to(root) if _UUID.match(i)]
+        self._cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE entity_id = ANY(%s::uuid[])", (ids,))
+        return [k for k, eid in self._cur.fetchall() if self.root(eid) == root]
+
+    def with_parent_in(self, root: str) -> List[str]:
+        ids = [i for i in self._leading_to(root) if _UUID.match(i)]
+        return [x for x in self._ordered_ids("parent = ANY(%s::uuid[])", (ids,))
+                if self.root(self.ents[x].parent) == root] if ids else []
+
+    def by_squashed_key(self, forms: Iterable[str]) -> List[str]:
+        forms = sorted(set(forms))
+        return self._ordered_ids(f"{N.SQUASH_SQL} = ANY(%s)", (forms,)) if forms else []
+
+    def first_with_key(self, key: str) -> Optional[str]:
+        got = self._ordered_ids("key = %s", (key,))
+        return got[0] if got else None
+
+    def keys_around(self, key: str) -> List[str]:
+        like = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + " %"
+        starts = [" ".join(key.split(" ")[:i]) for i in range(1, len(key.split(" ")))]
+        return [x for x in self._ordered_ids("key LIKE %s ESCAPE '\\' OR key = ANY(%s)", (like, starts))
+                if (k := self.ents[x].key) and (k.startswith(key + " ") or key.startswith(k + " "))]
 
     def _ents_of(self, ids: Sequence[str]) -> Dict[str, Ent]:
         b = Book()
@@ -593,25 +737,42 @@ class LazyBook(Book):
         """As Book.name_forms, read per root and per form (migration 0127's indexes on names.SQUASH_SQL)."""
         cur, of_memo, roots_memo = self._cur, {}, {}
 
+        def want_of(roots: Iterable[Optional[str]]) -> None:
+            todo = {r for r in roots if r not in of_memo}
+            lead = {i: r for r in todo if r for i in self._leading_to(r) if _UUID.match(i)}
+            got: Dict[Optional[str], Set[str]] = {r: set() for r in todo}
+            if lead:
+                cur.execute("""SELECT entity_id::text, key FROM mx_entity_aliases WHERE entity_id = ANY(%(ids)s::uuid[])
+                               UNION ALL SELECT id::text, key FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])""",
+                            {"ids": sorted(lead)})
+                for i, k in cur.fetchall():
+                    got[lead[i]].add(N.squash(k))
+            of_memo.update(got)
+
+        def want_roots(forms: Iterable[str]) -> None:
+            todo = sorted({f for f in forms if f not in roots_memo})
+            got: Dict[str, Set[str]] = {f: set() for f in todo}
+            asked = [f for f in todo if f]
+            if asked:
+                cur.execute(f"""SELECT {N.SQUASH_SQL}, entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = ANY(%(f)s)
+                                UNION SELECT {N.SQUASH_SQL}, id::text FROM mx_entities WHERE {N.SQUASH_SQL} = ANY(%(f)s)""",
+                            {"f": asked})
+                for f, i in cur.fetchall():
+                    r = self.root(i)
+                    if r:
+                        got[f].add(r)
+            self.ents.want({r for rs in got.values() for r in rs})   # what keep() reads, in one go
+            roots_memo.update({f: {r for r in rs if keep(r)} for f, rs in got.items()})
+
         def of(root: Optional[str]) -> Set[str]:
-            if root not in of_memo:
-                ids = [i for i in self._leading_to(root) if _UUID.match(i)] if root else []
-                cur.execute("""SELECT key FROM mx_entity_aliases WHERE entity_id = ANY(%(ids)s::uuid[])
-                               UNION ALL SELECT key FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])""", {"ids": ids})
-                of_memo[root] = {N.squash(k) for (k,) in cur.fetchall()} if ids else set()
+            want_of([root])
             return of_memo[root]
 
         def roots(form: str) -> Set[str]:
-            if form not in roots_memo:
-                got: Set[str] = set()
-                if form:
-                    cur.execute(f"""SELECT entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = %(f)s
-                                    UNION SELECT id::text FROM mx_entities WHERE {N.SQUASH_SQL} = %(f)s""", {"f": form})
-                    got = {r for r in (self.root(i) for (i,) in cur.fetchall()) if r}
-                roots_memo[form] = {r for r in got if keep(r)}
+            want_roots([form])
             return roots_memo[form]
 
-        return NameForms(of, roots)
+        return NameForms(of, roots, want_of, want_roots)
 
 
 def lazy_book(cur: Any) -> LazyBook:
@@ -654,11 +815,11 @@ def _mentions(cur: Any, guide: Any, *, unlinked: bool, limit: Optional[int] = No
     params: List[Any] = [guide] + ([list(posts)] if posts is not None else []) + ([limit] if limit else [])
     cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.span, m.name, m.type, m.role, m.maker, m.family, m.version,
                            m.variant, m.size, m.build, m.entity_id::text,
-                           COALESCE(p.published_at, p.fetched_at), m.ref, m.by_name, m.call_id::text
+                           {pairing.ix_date('p')}, m.ref, m.by_name, m.call_id::text
                       FROM mx_mentions_now m LEFT JOIN posts p ON p.id = m.post_id
                      WHERE m.guide = ANY(%s) {"AND m.entity_id IS NULL AND m.name_key <> ''" if unlinked else ""}
                            {"AND m.post_id = ANY(%s::uuid[])" if posts is not None else ""}
-                     ORDER BY COALESCE(p.published_at, p.fetched_at) DESC NULLS LAST, m.post_id, m.n
+                     ORDER BY {pairing.ix_date('p')} DESC NULLS LAST, m.post_id, m.n
                      {"LIMIT %s" if limit else ""}""", params)
     return [Mention(p, g, n, span or "", name or "", t, r, mk,
                     {"family": fam, "version": v, "variant": var, "size": sz, "build": bd}, e, at, ref, by, call)
@@ -1041,7 +1202,7 @@ def fields_rule(a: Ent, b: Ent) -> Optional[str]:
     return "auto" if N.version_part(a.pk) == N.version_part(b.pk) else "queue"
 
 
-@dataclass
+@dataclass(slots=True)   # 0183: no per-pair __dict__ (a full pass pools hundreds of thousands of pairs)
 class Pooled:
     a: str
     b: str
@@ -1617,6 +1778,13 @@ def vote(rels: Sequence[str]) -> str:
     return top if n * 2 > len(rels) else "same"
 
 
+def one_thing(answer: Dict[str, Any], n: int) -> bool:
+    """0191: a collision answer that calls every mention pair the same thing (no split, no part, nothing unclear): it
+    settles the key alone. On the lab's four labelled collision sets (364 keys, each run in turn taken as the first)
+    5 of 1,092 split decisions changed, all toward fewer splits (precision 21/33 -> 20/28), and 43% of calls were saved."""
+    return all(v == "same" for v in pairrel(answer, n).values())
+
+
 def split_of(answers: Sequence[Dict[str, Any]], n: int) -> Optional[Dict[str, Any]]:
     """The split two of the runs make (a mention pair most runs call different), or None. The proposal: the senses of
     the first run that splits, with the pairs the majority calls different."""
@@ -2139,8 +2307,10 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             continue
         from insight_core.markx import validate
         n = validate.collide_mentions(text)
-        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already
-        settled = len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)
+        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already;
+        # 0191: a first run that finds one thing (every pair the same, nothing unclear) is never asked again
+        settled = (len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)) \
+            or (len(calls) == 1 and one_thing(calls[0][1], n))
         if len(calls) < COLLIDE_RUNS and not settled:
             if status == "answered" and _savepoint(cur, "UPDATE mx_tasks SET status = 'open', lease_until = NULL, "
                                                         "leased_by = NULL WHERE id = %s AND status = 'answered'", (tid,)):

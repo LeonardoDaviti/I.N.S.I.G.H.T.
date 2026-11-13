@@ -169,18 +169,19 @@ class SourcesRepository:
                 s.enabled,
                 s.created_at,
                 s.updated_at,
-                COUNT(p.id) as post_count,
+                ps.post_count,
                 s.mean_gap_seconds,
                 s.cadence_sample_size,
                 s.cadence_tier,
                 s.fetch_interval_hours_override,
                 s.in_main_digest
             FROM sources s
-            LEFT JOIN posts p ON s.id = p.source_id
-            GROUP BY s.id
+            JOIN ({stats}) ps ON ps.source_id = s.id
             ORDER BY s.platform, s.handle_or_url
         """
-        cur.execute(query)
+        # Issue 0195: each source's kept post count (repo_post_stats), not a count of every post per request.
+        from insight_core.db.repo_post_stats import stats_sql
+        cur.execute(query.format(stats=stats_sql()))
         rows = cur.fetchall()
         
         sources = []
@@ -278,9 +279,12 @@ class SourcesRepository:
 
     def listed_settings(self, cur: Cursor) -> Dict[str, Dict[str, Any]]:
         """Every source's settings as the list shows them (issue 0105): merged with the defaults, as
-        get_source_settings, in one query, without the archive's history. The history stays in the row
+        get_source_settings, in one query, without the archive's history and the checkpoint's resume lists. The history stays in the row
         (left out in the query, so it is never read); the source's own settings still carry it."""
-        cur.execute("SELECT id, platform, settings #- '{archive,history}' FROM sources")
+        # Issue 0195: nor the checkpoint's resume lists (the candidate URLs and the ladder an archive goes on from,
+        # 48% of the answer on the server); the list reads its counts, the archive status the whole checkpoint.
+        cur.execute("SELECT id, platform, settings #- '{archive,history}' #- '{archive,checkpoint,urls}' "
+                    "#- '{archive,checkpoint,ladder}' FROM sources")
         out = {}
         for source_id, platform, settings in cur.fetchall():
             merged = self.merge_with_defaults(platform, settings)
@@ -309,6 +313,20 @@ class SourcesRepository:
         }
 
         return self._deep_merge_dicts(defaults, source_settings)
+
+    def name_if_unnamed(self, cur: Cursor, source_id: str, name: str) -> bool:
+        """Its own name (issue 0178) for a source that has none: one UPDATE whose WHERE is the guard, so a name the
+        owner set (now or meanwhile) is never written over. True when it was named."""
+        cur.execute(
+            """
+            UPDATE sources
+               SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object('display_name', %s::text),
+                   updated_at = now()
+             WHERE id = %s::uuid AND COALESCE(btrim(settings->>'display_name'), '') = ''
+            """,
+            (name, str(source_id)),
+        )
+        return (cur.rowcount or 0) > 0
 
     def merge_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

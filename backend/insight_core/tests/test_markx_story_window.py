@@ -19,7 +19,7 @@ import psycopg
 from insight_core.markx import candidates as C
 from insight_core.markx import decide as DD
 from insight_core.markx import entity_views, person_page as PP, repo, schemas, story_window as W, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES, _Api, call
 from insight_core.tests.test_markx_entities import D as DAY, H as HOUR, T0 as E0, _Db
 
@@ -69,7 +69,7 @@ class Window(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(TABLES)}")
+        clear_tables(self.cur, TABLES)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
@@ -242,7 +242,7 @@ class Window(unittest.TestCase):
 class Api(_Api):
     def setUp(self):
         super().setUp()
-        self.cur.execute("TRUNCATE mx_entity_sources, mx_story_samples, mx_story_sample_labels")
+        clear_tables(self.cur, "mx_entity_sources, mx_story_samples, mx_story_sample_labels")
 
     def test_the_page_sets_the_story_window(self):
         self.assertEqual(call("GET", "/api/markx/settings")[1]["story_window_days"], 30, "no row: 30")
@@ -271,7 +271,7 @@ class Api(_Api):
 class Page(_Db):
     def setUp(self):
         super().setUp()
-        self.cur.execute(f"TRUNCATE {', '.join(TABLES)}")
+        clear_tables(self.cur, TABLES)
         schemas.load_guides(self.cur)
         self.self_src = insert_scratch_source(self.cur, platform="rss",
                                               settings_json=json.dumps({"display_name": "Notes"}))
@@ -348,6 +348,10 @@ class Page(_Db):
                          "the Mark X story of a, and the Mark IX story of his own post (in no Mark X story); most voices first")
         x = page["stories"][1]
         self.assertEqual((x["original"]["post"], x["original"]["why"]), (a, "root"))
+        # issue 0195: one block listed of two; the timeline still reads both stories
+        one = entity_views.entity_page(self.cur, eid, now=E0 + DAY, stories_limit=1)
+        self.assertEqual((one["stories"], one["stories_total"]), (page["stories"][:1], 2))
+        self.assertEqual(one["timeline"], page["timeline"])
 
     def test_the_sample_offers_ten_a_page_and_thirty_a_day(self):
         eid, a, b = self.person()

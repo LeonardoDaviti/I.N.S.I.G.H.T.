@@ -21,8 +21,10 @@ from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
-from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, VOICE_PREFIX,
+from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
                                             Edge, Story, source_site)
+from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
+from insight_core.utils import voice as voice_keys
 from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
 
@@ -126,24 +128,22 @@ class SourceFacts:
         self.owner = channel_owners(self._channels(), self._pairs, linked)
 
         def voice(i: str) -> str:
-            return "site:" + self.publication(i) if self.kind.get(i) == "site" else "source:" + i
+            return voice_keys.source_key(i, self.kind.get(i), self.publication(i))
         self.owners: Dict[str, str] = {voice(i): voice(o) for i, o in self.owner.items() if voice(i) != voice(o)}
         # A confirmed voice of 2+ channels (issue 0132 A) is one voice everywhere: stories and News count it once.
         voice_of = getattr(self, "voice_of", {})
         for i, v in sorted(voice_of.items()):
             if self.kind.get(i) not in (*NOT_PUBLISHERS, "reddit"):
-                self.owners[voice(i)] = VOICE_PREFIX + v
+                self.owners[voice(i)] = voice_keys.confirmed_key(v)
         for i, kind in sorted(self.kind.items()):
             account = self.account.get(i) or ""
             if kind in ("x", "telegram", "youtube") and "/" in account:
-                self.owners.setdefault("reddit:" + account.rsplit("/", 1)[1].lstrip("@").lower(),
-                                       VOICE_PREFIX + voice_of[i] if i in voice_of else voice(self.owner.get(i, i)))
+                self.owners.setdefault(voice_keys.poster_key(account.rsplit("/", 1)[1].lstrip("@").lower()),
+                                       voice_keys.confirmed_key(voice_of[i]) if i in voice_of else voice(self.owner.get(i, i)))
 
     def owner_voice(self, voice: str) -> Optional[str]:
         """A voice's owner's voice, when another (a Reddit poster by its name in any case)."""
-        if voice.startswith("reddit:"):
-            return self.owners.get(voice.lower())
-        return self.owners.get(voice)
+        return voice_keys.owner_of(self.owners, voice)
 
     def _read(self, rows: List[Tuple[Any, ...]], host_rows: List[Tuple[Any, str, int]]) -> None:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
@@ -226,7 +226,7 @@ class SourceFacts:
 
     def voice_name(self, voice: str, source_id: str) -> str:
         """A voice as you know it: u/<author> on Reddit, else its source's name."""
-        return "u/" + voice.split(":", 1)[1] if voice.startswith("reddit:") else self.name.get(source_id, "")
+        return "u/" + voice_keys.poster(voice) if voice_keys.is_poster(voice) else self.name.get(source_id, "")
 
     def of_kind(self, *kinds: str) -> List[str]:
         return [source_id for source_id, kind in self.kind.items() if kind in kinds]
@@ -368,15 +368,15 @@ class StoriesRepository:
         on the platforms (`html_sources`)."""
         PostPartsRepository.write_missing(cur, ids)
         cur.execute(
-            """
-            SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
+            f"""
+            SELECT p.id, p.source_id, {ix_date("p")}, p.title, p.content_hash,
                    length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
                    pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
                    CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END,
                    p.metadata ->> %(moved)s
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
-            WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
+            WHERE {ix_date("p")} IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
               AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
                                                          WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
@@ -740,8 +740,8 @@ class StoriesRepository:
     @staticmethod
     def timeline(cur: Cursor, source_id: str, start: datetime, end: datetime) -> List[str]:
         """The posts of a source posted between `start` and `end`."""
-        cur.execute("SELECT id::text FROM posts WHERE source_id = %s "
-                    "AND COALESCE(published_at, fetched_at) BETWEEN %s AND %s", (source_id, start, end))
+        cur.execute(f"SELECT id::text FROM posts WHERE source_id = %s "
+                    f"AND {ix_date('')} BETWEEN %s AND %s", (source_id, start, end))
         return [r[0] for r in cur.fetchall()]
 
     @staticmethod

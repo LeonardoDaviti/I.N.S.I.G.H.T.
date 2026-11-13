@@ -15,7 +15,7 @@ test('newsWords counts the voices, a share among them, leaving out what is zero 
 });
 
 test('News, the feed row and the post page say one number (issue 0069)', () => {
-  const gemini = { ...story(['News from Google', 'Google DeepMind News', '_philschmid', 'epsiloncorrect', 'data_secrets']), voices: 4 };
+  const gemini = { ...story(['News from Google', 'Google DeepMind News', '_modelnotes', 'epsilon_ok', 'data_whispers']), voices: 4 };
   const news = { part: 'earlier' as const, first_at: '2026-10-28T17:00:00Z', reports: 4, shares: 1, mentions: 0, score: 4 };
   assert.equal(newsLine(news, gemini), '4 sources (1 share) · News from Google, Google DeepMind News, +2');
   assert.equal(coveredBy(gemini), 'covered by 4 · News from Google, Google DeepMind News, +2');

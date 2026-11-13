@@ -225,7 +225,7 @@ class _OpenSession:
 # --------------------------------------------------------------------------- synthesize_posts
 
 
-# Captured from the Mark VIII Telegram connector's _synthesize_messages(MESSAGES, "ai_newz", "@ai_newz")
+# Captured from the Mark VIII Telegram connector's _synthesize_messages(MESSAGES, "ai_dispatch", "@ai_dispatch")
 # before the connector was deleted (dates as ISO strings).
 def _d(hour: int) -> datetime:
     return datetime(2026, 10, 1, hour, 0, tzinfo=timezone.utc)
@@ -243,15 +243,15 @@ FIXTURE_MESSAGES = [
     SimpleNamespace(id=103, grouped_id=None, text=None, media=object(), date=_d(6)),
 ]
 FIXTURE_POSTS = [
-    {"platform": "telegram", "source": "@ai_newz", "url": "https://t.me/ai_newz/110", "content": "Text only",
+    {"platform": "telegram", "source": "@ai_dispatch", "url": "https://t.me/ai_dispatch/110", "content": "Text only",
      "date": "2026-10-01T10:00:00+00:00", "media_urls": [], "categories": [], "metadata": {}},
-    {"platform": "telegram", "source": "@ai_newz", "url": "https://t.me/ai_newz/108", "content": "Album caption",
+    {"platform": "telegram", "source": "@ai_dispatch", "url": "https://t.me/ai_dispatch/108", "content": "Album caption",
      "date": "2026-10-01T09:00:00+00:00",
-     "media_urls": ["https://t.me/ai_newz/109?single", "https://t.me/ai_newz/108?single",
-                    "https://t.me/ai_newz/107?single"],
+     "media_urls": ["https://t.me/ai_dispatch/109?single", "https://t.me/ai_dispatch/108?single",
+                    "https://t.me/ai_dispatch/107?single"],
      "categories": [], "metadata": {}},
-    {"platform": "telegram", "source": "@ai_newz", "url": "https://t.me/ai_newz/104", "content": "Photo post",
-     "date": "2026-10-01T07:00:00+00:00", "media_urls": ["https://t.me/ai_newz/104?single"],
+    {"platform": "telegram", "source": "@ai_dispatch", "url": "https://t.me/ai_dispatch/104", "content": "Photo post",
+     "date": "2026-10-01T07:00:00+00:00", "media_urls": ["https://t.me/ai_dispatch/104?single"],
      "categories": [], "metadata": {}},
 ]
 
@@ -272,7 +272,7 @@ class SynthesizePostsTests(unittest.TestCase):
                                            msg(2, "", grouped_id=9, media=True)], "chan"), [])
 
     def test_output_matches_the_mark_viii_connector(self):
-        posts = synthesize_posts(FIXTURE_MESSAGES, "ai_newz")
+        posts = synthesize_posts(FIXTURE_MESSAGES, "ai_dispatch")
         old_keys = list(FIXTURE_POSTS[0])
         self.assertEqual([{**{k: p[k] for k in old_keys}, "date": p["date"].isoformat()} for p in posts],
                          FIXTURE_POSTS)
@@ -405,7 +405,7 @@ class AvailabilityTests(unittest.TestCase):
         return MappingCredentials(values)
 
     def decide(self, availability: Availability):
-        source = tg_source("ai_newz")
+        source = tg_source("ai_dispatch")
         return decide_fetch(cadence_stats(source, None), TelegramKind().profile, NOW, force=True,
                             availability=availability)
 
@@ -453,12 +453,12 @@ class AvailabilityTests(unittest.TestCase):
     def test_the_health_row_shows_the_unavailable_reason_not_an_error(self):
         availability = availability_from_env({}, credentials=self.creds(session=None))
         kind = TelegramKind()
-        enabled = health_row({**tg_source("ai_newz"), "state": None}, kind, availability, NOW)
+        enabled = health_row({**tg_source("ai_dispatch"), "state": None}, kind, availability, NOW)
         self.assertEqual(enabled["status"], "unavailable")
         self.assertIn("no Telegram session", enabled["decision_detail"])
         self.assertIn("no Telegram session", enabled["unavailable_reason"])
         # The 12 bare-handle sources are disabled today: still say why enabling would not help.
-        disabled = health_row({**tg_source("ai_newz"), "enabled": False, "state": None}, kind, availability, NOW)
+        disabled = health_row({**tg_source("ai_dispatch"), "enabled": False, "state": None}, kind, availability, NOW)
         self.assertEqual(disabled["status"], "disabled")
         self.assertIn("no Telegram session", disabled["unavailable_reason"])
         self.assertIn("no Telegram session", disabled["decision_detail"])
@@ -584,8 +584,8 @@ class FetchInspectArchiveTests(unittest.IsolatedAsyncioTestCase):
 
     def test_every_mtproto_source_shares_the_platform_host_key_and_its_2s_floor(self):
         kind = TelegramKind()
-        self.assertEqual(kind.host_key(tg_source("ai_newz")), TELEGRAM_HOST_KEY)
-        self.assertEqual(kind.host_key(tg_source("@gonzo_ML")), "platform:telegram")
+        self.assertEqual(kind.host_key(tg_source("ai_dispatch")), TELEGRAM_HOST_KEY)
+        self.assertEqual(kind.host_key(tg_source("@bonzo_ML")), "platform:telegram")
         self.assertEqual(HOST_FLOORS["platform:telegram"], 2.0)
         self.assertEqual(FetchGates().host_limiter.host_floors[TELEGRAM_HOST_KEY], 2.0)
 
@@ -623,7 +623,7 @@ class ImportTests(unittest.TestCase):
     def test_the_default_registry_resolves_bare_handles_to_the_real_kind(self):
         from insight_core.ingestion.http import KindHttp
 
-        kind = KindRegistry.default(KindHttp(), object()).resolve(tg_source("ai_newz"))
+        kind = KindRegistry.default(KindHttp(), object()).resolve(tg_source("ai_dispatch"))
         self.assertIsInstance(kind, TelegramKind)
 
 

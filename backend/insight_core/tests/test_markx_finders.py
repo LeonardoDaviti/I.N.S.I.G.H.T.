@@ -9,9 +9,10 @@ import json
 import os
 import unittest
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from insight_core.tests._db import clear_tables
 from insight_core.markx import finders, repo, schemas, tasks, tracks, validate
 from insight_core.tests.test_markx_api import call
 from insight_core.tests.test_markx_tracks import NOW, _Tracks, b64, BUILD, unit, verdict
@@ -125,8 +126,8 @@ class _Finders(_Tracks):
     def setUp(self):
         super().setUp()
         self.enterContext(mock.patch.object(finders, "ADOPTED", finders.FINDERS))   # every finder, to test each
-        self.cur.execute("TRUNCATE mx_track_probes, mx_track_models")
-        self.addCleanup(self.cur.execute, "TRUNCATE mx_track_probes, mx_track_models")
+        clear_tables(self.cur, "mx_track_probes, mx_track_models")
+        self.addCleanup(clear_tables, self.cur, "mx_track_probes, mx_track_models")
 
     def probes(self, answer=PROBES):
         with self.conn.transaction():
@@ -236,6 +237,51 @@ class Learned(_Finders):
     def prepare(self):
         t = tracks.get(self.cur, self.folder)
         return t, finders.prepare(self.cur, t, tracks.examples(self.cur, self.folder), train_model=False)
+
+    # v10.16 (0177): a plan pass reads the window's counts once for every track (`prefetch` into one cache), and what
+    # each track learns from them is what it learns alone.
+    def scene(self):
+        texts = [f"Running a quantised model on a used card {k}: 22 tok/s with llamafile and kobold" for k in range(3)]
+        items = [self.passive(f"item {k}", text=x, links=[(f"https://example.com/build/{k}", "build")])
+                 for k, x in enumerate(texts)]
+        for p in items:
+            self.mention(p, "Llamafile")
+        for k in range(10):
+            p = self.passive(f"background {k}", text=" ".join(f"garden{k}x{j}" for j in range(40)) + " llamafile",
+                             links=[(f"https://example.com/other/{k}", "x")])
+            self.mention(p, "Llamafile" if k % 2 else "Kobold")
+        self.label_many(items, "in")
+        return items
+
+    def test_one_read_of_the_window_learns_what_each_read_learned(self):
+        items = self.scene()
+        now = datetime.now(timezone.utc) + timedelta(minutes=1)   # the posts are stored now
+        t = tracks.get(self.cur, self.folder)
+        alone = finders.learn(self.cur, t, items, now=now)
+        cache = {}
+        finders.prefetch(self.cur, items, now=now, cache=cache)
+        seen = []
+        real = type(self.cur).execute
+
+        def counting(this, query, *a, **kw):
+            seen.append(str(query))
+            return real(this, query, *a, **kw)
+        with mock.patch.object(type(self.cur), "execute", counting):
+            shared = finders.learn(self.cur, t, items, now=now, cache=cache)
+        self.assertEqual(shared, alone)
+        self.assertTrue(alone["entities"] and alone["domains"], alone)
+        window = [q for q in seen if "ts_stat" in q or "MATERIALIZED" in q or "count(*), COALESCE(sum(length" in q]
+        self.assertEqual(window, [])                                       # every window count came from the cache
+
+    def test_the_cache_keys_the_window(self):
+        items = self.scene()
+        now = datetime.now(timezone.utc) + timedelta(minutes=1)   # the posts are stored now
+        t = tracks.get(self.cur, self.folder)
+        cache = {}
+        finders.learn(self.cur, t, items, now=now, cache=cache)
+        later = finders.learn(self.cur, t, items, now=now + timedelta(days=400), cache=cache)   # a window of no post
+        self.assertEqual(later, finders.learn(self.cur, t, items, now=now + timedelta(days=400)))
+        self.assertEqual(later["n_posts"], 1)
 
     def test_an_entity_of_two_items_finds_a_post(self):
         items = [self.passive(f"item {k}") for k in range(2)]
@@ -373,6 +419,18 @@ class Classifier(_Finders):
         self.labelled(3, 2)
         self.prepare()
         self.assertEqual(self.models(), [(30, False), (40, True)])            # 10 new: retrained
+
+    def test_a_training_short_of_vectors_is_known_before_it_runs(self):
+        ins, outs = self.labelled(22, 8)
+        self.cur.execute("DELETE FROM mx_embeddings WHERE post_id = ANY(%s::uuid[])", (outs[:1],))   # 7 outs with a vector
+        with mock.patch.object(finders, "training_rows", wraps=finders.training_rows) as rows:
+            self.assertIsNone(self.prepare()["model"])
+        rows.assert_not_called()                                           # v10.16: was a leave-one-out every pass
+        self.assertEqual(self.models(), [])
+        self.labelled(0, 1)
+        with mock.patch.object(finders, "training_rows", wraps=finders.training_rows) as rows:
+            self.assertIsNotNone(self.prepare()["model"])
+        rows.assert_called_once()
 
     def test_it_ranks_and_finds(self):
         self.labelled(20, 10)

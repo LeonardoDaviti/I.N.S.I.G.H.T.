@@ -51,8 +51,8 @@ Read this first. Older handoffs (`HANDOFF-v9.16.md`, `HANDOFF-v9.15.md`) are his
 - **Never touch the live `insight` database.** The server only gets read-only GETs from agents, and nothing while it's hung.
 - **Download nothing,** and fetch nothing from this machine. Lab containers run with `INSIGHT_DISCOVER_READS=0`.
 - **No real channel or account names** in committed files, fixtures or commit messages. `plan/research/` is private and gitignored.
-- **Push only when the owner says "push".** The owner deploys with `git pull && ./update` in `~/Documents/Stacks/I.N.S.I.G.H.T.`.
-- **Live Mark X workers run from the MAIN checkout** (another session), using `~/.config/insight/markx-token` and a llama-server on this machine.
+- **Push only when the owner says "push".** The owner deploys with `git pull && ./update` in `<deploy dir>`.
+- **Live Mark X workers run from the MAIN checkout** (another session), using `<token file>` and a llama-server on this machine.
   - Never stop them, and never use that token in tests.
   - Never overwrite `scripts/markx-worker` in the main checkout while they run.
   - At merge, an identical uncommitted change can be checked out first.

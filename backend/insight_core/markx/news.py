@@ -24,6 +24,8 @@ import json
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from insight_core.markx import pairing
+from insight_core.utils import voice
 
 TAGS = ("NEW", "MERGED", "SPLIT", "CHANGED", "SAME")
 HAIKU_PER_MILLION = (0.10, 0.50)     # 0086 H: Haiku 5.5, $ per million tokens in and out (what the API would cost)
@@ -56,16 +58,64 @@ def tag(posts: Sequence[str], x_of: Dict[str, str], row_id: str, ix_of: Dict[str
     return "SAME" if set(posts) == ix_rows.get(nid, set()) else "CHANGED"
 
 
-def _story_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Any]:
-    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here)."""
+def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str, Any]:
+    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here). `sources`: the SourceFacts read
+    this run, else read here."""
     from insight_core.db.repo_stories import SourceFacts, StoriesRepository
     from insight_core.services.stories_service import StoriesService
     cur.execute("SELECT post_id::text FROM post_parts WHERE post_id = ANY(%s::uuid[])", (sorted(set(ids)),))
     parsed = [r[0] for r in cur.fetchall()]
     if not parsed:
         return {}
-    sources = SourceFacts(cur)
+    sources = SourceFacts(cur) if sources is None else sources
     return {row["id"]: StoriesService._story_post(row, sources) for row in StoriesRepository.load_posts(cur, sources, parsed)}
+
+
+# ---- 0177: what each post's StoryPost is made of, kept by the run's state ------------------------------------------
+# A post's StoryPost (StoriesService._story_post over StoriesRepository.load_posts) reads its posts row, its parts, its
+# kept links and the stored post each link resolves to (the first at that address), and its source's facts. News was
+# made in full whenever ingestion touched Mark IX's tables (on the server: almost every run). The run's state now
+# keeps, for every post News reads, a digest of its text stamp (plan_marks.STAMP: its row, parts and links rows) and
+# of its links' resolution; the facts as a StoryPost reads them; and Mark IX's surges. The posts whose digest changed,
+# and those of a surge that changed, seed the rows made again (with `_changed_rows`' closure); other facts: in full.
+
+def facts_digest(sources: Any) -> str:
+    """The source facts as a StoryPost reads them (kind, publication, home site, account; accounts; owners)."""
+    import hashlib
+    data = [[i, sources.kind.get(i), sources.publication(i), sources.home_site(i), sources.account.get(i)]
+            for i in sorted(sources.kind)]
+    blob = json.dumps([data, sorted(sources.of_account.items()), sorted(sources.owners.items())], default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
+def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
+    """{post: a digest of its text stamp and of its kept links' resolution} of the posts of `ids` that exist."""
+    import hashlib
+    from insight_core.markx import incremental
+    ids = sorted(set(ids))
+    stamps = incremental.stamps_of(cur, memo, ids)
+    cur.execute("""SELECT pl.post_id::text, string_agg(pl.target_url || ' ' || COALESCE(t.id::text, '-'), ' '
+                                                       ORDER BY pl.position, pl.target_url)
+                     FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
+                                                           ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
+                    WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
+    links = dict(cur.fetchall())
+    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}".encode()).hexdigest()[:16] for i in ids if i in stamps}
+
+
+def surge_keys(found: Iterable[Any]) -> List[List[Any]]:
+    return sorted([s.name, s.at.isoformat() if s.at else None, list(s.posts), s.usual] for s in found)
+
+
+def changed_posts(last: Dict[str, Any], now: Dict[str, Any]) -> Set[str]:
+    """The posts whose StoryPost inputs differ between two runs' digests, and the posts of a surge in one of them only."""
+    a, b = last.get("posts") or {}, now.get("posts") or {}
+    out = {p for p in set(a) | set(b) if a.get(p) != b.get(p)}
+    was = {json.dumps(k) for k in last.get("surges") or []}
+    new = {json.dumps(k) for k in now.get("surges") or []}
+    for k in was ^ new:
+        out |= set(json.loads(k)[2])
+    return out
 
 
 def window_posts(cur: Any, since: datetime) -> Set[str]:
@@ -74,13 +124,13 @@ def window_posts(cur: Any, since: datetime) -> Set[str]:
     Reading from `since` only, Mark X's row began inside where Mark IX's didn't, and was tagged NEW with no answer
     (0124, the v10.0.2 review's W5)."""
     from insight_core.utils.news_rules import NEWS_EDGE
-    cur.execute("SELECT id::text FROM posts WHERE COALESCE(published_at, fetched_at) >= %s", (since - NEWS_EDGE,))
+    cur.execute(f"SELECT id::text FROM posts WHERE {pairing.ix_date('')} >= %s", (since - NEWS_EDGE,))
     return {r[0] for r in cur.fetchall()}
 
 
 def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
-            first: Optional[Dict[str, Any]] = None, memo: Any = None) -> List[Dict[str, Any]]:
+            first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None) -> List[Dict[str, Any]]:
     """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
     story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
     rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
@@ -92,7 +142,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
     if only is not None:
         every &= only
-    sp = _story_posts(cur, every)
+    sp = _story_posts(cur, every, sources)
     built = []
     story_of: Dict[str, str] = {}
     for sid, (members, mentions) in sorted(stories.items()):
@@ -136,15 +186,15 @@ def last_written(cur: Any) -> Optional[str]:
 
 
 def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
-                  last: Dict[str, Any], window: Set[str], memo: Any = None
-                  ) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
+                  last: Dict[str, Any], window: Set[str], memo: Any = None, extra: Iterable[str] = (),
+                  sources: Any = None) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
     """0116: the last run's rows, with only those its changed stories reach made again (as Mark IX's incremental News,
     0072 A). The seeds: the posts of every story whose members or mentions changed (now and before), the posts that
     came into or left the window, and the stories whose start left it. The group: the seeds with every row, story
     (members and mentions) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
     from insight_core.markx import incremental
     stories = {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}
-    seeds: Set[str] = set(window ^ last["window"])
+    seeds: Set[str] = set(window ^ last["window"]) | set(extra)   # 0177: `extra`, the posts whose StoryPost changed
     for sid in set(stories) | set(last["stories"]):
         now_, was = stories.get(sid), last["stories"].get(sid)
         if now_ != was:
@@ -185,7 +235,8 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
         group |= frontier
     touching = {sid: (sorted(v[0]), set(v[1])) for sid, v in stories.items() if (v[0] | v[1]) & group}
     first = {sid: at for sid, at in last["first"].items() if sid in stories and sid not in touching}
-    made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo) if group else []
+    made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo,
+                   sources=sources) if group else []
     kept = [r for r in last["rows"] if not any(p["post_id"] in group for p in r["posts"])]
     return sorted(kept + made, key=lambda r: (r["first_at"], str(r["id"]))), group, first
 
@@ -291,12 +342,26 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     window = window_posts(cur, since)
     how, group = "full", None
     first: Dict[str, Any] = {}
-    if (memo is not None and memo.news is not None
-            and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
-        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)
+    sources = inputs = last_inputs = None
+    state = isinstance(memo, incremental.State)   # 0169's kept state (an older run's in-process memo has no stamps)
+    if state:   # 0177: what the StoryPosts are made of (the state keeps it; the next run compares)
+        from insight_core.db.repo_stories import SourceFacts
+        sources = SourceFacts(cur)
+        universe = window | {p for ms, _ in stories.values() for p in ms}
+        inputs = {"facts": facts_digest(sources), "posts": post_digests(cur, memo, universe),
+                  "surges": surge_keys(incremental.surges(cur, memo))}
+        last_inputs = (memo.news or {}).get("inputs")
+    if state and memo.news is not None and last_inputs is not None and last_inputs["facts"] == inputs["facts"]:
+        # 0177: Mark IX's tables changed or not (ingestion: almost every run), the posts whose StoryPost changed seed it
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo,
+                                           extra=changed_posts(last_inputs, inputs), sources=sources)
+        how = "incremental"
+    elif (not state and memo is not None and memo.news is not None
+          and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)   # 0116's in-process memo
         how = "incremental"
     else:
-        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo)
+        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo, sources=sources)
     ix_of, ix_rows = _ix_news(cur, since)
     x_of = {p["post_id"]: r["id"] for r in rows for p in r["posts"]}
     for r in rows:
@@ -304,7 +369,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     tags = dict(Counter(r["tag"] for r in rows))
     if memo is not None:
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
-                     "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}}
+                     "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()},
+                     "inputs": inputs}
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
         made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
@@ -358,19 +424,20 @@ def briefing(cur: Any, *, ask: Any, now: datetime, hour: int, limit: int) -> Dic
 
 def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """The page's post lines: title (the one every page shows), source, platform, time (published: built.PUBLISHED,
-    0128; a saved page by its own date)."""
+    0128; a saved page by its own date), and its byline (issue 0185: who wrote it, via whom, quoting whom)."""
+    from insight_core.utils import byline
     from insight_core.utils.post_links import source_kind
     ids = sorted(set(ids))
     if not ids:
         return {}
-    cur.execute("""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text,
-                          COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
-                                   s.handle_or_url),
-                          s.platform, s.handle_or_url, COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.url
-                     FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
-                    WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    cur.execute(f"""SELECT p.id::text, COALESCE(pp.title, p.title), s.id::text, {byline.SOURCE_NAME},
+                           {pairing.published_date('p')}, p.url, {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    owns: Dict[Any, str] = {}
     return {pid: {"id": pid, "title": title or "", "source_id": sid, "source": name or "", "kind": source_kind(platform, handle),
-                  "at": at, "url": url} for pid, title, sid, name, platform, handle, at, url in cur.fetchall()}
+                  "at": at, "url": url, "byline": byline.of_row(name, platform, handle, author, fwd, quoted, owns=owns)}
+            for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in cur.fetchall()}
 
 
 def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -389,10 +456,14 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
     if rest:
         posts = _row_posts(cur, rest)
         guide = schemas.KINDS["headline"].guide
+        texts = {str(r["id"]): row_headline_input(r, posts) for r in rest}
+        # v10.17 (0186): the rows' tasks and answers in two reads, not two a row
+        tasks_ = repo.tasks_for(cur, kind="headline", guide=guide, inputs={t for t in texts.values() if t})
+        calls = repo.valid_calls(cur, [t["id"] for t in tasks_.values() if t["status"] == "answered"])
         for r in rest:
-            text = row_headline_input(r, posts)
-            task = repo.task_for(cur, kind="headline", guide=guide, input=text) if text else None
-            call = repo.valid_call(cur, task["id"]) if task and task["status"] == "answered" else None
+            text = texts[str(r["id"])]
+            task = tasks_.get(text) if text else None
+            call = calls.get(str(task["id"])) if task and task["status"] == "answered" else None
             words = ((call or {}).get("answer") or {}).get("headline_en") or ""
             if words.strip():
                 own[str(r["id"])] = words.strip()
@@ -470,6 +541,10 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
             for p in ix_rows.get(nid, ()) if p not in {q["post_id"] for q in r["posts"]}}
     left |= {p for nid in gone_rows for p in ix_rows[nid]}
     checks = _checks(cur, sorted(left))
+    mention_of: Dict[str, Dict[str, Any]] = {}   # v10.17 (0186): a post's first non-member membership, once (each
+    for (_s, q), w in why.items():               # removed line walked every membership of the page before)
+        if w["role"] != "member":
+            mention_of.setdefault(q, w)
     heads = headlines(cur, shown)
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
     from insight_core.markx import labels
@@ -482,7 +557,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
         w = why.get((story, pid)) if story else None
         nid = ix_of.get(pid)
         ix = ({"row": nid, "title": ix_titles.get(nid), "same_row": nid in row_ids} if nid else None)
-        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")}, "why": w, "ix": ix}
+        return {**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")}, "why": w, "ix": ix}
 
     items = []
     for r in shown:
@@ -496,9 +571,9 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                 if pid in mine:
                     continue
                 p = posts.get(pid) or {"id": pid}
-                removed.append({**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url")},
+                removed.append({**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")},
                                 "check": checks.get(pid), "now_in": x_of.get(pid),
-                                "mention": next((w for (s, q), w in why.items() if q == pid and w["role"] != "member"), None)})
+                                "mention": mention_of.get(pid)})
         items.append({"id": str(r["id"]), "tag": r["tag"], "headline": heads[str(r["id"])], "first_at": r["first_at"],
                       "voices": r["voices"], "reports": r["reports"], "shares": r["shares"], "mentions": r["mentions"],
                       "score": float(r["score"]), "story": (r["posts"] or [{}])[0].get("story"), "posts": lines,
@@ -513,9 +588,9 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     gone = []
     for nid in sorted(gone_rows, key=lambda n: -(ix_meta.get(n) or {}).get("voices", 0)):
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),
-                     "posts": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at")},
+                     "posts": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "byline")},
                                 "check": checks.get(p),
-                                "mention": next((w for (s, q), w in why.items() if q == p and w["role"] != "member"), None)}
+                                "mention": mention_of.get(p)}
                                for p in sorted(ix_rows[nid])]})
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
@@ -585,18 +660,20 @@ def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Di
     now = now or datetime.now(timezone.utc)
     out = {}
     for name, days in (("today", 1), ("week", 7)):
-        cur.execute("""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
-                              (array_agg(m.type))[1], count(DISTINCT m.post_id), count(DISTINCT p.source_id),
+        cur.execute(f"""SELECT m.name_key, lower(COALESCE(m.version, '')), (array_agg(m.name ORDER BY m.name))[1],
+                              (array_agg(m.type))[1], count(DISTINCT m.post_id), {voice.count_sql("p.source_id", "s.platform")},
                               (array_agg(DISTINCT m.post_id::text))[1:5], (array_agg(m.version ORDER BY m.version))[1]
-                         FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                         FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.role = 'subject'
-                          AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
-                        GROUP BY 1, 2 ORDER BY count(DISTINCT p.source_id) DESC, count(DISTINCT m.post_id) DESC, 1 LIMIT %s""",
-                    (now - timedelta(days=days), limit))
+                          AND {pairing.post_date_within('p', '%(since)s')}
+                        GROUP BY 1, 2 ORDER BY {voice.count_sql("p.source_id", "s.platform")} DESC,
+                                 count(DISTINCT m.post_id) DESC, 1
+                        LIMIT %(limit)s""",
+                    {"since": now - timedelta(days=days), "limit": limit})
         rows = cur.fetchall()
         posts = _posts(cur, {p for r in rows for p in (r[6] or [])})
         out[name] = [{"key": k, "version": shown or v or None, "name": n, "type": t, "posts": np_, "voices": nv,
-                      "examples": [{k2: (posts.get(p) or {}).get(k2) for k2 in ("id", "title", "source")} for p in (ps or [])]}
+                      "examples": [{k2: (posts.get(p) or {}).get(k2) for k2 in ("id", "title", "source", "byline")} for p in (ps or [])]}
                      for k, v, n, t, np_, nv, ps, shown in rows]
     return out
 
@@ -616,6 +693,20 @@ def briefings(cur: Any) -> Dict[str, Any]:
     return {"day": day, "briefings": out}
 
 
+WORKER_STALE_DAYS = 3     # 0188: a worker silent this long shows as stale (the overview, /api/status's warnings)
+
+
+def workers_view(contacts: Dict[str, datetime], now: datetime,
+                 leased: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+    """Each worker that called or holds leases: {worker, last_contact, leased, stale (silent for more than
+    WORKER_STALE_DAYS, or no contact on record)}."""
+    leased = leased or {}
+    limit = timedelta(days=WORKER_STALE_DAYS)
+    return [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, 0),
+             "stale": contacts.get(w) is None or now - contacts[w] > limit}
+            for w in sorted(set(contacts) | set(leased))]
+
+
 def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     """The worker's side: the queue by kind, answers per day, tokens and their API cost, failures, last contacts, the
     last decision run."""
@@ -627,8 +718,8 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     days = [{"day": d, "calls": n, "valid": v, "tokens_in": int(ti), "tokens_out": int(to),
              "api_usd": round(int(ti) * HAIKU_PER_MILLION[0] / 1e6 + int(to) * HAIKU_PER_MILLION[1] / 1e6, 4)}
             for d, n, v, ti, to in cur.fetchall()]
-    cur.execute("SELECT count(*), COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), COALESCE(sum(cost_usd), 0) FROM mx_calls")
-    n, ti, to, cost = cur.fetchone()
+    from insight_core.markx import kept_counts
+    n, ti, to, cost = kept_counts.call_totals(cur)   # issue 0195: kept, not summed over every call per request
     cur.execute("""SELECT kind, last_error, count(*) FROM mx_tasks WHERE status = 'failed'
                     GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 20""")
     failed = [{"kind": k, "error": e, "tasks": c} for k, e, c in cur.fetchall()]
@@ -637,8 +728,7 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     invalid = [{"kind": k, "error": e, "at": at} for k, e, at in cur.fetchall()]
     cur.execute("SELECT leased_by, count(*), max(lease_until) FROM mx_tasks WHERE status = 'leased' GROUP BY 1")
     leased = {w: (k, until) for w, k, until in cur.fetchall()}
-    workers = [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, (0, None))[0]}
-               for w in sorted(set(contacts) | set(leased))]
+    workers = workers_view(contacts, datetime.now(timezone.utc), leased={w: k for w, (k, _) in leased.items()})
     run = repo.last_run(cur)
     return {"queue": queue, "days": days,
             "tokens": {"calls": n, "tokens_in": int(ti), "tokens_out": int(to), "paid_usd": round(float(cost), 4),

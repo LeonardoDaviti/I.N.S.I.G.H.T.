@@ -1,6 +1,7 @@
 import type { MarkxLine, MarkxRow, MarkxStoryPost, MarkxStoryView } from '../../services/markx';
 import type { MarkxBuilt, MarkxBuiltLine, MarkxOriginalHow } from '../../services/api';
 import { TextLink } from '../ui';
+import { bylineText } from '../../lib/byline';
 
 /** 0128 (Stealth v10.4): how a Mark X story is built. The shapes the News row and the story view carry. */
 export type BuiltRow = MarkxRow & { built?: MarkxBuilt | null };
@@ -103,7 +104,7 @@ export function BuiltSection({ built, posts }: { built: MarkxBuilt | null | unde
         <p className="text-[0.875rem] leading-5 text-fg [overflow-wrap:anywhere]" data-built="first">
           <span className="text-fg-3">First: </span>
           <TextLink to={`/posts/${encodeURIComponent(first.id)}`}>{first.title || '(no title)'}</TextLink>
-          <span className="text-fg-3"> · {first.source} · {HOW_WORDS[built.original!.how]}</span>
+          <span className="text-fg-3"> · {bylineText(first.byline, first.source)} · {HOW_WORDS[built.original!.how]}</span>
         </p>
       ) : built.source_page ? (
         <p className="text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]" data-built="source-page">

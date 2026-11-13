@@ -222,6 +222,25 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
             await SubstackKind(http, sid="s3cret").fetch_latest(_src(f"{base}/", substack=True), 1)
         self.assertEqual(http.headers_for(f"{base}/api/v1/posts/paid")["Cookie"], "substack.sid=s3cret")
 
+    async def test_the_cookie_never_goes_to_a_site_that_only_looks_like_substack(self):
+        # Issue 0187: settings.substack comes from a feed's generator line, which any site can write. When the
+        # subscriptions answer can't be read (the cookie used to go everywhere) or names other publications,
+        # such a domain is read without the cookie; Substack's own hosts still get it.
+        base = "https://lookalike.example"
+        for answer in ({"unexpected": True}, ValueError("HTTP 500"), PAYS_HERE):
+            with self.subTest(answer=answer):
+                http = self._http({
+                    SUBSCRIPTIONS: answer,
+                    f"{base}/api/v1/archive?sort=new&limit=1": [_item("paid", "only_paid", 1000)],
+                    f"{base}/api/v1/posts/paid": _post("paid", "only_paid", 1000, body_words=100),
+                })
+                posts = await SubstackKind(http, sid="s3cret").fetch_latest(_src(f"{base}/", substack=True), 1)
+                self.assertTrue(posts[0]["metadata"]["paywalled"])
+                self.assertIn(f"{base}/api/v1/posts/paid", http.requests)
+                self.assertNotIn("Cookie", http.headers_for(f"{base}/api/v1/posts/paid"))
+                self.assertNotIn("Cookie", http.headers_for(f"{base}/api/v1/archive?sort=new&limit=1"))
+                self.assertEqual(http.headers_for(SUBSCRIPTIONS)["Cookie"], "substack.sid=s3cret")
+
     async def test_a_401_on_the_subscriptions_api_expires_paid_publications_only(self):
         rejected = {SUBSCRIPTIONS: ValueError(f"HTTP 401 while fetching {SUBSCRIPTIONS}")}
         with self.assertRaises(KindUnavailable) as caught:

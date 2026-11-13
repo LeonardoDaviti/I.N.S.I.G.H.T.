@@ -10,6 +10,7 @@ import urllib.parse
 from typing import Any, Dict, List, Tuple
 
 from .addresses import tweet_author
+from .byline import RT_BY
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
 from .post_links import quoted_tweet
@@ -45,7 +46,7 @@ TAKEN_KEY = "taken_from"
 # {url, normalized_url, post_id}. Its address is the page's with CITATION_FRAGMENT and the source's id.
 CITES_KEY = "cites"
 CITATION_FRAGMENT = "#!/cited-by/"
-REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
+REPOST_BY_RE = RT_BY   # Nitter's "RT by @user: " (Byline's one pattern, issue 0189)
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
 
@@ -98,7 +99,7 @@ _MARK_RE = re.compile(r"^[>•*\-–—]\s+")
 # A Telegram link preview's lines (issue 0070): the bridge writes it as <cite>site</cite>, then the
 # page's title and description, each ended by a break; the stored text has lost those breaks.
 _PREVIEW_SITE_RE = re.compile(r"<cite>.*?</cite>", re.I | re.S)
-# A preview of a tweet is titled by its author, "Percy Liang (@percyliang)": who, not what; its text says it.
+# A preview of a tweet is titled by its author, "Jane Roe (@janeroe)": who, not what; its text says it.
 # A quoted tweet's words open on it too (issue 0072): who is quoted, not what.
 _BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)(?:\s+|$)")
 _LINE_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/b|/blockquote|/li|/h[1-6])>", re.I)

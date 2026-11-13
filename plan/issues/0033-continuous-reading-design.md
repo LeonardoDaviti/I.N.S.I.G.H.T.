@@ -3,14 +3,14 @@
 Status: **built** 2026-10-28, not yet deployed. UX, design pass on [0014](0014-continuous-reading.md).
 
 ## What the owner saw
-On v9.1, scrolling past one post into the next showed a divider carrying "source / title [...]", then the next post's byline "turboproject / settings / rss / Oct 21, 2026, 7:08 PM", then its title as an h1. "Why do I see the title two times? Just the separator line should remain, remove the top titling, and also remove the source type."
+On v9.1, scrolling past one post into the next showed a divider carrying "source / title [...]", then the next post's byline "turbo_bench / settings / rss / Oct 21, 2026, 7:08 PM", then its title as an h1. "Why do I see the title two times? Just the separator line should remain, remove the top titling, and also remove the source type."
 
 ## Already fixed on main
 - The divider is a plain `border-strong` rule (f942f98).
 - The byline no longer shows the platform (4277ace, issue 0027).
 
 ## What changed (and why)
-Looked at for real on the preview data: a Russian Telegram channel (@seeallochnaya), simonwillison.net and a three-video YouTube source, at 1400 px and 390 px, dark and light.
+Looked at for real on the preview data: a Russian Telegram channel (@seeall_notes), simonwillison.net and a three-video YouTube source, at 1400 px and 390 px, dark and light.
 
 - **`settings` only on the stream's first post** (decision 027, P6, P8). Every join repeated "source / settings / date"; in a source's stream that is the same link on every post. The first byline keeps it (one click to manage the source); a post that follows reads source / date. The source name still opens that source's feed, and the reader's header links into Sources.
 - **The byline date drops this year** (decision 028, P6). "Sep 22, 2026, 10:19 PM" beside three actions wrapped on a phone, leaving a second line that started with "/". Now it reads "Sep 22, 10:19 PM" (another year keeps its year), with the full date and time in the `<time>` tooltip. A joined post's byline now fits on one line at 390 px.

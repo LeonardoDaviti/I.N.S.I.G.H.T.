@@ -177,7 +177,9 @@ class Supervisor:
 
     def start(self) -> subprocess.Popen:
         self.close_jobs()
-        env = {**os.environ, SUPERVISED: "1"}
+        # issue 0188: the API's processes open connections as "api" (db/database.py's roles); the start work, a
+        # process of this one's, keeps the default
+        env = {**os.environ, SUPERVISED: "1", "INSIGHT_DB_ROLE": "api"}
         self.child = self.popen(self.command, env=env)
         try:
             self.work = self.spawn_work()

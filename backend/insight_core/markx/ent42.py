@@ -22,7 +22,7 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Sequence
 
-from insight_core.markx import plan_marks, repo, schemas, tasks
+from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
@@ -291,17 +291,17 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
     for _page in range(tasks.SCAN_PAGES):
         rows = plan_marks.execute(cur,
             f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
+                                        - {pairing.ordinary_date('p')})) / 86400))::int,
+                      {pairing.ordinary_date('p')}, {plan_marks.STAMP}
                  FROM posts p
-                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s AND t.a = p.id)
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
-                       OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
-                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                       OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
+                ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "main": GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
@@ -360,13 +360,19 @@ def main_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) ->
     return [_mention(e) for e in finish(entities, _title(cur, post_id), _cite_answer(cur, post_id))]
 
 
+def window_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """0176: a later window's ent-v4.2 answer's mentions: its own title dropped (the cite answer is merged into the
+    first window's only)."""
+    return [_mention(e) for e in finish(entities, _title(cur, post_id))]
+
+
 def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> int:
     """A cite answer after the post's ent-v4.2 main answer: its new entities appended to that set, marked q2 (a cite
     answer before it waits: the main answer merges it). How many were added."""
     pid = task["a"]
     _lock(cur, pid)
     cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = 'entities' AND guide = %s AND a = %s AND status = 'answered'
-                   LIMIT 1""", (GUIDE, pid))
+                      AND input !~ %s LIMIT 1""", (GUIDE, pid, r"\nWindow: \d+ of \d+ "))   # 0176: the first window's
     if cur.fetchone() is None:
         return 0
     have = repo.mentions(cur, pid, GUIDE)
@@ -375,7 +381,7 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     new = [e for e in merge_cite(have, cite)[len(have):]]
     if not new:
         return 0
-    start = max((m["n"] for m in have), default=-1) + 1
+    start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # 0176: in the first window's numbers
     fields = repo.MENTION_FIELDS + repo.MENTION_FIELDS_0133
     cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
                     f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING",

@@ -132,14 +132,14 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
 - **Entities and page types, claims and timelines** (page history from 0039).
 
 ### Asked by the owner while reading the lab (2026-10-31)
-- **Continuity: a post's earlier posts on the same thing.** Example: @denissexy's 27 Oct "updates to this skill" continues his 25 Oct post with the repo link, with no link of its own. Shown as "Continues: …" under the post.
+- **Continuity: a post's earlier posts on the same thing.** Example: @dennis_it's 27 Oct "updates to this skill" continues his 25 Oct post with the repo link, with no link of its own. Shown as "Continues: …" under the post.
   - **Technically:** the same voice first, then others. Candidates are posts from the last weeks close in meaning (embeddings). A cheap model confirms "is this a follow-up of that?". References like "this skill" or "updated" weigh in.
-- **Attribution:** "Tibo wrote…" joins the person's own post (his X account) when you follow it. Needs names to resolve to accounts (entities) and meaning across languages.
+- **Attribution:** "Tom wrote…" joins the person's own post (his X account) when you follow it. Needs names to resolve to accounts (entities) and meaning across languages.
 - **Authority across the graph:** in-degree (0064) becomes graph centrality over time, like PageRank or HITS's hubs and authorities. Which pages and sources are the sources of truth across all stories.
   - Weighted by who links (a voice that reports first and is cited more counts more);
   - joined to entities, so links to the same claim or product count together even at different addresses;
   - with the **stance** of each link: quotes, supports, disputes.
-  - Implicit citations, retellings without a link ("Tibo wrote…"), become edges through attribution.
+  - Implicit citations, retellings without a link ("Tom wrote…"), become edges through attribution.
 - **Links that point through a redirect** (saved for the future, owner 2026-10-31):
   - 4,626 `substack.com` app and redirect links, 424 `t.co`, and ~170 more (lnkd.in, bit.ly, trib.al…) are stored as written, never followed to the page they open;
   - two posts linking the same article through different redirects don't meet;

@@ -3,7 +3,7 @@
  * the origin; HN's row of its address and two citers under it; LessWrong's roundup mentions it,
  * issue 0068), Claude Fable 5 (the origin is Anthropic's page, outside INSIGHT, linked by 14; this
  * row is one of its citers, a copy under another) and Ghostty leaving GitHub (mitchellh.com's post,
- * read, is the origin; @steipete's repost of Mitchell's tweet and this row, Mat Duggan's, under it;
+ * read, is the origin; @toolsmith_pete's repost of Mitchell's tweet and this row, Mat Duggan's, under it;
  * Andrew Nesbitt's under Duggan: on a phone "↳ matduggan.com" in place of a second indent).
  */
 import type { FeedItem, StoryPost, StoryParentReason } from '../../services/api';
@@ -20,9 +20,9 @@ function storyPost(now: Date, id: string, source: string, name: string, title: s
 }
 
 /**
- * X (issue 0066), from the lab: badlogicgames' thread "software is dead. sad." (5 replies to
+ * X (issue 0066), from the lab: oddlogic_games' thread "software is dead. sad." (5 replies to
  * itself, and a quote of its first post 2 hours later: one row "Thread · 7 posts"), and
- * steipete's repost of badlogicgames' tweet.
+ * toolsmith_pete's repost of oddlogic_games' tweet.
  */
 export const THREAD_REPLIES: [string, string, number][] = [
   ['p-bg-1', 'pretty joyless now. guess i switch to gardening.', 4.9],
@@ -33,23 +33,24 @@ export const THREAD_REPLIES: [string, string, number][] = [
 ];
 
 export function xItems(now: Date): FeedItem[] {
-  const replies = THREAD_REPLIES.map(([id, text, hoursAgo], i) => storyPost(now, id, 's-bg', 'badlogicgames', text.split('\n')[0], hoursAgo,
-    i ? THREAD_REPLIES[i - 1][0] : 'p-bg', 'thread', { text, url: `https://nitter.local/badlogicgames/status/${id}`, read_at: i < 2 ? at(now, -HOUR) : null }));
+  const replies = THREAD_REPLIES.map(([id, text, hoursAgo], i) => storyPost(now, id, 's-bg', 'oddlogic_games', text.split('\n')[0], hoursAgo,
+    i ? THREAD_REPLIES[i - 1][0] : 'p-bg', 'thread', { text, url: `https://nitter.local/oddlogic_games/status/${id}`, read_at: i < 2 ? at(now, -HOUR) : null }));
   const thread = feedItem({
-    id: 'p-bg', title: 'software is dead. sad.', excerpt: '', source_id: sourceId('s-bg'), source_display_name: 'badlogicgames',
-    url: 'https://nitter.local/badlogicgames/status/2115002476311241104#m', sort_at: at(now, -5 * HOUR), published_at: at(now, -5 * HOUR), read_at: null,
+    id: 'p-bg', title: 'software is dead. sad.', excerpt: '', source_id: sourceId('s-bg'), source_display_name: 'oddlogic_games',
+    url: 'https://nitter.local/oddlogic_games/status/2115002476311241104#m', sort_at: at(now, -5 * HOUR), published_at: at(now, -5 * HOUR), read_at: null,
     story: { id: 'p-bg', voices: 1, first: 'p-bg', parent_id: null, parent_reason: null, origin: null, thread: true,
-      sources: [{ id: sourceId('s-bg'), name: 'badlogicgames' }],
-      posts: [...replies, storyPost(now, 'p-bg-giraffe', 's-bg', 'badlogicgames', 'this thread is brought to you by this very cool giraffe', 3,
+      sources: [{ id: sourceId('s-bg'), name: 'oddlogic_games' }],
+      posts: [...replies, storyPost(now, 'p-bg-giraffe', 's-bg', 'oddlogic_games', 'this thread is brought to you by this very cool giraffe', 3,
         'p-bg', 'quote')] },
   }, now);
   const repost = feedItem({
-    id: 'p-steipete-rt', title: 'how i work with agents in 2026.', excerpt: 'ignore all other guides on here.',
-    source_id: sourceId('s-steipete'), source_display_name: 'steipete', sort_at: at(now, -2 * HOUR), published_at: at(now, -2 * HOUR),
-    url: 'https://nitter.local/badlogicgames/status/2114444636303364349#m', read_at: null, repost: { by: [], author: 'badlogicgames' },
-    // Issue 0068: badlogicgames, whom you follow, wrote it; steipete reposted it: two voices.
-    story: { id: 'p-steipete-rt', voices: 2, first: 'p-steipete-rt', parent_id: null, parent_reason: null, origin: null, reposted_by: ['steipete'],
-      sources: [{ id: sourceId('s-steipete'), name: 'steipete' }, { id: sourceId('s-bg'), name: 'badlogicgames' }], posts: [] },
+    id: 'p-toolsmith_pete-rt', title: 'how i work with agents in 2026.', excerpt: 'ignore all other guides on here.',
+    source_id: sourceId('s-toolsmith_pete'), source_display_name: 'toolsmith_pete', sort_at: at(now, -2 * HOUR), published_at: at(now, -2 * HOUR),
+    url: 'https://nitter.local/oddlogic_games/status/2114444636303364349#m', read_at: null, repost: { by: [], author: 'oddlogic_games' },
+    byline: { author: '@oddlogic_games', via: 'toolsmith_pete', quoting: null },
+    // Issue 0068: oddlogic_games, whom you follow, wrote it; toolsmith_pete reposted it: two voices.
+    story: { id: 'p-toolsmith_pete-rt', voices: 2, first: 'p-toolsmith_pete-rt', parent_id: null, parent_reason: null, origin: null, reposted_by: ['toolsmith_pete'],
+      sources: [{ id: sourceId('s-toolsmith_pete'), name: 'toolsmith_pete' }, { id: sourceId('s-bg'), name: 'oddlogic_games' }], posts: [] },
   }, now);
   return [repost, thread];
 }
@@ -63,29 +64,29 @@ export function storyTreeItems(now: Date): FeedItem[] {
     story: {
       id: 'p-terra', voices: 4, first: 'p-terra', parent_id: null, parent_reason: null, origin: null,
       sources: [{ id: sourceId('s-openai'), name: 'OpenAI News' }, { id: sourceId('s-hn'), name: 'Hacker News: Front Page' },
-        { id: sourceId('s-ds'), name: 'data_secrets' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
+        { id: sourceId('s-ds'), name: 'data_whispers' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
       roundups: [{ id: 'p-terra-lw', title: 'Against Moloch #49', source_display_name: 'LessWrong' }],
       posts: [
         storyPost(now, 'p-terra-hn', 's-hn', 'Hacker News: Front Page', 'GPT-6.1 Terra', 5.5, 'p-terra', 'address', { role: 'share' }),
-        storyPost(now, 'p-terra-ds', 's-ds', 'data_secrets', 'Вышла GPT-6.1 Terra: почти как Sol, но в пять раз дешевле', 5.3, 'p-terra', 'citation'),
+        storyPost(now, 'p-terra-ds', 's-ds', 'data_whispers', 'Вышла GPT-6.1 Terra: почти как Sol, но в пять раз дешевле', 5.3, 'p-terra', 'citation'),
         storyPost(now, 'p-terra-simon', 's-simon', 'Simon Willison’s Weblog', 'GPT-6.1 Terra', 3, 'p-terra', 'citation', { read_at: at(now, -HOUR) }),
       ],
     },
   }, now);
   const fable = feedItem({
-    id: 'p-fable', title: 'Вышел Claude 5 Fable', source_id: sourceId('s-newz'), source_display_name: 'ai_newz', platform: 'telegram',
+    id: 'p-fable', title: 'Вышел Claude 5 Fable', source_id: sourceId('s-newz'), source_display_name: 'ai_dispatch', platform: 'telegram',
     excerpt: 'Это общедоступная версия Mythos, в которой Anthropic убрала кибер-возможности.',
     sort_at: at(now, -8 * HOUR), published_at: at(now, -8 * HOUR), read_at: null,
     story: {
       id: 'p-fable', voices: 4, first: null, parent_id: null, parent_reason: 'citation',
       origin: { url: 'https://www.anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5 and Mythos 5', linked_by: 14 },
-      sources: [{ id: sourceId('s-newz'), name: 'ai_newz' }, { id: sourceId('s-denis'), name: 'denissexy' },
-        { id: sourceId('s-toshoseti'), name: 'toshoseti' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
+      sources: [{ id: sourceId('s-newz'), name: 'ai_dispatch' }, { id: sourceId('s-dennis'), name: 'dennis_it' },
+        { id: sourceId('s-tosho_nets'), name: 'tosho_nets' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
       roundups: [{ id: 'p-fable-lw', title: 'Claude Fable 5 and Mythos 5: Capabilities', source_display_name: 'LessWrong' },
-        { id: 'p-fable-evil', title: 'Эпоха дешёвого AI походу того', source_display_name: 'evilfreelancer' }],
+        { id: 'p-fable-evil', title: 'Эпоха дешёвого AI походу того', source_display_name: 'lazy_freelancer' }],
       posts: [
-        storyPost(now, 'p-fable-denis', 's-denis', 'denissexy', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.9, null, 'citation'),
-        storyPost(now, 'p-fable-tosho', 's-toshoseti', 'toshoseti', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.5, 'p-fable-denis', 'copy', { role: 'share' }),
+        storyPost(now, 'p-fable-dennis', 's-dennis', 'dennis_it', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.9, null, 'citation'),
+        storyPost(now, 'p-fable-tosho', 's-tosho_nets', 'tosho_nets', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.5, 'p-fable-dennis', 'copy', { role: 'share' }),
         storyPost(now, 'p-fable-simon', 's-simon', 'Simon Willison’s Weblog', 'Initial impressions of Claude Fable 5', 2, null, 'citation'),
       ],
     },
@@ -96,14 +97,14 @@ export function storyTreeItems(now: Date): FeedItem[] {
     sort_at: at(now, -10 * HOUR), published_at: at(now, -10 * HOUR), read_at: null,
     story: {
       id: 'p-ghostty', voices: 4, first: 'p-ghostty', parent_id: 'p-ghostty', parent_reason: 'citation', origin: null,
-      sources: [{ id: sourceId('s-mitchell'), name: 'https://mitchellh.com/feed.xml' }, { id: sourceId('s-steipete'), name: 'steipete' },
+      sources: [{ id: sourceId('s-mitchell'), name: 'https://mitchellh.com/feed.xml' }, { id: sourceId('s-toolsmith_pete'), name: 'toolsmith_pete' },
         { id: sourceId('s-duggan'), name: 'https://matduggan.com/rss/' }, { id: sourceId('s-nesbitt'), name: 'https://nesbitt.io/feed.xml' }],
       roundups: [{ id: 'p-ghostty-armin', title: 'Before GitHub', source_display_name: 'https://lucumr.pocoo.org/feed.atom' }],
       posts: [
         storyPost(now, 'p-ghostty', 's-mitchell', 'https://mitchellh.com/feed.xml', 'Ghostty Is Leaving GitHub', 12, null, 'citation',
           { parent_reason: null, read_at: at(now, -HOUR) }),
-        storyPost(now, 'p-ghostty-rt', 's-steipete', 'steipete', 'Ghostty is leaving GitHub. I’m GitHub user 1299, joined Feb 2008.', 11,
-          'p-ghostty', 'citation', { role: 'share', reposted_by: ['steipete'] }),
+        storyPost(now, 'p-ghostty-rt', 's-toolsmith_pete', 'toolsmith_pete', 'Ghostty is leaving GitHub. I’m GitHub user 1299, joined Feb 2008.', 11,
+          'p-ghostty', 'citation', { role: 'share', reposted_by: ['toolsmith_pete'] }),
         storyPost(now, 'p-ghostty-nesbitt', 's-nesbitt', 'https://nesbitt.io/feed.xml', 'A GitHub for maintainers', 9, 'p-ghostty-duggan', 'citation'),
       ],
     },

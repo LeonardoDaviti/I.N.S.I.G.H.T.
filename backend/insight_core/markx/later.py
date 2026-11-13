@@ -38,11 +38,16 @@ nothing here reaches any News.
      `development` shows as one.
   D. **Shown** on the story's page ("Later") and the subject's entity page ("Later developments"), newest first,
      with the owner's label buttons: the current RULE's rows, an older rule's only with `all` (kept, never deleted;
-     neither counted nor in the precision otherwise). Not on News: NEWS_KEY (an mx_settings flag, off) is what will
-     gate it once measured.
+     neither counted nor in the precision otherwise). Not on News (v10.17 deleted the unread NEWS_KEY flag: a News
+     path is built when it is measured).
   Also: a long-lived story's back trigger may fire again AGAIN after its last mx_back window (back.stories).
 
-Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (back's).
+Dates are Pairing's post date (back's: pairing.post_date, a round-up's issue time included).
+
+0180 (anchors): the type lists, the share and the quiet rule are Pairing's `develops` row (`specific` asks it). This
+module's rows are engine 'old'; the anchors engine (markx/anchors.py: the anchor's happening first, then `mains` /
+`match` over Mark IX and Mark X stories) writes engine 'anchors' rows beside them from `stage` (Shadow), and the
+pages show the engine anchors.shown names (old by default).
 """
 from __future__ import annotations
 
@@ -55,34 +60,30 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import back, pairing
 from insight_core.markx.back import _date, norm
+from insight_core.utils import voice
 
 KIND = back.KIND
 RULE = 2                          # v10.13.12's tightened rule; the rows v10.13.11's loose one found are rule 1 (0103)
-ALWAYS_TYPES = ("paper", "document", "dataset", "method")   # specific by their type (method: once 0151's types add it)
-RELEASE_TYPES = ("model", "software")                       # specific only as one release (see `specific`)
+# 0180: the gates are Pairing's `develops` row (back.DEVELOPS); named here as before.
+ALWAYS_TYPES = back.DEVELOPS.always_types       # specific by their type (method: once 0151's types add it)
+RELEASE_TYPES = back.DEVELOPS.release_types     # specific only as one release (see `specific`)
 LONG_TYPES = ALWAYS_TYPES + RELEASE_TYPES
-RELEASE_LEVELS = ("version", "variant", "checkpoint")       # an entity level that is one release
-MAIN_SHARE = 0.5                  # provisional: the main subject is the subject of at least this share of read members
-QUIET_DAYS = 14                   # provisional: in the days before a post ...
-QUIET_MAX = 2                     # ... at most this many distinct sources named the subject as their subject
-QUIET_FOR_LINKS = True            # provisional: the quiet rule holds for L hits too (a popular release's page is linked
-                                  # about as often as it is named)
-AGAIN = timedelta(days=30)        # a long-lived story's back trigger may fire again this long after its last window
+RELEASE_LEVELS = back.DEVELOPS.release_levels   # an entity level that is one release
+MAIN_SHARE = back.DEVELOPS.main_share   # provisional: the main subject is the subject of at least this share of members
+QUIET_DAYS = back.DEVELOPS.quiet_days   # provisional: in the days before a post ...
+QUIET_MAX = back.DEVELOPS.quiet_max     # ... at most this many distinct sources named the subject as their subject
+QUIET_FOR_LINKS = back.DEVELOPS.quiet_for_links   # provisional: the quiet rule holds for L hits too (a popular
+                                                  # release's page is linked about as often as it is named)
+AGAIN = back.DEVELOPS.again       # a long-lived story's back trigger may fire again this long after its last window
+ENGINE = back.ENGINE              # this module's rows in mx_later (0180: the anchors engine writes 'anchors')
 FIRST_SCAN_DAYS = 30              # the first run of a rule reads this far back ...
 PER_RUN = 5000                    # ... and every run at most this many posts, oldest first
 MARGIN = timedelta(hours=1)
 SETTLE = 500                      # the answered rows a run stores verdicts of, at most
 SINCE_KEY = "later_since"
-NEWS_KEY = "later_news"           # 0163 D: Later on News, off until measured (nothing reads it as on yet)
 LABELS = back.LABELS
 ANSWERS = back.ANSWERS
 TRIG_ORDER = ("E", "L")
-
-
-def on_news(cur: Any) -> bool:
-    """Whether Later rows may reach News (NEWS_KEY; off by default, and nothing shows them there yet)."""
-    from insight_core.markx import repo
-    return bool(repo.get_setting(cur, NEWS_KEY, default=False))
 
 
 # ---- entities through the merges ----------------------------------------------------------------------------
@@ -141,24 +142,16 @@ def _ents(cur: Any, ids: Iterable[str]) -> Dict[str, _Ent]:
     return {r[0]: _Ent(r[0], schemas.entity_type(r[1]), *r[2:]) for r in cur.fetchall()}
 
 
-def _blank(v: Optional[str]) -> bool:
-    return not (v or "").strip()
-
-
 def specific(e: Optional[_Ent], mention_type: Optional[str] = None) -> bool:
     """Whether an entity is specific enough to keep a story listening (v10.13.12): a paper, a document, a dataset or
     a method always; a model or software only as one release: level version, variant or checkpoint, or a version, a
     variant or a build named (a family, an unversioned product or family name: never); any other type (product, org,
     person, event, ...) never. An entity marked not one is none. `mention_type`: the type its mentions give it, when
     the entity row has none."""
-    if e is None or e.status == "not_entity":
+    if e is None:
         return False
-    t = e.type or mention_type
-    if t in ALWAYS_TYPES:
-        return True
-    if t not in RELEASE_TYPES or e.level == "family":
-        return False
-    return e.level in RELEASE_LEVELS or not (_blank(e.version) and _blank(e.variant) and _blank(e.build))
+    return pairing.specific(back.DEVELOPS, e.type or mention_type, level=e.level, version=e.version,
+                            variant=e.variant, build=e.build, status=e.status)   # 0180: the develops row's gate
 
 
 def _same_version(a: Optional[_Ent], b: Optional[_Ent]) -> bool:
@@ -227,16 +220,25 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
     where, params = ("WHERE sp.story_id = ANY(%s::uuid[])", (list(story_ids),)) if story_ids is not None else ("", ())
     if story_ids is not None and not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url
-                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id {where}""",
+    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
+                           s.platform = 'saved'
+                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
+                      JOIN sources s ON s.id = p.source_id {where}""",
                 params)
     by: Dict[str, List[Any]] = defaultdict(list)
     origin: Dict[str, Optional[str]] = {}
-    for sid, pid, src, at, url, o in cur.fetchall():
+    for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(back._P(pid, src, at, url, False))
+            by[sid].append(back._P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
             origin[sid] = o
-    by = {sid: ms for sid, ms in by.items() if len({m.src for m in ms}) >= back.MIN_SOURCES}
+    by = {sid: ms for sid, ms in by.items() if back.sources(ms) >= back.MIN_SOURCES}
+    return mains(cur, by, origin, ids=ids, with_pages=with_pages)
+
+
+def mains(cur: Any, by: Dict[str, List[Any]], origin: Dict[str, Optional[str]], *, ids: Optional[_Ids] = None,
+          with_pages: bool = False) -> Dict[str, Long]:
+    """{story: Long} of the stories `by` ({id: its members, back._P}) whose main subject is one specific entity (the
+    module's A, whatever the story is: 0180's anchors give Mark X stories too). `origin`: {id: its origin page}."""
     if not by:
         return {}
     mids = sorted({m.id for ms in by.values() for m in ms})
@@ -396,7 +398,8 @@ def quiet(namings: Sequence[Tuple[datetime, str, str]], at: datetime, post: str,
     [(date, post, source)]; `post` itself and the posts of `skip`, the story's members, not counted)."""
     lo = bisect.bisect_left(namings, (at - timedelta(days=QUIET_DAYS),))
     hi = bisect.bisect_left(namings, (at,))
-    return len({src for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip}) <= QUIET_MAX
+    return voice.count((voice.Said(src) for _t, pid, src in namings[lo:hi] if pid != post and pid not in skip),
+                       voice.Policy.MARKX) <= QUIET_MAX
 
 
 def _rank(s: Long) -> Tuple:
@@ -422,12 +425,23 @@ def find(cur: Any, *, now: datetime, since: datetime, limit: int = PER_RUN,
     st = long_lived(cur, ids=ids, with_pages=True)
     for sid in stopped(cur, sorted(st)):
         st.pop(sid, None)
-    if not st:
-        return [], clock
+    return match(cur, recent, st, ids), clock
+
+
+def match(cur: Any, recent: Sequence[Any], st: Dict[str, Long], ids: _Ids, *, grown: bool = False, rank: Any = None
+          ) -> List[Dict[str, Any]]:
+    """The follow-ups by subject (E) and page (L) of the long-lived stories `st` (`mains`, with pages) among the
+    posts `recent` (back._P, oldest first, saved ones out): one story per post and subject, the quiet rule. Each
+    {story, post, members, entity, trig, post_at, last_at}. Nothing is written. `grown` (0180's anchors, Mark IX and
+    Mark X stories together): a story that shares posts with `s` doesn't house a post away from it. `rank`: the order
+    among the stories of one subject (default `_rank`)."""
+    rank = rank or _rank
+    if not st or not recent:
+        return []
     first_last = min(s.last for s in st.values())
     recent = [p for p in recent if p.at > first_last]
     if not recent:
-        return [], clock
+        return []
     rids = [p.id for p in recent]
     ids.pin(cur, rids)
     p_subj: Dict[str, List[Tuple[Optional[str], Optional[str]]]] = defaultdict(list)
@@ -469,19 +483,29 @@ def find(cur: Any, *, now: datetime, since: datetime, limit: int = PER_RUN,
             if ks - hub:
                 hits[(sid, pid)].add("L")
     at = {p.id: p for p in recent}
-    housed = {(m, s.subject) for s in st.values() for m in s.mids if m in at}   # posts in a story of the subject already
+    houses: Dict[Tuple[str, str], Set[str]] = defaultdict(set)   # (post, subject): the stories of it holding the post
+    for s in st.values():
+        for m in s.mids:
+            if m in at:
+                houses[(m, s.subject)].add(s.id)
+
+    def housed(pid: str, s: Long) -> bool:
+        """The post is in a story of the subject already (with `grown`: in one that shares none of `s`'s posts; a
+        Mark X story that grew from `s` and took the post in does not house it away from `s`)."""
+        held = houses.get((pid, s.subject), set())
+        return bool(held) if not grown else any(not (st[t].mids & s.mids) for t in held if t != s.id)
     best: Dict[Tuple[str, str], Tuple[str, Set[str]]] = {}   # (post, subject): its one story, and the triggers
     for (sid, pid), trig in hits.items():
         s, p = st[sid], at[pid]
-        if p.at <= s.last or pid in s.mids or (pid, s.subject) in housed:
+        if p.at <= s.last or pid in s.mids or housed(pid, s):
             continue   # one story per post and subject: a member of a story of this subject has its story
         if p.src in s.sources and (norm(p.url) in s.own or s.own & {norm(u) for u in links.get(pid, ())}):
             continue   # the story's own source again carrying a member's page: a retelling, not a follow-up
         k = (pid, s.subject)
-        if k not in best or _rank(s) < _rank(st[best[k][0]]):
+        if k not in best or rank(s) < rank(st[best[k][0]]):
             best[k] = (sid, trig)
     if not best:
-        return [], clock
+        return []
 
     def checked(trig: Set[str]) -> bool:
         return QUIET_FOR_LINKS or "E" in trig
@@ -496,18 +520,21 @@ def find(cur: Any, *, now: datetime, since: datetime, limit: int = PER_RUN,
             continue   # the subject is not quiet before it: chatter, not a follow-up (a popular subject never fires)
         out.append({"story": sid, "post": pid, "members": [m.id for m in s.members], "entity": r,
                     "trig": [t for t in TRIG_ORDER if t in trig], "post_at": p.at, "last_at": s.last})
-    return out, clock
+    return out
 
 
-def write(cur: Any, found: Sequence[Dict[str, Any]], *, run_id: Any = None, now: Optional[datetime] = None) -> int:
-    """The new Later rows of the current RULE (one a story, post and rule): how many were new."""
+def write(cur: Any, found: Sequence[Dict[str, Any]], *, run_id: Any = None, now: Optional[datetime] = None,
+          engine: str = ENGINE) -> int:
+    """The new Later rows of the current RULE (one an engine, anchor, post and rule): how many were new. A row's
+    `anchor_kind` (default ix_story) and `story` (the anchor's id) name its anchor (0180)."""
     added = 0
     for c in found:
-        cur.execute("""INSERT INTO mx_later (story, post, rule, members, entity, trig, post_at, last_at, run_id, found_at)
-                       VALUES (%s, %s, %s, %s::uuid[], %s, %s, %s, %s, %s, COALESCE(%s, now()))
-                       ON CONFLICT (story, post, rule) DO NOTHING""",
+        cur.execute("""INSERT INTO mx_later (story, post, rule, members, entity, trig, post_at, last_at, run_id, found_at,
+                                             engine, anchor_kind, anchor_id)
+                       VALUES (%s, %s, %s, %s::uuid[], %s, %s, %s, %s, %s, COALESCE(%s, now()), %s, %s, %s)
+                       ON CONFLICT (engine, anchor_kind, story, post, rule) DO NOTHING""",
                     (c["story"], c["post"], RULE, c["members"], c["entity"], c["trig"], c["post_at"], c["last_at"],
-                     run_id, now))
+                     run_id, now, engine, c.get("anchor_kind", "ix_story"), c["story"]))
         added += cur.rowcount
     return added
 
@@ -523,8 +550,10 @@ def plan(cur: Any, *, open_cap: int = back.OPEN, now: Optional[datetime] = None,
     room = open_cap - cur.fetchone()[0]
     if room <= 0:
         return 0
+    from insight_core.markx import anchors   # 0180: the engine shown first, then the other (Shadow compares both)
     cur.execute("""SELECT id::text, story::text, members::text[], post::text, post_at FROM mx_later
-                    WHERE task_id IS NULL AND rule = %s ORDER BY post_at DESC, id LIMIT %s""", (RULE, room))
+                    WHERE task_id IS NULL AND rule = %s ORDER BY engine <> %s, post_at DESC, id LIMIT %s""",
+                (RULE, anchors.shown(cur), room))
     picks = cur.fetchall()
     if not picks:
         return 0
@@ -577,8 +606,11 @@ def stage(cur: Any, *, now: datetime, run_id: Any = None, open_cap: int = back.O
     else:
         since = now - timedelta(days=FIRST_SCAN_DAYS)
     found, clock = find(cur, now=now, since=since, limit=limit, after=after)
+    from insight_core.markx import anchors   # 0180: the anchors engine's rows beside these (Shadow), before the plan
     out = {"rule": RULE, "since": since.isoformat(), "clock": clock, "found": len(found),
-           "added": write(cur, found, run_id=run_id, now=now), "planned": plan(cur, open_cap=open_cap, now=now),
+           "added": write(cur, found, run_id=run_id, now=now),
+           "anchors": anchors.shadow(cur, "later", now=now, run_id=run_id, limit=limit),
+           "planned": plan(cur, open_cap=open_cap, now=now),
            "settled": settle(cur, now=now)}
     repo.set_setting(cur, SINCE_KEY, clock)
     out["seconds"] = round(time.monotonic() - t0, 3)
@@ -596,12 +628,15 @@ def _labels(cur: Any, ids: Sequence[str]) -> Dict[str, Optional[str]]:
     return {a: (None if ans == "undo" else ans) for a, ans in cur.fetchall()}
 
 
-def precision(cur: Any, *, all: bool = False) -> Dict[str, Any]:
-    """The owner's labels on Later rows of the current RULE (`all`: of every rule): {labelled, development,
-    precision (None before the first)}."""
+def precision(cur: Any, *, all: bool = False, engine: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's labels on Later rows of the current RULE (`all`: of every rule) of `engine` (default the engine
+    shown, 0180): {labelled, development, precision (None before the first)}."""
+    if engine is None:
+        from insight_core.markx import anchors
+        engine = anchors.shown(cur)
     cur.execute("""SELECT DISTINCT ON (l.a) l.a::text, l.answer FROM mx_labels l JOIN mx_later r ON r.id = l.a
-                    WHERE l.item_kind = 'later' AND l.labeller = 'owner' AND (%s OR r.rule = %s)
-                    ORDER BY l.a, l.created_at DESC, l.ctid DESC""", (all, RULE))
+                    WHERE l.item_kind = 'later' AND l.labeller = 'owner' AND (%s OR r.rule = %s) AND r.engine = %s
+                    ORDER BY l.a, l.created_at DESC, l.ctid DESC""", (all, RULE, engine))
     marks = [ans for _, ans in cur.fetchall() if ans != "undo"]
     dev = sum(a == "development" for a in marks)
     return {"labelled": len(marks), "development": dev, "precision": round(dev / len(marks), 4) if marks else None}
@@ -625,7 +660,8 @@ def _items(cur: Any, rows: Sequence[Tuple]) -> Tuple[List[Dict[str, Any]], Dict[
         counts[verdict or "waiting"] += 1
         p = shown.get(pid) or {}
         items.append({"id": lid, "story": story, "headline": (shown.get(story) or {}).get("title"), "post": pid,
-                      "title": p.get("title"), "url": p.get("url"), "source": p.get("source"), "at": back._iso(at),
+                      "title": p.get("title"), "url": p.get("url"), "source": p.get("source"), "byline": p.get("byline"),
+                      "at": back._iso(at),
                       "days_after": max(0, (at - last).days), "trig": list(trig), "entity": ent,
                       "entity_name": names.get(ent), "verdict": verdict, "runs": list(runs or []),
                       "label": marks.get(lid), "rule": rule})
@@ -656,14 +692,17 @@ def of_story(cur: Any, story_id: str, *, all: bool = False) -> Dict[str, Any]:
                 "following": sid in lived and sid not in stops,
                 "subjects": [{"id": r, "name": ents[r].name if r in ents else None} for r in sorted(lived[sid].roots)]
                 if sid in lived else []} for sid in six]
+    from insight_core.markx import anchors   # 0180: the engine shown's rows (the anchors engine's: the story's own too)
+    engine = anchors.shown(cur)
+    keys = sorted(set(six) | ({story_id} if engine == anchors.ENGINE else set()))
     rows: List[Tuple] = []
-    if six:
+    if keys:
         cur.execute(f"""SELECT {_COLS} FROM mx_later WHERE story = ANY(%s::uuid[]) AND (%s OR rule = %s)
-                         ORDER BY post_at DESC, id""", (six, all, RULE))
+                         AND engine = %s ORDER BY post_at DESC, id""", (keys, all, RULE, engine))
         rows = cur.fetchall()
     items, counts = _items(cur, rows)
-    return {"stories": stories, "items": items, "counts": counts, "precision": precision(cur, all=all),
-            "news": on_news(cur), "rule": RULE}
+    return {"stories": stories, "items": items, "counts": counts, "precision": precision(cur, all=all, engine=engine),
+            "rule": RULE, "engine": engine}
 
 
 def of_entity(cur: Any, entity_id: str, *, limit: int = 200, all: bool = False) -> Dict[str, Any]:
@@ -672,13 +711,15 @@ def of_entity(cur: Any, entity_id: str, *, limit: int = 200, all: bool = False) 
     ids = _Ids(cur)
     root = ids.root(entity_id)
     members = sorted(ids.members([root])) if root else []
+    from insight_core.markx import anchors
+    engine = anchors.shown(cur)
     rows: List[Tuple] = []
     if members:
         cur.execute(f"""SELECT {_COLS} FROM mx_later WHERE entity = ANY(%s::uuid[]) AND (%s OR rule = %s)
-                         ORDER BY post_at DESC, id LIMIT %s""", (members, all, RULE, limit))
+                         AND engine = %s ORDER BY post_at DESC, id LIMIT %s""", (members, all, RULE, engine, limit))
         rows = cur.fetchall()
     items, counts = _items(cur, rows)
-    return {"entity": root, "items": items, "counts": counts, "rule": RULE}
+    return {"entity": root, "items": items, "counts": counts, "rule": RULE, "engine": engine}
 
 
 def label(cur: Any, *, row: str, answer: str, note: Optional[str] = None) -> Dict[str, Any]:
@@ -696,8 +737,8 @@ def label(cur: Any, *, row: str, answer: str, note: Optional[str] = None) -> Dic
 
 def follow(cur: Any, *, story: str, following: bool, note: Optional[str] = None) -> Dict[str, Any]:
     """The owner's "Stop following this story" (following False) or "Follow again" (True): a row, never deleted.
-    KeyError: no such Mark IX story."""
-    cur.execute("SELECT 1 FROM stories WHERE id = %s", (story,))
+    KeyError: no such Mark IX story (0180: or Mark X story, an anchor of the anchors engine)."""
+    cur.execute("SELECT 1 FROM stories WHERE id = %s UNION ALL SELECT 1 FROM mx_stories WHERE id = %s", (story, story))
     if cur.fetchone() is None:
         raise KeyError(story)
     cur.execute("INSERT INTO mx_later_stops (story, stopped, note) VALUES (%s, %s, %s)",
@@ -705,6 +746,6 @@ def follow(cur: Any, *, story: str, following: bool, note: Optional[str] = None)
     return {"story": story, "following": following}
 
 
-__all__ = ["AGAIN", "LONG_TYPES", "MAIN_SHARE", "NEWS_KEY", "QUIET_DAYS", "QUIET_MAX", "RULE", "find", "follow", "label",
-           "long_lived", "of_entity", "of_story", "on_news", "page_key", "plan", "precision", "quiet", "settle",
+__all__ = ["AGAIN", "LONG_TYPES", "MAIN_SHARE", "QUIET_DAYS", "QUIET_MAX", "RULE", "find", "follow", "label",
+           "long_lived", "of_entity", "of_story", "page_key", "plan", "precision", "quiet", "settle",
            "specific", "stage", "stopped", "write"]

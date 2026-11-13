@@ -51,13 +51,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from psycopg import errors as psycopg_errors
 
 from insight_core.markx import pairing
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
 CODE_VERSION = "markx-decide-v1"
 CERTAIN = frozenset({"thread", "quote", "address"})    # a tree reason that is not a guess: no check (unless a roundup)
 LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to the story's page (0121 Decided 1)
-NOT_VOICE = pairing.NOT_VOICE
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
 LATE = timedelta(hours=72)                              # Mark IX's link window (experiment W)
@@ -201,7 +201,8 @@ def _at_key(posts: Dict[str, Post], pid: str):
 
 
 def voices(posts: Dict[str, Post], ids: Iterable[str]) -> int:
-    return pairing.voices((posts[i].source, posts[i].kind) for i in ids if i in posts)
+    """How many voices the known posts among `ids` are (Voice's MARKX rule over each Post's counted source)."""
+    return voice.count((voice.Said(posts[i].source, posts[i].kind) for i in ids if i in posts), voice.Policy.MARKX)
 
 
 def ix_members(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]]) -> Dict[str, List[Member]]:
@@ -248,7 +249,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         origin = ms[0].post
         for m in ms:
             p = posts[m.post]
-            if m.post == origin or p.kind in NOT_VOICE or m.post in copies.get(key, ()):
+            if m.post == origin or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
                 continue
             roundup = kinds.get(m.post) == "roundup"
             if m.why in certain and not roundup:
@@ -763,9 +764,9 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     their stamps and a text or reading is read only when used (incremental.world)."""
     from insight_core.markx import embed, incremental, tasks
     since = now - timedelta(days=config.days)
-    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, sp.role, sp.parent_reason FROM story_posts sp
                     WHERE sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
-                                           WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s)""",
+                                           WHERE {pairing.ordinary_date('p')} >= %s)""",
                 (since,))
     rows = cur.fetchall()
     cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")
@@ -1218,7 +1219,7 @@ def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dic
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None,
         entity_budget: Optional[float] = None, limit: Optional[float] = None,
-        began: Optional[float] = None) -> Dict[str, Any]:
+        began: Optional[float] = None, skip: Iterable[str] = ()) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
@@ -1236,11 +1237,16 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
 
     v10.13.9: the story window steps back only when this run left room (story_window.room): `limit` is the caller's
     LIMIT (jobs.LIMIT when None), `began` the time.monotonic() its run began (jobs: before its candidate finder, as
-    LIMIT counts; this call's start when None)."""
+    LIMIT counts; this call's start when None).
+
+    0188: the stages in `skip` (of jobs.SKIPPABLE: the stages after the run's own decisions) are deferred this run,
+    as a stage that met a concurrent update is (`deferred` in the counts): jobs.py asks it after two runs in a row ran
+    over LIMIT in that stage, so the run is not the identical one again."""
     import json as _json
     import time as _time
     from insight_core.markx import incremental, news as mx_news, repo, schemas
     timed: List[Tuple[str, float]] = []           # (stage, when it began): the room check's own clock
+    skip = frozenset(skip)
 
     def mark(name: str) -> None:
         if stage is not None:
@@ -1300,6 +1306,10 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         (the server's 103.6 s run, lost after its back stage). Now only that stage's writes are undone and it is
         deferred to the next run, which reads them anew (each stage resumes from its own clock); the decisions, the
         stories, News and the kept state are kept."""
+        if timed and timed[-1][0] in skip:      # 0188: skipped this run (over the limit in it twice in a row)
+            deferred[name] = "skipped this run: two runs in a row went over the time limit in this stage"
+            log.warning("Mark X decision run: the %s stage is skipped this run (deferred to the next)", name)
+            return default
         added, old_added = Counter(ask.added), Counter(ask.old_added)
         try:
             with cur.connection.transaction():
@@ -1331,19 +1341,28 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         counts["check"] = {"same": not diff, **({"differences": diff} if diff else {})}
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
+    incremental.release(memo)           # 0183: the texts and readings the stages above read, let go
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
-    from insight_core.markx import entity_stage
+    from insight_core.markx import entity_stage, identity
+    # v10.16: the entity book is read once for the entities stage, and once after it (its entities, names, merges and
+    # pins as the stage left them; no mention count, which the surges and perspectives never read) for both of those
+    # (was: a whole book read by each of the three)
+    book = identity.load_book(cur) if "entities" not in skip else None
     got = guarded("entities", lambda: entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
-                                                             full=full, budget=entity_budget))
+                                                             full=full, budget=entity_budget, book=book))
     days = set()                        # deferred: it linked nothing, no day to recount; and no "entities" counts,
     if got is not None:                 # so the next run resumes a full pass from the last finished run's record
         counts["entities"], days = got
+    book = None                         # 0183: the stage's book let go before the next is read (was: both held to the end)
+    book_now = identity.load_book(cur, counts=False)
     mark("surges")                      # 0119 A2
     counts["surges"] = guarded("surges", lambda: entity_stage.surges(cur, now=now, run_id=run_id, days=days,
-                                                                      since=previous, window_days=recent_days))
+                                                                      since=previous, window_days=recent_days,
+                                                                      book=book_now))
     mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
     from insight_core.markx import perspectives
-    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id))
+    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id,
+                                                                                book=book_now))
     counts["briefing"] = guarded("briefing", lambda: mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR,
                                                                       limit=BRIEFING_STORIES))
     if deferred:

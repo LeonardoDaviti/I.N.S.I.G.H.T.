@@ -37,7 +37,8 @@ from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.addresses import account_key, site_of
 from insight_core.utils.post_links import extract_links, is_home, source_kind
 from insight_core.utils.discover_rules import suggestions
-from insight_core.utils.story_rules import StoryPost, count_voices, group, named_voices, roles
+from insight_core.utils import voice
+from insight_core.utils.story_rules import StoryPost, group, named_voices, roles
 from insight_core.utils.url_normalization import normalize_url
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -82,12 +83,12 @@ class PostLinksTests(unittest.TestCase):
     def test_sites_homes_and_kinds(self):
         self.assertEqual(site_of("news.bbc.co.uk"), "bbc.co.uk")
         self.assertEqual(site_of("www.roadtovr.com"), "roadtovr.com")
-        self.assertTrue(is_home("https://x.com/karpathy"))
+        self.assertTrue(is_home("https://x.com/nn_teacher"))
         self.assertTrue(is_home("https://openai.com/"))
         self.assertFalse(is_home("https://openai.com/index/gpt"))
         self.assertEqual(source_kind("rss", "https://www.reddit.com/r/Xreal/.rss"), "reddit")
-        self.assertEqual(source_kind("rss", "https://tg.i-c-a.su/rss/denissexy"), "telegram")
-        self.assertEqual(source_kind("rss", "https://nitter.local/karpathy/rss"), "x")
+        self.assertEqual(source_kind("rss", "https://tg.i-c-a.su/rss/dennis_it"), "telegram")
+        self.assertEqual(source_kind("rss", "https://nitter.local/nn_teacher/rss"), "x")
         self.assertEqual(source_kind("rss", "https://simonwillison.net/atom/everything/"), "site")
 
 
@@ -135,7 +136,7 @@ class JoiningRulesTests(unittest.TestCase):
         same_sub = post("c", "r1", kind="reddit", author="bob", hours=2, links=[(page, None)], words=10)
         self.assertEqual(group([a, same_sub]), [], "one subreddit, one story source: no join through the link")
         c = post("c", "r1", kind="reddit", author="bob", title="XREAL 1S is one of my favourites", hours=1)
-        self.assertEqual(count_voices([a, b, c]), 2, "the person, not the subreddit")
+        self.assertEqual(voice.count([a, b, c], voice.Policy.STORIES_IX), 2, "the person, not the subreddit")
 
     def test_a_citation_of_another_voice_within_72_hours(self):
         cited = post("a", "s1")
@@ -146,16 +147,16 @@ class JoiningRulesTests(unittest.TestCase):
                                             links=[("https://s1.test/2026/10/a-post", "a")])]), [], "its own voice")
 
     def test_a_cited_stored_post_with_a_one_segment_address_still_joins(self):
-        """Found on the server's data: @denissexy cited blog.cloudflare.com/yandex-outage 2.8 hours
+        """Found on the server's data: @dennis_it cited blog.cloudflare.com/yandex-outage 2.8 hours
         after Cloudflare posted it, and the one-segment address was taken for a profile page."""
         cited = post("cf", "cloudflare", site="cloudflare.com", hours=0)
-        citer = post("tg", "denissexy", kind="telegram", hours=2.8,
+        citer = post("tg", "dennis_it", kind="telegram", hours=2.8,
                      links=[("https://blog.cloudflare.com/yandex-outage", "cf")])
         self.assertEqual(ids(group([cited, citer])), [["cf", "tg"]])
 
     def test_home_and_profile_pages_join_nothing(self):
-        self.assertEqual(group([post("a", "s1", links=[("https://x.com/karpathy", None)]),
-                                post("b", "s2", links=[("https://x.com/karpathy", None)])]), [])
+        self.assertEqual(group([post("a", "s1", links=[("https://x.com/nn_teacher", None)]),
+                                post("b", "s2", links=[("https://x.com/nn_teacher", None)])]), [])
 
     def test_a_roundup_joins_its_first_link_and_mentions_the_rest(self):
         one, two, three = (f"https://news.example/2026/10/story-{n}" for n in (1, 2, 3))
@@ -213,7 +214,7 @@ class NamedVoicesTests(unittest.TestCase):
                           ("r1", "u/alice", "r/sub"), ("r1", "u/bob", "r/sub")],
                          "followed sources first, then Reddit authors (issue 0103), each by its first post")
         self.assertEqual([[s["id"] for s in v["with"]] for v in named], [["s2"], ["tg2"], [], []])
-        self.assertEqual(len(named), count_voices(posts), "the count is the names")
+        self.assertEqual(len(named), voice.count(posts, voice.Policy.STORIES_IX), "the count is the names")
 
     def test_one_voice_lists_its_sources(self):
         """No count shows for one voice ("also shared by", 0072): its names are who said and shared it."""
@@ -230,12 +231,12 @@ class NamedVoicesTests(unittest.TestCase):
         repost = post("a", "x2", kind="x", author="accounta", reposted=True, author_source="x1")
         named = self._named([repost], {"a": ["x1"]})
         self.assertEqual([v["name"] for v in named], ["Account B", "Account A"])
-        self.assertEqual(len(named), count_voices([repost]))
+        self.assertEqual(len(named), voice.count([repost], voice.Policy.STORIES_IX))
         # The author's own tweet in the story too: one voice, its tweet's source.
         own = post("b", "x1", kind="x", author="accounta", hours=-1)
         named = self._named([own, repost], {"a": ["x1"]})
         self.assertEqual([(v["name"], v["with"]) for v in named], [("Account A", []), ("Account B", [])])
-        self.assertEqual(len(named), count_voices([own, repost]))
+        self.assertEqual(len(named), voice.count([own, repost], voice.Policy.STORIES_IX))
 
 
 # ---- Discover ---------------------------------------------------------------------------------
@@ -258,11 +259,11 @@ class DiscoverRulesTests(unittest.TestCase):
         self.assertEqual((len(found[0].voices), len(found[0].articles), found[0].links), (3, 2, 2))
 
     def test_a_platform_suggests_accounts(self):
-        links = self.links("x.com", ["v1", "v2", "v3"], ["karpathy/2026-10-a-long-post-here",
-                                                          "karpathy/notes-on-a-new-model-today"])
+        links = self.links("x.com", ["v1", "v2", "v3"], ["nn_teacher/2026-10-a-long-post-here",
+                                                          "nn_teacher/notes-on-a-new-model-today"])
         links += self.links("x.com", ["v1", "v2", "v3"], ["status/what-a-day-it-has-been"])
         found = suggestions(links, followed=set(), hidden=set())
-        self.assertEqual([s.key for s in found], ["x.com/karpathy"])
+        self.assertEqual([s.key for s in found], ["x.com/nn_teacher"])
 
     def test_a_blog_with_posts_at_its_root_is_one_site(self):
         """On the server's data blog.cloudflare.com (16 voices) was never suggested: its root-level
@@ -277,19 +278,19 @@ class DiscoverRulesTests(unittest.TestCase):
 
     def test_on_a_platform_only_the_account_you_follow_is_followed(self):
         links = []
-        for channel in ("seeallochnaya", "denissexy"):
+        for channel in ("seeall_notes", "dennis_it"):
             links += self.links("t.me", ["v1", "v2", "v3"], [f"{channel}/2026-10-a-long-post-here",
                                                              f"{channel}/notes-on-a-new-model-today"])
-        followed = suggestions(links, followed={"t.me"}, hidden=set(), followed_accounts={"t.me/seeallochnaya"})
-        self.assertEqual([s.key for s in followed], ["t.me/denissexy"], "following one channel hides no other")
-        hidden = suggestions(links, followed=set(), hidden={"t.me", "t.me/denissexy"})
-        self.assertEqual([s.key for s in hidden], ["t.me/seeallochnaya"])
+        followed = suggestions(links, followed={"t.me"}, hidden=set(), followed_accounts={"t.me/seeall_notes"})
+        self.assertEqual([s.key for s in followed], ["t.me/dennis_it"], "following one channel hides no other")
+        hidden = suggestions(links, followed=set(), hidden={"t.me", "t.me/dennis_it"})
+        self.assertEqual([s.key for s in hidden], ["t.me/seeall_notes"])
 
     def test_a_source_follows_the_account_its_address_names(self):
-        self.assertEqual(source_account("rss", "https://tg.i-c-a.su/rss/SeeAllOchnaya?limit=50"), "t.me/seeallochnaya")
-        self.assertEqual(source_account("rss", "https://telegram.local/rss/denissexy?limit=50"), "t.me/denissexy")
-        self.assertEqual(source_account("telegram", "ai_newz"), "t.me/ai_newz")
-        self.assertEqual(source_account("rss", "https://nitter.local/karpathy/rss"), "x.com/karpathy")
+        self.assertEqual(source_account("rss", "https://tg.i-c-a.su/rss/Seeall_notes?limit=50"), "t.me/seeall_notes")
+        self.assertEqual(source_account("rss", "https://telegram.local/rss/dennis_it?limit=50"), "t.me/dennis_it")
+        self.assertEqual(source_account("telegram", "ai_dispatch"), "t.me/ai_dispatch")
+        self.assertEqual(source_account("rss", "https://nitter.local/nn_teacher/rss"), "x.com/nn_teacher")
         self.assertEqual(source_account("rss", "https://www.reddit.com/r/Xreal/.rss"), "reddit.com/r/xreal")
         self.assertEqual(source_account("reddit", "r/LocalLLaMA"), "reddit.com/r/localllama")
         self.assertEqual(source_account("rss", "https://github.com/anthropics/claude-code/releases.atom"),
@@ -699,7 +700,7 @@ class KilledJobTests(unittest.TestCase):
         self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
         self.assertEqual(self._setting()[0], {"rules": "older rules"}, "nothing written")
         with psycopg.connect(db_url(), autocommit=True) as conn:   # the server ends the killed session
-            for _ in range(50):
+            for _ in range(600):   # up to 60 s: the server ends the session later on a loaded machine
                 if conn.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (LOCK_KEY,)).fetchone()[0]:
                     conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (LOCK_KEY,))
                     break

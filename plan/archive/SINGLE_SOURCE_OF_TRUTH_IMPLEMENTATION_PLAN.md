@@ -52,7 +52,7 @@ Examples:
 
 - `DeepSeek released DeepSeek-OCR`
 - `OpenAI launched GPT-5.4 mini`
-- `Karpathy published 2025 LLM Year in Review`
+- `Tutor published 2025 LLM Year in Review`
 
 Then connected posts can be attached as:
 

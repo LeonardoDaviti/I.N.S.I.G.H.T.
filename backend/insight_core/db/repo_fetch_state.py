@@ -34,8 +34,10 @@ FAST_BELOW_SECONDS = 12 * 3600
 MEDIUM_UP_TO_SECONDS = 7 * 24 * 3600
 
 MAX_ERROR_LENGTH = 2000
-PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
-MOVED_NEWEST = 10           # the newest posts whose pages' moves say a source moved (issue 0108)
+# The newest page reads source health sums (issue 0032) and the newest posts whose moves say a source moved (0108):
+# defined with the kept statistics (repo_post_stats, issue 0195).
+from insight_core.db import repo_post_stats  # noqa: E402
+from insight_core.db.repo_post_stats import MOVED_NEWEST, PAGE_READS_IN_HEALTH  # noqa: E402,F401
 
 # A post the owner opened (issue 0046): its page was opened or read for a while, or it was
 # put in Later, kept (starred) or left part-read. read_at alone is not an open: "mark read
@@ -71,6 +73,8 @@ class FetchStateRow:
     linked_wanted_at: Optional[datetime] = None   # a story linked one of its pages not stored (issue 0114)
     linked_url: Optional[str] = None
     linked_fetched_at: Optional[datetime] = None  # the last early fetch decided: one per interval
+    silent_checked_at: Optional[datetime] = None  # the doctor last looked where a silent source went (issue 0178)
+    silent_finding: Optional[Dict[str, Any]] = None  # what it found: {moved, replacement, stopped, ...}
 
 
 _COLUMNS = [f.name for f in fields(FetchStateRow)]
@@ -338,6 +342,51 @@ class FetchStateRepository:
             {"sid": str(source_id), "at": checked_at, "finding": json.dumps(finding)},
         )
 
+    def record_silence(self, cur: Cursor, source_id: str, *, checked_at: datetime,
+                       finding: Optional[Dict[str, Any]]) -> None:
+        """The source doctor looked where a silent source went (issue 0178); None: it is not silent (cleared)."""
+        cur.execute(
+            """
+            INSERT INTO source_fetch_state (source_id, silent_checked_at, silent_finding, updated_at)
+            VALUES (%(sid)s, %(at)s, %(finding)s::jsonb, %(at)s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                silent_checked_at = EXCLUDED.silent_checked_at,
+                silent_finding = EXCLUDED.silent_finding,
+                updated_at = EXCLUDED.updated_at
+            """,
+            {"sid": str(source_id), "at": checked_at if finding is not None else None,
+             "finding": json.dumps(finding) if finding is not None else None},
+        )
+
+    def mark_stopped(self, cur: Cursor, source_id: str, *, last_post_at: Optional[datetime], at: datetime) -> bool:
+        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts
+        after `last_post_at`. Nothing is switched off or deleted. False for no such source."""
+        cur.execute("SELECT 1 FROM sources WHERE id = %s::uuid", (str(source_id),))
+        if cur.fetchone() is None:
+            return False
+        stopped = {"stopped": True, "stopped_at": at.isoformat(),
+                   "last_post_at": last_post_at.isoformat() if last_post_at else None}
+        cur.execute(
+            """
+            INSERT INTO source_fetch_state (source_id, silent_checked_at, silent_finding, updated_at)
+            VALUES (%(sid)s, %(at)s, %(finding)s::jsonb, %(at)s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                silent_finding = COALESCE(source_fetch_state.silent_finding, '{}'::jsonb) || EXCLUDED.silent_finding,
+                silent_checked_at = COALESCE(source_fetch_state.silent_checked_at, EXCLUDED.silent_checked_at),
+                updated_at = EXCLUDED.updated_at
+            """,
+            {"sid": str(source_id), "at": at, "finding": json.dumps(stopped)},
+        )
+        return True
+
+    def last_post_at(self, cur: Cursor, source_id: str) -> Optional[datetime]:
+        """When its newest post was published (surfaced, else fetched, if undated): health's last_post_at."""
+        # Issue 0195: the source's kept statistics (read live while its posts changed), as source health reads them.
+        cur.execute(f"SELECT x.last_post_at FROM ({repo_post_stats.stats_sql('WHERE s.id = %s')}) x",
+                    (str(source_id),))
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def dismiss_doctor(self, cur: Cursor, source_id: str) -> bool:
         """Hide the doctor's finding until the next failure streak. False when there is none."""
         cur.execute(
@@ -360,7 +409,7 @@ class FetchStateRepository:
             UPDATE source_fetch_state
                SET consecutive_failures = 0, next_retry_at = NULL, last_outcome = NULL,
                    last_error = NULL, last_error_at = NULL, doctor_checked_at = NULL,
-                   doctor_finding = NULL, updated_at = now(),
+                   doctor_finding = NULL, silent_checked_at = NULL, silent_finding = NULL, updated_at = now(),
                    last_success_at = CASE WHEN %s THEN NULL ELSE last_success_at END
              WHERE source_id = %s
             """,
@@ -431,7 +480,7 @@ class FetchStateRepository:
         """Every source with its cadence columns, added date, post count, newest post, folders,
         its newest page reads (`page_reads`: the metadata.page_read of its PAGE_READS_IN_HEALTH
         newest page-read posts, newest first), how many of its posts were opened
-        (`opened_posts`, OPENED_POST_SQL), when the owner last kept it (`tidy_kept_at`, issue
+        (`opened_posts`, OPENED_POST_SQL, counted by repo_post_stats.opened_counts), when the owner last kept it (`tidy_kept_at`, issue
         0046), whether its newest only_paid post was stored as a teaser (`paid_preview`, issue
         0084) and fetch state.
 
@@ -448,45 +497,39 @@ class FetchStateRepository:
                 return []
             where = "WHERE s.id = ANY(%(ids)s::uuid[])"
         state_columns = ", ".join(f"st.{c}" for c in _COLUMNS)
+        # Issue 0195: the post statistics kept per source (repo_post_stats; a changed source read live), and the
+        # opened posts counted from the opened posts up: no subquery per source over every post.
         cur.execute(
             f"""
+            WITH ps AS ({repo_post_stats.stats_sql(where)})
             SELECT s.id, s.platform, s.handle_or_url, s.enabled, s.in_main_digest, s.settings,
                    s.mean_gap_seconds, s.cadence_sample_size, s.cadence_tier,
                    s.cadence_computed_at, s.fetch_interval_hours_override, s.created_at,
-                   (SELECT count(*) FROM posts p WHERE p.source_id = s.id) AS post_count,
-                   (SELECT max(COALESCE(p.surfaced_at, p.published_at, p.fetched_at)) FROM posts p
-                     WHERE p.source_id = s.id) AS last_post_at,
+                   ps.post_count, ps.last_post_at,
                    COALESCE((
                        SELECT json_agg(json_build_object('id', f.id, 'name', f.name)
                                        ORDER BY f.name)
                        FROM source_folders sf JOIN folders f ON f.id = sf.folder_id
                        WHERE sf.source_id = s.id
                    ), '[]'::json) AS folders,
-                   (SELECT COALESCE(json_agg(r.page_read ORDER BY r.fetched_at DESC), '[]'::json)
-                      FROM (SELECT p.metadata -> '{PAGE_READ_KEY}' AS page_read, p.fetched_at
-                              FROM posts p
-                             WHERE p.source_id = s.id AND p.metadata ? '{PAGE_READ_KEY}'
-                             ORDER BY p.fetched_at DESC LIMIT {PAGE_READS_IN_HEALTH}) r) AS page_reads,
-                   (SELECT count(*) FROM posts p
-                     WHERE p.source_id = s.id AND {OPENED_POST_SQL}) AS opened_posts,
+                   ps.page_reads,
+                   0 AS opened_posts,
                    s.tidy_kept_at,
-                   (SELECT (p.metadata ->> 'paywalled')::boolean FROM posts p
-                     WHERE p.source_id = s.id AND p.metadata ->> 'audience' = 'only_paid'
-                     ORDER BY p.fetched_at DESC LIMIT 1) AS paid_preview,
-                   (SELECT array_agg(r.moved) FROM (SELECT p.metadata ->> '{MOVED_KEY}' AS moved FROM posts p
-                     WHERE p.source_id = s.id ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
-                     LIMIT {MOVED_NEWEST}) r) AS moved,
+                   ps.paid_preview,
+                   ps.moved,
                    {state_columns}
             FROM sources s
+            JOIN ps ON ps.source_id = s.id
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
             {where}
             ORDER BY s.platform, s.handle_or_url
             """,
             params,
         )
+        fetched = cur.fetchall()
+        opened = repo_post_stats.opened_counts(cur, params.get("ids"))
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
-        fetched = cur.fetchall()
         followed = _followed_sites(cur) if any(r[19] and any(r[19]) for r in fetched) else set()
         for r in fetched:
             state_values = r[20:]
@@ -510,7 +553,7 @@ class FetchStateRepository:
                     # How the newest page-read posts were read, newest first (issue 0032).
                     "page_reads": list(r[15] or []),
                     # Source hygiene (issue 0046): posts opened, and the owner's last Keep.
-                    "opened_posts": int(r[16] or 0),
+                    "opened_posts": opened.get(str(r[0]), 0),
                     "tidy_kept_at": r[17],
                     # Its newest only_paid post came as a teaser (issue 0084): True, False or None.
                     "paid_preview": r[18],

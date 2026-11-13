@@ -56,7 +56,7 @@ from uuid import UUID
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import pairing, repo, schemas, tasks
 
 KIND = "embed"
 MODEL = "bge-m3"
@@ -263,17 +263,17 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
     copied: List[str] = []
     for _page in range(PLAN_PAGES):
         cur.execute(
-            """SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
+            f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
+                                        - {pairing.ordinary_date('p')})) / 86400))::int
                  FROM posts p
-                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = p.id AND e.model = %(model)s)
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id
                                      AND t.status <> 'answered')   -- answered with no vector: set aside
                   AND NOT EXISTS (SELECT 1 FROM mx_embed_skips k WHERE k.post_id = p.id AND k.text_version = %(version)s)
                   AND NOT (p.id = ANY(%(seen)s::uuid[]))
-                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
+                ORDER BY {pairing.ordinary_date('p')} DESC, p.id
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "model": model, "kind": KIND, "guide": spec.guide, "seen": list(seen),
              "limit": limit, "version": TEXT_VERSION})

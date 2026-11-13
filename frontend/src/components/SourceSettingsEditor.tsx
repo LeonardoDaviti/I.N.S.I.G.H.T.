@@ -9,7 +9,7 @@ import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { HEALTH_STATUS_LABELS, backoffLabel, formatDue } from '../lib/sourceSchedule';
 import { dueLabel } from '../lib/schedulerStatus';
-import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperations';
+import { useRunningJobs, useSchedulerConfig } from '../hooks/useOperations';
 import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -24,6 +24,7 @@ import { sourceReadPath } from '../lib/feedContext';
 import ArchiveSection from './sources/ArchiveSection';
 import SourceDiscoveries from './sources/SourceDiscoveries';
 import ReplacementNotice from './sources/ReplacementNotice';
+import SilentNotice from './sources/SilentNotice';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
 function SourceAddress({ value }: { value: string }) {
@@ -125,7 +126,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const scheduler = useSchedulerConfig();
   const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
   // The server's jobs too: a fetch started before this sheet opened (or elsewhere) still shows.
-  const jobs = useOperationsOverview().data?.jobs;
+  const jobs = useRunningJobs().data?.jobs;
   const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
   // The Saved source (issue 0031) is never fetched: no fetch, cadence, archive or delay to set.
@@ -259,6 +260,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             {healthRow ? <ReplacementNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
+            {healthRow?.silent ? <SilentNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
             {/* A quiet note, after the replacement (an action): the reader keeps less of this
                 source's pages than they show (issue 0032). */}
             {healthRow?.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{healthRow.reading_notice}</p> : null}

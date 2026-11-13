@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Clock, EyeOff } from 'lucide-react';
 
@@ -12,6 +12,13 @@ import { postHref } from '../../lib/feedContext';
 import { citedBy, classicRoleWords, classicTitle, type ScopedClassic } from '../../lib/classics';
 import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
+
+type ClassicsPages = InfiniteData<ClassicsResponse, string | null>;
+
+/** Every cached page of classics with `change` applied to each page's list (read, Later and Hide patch them all). */
+function mapClassics(data: ClassicsPages | undefined, change: (classics: Classic[]) => Classic[]): ClassicsPages | undefined {
+  return data ? { ...data, pages: data.pages.map((page) => ({ ...page, classics: change(page.classics) })) } : data;
+}
 
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:opacity-60 coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
 
@@ -101,14 +108,17 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
   const key = search
     ? ['classics', 'search', search.q, search.scope ?? '', search.days ?? 0, search.order]
     : classicsKey(scope);
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: key,
-    queryFn: ({ signal }) => (search
+    initialPageParam: null as string | null,
+    queryFn: ({ signal, pageParam }) => (search
       // Classics (issue 0056): their titles and addresses, as GET /api/classics shapes them.
       ? api.searchPosts({
         q: search.q, scope: search.scope, days: search.days, order: search.order, filter: 'classics', limit: SEARCH_LIMIT, signal,
       }) as unknown as Promise<ClassicsResponse>
-      : api.getClassics({ scope, signal })),
+      : api.getClassics({ scope, cursor: pageParam, signal })),
+    // Issue 0195: Classics come a page at a time (the API's first 100, then next_cursor); a search is one page.
+    getNextPageParam: (last) => (search ? undefined : last.next_cursor ?? undefined),
     // Reading one changes it: coming back shows it read.
     staleTime: 0,
     refetchOnWindowFocus: false,
@@ -116,8 +126,8 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
   const [busy, setBusy] = useState<string | null>(null);
 
   const patch = (url: string, change: Partial<Classic>) => {
-    queryClient.setQueriesData<ClassicsResponse>({ queryKey: ['classics'] }, (data) => (
-      data ? { ...data, classics: data.classics.map((c) => (c.url === url ? { ...c, ...change } : c)) } : data
+    queryClient.setQueriesData<ClassicsPages>({ queryKey: ['classics'] }, (data) => (
+      mapClassics(data, (classics) => classics.map((c) => (c.url === url ? { ...c, ...change } : c)))
     ));
   };
 
@@ -162,8 +172,8 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
   };
 
   const hide = (classic: Classic) => {
-    queryClient.setQueriesData<ClassicsResponse>({ queryKey: ['classics'] }, (data) => (
-      data ? { ...data, classics: data.classics.filter((c) => c.url !== classic.url) } : data
+    queryClient.setQueriesData<ClassicsPages>({ queryKey: ['classics'] }, (data) => (
+      mapClassics(data, (classics) => classics.filter((c) => c.url !== classic.url))
     ));
     void api.hideClassic(classic.url).then(
       () => toast(`${classicTitle(classic)} won’t show again`),
@@ -178,7 +188,7 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
   if (query.isError) {
     return <ErrorState title={search ? 'Could not search' : 'Could not load Classics'} error={query.error} onRetry={() => void query.refetch()} />;
   }
-  const classics = query.data.classics;
+  const classics = query.data.pages.flatMap((page) => page.classics);
   if (!classics.length && search) {
     return (
       <EmptyState
@@ -205,10 +215,24 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
     );
   }
   return (
-    <ul aria-label="Classics" className="flex flex-col gap-2">
-      {classics.map((classic) => (
-        <ClassicRow key={classic.url} classic={classic} busy={busy === classic.url} onRead={read} onLater={later} onHide={hide} />
-      ))}
-    </ul>
+    <>
+      <ul aria-label="Classics" className="flex flex-col gap-2">
+        {classics.map((classic) => (
+          <ClassicRow key={classic.url} classic={classic} busy={busy === classic.url} onRead={read} onLater={later} onHide={hide} />
+        ))}
+      </ul>
+      {query.hasNextPage ? (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => void query.fetchNextPage()}
+            disabled={query.isFetchingNextPage}
+            className={`inline-flex min-h-[44px] items-center justify-center rounded-md border border-line-strong bg-transparent px-5 text-sm font-medium text-fg hover:bg-raised disabled:opacity-60 ${PRESS_FEEDBACK} ${FOCUS_RING}`}
+          >
+            {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }

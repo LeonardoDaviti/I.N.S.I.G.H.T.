@@ -31,8 +31,17 @@ runs one process; anything that isn't a number of 1 or more stops the start with
 - The Telegram RSS bridge and Nitter are self-hosted outside this compose file. Sources reach
   them as `https://telegram.local/...` and `https://nitter.local/...`, so those names must
   resolve from inside the `backend` and `ingestion` containers.
-- `.local` HTTPS hosts are fetched without TLS verification. Add other internal hosts to
-  `RSS_SKIP_TLS_VERIFY_HOSTS`.
+- Outgoing requests (feeds, Add source, page watch, saved pages, Discover, research, `/api/media`) go
+  only to hosts that resolve to public addresses (issue 0187): a private, loopback, link-local
+  (169.254.169.254), CGNAT/Tailscale (100.64/10) or Docker-network address is refused, on every
+  redirect too, so a pasted address can't reach the database, the API or the LAN. The exceptions
+  are the bridges: `telegram.local`, `nitter.local`, and every host named in `NITTER_HOSTS`,
+  `TELEGRAM_RSS_HOSTS`, `INSIGHT_MEDIA_PRIVATE_HOSTS` or `RSS_SKIP_TLS_VERIFY_HOSTS`. A feed on another
+  LAN host (an RSSHub, a FreshRSS) needs its host in `INSIGHT_MEDIA_PRIVATE_HOSTS`. No `HTTP_PROXY` is
+  used for them.
+- A bridge on a LAN address is fetched without TLS verification (self-signed certificates); other
+  `.local` hosts are no longer skipped automatically. Add any other host to `RSS_SKIP_TLS_VERIFY_HOSTS`.
+- A fetched body is read up to 10 MB, unpacked or not; a larger one fails that fetch.
 - Never use `localhost` in a source URL: inside a container it is the container itself.
 
 ## Prerequisites
@@ -134,12 +143,13 @@ sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FRO
 
 ```bash
 git pull
-docker exec insight-db pg_dump -U insight insight > /tmp/insight_pre_update.sql   # back up first
+./scripts/backup              # optional: the database (-Fc), the secrets volume and .env into ./backups/<time>/
 docker compose build
 docker compose up -d --remove-orphans
 ```
 
-`./update` does the same without the dump: `git pull`, build, then `up -d`. Between the build
+`./update` does the same without the backup, unless you ask for it (`INSIGHT_BACKUP_ON_UPDATE=1` in `.env`, see
+"Backups and rollback" below): `git pull`, build, then `up -d`. Between the build
 and `up -d` it lists the migrations the new code will run at its start, each with its header's
 first line (`migrate.py --pending`, read-only), so one that rewrites rows is seen before it runs. The build runs
 while the old containers keep serving; `up -d` then recreates only the containers whose image
@@ -154,9 +164,43 @@ changes (the build stamp comes after `npm ci`). `./update --refresh` (or `docker
 fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
 and then for security patches, and after changing `requirements.txt` or `package.json`
 (those rebuild their install layer anyway). `backend/requirements.txt` pins every package to the
-version tested, except `yt-dlp`, which a rebuild of that layer brings fresh; the first update to
-v9.13 rebuilds it once, since the file changed.
+version tested, `yt-dlp` too (since v10.16.2): when YouTube breaks it, bump its pin and update.
 If only environment variables changed: `docker compose up -d --force-recreate`.
+
+### Backups and rollback (issue 0188)
+
+**A backup:** `./scripts/backup` writes `backups/<UTC time>/` next to `docker-compose.yml`:
+- `insight.dump`: the database, `pg_dump -Fc` (compressed; checked with `pg_restore --list` before it counts);
+- `secrets.tar`: the `insight_secrets` volume, the key that decrypts Connections (API keys, sessions);
+- `env`: a copy of `.env`.
+
+**`secrets.tar` and `env` hold secrets.** The directory is made 700 and its files 600. Copy a backup off the
+machine only to a place as private as the machine. The newest `INSIGHT_BACKUPS_KEEP` (default 5) backups are kept;
+older ones are removed by the next backup. `backups/` is never committed.
+
+**On a schedule** (nothing runs one by default): `contrib/systemd/insight-backup.service` and `.timer` (nightly at
+03:30, a missed night runs at the next boot; the install steps are in the service file), or root's crontab:
+`30 3 * * * cd /path/to/checkout && ./scripts/backup >> backups/backup.log 2>&1`.
+
+**Before an update, if you want it:** `INSIGHT_BACKUP_ON_UPDATE=1` in `.env` (or the shell) makes `./update` run
+`scripts/backup` after the build and before the new code starts and migrates; a backup that fails stops the update
+there, with the old version still serving. Off by default.
+
+**Rollback:** every `./update` tags the images it built with the version (`VERSION`'s `vX.Y.Z`) and the commit,
+beside `:latest`; the newest `INSIGHT_IMAGES_KEEP` (default 3) builds keep their tags. `./update --images` lists them.
+```bash
+./update --rollback v10.16          # no pull, no build: those images become :latest and start
+./scripts/backup --restore backups/2026-11-13T033000Z   # only if the older code needs the database as it was
+```
+- `--rollback` refuses, changing nothing, when that version's images are not kept. The first update with this
+  (v10.17) is the first tagged one: a rollback needs two tagged updates.
+- The database keeps what the newer code migrated. Most migrations only add, and older code runs on them; when it
+  doesn't, restore the backup taken before the update: `--restore` asks you to type the database's name, stops the
+  API and ingestion, empties the database (`dropdb`/`createdb`), `pg_restore`s the dump and starts them again.
+  Everything written since that backup is lost. It leaves `.env` and the secrets volume alone and prints how to put
+  those back from the same backup.
+- Roll back first, then restore: restoring under the newer code would migrate the database again at its start.
+- The checkout stays at the pulled code; the next `./update` builds it again.
 
 After the restart the API catches up in the background while the reader already works: it
 re-indexes search when the search rule changed, reads the links of posts never read, and runs
@@ -364,9 +408,95 @@ scripts/markx-worker cycle --server http://<server>:5173 --token-file ~/.config/
 ```
 Start with `--batches 1`, read what was refused (`markx-worker status`), then the last 30 days. It stops cleanly at a usage limit (exit 4) or a sign-in error (exit 5) and hands its tasks back.
 
+**What the worker costs** (issue 0191, v10.17; Haiku 5.5 at list price, $0.10 / M input and $0.50 / M output; on a Claude subscription the same tokens count toward its limits). Measured on one week of the owner's logs (84,820 calls), each kind's answers per new post priced at its cost per answer:
+
+| kind | answers per new post | $ per 1,000 new posts, v10.16 | v10.17 |
+|---|---|---|---|
+| entities | 1.42 | 1.248 | 0.862 |
+| alias | 2.01 | 0.388 | 0.244 |
+| read | 1.00 | 0.352 | 0.293 |
+| cite | 0.29 | 0.347 | 0.231 |
+| relate | 0.77 | 0.128 | 0.116 |
+| track | 0.49 | 0.107 | 0.070 |
+| back | 0.21 | 0.063 | 0.040 |
+| collide | 0.18 | 0.060 | 0.029 |
+| pair | 0.24 | 0.056 | 0.036 |
+| read3 | 0.07 | 0.048 | 0.048 |
+| perspective | 0.01 | 0.038 | 0.033 |
+| connect | 0.12 | 0.038 | 0.023 |
+| join | 0.10 | 0.028 | 0.017 |
+| merge | 0.06 | 0.027 | 0.018 |
+| other kinds (each under $3 a week) | | 0.039 | 0.027 |
+| **total** | | **2.97** | **2.09** |
+
+Run the worker from INSIGHT's checkout (it imports the server's answer checks from `backend/insight_core/markx/validate.py`, so an answer the server would refuse is asked again in the same cycle). Its cost settings, each measured per kind on the lab's labelled sets and overridable: `--effort` (Claude Code's thinking effort; default `entities=medium,cite=low,alias=low,alias2=low`), `--prompt-cache` (off for most kinds: Claude Code's 1-hour cache bills every prompt at 2x and calls of distinct items never read it back; the 5-minute cache for the one-item-a-call kinds, whose first call of a cycle goes alone so the others read its guide; Claude Code's default for relate, back, read3 and websearch), `--no-server-rules` (the schema alone). A post the API's classifier refuses is isolated at once and asked alone from then on (`refused.json` beside the spool).
+
+**Workers that survive a reboot (issue 0188), only if you want them on a schedule.** The worker is run by hand
+by default; `contrib/systemd/` has *user* units for the device that runs it:
+- `markx-worker.service`: one cycle, with the arguments in `~/.config/insight/markx-worker.env`
+  (`contrib/systemd/markx-worker.env.example`). Exit 3 (server unreachable) and 4 (usage limit) count as normal stops.
+- `markx-worker.timer`: a cycle every hour, `Persistent=true` (a run missed while the device was off runs at the
+  next boot); never two cycles at once. **Ships disabled**: enable it only if you want the worker to run by itself.
+- `llama-server.service`: the embedder for the `embed` kind (BGE-M3), `Restart=on-failure`, with its binary, GGUF
+  and port in `~/.config/insight/llama-server.env` (the steps are in the file). It holds the model in memory while
+  it runs: enable it only when you embed.
+```bash
+mkdir -p ~/.config/systemd/user ~/.config/insight
+cp contrib/systemd/markx-worker.{service,timer} contrib/systemd/llama-server.service ~/.config/systemd/user/
+cp contrib/systemd/markx-worker.env.example ~/.config/insight/markx-worker.env    # edit: paths, server, kinds
+systemctl --user daemon-reload
+systemctl --user start markx-worker.service            # one cycle now; journalctl --user -u markx-worker
+systemctl --user enable --now markx-worker.timer       # only for the schedule
+sudo loginctl enable-linger "$USER"                    # user units run at boot, before (and without) a login
+```
+The worker's state (its JSON-lines log, the spool of answers not yet delivered, the GGUF hash memo) lives in
+`~/.local/state/insight/markx-worker/`, never `/tmp`, so a reboot loses nothing. `log.jsonl` rotates past 10 MB and
+keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
+
 **Turning it off:** `INSIGHT_MARKX=off` (or remove the line) and `./update`. Every Mark X job stops and the page hides; its tables stay as they are (keep everything).
 
 **Updating to v10.0.2 (issue 0112 Decided 10-13):** `./update` rebuilds both images; migration 0070 adds `mx_jobs`, `mx_candidate_posts` and `mx_workers` (Mark X tables only). Mark X's jobs move to `insight-ingestion` by themselves; nothing to set. Remove `API_WORKERS=1` from `.env` if it is there, so the API runs its two processes.
+
+## Health, timeouts, memory and logs (issue 0188)
+- **`GET /api/status`'s `healthy` is computed**, with its `health.reasons` (what makes it false), `health.warnings`
+  (shown, never false alone) and `health.checks` (the numbers read):
+  - the newest successful ingestion run is older than the fetch interval plus two ticks, or the scheduler's next tick
+    is two ticks overdue;
+  - the scheduler's or Mark X's loop stopped beating (`/app/logs/runtime/heartbeat-*`, written every 30 s by the
+    scheduler and after each Mark X look);
+  - with Mark X on: a job failing (3 failed runs in a row), or no decision run finished in 2 hours;
+  - warnings: failing sources; Mark X workers silent for over 3 days (also marked "stale" on the /markx page).
+  `table_sizes` lists the 15 biggest tables (with indexes and TOAST). Nothing is pruned: everything is kept.
+- **insight-ingestion's healthcheck** runs `python -I insight_core/utils/heartbeat.py`: unhealthy when the
+  scheduler's heartbeat is over 3 minutes old (or Mark X's over 2000 s). Docker restarts nothing for that; it shows.
+- **A Mark X job that fails backs off** (`mx_jobs.failures`, migration 0129): 10 minutes after the first failure,
+  doubling, at most 6 hours apart, and keeps trying; from 3 in a row it is "failing" (/markx, `/api/status`).
+  A decision run over its limit twice in a row in the same late stage (graph, back, later, entities, surges,
+  perspectives) skips that stage once and is logged so; the run after tries it again.
+- **Database timeouts** (`db/database.py`, by role): in insight-ingestion a statement ends after 14 minutes (under a
+  job's 15-minute kill) and a transaction idle for 16 minutes is ended; in the API a request's statements end after
+  30 s (`INSIGHT_DB_REQUEST_TIMEOUT_MS`, 0 turns it off; deleting a source is allowed the default 5 minutes), its
+  background work keeps 5 minutes, an idle transaction ends after 2 minutes. Every connection checks its client
+  every 10 s, so a killed job's statement ends and its locks are freed.
+- **Logs:** each container's own log (`docker logs`) is capped at 5 x `INSIGHT_DOCKER_LOG_SIZE` (20m). The files in
+  `/app/logs` (both containers, every process) rotate at 10 MB, 3 kept, by whichever process finds one full, under a
+  lock, so no line is lost; the worker's `log.jsonl` rotates at 10 MB, 4 kept.
+- **Memory** (`mem_limit`, each from `.env`): past its limit the kernel ends a process of that container only. In
+  insight-ingestion that is a Mark X job's process (the largest), recorded as a failed run and backed off, never
+  Postgres. The limits sit above the measured peaks, so a normal run is never ended:
+
+  | container | limit | measured |
+  |---|---|---|
+  | insight-ingestion | 12g (`INSIGHT_INGESTION_MEM_LIMIT`) | 7.0-7.75 GiB spikes in decision runs on the server (0183); a decision run 1.2-1.6 GB on a 95k-entity copy (the server has ~250k) |
+  | insight-api | 10g (`INSIGHT_API_MEM_LIMIT`) | 2.3 GB average, 3.2 GB at most on the server before 0186; an export's process peak 7.5 GB on the 0186 copy |
+  | insight-db | 6g (`INSIGHT_DB_MEM_LIMIT`) | its page cache is reclaimed under the limit, never killed for |
+  | insight-frontend | 256m | nginx serving files |
+
+  If the server's corpus grows and a container is ended at its limit (`docker inspect insight-ingestion` shows
+  `OOMKilled`, or a Mark X run "exited with code -9"), raise its limit in `.env` and `./update`.
+- **Minimum host**, from those numbers: 16 GB of RAM for a server-sized corpus (ingestion's peak ~8 GB, the API ~3 GB,
+  Postgres and the page cache the rest); 4 cores (a decision run uses one; the API two processes; Postgres the
+  rest). A small corpus runs in far less: the limits are ceilings, not reservations.
 
 ## When the API stops answering (issue 0117)
 Docker restarts nothing for being unhealthy: `restart: unless-stopped` acts only when the process exits. On 5 Nov the API answered nothing for over 20 minutes until the owner looked.
@@ -416,6 +546,9 @@ cd frontend && npm install && npm run dev
 
 Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/api` to
 `http://localhost:8000`. To point the dev UI at another backend, set `VITE_API_URL` and restart Vite.
+Vite answers only `localhost` and raw IP addresses; to open the dev UI from another device by
+name (a machine name, a `.local` or tailnet name), list them in `VITE_ALLOWED_HOSTS`, comma
+separated (`myhost,.example.net`), in `.env` or `frontend/.env`, and restart Vite.
 
 ## Tests
 

@@ -57,7 +57,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Seq
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas, scout_reads, tasks
+from insight_core.markx import pairing, repo, schemas, scout_reads, tasks
 
 log = logging.getLogger(__name__)
 
@@ -800,9 +800,9 @@ def followed(cur: Cursor, folder_id: str) -> List[Dict[str, Any]]:
                     WHERE p.track_id = %s AND p.kind = 'scout' ORDER BY p.source_id, p.created_at""", (folder_id,))
     out = []
     for sid, active, at, name in cur.fetchall():
-        cur.execute("""SELECT count(*) FILTER (WHERE i.verdict IS NOT NULL), count(*) FILTER (WHERE i.verdict)
-                         FROM mx_track_items i JOIN posts p ON p.id = i.post_id
-                        WHERE i.track_id = %s AND p.source_id = %s AND COALESCE(p.surfaced_at, p.fetched_at) >= %s""",
+        cur.execute(f"""SELECT count(*) FILTER (WHERE i.verdict IS NOT NULL), count(*) FILTER (WHERE i.verdict)
+                          FROM mx_track_items i JOIN posts p ON p.id = i.post_id
+                         WHERE i.track_id = %s AND p.source_id = %s AND {pairing.ordinary_date('p')} >= %s""",
                     (folder_id, sid, at))
         judged, fits = cur.fetchone()
         out.append({"source_id": sid, "name": name, "as": "active" if active else "passive", "since": _iso(at),

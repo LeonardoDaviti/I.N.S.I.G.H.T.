@@ -43,14 +43,14 @@ def launch(*sources, hours=0, title="Gemini 4 Carbon is here"):
 
 class NameEvidenceTests(unittest.TestCase):
     def test_a_newer_source_joins_a_burst_but_doesnt_make_or_age_it(self):
-        # pankajkumar_dev, added 13 days before, leaked the name 11 times; then the launch.
-        leaks = said("pankaj", -24 * 9, n=11)
-        everyone = {**followed("s1", "s2", "s3"), "pankaj": T0 - timedelta(days=13)}
-        [found] = [s for s in surges(leaks + launch("s1", "s2", "s3", "pankaj"), everyone) if s.name == "gemini 4 carbon"]
-        self.assertEqual(found.posts, ["s1@0", "s2@0", "s3@0", "pankaj@0"], "the leaks don't age it; the launch post joins")
-        self.assertEqual([s.name for s in surges(launch("s1", "s2", "pankaj", "pankaj"), everyone)], [],
+        # ravi_codes, added 13 days before, leaked the name 11 times; then the launch.
+        leaks = said("ravi", -24 * 9, n=11)
+        everyone = {**followed("s1", "s2", "s3"), "ravi": T0 - timedelta(days=13)}
+        [found] = [s for s in surges(leaks + launch("s1", "s2", "s3", "ravi"), everyone) if s.name == "gemini 4 carbon"]
+        self.assertEqual(found.posts, ["s1@0", "s2@0", "s3@0", "ravi@0"], "the leaks don't age it; the launch post joins")
+        self.assertEqual([s.name for s in surges(launch("s1", "s2", "ravi", "ravi"), everyone)], [],
                          "a newer source's posts don't make the 3 posts")
-        self.assertEqual([s.name for s in surges(leaks + launch("pankaj", "s1", "s2", "s3"), everyone)
+        self.assertEqual([s.name for s in surges(leaks + launch("ravi", "s1", "s2", "s3"), everyone)
                           if s.name == "gemini 4 carbon"], ["gemini 4 carbon"], "nor start it: it starts at s1")
 
     def test_two_of_its_voices_are_new_to_the_name(self):
@@ -152,7 +152,7 @@ class PostAboutOneStoryTests(unittest.TestCase):
         links = [("https://huggingface.co/ggml-org/Mistral-Large-4-GGUF", None), ("https://huggingface.co/unsloth/m-GGUF", None),
                  (self.ORIGIN, None), *extra, (self.MODEL, None)]
         posts = [trees.post("a", "reddit-sub", kind="reddit", links=[(self.ORIGIN, None)]),
-                 trees.post("b", "akhaliq", kind="x", hours=0.2, links=[(self.ORIGIN, None), (self.MODEL, None)]),
+                 trees.post("b", "paperfeed", kind="x", hours=0.2, links=[(self.ORIGIN, None), (self.MODEL, None)]),
                  trees.post("c", "reddit-sub2" if kind == "reddit" else "blog", kind=kind, hours=0.3, links=links)]
         return group(posts)
 
@@ -222,11 +222,11 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         return trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=40, title="GitHub - unslothai/unsloth")
 
     def test_a_saved_page_and_one_voice_are_no_story(self):
-        self.assertEqual(group([self.saved(), trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")])]), [])
+        self.assertEqual(group([self.saved(), trees.post("dh", "finetune_dan", kind="x", links=[(self.PAGE, "saved")])]), [])
 
     def test_a_saved_origin_is_the_page_never_the_first_post(self):
-        posts = [self.saved(), trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")]),
-                 trees.post("tg", "toshoseti", kind="telegram", hours=1, links=[(self.PAGE, "saved")])]
+        posts = [self.saved(), trees.post("dh", "finetune_dan", kind="x", links=[(self.PAGE, "saved")]),
+                 trees.post("tg", "tosho_nets", kind="telegram", hours=1, links=[(self.PAGE, "saved")])]
         story = trees.only(posts)
         self.assertEqual(story.voices, 2)
         self.assertEqual((story.origin_url, story.origin_title, story.origin_linked_by),

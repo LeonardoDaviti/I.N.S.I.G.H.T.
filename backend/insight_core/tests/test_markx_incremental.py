@@ -17,7 +17,7 @@ import psycopg
 from insight_core.markx import decide as D
 from insight_core.markx import incremental as I
 from insight_core.markx import repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
 T = datetime(2100, 3, 1, 12, tzinfo=timezone.utc)
@@ -51,7 +51,7 @@ class Incremental(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES + STATE)}")
+        clear_tables(self.cur, MX_TABLES + STATE)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
@@ -179,13 +179,39 @@ class Incremental(unittest.TestCase):
         self.assertEqual(out["run"]["texts_read"], 1)                   # its rules' post read again
         self.assertIn("posts", out["run"]["ix_changed"])
         self.assertGreater(out["run"]["inputs_rendered"], 0)            # the questions showing it, rendered again
-        self.assertEqual(out["news"]["made"], "full")                   # Mark IX's posts changed: News in full
+        self.assertEqual(out["news"]["made"], "incremental")            # 0177: the changed post seeds News' rows
+        self.assertGreater(out["news"]["group"], 0)
         self.full_writes_nothing()
         x = self.post(9, "Widget 4 teardown")                           # a new post, paired with the story's
         repo.add_candidate(self.cur, kind="post_post", a=a, b=x, source="embedding", score=0.9)
         self.read_all([x])
         out = self.go()
         self.assertEqual((out["run"]["kind"], out["run"]["texts_read"]), ("incremental", 1))
+        self.full_writes_nothing()
+
+    def test_news_is_made_again_for_the_posts_whose_story_post_changed(self):
+        """0177: a link's resolution moving (a page stored at an address a post links), or a post's text, seeds the
+        rows made again; the source facts a StoryPost reads changing makes News in full. Each time a full run of the
+        snapshot writes nothing more."""
+        a, b, c, d, e, f, g, h, k = self.scene()
+        self.go()
+        self.cur.execute("""INSERT INTO post_links (post_id, target_url, target_site, position, link_text, boilerplate, kind)
+                            VALUES (%s, 'https://test.invalid/page/one', 'test.invalid', 9, 'a page', false, 'link')""", (b,))
+        out = self.go()
+        self.assertEqual(out["news"]["made"], "incremental")
+        self.full_writes_nothing()
+        self.cur.execute("SELECT source_id FROM posts WHERE id = %s", (d,))
+        source = self.cur.fetchone()[0]
+        self.cur.execute("""INSERT INTO posts (source_id, url, normalized_url, title, content, published_at)
+                            VALUES (%s, 'https://test.invalid/page/one', 'https://test.invalid/page/one', 'The page',
+                                    'Its words.', %s)""", (source, T + 9 * H))
+        out = self.go()                                                  # b's link now resolves to a stored post
+        self.assertEqual(out["news"]["made"], "incremental")
+        self.assertGreater(out["news"]["group"], 0)
+        self.full_writes_nothing()
+        self.cur.execute("UPDATE sources SET platform = 'rss' WHERE id = %s", (source,))
+        out = self.go()                                                  # a source's kind: the facts changed
+        self.assertEqual(out["news"]["made"], "full")
         self.full_writes_nothing()
 
     def test_the_check_finds_a_state_gone_wrong_with_its_stories(self):
@@ -234,7 +260,7 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_a_repost_counts_as_its_author_only_when_a_source_follows_the_author(self):
-        """Mark IX's rule in Mark X's decisions (pairing.counted_voice): two feeds forwarding one followed channel are
+        """Mark IX's rule in Mark X's decisions (voice.counted_source): two feeds forwarding one followed channel are
         that channel's one voice (their story is never checked); forwards of a stranger stay their feeds' two voices;
         a feed quoting a stranger is one voice. In a full run and in the state an incremental run keeps; a source that
         starts following an author makes the next run full."""

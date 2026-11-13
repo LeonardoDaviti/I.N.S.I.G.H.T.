@@ -60,7 +60,7 @@ def depth(story, pid):
 
 def terra():
     """GPT-6.1 Terra on the lab: OpenAI's own post (a date alone) and HN's row of it share the
-    address; data_secrets and Simon link it (the link resolves to HN's row, the first seen);
+    address; data_whispers and Simon link it (the link resolves to HN's row, the first seen);
     LessWrong links Simon's post."""
     return [
         post("openai", "oa", at=DAY, site="openai.com", url=PAGE, title="Introducing GPT-6.1 Terra"),
@@ -262,7 +262,7 @@ class TreeJobTests(unittest.TestCase):
         day = (self.now - timedelta(days=1)).replace(hour=0, minute=0, second=0)
         link = f'<p><a href="{page}">Introducing GPT-6.1 Terra</a></p>'
         oa, hn, ds, sw = (self._source("OpenAI News"), self._source("Hacker News", "?hnrss"),
-                          self._source("data_secrets"), self._source("Simon Willison"))
+                          self._source("data_whispers"), self._source("Simon Willison"))
         self.hn = self._post(hn, page + "/", at=day + timedelta(hours=2), title="GPT-6.1 Terra", html=link)   # first seen
         self.openai = self._post(oa, page, at=day, title="Introducing GPT-6.1 Terra")
         self._post(oa, f"https://openai-{self.mark}.test/index/older", at=day - timedelta(days=3), title="Older")

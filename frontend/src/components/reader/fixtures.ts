@@ -86,12 +86,12 @@ export function worstFeedItems(now: Date = new Date()): FeedItem[] {
         voices: 3,
         sources: [
           { id: uuid(9103), name: 'الجزيرة للتقنية' },
-          { id: uuid(9104), name: 'https://tg.i-c-a.su/rss/seeallochnaya?limit=50' },
+          { id: uuid(9104), name: 'https://tg.i-c-a.su/rss/seeall_notes?limit=50' },
           { id: uuid(9105), name: 'Aleksandra Wiśniewska-Kowalczyk, Datenschutzgrundverordnungsdurchführungsbestimmungen' },
           { id: SOURCE_SIMON, name: 'Simon Willison’s Weblog' },
         ],
         posts: [
-          { id: uuid(1031), title: 'Вышла новая арабская языковая модель: понимает местные диалекты лучше прежних, а в длинных текстах в пять раз быстрее', url: 'https://t.me/seeallochnaya/1', source_id: uuid(9104), source_display_name: 'https://tg.i-c-a.su/rss/seeallochnaya?limit=50', platform: 'rss', sort_at: at(now, 2 * DAY + HOUR), published_at: at(now, 2 * DAY + HOUR), read_at: null, role: 'share' },
+          { id: uuid(1031), title: 'Вышла новая арабская языковая модель: понимает местные диалекты лучше прежних, а в длинных текстах в пять раз быстрее', url: 'https://t.me/seeall_notes/1', source_id: uuid(9104), source_display_name: 'https://tg.i-c-a.su/rss/seeall_notes?limit=50', platform: 'rss', sort_at: at(now, 2 * DAY + HOUR), published_at: at(now, 2 * DAY + HOUR), read_at: null, role: 'share' },
           { id: uuid(1032), title: 'Ein außergewöhnlich langes zusammengesetztes Substantiv: Datenschutzgrundverordnungsdurchführungsbestimmungen', url: 'https://example.invalid/de', source_id: uuid(9105), source_display_name: 'Aleksandra Wiśniewska-Kowalczyk, Datenschutzgrundverordnungsdurchführungsbestimmungen', platform: 'rss', sort_at: at(now, 2 * DAY + 2 * HOUR), published_at: null, read_at: at(now, -HOUR), role: 'report' },
           { id: uuid(1033), title: '', url: 'https://simonwillison.net/x', source_id: SOURCE_SIMON, source_display_name: 'Simon Willison’s Weblog', platform: 'rss', sort_at: at(now, 2 * DAY + 3 * HOUR), published_at: null, read_at: null, role: 'report' },
         ],

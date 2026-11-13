@@ -87,14 +87,25 @@ def forwards_on() -> bool:
 def forwarded_from(message: Any) -> Optional[Dict[str, Any]]:
     """0132 C3: who a forwarded message came from, as Telegram's forward header says it (the RSS bridge drops it):
     {channel_id, user_id, name, post, date}, the fields it has; None for a message of the channel's own. The source
-    stats count such a post as a repost (markx/source_stats.is_repost)."""
+    stats count such a post as a repost (Byline's rule, utils/byline.is_repost)."""
     fwd = getattr(message, "fwd_from", None)
     if fwd is None:
         return None
     peer = getattr(fwd, "from_id", None)
     date = getattr(fwd, "date", None)
+    # The forwarded channel's own entity, when the answer carried it (Telethon's message.forward.chat, no extra
+    # request): its username is the account Pairing's voice rule matches (t.me/<username>, issue 0178), its title
+    # the name a header by id alone lacks.
+    forward = getattr(message, "forward", None)
+    chat = getattr(forward, "chat", None) if forward is not None else None
+    username = getattr(chat, "username", None) if chat is not None else None
+    username = username if isinstance(username, str) and username else None
+    title = getattr(chat, "title", None) if chat is not None else None
+    title = title if isinstance(title, str) and title else None
     out = {"channel_id": getattr(peer, "channel_id", None), "user_id": getattr(peer, "user_id", None),
-           "name": getattr(fwd, "from_name", None), "post": getattr(fwd, "channel_post", None),
+           "username": username,
+           "name": getattr(fwd, "from_name", None) or title or (f"@{username}" if username else None),
+           "post": getattr(fwd, "channel_post", None),
            "date": date.isoformat() if isinstance(date, datetime) else None}
     return {k: v for k, v in out.items() if v is not None} or {"name": None}
 

@@ -118,36 +118,92 @@ def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict
     return _one(cur)
 
 
+def tasks_for(cur: Cursor, *, kind: str, guide: str, inputs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{input: the task already asking it} for many questions, in one read (v10.17, 0186: a page asked them one by
+    one)."""
+    by_hash = {sha256_hex(i): i for i in inputs}
+    if not by_hash:
+        return {}
+    cur.execute("SELECT * FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = ANY(%s)",
+                (kind, guide, sorted(by_hash)))
+    return {by_hash[t["input_hash"]]: t for t in _rows(cur)}
+
+
 def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
-                minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None
-                ) -> List[Dict[str, Any]]:
+                minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None,
+                fresh: Sequence[str] = (), fresh_hours: Optional[int] = None, fresh_share: float = 0.75,
+                fresh_dated_days: int = 7) -> List[Dict[str, Any]]:
     """Lease up to `limit` open tasks of `kinds` (and leased ones whose lease ran out) to `worker` for
-    `minutes`, by priority then age: [{id, kind, guide, input, lease_until}] in that order. Rows another
+    `minutes`, by priority then age: [{id, kind, guide, input, lease_until, a}] in that order. Rows another
     transaction is leasing are skipped, never waited on. A task of a `windowed` kind (a post's: read, entities,
     embed) is ranked by its post's age today, not the age it had when planned (a priority below 0 is a
     caller's urgency and stays), and those of posts older than `days`
-    (None: no post is) come after every other (0121 Decided 4: a narrowed reading window leases inside it first)."""
-    cur.execute("""WITH picked AS (
+    (None: no post is) come after every other (0121 Decided 4: a narrowed reading window leases inside it first).
+
+    0176 A, the fresh lane (`fresh`: its kinds; `fresh_hours`: None, no lane): a task of those kinds whose post (`a`)
+    was fetched or surfaced in the last `fresh_hours` and is dated in the last `fresh_dated_days` (an archive import is
+    not new) is fresh. A lease takes fresh tasks
+    first (in the order above), up to `fresh_share` of `limit` (at least one slot, and one slot left to the rest when
+    `limit` is 2 or more); then the rest in the order above; then fresh ones again when slots are left. So a big
+    backfill never holds a new post back, and new posts never take a whole lease while older work waits."""
+    lane = bool(fresh) and fresh_hours is not None and any(k in fresh for k in kinds)
+    if not lane:
+        return _lease(cur, kinds=kinds, limit=limit, worker=worker, minutes=minutes, windowed=windowed, days=days,
+                      fresh=(), fresh_hours=None, fresh_dated_days=None, lane=None)
+    cap = limit if limit < 2 else max(1, min(limit - 1, int(limit * fresh_share)))
+    kw = dict(kinds=kinds, worker=worker, minutes=minutes, windowed=windowed, days=days, fresh=fresh,
+              fresh_hours=fresh_hours, fresh_dated_days=fresh_dated_days)
+    got = _lease(cur, limit=cap, lane=True, **kw)
+    got += _lease(cur, limit=limit - len(got), lane=False, **kw)
+    if len(got) < limit:
+        got += _lease(cur, limit=limit - len(got), lane=True, **kw)
+    return [{k: r[k] for k in LEASED} for r in sorted(got, key=_lease_order)]
+
+
+def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minutes: int, windowed: Sequence[str],
+           days: Optional[int], fresh: Sequence[str], fresh_hours: Optional[int], fresh_dated_days: Optional[int],
+           lane: Optional[bool]) -> List[Dict[str, Any]]:
+    """One lease query: every task (`lane` None), the fresh lane's only (True) or every other (False)."""
+    if limit <= 0:
+        return []
+    from insight_core.markx import pairing   # pairing imports this module
+    fresh_sql = f"""(t.kind = ANY(%(fresh)s) AND f.id IS NOT NULL
+                    AND GREATEST(f.fetched_at, f.surfaced_at) >= now() - make_interval(hours => %(hours)s)
+                    AND {pairing.ordinary_date('f')} >= now() - make_interval(days => %(dated)s))"""
+    where = "" if lane is None else f"AND {'' if lane else 'NOT '}COALESCE({fresh_sql}, false)"
+    join = "LEFT JOIN posts f ON t.kind = ANY(%(fresh)s) AND f.id = t.a" if lane is not None else ""
+    cur.execute(f"""WITH picked AS (
                      SELECT t.id,
                             (p.id IS NOT NULL AND %(days)s::int IS NOT NULL
-                             AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                             AND {pairing.ordinary_date('p')}
                                  < now() - make_interval(days => %(days)s)) AS outside,
                             CASE WHEN p.id IS NULL OR t.priority < 0 THEN t.priority
-                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - COALESCE(p.surfaced_at,
-                                                  p.published_at, p.fetched_at))) / 86400))::int END AS rank
+                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - {pairing.ordinary_date('p')}))
+                                                  / 86400))::int END AS rank
                        FROM mx_tasks t
                        LEFT JOIN posts p ON t.kind = ANY(%(windowed)s) AND p.id = t.a
+                       {join}
                       WHERE t.kind = ANY(%(kinds)s) AND (t.status = 'open' OR (t.status = 'leased' AND t.lease_until < now()))
+                        {where}
                       ORDER BY 2, 3, t.created_at, t.id
                       LIMIT %(limit)s FOR UPDATE OF t SKIP LOCKED)
                    UPDATE mx_tasks t SET status = 'leased', leased_by = %(worker)s,
                           lease_until = now() + make_interval(mins => %(minutes)s)
                      FROM picked WHERE t.id = picked.id
-                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, picked.outside, picked.rank, t.created_at""",
+                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, t.a, picked.outside, picked.rank,
+                             t.created_at""",
                 {"kinds": list(kinds), "limit": limit, "worker": worker, "minutes": minutes,
-                 "windowed": list(windowed), "days": days})
-    rows = sorted(_rows(cur), key=lambda r: (r["outside"], r["rank"], r["created_at"], str(r["id"])))
-    return [{k: r[k] for k in ("id", "kind", "guide", "input", "lease_until")} for r in rows]
+                 "windowed": list(windowed), "days": days, "fresh": list(fresh), "hours": fresh_hours,
+                 "dated": fresh_dated_days})
+    rows = sorted(_rows(cur), key=_lease_order)
+    return rows if lane is not None else [{k: r[k] for k in LEASED} for r in rows]
+
+
+LEASED = ("id", "kind", "guide", "input", "lease_until", "a")
+
+
+def _lease_order(r: Dict[str, Any]) -> Tuple:
+    return r["outside"], r["rank"], r["created_at"], str(r["id"])
 
 
 def release_tasks(cur: Cursor, worker: str) -> int:
@@ -189,12 +245,10 @@ def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
 
 
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
-    """{kind: {status: tasks}} (GET /api/markx/status)."""
-    cur.execute("SELECT kind, status, count(*) FROM mx_tasks GROUP BY kind, status ORDER BY kind, status")
-    out: Dict[str, Dict[str, int]] = {}
-    for kind, status, n in cur.fetchall():
-        out.setdefault(kind, {})[status] = n
-    return out
+    """{kind: {status: tasks}} (GET /api/markx/status): the kept totals (issue 0195, markx/kept_counts.py), equal to
+    the GROUP BY over every task they replace."""
+    from insight_core.markx import kept_counts
+    return kept_counts.queue_counts(cur)
 
 
 # ---- calls ----------------------------------------------------------------------------------------
@@ -236,6 +290,16 @@ def valid_call(cur: Cursor, task_id: Id) -> Optional[Dict[str, Any]]:
     return _one(cur)
 
 
+def valid_calls(cur: Cursor, task_ids: Iterable[Id]) -> Dict[str, Dict[str, Any]]:
+    """{task id: its first valid call} for many tasks, in one read (valid_call's answer for each)."""
+    ids = sorted({str(t) for t in task_ids})
+    if not ids:
+        return {}
+    cur.execute("""SELECT DISTINCT ON (task_id) * FROM mx_calls WHERE task_id = ANY(%s::uuid[]) AND valid
+                    ORDER BY task_id, created_at, ctid""", (ids,))
+    return {str(c["task_id"]): c for c in _rows(cur)}
+
+
 # ---- readings and mentions ------------------------------------------------------------------------
 
 def add_reading(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, kind: Optional[str], events: Optional[str],
@@ -259,21 +323,33 @@ MENTION_FIELDS_0133 = ("rule", "by_name", "ref")   # 0133: 'citation' for the ru
                                                    # written; the identifier the rule read (arXiv, DOI, a document link)
 
 
-def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict]) -> int:
+WINDOW_N = 1000   # 0176: window w's mentions are numbered from w * WINDOW_N (tasks.WINDOW_N)
+
+
+def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict], win: int = 0) -> int:
     """A post's entities under `guide`, numbered in their order (n from 0): how many were written. A
-    post's mentions under one guide are written once: a later call adds none."""
-    cur.execute("SELECT 1 FROM mx_mentions WHERE post_id = %s AND guide = %s LIMIT 1", (post_id, guide))
+    post's mentions under one guide are written once: a later call adds none. 0176: a long post's are written once a
+    window (`win`), window w's numbered from w * WINDOW_N, so (post, guide, n) stays a mention's key and n its order
+    in the text, whichever window is answered first."""
+    cur.execute("SELECT 1 FROM mx_mentions WHERE post_id = %s AND guide = %s AND win = %s LIMIT 1", (post_id, guide, win))
     if cur.fetchone():
         return 0
     fields = MENTION_FIELDS + MENTION_FIELDS_0133
-    rows = [(post_id, guide, n, call_id, *(m.get(f) for f in fields)) for n, m in enumerate(mentions)]
+    rows = [(post_id, guide, win * WINDOW_N + n, win, call_id, *(m.get(f) for f in fields))
+            for n, m in enumerate(mentions)]
     if rows:
-        cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
-                        f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING", rows)
-    # 0133: the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too
+        cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, win, call_id, {', '.join(fields)}) "
+                        f"VALUES ({', '.join(['%s'] * (5 + len(fields)))}) ON CONFLICT DO NOTHING", rows)
+    # 0133: the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too.
+    # 0176: a later window that adds mentions to the same set marks it changed (`at`: the readers of new sets read it
+    # again); the set's call stays its first answer's
     cur.execute("""INSERT INTO mx_mention_sets (post_id, guide, call_id) VALUES (%s, %s, %s)
-                   ON CONFLICT (post_id) DO UPDATE SET guide = EXCLUDED.guide, call_id = EXCLUDED.call_id, at = now()
-                    WHERE mx_mention_sets.guide <> EXCLUDED.guide""", (post_id, guide, call_id))
+                   ON CONFLICT (post_id) DO UPDATE
+                      SET guide = EXCLUDED.guide, at = now(),
+                          call_id = CASE WHEN mx_mention_sets.guide <> EXCLUDED.guide THEN EXCLUDED.call_id
+                                         ELSE mx_mention_sets.call_id END
+                    WHERE mx_mention_sets.guide <> EXCLUDED.guide OR %s""",
+                (post_id, guide, call_id, win > 0 and bool(rows)))
     return len(rows)
 
 

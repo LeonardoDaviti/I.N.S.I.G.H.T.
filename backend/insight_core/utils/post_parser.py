@@ -117,7 +117,7 @@ class Parts:
 def _title_from(title: Optional[str], shown_title: str) -> str:
     if not shown_title:
         return "none"
-    stored = clean_text(REPLY_TO_RE.sub("", re.sub(r"^RT by @\w+: ", "", (title or "").strip())))
+    stored = clean_text(REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip())))
     squash = lambda s: re.sub(r"\s+", "", s.rstrip("…"))   # noqa: E731
     if stored and squash(stored).startswith(squash(shown_title)):
         return "feed field"

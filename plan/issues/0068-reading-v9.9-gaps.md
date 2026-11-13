@@ -5,10 +5,10 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 ## 1. Thread replies read like posts
 - **The case:** the post page shows a thread's replies as plain words with line breaks. Their links aren't links and their pictures aren't shown (0066 Left open). There are 929 threads on the lab.
 - **Decided:** each reply renders through the same reader as a post's body (the same sanitising, links, images through the 24-hour image cache), one after another, each with its date opening the reply. No new controls.
-- **Done when:** a test that a reply's link is a link and its image is shown; screens of badlogicgames' "software is dead. sad." thread, light and dark, wide and narrow.
+- **Done when:** a test that a reply's link is a link and its image is shown; screens of oddlogic_games' "software is dead. sad." thread, light and dark, wide and narrow.
 
 ## 2. "Covered by" says which roundups mention the story
-- **The case:** a roundup (a post whose links have 3+ anchors, 0050) joins a story only through its first link. Every other story it mentions leaves it out of the tree. LessWrong's AI #191 mentions GPT-6.1 Terra (0064) and the Extraltodeus tweet (0066), and neither shows it. News already counts these mentions at ½ (0051).
+- **The case:** a roundup (a post whose links have 3+ anchors, 0050) joins a story only through its first link. Every other story it mentions leaves it out of the tree. LessWrong's AI #191 mentions GPT-6.1 Terra (0064) and the Modelwright tweet (0066), and neither shows it. News already counts these mentions at ½ (0051).
 - **Decided:**
   - Under the tree, one quiet line: `Also in roundups: LessWrong, Smol` (each name opens that roundup). It sits on the feed row's "covered by" and on the post page.
   - Each roundup is listed once. A roundup already in the tree isn't repeated.
@@ -21,7 +21,7 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 - **Decided:**
   - A reposter who is one of your sources (not the author reposting themselves) is a **share** voice in the tweet's story, as a share is today: ½ in News' score.
   - A tweet with 2+ voices this way is a story, like any other.
-  - "Covered by" lists the reposters on one line under the tweet: `↻ reposted by @steipete, @badlogicgames`.
+  - "Covered by" lists the reposters on one line under the tweet: `↻ reposted by @toolsmith_pete, @oddlogic_games`.
   - Nothing new is stored. `reposted_by` is read by the story job.
 - **Expected on the lab:** record how many tweets gain voices, how many become stories or News, and the 10 with most reposters. A random 10 of the new News stories are checked by reading them and recorded as right or wrong.
 - **Done when:** tests for a reposter's voice, a self-repost adding none, and News' ½; the lab numbers recorded.
@@ -54,7 +54,7 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 ## 8. Writers on a shared blog host are separate voices
 - **The case** (found while building 0067): a site source's voice is its registrable site (`site_of`: the last two labels). Different writers on one blog host collapse into one voice:
   - 12 Substack sources (garymarcus, gwern, epochai, aella, addyo, …) count as `site:substack.com`;
-  - 7 on github.io (karpathy, lilianweng, geohot, matklad, …);
+  - 7 on github.io (nn_teacher, lilianweng, geohot, matklad, …);
   - 3 on bearblog.dev.
 
   That's 22 sources counted as 3 voices. Two of them covering one story don't make a story, and News counts them once. A separate case: `blog.ncase.me` and `ncase.me` are one writer.
@@ -76,21 +76,21 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 - **The post page** (`post_detail_service.story`): each thread reply in `story.posts` also carries `html` (its stored body) and `internal_links` (0057's links to stored posts). The feed row carries neither: only the post page asks.
 - **The reader** (`ThreadPosts`): each reply goes through the post body's `MarkdownRenderer` (the same sanitising, links, a stored post's link opening here), its pictures through the image cache under the reply's own id (`/api/media?post=<reply>`); its date still opens it. A reply stored without HTML reads as before.
 - **Tests:** backend `test_a_thread_reply_carries_its_html_and_its_links_to_stored_posts`; frontend `PostDetailPage.story.test.tsx` (a reply's link is a link, a stored post's opens here, its picture shows through the cache).
-- **Screens** (Design Studio, not committed): `frontend/.design-shots/post/thread.{1400,390}.{light,dark}.png`, badlogicgames' "software is dead. sad." read in order. Its real replies are plain text, so they look as before; the test carries the link and the picture.
+- **Screens** (Design Studio, not committed): `frontend/.design-shots/post/thread.{1400,390}.{light,dark}.png`, oddlogic_games' "software is dead. sad." read in order. Its real replies are plain text, so they look as before; the test carries the link and the picture.
 
 ### 2. "Covered by" says which roundups mention the story
 - **The reader** (`attach_stories`): `story.roundups` [{id, title, source_display_name}] from 0050's `story_mentions`, which never holds a post of the story. **Each source once, at its first roundup** (see Left open), in the order they came.
 - **The line** sits under the tree, on the feed row's opened list and on the post page: `Also in roundups: LessWrong, Smol`, each name opening its roundup (its title on hover). Not a tree member; no voice, no score: News is unchanged.
 - **Tests:** backend `test_the_roundups_that_mention_a_story_each_source_once_out_of_the_tree` (LessWrong's two roundups once; the tree and the voices unchanged; the post page the same), `test_a_roundup_in_the_tree_is_not_repeated`; frontend `FeedList.test.tsx`, `PostDetailPage.story.test.tsx`.
-- **On the lab copy:** **425 stories** (of 1,821) get the line, 293 of them with 2+ voices. The most roundups on one story: **84 roundup posts from 10 sources** ("Hugging face incident and the road ahead"), so the line names at most 10. Terra lists **LessWrong** (Against Moloch #49, its first of two); the Extraltodeus tweet's story lists **LessWrong** (AI #191).
+- **On the lab copy:** **425 stories** (of 1,821) get the line, 293 of them with 2+ voices. The most roundups on one story: **84 roundup posts from 10 sources** ("Hugging face incident and the road ahead"), so the line names at most 10. Terra lists **LessWrong** (Against Moloch #49, its first of two); the Modelwright tweet's story lists **LessWrong** (AI #191).
 
 ### 3. A repost by one of your sources is that source's voice
 - **The job** (`StoriesService._story_post`): from `posts.reposted_by` (nothing new stored), a tweet's `reposters` are your other sources that reposted it, and `author_source` is its author's own source when another source holds the row. **Built beyond the spec's words, measured:** on the lab every tweet two of your sources pushed is stored once, under the first saver's source; in the 21 "repost of an author you follow" rows (0066) that is the reposter, so the reposter is already the row's voice and the missing voice is the author's. Without it, `x-repost-followed-author` gains nothing.
 - **The rules:** `count_voices` and the 2+ sources test count them; News' `tally` counts a reposter as a share (½) and the author as a report, each voice once in its strongest role; one tweet with 2+ voices is a story and can be News. A source is never a voice twice (the row's own source, the author reposting itself).
-- **The reader:** those sources join `story.sources` ("covered by 2 · steipete, badlogicgames"); each post (and the row's own place) carries `reposted_by`; "covered by" shows one line under the tweet, `↻ reposted by @steipete, @badlogicgames`, and the row's own at the top of its list. News lists it too.
+- **The reader:** those sources join `story.sources` ("covered by 2 · toolsmith_pete, oddlogic_games"); each post (and the row's own place) carries `reposted_by`; "covered by" shows one line under the tweet, `↻ reposted by @toolsmith_pete, @oddlogic_games`, and the row's own at the top of its list. News lists it too.
 - **Stories written just now are never deleted** by the job's last step (it removes frozen stories left with one source, and would have removed a one-row repost story every run).
 - **Tests:** `RepostVoiceRulesTests` (a reposter's voice, one with its own post in the story, News' ½), and on the database a tweet another source reposted, an author reposting itself, a reposter of its own row, the followed author's report and the reposter's share (2 voices, 1 + ½ = 1.5); a second run changes nothing. Frontend: `lib/story.test.ts`, `FeedList.test.tsx`, `PostDetailPage.story.test.tsx`.
-- **On the lab copy** (all time, a full run): **35 tweets gain a voice** (21 an author's, 14 a reposter's; each gains exactly one, so "the 10 with most reposters" all have one: badlogicgames' tweets held by steipete, UnslothAI's and Hesamation's held by _akhaliq and reposted by danielhanchen, julien_c's and ClementDelangue's reposted by ggerganov, …). **29 new stories**, 4 stories gain a voice, no story splits or loses a post, no parent changes. **News: 593 → 624 (+31)**, 2 scores change. A random 10 of the new News stories, read: **10 of 10 right** as stories (two of your sources really pushed that tweet): Hugging Face joining NVIDIA (julien_c; ClementDelangue's "getting acquired by nvidia"), Gemma 4 MTP, "Liberate your @openclaw" (davemorin, by _akhaliq and steipete), two Qwen3.5-27B fine-tune tweets, badlogicgames on long context, … **3 of the 10 are banter** between steipete and badlogicgames ("found @steipete's final form", "uffi ouchie wtf", "loops or graphs"): right, but not news anyone needs.
+- **On the lab copy** (all time, a full run): **35 tweets gain a voice** (21 an author's, 14 a reposter's; each gains exactly one, so "the 10 with most reposters" all have one: oddlogic_games' tweets held by toolsmith_pete, UnslothAI's and Hesamation's held by _paperfeed and reposted by finetune_dan, julien_c's and ClementHub's reposted by cpp_infer, …). **29 new stories**, 4 stories gain a voice, no story splits or loses a post, no parent changes. **News: 593 → 624 (+31)**, 2 scores change. A random 10 of the new News stories, read: **10 of 10 right** as stories (two of your sources really pushed that tweet): Hugging Face joining NVIDIA (julien_c; ClementHub's "getting acquired by nvidia"), Gemma 4 MTP, "Liberate your @openclaw" (davemorin, by _paperfeed and toolsmith_pete), two Qwen3.5-27B fine-tune tweets, oddlogic_games on long context, … **3 of the 10 are banter** between toolsmith_pete and oddlogic_games ("found @toolsmith_pete's final form", "uffi ouchie wtf", "loops or graphs"): right, but not news anyone needs.
 
 ### 4. An outside origin's title is a title
 - **Measured first** (`plan/research`-style scripts, not committed): every outside root on the lab (415), titled by the old rule, by the spec's order, and by a proposed one; 30 roots whose title changes, picked at random, checked by hand (R a title naming the page, A the address, W a title that doesn't name it):
@@ -118,7 +118,7 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 ### 5. Trees on a phone
 - **The rule** (`storyTree`, `FeedItem`, `PostDetailPage`): below `sm` the tree indents one level at most (`pl-2`); a line at the deepest level shows `↳ <parent's name>` first, hidden from `sm` up, where the second indent stays. Wide screens are unchanged. On a feed row led by the origin the list is one level less deep, so the `↳` shows on rows not led by the origin and on the post page.
 - **Tests:** `lib/story.test.ts` (Ghostty: the line under Duggan names him, this post too, the origin's row names nothing), `FeedList.test.tsx`, `PostDetailPage.story.test.tsx`.
-- **Screens** (not committed): `frontend/.design-shots/reader/story.{390,1400}.{light,dark}.png`: Terra (with `Also in roundups: LessWrong`), Fable 5 (toshoseti's forward `↳ denissexy`; LessWrong and evilfreelancer in roundups) and Ghostty (the row is Mat Duggan's, mitchellh.com's post read; @steipete's repost with `↻ reposted by @steipete`; Nesbitt `↳ matduggan.com`; `Also in roundups: lucumr.pocoo.org`). `reader/thread.*` shows steipete's repost of badlogicgames as a story of 2; `post/story.*` the Kimi tree with `↳ data_secrets` at 390.
+- **Screens** (not committed): `frontend/.design-shots/reader/story.{390,1400}.{light,dark}.png`: Terra (with `Also in roundups: LessWrong`), Fable 5 (tosho_nets's forward `↳ dennis_it`; LessWrong and lazy_freelancer in roundups) and Ghostty (the row is Mat Duggan's, mitchellh.com's post read; @toolsmith_pete's repost with `↻ reposted by @toolsmith_pete`; Nesbitt `↳ matduggan.com`; `Also in roundups: lucumr.pocoo.org`). `reader/thread.*` shows toolsmith_pete's repost of oddlogic_games as a story of 2; `post/story.*` the Kimi tree with `↳ data_whispers` at 390.
 
 ### 6. Link labels leave the stored posts too
 - **The repair** (`PostsRepository.drop_hidden_link_labels`): posts whose HTML holds a hiding hint (0063's `HIDDEN_HINT_RE`, in SQL) go through 0063's own rule (`parsing._without_hidden_link_labels`) on their stored HTML; nothing is fetched. The plain text follows when it is that HTML's text (`strip_html`, true for all 13), the hash follows, and the post's links are read again by the next story job (their link words held the labels).
@@ -128,8 +128,8 @@ Status: **built, not deployed** (2026-10-31; design decision 041; no migration) 
 
 ### 7. Two cases that may be stale
 Both **pass** on the lab copy, on main's code before this issue as on this branch:
-- `protein-design-surfaced`: `surfaced_at` is empty since 0058's migration 0043, so the page sorts at 18 Aug, not on top (not in the Main feed's first 100 rows); its story holds Just Links' and turboproject's posts of 19 Aug.
-- `internal-link`: data_secrets/10206's link to t.me/data_secrets/9951 resolves to the stored post (0057's `internal_links`), so it opens in INSIGHT.
+- `protein-design-surfaced`: `surfaced_at` is empty since 0058's migration 0043, so the page sorts at 18 Aug, not on top (not in the Main feed's first 100 rows); its story holds Plain Links' and turbo_bench's posts of 19 Aug.
+- `internal-link`: data_whispers/10206's link to t.me/data_whispers/9951 resolves to the stored post (0057's `internal_links`), so it opens in INSIGHT.
 
 ### 8. Writers on a shared blog host are separate voices
 - **Measured first:** the Public Suffix List's private section (version 2026-03-06, the copy the `tld` package ships; nothing fetched) lists **github.io and bearblog.dev, not substack.com**. On the lab's site sources: Substack 11 sources (the spec's 12), github.io 5 (the spec's 7: two aren't site sources on the lab), bearblog.dev 3; the only other site holding two sources is ncase.me (`blog.ncase.me` and `ncase.me`) and philschmid.de (one host).
@@ -140,7 +140,7 @@ Both **pass** on the lab copy, on main's code before this issue as on this branc
 - **Tests:** `HostingPlatformTests` (a platform subdomain is its own site and voice; `blog.x.com`, `blog.ncase.me`, `news.bbc.co.uk` aren't; Substack recorded as not listed).
 
 ### Every passing case
-On the lab copy after all items: `kimi-k31-pro` (8 posts, 7 voices, Kimi's page the root), `cloudflare-yandex-outage`, `openai-terra-same-address` (OpenAI's post the origin, HN by address, data_secrets and Simon by citation), `search-kimi-31` (row 21 newest first, 3 best match), `lime-paper-origin`, `x-quote-edge`, `x-thread-badlogicgames` (Thread · 9 posts), the Discover cases (anthropic.com/news #3; OpenAI News' archive 39/38 as 0067 recorded) all read as before. Stories, trees and search read the same as main's code (fea2a71) on a second copy, but for the new repost stories.
+On the lab copy after all items: `kimi-k31-pro` (8 posts, 7 voices, Kimi's page the root), `cloudflare-yandex-outage`, `openai-terra-same-address` (OpenAI's post the origin, HN by address, data_whispers and Simon by citation), `search-kimi-31` (row 21 newest first, 3 best match), `lime-paper-origin`, `x-quote-edge`, `x-thread-oddlogic_games` (Thread · 9 posts), the Discover cases (anthropic.com/news #3; OpenAI News' archive 39/38 as 0067 recorded) all read as before. Stories, trees and search read the same as main's code (fea2a71) on a second copy, but for the new repost stories.
 
 ### Suites and the bundle
 - Backend: `test_reading_gaps.py` (21); **suite 1,157 tests OK** on `insight_0068_test` (own image tag, not `run-tests.sh`).
@@ -160,9 +160,9 @@ On the lab copy after all items: `kimi-k31-pro` (8 posts, 7 voices, Kimi's page 
 ## Left open
 - **Roundups are named one per source.** The spec says each roundup listed once; on the lab a story is mentioned by up to 84 roundup posts from 10 sources (LessWrong's essays count as roundups, 0050's 3+ links), so the line names each source once and opens its first roundup; the others aren't reachable from the line.
 - **A one-row repost story** (the tweet and the source that reposted it) has no other post: its row says "covered by 2 · …" and opens only the `↻ reposted by` line, which the row's meta line already says.
-- **Reposts as News are sometimes banter** (3 of 10 sampled, all steipete reposting badlogicgames about himself). Telling banter from news is meaning, Mark X's.
+- **Reposts as News are sometimes banter** (3 of 10 sampled, all toolsmith_pete reposting oddlogic_games about himself). Telling banter from news is meaning, Mark X's.
 - **Origin titles:** a slug reads in lower case ("Our decision on cursor following its acquisition by spacex"); one voice's words that read as a title can still be no title ("Регистрация здесь, не пропустите": its slug has two words). The 7 addresses in the sample stay addresses.
 - **Substack is not in the Public Suffix List**, so its 11 writers stay one voice. What would cover it, measured on the lab: "your sources on different subdomains of one site, none on the site itself, are different voices" splits exactly Substack, github.io and bearblog.dev and keeps ncase.me and philschmid.de whole; it would also split a company with two subdomain blogs (none on the lab). Proposed for the owner; not built.
 - **The vendored list ages:** refreshing it is copying the section again (version and commit at its top).
-- **On a phone** the deepest line now holds `↳ name` as well as its source, so with a share mark and a date its title can still be short (toshoseti's forward in the Fable screen).
+- **On a phone** the deepest line now holds `↳ name` as well as its source, so with a share mark and a date its title can still be short (tosho_nets's forward in the Fable screen).
 - Frozen stories (begun before the 30-day window) keep the voices they had when a reposter source is removed.

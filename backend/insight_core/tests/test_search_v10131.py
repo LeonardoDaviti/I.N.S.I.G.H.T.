@@ -27,7 +27,7 @@ from insight_core.db.repo_search import SearchQuery
 from insight_core.markx import names
 from insight_core.markx import search as mx_search
 from insight_core.services.reader_service import ReaderService
-from insight_core.tests._db import db_url, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, requires_test_db
 from insight_core.tests.test_markx_api import _Api, reading
 
 
@@ -101,7 +101,7 @@ def _ru_reading(headline: str):
 class NameAndVersionInSearch(_Api):
     def setUp(self):
         super().setUp()
-        self.cur.execute("TRUNCATE mx_post_search")
+        clear_tables(self.cur, "mx_post_search")
         self.reader = ReaderService(db_url())
         self.now = datetime.now(timezone.utc)
 
@@ -186,7 +186,7 @@ class NameAndVersionInSearch(_Api):
         self.link(about, "Acme Zorblax 5.2", version)
         # `actor`'s mention is not linked yet (read since identity's last run): its own name key counts
         self.link(joke, "Zorblax 5.2 Ultra Max", variant)
-        self.cur.execute("TRUNCATE mx_post_search")   # the words alone rank, on or off: only the entity moves a post
+        clear_tables(self.cur, "mx_post_search")   # the words alone rank, on or off: only the entity moves a post
 
         os.environ["INSIGHT_MARKX"] = "off"
         by_words = self.ids("zorblax 5.2", order="best")
@@ -211,7 +211,7 @@ class NameAndVersionInSearch(_Api):
                                "type": "product", "role": "subject"}])
         doc = self.entity("Quillon delivery playbook", level="thing", type_="product")
         self.link(about, "Quillon delivery playbook", doc)
-        self.cur.execute("TRUNCATE mx_post_search")
+        clear_tables(self.cur, "mx_post_search")
         os.environ["INSIGHT_MARKX"] = "on"
         self.assertIn(about, mx_search.entity_first_posts(self.cur, "quillon delivery playbook"))
         self.assertEqual(self.ids("quillon delivery playbook", order="best")[:2], [own, about])
@@ -226,7 +226,7 @@ class NameAndVersionInSearch(_Api):
         self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 2)", (shown, self.at(3)))
         self.cur.executemany("INSERT INTO story_posts (post_id, story_id, role, voice) VALUES (%s, %s, 'report', %s)",
                              [(about, shown, about), (shown, shown, shown)])
-        self.cur.execute("TRUNCATE mx_post_search")
+        clear_tables(self.cur, "mx_post_search")
         got = self.ids("zorblax 5.2", order="best")
         self.assertEqual(got[0], shown)          # the story, shown at its best-matching post, ranks first
         self.assertIn(alone, got)

@@ -20,18 +20,21 @@ A cycle
        claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
               --no-session-persistence --strict-mcp-config
    (0171: a `websearch` call, research's web search, has --tools WebSearch and, last, --allowedTools WebSearch
-   --max-turns 8: the web search tool only, no fetch, no other tool; one question a call)
+   --max-turns 8: the web search tool only, no fetch, no other tool; one question a call; 0191: a kind with an
+   --effort level gets `--effort <level>` last, and Claude Code's prompt cache is set by kind, --prompt-cache)
    with the prompt on stdin: an instruction, then each task as "### ITEM id: <task id>\\n<input>". Haiku
    answers one JSON line per task, `{"id": <task id>, <the guide's answer fields>}` (the prototype's measured
    form; `{"task_id": .., "answer": {..}}` lines are accepted too).
 4. Each line is checked against the guide's JSON schema (a subset: type, enum, const, required, properties,
-   additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum, pattern, anyOf/oneOf). The
-   valid answers are posted at once.
-5. One retry: the tasks whose line was missing or failed the schema are asked again, in batches of their
+   additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum, pattern, anyOf/oneOf), then
+   (0191) against the server's own input checks, validate.CHECKS, imported from the checkout's backend (a span or
+   a version not in the post); --no-server-rules: the schema alone. The valid answers are posted at once.
+5. One retry: the tasks whose line was missing or failed a check are asked again, in batches of their
    own (one kind each, at most --batch). After it, valid and still-invalid answers are posted (an invalid
    one is stored by the server as a call with its error and counts as a try); tasks still without an answer
-   are released at the end of the cycle. A retry refused by the usage policy is halved until the refused task
-   stands alone; that one is posted as an empty answer (a failed try), so it never holds back its batch again.
+   are released at the end of the cycle. A call refused by the usage policy is halved, from its first refusal
+   (0191), until the refused task stands alone; that one is posted as an empty answer (a failed try) and
+   remembered in refused.json beside the spool: its later leases ask it alone, never in a batch again.
 6. Tokens and cost come from Claude Code's JSON (`usage`: input + cache read + cache creation tokens in,
    output tokens out; `total_cost_usd`; the model from `modelUsage`). Every call is logged with them; each
    posted answer carries its share of its batch (an even split; a retried task carries its share of both
@@ -115,7 +118,8 @@ Where 0086 C is ambiguous (decided here; S3 should confirm or say otherwise)
   to an expired but still open task is assumed to be accepted like any other.
 - The schema: 0086 C gives `schema` per guide, no dialect. The worker reads it as JSON Schema and checks
   the subset above; a missing or null schema checks only that the answer is an object. The server's own
-  checks (spans, versions, figures) stay the server's.
+  checks (spans, versions, figures) stay the server's (0191: the worker runs the same validate.py's checks first, so
+  a refused answer is asked again in its own cycle; the server still checks every answer).
 - Tokens: per answer only, as an even share of its batch; the spend on tasks never answered is in the
   worker's log, not on the server.
 - `lease_until` without an offset is read as UTC.
@@ -143,17 +147,34 @@ from pathlib import Path
 
 EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing. 0173: the source judge first
-# (the owner tapped "Is this worth it?" and waits for it). 0174: News' sections after the headlines.
-DEFAULT_KINDS = "source_judge,read,read3,entities,cite,alias,alias2,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,news_sections,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics"
+# (the owner tapped "Is this worth it?" and waits for it). 0174: News' sections after the headlines, 0197: the
+# new rows placed into them right after (a worker newer than its server skips an unknown kind: v10.14).
+DEFAULT_KINDS = "source_judge,read,read3,entities,cite,alias,alias2,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,news_sections,news_place,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
 # a lease takes --lease of them (v10.13.3), at most --parallel calls' worth. --per-call overrides it.
-PER_CALL = "merge=1,collide=6,rename=5,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1"   # 0174: News' sections one question a call (every row of the page in it); 0173: "Is this worth it?" one candidate a call (the owner waits: its kind leased first); 0148: a track scout one a call; 0162: 5 identity pairs a call; 0171: one web search question a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
+PER_CALL = "merge=1,collide=6,rename=5,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1"   # 0197: a placement question one a call (the new rows and the sections in it); 0174: News' sections one question a call (every row of the page in it); 0173: "Is this worth it?" one candidate a call (the owner waits: its kind leased first); 0148: a track scout one a call; 0162: 5 identity pairs a call; 0171: one web search question a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
 # perspectives (one group of at most 5 members a task) and its sheet one a call (0119 B3-B4); 0127: read-v3 5 a call (rv3d);
 # 0165 B: the rename judge 5 a call (each item shows two names with two posts each)
+# v10.17 (0191): Claude Code's thinking effort a kind's calls are asked at (`claude --effort`); a kind not named keeps
+# Claude Code's default. Chosen per kind on the lab's labelled sets (plan/issues/0191-worker-cost.md): a level is set
+# only where its answers stayed within the noise of two default runs. --effort overrides it.
+EFFORT = "entities=medium,cite=low,alias=low,alias2=low"
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# v10.17 (0191): Claude Code's prompt cache, by kind. On a subscription it writes every prompt to the 1-hour cache
+# (billed at 2x input) and calls of distinct items almost never read it back: "off" sends the input once at 1x. The
+# kinds whose input the week's logs billed at about 1x or less (relate, back: the majority's runs ask the same prompt
+# again; read3) read it back, so they keep "default", and so does websearch (its turns re-send the conversation). A
+# kind asked one item a call, whose guide is a large share of its prompt, takes "5m": its first call of a cycle goes
+# alone and writes the guide at 1.25x, the others read it at 0.1x (measured: 0.75x of list, against 1.0x off).
+# "mode[,kind=mode]": the first a mode alone, for every kind not named.
+PROMPT_CACHE = {"default": {}, "off": {"DISABLE_PROMPT_CACHING": "1"}, "5m": {"CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}}
+DEFAULT_PROMPT_CACHE = ("off,relate=default,back=default,read3=default,websearch=default,merge=5m,sheet=5m,stance=5m,"
+                        "subtopics=5m,probes=5m,scout=5m,source_judge=5m,news_sections=5m,unit_types=5m")
 HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY JSON lines, one per item, in the "
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
 
+REFUSED_KEEP = 5000   # 0191: refused tasks (and posts) remembered at most, the newest
 LEASE_MAX = 100   # v10.13.3: the server's MAX_LIMIT, tasks a lease may ask
 SLOW_LEASES = 3   # v10.13.2: this many slow leases in a row (no answer within the timeout) end the cycle as exit 3
 EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
@@ -195,19 +216,49 @@ class ServerAuth(Exception):
 # ---------------------------------------------------------------------------------------------- the log
 
 class Log:
-    def __init__(self, path, quiet=False):
+    """The JSON-lines log (--log). v10.17: rotated by size, so a worker run by a timer for months never fills the
+    disk: past `max_bytes` the file becomes log.jsonl.1 (.1 -> .2 ...), and the `keep` newest old files stay. Two
+    worker processes may share the file (an embed cycle beside a read cycle): each write and rotation holds an
+    exclusive flock on log.jsonl.lock, so a line is never written to a file another process is renaming."""
+    MAX_BYTES = 10 * 1024 * 1024
+    KEEP = 4
+
+    def __init__(self, path, quiet=False, max_bytes=None, keep=None):
         self.path = Path(path) if path else None
         self.quiet = quiet
+        self.max_bytes = self.MAX_BYTES if max_bytes is None else max_bytes
+        self.keep = self.KEEP if keep is None else keep
         self.lock = threading.Lock()
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _rotate(self):
+        if self.keep < 1:
+            self.path.unlink(missing_ok=True)
+            return
+        for n in range(self.keep - 1, 0, -1):
+            older = self.path.with_name(f"{self.path.name}.{n}")
+            if older.exists():
+                os.replace(older, self.path.with_name(f"{self.path.name}.{n + 1}"))
+        os.replace(self.path, self.path.with_name(f"{self.path.name}.1"))
+
+    def _write(self, line):
+        import fcntl
+        with open(self.path.with_name(self.path.name + ".lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.max_bytes and self.path.exists() and self.path.stat().st_size >= self.max_bytes:
+                    self._rotate()
+                with self.path.open("a") as f:
+                    f.write(line)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def __call__(self, event, **rec):
         rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": event, **rec}
         with self.lock:
             if self.path:
-                with self.path.open("a") as f:
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                self._write(json.dumps(rec, ensure_ascii=False) + "\n")
             if not self.quiet:
                 brief = " ".join(f"{k}={v}" for k, v in rec.items() if k not in ("at", "event") and v is not None)
                 print(f"markx-worker {event} {brief}", file=sys.stderr, flush=True)
@@ -387,6 +438,67 @@ def per_call_arg(value):
     return out
 
 
+def cache_arg(value):
+    """--prompt-cache: "mode[,kind=mode]" (0191), a mode one of PROMPT_CACHE: {"*": every kind's, kind: its own}."""
+    out = {"*": "default"}
+    for part in [x.strip() for x in value.split(",") if x.strip()]:
+        kind, eq, mode = part.rpartition("=") if "=" in part else ("*", "=", part)
+        if mode.strip() not in PROMPT_CACHE or not kind.strip():
+            raise argparse.ArgumentTypeError(f'mode[,kind=mode], a mode one of {", ".join(sorted(PROMPT_CACHE))}')
+        out[kind.strip()] = mode.strip()
+    return out
+
+
+def effort_arg(value):
+    """--effort: "kind=level[,kind=level]" (0191), a level one of EFFORTS or "default" (Claude Code's own): {kind: level}."""
+    out = {}
+    for part in [x.strip() for x in value.split(",") if x.strip()]:
+        kind, eq, level = part.partition("=")
+        level = level.strip()
+        if not eq or not kind.strip() or level not in EFFORTS + ("default",):
+            raise argparse.ArgumentTypeError(f'kind=level[,kind=level], a level one of {", ".join(EFFORTS)} or default')
+        out[kind.strip()] = level
+    return out
+
+
+# ---------------------------------------------------------------------------------------------- the server's checks
+
+_RULES = []   # [module or None]: the server's validate.py, loaded once
+
+
+def server_rules():
+    """0191: the server's own answer checks (backend/insight_core/markx/validate.py, standard library only) when this
+    worker runs from INSIGHT's checkout, so an answer the server would refuse (a span or a version not in the post) is
+    asked again in the same cycle; None elsewhere (the schema alone is checked, as before)."""
+    if not _RULES:
+        mod = None
+        backend = Path(__file__).resolve().parent.parent / "backend"
+        if (backend / "insight_core" / "markx" / "validate.py").is_file():
+            sys.path.insert(0, str(backend))
+            try:
+                from insight_core.markx import validate as mod
+            except Exception:   # an older or broken checkout: the schema alone
+                mod = None
+            finally:
+                sys.path.remove(str(backend))
+        _RULES.append(mod)
+    return _RULES[0]
+
+
+def rule_error(kind, answer, input):
+    """The server's input checks on an answer the schema passed (validate.CHECKS[kind]: spans and versions in the post,
+    numbered items that exist ...), or None. A check that needs more than the standard library (back, subtopics) or
+    that cannot read the answer is no opinion: the server still checks it."""
+    rules = server_rules()
+    check = getattr(rules, "CHECKS", {}).get(kind) if rules else None
+    if check is None or kind in EMBED_KINDS:
+        return None
+    try:
+        return check(rules.unwrap(kind, answer), input or "")
+    except Exception:
+        return None
+
+
 def system_for(guide):
     """The guide's body, then its answer schema when it has one (v10.0.1): a guide's prose can leave a field's
     key unnamed (read-v2's mentions never say `name`), and the server refuses an answer without it."""
@@ -397,15 +509,16 @@ def system_for(guide):
             "exactly these field names:\n" + json.dumps(schema, ensure_ascii=False, separators=(",", ":")))
 
 
-def claude_argv(claude, model, system, kind=None):
+def claude_argv(claude, model, system, kind=None, effort=None):
     """No tools, except for a kind in WEB_KINDS (0171): Claude Code's web search tool only (allowed without a prompt,
-    no fetch, no other tool), at most WEB_MAX_TURNS turns."""
+    no fetch, no other tool), at most WEB_MAX_TURNS turns. `effort` (0191): --effort, last; None or "default": none."""
+    tail = ["--effort", effort] if effort and effort != "default" else []
     if kind in WEB_KINDS:
         return [claude, "-p", "--model", model, "--tools", WEB_TOOL, "--system-prompt", system,
                 "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-                "--allowedTools", WEB_TOOL, "--max-turns", str(WEB_MAX_TURNS)]
+                "--allowedTools", WEB_TOOL, "--max-turns", str(WEB_MAX_TURNS)] + tail
     return [claude, "-p", "--model", model, "--tools", "", "--system-prompt", system,
-            "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"]
+            "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"] + tail
 
 
 def classify(text):
@@ -417,12 +530,14 @@ def classify(text):
     return None
 
 
-def call(claude, model, system, prompt, timeout, kind=None):
-    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model} or {error, fatal, ms}."""
+def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=None):
+    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model, cread, cwrite, think} or {error, fatal, ms}.
+    `env` (0191): variables for Claude Code (its prompt cache), over this process's."""
     t0 = time.time()
     try:
-        p = subprocess.run(claude_argv(claude, model, system, kind), input=prompt, capture_output=True, text=True,
-                           timeout=max(1, timeout), cwd=tempfile.gettempdir())
+        p = subprocess.run(claude_argv(claude, model, system, kind, effort), input=prompt, capture_output=True,
+                           text=True, timeout=max(1, timeout), cwd=tempfile.gettempdir(),
+                           env={**os.environ, **env} if env else None)
     except subprocess.TimeoutExpired:
         return {"error": "timeout", "fatal": None, "ms": int((time.time() - t0) * 1000)}
     except FileNotFoundError:
@@ -445,7 +560,10 @@ def call(claude, model, system, prompt, timeout, kind=None):
     return {"text": r.get("result") or "", "ms": ms, "cost": float(r.get("total_cost_usd") or 0),
             "tin": (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0)
                    + (u.get("cache_creation_input_tokens") or 0),
-            "tout": u.get("output_tokens") or 0, "model": used}
+            "tout": u.get("output_tokens") or 0, "model": used,
+            # 0191: the parts the price differs by (a cache read is 0.1x input, a 1-hour cache write 2x; thinking is output)
+            "cread": u.get("cache_read_input_tokens") or 0, "cwrite": u.get("cache_creation_input_tokens") or 0,
+            "think": (u.get("output_tokens_details") or {}).get("thinking_tokens") or 0}
 
 
 def prompt_for(tasks):
@@ -569,6 +687,21 @@ def shares(total, n):
     return [base + (1 if k < extra else 0) for k in range(n)]
 
 
+def split_calls(tasks, n):
+    """0176 (0150 B): a lease's tasks of one kind and guide in calls of at most n, in order, never two tasks of the
+    same post (the server's "post": a long post's windows) in one call: windows asked together answer from each other."""
+    calls = []
+    for t in tasks:
+        post = t.get("post")
+        for c in calls:
+            if len(c) < n and (post is None or all(x.get("post") != post for x in c)):
+                c.append(t)
+                break
+        else:
+            calls.append([t])
+    return calls
+
+
 def read_token(path):
     p = Path(path).expanduser()
     try:
@@ -609,9 +742,11 @@ class Worker:
         self.embedder = getattr(args, "embedder_client", None)
         self.embed_sha = getattr(args, "embedder_sha256", None)
         self.counts = {"leased": 0, "calls": 0, "posted": 0, "valid": 0, "server_invalid": 0, "released": 0,
-                       "vectors": 0, "embed_ms": 0,
+                       "vectors": 0, "embed_ms": 0, "rule_invalid": 0,
                        "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
         self.model_seen = None
+        self.refused = self.load_refused()   # 0191: tasks and posts a refusal was isolated to before
+        self.warm = {}                       # 0191: kind -> set once its first call under the 5-minute cache returned
 
     # -- fatal ------------------------------------------------------------------------------------------
     def set_fatal(self, kind, why):
@@ -697,9 +832,19 @@ class Worker:
                 "cost_usd": round(s.get("cost_usd", 0.0), 8)}
 
     # -- one call ---------------------------------------------------------------------------------------
+    def cache_mode(self, kind):
+        """0191: the kind's prompt-cache mode (--prompt-cache's)."""
+        modes = self.a.prompt_cache or {"*": "default"}
+        return modes.get(kind, modes.get("*", "default"))
+
+    def effort(self, kind):
+        """0191: the kind's --effort level (--effort's, else EFFORT's), or None (Claude Code's default)."""
+        level = (self.a.effort or {}).get(kind)
+        return None if level in (None, "default") else level
+
     def ask(self, batch, tasks, attempt):
         """Asks one call. Returns (ok [(task, answer)], invalid [(task, answer, error)], missing [task], late,
-        model) or None when no call was made."""
+        model, refused) or None when no call was made."""
         if self.stop.is_set():
             return None
         left = (batch.lease_until - datetime.now(timezone.utc)).total_seconds()
@@ -707,9 +852,11 @@ class Worker:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
             return None
         res = call(self.a.claude, self.a.model, system_for(batch.guide), prompt_for(tasks),
-                   timeout=self.a.timeout, kind=batch.kind)
+                   timeout=self.a.timeout, kind=batch.kind, effort=self.effort(batch.kind),
+                   env=PROMPT_CACHE[self.cache_mode(batch.kind)])
         late = datetime.now(timezone.utc) > batch.lease_until
         ok, invalid, missing = [], [], []
+        ruled = 0
         if "text" in res:
             got = parse_lines(res["text"])
             n = len(tasks)
@@ -725,33 +872,94 @@ class Worker:
                     missing.append(t)
                     continue
                 err = check_answer(batch.guide.get("schema"), a)
+                if err is None and not self.a.no_server_rules:
+                    err = rule_error(batch.kind, a, t.get("input"))   # 0191: what the server would refuse
+                    ruled += err is not None
                 (invalid.append((t, a, err)) if err else ok.append((t, a)))
             with self.lock:
                 self.counts["calls"] += 1
                 self.counts["tokens_in"] += res["tin"]
                 self.counts["tokens_out"] += res["tout"]
                 self.counts["cost_usd"] += res["cost"]
+                self.counts["rule_invalid"] += ruled
                 self.model_seen = res.get("model") or self.model_seen
         else:
             missing = list(tasks)
             with self.lock:
                 self.counts["calls"] += 1
+        refused = "text" not in res and bool(REFUSAL.search(str(res.get("error") or "")))
         self.log("call", kind=batch.kind, guide=batch.guide_id, attempt=attempt, size=len(tasks), ok=len(ok),
                  invalid=len(invalid), missing=len(missing), ms=res.get("ms"), cost_usd=res.get("cost"),
                  tokens_in=res.get("tin"), tokens_out=res.get("tout"), model=res.get("model"),
+                 cache_read=res.get("cread"), cache_write=res.get("cwrite"), thinking=res.get("think"),
+                 effort=self.effort(batch.kind), rule_invalid=ruled or None, refused=refused or None,
                  late=late or None, error=res.get("error"),
                  invalid_errors=[e for _, _, e in invalid][:5] or None)
         if res.get("fatal"):
             self.set_fatal(res["fatal"], res["error"])
-        refused = "text" not in res and bool(REFUSAL.search(str(res.get("error") or "")))
         return ok, invalid, missing, late, res.get("model"), refused
+
+    # -- refusals (0191) ----------------------------------------------------------------------------------
+    def refused_path(self):
+        return self.spool_path().with_name("refused.json")
+
+    def load_refused(self):
+        """{"tasks": {task id: kind}, "posts": {post id: kind}}: what a usage-policy refusal was isolated to before."""
+        try:
+            got = json.loads(self.refused_path().read_text())
+            return {"tasks": dict(got.get("tasks") or {}), "posts": dict(got.get("posts") or {})}
+        except (OSError, ValueError, AttributeError):
+            return {"tasks": {}, "posts": {}}
+
+    def known_refused(self, task):
+        with self.lock:
+            return (str(task["id"]) in self.refused["tasks"]
+                    or (task.get("post") is not None and str(task["post"]) in self.refused["posts"]))
+
+    def remember_refused(self, kind, task):
+        """A task a refusal stood alone on: never batched again (its later leases ask it alone), kept across cycles in
+        refused.json beside the spool (the newest REFUSED_KEEP)."""
+        with self.lock:
+            self.refused["tasks"][str(task["id"])] = kind
+            if task.get("post") is not None:
+                self.refused["posts"][str(task["post"])] = kind
+            for k in ("tasks", "posts"):
+                over = len(self.refused[k]) - REFUSED_KEEP
+                for key in list(self.refused[k])[:max(0, over)]:
+                    del self.refused[k][key]
+            try:
+                p = self.refused_path()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(self.refused))
+            except OSError:
+                pass
+
+    def isolate(self, batch, attempt):
+        """A refused call answers no task of it: halves it until the refused task stands alone (2026-11-08), from the
+        first refusal on (0191: before, the first refused call was asked once more whole). A task refused alone is
+        posted as an empty answer (the server stores a failed try; three and the task fails) and remembered."""
+        if len(batch.tasks) > 1:
+            half = len(batch.tasks) // 2
+            for part in (batch.tasks[:half], batch.tasks[half:]):
+                self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until), attempt)
+            return
+        t = batch.tasks[0]
+        first_line = (t.get("input") or "").split("\n", 1)[0]
+        platform = first_line[len("Platform: "):].split(" ", 1)[0] if first_line.startswith("Platform: ") else None
+        self.log("refused", kind=batch.kind, task=t["id"], post=t.get("post"), chars=len(t.get("input") or ""),
+                 platform=platform, again=self.known_refused(t) or None)
+        self.remember_refused(batch.kind, t)
+        self.post([self.answer_row(t, {})], None)
 
     # -- a round ----------------------------------------------------------------------------------------
     def first(self, batch):
         r = self.ask(batch, batch.tasks, 1)
         if r is None:
             return []
-        ok, invalid, missing, late, model, _refused = r
+        ok, invalid, missing, late, model, refused = r
+        if refused and not late:
+            self.isolate(batch, 2)
+            return []
         rows = [self.answer_row(t, a) for t, a in ok]
         if late:   # the lease is gone: no retry; the invalid ones are stored with their errors
             rows += [self.answer_row(t, a) for t, a, _ in invalid]
@@ -760,22 +968,13 @@ class Worker:
         self.post(rows, model)
         return [t for t, _, _ in invalid] + missing
 
-    def second(self, batch):
-        r = self.ask(batch, batch.tasks, 2)
+    def second(self, batch, attempt=2):
+        r = self.ask(batch, batch.tasks, attempt)
         if r is None:
             return
         ok, invalid, missing, late, model, refused = r
         if refused and not late:
-            # A usage-policy refusal answers no task of the batch: halve it until the refused task stands alone,
-            # then post it as an empty answer (the server stores a failed try; three and the task fails), so one
-            # post no longer holds back its batch every round (2026-11-08).
-            if len(batch.tasks) > 1:
-                half = len(batch.tasks) // 2
-                for part in (batch.tasks[:half], batch.tasks[half:]):
-                    self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until))
-                return
-            self.log("refused", kind=batch.kind, task=batch.tasks[0]["id"])
-            self.post([self.answer_row(batch.tasks[0], {})], model)
+            self.isolate(batch, attempt)
             return
         self.post([self.answer_row(t, a) for t, a in ok] + [self.answer_row(t, a) for t, a, _ in invalid], model)
 
@@ -904,7 +1103,10 @@ class Worker:
                 self.log("guide-sha256-mismatch", kind=k, guide=gid, tasks=len(ts))
                 continue
             n = self.per_call(k)
-            out += [Batch(k, gid, g, ts[i:i + n], until) for i in range(0, len(ts), n)]
+            alone = [t for t in ts if self.known_refused(t)]   # 0191: a task a refusal was isolated to: asked alone
+            ts = [t for t in ts if not self.known_refused(t)]
+            out += [Batch(k, gid, g, c, until) for c in split_calls(ts, n)]   # 0176: one window of a post a call
+            out += [Batch(k, gid, g, [t], until) for t in alone]
         self.log("leased", kind=kind, tasks=len(tasks), ms=ms, lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
 
@@ -1001,6 +1203,24 @@ class Worker:
             for _ in range(callers):
                 ready.put(None)
 
+    def warmed(self, b):
+        """first(b); 0191: under the 5-minute cache, a kind's first call of the cycle goes alone and the kind's other
+        calls wait for it (at most --timeout), so they read its guide from the cache instead of each writing it."""
+        if self.cache_mode(b.kind) != "5m":
+            return self.first(b)
+        with self.lock:
+            ready = self.warm.get(b.kind)
+            warmer = ready is None
+            if warmer:
+                ready = self.warm[b.kind] = threading.Event()
+        if not warmer:
+            ready.wait(self.a.timeout)
+            return self.first(b)
+        try:
+            return self.first(b)
+        finally:
+            ready.set()
+
     def run_batch(self, b):
         """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked once more in calls
         of per_call(kind) (as a round's retry did before v10.13.3)."""
@@ -1010,7 +1230,7 @@ class Worker:
                 return
             if self.stop.is_set():
                 return
-            todo = self.first(b)
+            todo = self.warmed(b)
             if not todo or self.stop.is_set() or self.a.no_retry:
                 return
             n = self.per_call(b.kind)
@@ -1052,7 +1272,7 @@ def main(argv=None):
     common.add_argument("--server", required=True, help="INSIGHT's address, e.g. http://<server>:5173")
     common.add_argument("--token-file", required=True, help="a file holding the bearer token")
     common.add_argument("--worker", default=socket.gethostname(), help="this worker's name (default: the host)")
-    common.add_argument("--log", default=str(state_dir() / "log.jsonl"), help="JSON-lines log ('' for none)")
+    common.add_argument("--log", default=str(state_dir() / "log.jsonl"), help="JSON-lines log ('' for none; rotated past 10 MB, 4 old files kept)")
     common.add_argument("--quiet", action="store_true", help="no log lines on stderr")
     c = sub.add_parser("cycle", parents=[common], help="lease, ask Haiku, post")
     c.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds, in order (default: %(default)s)")
@@ -1062,6 +1282,15 @@ def main(argv=None):
     c.add_argument("--per-call", type=per_call_arg, default=per_call_arg(PER_CALL),
                    help="tasks per call for some kinds, at most --batch (default " + PER_CALL + ": a merge is asked alone; "
                         "a lease takes --lease, at most --parallel calls of the kind)")
+    c.add_argument("--effort", type=effort_arg, default=effort_arg(EFFORT),
+                   help="Claude Code's thinking effort by kind, kind=level (low, medium, high, xhigh, max or default); "
+                        "default " + EFFORT + " (0191: measured per kind); a kind not named: Claude Code's default")
+    c.add_argument("--prompt-cache", type=cache_arg, default=cache_arg(DEFAULT_PROMPT_CACHE),
+                   help="Claude Code's prompt cache, mode[,kind=mode], a mode one of off, 5m or default (Claude "
+                        "Code's own); default " + DEFAULT_PROMPT_CACHE + " (0191: 'default' writes each prompt to the "
+                        "1-hour cache at 2x input, which calls of distinct items never read back)")
+    c.add_argument("--no-server-rules", action="store_true",
+                   help="check answers against the guide's schema only, not also the server's validate.py (0191)")
     c.add_argument("--lease", type=int, default=None,
                    help="tasks per lease, at most 100 (default --batch); a call still asks --batch / --per-call of them")
     c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
@@ -1126,7 +1355,9 @@ def main(argv=None):
             return EXIT_SETUP
         log("embedder", url=a.embedder, gguf=str(gguf), sha256=a.embedder_sha256)
     log("start", worker=a.worker, server=a.server, kinds=a.kinds, batch=a.batch, batches=a.batches,
-        parallel=a.parallel, model=a.model)
+        parallel=a.parallel, model=a.model,
+        prompt_cache=",".join(f"{k}={v}" if k != "*" else v for k, v in a.prompt_cache.items()),
+        server_rules=None if a.no_server_rules else server_rules() is not None)
     return Worker(a, server, log).cycle()
 
 

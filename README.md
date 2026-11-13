@@ -76,7 +76,7 @@ Notes:
 - RSS-based Telegram sources do not require Telegram API credentials.
 - Bare-handle Telegram sources need the Telegram API ID and hash and a signed-in session, all added under Sources → Connections → Telegram (see `backend/insight_core/scripts/README.md`). Until then those sources show as unavailable, not failing.
 - Reddit is read through its public RSS/JSON feeds and needs no account or API key.
-- Self-hosted `.local` HTTPS feeds are fetched with TLS verification disabled automatically. You can also set `RSS_SKIP_TLS_VERIFY_HOSTS` for additional internal hosts.
+- The bridges (`telegram.local`, `nitter.local`, the hosts in `NITTER_HOSTS`, `TELEGRAM_RSS_HOSTS`, `INSIGHT_MEDIA_PRIVATE_HOSTS`) are the only private-network hosts INSIGHT fetches from; on a LAN address their HTTPS is read without TLS verification. `RSS_SKIP_TLS_VERIFY_HOSTS` adds hosts (DEPLOYMENT.md, Networking).
 
 Archive behavior:
 
@@ -314,7 +314,7 @@ References:
 
 ## Tests
 
-Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so each run creates a database of its own (`insight_run_<time>_<pid>_test`), migrates it, and drops it when the run ends, so two runs at once never share rows; never the live `insight`. `TEST_DATABASE_URL` uses a database of your own instead, and `MIGRATE=1` applies pending migrations to it first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
+Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so each run creates a database of its own (`insight_run_<time>_<pid>_test`, a copy of a migrated template), and drops it when the run ends, so two runs at once never share rows; never the live `insight`. `JOBS=n` runs the whole suite in n shards at once. Prepared real-data copies, the real-data check's cache and when to run what: [WORKFLOW.md](WORKFLOW.md). `TEST_DATABASE_URL` uses a database of your own instead, and `MIGRATE=1` applies pending migrations to it first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
 ## Notes
 

@@ -13,7 +13,7 @@ At 390 px the feed row's time column and its two 44 px buttons take about 45% of
 
 ## Decided
 1. **The title runs across the full row.** The two buttons (read, later) move to the right of the meta and excerpt lines, keeping 44 px targets. The time leaves its column and joins the meta line: `r/LocalLLaMA · 11:09 · 1 min read`.
-2. **News's coverage line may wrap to two lines,** so its names show: `▸ 8 sources (1 share) · in 1 roundup ·` / `Hacker News, seeallochnaya, +6`.
+2. **News's coverage line may wrap to two lines,** so its names show: `▸ 8 sources (1 share) · in 1 roundup ·` / `Hacker News, seeall_notes, +6`.
 3. **Hacker News counts take the second meta line** (like reposts and "published …"): `1,675 points · 1,628 comments`. The reading bar is no longer clipped.
 4. **An open "covered by" tree uses the row's full width,** as the post page's already does. The one-indent and `↳ parent` rule stays.
 5. **Safe areas:** the top bar, the sides and bottom toasts respect the notch and the home bar (`env(safe-area-inset-*)`), because `index.html` asks to draw edge to edge. Check on WebKit (Playwright's iPhone profile), not only Chromium.

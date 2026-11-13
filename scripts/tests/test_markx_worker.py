@@ -10,6 +10,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -124,13 +125,15 @@ class Stub:
         self.httpd.shutdown()
         self.httpd.server_close()
 
-    def add(self, kind, n, start=1, ids=None):
+    def add(self, kind, n, start=1, ids=None, post=None):
         for k in range(n):
             tid = ids[k] if ids else start + k
             self.tasks[str(tid)] = {"id": tid, "kind": kind, "guide": KIND_GUIDE[kind], "priority": 0,
                                     "input": f"platform: test\ntitle: post {tid}\ntext: something happened",
                                     "status": "open", "lease_until": None, "leased_by": None, "attempts": 0,
                                     "last_error": None}
+            if post is not None:          # 0176: a long post's windows carry their post
+                self.tasks[str(tid)]["post"] = post
 
     def _expire(self, now):
         for t in self.tasks.values():
@@ -150,8 +153,8 @@ class Stub:
             for t in pick:
                 t.update(status="leased", lease_until=until, leased_by=q["worker"])
             return {"lease_until": until.isoformat(), "guides": {t["guide"]: self.guides[t["guide"]] for t in pick},
-                    "tasks": [{"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]}
-                              for t in pick]}
+                    "tasks": [dict({"id": t["id"], "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
+                                   **({"post": t["post"]} if "post" in t else {})) for t in pick]}
 
     def check(self, answer):
         err = W.schema_error(SCHEMA, answer) if isinstance(answer, dict) else "not an object"
@@ -375,6 +378,26 @@ class TestValid(Base):
         self.assertEqual(sizes["merge"], [1] * 7)
         self.assertEqual(sorted(sizes["read"]), [5, 20])
         self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "4")])
+
+    def test_two_windows_of_one_post_are_never_in_one_call(self):
+        """0176 (0150 B): a long post's entities windows (the server's "post") are asked in different calls."""
+        for k, post in enumerate(("p-a", "p-b", "p-c")):
+            self.stub.add("entities", 4, start=100 + 10 * k, post=post)
+        self.stub.add("entities", 8, start=1)
+        p = self.run_worker("--kinds", "entities", "--parallel", "1", "--batches", "5")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        for c in self.fake_calls():
+            ids = [x for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
+            posts = [self.stub.tasks[i].get("post") for i in ids if self.stub.tasks[i].get("post")]
+            self.assertEqual(len(posts), len(set(posts)), posts)
+        self.assertEqual(len(self.fake_calls()), 4)                    # 4 windows of a post: 4 calls, no more
+
+    def test_split_calls_keeps_order_and_size(self):
+        ts = [{"id": 1, "post": "a"}, {"id": 2, "post": "a"}, {"id": 3}, {"id": 4, "post": "b"}, {"id": 5, "post": "a"}]
+        self.assertEqual([[t["id"] for t in c] for c in W.split_calls(ts, 3)], [[1, 3, 4], [2], [5]])
+        self.assertEqual([[t["id"] for t in c] for c in W.split_calls([{"id": k} for k in range(5)], 2)],
+                         [[0, 1], [2, 3], [4]])
 
     def test_per_call_sets_a_kinds_call_size(self):
         self.stub.add("merge", 7)
@@ -970,6 +993,40 @@ class TestNewsSections(Base):
         self.assertEqual(sizes, [1, 1])
 
 
+class TestNewsPlace(Base):
+    """0197: the new rows' placement (news-place-v1) is a default kind right after News' sections, one question a call,
+    with no tool; a server older than the worker (no news_place yet) has it skipped, the others go on."""
+
+    def setUp(self):
+        super().setUp()
+        KIND_GUIDE["news_place"] = "news-place-v1"
+        self.addCleanup(KIND_GUIDE.pop, "news_place")
+        self.stub.guides["news-place-v1"] = guide("news-place-v1", "GUIDE news-place-v1")
+
+    def test_news_place_is_a_default_kind_after_the_sections_one_a_call(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds.index("news_place"), kinds.index("news_sections") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["news_place"], 1)
+        argv = W.claude_argv("claude", "haiku", "S", "news_place")
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+
+    def test_questions_asked_one_a_call(self):
+        self.stub.add("news_place", 2, start=1)
+        p = self.run_worker("--parallel", "1", "--batches", "10")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 2)
+        sizes = [len(__import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)) for c in self.fake_calls()]
+        self.assertEqual(sizes, [1, 1])
+
+    def test_an_older_server_skips_it(self):
+        self.stub.add("read", 5)
+        self.stub.unknown_kinds = {"news_place"}
+        p = self.run_worker("--kinds", "news_place,read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.stub.by_status("answered")), 5)
+        self.assertEqual([e["kind"] for e in self.events("kind-unknown")], ["news_place"])
+
+
 WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
               "properties": {"candidates": {"type": "array", "maxItems": 15, "items": {
                   "type": "object", "required": ["url", "why"],
@@ -1036,6 +1093,174 @@ class TestWebSearch(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(self.stub.by_status("answered"), [1])
         self.assertEqual(len(self.fake_calls()), 2)
+
+
+class TestCost0191(Base):
+    """0191: thinking effort by kind, the prompt cache, refusals isolated at once and remembered, and the server's
+    own answer checks run by the worker so a refused answer is asked again in the same cycle."""
+
+    def setUp(self):
+        super().setUp()
+        GUIDES.setdefault("cite-v1", {"sha256": hashlib.sha256(b"GUIDE cite-v1").hexdigest(), "body": "GUIDE cite-v1",
+                                      "schema": None})
+        KIND_GUIDE.setdefault("cite", "cite-v1")
+
+    def test_each_kind_asked_at_its_effort_and_effort_overrides_it(self):
+        self.stub.add("entities", 3)
+        self.stub.add("read", 3, start=101)
+        p = self.run_worker("--kinds", "entities,read", "--parallel", "1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        want = W.effort_arg(W.EFFORT)
+        for c in self.fake_calls():
+            kind = "entities" if "GUIDE ent-v3" in c["system"] else "read"
+            self.assertEqual(c["effort"], None if want.get(kind) in (None, "default") else want[kind], kind)
+        self.fake_log.unlink()
+        self.stub.add("read", 2, start=201)
+        p = self.run_worker("--kinds", "read", "--effort", "read=low")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([c["effort"] for c in self.fake_calls()], ["low"])
+        self.assertEqual([e["effort"] for e in self.events("call")][-1], "low")
+
+    def test_a_bad_effort_is_refused(self):
+        p = self.run_worker("--kinds", "read", "--effort", "read=extreme")
+        self.assertEqual(p.returncode, 2)
+
+    def test_the_prompt_cache_setting_goes_to_claude_codes_environment(self):
+        self.stub.add("read", 2)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        modes = W.cache_arg(W.DEFAULT_PROMPT_CACHE)
+        self.assertEqual(self.fake_calls()[0]["cache_env"], W.PROMPT_CACHE[modes.get("read", modes["*"])])
+        for mode in ("off", "default"):
+            self.fake_log.unlink()
+            self.stub.add("read", 1, start=10 if mode == "off" else 20)
+            p = self.run_worker("--kinds", "read", "--prompt-cache", mode)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            env = self.fake_calls()[0]["cache_env"]
+            self.assertEqual(env.get("DISABLE_PROMPT_CACHING"), "1" if mode == "off" else None, mode)
+
+    def test_the_prompt_cache_by_kind(self):
+        self.assertEqual(W.cache_arg("off,relate=default"), {"*": "off", "relate": "default"})
+        self.assertEqual(W.cache_arg("relate=5m"), {"*": "default", "relate": "5m"})
+        for bad in ("forever", "relate=forever", "=off"):
+            with self.assertRaises(W.argparse.ArgumentTypeError):
+                W.cache_arg(bad)
+        self.stub.add("read", 1)
+        self.stub.add("entities", 1, start=2)
+        p = self.run_worker("--kinds", "read,entities", "--prompt-cache", "off,entities=default", "--parallel", "1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        got = {("ent" if "GUIDE ent-v3" in c["system"] else "read"): c["cache_env"] for c in self.fake_calls()}
+        self.assertEqual(got, {"read": {"DISABLE_PROMPT_CACHING": "1"}, "ent": {}})
+
+    def test_under_the_5_minute_cache_a_kinds_first_call_goes_alone(self):
+        # four merges, one a call, four callers: the first call alone (it writes the guide), then the other three at once
+        self.stub.add("merge", 4)
+        p = self.run_worker("--kinds", "merge", "--parallel", "4", "--prompt-cache", "off,merge=5m",
+                            plan="valid+sleep:0.4")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.fake_calls()
+        self.assertEqual(len(calls), 4)
+        self.assertEqual({c["cache_env"].get("CLAUDE_CODE_PROMPT_CACHE_TTL") for c in calls}, {"5m"})
+        self.assertEqual(len(self.stub.by_status("answered")), 4)
+        starts = sorted(c["t"] for c in calls)   # the first call returned (0.4 s) before any other started
+        self.assertGreaterEqual(starts[1] - starts[0], 0.35, starts)
+        self.assertLess(starts[3] - starts[1], 0.35, starts)   # then the other three at once
+
+    def test_a_calls_cache_and_thinking_tokens_are_logged(self):
+        self.stub.add("read", 4)
+        p = self.run_worker("--kinds", "read")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        e = self.events("call")[0]
+        self.assertEqual((e["cache_read"], e["cache_write"], e["thinking"]), (2000, 300, 40))
+
+    def test_a_first_refusal_is_halved_at_once_and_the_refused_task_asked_alone_next_time(self):
+        self.stub.add("read", 20)
+        self.stub.tasks["7"]["input"] += " FORBIDDEN"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        sizes = [len(re.findall(r"^### ITEM id: ", c["stdin"], re.M)) for c in self.fake_calls()]
+        self.assertEqual(sizes.count(20), 1, f"the refused batch of 20 is never asked whole again: {sizes}")
+        self.assertLessEqual(len(sizes), 1 + 2 * 5, sizes)
+        self.assertEqual(len(self.stub.by_status("answered")), 19)
+        refused = self.events("refused")
+        self.assertEqual([e["task"] for e in refused], [7])
+        self.assertEqual(refused[0]["platform"], None)   # the stub's input has no "Platform: " line
+        kept = json.loads((self.tmp / "refused.json").read_text())
+        self.assertEqual(list(kept["tasks"]), ["7"])
+        # the next cycle: task 7 again, with 19 new ones: 7 is asked alone, the 19 in one call
+        self.fake_log.unlink()
+        self.stub.add("read", 19, start=101)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = [re.findall(r"^### ITEM id: (\S+)$", c["stdin"], re.M) for c in self.fake_calls()]
+        self.assertEqual(sorted(len(c) for c in calls), [1, 19], calls)
+        self.assertIn(["7"], calls)
+        self.assertTrue(self.events("refused")[-1]["again"])
+
+    def test_an_answer_the_servers_checks_refuse_is_asked_again_in_the_same_cycle(self):
+        self.stub.add("cite", 5)
+        p = self.run_worker("--kinds", "cite", plan="spanbad:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.events("call")
+        self.assertEqual([(e["attempt"], e["size"], e["rule_invalid"]) for e in calls], [(1, 5, 2), (2, 2, None)])
+        self.assertIn("does not occur in the post", calls[0]["invalid_errors"][0])
+        self.assertEqual(self.done()["rule_invalid"], 2)
+        # --no-server-rules: the schema alone (none here), nothing asked again
+        self.fake_log.unlink()
+        self.stub.add("cite", 5, start=11)
+        p = self.run_worker("--kinds", "cite", "--no-server-rules", plan="spanbad:2,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 1)
+
+    def test_rule_error_is_the_servers_check_or_no_opinion(self):
+        bad = {"entities": [{"span": "Nowhere Inc", "name": "Nowhere", "type": "org", "role": "subject"}]}
+        good = {"entities": [{"span": "Acme", "name": "Acme", "type": "org", "role": "subject"}]}
+        self.assertIn("does not occur in the post", W.rule_error("entities", bad, "Title: Acme ships"))
+        self.assertIsNone(W.rule_error("entities", good, "Title: Acme ships"))
+        self.assertIsNone(W.rule_error("entities", {"something": "else"}, "Title: Acme"), "unreadable: no opinion")
+        self.assertIsNone(W.rule_error("no-such-kind", good, "Title: Acme"))
+
+    def test_the_servers_checks_need_only_the_standard_library(self):
+        # one source of truth: the worker imports the server's validate.py, so it must stay standard library only
+        # (back's and subtopics' checks import more lazily; the worker has no opinion on those)
+        backend = HERE.parent.parent / "backend"
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from insight_core.markx import validate, schemas; "
+                "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('psycopg', 'fastapi', 'pydantic', 'numpy'));"
+                "print(bad); sys.exit(1 if bad else 0)")
+        p = subprocess.run([sys.executable, "-I", "-c", code, str(backend)], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+
+class TestLogRotation(unittest.TestCase):
+    """v10.17: the JSON-lines log rotates by size and keeps a few old files; every line lands in one of them."""
+
+    def test_rotates_and_keeps(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "log.jsonl"
+            log = W.Log(str(path), quiet=True, max_bytes=300, keep=2)
+            for i in range(40):
+                log("tick", n=i)
+            files = sorted(p.name for p in Path(d).iterdir() if not p.name.endswith(".lock"))
+            self.assertEqual(files, ["log.jsonl", "log.jsonl.1", "log.jsonl.2"])
+            for name in files:
+                self.assertLessEqual((Path(d) / name).stat().st_size, 300 + 100)
+                for line in (Path(d) / name).read_text().splitlines():
+                    self.assertEqual(json.loads(line)["event"], "tick")
+            last = [json.loads(x)["n"] for x in path.read_text().splitlines()]
+            self.assertEqual(last[-1], 39)
+
+    def test_two_writers_lose_no_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "log.jsonl"
+            logs = [W.Log(str(path), quiet=True, max_bytes=10_000_000) for _ in range(2)]
+            threads = [threading.Thread(target=lambda lg=lg, k=k: [lg("w", k=k, n=i) for i in range(200)])
+                       for k, lg in enumerate(logs)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            lines = [json.loads(x) for x in path.read_text().splitlines()]
+            self.assertEqual(len(lines), 400)
 
 
 if __name__ == "__main__":

@@ -299,7 +299,7 @@ class ClassicRulesTests(unittest.TestCase):
     def test_reference_pages_are_not_classics(self):
         for url in ("https://docs.example/docs/intro", "https://claude.example/product/claude-code",
                     "https://example.com/pricing", "https://help.example.com/help/articles/123",
-                    "https://example.com/api/reference", "https://example.com/", "https://x.com/karpathy",
+                    "https://example.com/api/reference", "https://example.com/", "https://x.com/nn_teacher",
                     "https://example.com/release-notes/2026"):
             self.assertTrue(is_reference(url), url)
             self.assertEqual(classics([cite("a", 0, url), cite("b", 10, url), cite("a", 300, url)], {}), [], url)
@@ -419,21 +419,21 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual((facts.name[empty], facts.name[missing]), (address[empty], address[missing]))
 
     def test_news_names_every_voice_it_counts(self):
-        """Issue 0069 (R6): steipete reposting badlogicgames' tweet is 2 voices, so News names both."""
+        """Issue 0069 (R6): toolsmith_pete reposting oddlogic_games' tweet is 2 voices, so News names both."""
         accounts = {}
-        for name in ("steipete", "badlogicgames"):
+        for name in ("toolsmith_pete", "oddlogic_games"):
             accounts[name] = self._source(name)
             self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s",
                              (f"https://nitter.local/{name}{self.mark}/rss", accounts[name]))
-        url = f"https://nitter.local/badlogicgames{self.mark}/status/2114444636303364349#m"
-        post = self._post(accounts["steipete"], site="x", title=f"RT by @steipete{self.mark}: how i work with agents",
+        url = f"https://nitter.local/oddlogic_games{self.mark}/status/2114444636303364349#m"
+        post = self._post(accounts["toolsmith_pete"], site="x", title=f"RT by @toolsmith_pete{self.mark}: how i work with agents",
                           url=url)
         self.cur.execute("UPDATE posts SET author = %s, reposted_by = %s WHERE id = %s",
-                         (f"badlogicgames{self.mark}", [f"steipete{self.mark}"], post))
+                         (f"oddlogic_games{self.mark}", [f"toolsmith_pete{self.mark}"], post))
         self._job()
         [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["id"] == post]
         self.assertEqual(item["story"]["voices"], 2)
-        self.assertEqual([s["name"] for s in item["story"]["sources"]], ["steipete", "badlogicgames"])
+        self.assertEqual([s["name"] for s in item["story"]["sources"]], ["toolsmith_pete", "oddlogic_games"])
 
     def test_news_shows_30_days(self):
         """Issue 0077: News reads 30 days; "recent" is still the last 48 hours."""

@@ -7,8 +7,8 @@
   shows at once. **Never applied without the owner.**
 - **The owner decides**: Join (a voice, named by its main channel, editable), Not the same, Related, Make a voice
   by hand, a channel leaves, the voice is removed (its channels stay sources: 0078's question 4, default yes).
-- **Stories count a confirmed voice once** (story_rules.count_voices, through SourceFacts.voice_of). A decision that
-  changes which voice a source counts as queues only those sources' posts (and the X posts by or reposting their
+- **Stories count a confirmed voice once** (voice.count by Policy.STORIES_IX, through SourceFacts.voice_of). A
+  decision that changes which voice a source counts as queues only those sources' posts (and the X posts by or reposting their
   accounts) for the story job, then asks for a run; nothing else regroups, and the rules' stamp never moves.
 
 One voice per source (sources.voice_id): joining a source of another voice moves it (that voice, left with none, is

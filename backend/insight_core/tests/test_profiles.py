@@ -40,7 +40,7 @@ YOUTUBE_PAGE = """<html><head><meta property="og:title" content="Brightwater Tal
 <meta property="og:description" content="Talks on models. Blog: https://brightwater.example"></head>
 <script>var ytInitialData = {"header":{"subscriberCountText":{"simpleText":"1.2M subscribers"}},
 "aboutChannelViewModel":{"description":"Talks on models.\\nBlog: https://brightwater.example",
-"links":[{"channelExternalLinkViewModel":{"title":{"content":"X"},"link":{"content":"x.com/brightwatertalks"}}},
+"links":[{"channelExternalLinkViewModel":{"title":{"content":"X"},"link":{"content":"x.com/clearwatertalks"}}},
 {"channelExternalLinkViewModel":{"title":{"content":"Site"},"link":{"content":"brightwater.example"}}}]}};</script></html>"""
 
 BRIDGE_FEED = """<?xml version="1.0"?><rss><channel><title>Quiet Channel</title><link>https://t.me/quietchan</link>
@@ -73,7 +73,7 @@ class ParserTests(unittest.TestCase):
         p = P.parse_youtube(YOUTUBE_PAGE, "https://www.youtube.com/channel/UCabc/about")
         self.assertEqual((p.name, p.followers, p.followers_label), ("Brightwater Talks", 1200000, "subscribers"))
         self.assertTrue(p.bio.startswith("Talks on models."))
-        self.assertIn("https://x.com/brightwatertalks", p.links)
+        self.assertIn("https://x.com/clearwatertalks", p.links)
         self.assertIn("https://brightwater.example", p.links)
 
     def test_telegram_bridge_and_mtproto(self):

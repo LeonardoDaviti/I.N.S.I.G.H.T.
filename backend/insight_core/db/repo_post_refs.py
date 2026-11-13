@@ -26,12 +26,13 @@ from insight_core.utils.addresses import host_of
 from insight_core.utils.post_refs import PostRef, refs_of, shown_reason
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 REFS_BATCH = 500
 # The caps of the Connected groups (0125 decision 2, the default): each group says how many more it has.
 EARLIER_SHOWN, LATER_SHOWN, OUTSIDE_SHOWN = 10, 10, 5
 GROUPS = ("earlier", "later", "outside")
-POST_DATE = "COALESCE(p.published_at, p.fetched_at)"
+POST_DATE = pairing.ix_date("p")
 
 
 class PostRefsRepository:
@@ -145,6 +146,12 @@ class PostRefsRepository:
                 else:
                     kept.append(r)
             groups[g] = kept
+        # issue 0185: each stored row's byline (who wrote it, via whom), one query
+        from insight_core.utils.byline import bylines
+        stored = [r for rows in (groups["earlier"], groups["later"], navigation) for r in rows if r.get("post_id")]
+        bys = bylines(cur, [r["post_id"] for r in stored])
+        for r in stored:
+            r["byline"] = bys.get(r["post_id"])
         caps = {"earlier": EARLIER_SHOWN, "later": LATER_SHOWN, "outside": OUTSIDE_SHOWN}
         out: Dict[str, Any] = {"more": {}}
         for group, rows in groups.items():

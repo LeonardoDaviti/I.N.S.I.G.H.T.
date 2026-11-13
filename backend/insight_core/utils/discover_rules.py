@@ -15,7 +15,6 @@ from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tupl
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, paper_id, publication_of, site_of, x_account
 from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, is_home, section_of
 from insight_core.utils.stamps import ADDRESSES, fingerprint
-from insight_core.utils.story_rules import ROUNDUP_ANCHORS, StoryPost, anchors
 from insight_core.utils.url_normalization import TWEET_PATH
 
 DISCOVER_MIN_VOICES = 3        # the prototype's, not measured (the prototype: plan/research/dedup-prototype)
@@ -688,7 +687,7 @@ def order(found: Iterable[Mapping]) -> List[Mapping]:
 
 @dataclass
 class Suggestion:
-    key: str                         # a site (openai.com) or a platform account (x.com/karpathy)
+    key: str                         # a site (openai.com) or a platform account (x.com/nn_teacher)
     voices: List[str]                # the voices that link it
     articles: List[str]              # its article-like addresses linked
     links: int                       # every address of it linked
@@ -699,12 +698,6 @@ class Suggestion:
     def weight(self) -> float:
         """Its voices as Discover orders them (issue 0067): one linking it only in roundups counts half."""
         return len(self.voices) - len(self.roundups) / 2
-
-
-def is_roundup(post: StoryPost) -> bool:
-    """A post whose links have 3+ anchors: it lists news, so it joins only the story of its first
-    (group) and weighs half in Discover's order (issue 0067)."""
-    return len(anchors(post)) >= ROUNDUP_ANCHORS
 
 
 def discover_address(url: str, platforms: Platforms = {}) -> Tuple[Optional[str], str, bool]:
@@ -921,4 +914,4 @@ def address_stamp(platforms: Platforms) -> str:
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
            "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
            "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
-           "Origin", "Origins", "origins", "is_roundup", "address_rules", "ADDRESS_RULES"]
+           "Origin", "Origins", "origins", "address_rules", "ADDRESS_RULES"]

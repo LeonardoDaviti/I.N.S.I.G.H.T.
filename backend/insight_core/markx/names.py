@@ -54,7 +54,7 @@ def key(name: Optional[str]) -> str:
 
 
 SQUASH = r"[^0-9a-zа-яͰ-Ͽ一-鿿぀-ヿ가-힯+#]+"   # what squash drops
-# squash(key) in Postgres (v10.16.1, 0186: the same answer for every code point, measured), as migration 0127's
+# squash(key) in Postgres (v10.17, 0186: the same answer for every code point, measured), as migration 0127's
 # indexes on mx_entity_aliases.key and mx_entities.key spell it: a query must write it exactly so to use them
 SQUASH_SQL = "regexp_replace(key, '" + SQUASH + "', '', 'g')"
 

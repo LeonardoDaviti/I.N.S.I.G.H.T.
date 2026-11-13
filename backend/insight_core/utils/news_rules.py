@@ -31,7 +31,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles, story_times
+from insight_core.utils import voice
+from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, roles, story_times
 from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -261,19 +262,20 @@ def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: 
     """(reports, shares, mentions): each voice once, in its strongest role (report, share, then a
     roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
     best: Dict[str, str] = {}
-    posts = [p for p in posts if p.kind != "saved"]   # a page you saved is no voice (issue 0070)
+    posts = [p for p in posts if voice.is_voice(p.kind)]   # a page you saved is no voice (issue 0070)
     for p in posts:   # each voice as its owner's (issue 0111)
         role = post_roles[p.id]
-        if best.get(p.owner_voice) != "report":
-            best[p.owner_voice] = role
+        own = voice.voice_of(p, voice.Policy.NEWS_IX)
+        if best.get(own) != "report":
+            best[own] = role
     for p in posts:
-        voices = dict(zip(p.other_sources, p.other_voices(by_owner=True)))
+        voices = dict(zip(p.other_sources, voice.others_of(p, voice.Policy.NEWS_IX)))
         if p.author_source:
             best[voices[p.author_source]] = "report"
         for source_id in p.reposters:
             best.setdefault(voices[source_id], "share")
     reports = sum(1 for role in best.values() if role == "report")
-    mentions = len({p.owner_voice for p in mentioned_by} - set(best))
+    mentions = len({voice.voice_of(p, voice.Policy.NEWS_IX) for p in mentioned_by} - set(best))
     return reports, len(best) - reports, mentions
 
 
@@ -324,7 +326,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         group = sorted(group, key=lambda p: (times[p.id], not p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
-        voices = count_voices(group, by_owner=True)   # one owner's channels one voice (issue 0111)
+        voices = voice.count(group, voice.Policy.NEWS_IX)   # one owner's channels one voice (issue 0111)
         if voices < NEWS_MIN_VOICES:
             continue
         ids = {p.id for p in group}

@@ -17,7 +17,7 @@ from unittest import mock
 from insight_core.ingestion.http import HttpError
 from insight_core.markx import research, schemas, scout, scout_reads, tracks, validate
 from insight_core.markx import research_web as W
-from insight_core.tests._db import db_url, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 from insight_core.tests.test_markx_api import _Api, call
 from insight_core.tests.test_markx_scout import SCOUT_TABLES, StubReader, feed_result
@@ -284,9 +284,9 @@ class _Research(_Api):
 
     def setUp(self):
         super().setUp()
-        for t in (*RESEARCH_TABLES, *SCOUT_TABLES, "mx_tracks", "mx_track_items"):
-            self.cur.execute(f"TRUNCATE {t} CASCADE")
-            self.addCleanup(self.cur.execute, f"TRUNCATE {t} CASCADE")
+        tables = (*RESEARCH_TABLES, *SCOUT_TABLES, "mx_tracks", "mx_track_items")
+        clear_tables(self.cur, tables, cascade=True)
+        self.addCleanup(clear_tables, self.cur, tables, cascade=True)
         for target, value in ((scout, "_x_bridge"),):
             p = mock.patch.object(target, value, return_value=None)
             p.start()

@@ -39,6 +39,18 @@ only its own address read as a page. The finding carries the candidate's latest 
 (`latest`), which the source sheet shows before Switch.
 Nothing is re-fetched: the next fetch reads the new address, posts match by URL, and an
 archive brings the older ones.
+
+A silent source (issue 0178): its fetches work, yet nothing new came for far longer than its own rhythm
+(silent_beyond_rhythm: over max(SILENT_GAPS x its measured mean gap, SILENT_FLOOR); a source whose cadence
+is not measured is never silent here: source hygiene's "quiet" mark covers it). A newsletter that moved
+domains keeps answering at its old feed, so no failure ever wakes the doctor; after a fetch that worked and
+brought nothing new, the runner shows it the source (after_success), at most once a LOOK_SILENT_EVERY. For a
+kind whose address can move (SILENT_KINDS) it looks where the source went (where_it_went): where its address,
+its home page and its newest posts' own pages now land (a redirect to another site is recorded, `moved`),
+then the feed finder on each such landing and on its home page; a feed offered must publish after the
+source's last post (it is alive) and, on the source's own site, stay within its section. The finding is kept
+apart from the failure finding (source_fetch_state.silent_finding): Switch (the existing switch path) or
+"It stopped" is the owner's; the doctor never switches a silent source by itself.
 """
 from __future__ import annotations
 
@@ -57,6 +69,7 @@ from insight_core.ingestion.kinds import KindRegistry, page_watch, substack
 from insight_core.ingestion.kinds.base import EmptyFetch
 from insight_core.ingestion.kinds.parsing import path_segments
 from insight_core.utils.addresses import host_of, publication_of
+from insight_core.utils.json_safe import iso
 from insight_core.utils.titles import title_key
 from insight_core.utils.url_normalization import normalize_url
 
@@ -68,6 +81,15 @@ GONE_STATUSES = (404, 410)
 LOOK_EVERY = timedelta(days=1)
 STORED_ITEMS = 50          # the source's latest stored posts a candidate is compared with; not measured
 LATEST_TITLES = 5          # the candidate's titles shown before Switch (page watching's preview has 5)
+
+# Issue 0178: silent far beyond its own rhythm. Not measured: 5 gaps is a run of misses no rhythm has by
+# chance often (a daily source silent 5 days), and the floor keeps a busy source's quiet fortnight from counting.
+SILENT_GAPS = 5
+SILENT_FLOOR = timedelta(days=14)
+LOOK_SILENT_EVERY = timedelta(days=7)
+SILENT_KINDS = ("generic_rss", "page_watch", "substack")   # the kinds whose address can move to another site
+NEWEST_PROBED = 3          # the newest posts whose own pages are asked where they land
+PROBE_BYTES = 4096         # a redirect is in the answer's address; the body is not needed
 
 Replacement = Dict[str, Any]   # {kind: feed|page_watch, url, title, found, prefix, shared, latest}
 Item = Tuple[str, str]         # a stored post's (url, title)
@@ -220,6 +242,77 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
     return candidate if candidate["shared"] or _same(listing, address) else None
 
 
+def silent_beyond_rhythm(last_post_at: Optional[datetime], mean_gap_seconds: Any, cadence_tier: Any,
+                         now: datetime) -> Optional[timedelta]:
+    """How long a source has been silent, when that is far beyond its own rhythm (issue 0178): over
+    max(SILENT_GAPS x its mean gap, SILENT_FLOOR) since its newest post; None when it is not, has no post, or
+    its cadence is not measured (no mean gap, or the "unknown" tier: too few posts to have a rhythm)."""
+    tier = getattr(cadence_tier, "value", cadence_tier)
+    if last_post_at is None or mean_gap_seconds is None or tier in (None, "", "unknown"):
+        return None
+    try:
+        gap = timedelta(seconds=float(mean_gap_seconds))
+    except (TypeError, ValueError):
+        return None
+    silence = now - last_post_at
+    return silence if silence > max(gap * SILENT_GAPS, SILENT_FLOOR) else None
+
+
+def home_of(url: str) -> str:
+    """The site's home page: "https://news.example/rss.xml" -> "https://news.example/"."""
+    parsed = urllib.parse.urlparse(url)
+    return urllib.parse.urlunparse(parsed._replace(path="/", params="", query="", fragment=""))
+
+
+def _elsewhere(url: str, landed: str) -> bool:
+    """`landed` is on another site than `url` (www. and the subdomains of one publication are one site)."""
+    return bool(landed) and publication_of(host_of(landed)) != publication_of(host_of(url))
+
+
+async def where_it_went(http: KindHttp, registry: KindRegistry, address: str, *, last_post_at: Optional[datetime],
+                        newest_posts: Sequence[str] = ()) -> Dict[str, Any]:
+    """Where a silent source went (issue 0178): {moved: [{via, from, to}], replacement: {kind: feed, url, title,
+    latest, newest, via} | None}. `moved`: its address, its home page or one of its newest posts' own pages
+    (`newest_posts`, newest first) now landing on another site. The feed finder runs on each such landing, then
+    on its home page; the first feed that is not the source's own address, publishes after `last_post_at` (it is
+    alive) and, on the source's own site, stays within its section (within_section) is the replacement.
+    Never raises for a site's failure."""
+    probes: List[Tuple[str, str]] = [("address", address), ("home page", home_of(address))]
+    probes += [("post", url) for url in list(dict.fromkeys(u for u in newest_posts if u))[:NEWEST_PROBED]]
+    moved: List[Dict[str, str]] = []
+    for via, url in probes:
+        try:
+            _, landed = await http.get_start(url, PROBE_BYTES)
+        except Exception as exc:  # noqa: BLE001 - a page that does not answer says nothing of a move
+            logger.info("Source doctor: %s (%s) did not answer: %s", url, via, str(exc)[:200])
+            continue
+        if _elsewhere(url, landed) and not any(_same(m["to"], landed) for m in moved):
+            moved.append({"via": via, "from": url, "to": landed})
+    looked: List[Tuple[str, str]] = []
+    for move in moved:
+        site = publication_of(host_of(move["to"]))
+        if not any(publication_of(host_of(page)) == site for page, _ in looked):
+            what = "its address" if move["via"] == "address" else f"its {move['via']}"
+            looked.append((move["to"], f"{what} now lands at {short_address(move['to'])}"))
+    looked.append((home_of(address), "its home page"))
+    for page, via in looked:
+        try:
+            finding = await find_feeds(http, registry, page)
+        except Exception as exc:  # noqa: BLE001 - nothing found there
+            logger.info("Source doctor: the finder failed on %s: %s", page, str(exc)[:200])
+            continue
+        for feed in finding.feeds:
+            if (_same(feed.url, address) or not within_section(feed.url, address) or not feed.readable
+                    or feed.search or feed.newest is None
+                    or (last_post_at is not None and feed.newest <= last_post_at)):
+                continue
+            return {"moved": moved, "replacement": {
+                "kind": "feed", "url": feed.url, "title": feed.title or short_address(feed.url),
+                "latest": [title for title in feed.titles if title][:LATEST_TITLES], "newest": iso(feed.newest),
+                "via": via}}
+    return {"moved": moved, "replacement": None}
+
+
 class SourceDoctor:
     def __init__(self, *, http: KindHttp, registry: KindRegistry, store: DoctorStore,
                  clock: Callable[[], datetime]) -> None:
@@ -297,6 +390,55 @@ class SourceDoctor:
                     f"suggesting {replacement['kind']} {replacement['url']}" if replacement else "no replacement found")
 
 
+    async def after_success(self, source: Mapping[str, Any], kind: Any, state: Optional[FetchStateRow],
+                            new_posts: int = 0) -> None:
+        """After a fetch that worked (issue 0178): a source silent far beyond its rhythm has where it went looked
+        for and recorded; one that posts again has its silence cleared. Never switches; never raises."""
+        try:
+            await self._after_success(source, kind, state, new_posts)
+        except Exception:  # noqa: BLE001 - the doctor is never worth the run
+            logger.exception("Source doctor (silence) failed for %s", source.get("handle_or_url"))
+
+    async def _after_success(self, source: Mapping[str, Any], kind: Any, state: Optional[FetchStateRow],
+                             new_posts: int) -> None:
+        if not hasattr(self.store, "record_silence"):
+            return
+        source_id, now = str(source["id"]), self.clock()
+        finding = (state.silent_finding if state else None) or None
+        if new_posts:
+            if finding:   # it posts again
+                await asyncio.to_thread(self.store.record_silence, source_id, checked_at=now, finding=None)
+            return
+        if source.get("mean_gap_seconds") is None or source.get("cadence_tier") in (None, "", "unknown"):
+            return
+        if (state is not None and state.silent_checked_at is not None
+                and now - state.silent_checked_at < LOOK_SILENT_EVERY):
+            return
+        last = await asyncio.to_thread(self.store.last_post_at, source_id)
+        silence = silent_beyond_rhythm(last, source.get("mean_gap_seconds"), source.get("cadence_tier"), now)
+        if silence is None:
+            if finding:
+                await asyncio.to_thread(self.store.record_silence, source_id, checked_at=now, finding=None)
+            return
+        if finding and finding.get("stopped") and finding.get("last_post_at") == iso(last):
+            return   # the owner said it stopped, and nothing came since
+        name = str((source.get("settings") or {}).get("display_name") or source.get("handle_or_url"))
+        record: Dict[str, Any] = {
+            "last_post_at": iso(last), "silent_days": round(silence.total_seconds() / 86400, 1),
+            "usual_gap_days": round(float(source["mean_gap_seconds"]) / 86400, 2), "stopped": False,
+            "moved": [], "replacement": None, "looked": False}
+        if kind.name in SILENT_KINDS and source.get("platform") == "rss":
+            newest = [url for url, _ in await asyncio.to_thread(self.store.items, source_id)]
+            record.update(await where_it_went(self.http, self.registry, str(source["handle_or_url"]),
+                                              last_post_at=last, newest_posts=newest), looked=True)
+        await asyncio.to_thread(self.store.record_silence, source_id, checked_at=now, finding=record)
+        replacement = record["replacement"]
+        logger.warning("Source doctor: %s is silent for %s days (usually every %s days)%s", name,
+                       record["silent_days"], record["usual_gap_days"],
+                       f"; offering {replacement['url']} ({replacement['via']})" if replacement else
+                       (f"; it moved to {record['moved'][0]['to']}" if record["moved"] else ""))
+
+
 class DbDoctorStore:
     """The finding in source_fetch_state; the switch is the caller's (it keeps sources.json in step)."""
 
@@ -322,6 +464,17 @@ class DbDoctorStore:
                 SourcesRepository(self.db_url).merge_source_settings(cur, source_id, settings)
             conn.commit()
 
+    def record_silence(self, source_id: str, *, checked_at: datetime, finding: Optional[Dict[str, Any]]) -> None:
+        """Where a silent source went (issue 0178); None clears it."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                FetchStateRepository().record_silence(cur, source_id, checked_at=checked_at, finding=finding)
+            conn.commit()
+
+    def last_post_at(self, source_id: str) -> Optional[datetime]:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return FetchStateRepository().last_post_at(cur, source_id)
+
     def items(self, source_id: str) -> List[Item]:
         """The source's latest STORED_ITEMS posts, (url, title)."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -332,4 +485,4 @@ class DbDoctorStore:
 
 
 __all__ = ["DbDoctorStore", "EMPTY_FETCH", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
-           "shared", "should_look", "within_section"]
+           "shared", "should_look", "silent_beyond_rhythm", "where_it_went", "within_section"]

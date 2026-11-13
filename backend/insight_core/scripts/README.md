@@ -60,7 +60,7 @@ the key, saved values are unreadable and must be saved again.
 
 ### Telegram session
 
-The bare-handle Telegram sources (platform `telegram`, a handle such as `ai_newz`, no URL)
+The bare-handle Telegram sources (platform `telegram`, a handle such as `ai_dispatch`, no URL)
 are read over MTProto by the `telegram_mtproto` kind. The fetcher never prompts for a login:
 it needs an already-authorised session.
 

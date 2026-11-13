@@ -13,9 +13,12 @@ The interface (what a caller must know):
   - `admits_stories(policy, cos, voices_a, voices_b)` and `story_pairs(cur, policy, groups, posts)`: the same for
     two stories (by their centroids, their first posts within the story window).
   - `policy(relation, **overrides)`: the row, with a caller's overrides (decide.Config's bars).
-  - the basics every module reads the same way: `post_date` (the post's date: when it surfaced, else published, else
-    fetched), `is_voice` and `voices` (a saved post is no voice; voices are distinct sources), `page_key` and its
-    lower layer `page_address` (a page's compared form), `document_key` (a document page's key).
+  - `attach_targets(cur, units)` and `attaches(policy, ...)`: the attach relation (0181) for round-up items.
+  - the basics every module reads the same way: the dates (`post_date`: the post's date, a round-up's issue time
+    when its items are known, else when it surfaced, else published, else fetched; `ordinary_date`, `published_date`
+    and `ix_date`: the post's own, 0128's published and Mark IX's time; see "the dates" below), `page_key` and its
+    lower layer `page_address` (a page's compared form), `document_key` (a document page's key). Who a post counts
+    as, and how many voices posts are, is Voice's (utils/voice.py, Policy.MARKX; issue 0189): every gate here asks it.
 
 The sources (adapters; each idempotent, each writes only mx_candidates):
   - `embedding`: a post's nearest posts by cosine among other sources' voices within the window, at the cosine bar,
@@ -31,9 +34,16 @@ The sources (adapters; each idempotent, each writes only mx_candidates):
     window; a roundup's links never count.
   - `happening` (markx/happening.py, off unless the mx_settings flag HAPPENING_KEY is on): posts of different voices
     whose readings name one happening (action group and parties) within the group's window.
+  - `link` (attach, 0181; stored by units.py, never in mx_candidates): a round-up's item (a unit) and the
+    stored post whose address it links, from ATTACH_WINDOW before the round-up to ATTACH_AFTER after it.
 
 Step 1 of 0166 moved the sources and decide's re-gates here unchanged (the equivalence tests:
-tests/test_markx_pairing.py). graph.py, back.py and later.py keep their own gates for now (0166's anchors step).
+tests/test_markx_pairing.py). 0180 (anchors): the third relation, `develops` (a post that follows up an anchor: a
+story or a happening), holds back.py's and later.py's gates (their windows, type lists, quiet rule) and E6's
+happening windows; `develops(pol, earlier, later, gap)` is its happening gate, `specific(pol, ...)` its subject gate.
+graph.py keeps its own gates for now. 0181 (units): the fourth relation, `attach` (a round-up's item -> the stored
+post it links, and the story holding it, as a digest item, never a voice), and the round-up's issue time in
+`post_date` (its latest attached item's time), so every consumer of the post date reads it.
 """
 from __future__ import annotations
 
@@ -49,58 +59,93 @@ from urllib.parse import urlsplit
 from psycopg import Cursor
 
 from insight_core.markx import repo, schemas
+from insight_core.utils import voice
 from insight_core.utils.post_links import is_home, source_kind
 
 log = logging.getLogger(__name__)
 
 MODEL = "bge-m3"
 POST_POST, STORY_STORY = "post_post", "story_story"
-SAME_STORY, CONNECTED = "same_story", "connected"
-HAPPENING_KEY = "pairing_happening"   # mx_settings: the happening source on (off by default, until E1 sets its bars)
+SAME_STORY, CONNECTED, DEVELOPS, ATTACH = "same_story", "connected", "develops", "attach"
+# An experiment (0166, 0175; kept as one in v10.17's 0190): the happening source runs only while this mx_settings flag
+# is on (off by default): E1 measured its company groups (deal, funding, legal, people), the other groups are
+# unmeasured, and nothing turns it on but the owner. Its key is stored either way (mx_happenings, for anchors).
+HAPPENING_KEY = "pairing_happening"
 
-# ---- the basics ------------------------------------------------------------------------------------------
+# ---- the dates (v10.17, 0190: one owner per decision) ---------------------------------------------------------
+# Every SQL date of a post is one of these four meanings, named here and nowhere else (tests/test_dates_owner.py
+# fails on an inline COALESCE of a post's dates outside this module):
+#   - `post_date`: Mark X's time of a post, what a Mark X comparison reads (windows, timelines, an entity's
+#     mentions): a round-up's issue time when its items are known (0181), else its own date.
+#   - `ordinary_date`: the post's own date (surfaced, else published, else fetched): the feed's sort key (indexed:
+#     posts_feed_order_idx, posts_source_feed_order_idx, 0037), the planners' and the lease's order and reading windows
+#     (0176), every task input (0128: a changed input is a new question), and what the issue time is made from.
+#   - `published_date`: 0128's "published" (published, else surfaced, else fetched): the order and times a story's
+#     lines are shown in (a News row, the folds, the story page) and graph's G2.
+#   - `ix_date`: Mark IX's time (published, else fetched; StoryPost.t, 0111's News window, Discover, the source and
+#     fetch statistics).
+# They differ only on a round-up with an issue time (post_date) and on a post with surfaced_at (49,384 posts on the
+# 2026-11-05 copy: 211 issue times, 51 surfaced_at).
+ORDINARY_DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"   # a post's own time
+PUBLISHED_DATE = "COALESCE({p}.published_at, {p}.surfaced_at, {p}.fetched_at)"  # 0128's published order
+IX_DATE = "COALESCE({p}.published_at, {p}.fetched_at)"                          # Mark IX's time
+# 0181: a round-up's time is its issue's (mx_roundups.issue_at: its latest attached item's time within ISSUE_REACH of
+# its own date), when its items are known; every other post's (and a round-up's with no such item) is its own time.
+# The issue times are read once a query (an InitPlan: one object of a few hundred rows, by a partial index) and looked
+# up per row: a correlated lookup on every row made the callers' window queries 3-6x slower on the scratch copy
+# (its cost estimate also switched JIT on); this form measured as fast as the old expression (plan/research, private).
+POST_DATE = ("COALESCE(((SELECT jsonb_object_agg(r_.post_id, r_.issue_at) FROM mx_roundups r_ "
+             "WHERE r_.issue_at IS NOT NULL) ->> ({p}.id::text))::timestamptz, "
+             + ORDINARY_DATE + ")")   # Mark X's time of a post
 
-POST_DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"   # Mark X's time of a post
+
+def _alias(alias: str) -> str:
+    """'p' -> 'p.', '' -> '' (a query over posts with no alias)."""
+    return f"{alias}." if alias else ""
+
+
+def _form(template: str, alias: str) -> str:
+    return template.replace("{p}.", _alias(alias))
 
 
 def post_date(alias: str = "p") -> str:
-    """The post's date as SQL: when INSIGHT first saw it surface, else its published time, else its fetch."""
+    """The post's date as SQL: a round-up's issue time when its items are known (0181); else when INSIGHT first saw
+    it surface, else its published time, else its fetch. Never a rewrite of the post's own dates. Needs an alias
+    (the issue time is looked up by the post's id)."""
+    if not alias:
+        raise ValueError("post_date needs the posts alias")
     return POST_DATE.format(p=alias)
 
 
-NOT_VOICE = frozenset({"saved"})      # a post the owner saved is no independent voice
+def post_date_within(alias: str, lo: str, hi: Optional[str] = None) -> str:
+    """A window over Mark X's time as SQL: `post_date` at `lo` or later (and at `hi` or earlier), the same bounds
+    widened by the issue reach tested on the post's own date first, so the feed's index on `ordinary_date` finds the
+    rows (a round-up's issue time is within the attach row's `issue_reach` of its own date: units._times) and the post
+    date, which no index holds, is computed only for those. The same rows as `post_date` alone. `lo` / `hi`: SQL,
+    each written twice, in the order lo, lo, hi, hi (a positional %s takes its value twice)."""
+    reach = f"make_interval(secs => {int(POLICIES[ATTACH].issue_reach.total_seconds())})"
+    own, at = ordinary_date(alias), post_date(alias)
+    parts = [f"{own} >= ({lo}) - {reach}", f"{at} >= ({lo})"]
+    if hi is not None:
+        parts += [f"{own} <= ({hi}) + {reach}", f"{at} <= ({hi})"]
+    return "(" + " AND ".join(parts) + ")"
 
 
-def is_voice(kind: Optional[str]) -> bool:
-    return kind not in NOT_VOICE
+def ordinary_date(alias: str = "p") -> str:
+    """The post's own date as SQL (surfaced, else published, else fetched), round-up or not: the feed's indexed sort
+    key, the planners' and the lease's order and windows, a task's input, and what the issue time of a round-up is
+    computed from (units.py). `alias` '' for a query over posts with no alias."""
+    return _form(ORDINARY_DATE, alias)
 
 
-def voices(items: Iterable[Tuple[Any, Optional[str]]]) -> int:
-    """How many voices (source, kind) items are: their distinct sources, saved posts not counted."""
-    return len({source for source, kind in items if is_voice(kind)})
+def published_date(alias: str = "p") -> str:
+    """0128's published time as SQL (published, else surfaced, else fetched): the order a story's lines are shown in."""
+    return _form(PUBLISHED_DATE, alias)
 
 
-def counted_voice(source_id: str, author_account: Optional[str], of_account: Mapping[str, str]) -> str:
-    """The voice a post counts as, Mark IX's rule (StoryPost.author_source, issue 0068): a post its feed carries but
-    another account wrote (an X repost; a Telegram forward naming its channel) counts as that account's source when
-    one of the sources follows that account (`of_account`: SourceFacts.of_account, account -> the first source by id
-    following it, `followed_accounts`); a stranger's post stays the feed's own voice. A quote or a reply is the feed's
-    own post: its quoted or replied-to account never adds a voice."""
-    return (of_account.get(author_account) if author_account else None) or source_id
-
-
-def followed_accounts(cur: Any) -> Dict[str, str]:
-    """Every source's account -> the source following it, as Mark IX reads it (SourceFacts.of_account: its own rule
-    over every source's platform and handle, the first by id; issue 0068)."""
-    from insight_core.db.repo_stories import SourceFacts
-    cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), "
-                "handle_or_url) FROM sources")
-    return dict(SourceFacts.of(cur.fetchall(), []).of_account)
-
-
-def independent(source_a: Any, kind_a: Optional[str], source_b: Any, kind_b: Optional[str]) -> bool:
-    """Two posts are independent voices: both voices, of different sources."""
-    return is_voice(kind_a) and is_voice(kind_b) and source_a != source_b
+def ix_date(alias: str = "p") -> str:
+    """Mark IX's time as SQL (published, else fetched): StoryPost.t's, News's window, Discover's and the statistics'."""
+    return _form(IX_DATE, alias)
 
 
 SOCIAL = {"t.me", "x.com", "twitter.com", "youtube.com", "reddit.com", "instagram.com", "facebook.com", "linkedin.com",
@@ -168,7 +213,9 @@ def document_key(url: Optional[str]) -> Optional[str]:
 # ---- the policy table ------------------------------------------------------------------------------------
 
 OTHER_SOURCE = "other_source"   # two posts: both voices, of different sources (burst: of different places)
+NEVER_VOICE = "never_voice"     # attach (0181): a round-up's item is a digest item, never a voice, of any source
 ROUNDUP_WHOLE_EXCLUDED = "roundup_whole_excluded"   # a roundup is never judged as a whole (until units exist)
+ROUNDUP_UNITS = "roundup_units"   # attach (0181): a round-up is compared by its items (units), never whole
 ROUNDUP_ANCHORS = 3             # story_rules.ROUNDUP_ANCHORS: a post with 3+ links is about its first only (burst)
 SPECIFIC_TYPES = ("model", "product", "software", "document", "dataset")   # 0133: ent-v3's paper is read as document
 H, D = timedelta(hours=1), timedelta(days=1)
@@ -179,13 +226,25 @@ HAPPENING_WINDOW = 72 * H
 # The groups the source pairs: the company groups E1 measured (49/52 right with 2+ shared parties). release, research,
 # pricing and announcement keys are made but not paired until measured (the 72-hour sources keep them).
 HAPPENING_GROUPS = ("deal", "funding", "legal", "people")
+# E6 (plan/research/exp-2026-11-12/e1): a later post of one happening develops it from 3 days on, a deal to 120 days
+# (12/12 right), a legal step to 30 (company follow-ups with 2+ parties 23/27 = 85%); funding and people moves never
+# (one participant 8/21); release, research, pricing and announcement unmeasured, so never.
+DEVELOPS_WINDOWS: Mapping[str, Tuple[timedelta, timedelta]] = {"deal": (3 * D, 120 * D), "legal": (3 * D, 30 * D)}
+# 0181 (plan/research/roundups-1016, private): a round-up's cited post is dated at most ATTACH_WINDOW before it and
+# ATTACH_AFTER after it (a daily digest dated at the start of its day cites that day's posts: 591 of 642 forward hits
+# within 42 hours; the rest were an archive's issues stored under one date). The issue's time is its latest item
+# within ISSUE_REACH of its own date (a weekly's two-week-old background link never moves it).
+ATTACH_WINDOW = 14 * D
+ATTACH_AFTER = 2 * D
+ISSUE_REACH = 2 * D
 
 
 @dataclass(frozen=True)
 class Policy:
     """One relation's gates. Post pairs: `window`, `cosine`, `nearest`, `types`, `late_after`, `happening_windows`,
     `min_words`, `roundups`, `independence`. Story pairs: `story_window`, `story_cosine`, `document_window`,
-    `min_voices`. `units`: what is compared (a post; planned: a span of a roundup)."""
+    `min_voices`. `units`: what is compared (a post, or a round-up's item: `unit`, the attach relation, 0181).
+    Attach: `window` back from the round-up and `after` forward (a cited post stored after its digest)."""
     relation: str
     sources: Tuple[str, ...]
     window: Optional[timedelta] = None          # two posts at most this far apart (post_date)
@@ -204,6 +263,21 @@ class Policy:
     min_words: Optional[int] = None             # judged: each post of this many words
     roundups: str = ROUNDUP_WHOLE_EXCLUDED
     units: str = "post"
+    # develops (0180): a follow-up of an anchor (markx/anchors.py; back.py and later.py read these, never their own)
+    develops_windows: Mapping[str, Tuple[timedelta, timedelta]] = field(default_factory=dict)  # group: (from, to)
+    first_after: Optional[timedelta] = None     # back: a burst starts this long after the story's first post ...
+    last_after: Optional[timedelta] = None      # ... and this long after its last one
+    again: Optional[timedelta] = None           # back: a story still followed fires again this long after its window
+    hub_weeks: Optional[int] = None             # back: a page linked in this many ISO weeks is a hub, no story page
+    always_types: Tuple[str, ...] = ()          # later: a subject of these types is specific ...
+    release_types: Tuple[str, ...] = ()         # ... of these only as one release ...
+    release_levels: Tuple[str, ...] = ()        # ... (an entity level that is one release)
+    main_share: Optional[float] = None          # later: the main subject is the subject of this share of read members
+    quiet_days: Optional[int] = None            # later: in the days before a follow-up ...
+    quiet_max: Optional[int] = None             # ... at most this many sources named its subject (subject matches)
+    quiet_for_links: bool = True                # ... and for page matches too
+    after: Optional[timedelta] = None           # attach (0181): a cited post at most this long after its round-up
+    issue_reach: Optional[timedelta] = None     # ... and an item this close to it (either side) sets the issue's time
 
     def within(self, ta: Any, tb: Any) -> bool:
         return abs(ta - tb) <= self.window
@@ -213,6 +287,14 @@ class Policy:
 
     def happening_span(self, group: str) -> timedelta:
         return self.happening_windows.get(group, self.happening_window)
+
+    @property
+    def develops_groups(self) -> Tuple[str, ...]:
+        return tuple(self.develops_windows)
+
+    def develops_span(self, group: str) -> Optional[Tuple[timedelta, timedelta]]:
+        """(from, to): how long after a post of this group's happening another may develop it; None: never."""
+        return self.develops_windows.get(group)
 
 
 POLICIES: Dict[str, Policy] = {
@@ -224,6 +306,24 @@ POLICIES: Dict[str, Policy] = {
                        min_words=20),
     # decide's connect questions (F6): two News stories, a typed connection.
     CONNECTED: Policy(CONNECTED, sources=("centroid",), story_window=30 * D, story_cosine=0.60, min_voices=2),
+    # 0180: a post that follows up an anchor (a Mark IX story, a Mark X story, a happening; markx/anchors.py). The
+    # happening first: E6's windows by group (2+ separate shared parties, no money clash); funding and people never.
+    # Then the subject: back's gates (0136: a `window` burst of `min_voices` sources, `first_after` the first post and
+    # `last_after` the last, the centre at `cosine`, hubs of `hub_weeks`, subjects of the `types`) and later's (0163:
+    # one specific main subject, `quiet_days` / `quiet_max`), the values those modules wrote down.
+    DEVELOPS: Policy(DEVELOPS, sources=("happening", "subject", "page", "centre"),
+                     window=72 * H, cosine=0.70, min_voices=2,
+                     types=("model", "product", "software", "paper", "document", "dataset", "event", "law", "other"),
+                     develops_windows=DEVELOPS_WINDOWS, first_after=14 * D, last_after=7 * D, again=30 * D,
+                     hub_weeks=6, always_types=("paper", "document", "dataset", "method"),
+                     release_types=("model", "software"), release_levels=("version", "variant", "checkpoint"),
+                     main_share=0.5, quiet_days=14, quiet_max=2, quiet_for_links=True),
+    # 0181: a round-up's item (a unit, markx/units.py) -> the stored post it links, and the story holding it, as a
+    # digest item. NEVER a voice (`independence`), never a member, a mention or a News count: stored by units.py,
+    # read only by "also in round-ups" and the digest. A round-up's own source may be cited (a channel's weekly digest
+    # of its own posts); the target is no round-up and not the round-up itself. Windows: ATTACH_WINDOW, ATTACH_AFTER.
+    ATTACH: Policy(ATTACH, sources=("link",), window=ATTACH_WINDOW, after=ATTACH_AFTER, issue_reach=ISSUE_REACH,
+                   independence=NEVER_VOICE, min_voices=0, roundups=ROUNDUP_UNITS, units="unit"),
 }
 
 
@@ -257,6 +357,35 @@ def admits_stories(pol: Policy, cos: Optional[float], voices_a: int, voices_b: i
     return cos is None or pol.story_cosine is None or cos >= pol.story_cosine
 
 
+def develops(pol: Policy, earlier: Any, later: Any, gap: timedelta) -> bool:
+    """Whether a post whose happening is `later` (happening.Happening), `gap` after a post whose happening is
+    `earlier`, may be judged a development of it (the develops row): one group the row names, 2+ shared separate
+    parties, no money clash (happening.MONEY_TOLERANCE), the gap within the group's window. The stage and the stated
+    day are not compared: a later stage of one happening is what a development is."""
+    from insight_core.markx.happening import MIN_PARTIES, MONEY_TOLERANCE
+    span = pol.develops_span(earlier.group)
+    if span is None or earlier.group != later.group or not (span[0] <= gap <= span[1]):
+        return False
+    if len(earlier.parties & later.parties) < MIN_PARTIES:
+        return False
+    a, b = earlier.numbers, later.numbers
+    return not (a and b and not any(abs(x - y) <= MONEY_TOLERANCE * max(x, y) for x in a for y in b))
+
+
+def specific(pol: Policy, type_: Optional[str], *, level: Optional[str] = None, version: Optional[str] = None,
+             variant: Optional[str] = None, build: Optional[str] = None, status: Optional[str] = None) -> bool:
+    """Whether an entity is specific enough to keep a story listening by its subject (the develops row; 0163's rule):
+    a type of `always_types` always; of `release_types` only as one release (a level of `release_levels`, or a
+    version, a variant or a build named; a family never); any other type never; an entity marked not one never."""
+    if status == "not_entity":
+        return False
+    if type_ in pol.always_types:
+        return True
+    if type_ not in pol.release_types or level == "family":
+        return False
+    return level in pol.release_levels or any((v or "").strip() for v in (version, variant, build))
+
+
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
                      only: Optional[Iterable[str]] = None, model: str = MODEL) -> Dict[Tuple[str, str], float]:
     """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them."""
@@ -282,7 +411,8 @@ def story_pairs(cur: Any, pol: Policy, groups: Dict[str, Sequence[str]], posts: 
     """{(x, y): centroid cosine} (x < y) of the stories `groups` (key: its posts, earliest first) of `min_voices`+
     voices, at the story bar, their first posts within the story window. `posts`: id -> .source, .kind, .at."""
     groups = {k: ps for k, ps in groups.items()
-              if ps and voices((posts[p].source, posts[p].kind) for p in ps if p in posts) >= pol.min_voices}
+              if ps and voice.count((voice.Said(posts[p].source, posts[p].kind) for p in ps if p in posts),
+                                    voice.Policy.MARKX) >= pol.min_voices}
     first = {k: posts[ps[0]].at for k, ps in groups.items()}
     return {(x, y): c for (x, y), c in centroid_cosines(cur, groups, pol.story_cosine).items()
             if pol.story_within(first[x], first[y])}
@@ -388,7 +518,7 @@ class Posts:
         self._storied.update(ids)
 
     def voice(self, pid: str) -> bool:
-        return pid in self.at and is_voice(self.kind[pid])
+        return pid in self.at and voice.is_voice(self.kind[pid])
 
     def independent(self, a: str, b: str) -> bool:
         return self.voice(a) and self.voice(b) and self.source[a] != self.source[b]
@@ -616,6 +746,50 @@ def happening_on(cur: Cursor) -> bool:
 def happening_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
     from insight_core.markx import happening
     return happening.pairs(cur, posts, new)
+
+
+# ---- attach (0181): a round-up's items -> the stored posts they link --------------------------------------------
+
+def attaches(pol: Policy, roundup_at: datetime, target_at: datetime, *, target_is_roundup: bool,
+             same_post: bool) -> bool:
+    """Whether a unit may attach to a stored post it links (the attach row): not its own round-up, no round-up
+    itself, dated from `window` before the round-up to `after` after it. Who wrote it never matters: an item is
+    never a voice (`independence` NEVER_VOICE), so no voice rule applies."""
+    if same_post or target_is_roundup:
+        return False
+    return roundup_at - pol.window <= target_at <= roundup_at + pol.after
+
+
+def attach_targets(cur: Cursor, units: Sequence[Any], pol: Optional[Policy] = None) -> List[Tuple[int, str, str]]:
+    """The attach relation's `link` source: [(unit id, stored post, 'link')] for units (.id, .post, .links) whose
+    links are a stored post's address (posts.normalized_url, as post_links targets join posts), gated by `attaches`.
+    Each round-up's and each target's own date (`ordinary_date`: the issue time is made from these, never read)."""
+    pol = pol or POLICIES[ATTACH]
+    links = sorted({u for x in units for u in x.links})
+    if not links:
+        return []
+    cur.execute(f"""SELECT p.id::text, p.normalized_url, {ordinary_date('p')}, COALESCE(r.roundup, false)
+                      FROM posts p LEFT JOIN mx_roundups r ON r.post_id = p.id
+                     WHERE p.normalized_url = ANY(%s)""", (links,))
+    by_url: Dict[str, List[Tuple[str, datetime, bool]]] = defaultdict(list)
+    for pid, url, at, rd in cur.fetchall():
+        if at is not None:
+            by_url[url].append((pid, at, rd))
+    cur.execute(f"SELECT p.id::text, {ordinary_date('p')} FROM posts p WHERE p.id = ANY(%s::uuid[])",
+                (sorted({x.post for x in units}),))
+    own_at = dict(cur.fetchall())
+    out: List[Tuple[int, str, str]] = []
+    for x in units:
+        at = own_at.get(x.post)
+        if at is None:
+            continue
+        seen: Set[str] = set()
+        for url in x.links:
+            for pid, t_at, rd in by_url.get(url, ()):
+                if pid not in seen and attaches(pol, at, t_at, target_is_roundup=rd, same_post=pid == x.post):
+                    seen.add(pid)
+                    out.append((x.id, pid, "link"))
+    return out
 
 
 # ---- the interface -------------------------------------------------------------------------------------------

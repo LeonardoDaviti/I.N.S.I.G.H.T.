@@ -61,13 +61,14 @@ import logging
 import math
 import os
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import finders, repo, schemas, tasks
+from insight_core.markx import finders, pairing, repo, schemas, tasks
 
 log = logging.getLogger(__name__)
 
@@ -108,11 +109,9 @@ LABELS = ("in", "out")
 ANSWERS = LABELS + ("undo",)
 SECTION_ITEMS = 60             # items a section shows (newest first; its count says how many)
 DISCOVER_ITEMS = 100
-DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"
-
-
 def _date(p: str = "p") -> str:
-    return DATE.format(p=p)
+    """A folder's post date: the post's own (Pairing's ordinary date), as the feed shows it."""
+    return pairing.ordinary_date(p)
 
 
 def tasks_per_run() -> int:
@@ -162,15 +161,30 @@ def _clean(s: Optional[str], limit: int = 2000) -> Optional[str]:
     return s[:limit] or None
 
 
+def material(text: Optional[str]) -> str:
+    """0191: what a description says, for "did it change": its words, folded (NFKC, case), without punctuation or
+    spacing. An edit that changes none of them (a comma, a capital, a line break) is not a new version."""
+    return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", text or "").casefold()))
+
+
 def set_topic(cur: Cursor, folder_id: Any, *, description: Optional[str], excludes: Optional[str] = None
               ) -> Dict[str, Any]:
     """Describe a track (or change it): a new description or excludes is a new version (its posts judged again, the
     history pass started again, the description embedded again; the old verdicts kept). An empty description makes it
-    a plain folder again (its rows kept). KeyError: no such folder."""
+    a plain folder again (its rows kept). 0191: an edit that changes no word (material: punctuation, case, spacing)
+    keeps the version and its history pass; only the text shown (and its vector) follows it. KeyError: no such
+    folder."""
     cur.execute("SELECT 1 FROM folders WHERE id = %s", (str(folder_id),))
     if cur.fetchone() is None:
         raise KeyError(folder_id)
     description, excludes = _clean(description), _clean(excludes)
+    cur.execute("SELECT description, excludes FROM mx_tracks WHERE folder_id = %s", (str(folder_id),))
+    was = cur.fetchone()
+    if (was is not None and description and was[0] and (was[0], was[1]) != (description, excludes)
+            and (material(was[0]), material(was[1])) == (material(description), material(excludes))):
+        cur.execute("UPDATE mx_tracks SET description = %s, excludes = %s, updated_at = now() WHERE folder_id = %s",
+                    (description, excludes, str(folder_id)))
+        return get(cur, folder_id)
     cur.execute("""INSERT INTO mx_tracks (folder_id, description, excludes) VALUES (%s, %s, %s)
                    ON CONFLICT (folder_id) DO UPDATE
                       SET description = EXCLUDED.description, excludes = EXCLUDED.excludes,
@@ -549,10 +563,13 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     stats: Dict[str, Dict[str, Any]] = {t["folder_id"]: {} for t in ts}
     heads: Dict[str, str] = {}
     profs: Dict[str, Dict[str, Any]] = {}
+    exs = {t["folder_id"]: examples(cur, t["folder_id"]) for t in ts}
+    cache: Dict[Any, int] = {}   # v10.16: the window's counts, read once for every track's ✓ items
+    finders.prefetch(cur, {p for ex in exs.values() for p in ex.get("in") or []}, now=now, cache=cache)
     for t in ts:
-        ex = examples(cur, t["folder_id"])
+        ex = exs[t["folder_id"]]
         heads[t["folder_id"]] = header(cur, t, ex)
-        profs[t["folder_id"]] = finders.prepare(cur, t, ex, now=now)   # 0147: the finders, their bar, the classifier
+        profs[t["folder_id"]] = finders.prepare(cur, t, ex, now=now, cache=cache)   # 0147: the finders, their bar, the classifier
 
     def share(left: int, k: int) -> int:
         return max(1, -(-left // max(1, k)))
@@ -919,12 +936,15 @@ def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[d
     for t in described(cur):
         if folder_id is not None and t["folder_id"] != str(folder_id):
             continue
-        got = placed(cur, t)["items"]
+        from insight_core.markx import track_kept
+        kept = track_kept.suggestible(cur, t)   # issue 0195: the kept placement's suggestible items, else placed live
+        got = kept if kept is not None else [it for it in placed(cur, t)["items"]
+                                             if (it["verdict"] or it["label"] == "in") and it["label"] != "out"
+                                             and not it["active"]]
         c: Counter = Counter()
         names = {}
         for it in got:
-            if (it["verdict"] or it["label"] == "in") and it["label"] != "out" and not it["active"] \
-                    and it["at"] and it["at"] >= now - timedelta(days=SUGGEST_DAYS):
+            if it["at"] and it["at"] >= now - timedelta(days=SUGGEST_DAYS):
                 c[it["source_id"]] += 1
                 names[it["source_id"]] = it["source"]
         for sid, n in c.most_common():
@@ -971,7 +991,10 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     if not is_topic(t):
         return {"track": base, "sections": [], "discover": [], "counts": {}, "calibration": None, "suggestions": [],
                 "examples": {"in": [], "out": []}, "subtopics": [], "footer": None, "prefilter": None}
-    got = placed(cur, t)
+    from insight_core.markx import track_kept
+    got = track_kept.placed(cur, t)   # issue 0195: the kept placement (its shown items filled below), else live
+    kept = got is not None
+    got = got if kept else placed(cur, t)
     items, cal = got["items"], got["calibration"]
     subs = subtopics(cur, folder_id)
     groups: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
@@ -979,6 +1002,12 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
         if it["place"] in ("track", "joined"):
             groups[assign(subs, it["subtopic"])].append(it)
     epoch = datetime.min.replace(tzinfo=timezone.utc)
+    if kept:   # the items the page shows get their title, address, source and why
+        track_kept.fill(cur, t, [it for g in groups.values()
+                                 for it in sorted(g, key=lambda it: it["at"] or epoch, reverse=True)[:SECTION_ITEMS]]
+                        + sorted((it for it in items if it["place"] == "discover"),
+                                 key=lambda it: (-it["rank"], -(it["confidence"] or 0),
+                                                 -(it["at"] or epoch).timestamp()))[:DISCOVER_ITEMS])
     sections = []
     for s in sorted(subs, key=lambda s: -len(groups.get(s["id"], []))):
         its = sorted(groups.get(s["id"], []), key=lambda it: it["at"] or epoch, reverse=True)

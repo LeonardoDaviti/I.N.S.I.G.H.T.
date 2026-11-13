@@ -11,6 +11,10 @@ carries an edit time: it takes the newest date it can have, the earliest date of
 after it (message_order_dates), and keeps the bridge's in metadata.bridge_date. The MTProto path
 (telegram_mtproto) reads Telegram's own message date, never the edit date.
 
+A forwarded message's item carries the bridge's forward header as <source url="https://t.me/<channel>/<post>">
+title</source> (issue 0178); it is kept as metadata.forwarded_from {username, name, post, url} (forwarded_from), the
+MTProto adapter's shape, so Mark X's voice rule (voice.counted_source) can match the channel's account.
+
 The bridge the Add-source dialog builds a channel's address on (issue 0135): TELEGRAM_RSS_HOSTS, a
 comma list of hosts or origins, the first one used ("telegram.local" when unset; set and empty: none,
 and the dialog says so). Every host listed is read as a bridge, beside the known ones.
@@ -97,6 +101,36 @@ TELEGRAM_RSS_PROFILE = PolitenessProfile(
 )
 
 CANONICAL_RE = re.compile(r"^https://t\.me/(?P<username>[^/]+)/(?P<post_id>\d+)$")
+# The bridge's forward (issue 0178): <source url="https://t.me/<channel>/<post>">Channel title</source>, the
+# channel's username when it has one, else its numeric id (a private channel: no account to match).
+FORWARD_RE = re.compile(r"^https?://(?:t|telegram)\.me/(?:s/)?(?P<channel>[A-Za-z0-9_]+)/(?P<post>\d+)/?(?:[?#].*)?$")
+USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+
+
+def forwarded_from(origin: Optional[Mapping[str, Any]], own: str = "") -> Optional[Dict[str, Any]]:
+    """A bridge item's forward header (its <source>, parsing.rss_source) as metadata.forwarded_from, the shape
+    the MTProto adapter stores: {username, name, post, url} (username: the channel's, so Pairing's voice rule
+    matches t.me/<username>, Mark IX's account form), {channel_id, name, post, url} for a channel known by id
+    only. `name` is the channel's title, else "@username". None for no forward, one from the channel itself
+    (`own`, its username), or a source that is no Telegram post."""
+    if not origin:
+        return None
+    match = FORWARD_RE.match(str(origin.get("url") or "").strip())
+    if not match:
+        return None
+    channel, title = match.group("channel"), " ".join(str(origin.get("title") or "").split())
+    out: Dict[str, Any] = {"post": int(match.group("post")), "url": f"https://t.me/{channel}/{match.group('post')}"}
+    if USERNAME_RE.match(channel):
+        if own and channel.casefold() == own.lstrip("@").casefold():
+            return None
+        out["username"] = channel
+        out["name"] = title or f"@{channel}"
+    elif channel.isdigit():
+        out["channel_id"] = int(channel)
+        out["name"] = title or None
+    else:
+        return None
+    return out
 
 
 class TelegramRssKind(BaseKind):
@@ -223,6 +257,9 @@ class TelegramRssKind(BaseKind):
             post["media_urls"] = [
                 parsing.normalize_telegram_resources(media_url, origin) for media_url in post.get("media_urls", [])
             ]
+            forward = forwarded_from(post.pop("origin_item", None), match.group("username"))
+            if forward is not None:
+                post["metadata"] = {**(post.get("metadata") or {}), "forwarded_from": forward}
             canonical.append(post)
         return canonical
 

@@ -26,8 +26,9 @@ from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
 from insight_core.markx import pairing, repo, schemas, tasks
+from insight_core.utils import voice
 from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo (0169 moved it to Postgres)
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import candidates_a395c13 as OLD_C
 from insight_core.tests.legacy import decide_a395c13 as OLD_D
 from insight_core.tests.test_markx_api import MX_TABLES
@@ -57,11 +58,16 @@ class Table(unittest.TestCase):
         self.assertEqual(p.window, pairing.POLICIES[pairing.SAME_STORY].window)
 
     def test_the_basics(self):
-        self.assertEqual(pairing.voices([("s1", "telegram"), ("s1", "rss"), ("s2", "saved"), ("s3", "site")]), 2)
-        self.assertTrue(pairing.independent("s1", "telegram", "s2", "site"))
-        self.assertFalse(pairing.independent("s1", "telegram", "s1", "site"))
-        self.assertFalse(pairing.independent("s1", "saved", "s2", "site"))
-        self.assertEqual(pairing.post_date("x"), "COALESCE(x.surfaced_at, x.published_at, x.fetched_at)")
+        # the voice basics are Voice's (issue 0189: utils/voice.py, Policy.MARKX)
+        said = [voice.Said(s, k) for s, k in (("s1", "telegram"), ("s1", "rss"), ("s2", "saved"), ("s3", "site"))]
+        self.assertEqual(voice.count(said, voice.Policy.MARKX), 2)
+        self.assertTrue(voice.independent("s1", "telegram", "s2", "site"))
+        self.assertFalse(voice.independent("s1", "telegram", "s1", "site"))
+        self.assertFalse(voice.independent("s1", "saved", "s2", "site"))
+        self.assertEqual(pairing.ordinary_date("x"), "COALESCE(x.surfaced_at, x.published_at, x.fetched_at)")
+        # 0181: a round-up's issue time first, else that same expression (tests/test_markx_units.py: identical dates)
+        self.assertTrue(pairing.post_date("x").endswith(", COALESCE(x.surfaced_at, x.published_at, x.fetched_at))"))
+        self.assertIn("mx_roundups", pairing.post_date("x"))
         self.assertEqual(pairing.page_address("https://www.example.com/a/B/"), "example.com/a/b")
         self.assertEqual(pairing.page_key("https://www.example.com/a/B/"), "example.com/a/b")
 
@@ -157,7 +163,7 @@ class _World(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         incremental.forget()
         self.addCleanup(incremental.forget)

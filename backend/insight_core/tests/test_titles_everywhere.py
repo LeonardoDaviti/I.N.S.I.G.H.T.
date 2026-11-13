@@ -74,7 +74,7 @@ class QuotedWordsTests(unittest.TestCase):
         toot = "https://mastodon.social/@tristan/117233413705701198"
         self.assertEqual(quoted_words(preview(toot, "Mastodon", "tristan (@tristan@mastodon.social)", "Three results")),
                          {toot: "Three results"})
-        article = "https://x.com/jsuarez/status/2099512196304925161"
+        article = "https://x.com/jsmith_rl/status/2099512196304925161"
         self.assertEqual(quoted_words(preview(article, "Article • FixupX", "The 5 Coolest RL Results", "5. Multitask")),
                          {article: "The 5 Coolest RL Results"}, "an X article's preview has a title")
 

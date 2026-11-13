@@ -21,7 +21,9 @@ server 137 s, 28,902 texts read, 2.8 GiB in "questions and decisions". 0169 keep
   - **The dirty set** is still every judge task whose (status, valid calls) changed since the last run, now against
     `mx_inc_tasks` (what the last run saw); it is reported with its closure (`counts.run`), as 0116 did.
   - **News** keeps the last run's inputs and rows (`mx_inc_state.news`), so it is made again only for the rows the
-    changed stories reach (0116's `news.write`), and in full when Mark IX's posts, links, surges or roundups changed.
+    changed stories reach (0116's `news.write`). 0177: and the rows of the posts whose StoryPost inputs changed (their
+    text stamp, their links' resolution) or whose Mark IX surge did, by digests kept with them; in full only when the
+    source facts a StoryPost reads changed (or no digests were kept).
 
 **The rules still run over the whole world**: the plan, glue, merges, the second pass and the matching of stories are
 global and cost little next to reading (0116: 50 ms on 6,606 posts); running them in full is what keeps the result a
@@ -48,6 +50,8 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
+from insight_core.markx.unchanged import table_stamps   # 0183: one table stamp for every pass
+
 log = logging.getLogger(__name__)
 
 KINDS = ("check", "join", "pair", "merge", "card", "headline", "connect", "briefing")   # the tasks a run reads
@@ -63,11 +67,12 @@ CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "
                 "insight_core.markx.news", "insight_core.markx.pairing", "insight_core.markx.plan_marks",
                 "insight_core.utils.post_parts", "insight_core.utils.post_links", "insight_core.utils.news_rules",
                 "insight_core.utils.story_rules", "insight_core.services.news_service",
-                "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news")
+                "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news",
+                "insight_core.utils.voice", "insight_core.utils.byline")
 
 # The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
 # as that author), so the first run after it is full and writes every post again.
-STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (pairing.counted_voice)
+STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (voice.counted_source, then pairing's)
 
 _code: Optional[str] = None
 
@@ -86,10 +91,10 @@ def code_stamp() -> str:
 
 
 def accounts_stamp(cur: Any) -> str:
-    """The sha256 of which source follows which account (pairing.followed_accounts): a repost's voice depends on it
+    """The sha256 of which source follows which account (voice.followed_accounts): a repost's voice depends on it
     and no post's stamp says so, so it is in the state's key (a change makes the next run full)."""
-    from insight_core.markx import pairing
-    return _sha(json.dumps(sorted(pairing.followed_accounts(cur).items())))
+    from insight_core.utils import voice
+    return _sha(json.dumps(sorted(voice.followed_accounts(cur).items())))
 
 
 def _sha(text: str) -> str:
@@ -237,16 +242,6 @@ def nightly_due(cur: Any, now: datetime) -> bool:
                     WHERE finished_at IS NOT NULL AND counts->'run'->>'kind' = 'full'""")
     last = cur.fetchone()[0]
     return last is None or last < mark
-
-
-def table_stamps(cur: Any, tables: Iterable[str]) -> Dict[str, Tuple]:
-    """Each table's rows, newest row version and a sum of its row versions' hashes (transaction and place): any insert,
-    update or delete since changes it (a new version has a newer xmin, or, in the same transaction, another ctid)."""
-    out = {}
-    for t in tables:
-        cur.execute(f"SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint) FROM {t}")
-        out[t] = tuple(None if x is None else int(x) for x in cur.fetchone())
-    return out
 
 
 # ---- the dirty set -----------------------------------------------------------------------------------------
@@ -425,6 +420,14 @@ class LazyTexts(Mapping):
     def items(self):   # every text: read at once
         self.load(self.state.rules)
         return [(i, self.state.texts[i]) for i in self.state.rules if i in self.state.texts]
+
+
+def release(state: State) -> None:
+    """0183: the texts and readings this run read, let go once the reading is done (the decision run's stages after
+    News read neither; were held to the run's end, beside the entity book: a full run's every text). A text or reading
+    used after is read again, from the run's one snapshot."""
+    state.texts.clear()
+    state.readings.clear()
 
 
 class LazyReadings(Mapping):

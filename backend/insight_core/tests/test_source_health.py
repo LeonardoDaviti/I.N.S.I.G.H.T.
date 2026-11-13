@@ -221,7 +221,7 @@ class SourceHealthTests(unittest.TestCase):
         summary = self.result["summary"]
         # "errors" counts every failing source, the one in backoff too (issue 0137 A1): the buckets less
         # the backoff counted twice add up to the enabled sources.
-        self.assertEqual(summary, {"due_now": 3, "deferred": 1, "backoff": 1, "unavailable": 1, "errors": 2})
+        self.assertEqual(summary, {"due_now": 3, "deferred": 1, "backoff": 1, "unavailable": 1, "errors": 2, "silent": 0})
         enabled = [r for r in schedule_view() if r["enabled"]]
         self.assertEqual(sum(summary.values()) - summary["backoff"], len(enabled))
         self.assertTrue(self.result["success"])
@@ -270,8 +270,8 @@ class SourceHealthTests(unittest.TestCase):
         self.assertEqual(HEALTH_STATUS_ORDER, tuple(s.value for s in HealthStatus))
         self.assertEqual(summarize_health([]), EMPTY_SOURCE_HEALTH["summary"])
         self.assertEqual(set(EMPTY_SOURCE_HEALTH["summary"]),
-                         {"due_now", "deferred", "backoff", "unavailable", "errors"},
-                         "the wire keys are API contract (spec F.4)")
+                         {"due_now", "deferred", "backoff", "unavailable", "errors", "silent"},
+                         "the wire keys are API contract (spec F.4; issue 0178 added silent)")
 
     def test_overview_carries_the_summary_and_the_worst_eight(self):
         many = schedule_view() + [view_row(f"extra{i}", state=state(f"extra{i}", last_success_at=NOW))
@@ -336,7 +336,9 @@ class FakeOperations:
 
 
 def run(coro):
-    return asyncio.run(coro)
+    """A route's answer: awaited for an async route, as is for a plain def one (issue 0195: sync routes run in the
+    threadpool, never on the loop)."""
+    return asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
 
 
 class SourceHealthRouteTests(unittest.TestCase):
@@ -385,6 +387,9 @@ class _FakeSourcesService:
         self.sources = sources
 
     def get_all_sources_with_settings(self):
+        return self.sources
+
+    def list_sources(self):   # the catalog reads the list's settings (issue 0195)
         return self.sources
 
 

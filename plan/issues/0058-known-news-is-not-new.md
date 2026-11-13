@@ -5,7 +5,7 @@ Status: **built, not deployed** (2026-10-31, migration 0043) for v9.8 (owner, 20
 ## The case (the lab, the server's data)
 - **"Claude accelerates protein design and analytical chemistry"** (`anthropic.com/research/…`) was published on 18 Aug. The page-watched source "anthropic.com/research" first saw it on 30 Oct.
 - **0039's "new to you is new"** set `surfaced_at`, so it sits on top of the Main feed with "published Aug 18".
-- **But you did get it in August:** six of your sources' posts linked that page from 19 Aug on (Just Links, turboproject and others). It's in a story from 19 Aug.
+- **But you did get it in August:** six of your sources' posts linked that page from 19 Aug on (Plain Links, turbo_bench and others). It's in a story from 19 Aug.
 - **"New to you" was decided for pages you never saw** (Gwern's "Lean Software Scaling Laws"). A page your sources already linked is known news.
 
 ## Decided

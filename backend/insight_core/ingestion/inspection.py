@@ -31,6 +31,22 @@ class DbInspectionRefresher:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Archive metadata write failed for %s: %s", source.get("handle_or_url"), exc)
 
+    async def named(self, source: Mapping[str, Any], title: str) -> None:
+        """What the feed a fetch read calls itself (issue 0178), as the name of a source that has none
+        (source_names.clean_name: no generic word, no address); a name the owner set is never written over.
+        Never raises."""
+        from insight_core.ingestion.source_names import clean_name
+
+        if str((source.get("settings") or {}).get("display_name") or "").strip():
+            return
+        name = clean_name(title, str(source.get("handle_or_url") or ""))
+        if not name:
+            return
+        try:
+            await asyncio.to_thread(self.writer.sources.name_if_unnamed, str(source.get("id")), name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not name %s: %s", source.get("handle_or_url"), exc)
+
     async def recognised(self, source: Mapping[str, Any], settings: Mapping[str, Any]) -> None:
         """What a fetch learned the source is (issue 0167: {"substack": True}), merged into its settings when they
         don't say so already: its next fetch reads it by that kind. Never raises."""

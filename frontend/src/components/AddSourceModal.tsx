@@ -54,7 +54,7 @@ const TEMPLATES: Template[] = [
     variableName: 'username',
     variableLabel: 'Channel Username',
     placeholder: 'Enter channel username...',
-    helperText: 'Creates a source like https://telegram.local/rss/seeallochnaya?limit=50',
+    helperText: 'Creates a source like https://telegram.local/rss/seeall_notes?limit=50',
     buildHandle: (value) => `https://telegram.local/rss/${value.replace(/^@/, '').trim()}?limit=50`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     fetchDelay: 5,
@@ -217,6 +217,8 @@ const NO_FEED_BECAUSE: Record<string, string> = {
   'server error': 'the site answered with a server error',
   'empty feed': 'the feed has no items yet',
   'no bridge': 'no bridge is set up on this server for this platform',
+  // Issue 0185: a bridge IS set up, but its feed gave nothing twice (slow, empty or down).
+  'bridge did not answer': 'the bridge on this server did not answer (asked twice); try again in a minute',
 };
 const NOT_THIS_PAGE: Record<string, string> = {
   other_scope: 'none of this page\'s articles are in it',

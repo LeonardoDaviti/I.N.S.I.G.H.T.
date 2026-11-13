@@ -5,6 +5,7 @@ import { Button, TextLink } from '../ui';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { request } from '../../lib/request';
+import { bylineText, type Byline } from '../../lib/byline';
 
 // 0163 (Stealth v10.13.11): later developments, Shadow. A story about a paper, a document, a model, software or a
 // dataset keeps gathering the posts that follow it up, at any age; each asked of the back judge three times. Shown on
@@ -12,7 +13,7 @@ import { request } from '../../lib/request';
 export type MarkxLaterLabel = 'development' | 'retold' | 'related' | 'unrelated';
 export interface MarkxLaterRow {
   id: string; story: string; headline: string | null; post: string; title: string | null; url: string | null;
-  source: string | null; at: string | null; days_after: number; trig: string[]; entity: string | null;
+  source: string | null; byline?: Byline | null; at: string | null; days_after: number; trig: string[]; entity: string | null;
   entity_name: string | null; verdict: MarkxLaterLabel | 'unknown' | null; runs: (string | null)[];
   label: MarkxLaterLabel | null;
 }
@@ -23,7 +24,6 @@ export interface MarkxLaterStory {
 export interface MarkxLaterPrecision { labelled: number; development: number; precision: number | null }
 export interface MarkxStoryLater {
   stories: MarkxLaterStory[]; items: MarkxLaterRow[]; counts: Record<string, number>; precision: MarkxLaterPrecision;
-  news: boolean;
 }
 export interface MarkxEntityLater { entity: string | null; items: MarkxLaterRow[]; counts: Record<string, number> }
 
@@ -82,7 +82,7 @@ function Row({ row, refresh, showStory }: { row: MarkxLaterRow; refresh: () => v
       </p>
       <p className="text-[0.8125rem] tabular-nums leading-5 text-fg-2 [overflow-wrap:anywhere]">
         {row.at ? postBylineTime(row.at) : ''} · {plural(row.days_after, 'day')} after
-        {row.source ? ` · ${row.source}` : ''}{row.trig.length ? ` · ${trigWords(row)}` : ''} · {verdictWords(row)}
+        {row.source ? ` · ${bylineText(row.byline, row.source)}` : ''}{row.trig.length ? ` · ${trigWords(row)}` : ''} · {verdictWords(row)}
       </p>
       {showStory ? (
         <p className="text-[0.75rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">

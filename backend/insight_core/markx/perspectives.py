@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import names as N
+from insight_core.utils import voice
 
 LABELS = ("original", "new_facts", "opinion", "same", "not_this_story")
 WORTH = frozenset({"original", "new_facts", "opinion"})
@@ -63,7 +64,7 @@ class Member:
     src: str                  # the source's id
     src_name: str
     kind: str
-    at: datetime              # COALESCE(surfaced_at, published_at, fetched_at)
+    at: datetime              # its own date (Pairing's ordinary date: the frozen port's input)
     published: Optional[datetime]
     title: str
     text: str
@@ -167,12 +168,38 @@ class Makers:
 
     def __init__(self, book: Any, mentions: Dict[str, List[Dict[str, Any]]]) -> None:
         self.book, self.mentions = book, mentions
-        ms = [m for got in mentions.values() for m in got]   # v10.16.1: what `hits` asks first, read in one go (a page's
+        ms = [m for got in mentions.values() for m in got]   # v10.17: what `hits` asks first, read in one go (a page's
         book.prime(ids=[m.get("entity_id") for m in ms],     # book reads what it is asked: identity.lazy_book)
                    keys=[N.key(m.get(f)) for m in ms for f in ("maker", "name") if m.get(f)])
         self._makers = book.maker_roots()
         # the names an owner can match: an org's, or a cluster some entity names as its maker
         self._names = book.name_forms(keep=self._org_or_maker)
+
+    def prepare(self, posts: Dict[str, "Member"]) -> None:
+        """v10.17 (0186): read ahead, in a few queries, what the Stories of these members will ask (a page's book asked
+        each name, owner and maker on its own: ~700 queries a News load, growing with its rows): the roots of
+        every owner their links and own pages name, the sources' names, the clusters' entities and names, their
+        parents and makers up the chain. A whole book holds them already (nothing read)."""
+        b = self.book
+        owners = {owner(u) for p in posts.values() for u in links(p) + sorted(own_pages(p))}
+        forms = {f for o in owners if o for f in N.handle_forms(o)}
+        self._names.want_roots(forms)
+        b.prime(keys=[k for k in (N.key(p.src_name) for p in posts.values()) if k])
+        roots = {r for f in forms for r in self._names.roots(f)}
+        roots |= {self.root(m.get("entity_id")) for ms in self.mentions.values() for m in ms} - {None}
+        roots |= {self.of_name(n) for ms in self.mentions.values() for m in ms for n in (m.get("maker"), m.get("name"))
+                  if n} - {None}
+        roots |= {self.of_name(p.src_name) for p in posts.values()} - {None}
+        seen: Set[str] = set()
+        while roots - seen:   # the chain up: each entity's parent and stated maker
+            todo = roots - seen
+            seen |= todo
+            b.prime(ids=todo)
+            ents = [e for e in (b.ents.get(r) for r in todo) if e is not None]
+            b.prime(ids=[e.parent for e in ents if e.parent], keys=[N.key(e.maker) for e in ents if e.maker])
+            roots |= {self.root(e.parent) for e in ents if e.parent} | {self.of_name(e.maker) for e in ents if e.maker}
+            roots -= {None}
+        self._names.want_of(seen)
 
     def _org_or_maker(self, r: str) -> bool:
         e = self.book.ents.get(r)
@@ -259,6 +286,11 @@ class Story:
 
     def __init__(self, posts: Sequence[str], by: Dict[str, Member], makers: Optional[Makers] = None) -> None:
         self.by, self.mk = by, makers
+        # v10.17 (0186): each member's words, shingles and link words worked out once (the steps compared every
+        # member with every earlier one, reading their texts again each time: a 60-member story read ~1,800 texts)
+        self._w: Dict[str, List[str]] = {}
+        self._sh: Dict[str, Set[Tuple[str, ...]]] = {}
+        self._lw: Dict[str, Set[str]] = {}
         ids = sorted(posts, key=lambda i: (pub(by[i]), i))
         seen: Dict[Tuple[str, str], str] = {}
         keep: List[str] = []
@@ -266,7 +298,7 @@ class Story:
         for i in ids:                                          # 1. duplicates: same source, same folded text
             k = (by[i].src, fold(text(by[i]))[:400])
             near = next((j for j in keep if by[j].src == by[i].src
-                         and jacc(shingles(text(by[i])), shingles(text(by[j]))) >= 0.6), None)
+                         and jacc(self._shingles(i), self._shingles(j)) >= 0.6), None)
             if k in seen:
                 dup[seen[k]].append(i)
             elif near:                                         # the same source posting it again, a little edited
@@ -282,6 +314,7 @@ class Story:
         self.how: Set[str] = set()
         self._originals()
         self._same()
+        self._w, self._sh, self._lw = {}, {}, {}   # let them go: a page holds hundreds of stories at once
 
     # the maker
     def _maker(self) -> Optional[str]:
@@ -305,13 +338,34 @@ class Story:
     def is_maker(self, o: Optional[str]) -> bool:
         return self.mk is not None and self.mk.is_maker(o, self.maker)
 
+    def _words(self, i: str) -> List[str]:
+        """words(text(member)), once a member."""
+        got = self._w.get(i)
+        if got is None:
+            got = self._w[i] = words(text(self.by[i]))
+        return got
+
+    def _shingles(self, i: str, k: int = 5) -> Set[Tuple[str, ...]]:
+        """shingles(text(member)), once a member."""
+        got = self._sh.get(i)
+        if got is None:
+            w = self._words(i)
+            got = self._sh[i] = {tuple(w[n:n + k]) for n in range(max(0, len(w) - k + 1))}
+        return got
+
+    def _link_words(self, i: str) -> Set[str]:
+        got = self._lw.get(i)
+        if got is None:
+            got = self._lw[i] = {w for u in links(self.by[i]) for w in words(u)}
+        return got
+
     def own_words(self, i: str, before: Sequence[str]) -> int:
         seen: Set[str] = set()
         for j in before:
-            seen |= set(words(text(self.by[j])))
-            seen |= set(w for u in links(self.by[j]) for w in words(u))
-        seen |= set(w for u in links(self.by[i]) for w in words(u))
-        return sum(1 for w in words(text(self.by[i])) if w not in seen)
+            seen |= set(self._words(j))
+            seen |= self._link_words(j)
+        seen |= self._link_words(i)
+        return sum(1 for w in self._words(i) if w not in seen)
 
     def main_link(self, i: str) -> Optional[str]:
         """The page a link post carries: a repository or model page by its title, a link whose last path part is in
@@ -418,13 +472,13 @@ class Story:
             if self.ref_is_original and self.ref not in before:
                 before.append(self.ref)                        # the original is read first
             ow = self.own_words(i, [j for j in before if j != i])
-            if len(words(text(P))) >= 80 or ow >= 15:
+            if len(self._words(i)) >= 80 or ow >= 15:
                 continue
             if ow < 4:
                 self.code[i] = ("same", "nothing-own")
                 continue
             for j in before:
-                if j != i and jacc(shingles(text(P)), shingles(text(by[j]))) >= 0.3:
+                if j != i and jacc(self._shingles(i), self._shingles(j)) >= 0.3:
                     self.code[i] = ("same", "copy")
                     break
             else:
@@ -830,9 +884,11 @@ def one(cur: Any, story_id: str, st: Story, ask: Any, *, run_id: Any, mhash: str
     return {"state": "done", "sheet_opened": opened, "given_up": len(j.given_up), **stored}
 
 
-def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int] = None) -> Dict[str, Any]:
-    """B1-B5 over the News window's stories of MIN_VOICES or more voices (`limit`: at most that many stories built)."""
-    from insight_core.markx import identity, tasks
+def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int] = None,
+          book: Any = None) -> Dict[str, Any]:
+    """B1-B5 over the News window's stories of MIN_VOICES or more voices (`limit`: at most that many stories built).
+    `book`: the entity book as it is now (its entities, names, merges and pins), else read here when needed."""
+    from insight_core.markx import identity
     stories = news_stories(cur, now)
     out: Counter = Counter()
     out["stories"] = len(stories)
@@ -844,12 +900,14 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
     every = sorted({p for ms in todo.values() for p in ms})
     posts = load_members(cur, every)
     eligible = {sid: ms for sid, ms in todo.items()
-                if len({posts[p].src for p in ms if p in posts and posts[p].kind not in tasks.NOT_VOICE}) >= MIN_VOICES}
+                if voice.count((voice.Said(posts[p].src, posts[p].kind) for p in ms if p in posts),
+                               voice.Policy.MARKX) >= MIN_VOICES}
     out["fewer_voices"] = len(todo) - len(eligible)
     if not eligible:
         return dict(out)
     waiting = entities_waiting(cur, sorted({p for ms in eligible.values() for p in ms}))
-    makers = Makers(identity.load_book(cur), mentions_of(cur, sorted({p for ms in eligible.values() for p in ms})))
+    book = identity.load_book(cur, counts=False) if book is None else book   # v10.16: Makers reads no mention count
+    makers = Makers(book, mentions_of(cur, sorted({p for ms in eligible.values() for p in ms})))
     built = 0
     for sid in sorted(eligible, key=lambda s: (-len(eligible[s]), s)):
         ms = eligible[sid]

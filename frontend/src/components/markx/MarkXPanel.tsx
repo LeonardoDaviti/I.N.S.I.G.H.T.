@@ -9,6 +9,7 @@ import { judged, relationWords, whyWords } from '../../lib/markx';
 import { request } from '../../lib/request';   // 0133 v4.2
 import { plural } from '../../lib/format';
 import { postBylineTime } from '../../lib/dates';
+import { bylineText } from '../../lib/byline';
 import MarkXTranslation from './MarkXTranslation';   // 0130 D
 import { TimelineLine } from './MarkXTimeline';       // 0165 D
 
@@ -208,7 +209,7 @@ function BeforeList({ postId, rows, more, timeline }: { postId: string; rows: Ma
             <span className="text-fg">{relationWords(r.relation)}</span>{' '}
             <TextLink to={`/posts/${encodeURIComponent(r.post_id)}`} muted>{r.title || 'a post'}</TextLink>
             <span className="text-fg-3">
-              {r.source ? ` · ${r.source}` : ''}{r.at ? ` · ${postBylineTime(r.at)}` : ''}
+              {r.source ? ` · ${bylineText(r.byline, r.source)}` : ''}{r.at ? ` · ${postBylineTime(r.at)}` : ''}
               {' · '}{r.rule ? RULE_WORDS[r.rule] ?? `rule ${r.rule}` : judged(r.relation, r.p)}
             </span>
             {r.uncertain ? <> <span className="rounded-sm border border-line px-1 text-[0.6875rem] text-fg-3">uncertain</span>{' '}

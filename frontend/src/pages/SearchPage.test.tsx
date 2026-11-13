@@ -173,9 +173,9 @@ describe('search finds stories (issue 0056)', () => {
       snippet: [{ text: 'Moonshot released ', mark: false }, { text: 'Kimi', mark: true }, { text: ' K3.1 today.', mark: false }],
       story: {
         id: POST, voices: 3,
-        sources: [{ id: 's1', name: 'data_secrets' }, { id: SOURCE, name: 'Simon Willison’s Weblog' }, { id: 's3', name: 'r/LocalLLaMA' }],
+        sources: [{ id: 's1', name: 'data_whispers' }, { id: SOURCE, name: 'Simon Willison’s Weblog' }, { id: 's3', name: 'r/LocalLLaMA' }],
         posts: [
-          { id: 'p2', title: 'Вышла Kimi K3.1', url: 'https://t.me/data_secrets/10204', source_id: 's1', source_display_name: 'data_secrets',
+          { id: 'p2', title: 'Вышла Kimi K3.1', url: 'https://t.me/data_whispers/10204', source_id: 's1', source_display_name: 'data_whispers',
             platform: 'telegram', sort_at: '2026-10-23T08:00:00Z', published_at: null, read_at: null, role: 'report' },
           { id: 'p3', title: 'Kimi K3.1 Pro tech blog', url: 'https://reddit.com/r/LocalLLaMA/x', source_id: 's3', source_display_name: 'r/LocalLLaMA',
             platform: 'reddit', sort_at: '2026-10-23T09:00:00Z', published_at: null, read_at: null, role: 'share' },
@@ -186,7 +186,7 @@ describe('search finds stories (issue 0056)', () => {
 
     const row = await screen.findByRole('article', { name: 'Introducing Kimi K3.1 Pro' });
     expect(within(row).getByText('Kimi', { selector: 'mark' })).toBeInTheDocument();
-    const toggle = within(row).getByRole('button', { name: /^covered by 3 · data_secrets, Simon Willison’s Weblog/ });
+    const toggle = within(row).getByRole('button', { name: /^covered by 3 · data_whispers, Simon Willison’s Weblog/ });
     await user.click(toggle);
     expect(within(row).getByRole('link', { name: 'Вышла Kimi K3.1' })).toBeInTheDocument();
     expect(within(row).getByRole('link', { name: 'Kimi K3.1 Pro tech blog' })).toBeInTheDocument();

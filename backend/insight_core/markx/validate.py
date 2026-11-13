@@ -361,10 +361,19 @@ def _stance(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_BACK_NUMBERED = re.compile(r"^(\d+)\. \[", re.M)
+
+
+def back_numbered(input: str) -> int:
+    """How many new posts a back question numbers (back.numbered; here so this module needs only the standard library,
+    0191: the worker imports it)."""
+    _, _, tail = (input or "").partition("NEW POSTS")
+    return len(_BACK_NUMBERED.findall(tail))
+
+
 def _back(a: Dict[str, Any], input: str) -> Optional[str]:
     """0136: each verdict names one of the question's new posts, once."""
-    from insight_core.markx import back
-    n = back.numbered(input)
+    n = back_numbered(input)
     seen = set()
     for p in a["posts"]:
         if not 1 <= p["n"] <= n:
@@ -537,6 +546,57 @@ def _news_sections(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_UNIT_KEY = re.compile(r"^\[(u\d{1,3})\] ", re.M)
+
+
+def _unit_types(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0181: every item the question shows (its "[u<n>] ..." lines) answered exactly once, no other key; a headline
+    of one line and at most UNIT_HEADLINE_WORDS words (+2, as headlines have)."""
+    shown = _UNIT_KEY.findall(input or "")
+    keys = set(shown)
+    seen: set = set()
+    for n, u in enumerate(a["units"]):
+        k = u["key"]
+        if k not in keys:
+            return f"units[{n}] names {k}, not an item of the question"
+        if k in seen:
+            return f"{k} is answered twice"
+        seen.add(k)
+        head = u["headline"].strip()
+        if not head or "\n" in head:
+            return f"{k}: a headline is one line, not empty"
+        if len(head.split()) > schemas.UNIT_HEADLINE_WORDS + 2:
+            return f"{k}: the headline has more than {schemas.UNIT_HEADLINE_WORDS} words"
+    missing = [k for k in shown if k not in seen]
+    if missing:
+        return f"{', '.join(missing[:3])} not answered: every item once"
+    return None
+
+
+_SECTION_KEY = re.compile(r"^\[(s\d{1,2})\] ", re.M)
+
+
+def _news_place(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0197: every new row the question shows (its "[r<n>] ..." lines) placed exactly once, into a section it shows (its
+    "[s<n>] ..." lines) or "new"; no other key."""
+    rows, sections = set(_ROW_KEY.findall(input or "")), set(_SECTION_KEY.findall(input or ""))
+    seen: set = set()
+    for n, p in enumerate(a["placements"]):
+        k, s = p["row_id"], p["section"]
+        if k not in rows:
+            return f"placements[{n}] names {k}, not a new row of the question"
+        if k in seen:
+            return f"{k} is placed twice"
+        seen.add(k)
+        if s != "new" and s not in sections:
+            return f"placements[{n}]: {s} is not a section of the question (one of them, or \"new\")"
+    missing = sorted(rows - seen, key=lambda k: int(k[1:]))
+    if missing:
+        more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        return f"{', '.join(missing[:3])}{more} not placed: every new row exactly once"
+    return None
+
+
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -550,6 +610,8 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "websearch": _websearch,                    # 0171
           "source_judge": _source_judge,              # 0173
           "news_sections": _news_sections,            # 0174
+          "news_place": _news_place,                  # 0197
+          "unit_types": _unit_types,                  # 0181
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

@@ -20,6 +20,9 @@ GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
          "guides": {"<guide id>": {"sha256": "<hex of body>", "body": "<text>", "schema": {..}}},
          "tasks": [{"id": "<uuid>", "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
     Every task's guide is in "guides". No open task: "tasks": [] and "guides": {}. An unknown kind: 400.
+    0176 (additive): an entities task also carries "post": "<uuid>" (a long post is asked a task a window; the worker
+    never puts two tasks of one post in one call). Posts fetched in the last 24 hours are planned and leased first
+    (the fresh lane, up to 3/4 of a lease).
 
 POST /api/markx/answers
     {"worker": "<name>", "executor": "claude-code" | "api" | "api-batch", "model": "<model id>",
@@ -75,7 +78,10 @@ POST /api/markx/decide             asks for a decision run: {"wanted": true, "jo
 S6's routes, the labels tab's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
 --------------------------------------------------------------------------------------------------------------
 GET /api/markx/labels                  the queue (markx/labels.py): {run, cut, total, done, features [{feature, name,
-                                       total, done, population}], next [item ids], answered [item ids], pools}
+                                       total, done, population}], next [item ids], answered [item ids], pools,
+                                       building}; 0182: the queue the jobs process kept after the decision run (never
+                                       built here); building: the newest run's is not kept yet (meanwhile the last kept
+                                       one, or none: total 0, and the item routes answer 503)
 GET /api/markx/labels/items/{id}       one item: {id, feature, name, question, answers, evidence (the judge's input),
                                        extracted (entities), day, split, pool, position, label, verdict}; the verdict
                                        is null until the item has a label
@@ -255,6 +261,9 @@ PLANNED_BY_RUNS = ("relate", "back")
 
 PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests this long before a lease runs it again
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
+FRESH = "fresh:"                    # 0176 A: _PLAN_REST's key prefix for a kind's fresh-lane planner
+FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
+POST_KINDS = ("entities",)          # 0176 B: kinds whose leased tasks carry their post (a long post's windows)
 
 
 def _plan_resting(kind: str) -> bool:
@@ -271,7 +280,11 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     asked are planned for that window first, newest first and PLAN_LIMIT a call, whatever the page's reading window
     (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait, or at
     once when the window it was last planned for is not the page's (0121 Decided 4). Those kinds are leased inside
-    the window first, newest first, then the older tasks still queued (a narrowed window drops none)."""
+    the window first, newest first, then the older tasks still queued (a narrowed window drops none).
+    0176 A, the fresh lane: before any of that, the posts fetched in the last tasks.FRESH_HOURS are planned for read,
+    entities and read3 whatever the queue holds, and a lease gives the fresh tasks up to tasks.FRESH_SHARE of its
+    slots first (repo.lease_tasks). A task of a post's kind carries its post ("post": the worker never asks two windows
+    of one post in one call)."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
@@ -283,6 +296,10 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
         ensure_guides(cur)
         waiting = repo.open_counts(cur, wanted)
         setting = tasks.reading_window(cur)
+        for kind in wanted:   # 0176 A: the fresh lane is planned on every lease (FRESH_REST_SECONDS after a dry one)
+            if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
+                if not tasks.FRESH_PLANNERS[kind](cur):
+                    _PLAN_REST[FRESH + kind] = time.monotonic() + FRESH_REST_SECONDS
         for kind in wanted:
             if kind not in tasks.PLANNERS:
                 continue
@@ -299,13 +316,17 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
                 if not tasks.PLANNERS[kind](cur):
                     _PLAN_REST[kind] = time.monotonic() + PLAN_REST_SECONDS
         leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker, windowed=tasks.WINDOWED,
-                                  days=setting if window is tasks.SETTING else window)
+                                  days=setting if window is tasks.SETTING else window,
+                                  fresh=tasks.FRESH_KINDS, fresh_hours=tasks.FRESH_HOURS, fresh_share=tasks.FRESH_SHARE,
+                                  fresh_dated_days=tasks.FRESH_DATED_DAYS)
         guides = repo.guides(cur, sorted({t["guide"] for t in leased})) if leased else {}
     until = max((t["lease_until"] for t in leased), default=datetime.now(timezone.utc)
                 + timedelta(minutes=repo.LEASE_MINUTES))
     return {"lease_until": _iso(until),
             "guides": {gid: {"sha256": g["sha256"], "body": g["body"], "schema": g["schema"]} for gid, g in guides.items()},
-            "tasks": [{"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]} for t in leased]}
+            "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
+                           **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}))
+                      for t in leased]}
 
 
 class Answer(BaseModel):
@@ -645,23 +666,38 @@ class FlagIn(BaseModel):
     note: Optional[str] = None
 
 
+# 0182: the queue is built by insight-ingestion's jobs process after each decision run and kept (labels.keep); these
+# routes read only the kept queue (labels.kept), never a reading of their own. Not kept yet (the first start after a
+# deploy): "building": true, and the item routes answer 503 until the jobs process has built it (its next pass).
+BUILDING = "The labels queue is being built after the last decision run; it shows within a few minutes"
+
+
+def _kept_or_503(cur: Any) -> "labels.Kept":
+    q = labels.kept(cur)
+    if q.key is None and q.building:
+        raise HTTPException(status_code=503, detail=BUILDING)
+    return q
+
+
 @router.get("/labels")
 def mx_labels_queue():
     with transaction() as cur:
-        return labels.queue_view(cur, labels.queue(cur))
+        q = labels.kept(cur)
+        return {**labels.queue_view(cur, q), "building": q.building}
 
 
 @router.get("/labels/precision")
 def mx_labels_precision(labeller: str = Query("owner", min_length=1, max_length=40)):
     with transaction() as cur:
-        return labels.precision(cur, labels.queue(cur), labeller=labeller)
+        q = labels.kept(cur)
+        return {**labels.precision(cur, q, labeller=labeller), "building": q.building}
 
 
 @router.get("/labels/items/{item_id}")
 def mx_labels_item(item_id: str):
     found = _uuid(item_id)
     with transaction() as cur:
-        got = labels.item_view(cur, labels.queue(cur), str(found)) if found else None
+        got = labels.item_view(cur, _kept_or_503(cur), str(found)) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such item in the queue")
     return got
@@ -671,7 +707,9 @@ def mx_labels_item(item_id: str):
 def mx_labels_answer(body: LabelIn):
     found = _uuid(body.item)
     with transaction() as cur:
-        q = labels.queue(cur)
+        q = _kept_or_503(cur)
+        if found is not None:
+            q.ensure(cur, [str(found)])
         if found is None or str(found) not in q.items:
             raise HTTPException(status_code=404, detail="No such item in the queue")
         try:
@@ -721,10 +759,12 @@ def mx_entities():
 
 
 @router.get("/entities/queue")
-def mx_entity_queue():
+def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    """Issue 0195: `limit` open items (50) from `offset`; `next_offset` the next page's, null at the end (12,572 open
+    items answered 28.9 MB in 14.7 s on the server)."""
     from insight_core.markx import entity_views
     with transaction() as cur:
-        return entity_views.queue(cur)
+        return entity_views.queue(cur, limit=limit, offset=offset)
 
 
 @router.post("/entities/queue/{item_id}")
@@ -756,14 +796,16 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False):
+def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False,
+                   stories_limit: int = Query(50, ge=1, le=100000), loose_limit: int = Query(100, ge=1, le=100000)):
     """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
-    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too."""
+    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too.
+    Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:
-        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True,
-                                       replies=replies) if found else None
+        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True, replies=replies,
+                                       stories_limit=stories_limit, loose_limit=loose_limit) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return got
@@ -783,7 +825,7 @@ def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
     if found is None or not ids:
         raise HTTPException(status_code=404, detail="No such entity or source")
     with transaction() as cur:
-        book = identity.load_book(cur)
+        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:
@@ -808,7 +850,7 @@ def mx_entity_handle(entity_id: str, body: EntityHandleIn):
     if found is None:
         raise HTTPException(status_code=404, detail="No such entity")
     with transaction() as cur:
-        book = identity.load_book(cur, counts=False)
+        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:
@@ -867,8 +909,11 @@ class FactLabelIn(BaseModel):
 def mx_story_view(story_id: str):
     from insight_core.markx import perspective_views
     found = _uuid(story_id)
+    from insight_core.markx import units
     with transaction() as cur:
         got = perspective_views.story_view(cur, str(found)) if found else None
+        if got is not None:   # 0181: the round-ups carrying a member, display only (never a voice or a member)
+            got["roundups"] = units.also_in_story(cur, got["story"]["id"])
     if got is None:
         raise HTTPException(status_code=404, detail="No such Mark X story")
     return got
@@ -946,6 +991,8 @@ def mx_label_edge(body: EdgeLabelIn):
 from insight_core.markx import sources_api as _sources_api; router.include_router(_sources_api.router)  # noqa: E402,E702  0132 B: the source analysis page
 from insight_core.markx import back_api as _back_api; router.include_router(_back_api.router)  # noqa: E402,E702  0136: back in the news
 from insight_core.markx import later_api as _later_api; router.include_router(_later_api.router)  # noqa: E402,E702  0163: later developments
+from insight_core.markx import anchors_api as _anchors_api; router.include_router(_anchors_api.router)  # noqa: E402,E702  0180: anchors in Shadow
+from insight_core.markx import units_api as _units_api; router.include_router(_units_api.router)  # noqa: E402,E702  0181: own round-ups
 from insight_core.markx import track_counts as _track_counts; router.include_router(_track_counts.router)  # noqa: E402,E702  v10.12.1: a topic track's sidebar count (before tracks_api: /tracks/{id})
 from insight_core.markx import tracks_api as _tracks_api; router.include_router(_tracks_api.router)  # noqa: E402,E702  0145: tracks as topics
 from insight_core.markx import scout_api as _scout_api; router.include_router(_scout_api.router)  # noqa: E402,E702  0148: the track scout

@@ -127,7 +127,7 @@ class DisplayTitleTests(unittest.TestCase):
                          "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)")
 
     def test_a_title_cut_with_brackets_by_the_telegram_bridge_is_the_body_first_line(self):
-        # tg.i-c-a.su cuts titles with " [...]" (turboproject, 2026-10-21).
+        # tg.i-c-a.su cuts titles with " [...]" (turbo_bench, 2026-10-21).
         body = "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».\n\nДальше текст."
         for cut in ("🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е [...]",
                     "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е […]"):
@@ -153,11 +153,11 @@ class DisplayTitleTests(unittest.TestCase):
         """Issue 0069 (R5): placeholders told by shape, never by a list of phrases per site."""
         self.assertEqual(display_title("[Photo]", "А теперь наша любимая рубрика..."), "А теперь наша любимая рубрика...")
         self.assertEqual(display_title("[Video]", ""), "[Video]", "a post with no words keeps its placeholder")
-        self.assertEqual(display_title("RT by @steipete: Image", "jason (@jxnlco) Post your best codex billboard"),
+        self.assertEqual(display_title("RT by @toolsmith_pete: Image", "jason (@jxn_co) Post your best codex billboard"),
                          "Post your best codex billboard", "a quoted tweet's byline is no word (issue 0072)")
-        self.assertEqual(display_title("R to @badlogicgames: Gif", ""), "Gif")
-        self.assertEqual(display_title("R to @pankajkumar_dev: x.com/pankajkumar_dev/status…",
-                                       "nitter.net/pankajkumar_dev/status… Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out."),
+        self.assertEqual(display_title("R to @oddlogic_games: Gif", ""), "Gif")
+        self.assertEqual(display_title("R to @ravi_codes: x.com/ravi_codes/status…",
+                                       "nitter.net/ravi_codes/status… Ravi Kumar (@ravi_codes) Gemini 4 Carbon is out."),
                          "Gemini 4 Carbon is out.", "a self-quote reads as the quoted words, not who wrote them (0072)")
         self.assertEqual(display_title("https://lean-lang.org/eval/", "https://lean-lang.org/eval/ Lean Evaluating provers"),
                          "Lean Evaluating provers", "a shared link reads as its preview's words")
@@ -166,24 +166,24 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("Video games I loved", "Body."), "Video games I loved")
 
     def test_a_reply_loses_nitters_prefix(self):
-        self.assertEqual(display_title("R to @pankajkumar_dev: Gemini 4 Carbon*", "Gemini 4 Carbon*"), "Gemini 4 Carbon*")
+        self.assertEqual(display_title("R to @ravi_codes: Gemini 4 Carbon*", "Gemini 4 Carbon*"), "Gemini 4 Carbon*")
 
     def test_a_short_unfinished_first_line_runs_on_to_the_sentence_end(self):
-        tibo = ("RT by @badlogicgames: Day 25/\n\nWe are doubling all usage limits for all Pro 100/200/500 tiers and "
+        reply = ("RT by @oddlogic_games: Day 25/\n\nWe are doubling all usage limits for all Pro 100/200/500 tiers and "
                 "Business Premium, effective today.\n\nWe heard your kind feedback and won’t be reducing usage limits.")
-        self.assertEqual(display_title(tibo, "Day 25/ We are doubling"),
+        self.assertEqual(display_title(reply, "Day 25/ We are doubling"),
                          "Day 25/ We are doubling all usage limits for all Pro 100/200/500 tiers and Business Premium, effective today.")
         self.assertEqual(display_title("Привет!\nКак дела у всех сегодня?", ""), "Привет!", "a finished line stands")
         self.assertEqual(display_title("Ghostty 1.4", "The release notes."), "Ghostty 1.4", "a one-line title stands")
 
     def test_a_whole_title_glued_from_two_lines_ends_where_the_first_line_did(self):
-        """seeallochnaya/4011: the bridge glued two lines into a title it did not cut."""
+        """seeall_notes/4011: the bridge glued two lines into a title it did not cut."""
         body = ("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500 Изменения уже действуют. "
                 "Заодно отменили сокращение лимитов")
         self.assertEqual(display_title("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500Изменения уже действуют.", body),
                          "🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500")
         # A space a tag left in the body is no line break.
-        self.assertEqual(display_title("Huge thanks @_akhaliq! 🙌", "Huge thanks @_akhaliq ! 🙌"), "Huge thanks @_akhaliq! 🙌")
+        self.assertEqual(display_title("Huge thanks @_paperfeed! 🙌", "Huge thanks @_paperfeed ! 🙌"), "Huge thanks @_paperfeed! 🙌")
         self.assertEqual(display_title("Те, кто знают тест «Смит ест спагетти».", "Те , кто знают тест « Смит ест спагетти »."),
                          "Те, кто знают тест «Смит ест спагетти».")
 
@@ -200,16 +200,16 @@ class DisplayTitleTests(unittest.TestCase):
 class TitlesLeftOpenTests(unittest.TestCase):
     # Issue 0070, B6: the titles 0069 B left open, each a class.
     def test_a_link_then_a_list_is_titled_by_the_link_and_a_list_mark_is_no_word(self):
-        title = "RT by @badlogicgames: http://agentville.world\n\n> accessible for AI newcomers\n> voice chat for everything"
+        title = "RT by @oddlogic_games: http://agentville.world\n\n> accessible for AI newcomers\n> voice chat for everything"
         self.assertEqual(display_title(title, "agentville.world > accessible for AI newcomers > voice chat"), "agentville.world")
-        self.assertEqual(display_title("R to @predict_addict: • It penalizes underconfidence\n• and more", ""),
+        self.assertEqual(display_title("R to @forecast_fan: • It penalizes underconfidence\n• and more", ""),
                          "It penalizes underconfidence")
         self.assertEqual(display_title("— модель станет доступна сегодня всем, кроме бесплатников.", ""),
                          "модель станет доступна сегодня всем, кроме бесплатников.")
 
     def test_a_title_ending_in_a_custom_emoji_keeps_it(self):
-        title = "Релизы зарелижены, поэтому время показать папищекам, что я жива💀."
-        body = "Релизы зарелижены, поэтому время показать папищекам, что я жива 💀 . Все подводят какие-то итоги года"
+        title = "Отчёты сданы, поэтому время показать подписчикам, что я жив💀."
+        body = "Отчёты сданы, поэтому время показать подписчикам, что я жив 💀 . Все подводят какие-то итоги месяца"
         self.assertEqual(display_title(title, body), title)
         # A glued line that starts with an emoji and has words is still a line of its own.
         self.assertEqual(display_title("🤖 OpenAI удвоила лимиты за $500🔥Изменения уже действуют.",
@@ -222,7 +222,7 @@ class TitlesLeftOpenTests(unittest.TestCase):
         content = "https://lnkd.in/p/x LinkedIn New Open-Source Glyph for Refusing Consent I just learned that."
         self.assertEqual(display_title("[Media]", content), "LinkedIn New Open-Source Glyph for Refusing Consent I just learned that.")
         self.assertEqual(display_title("[Media]", content, html), "New Open-Source Glyph for Refusing Consent")
-        tweet = html.replace("<b>New Open-Source Glyph for Refusing Consent</b>", "<b>Percy Liang (@percyliang)</b>")
+        tweet = html.replace("<b>New Open-Source Glyph for Refusing Consent</b>", "<b>Jane Roe (@percyleung)</b>")
         self.assertEqual(display_title("[Media]", content, tweet), "I just learned that.", "a tweet's preview: its words, not its author")
 
     def test_a_letters_abbreviation_is_no_sentence_end(self):
@@ -247,7 +247,7 @@ class TitleNotReadTwiceTests(unittest.TestCase):
 
     def test_a_tweets_first_line_is_found_by_its_html_when_the_text_lost_its_breaks(self):
         html = '<p>Canada being &quot;at the forefront of AI&quot;</p>\n<a href="https://x.test/v"><br>Video<br></a>'
-        title, text, body = reading_text('RT by @predict_addict: Canada being "at the forefront of AI"',
+        title, text, body = reading_text('RT by @forecast_fan: Canada being "at the forefront of AI"',
                                          'Canada being "at the forefront of AI" Video', html)
         self.assertEqual((title, text), ('Canada being "at the forefront of AI"', "Video"))
         self.assertEqual(body, '<a href="https://x.test/v"><br>Video<br></a>')

@@ -29,6 +29,7 @@ import json
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.markx import event_types   # the main action's object, through the seam (0190)
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
 
@@ -105,9 +106,7 @@ def _evidence(cur: Any, ms: Sequence[Tuple[I.Mention, str, str]]) -> Dict[Tuple[
                 if isinstance(r, dict):
                     rels[cid].append((N.key(r.get("a")), str(r.get("rel") or ""), N.key(r.get("b"))))
     posts = sorted({m.post_id for m, _, _ in rest})
-    cur.execute("""SELECT post_id::text, reading->'main'->>'object' FROM mx_readings
-                    WHERE post_id = ANY(%s::uuid[]) AND guide = 'read-v2'""", (posts,))
-    obj = {pid: N.key(o) for pid, o in cur.fetchall() if o}
+    obj = {pid: N.key(o) for pid, o in event_types.main_objects(cur, posts).items()}
     for m, comp, head in rest:
         k = (m.post_id, m.guide, m.n)
         if any(rel == "part_of" and a in (comp, N.key(m.span)) and (b == head or b.endswith(" " + head) or head.endswith(" " + b))
@@ -194,8 +193,9 @@ def components_of(book: I.Book, root: str) -> List[str]:
     if not product_like(book, root):
         return []
     members = set(book.cluster(root))
-    out = {book.root(x) for x, e in book.ents.items()
-           if e.level == "thing" and e.parent in members and e.status != "not_entity" and book.root(x) != root}
+    out = {book.root(x) for x in book.with_parent_in(root)   # v10.17 (0186): asked of the book, not walked
+           if (e := book.ents[x]).level == "thing" and e.parent in members and e.status != "not_entity"
+           and book.root(x) != root}
     return sorted(r for r in out if r in book.ents)
 
 

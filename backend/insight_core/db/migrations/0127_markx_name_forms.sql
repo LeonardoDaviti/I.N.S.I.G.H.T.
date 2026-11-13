@@ -1,4 +1,4 @@
--- 0127_markx_name_forms.sql (Stealth v10.16.1, issue 0186: the News page's speed)
+-- 0127_markx_name_forms.sql (Stealth v10.17, issue 0186: the News page's speed)
 --
 -- A page's entity book (identity.lazy_book) reads only what the page asks. The maker of a story (perspectives.Makers)
 -- asks which org or maker an owner's handle names: the entities and aliases whose key squashes (names.squash) to one
