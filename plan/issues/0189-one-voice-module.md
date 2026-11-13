@@ -1,7 +1,8 @@
 # 0189 — One Voice module (v10.17)
 
-Status: **built** (branch `v1017-voice` from v1016 bae0ac0: the module 4cbb2e6, the one fix 6528ae2). Not merged, not
-pushed, not deployed. No migration.
+Status: **built** (branch `v1017-voice` from v1016 bae0ac0: the module 4cbb2e6, the built fix 6528ae2; v1016 591a5c4
+merged in 7770d10; the rest of the class 3adba4a, its fix 5ed01f5). Not merged into v1016, not pushed, not deployed.
+No migration.
 
 ## The problem
 
@@ -123,12 +124,39 @@ The repost tests in Byline differ too, each kept as it was: `is_repost` (source 
 `not_retold_sql` (the stance count's filter) reads no author. Recommendation: one `is_repost` for all three, after
 measuring the suggestions' and stance counts it moves.
 
-## Found, not moved (same class, outside this slice)
+## The merge of v1016 (591a5c4, 0190) — 7770d10
 
-- Sources counted as voices by hand, not through Voice: `markx/back.py` (MIN_SOURCES, three places; its recent
-  posts drop saved pages first, its stories' members do not), `markx/later.py` (two), `markx/entity_views.py`
-  ("voices"), `markx/timeline.py`, and `count(DISTINCT source_id)` named voices in `markx/news.py` and
-  `markx/search.py`. Each should ask `voice.count(..., Policy.MARKX)`, measured one at a time (a saved page may count
-  in some of them today). `story_rules.is_story` counts sources (with reposters), not voices, by design.
-- Two other "RT by" patterns that differ (`\s*`, and "R to" in one group): `utils/voice_rules.py` (shingles) and
-  `utils/series.py`.
+Four conflicts, both slices' intent kept: `db/repo_discover.py` (0190's `pairing, units` import beside Voice's
+keys), `markx/built.py` (0190's `pairing.published_date` and `event_types` lists beside Voice's count),
+`markx/pairing.py` (the docstring names 0190's dates and Voice's basics; 0189's deletions stay deleted),
+`tests/test_markx_event_types.py` (0190's by-id order, and the members' `kind` left out of the comparison). 0190's
+guard `tests/test_dates_owner.py` pinned nine inline Mark IX dates in this slice's files (repo_stories 3, repo_voices
+4, source_stats 2); they now read `pairing.ix_date` / `ordinary_date` (the same SQL text), and the guard pins none.
+`markx/tasks.py` keeps its `pairing` import (0190's `ordinary_date`).
+
+## The rest of the class — 3adba4a (no output change) and 5ed01f5 (the second fix)
+
+Every remaining voice count asks Voice: `markx/back.py` (the story gate, a burst, a trigger), `markx/later.py` (the
+story gate, the quiet rule), `markx/entity_views.py` (a story block's voices), `markx/timeline.py` (a month's
+sources), `markx/news.py` (`entities`), `markx/search.py` (entity cards), `markx/research.py` (`held`'s voices),
+`services/originals_service.py` (a front page's linking sources, saved already out). New: `voice.count_sql(source,
+platform=None)`, MARKX in a query. 3adba4a moved them unchanged (each still counts what it counted).
+
+5ed01f5 makes the ones named voices, or gating on "2+ sources" of a story, count a saved page as none: back's and
+later's Mark IX story gate (`back.sources`; members now carry their saved flag), the entity page's story voices,
+`news.entities`, search's entity voices, research's voices. Kept as source counts (not voices): the bursts and
+triggers (their posts drop saved pages first), the quiet rule (sources naming a subject) and the timeline's month
+line. Effect, both versions over one state of a migrated `insight_ru_show` copy: **no output changes** (back's 884
+stories, later's long-lived stories, `news.entities` identical; no saved page holds a mention there, so entity pages,
+cards and research counts cannot move; its one Mark IX story with a saved member keeps 2+ voices). On the lab copy
+one Mark IX story, a one-account thread plus a saved page of its address, drops from 2 sources to 1 voice and leaves
+back's and later's story set.
+
+"RT by": `voice_rules.shingles` and `series.clean_title` now cut Byline's `RT_BY_TAG` ("RT by @user:"). Their
+behaviour is not RT_BY's and was kept: they cut the tag with any whitespace after it (`\s*`; series also "R to"),
+where `RT_BY` needs exactly one space (Nitter's form). They differ only on a title whose tag is followed by no space
+or by another whitespace.
+
+The guard `tests/test_voice_owner.py` fails on a new `count(DISTINCT …source_id)`, a `len({…source/src…})` or an
+"RT by @" pattern (regex, LIKE, startswith) outside voice.py / byline.py. Pinned, with why (counts of sources, not
+voices): `story_rules.is_story`, `entity_repair`'s span spread, `repo_folders`' folder size.
