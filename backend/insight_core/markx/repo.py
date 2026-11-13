@@ -118,6 +118,17 @@ def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict
     return _one(cur)
 
 
+def tasks_for(cur: Cursor, *, kind: str, guide: str, inputs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{input: the task already asking it} for many questions, in one read (v10.17, 0186: a page asked them one by
+    one)."""
+    by_hash = {sha256_hex(i): i for i in inputs}
+    if not by_hash:
+        return {}
+    cur.execute("SELECT * FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = ANY(%s)",
+                (kind, guide, sorted(by_hash)))
+    return {by_hash[t["input_hash"]]: t for t in _rows(cur)}
+
+
 def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
                 minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None,
                 fresh: Sequence[str] = (), fresh_hours: Optional[int] = None, fresh_share: float = 0.75,
@@ -277,6 +288,16 @@ def valid_call(cur: Cursor, task_id: Id) -> Optional[Dict[str, Any]]:
     """The task's first valid call (the answer that counts), if any."""
     cur.execute("SELECT * FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid LIMIT 1", (task_id,))
     return _one(cur)
+
+
+def valid_calls(cur: Cursor, task_ids: Iterable[Id]) -> Dict[str, Dict[str, Any]]:
+    """{task id: its first valid call} for many tasks, in one read (valid_call's answer for each)."""
+    ids = sorted({str(t) for t in task_ids})
+    if not ids:
+        return {}
+    cur.execute("""SELECT DISTINCT ON (task_id) * FROM mx_calls WHERE task_id = ANY(%s::uuid[]) AND valid
+                    ORDER BY task_id, created_at, ctid""", (ids,))
+    return {str(c["task_id"]): c for c in _rows(cur)}
 
 
 # ---- readings and mentions ------------------------------------------------------------------------

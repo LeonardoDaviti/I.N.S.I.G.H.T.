@@ -281,7 +281,7 @@ class Book:
                 for f in fs:
                     if f:
                         by_form[f].add(r)
-        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))
+        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))   # holds them all
 
     # v10.17 (0186): what a page asks of the book besides ids and keys, here so a page's book answers them by query
     def alias_keys(self, root: str) -> List[str]:
@@ -518,9 +518,12 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
 @dataclass(frozen=True)
 class NameForms:
     """`of(root)`: the cluster's squashed names; `roots(form)`: the admitted clusters one of whose names squashes to
-    `form` (Book.name_forms)."""
+    `form` (Book.name_forms). `want_of(roots)` / `want_roots(forms)`: read many ahead in one go (v10.17, 0186: a
+    page's book asked them one query each, ~500 a News load; a whole book holds them all)."""
     of: Any
     roots: Any
+    want_of: Any = lambda _roots: None
+    want_roots: Any = lambda _forms: None
 
 
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -734,25 +737,42 @@ class LazyBook(Book):
         """As Book.name_forms, read per root and per form (migration 0127's indexes on names.SQUASH_SQL)."""
         cur, of_memo, roots_memo = self._cur, {}, {}
 
+        def want_of(roots: Iterable[Optional[str]]) -> None:
+            todo = {r for r in roots if r not in of_memo}
+            lead = {i: r for r in todo if r for i in self._leading_to(r) if _UUID.match(i)}
+            got: Dict[Optional[str], Set[str]] = {r: set() for r in todo}
+            if lead:
+                cur.execute("""SELECT entity_id::text, key FROM mx_entity_aliases WHERE entity_id = ANY(%(ids)s::uuid[])
+                               UNION ALL SELECT id::text, key FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])""",
+                            {"ids": sorted(lead)})
+                for i, k in cur.fetchall():
+                    got[lead[i]].add(N.squash(k))
+            of_memo.update(got)
+
+        def want_roots(forms: Iterable[str]) -> None:
+            todo = sorted({f for f in forms if f not in roots_memo})
+            got: Dict[str, Set[str]] = {f: set() for f in todo}
+            asked = [f for f in todo if f]
+            if asked:
+                cur.execute(f"""SELECT {N.SQUASH_SQL}, entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = ANY(%(f)s)
+                                UNION SELECT {N.SQUASH_SQL}, id::text FROM mx_entities WHERE {N.SQUASH_SQL} = ANY(%(f)s)""",
+                            {"f": asked})
+                for f, i in cur.fetchall():
+                    r = self.root(i)
+                    if r:
+                        got[f].add(r)
+            self.ents.want({r for rs in got.values() for r in rs})   # what keep() reads, in one go
+            roots_memo.update({f: {r for r in rs if keep(r)} for f, rs in got.items()})
+
         def of(root: Optional[str]) -> Set[str]:
-            if root not in of_memo:
-                ids = [i for i in self._leading_to(root) if _UUID.match(i)] if root else []
-                cur.execute("""SELECT key FROM mx_entity_aliases WHERE entity_id = ANY(%(ids)s::uuid[])
-                               UNION ALL SELECT key FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])""", {"ids": ids})
-                of_memo[root] = {N.squash(k) for (k,) in cur.fetchall()} if ids else set()
+            want_of([root])
             return of_memo[root]
 
         def roots(form: str) -> Set[str]:
-            if form not in roots_memo:
-                got: Set[str] = set()
-                if form:
-                    cur.execute(f"""SELECT entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = %(f)s
-                                    UNION SELECT id::text FROM mx_entities WHERE {N.SQUASH_SQL} = %(f)s""", {"f": form})
-                    got = {r for r in (self.root(i) for (i,) in cur.fetchall()) if r}
-                roots_memo[form] = {r for r in got if keep(r)}
+            want_roots([form])
             return roots_memo[form]
 
-        return NameForms(of, roots)
+        return NameForms(of, roots, want_of, want_roots)
 
 
 def lazy_book(cur: Any) -> LazyBook:

@@ -456,10 +456,14 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
     if rest:
         posts = _row_posts(cur, rest)
         guide = schemas.KINDS["headline"].guide
+        texts = {str(r["id"]): row_headline_input(r, posts) for r in rest}
+        # v10.17 (0186): the rows' tasks and answers in two reads, not two a row
+        tasks_ = repo.tasks_for(cur, kind="headline", guide=guide, inputs={t for t in texts.values() if t})
+        calls = repo.valid_calls(cur, [t["id"] for t in tasks_.values() if t["status"] == "answered"])
         for r in rest:
-            text = row_headline_input(r, posts)
-            task = repo.task_for(cur, kind="headline", guide=guide, input=text) if text else None
-            call = repo.valid_call(cur, task["id"]) if task and task["status"] == "answered" else None
+            text = texts[str(r["id"])]
+            task = tasks_.get(text) if text else None
+            call = calls.get(str(task["id"])) if task and task["status"] == "answered" else None
             words = ((call or {}).get("answer") or {}).get("headline_en") or ""
             if words.strip():
                 own[str(r["id"])] = words.strip()
@@ -537,6 +541,10 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
             for p in ix_rows.get(nid, ()) if p not in {q["post_id"] for q in r["posts"]}}
     left |= {p for nid in gone_rows for p in ix_rows[nid]}
     checks = _checks(cur, sorted(left))
+    mention_of: Dict[str, Dict[str, Any]] = {}   # v10.17 (0186): a post's first non-member membership, once (each
+    for (_s, q), w in why.items():               # removed line walked every membership of the page before)
+        if w["role"] != "member":
+            mention_of.setdefault(q, w)
     heads = headlines(cur, shown)
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
     from insight_core.markx import labels
@@ -565,7 +573,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                 p = posts.get(pid) or {"id": pid}
                 removed.append({**{k: p.get(k) for k in ("id", "title", "source", "kind", "at", "url", "byline")},
                                 "check": checks.get(pid), "now_in": x_of.get(pid),
-                                "mention": next((w for (s, q), w in why.items() if q == pid and w["role"] != "member"), None)})
+                                "mention": mention_of.get(pid)})
         items.append({"id": str(r["id"]), "tag": r["tag"], "headline": heads[str(r["id"])], "first_at": r["first_at"],
                       "voices": r["voices"], "reports": r["reports"], "shares": r["shares"], "mentions": r["mentions"],
                       "score": float(r["score"]), "story": (r["posts"] or [{}])[0].get("story"), "posts": lines,
@@ -582,7 +590,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),
                      "posts": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "byline")},
                                 "check": checks.get(p),
-                                "mention": next((w for (s, q), w in why.items() if q == p and w["role"] != "member"), None)}
+                                "mention": mention_of.get(p)}
                                for p in sorted(ix_rows[nid])]})
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
