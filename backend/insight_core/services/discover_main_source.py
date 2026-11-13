@@ -345,19 +345,21 @@ def _with_sections(cur: Any, sources: Dict[str, Src], sites: Set[str]) -> Dict[s
 
 def _stories(cur: Any, since: datetime) -> Dict[str, Dict[str, Any]]:
     from insight_core.markx import built, event_types
+    from insight_core.utils.post_links import source_kind
     cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {built.PUBLISHED}, s.headline,
-                           s.first_at
+                           s.first_at, so.platform, so.handle_or_url
                       FROM mx_story_posts sp JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
-                      JOIN posts p ON p.id = sp.post_id
+                      JOIN posts p ON p.id = sp.post_id JOIN sources so ON so.id = p.source_id
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s""", (since,))
     rows = cur.fetchall()
     types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, Dict[str, Any]] = {}
-    for sid, pid, src, at, headline, first_at in rows:
+    for sid, pid, src, at, headline, first_at, platform, handle in rows:
         et, origin = types[pid]
         s = out.setdefault(sid, {"headline": headline or "", "first_at": first_at, "posts": {}})
         if pid not in s["posts"] or et is not None:
-            s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin)
+            s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin,
+                                         kind=source_kind(platform, handle))   # a saved page is no voice (0189)
     return out
 
 

@@ -7,6 +7,7 @@ The DB part runs only on a database whose name ends in _test (it empties the mx_
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import random
 import unittest
 import uuid
@@ -195,7 +196,10 @@ class Consumers(unittest.TestCase):
                 self.cur.execute("SAVEPOINT w")
                 rnd, posts, stories, rows = self.world(seed)
                 self.assertEqual(folds.story_folds(self.cur, stories), old_story_folds(self.cur, stories))
-                self.assertEqual(built._load(self.cur, stories), old_built_load(self.cur, stories))
+                # 0189: built's members also carry their source's kind (a saved page is no voice); the types as before
+                now = {s: [{k: v for k, v in m.items() if k != "kind"} for m in ms]
+                       for s, ms in built._load(self.cur, stories).items()}
+                self.assertEqual(now, old_built_load(self.cur, stories))
                 for _ in range(3):
                     lo = T0 + rnd.randint(0, 30 * 24) * H
                     hi = lo + rnd.randint(1, 20 * 24) * H
@@ -203,7 +207,9 @@ class Consumers(unittest.TestCase):
                     self.assertEqual(built._neighbours(self.cur, lo, hi, have), old_neighbours(self.cur, lo, hi, have))
                 self.assertEqual(news_sections._types(self.cur, rows), old_types(self.cur, rows))
                 self.assertEqual(news_sections._types(self.cur, []), old_types(self.cur, []))
-                self.assertEqual(DMS._stories(self.cur, T0 + 5 * 24 * H), old_discover_stories(self.cur, T0 + 5 * 24 * H))
+                kindless = {s: {**x, "posts": {p: replace(post, kind=None) for p, post in x["posts"].items()}}
+                            for s, x in DMS._stories(self.cur, T0 + 5 * 24 * H).items()}   # 0189: and each source's kind
+                self.assertEqual(kindless, old_discover_stories(self.cur, T0 + 5 * 24 * H))
                 self.cur.execute("ROLLBACK TO SAVEPOINT w")
 
     def test_of_posts_by_guide(self):

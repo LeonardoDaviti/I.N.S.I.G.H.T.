@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
+from insight_core.markx import built
 from insight_core.tests._db import db_url, requires_db
 from insight_core.tests.legacy import voice_v1016 as old
 from insight_core.utils import byline, voice
@@ -176,6 +177,30 @@ class Byline(unittest.TestCase):
                         self.assertEqual(byline.retold("x", "feedowner", author, bool(by), rt),
                                          bool(by or (title and title.startswith("RT"))
                                               or (author and author.lower().lstrip("@") != "feedowner")))
+
+
+class BuiltVoices(unittest.TestCase):
+    """markx/built.py counts a story's voices by Voice's MARKX rule: a saved page is no voice (0189's one fix; v10.16
+    counted every member's source)."""
+
+    def test_a_saved_page_is_no_voice(self):
+        P = built.Post
+        posts = [P("a", "s1", T0, None), P("b", "s1", T0, None), P("c", "s2", T0, None, kind="saved")]
+        self.assertEqual(built.voices(posts), 1)
+        self.assertEqual(old.built_voices(posts), 2, "v10.16 counted the saved page")
+        self.assertEqual(built.voices(posts[:2] + [P("d", "s3", T0, None, kind="telegram")]), 2)
+
+    def test_a_saved_leak_is_no_coverage_of_its_own(self):
+        """Two voices leaking a release more than a day before it are coverage of their own; a saved page is none."""
+        from datetime import timedelta
+        P = built.Post
+        h = timedelta(hours=1)
+        release = P("r", "s9", T0, "model_release")
+        leak = P("l1", "s1", T0 - 48 * h, built.LEAK)
+        saved = P("l2", "s2", T0 - 40 * h, built.LEAK, kind="saved")
+        other = P("l3", "s3", T0 - 40 * h, built.LEAK)
+        self.assertTrue(all(x["joins"] for x in built.leaks_inside([release, leak, saved])))
+        self.assertFalse(any(x["joins"] for x in built.leaks_inside([release, leak, other])))
 
 
 if __name__ == "__main__":

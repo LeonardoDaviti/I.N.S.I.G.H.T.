@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
 from insight_core.markx import event_types, folds
+from insight_core.utils import voice
 
 PUBLISHED = "COALESCE(p.published_at, p.surfaced_at, p.fetched_at)"
 JOIN_HOURS = 24          # a leak this close before its release, with no coverage of its own, joins the release
@@ -57,6 +58,7 @@ class Post:
     event_type: Optional[str]          # None: no read-v3 reading yet
     origin: Optional[str] = None
     subjects: FrozenSet[str] = frozenset()   # the entity roots the post names as its subject
+    kind: Optional[str] = None         # its source's kind (post_links.source_kind): a saved page is no voice (0189)
 
 
 def _read(posts: Iterable[Post]) -> List[Post]:
@@ -99,7 +101,7 @@ def leaks_inside(posts: Sequence[Post], join_hours: float = JOIN_HOURS) -> List[
         return []
     leaks = [p for p in _read(posts) if p.event_type == LEAK and p.at < rel]
     early = [p for p in leaks if _hours(p.at, rel) > join_hours]
-    own = len({p.source for p in early}) >= 2
+    own = voices(early) >= 2
     return [{"post": p.id, "hours": _hours(p.at, rel), "joins": not (own and p in early),
              "own_coverage": own and p in early} for p in leaks]
 
@@ -119,8 +121,10 @@ def _related(a: Set[str], b: Set[str], family: Callable[[str], Iterable[str]]) -
     return any(x in set(family(y)) for x in a for y in b) or any(y in set(family(x)) for x in a for y in b)
 
 
-def voices(posts: Sequence[Post]) -> int:
-    return len({p.source for p in posts})
+def voices(posts: Iterable[Post]) -> int:
+    """A story's voices by Voice's MARKX rule over each member's source: a saved page is none (0189: v10.16 counted
+    every member's source, a saved page's too)."""
+    return voice.count((voice.Said(p.source, p.kind) for p in posts), voice.Policy.MARKX)
 
 
 def came_true(stories: Mapping[str, Sequence[Post]], *, connected: Iterable[FrozenSet[str]] = (),
@@ -192,19 +196,22 @@ def in_published_order(cur: Any, posts: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
-    """{story: [{id, source, at (published), event_type, origin}]} over each story's current members."""
+    """{story: [{id, source, kind (its source's), at (published), event_type, origin}]} over each story's current
+    members."""
+    from insight_core.utils.post_links import source_kind
     if not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED}
-                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED}, s.platform, s.handle_or_url
+                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id JOIN sources s ON s.id = p.source_id
                      WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
                 (list(story_ids),))
     rows = cur.fetchall()
     types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for sid, pid, src, at in rows:
+    for sid, pid, src, at, platform, handle in rows:
         et, origin = types[pid]
-        out[sid].append({"id": pid, "source": src, "at": at, "event_type": et, "origin": origin})
+        out[sid].append({"id": pid, "source": src, "kind": source_kind(platform, handle), "at": at, "event_type": et,
+                         "origin": origin})
     return dict(out)
 
 
@@ -316,7 +323,8 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     rows.update(_load(cur, near))
     subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book) if SUBJECT_LINKS else {}
     world = {sid: [Post(id=m["id"], source=m["source"], at=m["at"], event_type=m["event_type"], origin=m["origin"],
-                        subjects=frozenset(subj.get(m["id"], ()))) for m in ms] for sid, ms in rows.items()}
+                        subjects=frozenset(subj.get(m["id"], ())), kind=m["kind"]) for m in ms]
+             for sid, ms in rows.items()}
     links = came_true(world, connected=_connected(cur, sorted(world)), family=_family(book), by_subject=SUBJECT_LINKS)
     firsts = {s: min(ps, key=lambda p: (p.at, p.id)).id for s, ps in world.items() if ps}
     titles = _titles(cur, sorted({x[k] for x in links for k in ("leak", "release")}), firsts)
