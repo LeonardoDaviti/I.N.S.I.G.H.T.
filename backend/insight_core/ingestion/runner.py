@@ -185,8 +185,21 @@ class IngestionRunner:
                 if not acquired:
                     logger.info("Another full ingestion run holds the run lock; skipping")
                     return self._report(request, started, status="skipped_busy")
-                return await self._run(request, progress, started)
-        return await self._run(request, progress, started)
+                try:
+                    return await self._run(request, progress, started)
+                finally:
+                    await self._keep_derived()
+        try:
+            return await self._run(request, progress, started)
+        finally:
+            await self._keep_derived()
+
+    async def _keep_derived(self) -> None:
+        """What the API reads kept (issue 0195) brought up to date after the run: the post statistics of the sources
+        whose posts changed (this run's, an archive's, a Save's), Mark X's totals, the topic tracks' placements
+        (ports.DbFetchStateStore.keep_derived). Never raises."""
+        if hasattr(self.state, "keep_derived"):
+            await self._safely("keep the derived counts", self.state.keep_derived)
 
     # ------------------------------------------------------------------ the run
 

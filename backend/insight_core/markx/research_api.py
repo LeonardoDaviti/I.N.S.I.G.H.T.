@@ -60,7 +60,7 @@ class SettingsIn(BaseModel):
 
 
 @router.post("/research")
-async def mx_research_start(body: ResearchIn, background: BackgroundTasks):
+def mx_research_start(body: ResearchIn, background: BackgroundTasks):
     from insight_core.markx.api import transaction
     with transaction() as cur:
         try:
@@ -100,7 +100,7 @@ def mx_research_settings_put(body: SettingsIn):
 
 
 @router.get("/research/{run_id}")
-async def mx_research_page(run_id: str, background: BackgroundTasks):
+def mx_research_page(run_id: str, background: BackgroundTasks):
     from insight_core.markx.api import transaction
     rid = _id(run_id)
     with transaction() as cur:
@@ -115,7 +115,7 @@ async def mx_research_page(run_id: str, background: BackgroundTasks):
 
 
 @router.post("/research/{run_id}/rerun")
-async def mx_research_rerun(run_id: str, background: BackgroundTasks):
+def mx_research_rerun(run_id: str, background: BackgroundTasks):
     from insight_core.markx.api import transaction
     rid = _id(run_id)
     with transaction() as cur:
@@ -128,7 +128,7 @@ async def mx_research_rerun(run_id: str, background: BackgroundTasks):
 
 
 @router.post("/research/{run_id}/watch")
-async def mx_research_watch(run_id: str, background: BackgroundTasks):
+def mx_research_watch(run_id: str, background: BackgroundTasks):
     from insight_core.markx.api import transaction
     rid = _id(run_id)
     with transaction() as cur:

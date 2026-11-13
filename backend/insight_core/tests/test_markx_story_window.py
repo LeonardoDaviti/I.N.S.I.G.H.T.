@@ -348,6 +348,10 @@ class Page(_Db):
                          "the Mark X story of a, and the Mark IX story of his own post (in no Mark X story); most voices first")
         x = page["stories"][1]
         self.assertEqual((x["original"]["post"], x["original"]["why"]), (a, "root"))
+        # issue 0195: one block listed of two; the timeline still reads both stories
+        one = entity_views.entity_page(self.cur, eid, now=E0 + DAY, stories_limit=1)
+        self.assertEqual((one["stories"], one["stories_total"]), (page["stories"][:1], 2))
+        self.assertEqual(one["timeline"], page["timeline"])
 
     def test_the_sample_offers_ten_a_page_and_thirty_a_day(self):
         eid, a, b = self.person()

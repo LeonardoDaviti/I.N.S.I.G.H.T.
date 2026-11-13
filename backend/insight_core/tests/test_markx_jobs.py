@@ -580,7 +580,8 @@ class PlanningInTheBackground(_Api):
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
-        self.assertEqual({k: v["added"] for k, v in got.items()}, {"check": 7, "cite": 2, "track": 0})
+        self.assertEqual({k: v["added"] for k, v in got.items() if k != "track_places"}, {"check": 7, "cite": 2, "track": 0})
+        self.assertIn("placed", got["track_places"])   # issue 0195: the track placements kept after the planners
 
     def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks
@@ -611,6 +612,18 @@ class PlanningInTheBackground(_Api):
         last = jobs.state(self.cur)["plan"]["last"]
         self.assertTrue(last["ok"], last)
         self.assertEqual(last["kinds"]["cite"]["added"], 1)
+
+    def test_keeping_the_track_placements_never_fails_the_plan(self):
+        from insight_core.markx import tasks, track_kept
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track")}
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.dict(tasks.PLANNERS, planners), \
+                mock.patch.object(track_kept, "refresh", mock.Mock(side_effect=RuntimeError("no places"))):
+            self.jobs_().plan()
+        last = jobs.state(self.cur)["plan"]["last"]
+        self.assertTrue(last["ok"], last)
+        self.assertIn("no places", last["kinds"]["track_places"]["failed"])
+        self.assertEqual(last["kinds"]["track"]["added"], 1)
 
     def test_the_plan_job_is_due_every_5_minutes_before_a_decision_run(self):
         s = _states(plan={"started_at": T0 - timedelta(seconds=301)}, decide={"started_at": T0 - timedelta(hours=2)})

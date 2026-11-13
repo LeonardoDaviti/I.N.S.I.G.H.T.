@@ -32,7 +32,7 @@ const RANKED = { name: 'News', sectionOf, storyLine };
  * 12 Oct" for each earlier week), each in the API's order (by score). On a source's page a
  * row's line first says the source's part ("Started it", "Covered", ...) when the API sends it. A story is its lead's row, its line saying what the score is made of and
  * who covered it, its other posts one click away; reading it marks it as the feed does (0050).
- * One page, loaded when shown; it never reorders under you.
+ * Loaded when shown, a page at a time as you scroll (issue 0195); it never reorders under you.
  */
 export default function NewsList({ scope, helpOpen, onHelpOpenChange, onUnreadDelta }: {
   scope: string;
@@ -44,8 +44,9 @@ export default function NewsList({ scope, helpOpen, onHelpOpenChange, onUnreadDe
   const query = useInfiniteQuery({
     queryKey: newsKey(scope),
     initialPageParam: null as string | null,
-    queryFn: ({ signal }): Promise<FeedPage> => api.getNews({ scope, signal }),
-    getNextPageParam: () => undefined,
+    queryFn: ({ signal, pageParam }): Promise<FeedPage> => api.getNews({ scope, cursor: pageParam, signal }),
+    // Issue 0195: News comes a page at a time (the API's first 50 rows, then next_cursor), loaded ahead as the feed's.
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

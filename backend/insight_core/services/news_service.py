@@ -30,6 +30,7 @@ from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import page_titles
 from insight_core.utils import voice
 from insight_core.utils.addresses import paper_id
+from insight_core.utils.paging import page_of
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
 from insight_core.utils.story_rules import page_key, paper_aliases
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_EDGE, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
@@ -220,7 +221,8 @@ class NewsService:
 
     # ---- News ---------------------------------------------------------------------------
 
-    def news(self, scope: str | None = None) -> Dict[str, Any]:
+    def news(self, scope: str | None = None, *, limit: Optional[int] = None,
+             cursor: Optional[str] = None) -> Dict[str, Any]:
         """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
         begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
         source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
@@ -230,7 +232,11 @@ class NewsService:
         strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
         the origin of its 0050 story, issue 0082), report, share, else mention."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            return self.news_on(cur, scope)
+            answer = self.news_on(cur, scope)
+        if limit is None:
+            return answer
+        items, next_cursor = page_of(answer["items"], limit, cursor)   # issue 0195: News in pages
+        return {**answer, "items": items, "next_cursor": next_cursor}
 
     def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None) -> Dict[str, Any]:
         """`news` on the caller's cursor; `news_id`: that row only."""
@@ -303,24 +309,31 @@ class NewsService:
 
     # ---- Classics -----------------------------------------------------------------------
 
-    def classics(self, scope: str | None = None) -> Dict[str, Any]:
+    def classics(self, scope: str | None = None, *, limit: Optional[int] = None,
+                 cursor: Optional[str] = None) -> Dict[str, Any]:
         """The classics a source of the scope cited and you did not hide: cited again this week
         first (`cited_again`), then most voices, then cited longest. Each {url, post_id (the stored
         post, when it is one), title, voices, days, first_at, last_at, cited_again, citers [{name,
         at}] (each voice once, first citation first), read_at, later_at}. On one source (issue 0077)
         also its own posts that are classics, and `scope_role`: origin (its own post), else report."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            return self.classics_on(cur, scope)
+            return self.classics_on(cur, scope, limit=limit, cursor=cursor)
 
-    def classics_on(self, cur: Any, scope: str | None = None) -> Dict[str, Any]:
-        """`classics` on the caller's cursor."""
+    def classics_on(self, cur: Any, scope: str | None = None, *, limit: Optional[int] = None,
+                    cursor: Optional[str] = None) -> Dict[str, Any]:
+        """`classics` on the caller's cursor. With `limit` (issue 0195), one page from `cursor` (an offset) and
+        `next_cursor` (None at the end); the page's titles only are read."""
         feed_scope = FeedScope.parse(scope)
         now = self.clock()
-        rows = self.repo.classics(cur, feed_scope)
+        rows = sorted(self.repo.classics(cur, feed_scope),
+                      key=lambda r: classic_order(r["last_at"], r["voices"], r["days"], r["url"], now))
+        next_cursor = None
+        if limit is not None:
+            rows, next_cursor = page_of(rows, limit, cursor)
         named = self.repo.source_name(cur, feed_scope.id) if feed_scope.kind == "source" else None
         read = self._read_titles(cur, rows)
         out = []
-        for row in sorted(rows, key=lambda r: classic_order(r["last_at"], r["voices"], r["days"], r["url"], now)):
+        for row in rows:
             title = row["post_title"] if row["post_id"] else row["title"] or read.get(row["url"])
             out.append({
                 "url": row["url"], "post_id": row["post_id"], "title": title or None, "voices": row["voices"],
@@ -331,7 +344,7 @@ class NewsService:
             })
             if feed_scope.kind in ("source", "voice"):   # issue 0077: the source's own page, else a page it cites
                 out[-1]["scope_role"] = "origin" if row["own"] else "report"
-        return {"success": True, "classics": out}
+        return {"success": True, "classics": out, **({} if limit is None else {"next_cursor": next_cursor})}
 
     @staticmethod
     def _citers(citers: Sequence[Dict[str, Any]], source_id: Optional[str], name: Optional[str]) -> List[Dict[str, Any]]:

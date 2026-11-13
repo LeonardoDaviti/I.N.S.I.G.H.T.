@@ -234,12 +234,10 @@ def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
 
 
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
-    """{kind: {status: tasks}} (GET /api/markx/status)."""
-    cur.execute("SELECT kind, status, count(*) FROM mx_tasks GROUP BY kind, status ORDER BY kind, status")
-    out: Dict[str, Dict[str, int]] = {}
-    for kind, status, n in cur.fetchall():
-        out.setdefault(kind, {})[status] = n
-    return out
+    """{kind: {status: tasks}} (GET /api/markx/status): the kept totals (issue 0195, markx/kept_counts.py), equal to
+    the GROUP BY over every task they replace."""
+    from insight_core.markx import kept_counts
+    return kept_counts.queue_counts(cur)
 
 
 # ---- calls ----------------------------------------------------------------------------------------

@@ -336,7 +336,9 @@ class FakeOperations:
 
 
 def run(coro):
-    return asyncio.run(coro)
+    """A route's answer: awaited for an async route, as is for a plain def one (issue 0195: sync routes run in the
+    threadpool, never on the loop)."""
+    return asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
 
 
 class SourceHealthRouteTests(unittest.TestCase):
@@ -385,6 +387,9 @@ class _FakeSourcesService:
         self.sources = sources
 
     def get_all_sources_with_settings(self):
+        return self.sources
+
+    def list_sources(self):   # the catalog reads the list's settings (issue 0195)
         return self.sources
 
 

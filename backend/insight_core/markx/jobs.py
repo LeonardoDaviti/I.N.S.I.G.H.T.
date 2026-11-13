@@ -358,7 +358,24 @@ class Jobs:
                 continue
             log.info("Mark X jobs: %d %s tasks planned in %.1f s", added, kind, seconds)
             out[kind] = {"added": added, "seconds": seconds}
+        out["track_places"] = self._keep_track_places()
         return out
+
+    def _keep_track_places(self) -> Dict[str, Any]:
+        """Issue 0195: after the track planner, the topic tracks whose inputs changed placed again (track_kept.refresh),
+        so the sidebar counts, suggestions and track pages read kept placements while a worker answers. In a savepoint
+        of its own transaction; a failure is logged and recorded as `failed`, never failing the plan (a track not kept
+        is placed live by its readers, never wrong)."""
+        from insight_core.markx import track_kept
+        t = time.monotonic()
+        try:
+            with self._tx() as cur:
+                with cur.connection.transaction():
+                    placed = track_kept.refresh(cur)
+        except Exception as exc:  # noqa: BLE001 - derived; the readers place a track live without it
+            log.exception("Mark X jobs: keeping the track placements failed")
+            return {"failed": str(exc)[:300]}
+        return {"placed": placed, "seconds": round(time.monotonic() - t, 1)}
 
     def labels(self) -> Optional[Dict[str, Any]]:
         """0182: the newest decision run's Labels queue, built and kept (labels.keep) in one REPEATABLE READ

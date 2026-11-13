@@ -163,6 +163,21 @@ class TestSourceSettings(unittest.TestCase):
             cur.execute("SELECT settings->'archive'->'history' FROM sources WHERE id = %s", (self.test_source_id,))
             self.assertEqual(cur.fetchone()[0], history)
 
+    def test_the_list_leaves_out_the_checkpoints_resume_lists(self):
+        """Issue 0195: the checkpoint's candidate URLs and ladder (48% of GET /api/sources and 66% of the archive
+        catalog on the server) are an archive's resume state; the list keeps the checkpoint's counts, a source's own
+        settings the whole of it."""
+        checkpoint = {"mode": "listing", "urls": [f"https://x.invalid/{n}" for n in range(50)],
+                      "ladder": {"items": ["https://x.invalid/1"]}, "collected_posts": 7, "pages_fetched": 3}
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE sources SET settings = %s::jsonb WHERE id = %s",
+                        (json.dumps({"archive": {"status": "partial", "checkpoint": checkpoint}}), self.test_source_id))
+        listed = next(s for s in self.service.list_sources() if s["id"] == self.test_source_id)
+        self.assertEqual(listed["settings"]["archive"]["checkpoint"],
+                         {"mode": "listing", "collected_posts": 7, "pages_fetched": 3})
+        own = self.service.get_source_with_settings(self.test_source_id)["settings"]["archive"]["checkpoint"]
+        self.assertEqual(own, checkpoint)
+
     def test_the_route_answers_the_list(self):
         from types import SimpleNamespace
         import main

@@ -475,6 +475,9 @@ export interface MarkxEntityList {
   queue: number;
 }
 
+/** Issue 0195: how many stories and posts in no story an entity's page lists (GET ...?stories_limit=&loose_limit=). */
+export interface MarkxEntityLimits { stories?: number; loose?: number }
+
 export interface MarkxEntityPage {
   entity: MarkxEntityRef;
   asked: string;
@@ -487,6 +490,9 @@ export interface MarkxEntityPage {
   voices: number;
   stories: MarkxEntityStory[];
   loose: MarkxEntityPost[];
+  /** Issue 0195: how many stories and posts in no story there are; `stories` and `loose` list the first ones. */
+  stories_total?: number;
+  loose_total?: number;
   /** 0144 B4: the loose posts by role: subject or actor, by, venue / source / recommended, mentions. */
   loose_counts?: Record<'report' | 'by' | 'other' | 'mention', number>;
   /** 0144 B1 (absent from an older API). */
@@ -619,6 +625,8 @@ export interface MarkxEntityQueue {
     automatic: boolean; at: string; undone_at: string | null; confidence: number | null; kind?: 'same' | 'rename' }[];
   counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
   accuracy: MarkxEntityAccuracy;
+  /** Issue 0195: `open` is a page; the offset of the next one, null at the end (absent from an older API). */
+  next_offset?: number | null;
 }
 
 // ---- perspectives inside a story and the story sheet (issue 0119 B6-B7) ----------------------------------------
