@@ -77,7 +77,7 @@ say() { echo "==> $(date +%H:%M:%S) $*"; }
 psql_admin() { docker run --rm --network "$NETWORK" "$IMAGE" psql -q -At "$PG/postgres" -c "$1"; }
 
 cleanup() {
-  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" >/dev/null 2>&1 || true   # by name only
+  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" "$RUN_ID-analyze" >/dev/null 2>&1 || true   # by name only
   if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ]; then
     psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" >/dev/null 2>&1 || true
     psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B" >/dev/null 2>&1 || true
@@ -127,6 +127,13 @@ else
     pg_restore -j 8 --no-owner --no-privileges -d "$PG/$SCRATCH_A" /work/copy.dump 2> "$WORK/restore.log" || true
   grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error \
     && { echo "restore failed" >&2; exit 2; } || true
+  # Planner statistics before the copy, so both copies start with the same ones (2026-11-13): pg_restore writes
+  # none, and the file copy takes the catalog as it is but not the activity counters, so autovacuum analyzed the
+  # base's copy and never the head's untouched tables (post_parts, sources: no statistics at all). The head's
+  # API then planned /api/feed blind, every request slow, and markx.api_during_run / _rebuild were "not measured"
+  # or rose on the head side in every run (main against main too), whatever its code.
+  say "analyze $SCRATCH_A"
+  docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$SCRATCH_A"
   say "copy $SCRATCH_A to $SCRATCH_B (file copy)"
   psql_admin "CREATE DATABASE $SCRATCH_B TEMPLATE $SCRATCH_A STRATEGY FILE_COPY"
   rm -f "$WORK/copy.dump"
