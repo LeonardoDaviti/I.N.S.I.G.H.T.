@@ -69,8 +69,12 @@ disagreed adjudicated.
 So of the backlog, the run closes the 1,253 already-one items, keeps apart about 57% of the rule items once asked,
 and merges the type-held pairs two opinions agree on; the rest stays queued because Haiku is unsure (a weak first
 `same`: 77-85% right even with a second opinion) or a guard holds (chain, versions: 94-95% with two opinions). Those
-need a better question, not a lower bar: a three-opinion class (weak first, second and a four-post ask all `same`
->= 0.85) was 18/18 on the first 100 and is being measured on a held-out 150.
+need a better question, not a lower bar. A three-opinion class (a weak first `same`, then the second opinion and a
+four-post ask both `same` >= 0.85) was 18/18 on the first 100 and 26/27 on a held-out 150 (the one a disclosure
+post and a later technical report): 44/45, 97.8%, Wilson 88.4-99.6%, just under the bound; it fires on ~18% of the
+weak items. Not switched on; ~15 more labelled rows decide it.
+
+Haiku cost of the whole measurement (both parts): 0.37 $ (the worker's own `claude -p` call).
 
 Not measured: the rule items' share that merge (their `same` answers wait for the second opinion), and the run's time
 on the server's book (2,000 pairs pooled with the first chunk; a run's 15-minute budget).
