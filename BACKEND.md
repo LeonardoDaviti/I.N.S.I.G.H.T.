@@ -506,9 +506,12 @@ Run them inside the backend image, never on the host:
 TEST_DATABASE_URL=postgresql://insight:insight@postgres:5432/mine_test MIGRATE=1 ./run-tests.sh   # a database of yours
 ```
 
-By default each run creates its own database (`insight_run_<time>_<pid>_test`), migrates it and
-drops it at the end, never the live `insight`. The posts and sources tests make come from one
-factory, `insight_core/tests/_stories.py`.
+By default each run creates its own database (`insight_run_<time>_<pid>_test`) as a copy of a
+migrated template (`insight_tmpl_<hash>_test`, made once per set of migrations) and drops it at the
+end, never the live `insight`. `JOBS=6 ./run-tests.sh` runs the whole suite in 6 shards at once,
+each with its own database. From a worktree, `scripts/test-backend.sh` (same arguments). The posts
+and sources tests make come from one factory, `insight_core/tests/_stories.py`. How agents get a
+real-data database in seconds and when to run what: [WORKFLOW.md](WORKFLOW.md).
 
 ### Manual API Testing
 

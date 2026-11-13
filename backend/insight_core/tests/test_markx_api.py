@@ -29,7 +29,7 @@ import psycopg
 from insight_core.ingestion.credentials import SecretBox
 from insight_core.markx import api, repo, schemas, tasks
 from insight_core.services import registry
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 
 MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
@@ -125,7 +125,7 @@ class _Api(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.cur = self.conn.cursor()
         # a scratch _test database: each test starts from empty mx_* tables and no worker token
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         self.cur.execute("DELETE FROM mx_inc_state")   # 0183: no pass's kept stamp (an empty table's) carries over
         self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
         self.source = insert_scratch_source(self.cur, platform="telegram",
@@ -235,7 +235,7 @@ class Leases(_Api):
         import threading
         import time
         from unittest import mock
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")       # a fresh database: no guide yet
+        clear_tables(self.cur, MX_TABLES)       # a fresh database: no guide yet
         schemas._ready.clear()
         tasks.PLANNERS = {"read": lambda cur, **kw: tasks.plan_posts(cur, "read", **kw)}
         self.post(title="Globex raised $300m")
@@ -266,7 +266,7 @@ class Leases(_Api):
     def test_the_guides_are_ready_only_once_their_load_commits(self):
         from unittest import mock
         from insight_core.db import database
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas._ready.clear()
         with mock.patch.object(schemas, "load_guides", side_effect=RuntimeError("the load failed")):
             with self.assertRaises(RuntimeError):
@@ -434,7 +434,7 @@ class GuidesAndInputs(_Api):
 
     def test_a_builder_called_before_any_request_loads_the_guides_itself(self):
         """S2's and S5's jobs build tasks without the API having run: the first task loads the guides."""
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas._ready.clear()
         task_id = self.task()
         self.assertEqual(self.row(task_id)["guide"], "read-v2")

@@ -25,7 +25,7 @@ import psycopg
 
 from insight_core.markx import happening as HP
 from insight_core.markx import jobs, pairing, repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import happening_784d232 as OLD
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -54,7 +54,7 @@ class _Db(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         self.ents = {}
 

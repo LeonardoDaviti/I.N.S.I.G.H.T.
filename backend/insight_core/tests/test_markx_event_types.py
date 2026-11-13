@@ -19,7 +19,7 @@ import psycopg
 from insight_core.markx import built, event_types as ET, folds, news_sections, repo, schemas
 from insight_core.markx import happening as HP
 from insight_core.services import discover_main_source as DMS
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import happening_784d232 as OLD
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -152,7 +152,7 @@ class Consumers(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         tid, _ = repo.add_task(self.cur, kind="read", guide="read-v2", subject_kind="post", input="seam test")
         self.call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer={})

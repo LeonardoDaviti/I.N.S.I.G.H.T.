@@ -27,7 +27,7 @@ from insight_core.db.repo_search import SearchQuery
 from insight_core.markx import names
 from insight_core.markx import search as mx_search
 from insight_core.services.reader_service import ReaderService
-from insight_core.tests._db import db_url
+from insight_core.tests._db import clear_tables, db_url
 from insight_core.tests.test_markx_api import _Api
 
 FILLER = " ".join(["Длинный текст о других делах и новостях недели."] * 30)
@@ -36,7 +36,7 @@ FILLER = " ".join(["Длинный текст о других делах и но
 class _Search(_Api):
     def setUp(self):
         super().setUp()
-        self.cur.execute("TRUNCATE mx_post_search")
+        clear_tables(self.cur, "mx_post_search")
         self.reader = ReaderService(db_url())
         self.now = datetime.now(timezone.utc)
 
@@ -127,7 +127,7 @@ class FamilyVersionFirst(_Search):
                                    role="compared", hours=10)
         self.next_post = self.about("Обзор Z3.2", f"{FILLER} Zentra Z3.2, not 3.1.", "Zentra Z3.2", self.next, hours=11)
         self.other_post = self.about("Обзор Quillon", f"{FILLER} Quillon 3.1.", "Quillon 3.1", self.quillon, hours=12)
-        self.cur.execute("TRUNCATE mx_post_search")   # the words alone rank: only the entity moves a post
+        clear_tables(self.cur, "mx_post_search")   # the words alone rank: only the entity moves a post
 
     def test_every_spelling_of_the_version_is_first(self):
         want = {*self.pros, self.dup_post, self.version_post, self.flash_post, self.loose}

@@ -21,7 +21,7 @@ from psycopg import sql
 from insight_core.markx import decide as D
 from insight_core.markx import news as N
 from insight_core.markx import repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
 T = datetime(2100, 3, 1, 12, tzinfo=timezone.utc)
@@ -361,7 +361,7 @@ class Job(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
@@ -774,8 +774,8 @@ class Snapshot(unittest.TestCase):
         self.cur = self.other.cursor()
         tables = ", ".join(MX_TABLES + ("mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies",
                                         "mx_inc_tasks"))
-        self.cur.execute(f"TRUNCATE {tables}")
-        self.addCleanup(self.cur.execute, f"TRUNCATE {tables}")
+        clear_tables(self.cur, f"{tables}")
+        self.addCleanup(clear_tables, self.cur, f"{tables}")
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
         self.posts, self.sources = [], []

@@ -17,7 +17,7 @@ import psycopg
 from insight_core.markx import decide as D
 from insight_core.markx import incremental as I
 from insight_core.markx import repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
 T = datetime(2100, 3, 1, 12, tzinfo=timezone.utc)
@@ -51,7 +51,7 @@ class Incremental(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES + STATE)}")
+        clear_tables(self.cur, MX_TABLES + STATE)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 

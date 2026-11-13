@@ -18,7 +18,7 @@ import psycopg
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.markx import candidates as C
 from insight_core.markx import repo, schemas, tasks
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
 T0 = datetime(2100, 1, 1, tzinfo=timezone.utc)   # no other test's post is near
@@ -46,7 +46,7 @@ class _Cands(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.addCleanup(self.conn.rollback)
         self.cur = self.conn.cursor()
-        self.cur.execute(f"TRUNCATE {', '.join(MX_TABLES)}")
+        clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
 
     def source(self, platform="telegram"):

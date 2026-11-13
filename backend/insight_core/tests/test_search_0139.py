@@ -28,7 +28,7 @@ from insight_core.markx import search as mx_search
 from insight_core.services import registry
 from insight_core.services.reader_service import ReaderService
 from insight_core.tests._asgi import call as asgi_call
-from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import clear_tables, db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import _Api, reading
 
 
@@ -140,7 +140,7 @@ RU_READING = reading(lang="ru", main={"headline_en": "Acme released widget3d, a 
 class MarkXLayer(_Api):
     def setUp(self):
         super().setUp()
-        self.cur.execute("TRUNCATE mx_post_search")
+        clear_tables(self.cur, "mx_post_search")
         self.reader = ReaderService(db_url())
 
     def found(self, q: str, **query):

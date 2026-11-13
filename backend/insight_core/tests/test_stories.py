@@ -700,7 +700,7 @@ class KilledJobTests(unittest.TestCase):
         self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
         self.assertEqual(self._setting()[0], {"rules": "older rules"}, "nothing written")
         with psycopg.connect(db_url(), autocommit=True) as conn:   # the server ends the killed session
-            for _ in range(50):
+            for _ in range(600):   # up to 60 s: the server ends the session later on a loaded machine
                 if conn.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (LOCK_KEY,)).fetchone()[0]:
                     conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (LOCK_KEY,))
                     break

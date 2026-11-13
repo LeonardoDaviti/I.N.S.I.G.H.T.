@@ -74,7 +74,7 @@ class FillsFinishTests(unittest.TestCase):
             time.sleep(HELD_SECONDS)
             self.assertTrue(worker.is_alive(), "it waits while the posts are held, rather than stopping")
             other.rollback()
-        worker.join(timeout=30)
+        worker.join(timeout=180)   # minutes under a loaded database (v10.17); a fill that never ends still fails
         self.assertFalse(worker.is_alive())
         return result["filled"]
 
@@ -107,7 +107,7 @@ class FillsFinishTests(unittest.TestCase):
         ReaderService(db_url()).fill_search_vectors()
         started = time.monotonic()
         self.assertEqual(ReaderService(db_url()).fill_search_vectors(), 0)
-        self.assertLess(time.monotonic() - started, 1)
+        self.assertLess(time.monotonic() - started, 10)   # one query; a fill that waits for nothing never returns
 
 
 @requires_test_db
