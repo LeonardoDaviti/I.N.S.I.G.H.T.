@@ -185,8 +185,20 @@ class IngestionRunner:
                 if not acquired:
                     logger.info("Another full ingestion run holds the run lock; skipping")
                     return self._report(request, started, status="skipped_busy")
-                return await self._run(request, progress, started)
-        return await self._run(request, progress, started)
+                try:
+                    return await self._run(request, progress, started)
+                finally:
+                    await self._keep_post_stats()
+        try:
+            return await self._run(request, progress, started)
+        finally:
+            await self._keep_post_stats()
+
+    async def _keep_post_stats(self) -> None:
+        """The post statistics of the sources whose posts changed (this run's, an archive's, a Save's) kept again
+        (issue 0195): source health reads them instead of counting posts per request. Never raises."""
+        if hasattr(self.state, "refresh_post_stats"):
+            await self._safely("keep post statistics", self.state.refresh_post_stats)
 
     # ------------------------------------------------------------------ the run
 

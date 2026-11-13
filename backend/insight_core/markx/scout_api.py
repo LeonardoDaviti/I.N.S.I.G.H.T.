@@ -54,7 +54,7 @@ def _kick(cur: Any, background: BackgroundTasks, folder_id: Optional[str] = None
 
 
 @router.get("/tracks/{track_id}/scout")
-async def mx_track_scout(track_id: str, background: BackgroundTasks):
+def mx_track_scout(track_id: str, background: BackgroundTasks):
     from insight_core.markx import tracks
     from insight_core.markx.api import transaction
     tid = _id(track_id)
@@ -66,7 +66,7 @@ async def mx_track_scout(track_id: str, background: BackgroundTasks):
 
 
 @router.post("/tracks/{track_id}/scout")
-async def mx_track_scout_start(track_id: str, background: BackgroundTasks):
+def mx_track_scout_start(track_id: str, background: BackgroundTasks):
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:

@@ -262,6 +262,16 @@ class DbFetchStateStore:
                 self.repo.replace_validators(cur, source_id, validators)
             conn.commit()
 
+    def refresh_post_stats(self) -> Optional[int]:
+        """Keep the post statistics of the sources whose posts changed (issue 0195, db/repo_post_stats.py)."""
+        from insight_core.db import repo_post_stats
+
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                kept = repo_post_stats.refresh(cur)
+            conn.commit()
+        return kept
+
     def refresh_cadence(self) -> int:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:

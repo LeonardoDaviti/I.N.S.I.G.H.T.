@@ -82,6 +82,8 @@ HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
 # "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
 FAILING_STATUSES = (HealthStatus.ERROR, HealthStatus.BACKOFF)
 OVERVIEW_HEALTH_ROWS = 8
+# The recent jobs the overview and the top bar's running sign list (the scheduler writes ~4-6 rows per cycle).
+OVERVIEW_JOBS = 50
 
 
 def empty_health_summary() -> Dict[str, int]:
@@ -900,11 +902,16 @@ class OperationsService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return {"success": True, **background_work(cur, stories_key=SETTINGS_KEY, stories_lock=LOCK_KEY)}
 
+    def running(self) -> Dict[str, Any]:
+        """What runs now, for the top bar's sign on every page (issue 0195): the recent jobs only, the same list the
+        overview carries (the running fetch and an hour's failed one are read from it), without source health."""
+        return {"success": True, "jobs": self.list_recent_jobs(OVERVIEW_JOBS)}
+
     def get_operations_overview(self) -> Dict[str, Any]:
         # The SQL projection above is what fixed the memory, not this limit, so keep
         # enough history for the alerts panel to still catch a stale failure.
         # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
-        jobs = self.list_recent_jobs(50)
+        jobs = self.list_recent_jobs(OVERVIEW_JOBS)
         health = self.get_source_health()
         summary = health["summary"]
         counts = self.get_database_counts()
@@ -938,43 +945,37 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
+        """{total_posts, enabled_sources}: the posts summed over each source's kept statistics (issue 0195), not a
+        count of every post."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      (SELECT COUNT(*) FROM posts) AS total_posts,
-                      (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
-                    """
-                )
-                row = cur.fetchone()
+                total = repo_post_stats.corpus(cur)["total_posts"]
+                cur.execute("SELECT COUNT(*) FROM sources WHERE enabled = TRUE")
+                enabled = cur.fetchone()[0]
 
         return {
-            "total_posts": int(row[0] or 0),
-            "enabled_sources": int(row[1] or 0),
+            "total_posts": int(total or 0),
+            "enabled_sources": int(enabled or 0),
         }
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
-        """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
+        """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
+        last-24h volume (by the fetched_at index)."""
+        from insight_core.db import repo_post_stats
+
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      MAX(COALESCE(published_at, fetched_at)) AS latest,
-                      MIN(COALESCE(published_at, fetched_at)) AS oldest,
-                      MAX(fetched_at) AS latest_fetch,
-                      COUNT(*) FILTER (WHERE fetched_at >= now() - interval '24 hours') AS last_24h
-                    FROM posts
-                    """
-                )
-                row = cur.fetchone()
+                corpus = repo_post_stats.corpus(cur)
+                cur.execute("SELECT COUNT(*) FROM posts WHERE fetched_at >= now() - interval '24 hours'")
+                last_24h = cur.fetchone()[0]
 
         return {
-            "latest_post_at": iso(row[0]),
-            "oldest_post_at": iso(row[1]),
-            "latest_fetch_at": iso(row[2]),
-            "posts_last_24h": int(row[3] or 0),
+            "latest_post_at": iso(corpus["latest_at"]),
+            "oldest_post_at": iso(corpus["oldest_at"]),
+            "latest_fetch_at": iso(corpus["latest_fetch_at"]),
+            "posts_last_24h": int(last_24h or 0),
         }
 
     # ------------------------------------------------------------------ source health
