@@ -154,3 +154,27 @@ class Handles(_Db):
         self.assertEqual(out["facts"]["placed"], {"rule:handle": 1})
         self.stage(since=self.since)
         self.assertEqual(self.book().root(self.entity_of(p)), self.book().root(person))
+
+
+class KnownSenses(Facts):
+    def test_a_mention_the_answer_puts_in_a_known_sense_is_pinned_there(self):
+        from insight_core.markx import tasks
+        e, other = self._two_senses()
+        p = self.post(3, T0 + 2 * H, title="The Kestrel robot walks")
+        self.mentions(p, ("Kestrel", "product", "subject"))
+        self.stage(since=self.since)
+        self.assertEqual(self.entity_of(p), e)                           # linked by the name
+        switch(self, on=True, known=True)
+        book = self.book()
+        order = [s.entity_id for s in F.known(self.cur, e)]
+        text = F.known_block(self.cur, e) + I.collide_input(book.ents[e], 2, [(p, "Kestrel", "product", None)],
+                                                            tasks.load_posts(self.cur, [p]))
+        self.cur.execute("SELECT id::text FROM mx_calls LIMIT 1")
+        call = self.cur.fetchone()[0]
+        answer = {"senses": [{"m": [1], "known": f"S{order.index(other) + 1}", "what": "a robot family"}]}
+        got = F.apply(self.cur, book, e, [(call, answer)], text, prop=None, run_id=None, guide="collide-v2",
+                      mguide=["ent-v3"])
+        self.assertEqual(got["known"], 1)
+        self.cur.execute("SELECT entity_id::text, by FROM mx_entity_pins WHERE post_id = %s", (p,))
+        self.assertEqual(self.cur.fetchone(), (other, "facts"))
+        self.assertEqual(F.read(self.cur, [e])[e].what, "a startup")     # a known sense's facts never become e's

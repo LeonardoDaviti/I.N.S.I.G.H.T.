@@ -763,6 +763,56 @@ class RuleProposedPairs(_Db):
         self.assertEqual(self.cur.fetchone(), (0.95, "0.97"))
 
 
+class TheUnsureQueue(_Db):
+    """0201: a `same` still queued for a chain (or a weak first answer) is asked alias-v2; its answer decides."""
+
+    def setUp(self):
+        super().setUp()
+        saved = dict(I._BANDS) or dict(I.bands())
+        I._BANDS.clear()
+        I._BANDS.update(dict(saved, third={"on": True, "reasons": ["chain"], "same_min_conf": 0.8,
+                                           "apart_min_conf": 0.9, "apart_relations": ["different"]}))
+        self.addCleanup(lambda: (I._BANDS.clear(), I._BANDS.update(saved)))
+
+    def _decision(self):
+        a, b = Rules.ent(Rules, "a", "Kestrel Coder", "software"), Rules.ent(Rules, "b", "KestrelCoder CLI", "software")
+        book = Rules.book(Rules, a, b)
+        return book, I.Decision(("a", "b"), "queue", "chain", 0.95, "c1", {"relation": "same", "confidence": 0.95},
+                                reasons=("chain",))
+
+    def test_its_answer_merges_keeps_apart_or_stays(self):
+        book, d = self._decision()
+        self.assertEqual(I.third(book, [d], {}), [d])                       # not asked yet: asked
+        I.third(book, [d], {("a", "b"): [("c3", {"relation": "same", "confidence": 0.85})]})
+        self.assertEqual((d.tier, d.reason, d.call_id), ("auto", "third", "c3"))
+        book, d = self._decision()
+        I.third(book, [d], {("a", "b"): [("c3", {"relation": "different", "confidence": 0.95})]})
+        self.assertEqual((d.tier, d.reason), ("apart", "third"))
+        book, d = self._decision()
+        I.third(book, [d], {("a", "b"): [("c3", {"relation": "same", "confidence": 0.7})]})
+        self.assertEqual((d.tier, d.judge["third"]["confidence"]), ("queue", 0.7))   # unsure: stays, with it
+        book, d = self._decision()
+        d.reason, d.reasons = "below_bar", ("below_bar",)
+        self.assertEqual(I.third(book, [d], {}), [])                        # a reason the config doesn't name
+
+    def test_the_question_shows_facts_accounts_and_four_posts(self):
+        ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(10)]
+        for p in ps[:5]:
+            self.mentions(p, ("Kestrel Coder", "software", "subject"))
+        for p in ps[5:]:
+            self.mentions(p, ("Kestrel Coder CLI", "software", "subject"))
+        self.cur.execute("""INSERT INTO mx_handle_refs (post_id, digest, platform, handle, shown, form, role)
+                            VALUES (%s, 'd', 'x', 'kestrelhq', '@kestrelhq', 'quote', 'by')""", (ps[0],))
+        self.stage()
+        a, b = I.pair(self.entity_of(ps[0]), self.entity_of(ps[5]))
+        from insight_core.markx import entity_facts, schemas
+        entity_facts.write(self.cur, self.entity_of(ps[0]), by="haiku", what="a coding agent", kind="software")
+        text = I.alias3_input(self.cur, self.book(), schemas.mention_guides(), a, b)
+        self.assertIn("known facts: a coding agent | kind software", text)
+        self.assertIn("accounts naming it: kestrelhq", text)
+        self.assertEqual(text.count("example:"), 8)
+
+
 class Collisions(_Db):
     def test_a_split_two_runs_make_is_a_question_and_the_owner_applies_it(self):
         ps = [self.post(n, T0 + n * H, title=f"Luma {t} news {n}") for n, t in enumerate(["model", "model", "agent"])]

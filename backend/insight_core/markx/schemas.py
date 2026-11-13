@@ -195,6 +195,16 @@ ALIAS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
+# 0201 (v10.18): alias-v2, the question for pairs alias-v1 left unsure: each side's facts first, then the relation.
+_SIDE = {"type": "object", "properties": {"what": _STR, "kind": {"type": ["string", "null"]},
+                                         "maker": {"type": ["string", "null"]}}}
+ALIAS_V2_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence"],
+    "properties": {"a": _SIDE, "b": _SIDE, "evidence": _STR, "relation": {"enum": ALIAS_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
 # 0165 B: two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
 RENAME_RELATIONS = ["renamed", "successor", "part", "different", "cant_tell"]
 RENAME_SCHEMA = {
@@ -473,6 +483,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
+    Kind("alias3", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the unsure queue's question (each side's facts)
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)

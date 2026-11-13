@@ -292,22 +292,65 @@ def to_ask(cur: Any, book: I.Book, seeds: Optional[Set[str]], guide: Sequence[st
     return out
 
 
-def known_block(cur: Any, eid: str) -> str:
-    """The question's known senses ("S1: what | kind | maker"), the entity's name key's senses with facts."""
+def known(cur: Any, eid: str) -> List[Facts]:
+    """The known senses of the entity's name key, in the order the question numbers them (S1, S2, ...)."""
     cur.execute("SELECT key FROM mx_entities WHERE id = %s", (eid,))
     row = cur.fetchone()
     if not row:
-        return ""
-    ss = [s for s in senses_of(cur, [row[0]]).get(row[0], []) if s.what and not s.generic]
-    if len(ss) < 1:
+        return []
+    return sorted((s for s in senses_of(cur, [row[0]]).get(row[0], []) if s.what and not s.generic),
+                  key=lambda s: s.entity_id)
+
+
+def known_block(cur: Any, eid: str) -> str:
+    """The question's known senses ("S1: what | kind | maker"), the entity's name key's senses with facts."""
+    ss = known(cur, eid)
+    if not ss:
         return ""
     lines = ["KNOWN SENSES"] + [f"S{k}: {s.what} | kind {s.kind or 'other'} | maker {s.maker or 'none'}"
-                                for k, s in enumerate(sorted(ss, key=lambda s: s.entity_id), 1)]
+                                for k, s in enumerate(ss, 1)]
     return "\n".join(lines) + "\n"
 
 
+def place_known(cur: Any, book: I.Book, eid: str, senses: Sequence[Dict[str, Any]], text: str,
+                mguide: Sequence[str], call_id: Optional[str]) -> int:
+    """The answer's mentions put in a known sense (`"known": "S2"`) other than the entity they are linked to: a facts
+    pin there (placed `facts`). Its own switch (`known`), off until measured."""
+    if not config().get("known"):
+        return 0
+    ks = known(cur, eid)
+    if not ks:
+        return 0
+    found = I.match_pick(cur, mguide, eid, text)
+    from insight_core.markx import repo
+    n = 0
+    for s in senses:
+        k = str(s.get("known") or "")
+        if not k[1:].isdigit() or not 1 <= int(k[1:]) <= len(ks):
+            continue
+        to = ks[int(k[1:]) - 1].entity_id
+        if book.root(to) == book.root(eid):
+            continue
+        for x in s.get("m") or []:
+            for pid, mn in found.get(int(x), []):
+                g = repo.current_guide(cur, pid) or (list(mguide) or [None])[0]
+                m = _M(pid, g, mn, eid)
+                if pin(cur, book, m, to, call_id=call_id):
+                    _mark(cur, m, "facts")
+                    n += 1
+    return n
+
+
+@dataclass
+class _M:
+    post_id: str
+    guide: str
+    n: int
+    entity_id: str
+
+
 def apply(cur: Any, book: I.Book, eid: str, answers: Sequence[Tuple[str, Dict[str, Any]]], text: str, *,
-          prop: Optional[Dict[str, Any]], run_id: Any, guide: str) -> Dict[str, int]:
+          prop: Optional[Dict[str, Any]], run_id: Any, guide: str, mguide: Sequence[str] = ()) -> Dict[str, int]:
     """A settled answer to an entity's question (identity.collisions): the facts of each sense; a split (two runs
     agreeing, `prop`) made into sense entities when the bar is met (`split`), else returned for the queue."""
     out: Counter = Counter()
@@ -322,15 +365,23 @@ def apply(cur: Any, book: I.Book, eid: str, answers: Sequence[Tuple[str, Dict[st
     if not senses:
         return dict(out)
     groups = sorted(senses, key=lambda s: -len(s.get("m") or []))
-    home = groups[0]
-    # the entity's own sense: the largest group's facts (generic: the name is a common word there)
-    write(cur, eid, by="haiku", kind=home.get("kind"), maker_name=home.get("maker") or None,
-          maker_id=I.maker_root(book, home.get("maker")) if home.get("maker") else None,
-          what=home.get("what") or "", context=home.get("context") or [], generic=bool(home.get("generic")),
-          sense_key=key, guide=guide, call_id=call_id, confidence=first.get("confidence"), run_id=run_id)
-    out["facts"] += 1
+    # the entity's own sense: the largest group the answer doesn't put in another known sense (its facts are its
+    # own); none: the entity's facts stay as they are
+    ks = [k.entity_id for k in known(cur, eid)]
+
+    def own(s: Dict[str, Any]) -> bool:
+        k = str(s.get("known") or "")
+        return not k[1:].isdigit() or not 1 <= int(k[1:]) <= len(ks) or book.root(ks[int(k[1:]) - 1]) == book.root(eid)
+    home = next((s for s in groups if own(s)), None)
+    if home is not None:   # generic: the name is a common word there
+        write(cur, eid, by="haiku", kind=home.get("kind"), maker_name=home.get("maker") or None,
+              maker_id=I.maker_root(book, home.get("maker")) if home.get("maker") else None,
+              what=home.get("what") or "", context=home.get("context") or [], generic=bool(home.get("generic")),
+              sense_key=key, guide=guide, call_id=call_id, confidence=first.get("confidence"), run_id=run_id)
+        out["facts"] += 1
     # the entity's unplaced mentions were asked: answered (linked by the name as before; a split below pins its own)
     cur.execute("UPDATE mx_mentions SET placed = 'facts' WHERE entity_id = %s AND placed = 'wait'", (eid,))
+    out["known"] += place_known(cur, book, eid, senses, text, mguide, call_id)
     if prop is not None and config().get("split"):
         from insight_core.markx import entity_answers
         got = entity_answers.split(cur, book, {"id": None, "a": eid, "evidence": prop}, by="facts", call_id=call_id)

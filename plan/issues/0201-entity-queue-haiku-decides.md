@@ -78,3 +78,41 @@ Haiku cost of the whole measurement (both parts): 0.37 $ (the worker's own `clau
 
 Not measured: the rule items' share that merge (their `same` answers wait for the second opinion), and the run's time
 on the server's book (2,000 pairs pooled with the first chunk; a run's 15-minute budget).
+
+## Round 2 (2026-11-14): a better question for the unsure queue
+
+**The question: `alias3`, guide `alias-v2`.** For each side it shows the known identity facts (0184: what it is, its
+kind and maker, when there are any), the accounts whose posts name it (their handles), and four example posts with
+wider windows (300/500 characters around the name). Haiku first says what each side is, then compares the two things
+rather than the two strings. It is asked only for a Haiku `same` still queued after both opinions and the chain guard,
+for a reason listed in the config (`entity_bands.json` `third`); `identity.third` decides on its answer.
+
+**Measured, blind, held out.** None of these items was used before. The labels are a blind labeller's, who saw the
+same four posts a side as Haiku.
+
+| Set | Class | n | right | precision | Wilson 95% | automatic? |
+|---|---|---|---|---|---|---|
+| chain-held `same` (40 + 48) | alias-v2 `same` >= 0.8: merge | 77 | 76 | 98.7% | 93.0-99.8% | **yes** (decides 77 of 88) |
+| chain-held | alias-v2 `same` >= 0.9 | 61 | 61 | 100% | 94.1-100% | (contained above) |
+| weak first `same` (40) | alias-v2 `same` >= 0.85 | 15 | 12 | 80% | 54.8-93.0% | no |
+| weak first | alias-v2 `same` >= 0.9 | 6 | 5 | 83% | | no |
+| either | alias-v2 apart | 1 | 1 | | | not measurable (said once in 168) |
+
+The richer question does not settle the weak `same` pairs. The blind labels call 27 of 40 of them the same thing,
+but Haiku stays below 0.85 on most of them even with four posts a side: it is under-confident there, not wrong. So
+below_bar is not listed in `third`. Settling them needs another judge (a stronger model) measured the same way.
+
+**The three-opinion class** (a weak first `same`, then the second opinion and a four-post ask both `same` >= 0.85),
+with about 15 more items labelled: 13 more fired in 100 held-out items, 11 of them right (the other two: two
+different online talks; one edition of a conference series). In total 55/58, 94.8%, Wilson low 85.9%: **fails**.
+It stays off.
+
+**Effect on the backlog.** Of about 1,350 chain-held items, about 87% merge once asked (one `alias3` call each). With
+the round-1 closures, about 2,700 of the ~11,400 open alias items close. What remains is the ~7,500 weak `same` (Haiku
+unsure), the ~1,900 version-held items and the chain items alias-v2 is unsure on.
+
+**Cost.** alias-v2 measured at 0.023-0.027 $ for 40-48 items, i.e. about 0.55 $ per 1,000 items: about 0.75 $ for the
+chain backlog. Every Haiku call in rounds 1 and 2 together: 0.49 $.
+
+A merge by `third` passes the chain guard's two-groups rule but never the six-names-a-cluster cap. The labels judged
+the two names, not every name in the two groups being joined.

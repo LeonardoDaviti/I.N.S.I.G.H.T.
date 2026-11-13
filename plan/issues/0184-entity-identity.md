@@ -349,3 +349,16 @@ first). Cost: collide-v1 + v2 on 60 items 0.07 $.
 **To switch on** (entity_bands.json `facts`): `on` (the readers and the makers), `split` (the splits: bar met on 54),
 `place` (rule 1 and `wait`), `backfill` (cap a run); `collide` to `collide-v2` in `schemas.KINDS`; then the
 realdata-check on main and the reader review.
+
+### Round 2 (2026-11-14): the placement rules, measured
+
+| Rule | Held-out rows | Result | Switch |
+|---|---|---|---|
+| rule 1: a mention whose post states one sense's maker goes to that sense | F1's 235 mentions of names with 2+ senses (labelled senses and makers; a maker "stated" when its name is in the mention's title or words) | places 54; 53/54 right (98.1%, Wilson low 90.2%). The one wrong: an NVIDIA framework mention placed in the NVIDIA sense | **`place`: on** (it acts only once `on` is) |
+| rule 2: a shared source | the same pairs | 140/171 (81.9%) | `rule_context`: off |
+| the handle rule: a first name in a post by the person's confirmed account | the mxreal copy (49k posts): handles learned from 2+ "Name (@handle)" pairs, a post's own X account or a `by` reference | 18 rows, all orgs (the first word of "Unsloth AI", "NVIDIA AI", "Google DeepMind"), no person: the rule (persons only) has no rows to measure | `rule_handle`: off, unmeasured |
+
+**Placing a mention in a known sense (step 4): built, off.** `entity_facts.place_known` reads the answer's
+`"known": "S2"` and pins each such mention to that sense entity (a facts pin, placed `facts`). The answer's facts are
+written for the entity only from a group the answer doesn't put in another known sense. The switch is `known`,
+unmeasured: it needs senses with facts on the server first, which comes once `on` and `split` are switched on.
