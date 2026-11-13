@@ -12,7 +12,9 @@
 # Tuned for throwaway data: fsync, synchronous_commit and full_page_writes off (a crash can corrupt it: rebuild),
 # 8 GB of shared buffers, checkpoints every 30 min or 16 GB of WAL (a CREATE/DROP DATABASE's forced checkpoint only
 # writes buffers to the OS, never waits for the disk), 400 connections, parallel workers for the 32 cores, a large
-# /dev/shm for parallel builds. Same image as insight-db (pgvector/pgvector:pg15), on the compose network as
+# /dev/shm for parallel builds. The planner's settings (work_mem, random_page_cost, effective_cache_size, workers per
+# gather...) stay Postgres' defaults, as on insight-db and the server: with others, a query's plan changed the order
+# of tied rows and test_markx_event_types failed here only (measured). Same image as insight-db (pgvector/pgvector:pg15), on the compose network as
 # insight-scratch-db:5432, its data in the docker volume insight-scratch-db-data (survives a restart, not a crash).
 #
 # Env: SCRATCH_CONTAINER (insight-scratch-db), NETWORK (insight_insight-network), SCRATCH_VOLUME (insight-scratch-db-data).
@@ -40,11 +42,10 @@ up() {
         -e POSTGRES_USER=insight -e POSTGRES_PASSWORD=insight -e POSTGRES_DB=postgres \
         --label insight.scratch=1 "$IMAGE" postgres \
         -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
-        -c shared_buffers=8GB -c effective_cache_size=48GB -c work_mem=32MB -c maintenance_work_mem=2GB \
+        -c shared_buffers=8GB -c maintenance_work_mem=2GB \
         -c max_wal_size=16GB -c min_wal_size=2GB -c checkpoint_timeout=30min -c wal_level=minimal -c max_wal_senders=0 \
         -c max_connections=400 -c max_worker_processes=32 -c max_parallel_workers=24 \
-        -c max_parallel_workers_per_gather=4 -c max_parallel_maintenance_workers=8 \
-        -c random_page_cost=1.1 -c effective_io_concurrency=200 -c autovacuum_max_workers=6 >/dev/null
+        -c max_parallel_maintenance_workers=8 -c autovacuum_max_workers=6 >/dev/null
     fi
   fi
   for _ in $(seq 1 60); do ready && break; sleep 1; done

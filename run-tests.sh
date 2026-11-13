@@ -204,8 +204,9 @@ if [ -z "${TEST_DATABASE_URL:-}" ] && [ "${NO_TEMPLATE:-0}" != "1" ]; then TEMPL
 if [ "$#" -eq 0 ] && [ -z "${TEST_DATABASE_URL:-}" ] && [ "${DISCOVER:-0}" != "1" ]; then
   TIMES="${XDG_CACHE_HOME:-$HOME/.cache}/insight-prep/test-times.tsv"
   mkdir -p "$(dirname "$TIMES")"; touch "$TIMES"
-  OUTDIR="$(mktemp -d)"
-  trap 'drop_all; rm -rf "$OUTDIR"' EXIT
+  OUTDIR="$(dirname "$TIMES")/shards/$$"   # this run's shard logs, kept for reading , not /tmp
+  mkdir -p "$OUTDIR"   # the shard logs of runs that ended go, but the newest 5
+  for d in $(ls -dt "$(dirname "$OUTDIR")"/*/ 2>/dev/null | tail -n +6); do kill -0 "$(basename "$d")" 2>/dev/null || rm -rf "$d"; done
   # modules by last time (unknown ones by file size), dealt to the shard with the least so far
   mapfile -t shards < <(for f in backend/insight_core/tests/test_*.py; do
       m="$(basename "$f" .py)"; t="$(awk -F'\t' -v m="$m" '$1==m {print $2}' "$TIMES" | tail -1)"
@@ -238,7 +239,8 @@ sys.exit(1 if failed else 0)'
   for p in "${pids[@]}"; do wait "$p" || status=1; done
   for i in "${!shards[@]}"; do   # a shard that failed or ended early: its output, less the dots
     if grep -q ' FAILED$' "$OUTDIR/shard$i.log" || ! tail -1 "$OUTDIR/shard$i.log" | grep -q '^MODULE '; then
-      echo "==> shard $i:"; grep -vE '^(MODULE .* OK|[.sxEF]*|-+|Ran [0-9]+ tests? in .*|OK.*)$' "$OUTDIR/shard$i.log" | head -300
+      echo "==> shard $i ($OUTDIR/shard$i.log):"
+      grep -vE '^(MODULE .* OK|[.sxEF]*|-+|Ran [0-9]+ tests? in .*|OK.*)$' "$OUTDIR/shard$i.log" | grep -vE '^(INFO|WARNING|DEBUG) ' | tail -120 || true
     fi
   done
   total=$(cat "$OUTDIR"/shard*.log | awk '/^MODULE / {s += $3} END {print s + 0}')
