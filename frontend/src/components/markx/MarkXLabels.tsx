@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils';
 import { PerspectiveAccuracy } from './MarkXPerspectives';
 
 const QUEUE_KEY = ['markx-labels'] as const;
+const BUILDING = 'Built after each decision run, in the background; it shows within a few minutes.';
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
 function day(iso: string | null | undefined): string {
@@ -158,7 +159,8 @@ function Progress({ queue }: { queue: MarkxLabelQueue }) {
 
 function Queue() {
   const api = useApi();
-  const query = useQuery({ queryKey: [...QUEUE_KEY], queryFn: () => api.getMarkxLabels(), staleTime: 30_000 });
+  const query = useQuery({ queryKey: [...QUEUE_KEY], queryFn: () => api.getMarkxLabels(), staleTime: 30_000,
+    refetchInterval: (q) => (q.state.data?.building ? 30_000 : false) });
   const [current, setCurrent] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const queue = query.data;
@@ -170,11 +172,17 @@ function Queue() {
   if (!queue.run) {
     return <EmptyState title="Nothing to label yet" description="The queue is drawn from the decision job's runs, once the worker has answered." />;
   }
+  if (queue.building && !queue.total) {
+    return <EmptyState title="The queue is being built" description={BUILDING} />;
+  }
   const last = queue.answered.at(-1);
   return (
     <section aria-label="Label">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <Progress queue={queue} />
+        <div>
+          <Progress queue={queue} />
+          {queue.building ? <p className="text-[0.75rem] leading-5 text-fg-3">The last decision run's queue is being built; this is the one before.</p> : null}
+        </div>
         {last && last !== shown ? (
           <Button size="sm" variant="ghost" onClick={() => setCurrent(last)}>last answered</Button>
         ) : null}
@@ -310,7 +318,9 @@ function Precision() {
         ) : null}
       </div>
       {data.features.length ? data.features.map((f) => <FeatureCard key={f.feature} f={f} target={data.target} />) : (
-        <EmptyState className="mt-6" title="No decisions to count yet" />
+        data.building
+          ? <EmptyState className="mt-6" title="The queue is being built" description={BUILDING} />
+          : <EmptyState className="mt-6" title="No decisions to count yet" />
       )}
       {rules.length ? (
         <p className="mt-3 text-[0.8125rem] leading-5 text-fg-2">

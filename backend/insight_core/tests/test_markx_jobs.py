@@ -44,6 +44,29 @@ class Due(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
 
 
+class TheLabelsQueue(unittest.TestCase):
+    """0182: the Labels queue is built here when the newest run's is not kept, after a decision run is due."""
+
+    def test_due_when_missing_after_the_decision_run(self):
+        recent = {"started_at": T0 - timedelta(minutes=10)}
+        self.assertIsNone(jobs.due(_states(decide=recent), T0))
+        self.assertEqual(jobs.due(_states(decide=recent), T0, labels_missing=True), "labels")
+        self.assertEqual(jobs.due(_states(), T0, labels_missing=True), "decide")                # a run first
+        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0, labels_missing=True),
+                         "labels")
+
+    def test_a_failed_build_waits_for_the_gap(self):
+        recent = {"started_at": T0 - timedelta(minutes=10)}
+        failed = {"started_at": T0 - timedelta(minutes=2), "last": {"ok": False, "error": "boom"}}
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True))
+        failed["started_at"] = T0 - timedelta(minutes=6)
+        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True), "labels")
+        ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}}                   # a newer run's
+        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, labels_missing=True), "labels")
+        running = {"started_at": T0 - timedelta(seconds=40), "stage": "building"}
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, labels_missing=True))
+
+
 class TheOrderOfRuns(unittest.TestCase):
     """0121 Decided 3 (the v10.0.1 review's W6): a decision run ran during Mark IX's first-start rebuild, at 0 of
     49,384 posts, and queued 159 checks against stories about to change; one started 29 s before the candidate finder
@@ -156,6 +179,52 @@ class TheRunner(_Api):
         self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
         self.assertEqual(self.cur.fetchone()[0], 1)
         self.assertIsNone(self.runner().tick())                      # nothing due: it ran a moment ago
+
+    def test_the_labels_queue_is_built_right_after_the_run_in_its_own_transaction(self):
+        """0182: the decision run, then its Labels queue (labels.keep) in the same tick; a failed build is recorded
+        apart, the run stays committed and ok, and the build runs again on a later pass."""
+        from insight_core.markx import labels
+        self.post()
+        self.assertEqual(self.runner().tick(), "decide")
+        s = jobs.state(self.cur)
+        self.assertTrue(s["decide"]["last"]["ok"])
+        self.assertTrue(s["labels"]["last"]["ok"], s["labels"]["last"])
+        self.cur.execute("SELECT id::text FROM mx_runs")
+        run, = [r[0] for r in self.cur.fetchall()]
+        self.assertEqual(s["labels"]["last"]["run"], run)
+        self.assertIn("peak_mb", s["labels"]["last"])
+        self.assertFalse(labels.missing(self.cur))
+        self.cur.execute("SELECT run_id::text, stamp FROM mx_label_queues")
+        self.assertEqual(self.cur.fetchall(), [(run, labels.stamp())])
+        self.assertIsNone(self.runner().tick())                      # nothing due
+        # a failed build: the next run is kept, ok, and its queue missing until a later pass builds it
+        with self.conn.transaction():
+            self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '2 hours' WHERE job = 'decide'")
+        with mock.patch.object(labels, "population", side_effect=RuntimeError("boom")), \
+                self.assertLogs(jobs.log, "ERROR"):
+            self.assertEqual(self.runner().tick(), "decide")
+        s = jobs.state(self.cur)
+        self.assertTrue(s["decide"]["last"]["ok"])
+        self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
+        self.assertEqual(self.cur.fetchone()[0], 2)                 # the run is never lost
+        self.assertFalse(s["labels"]["last"]["ok"])
+        self.assertTrue(labels.missing(self.cur))
+        self.assertIsNone(self.runner().tick())                      # within GAP of the failed build
+        with self.conn.transaction():
+            self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '10 minutes' WHERE job = 'labels'")
+        self.assertEqual(self.runner().tick(), "labels")
+        self.assertFalse(labels.missing(self.cur))
+
+    def test_a_first_start_after_a_deploy_builds_the_missing_queue(self):
+        from insight_core.markx import labels
+        self.post()
+        self.runner().tick()
+        with self.conn.transaction():
+            self.cur.execute("TRUNCATE mx_label_queue_items, mx_label_queues")
+            self.cur.execute("DELETE FROM mx_jobs WHERE job = 'labels'")
+        self.assertTrue(labels.missing(self.cur))
+        self.assertEqual(self.runner().tick(), "labels")
+        self.assertFalse(labels.missing(self.cur))
 
     def test_vectors_alone_run_the_candidate_finder(self):
         self.runner().tick()                                        # the first decision run

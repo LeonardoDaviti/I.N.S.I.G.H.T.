@@ -302,6 +302,8 @@ export interface MarkxLabelQueue {
   next: string[];
   answered: string[];
   pools: Record<string, number>;
+  /** 0182: the newest decision run's queue is not built yet (insight-ingestion builds it after each run); absent from an older API. */
+  building?: boolean;
 }
 
 export interface MarkxVerdict {
@@ -370,6 +372,8 @@ export interface MarkxPrecision {
   stale: number;
   unsure: number;
   flags: Record<string, Partial<Record<MarkxFlag, number>>>;
+  /** 0182: as MarkxLabelQueue.building. */
+  building?: boolean;
 }
 
 // ---- 0119 A3: entities (the list, an entity's page, the review queue) ------------------------------------------
