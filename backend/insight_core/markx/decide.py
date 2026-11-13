@@ -223,7 +223,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
                in_window: Optional[Callable[[str], bool]] = None,
                copies: Optional[Dict[str, Set[str]]] = None) -> List[Question]:
     """The first pass's questions (pipeline.plan): checks of every uncertain member and every roundup member of a
-    2+ voice story (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
+    2+ voice story (its first post too when that is a roundup, 0204) (and, with `config.check_threads`, of every member joined by `thread`: one thread can hang
     unrelated replies on a story, which its root's check never reaches). A check shows the story's reports but the
     post, or its other members of any role when the post is its only report (0112 bug 2), never an empty story; for each candidate pair (a, b, cosine; None for a pair not found by meaning), a merge when both
     posts are in 2+ voice stories, a join when one is, a pair when neither; then the story pairs (x, y, centroid
@@ -249,9 +249,12 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
         origin = ms[0].post
         for m in ms:
             p = posts[m.post]
-            if m.post == origin or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
-                continue
             roundup = kinds.get(m.post) == "roundup"
+            # 0204: a roundup is checked even when it is the story's first post: two digests citing one outside page
+            # made a story of their own (Mark IX's citation join), its first digest never asked, its second asked
+            # against the first; the check against the story's other reports demotes it ("digest item"), as any roundup
+            if (m.post == origin and not roundup) or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
+                continue
             if m.why in certain and not roundup:
                 continue
             if p.words < config.min_words and not roundup:

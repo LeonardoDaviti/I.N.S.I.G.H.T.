@@ -62,6 +62,16 @@ class Rules(unittest.TestCase):
         self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "quote"), D.Member("c", "report", "citation")]
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:c"})   # a quote is not a guess
 
+    def test_a_roundup_that_begins_a_story_is_checked_too(self):
+        """0204: two digests citing one outside page were a story of their own, its first digest never asked. A roundup
+        is checked against the story's other reports even when it is the first post; any other first post is not."""
+        self.stories["E"] = [D.Member("e", "report"), D.Member("f", "report", "citation")]
+        tids = {q.tid for q in self.plan(kinds={"e": "roundup", "f": "roundup"}) if q.story == "E"}
+        self.assertEqual(tids, {"check:E:e", "check:E:f"})
+        qs = {q.tid: q for q in self.plan(kinds={"e": "roundup"}) if q.story == "E"}
+        self.assertEqual((qs["check:E:e"].side, qs["check:E:e"].roundup), (("f",), True))
+        self.assertNotIn("check:A:a", {q.tid for q in self.plan()})   # a first post that is no roundup: never
+
     def test_a_member_joined_by_thread_is_checked_but_not_in_the_prototypes_config(self):
         self.stories["A"] = [D.Member("a", "report"), D.Member("b", "report", "citation"), D.Member("c", "report", "thread")]
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
