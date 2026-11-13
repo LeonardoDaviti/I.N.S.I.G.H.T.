@@ -795,6 +795,20 @@ class TheUnsureQueue(_Db):
         d.reason, d.reasons = "below_bar", ("below_bar",)
         self.assertEqual(I.third(book, [d], {}), [])                        # a reason the config doesn't name
 
+    def test_a_weak_same_is_its_own_kind_and_model(self):
+        """v10.18: the weak class is asked as alias4, with the model the config gives it; a `same` whose second
+        opinion is still to come, or disagrees, is never asked here."""
+        I._BANDS["third"] = dict(I._BANDS["third"], reasons=["chain", "below_bar"], kinds={"below_bar": "alias4"})
+        I._BANDS["models"] = {"alias4": "sonnet"}
+        book, d = self._decision()
+        d.reason, d.reasons = "below_bar", ("below_bar",)
+        self.assertEqual((I.third(book, [d], {}), I.third_kind(d)), ([d], "alias4"))
+        self.assertEqual((I.model_for("alias4"), I.model_for("alias3")), ("sonnet", None))
+        d.ask2 = True
+        self.assertEqual(I.third(book, [d], {}), [])
+        d.ask2, d.second = False, {"relation": "part", "confidence": 0.9}
+        self.assertEqual(I.third(book, [d], {}), [])
+
     def test_the_question_shows_facts_accounts_and_four_posts(self):
         ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(10)]
         for p in ps[:5]:

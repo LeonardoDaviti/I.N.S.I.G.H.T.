@@ -283,7 +283,7 @@ class TheKindsAndGuides(unittest.TestCase):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
                                               "headline", "briefing", "translate", "embed",   # embed: S2
                                               "alias", "collide", "embed_name",                # 0119 A1
-                                              "alias2",                                         # 0130 A2
+                                              "alias2", "alias3", "alias4",                     # 0130 A2; 0201
                                               "rename",                                         # 0165 B
                                               "perspective", "sheet", "read3",                         # 0119 B
                                               "relate", "stance",                               # 0131, 0132 B

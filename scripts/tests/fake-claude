@@ -38,10 +38,10 @@ import re
 import sys
 import time
 
-EXPECTED = ["-p", "--model", "haiku", "--tools", "", "--system-prompt", None, "--output-format", "json",
+EXPECTED = ["-p", "--model", None, "--tools", "", "--system-prompt", None, "--output-format", "json",
             "--no-session-persistence", "--strict-mcp-config"]
 # 0171: a websearch call: the web search tool only, allowed without a prompt, its turns capped
-EXPECTED_WEB = ["-p", "--model", "haiku", "--tools", "WebSearch", "--system-prompt", None, "--output-format", "json",
+EXPECTED_WEB = ["-p", "--model", None, "--tools", "WebSearch", "--system-prompt", None, "--output-format", "json",
                 "--no-session-persistence", "--strict-mcp-config", "--allowedTools", "WebSearch", "--max-turns", "8"]
 
 

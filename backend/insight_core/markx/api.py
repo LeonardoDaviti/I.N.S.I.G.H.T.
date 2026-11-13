@@ -325,8 +325,16 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     return {"lease_until": _iso(until),
             "guides": {gid: {"sha256": g["sha256"], "body": g["body"], "schema": g["schema"]} for gid, g in guides.items()},
             "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
-                           **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}))
+                           **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}),
+                           **_model(t["kind"]))
                       for t in leased]}
+
+
+def _model(kind: str) -> Dict[str, str]:
+    """v10.18: {"model": ...} when the kind is asked with another model than the worker's (identity.model_for)."""
+    from insight_core.markx import identity
+    m = identity.model_for(kind)
+    return {"model": m} if m else {}
 
 
 class Answer(BaseModel):

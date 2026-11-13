@@ -126,6 +126,13 @@ def bands() -> Dict[str, Any]:
     return _BANDS
 
 
+def model_for(kind: str) -> Optional[str]:
+    """v10.18: the model a kind's tasks are asked with when it is not the worker's own (entity_bands.json `models`,
+    measured per kind); the worker's --model otherwise."""
+    m = (bands().get("models") or {}).get(kind)
+    return m if isinstance(m, str) else None
+
+
 def band_of(conf: Optional[float]) -> Optional[str]:
     """The band a confidence falls in: the first of the config's `bands` ([name, lower bound], highest first)."""
     if conf is None:
@@ -1640,6 +1647,8 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
             continue
         if not set(d.reasons or (d.reason,)) | {d.reason} <= set(cfg.get("reasons") or ()):
             continue
+        if d.ask2 or (d.second is not None and not second_agrees(d.second)):
+            continue   # the second opinion is still to come, or disagrees: the owner's (never measured here)
         got_ = answers.get(d.pair)
         if not got_:
             need.append(d)
@@ -1655,6 +1664,12 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
         else:
             d.judge = dict(d.judge, third=a)
     return need
+
+
+def third_kind(d: Decision) -> str:
+    """The kind a held `same` is asked as: the config's per-reason kind (`third.kinds`: a class asked with its own
+    model, `models`), else alias3."""
+    return ((bands().get("third") or {}).get("kinds") or {}).get(d.reason, "alias3")
 
 
 def alias3_input(cur: Any, book: Book, guide: Any, a: str, b: str) -> str:
@@ -1984,11 +1999,11 @@ class Asked:
 def asked(cur: Any) -> Asked:
     out = Asked()
     cur.execute("SELECT id::text, kind, a::text, b::text, status, input FROM mx_tasks "
-                "WHERE kind IN ('alias', 'alias2', 'alias3', 'collide') ORDER BY created_at")
+                "WHERE kind IN ('alias', 'alias2', 'alias3', 'alias4', 'collide') ORDER BY created_at")
     for tid, kind, a, b, status, text in cur.fetchall():
         if kind == "alias2" and b is not None:
             out.alias2[pair(a, b)] = (tid, status)
-        elif kind == "alias3" and b is not None:
+        elif kind in ("alias3", "alias4") and b is not None:   # one unsure-queue answer a pair, whichever kind
             out.alias3[pair(a, b)] = (tid, status)
         elif b is not None:
             out.alias[pair(a, b)] = (tid, status)
@@ -2073,6 +2088,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         ask.caps.setdefault("alias", ALIAS_CAP)
         ask.caps.setdefault("alias2", ALIAS2_CAP)
         ask.caps.setdefault("alias3", ALIAS3_CAP)
+        ask.caps.setdefault("alias4", ALIAS3_CAP)
         ask.caps.setdefault("collide", COLLIDE_CAP)
     got = asked(cur)
     answered_pairs: Set[Tuple[str, str]] = set()
@@ -2258,10 +2274,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             for d in need3:
                 if d.pair in got.alias3:
                     continue
-                if ask.added["alias3"] >= ALIAS3_CAP:
-                    ask.waiting["alias3"] += 1
+                kind3 = third_kind(d)
+                if ask.added[kind3] >= ALIAS3_CAP:
+                    ask.waiting[kind3] += 1
                     continue
-                ask.answer("alias3", alias3_input(cur, book, guide, *d.pair), a=d.pair[0], b=d.pair[1])
+                ask.answer(kind3, alias3_input(cur, book, guide, *d.pair), a=d.pair[0], b=d.pair[1])
                 n["added3"] += 1
         t = tick("ask", t)
         for d in decisions:

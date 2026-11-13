@@ -484,6 +484,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
     Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
     Kind("alias3", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the unsure queue's question (each side's facts)
+    Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the same, for a class asked with its own model
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)

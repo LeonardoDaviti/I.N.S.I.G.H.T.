@@ -116,3 +116,49 @@ chain backlog. Every Haiku call in rounds 1 and 2 together: 0.49 $.
 
 A merge by `third` passes the chain guard's two-groups rule but never the six-names-a-cluster cap. The labels judged
 the two names, not every name in the two groups being joined.
+
+## Round 3 (2026-11-14): a stronger judge for the weak `same`; what version-held items are
+
+**Sonnet on the weak class.** The same alias-v2 question is now asked as its own kind, `alias4`, through the worker's
+usual path. The model is a per-kind setting: `entity_bands.json` `models` gives `{"alias4": "sonnet"}`, the server
+names it on each leased task, and the worker asks with it instead of its `--model` (`identity.model_for`; no fork).
+`third.kinds` sends `below_bar` items to `alias4`. Only a weak first `same` with no second opinion qualifies: a
+`same` still waiting for its second opinion, or one whose second opinion disagrees, stays the owner's.
+
+Measured blind on 120 held-out weak items (two fresh sets of 60, labelled with the same four posts a side):
+
+| Class | n | right | precision | Wilson 95% | automatic? |
+|---|---|---|---|---|---|
+| Sonnet `same` >= 0.8: merge (both sets) | 68 | 67 | 98.5% | 92.1-99.7% | **yes** (fires on 68 of 120) |
+| the second set alone | 34 | 34 | 100% | 89.8-100% | |
+| Sonnet `same` >= 0.9 | 38 | 38 | 100% | 90.8-100% | |
+| Sonnet not-`same` (any confidence): apart | 32 | 31 | 96.9% | 84.3-99.4% | no |
+| Sonnet not-`same` >= 0.8: apart | 13 | 13 | 100% | 77.2-100% | no |
+
+The one wrong merge: Sonnet `same` at 0.88 on a pair the label calls another version. The one wrong apart: Sonnet
+`other_version` at 0.65 on a pair the label calls the same.
+
+**Effect and cost.** About 57% of the ~7,500 weak items merge: about 4,250. Sonnet cost 0.54 $ per 60 items, so
+about 9 $ per 1,000 and **about 67 $ to ask the whole weak backlog once**. Haiku costs about 0.55 $ per 1,000 on the
+same question, but scores 12/15. The 43% Sonnet doesn't settle stay queued (its apart is off): about 3,200 items.
+
+**Version-held (~1,900 items), 40-row sample, blind:**
+
+| What they are | Rows |
+|---|---|
+| the same thing, the version written two ways ("P40 24GB" / "P40", "2nd generation" / "second generation", "TPU v7x" / "Ironwood", "macOS 15" / "Sequoia", "Mac OS X Tiger" / "10.4") | 19 |
+| the same thing, one name leaves out a version the posts show is the same (a year on an election, "Ironwood" / "TPU v7 Ironwood") | 11 |
+| a family against one of its versions ("Nemotron 3.5" / "Nemotron 3.5 Bolt", "Transformers.js" / "v4", a survey / its 2026 edition) | 5 |
+| really another version | 2 |
+| part (a model card, a system around a product) | 2 |
+| different | 1 |
+
+30 of 40 are the same thing. But the "written two ways" rows are mostly the same thing under another name (a code
+name against a number, a generation word against a digit, an added size or variant), not a spelling a normaliser can
+read. The deterministic sub-classes are too small and mixed to reach the bar:
+- the same version on both sides with one side adding only a size or a build: 2 rows;
+- an added variant: 3 same against 1 family-vs-version ("Bolt" is its own model);
+- a year on one side: 4 same against 3 family-vs-edition.
+
+So **no normaliser was built**. A judge does better: Haiku's alias-v2 on these 40 says `same` >= 0.85 on 25, 24 of
+them right (96%, Wilson low 80.5%), close to the bar but short. Sonnet, measured the same way, is the next step.

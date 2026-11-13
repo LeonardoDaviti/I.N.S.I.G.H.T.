@@ -149,7 +149,7 @@ EXECUTOR = "claude-code"
 # The 0086 D order: readings and entities, the questions, cards, headlines and the briefing. 0173: the source judge first
 # (the owner tapped "Is this worth it?" and waits for it). 0174: News' sections after the headlines, 0197: the
 # new rows placed into them right after (a worker newer than its server skips an unknown kind: v10.14).
-DEFAULT_KINDS = "source_judge,read,read3,entities,cite,alias,alias2,alias3,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,news_sections,news_place,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics"
+DEFAULT_KINDS = "source_judge,read,read3,entities,cite,alias,alias2,alias3,alias4,collide,rename,check,join,pair,merge,perspective,sheet,connect,relate,back,card,headline,news_sections,news_place,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics"
 # Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
 # a lease takes --lease of them (v10.13.3), at most --parallel calls' worth. --per-call overrides it.
 PER_CALL = "merge=1,collide=6,rename=5,perspective=1,sheet=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1"   # 0197: a placement question one a call (the new rows and the sections in it); 0174: News' sections one question a call (every row of the page in it); 0173: "Is this worth it?" one candidate a call (the owner waits: its kind leased first); 0148: a track scout one a call; 0162: 5 identity pairs a call; 0171: one web search question a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
@@ -726,8 +726,9 @@ def state_dir():
 # ---------------------------------------------------------------------------------------------- the cycle
 
 class Batch:
-    def __init__(self, kind, guide_id, guide, tasks, lease_until):
+    def __init__(self, kind, guide_id, guide, tasks, lease_until, model=None):
         self.kind, self.guide_id, self.guide, self.tasks, self.lease_until = kind, guide_id, guide, tasks, lease_until
+        self.model = model   # v10.18: the server's model for this kind (its config), else --model
 
 
 class Worker:
@@ -851,7 +852,7 @@ class Worker:
         if left < self.a.lease_margin:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
             return None
-        res = call(self.a.claude, self.a.model, system_for(batch.guide), prompt_for(tasks),
+        res = call(self.a.claude, batch.model or self.a.model, system_for(batch.guide), prompt_for(tasks),
                    timeout=self.a.timeout, kind=batch.kind, effort=self.effort(batch.kind),
                    env=PROMPT_CACHE[self.cache_mode(batch.kind)])
         late = datetime.now(timezone.utc) > batch.lease_until
@@ -941,7 +942,8 @@ class Worker:
         if len(batch.tasks) > 1:
             half = len(batch.tasks) // 2
             for part in (batch.tasks[:half], batch.tasks[half:]):
-                self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until), attempt)
+                self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until, batch.model),
+                            attempt)
             return
         t = batch.tasks[0]
         first_line = (t.get("input") or "").split("\n", 1)[0]
@@ -1105,8 +1107,9 @@ class Worker:
             n = self.per_call(k)
             alone = [t for t in ts if self.known_refused(t)]   # 0191: a task a refusal was isolated to: asked alone
             ts = [t for t in ts if not self.known_refused(t)]
-            out += [Batch(k, gid, g, c, until) for c in split_calls(ts, n)]   # 0176: one window of a post a call
-            out += [Batch(k, gid, g, [t], until) for t in alone]
+            model = next((t.get("model") for t in ts if t.get("model")), None)   # v10.18: a kind's model
+            out += [Batch(k, gid, g, c, until, model) for c in split_calls(ts, n)]   # 0176: one window of a post a call
+            out += [Batch(k, gid, g, [t], until, model) for t in alone]
         self.log("leased", kind=kind, tasks=len(tasks), ms=ms, lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
 
@@ -1237,7 +1240,7 @@ class Worker:
             for k in range(0, len(todo), n):
                 if self.stop.is_set():
                     return
-                self.second(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until))
+                self.second(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until, b.model))
         except Exception as e:   # a bug: logged, the cycle stops and exits 1 (never 0)
             self.log("bug", where="batch", kind=b.kind, error=repr(e)[:300])
             self.set_fatal("bug", repr(e)[:300])
