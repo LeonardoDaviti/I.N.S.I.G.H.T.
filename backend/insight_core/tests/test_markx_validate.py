@@ -294,6 +294,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "websearch",                                      # 0171
                                               "source_judge",                                   # 0173
                                               "news_sections",                                  # 0174
+                                              "news_place",                                     # 0197
                                               "unit_types"})                                    # 0181
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):

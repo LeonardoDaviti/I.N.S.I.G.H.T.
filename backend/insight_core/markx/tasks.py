@@ -985,6 +985,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "news_sections":           # 0174: Mark X News' titled sections
         from insight_core.markx import news_sections
         news_sections.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "news_place":              # 0197: new News rows into those sections
+        from insight_core.markx import news_sections
+        news_sections.after_place(cur, task, call_id, answer)
     elif task["kind"] == "unit_types":              # 0181: a round-up's items: type, headline, continues
         from insight_core.markx import units
         units.after_types(cur, task, call_id, answer)
@@ -1240,3 +1243,11 @@ def _plan_news_sections(cur: Cursor, **kw: Any) -> int:   # 0174: News' sections
 
 
 PLANNERS["news_sections"] = _plan_news_sections                            # 0174
+
+
+def _plan_news_place(cur: Cursor, **kw: Any) -> int:   # 0197: the rows added since, into the sections (news_sections.place)
+    from insight_core.markx import news_sections
+    return news_sections.place(cur, **kw)
+
+
+PLANNERS["news_place"] = _plan_news_place                                  # 0197
