@@ -177,9 +177,10 @@ def _signature(rows: Iterable[Dict[str, Any]]) -> Set[str]:
 
 
 def last_written(cur: Any) -> Optional[str]:
-    """The newest run that wrote News rows."""
-    cur.execute("""SELECT n.run_id::text FROM mx_news n JOIN mx_runs r ON r.id = n.run_id
-                    GROUP BY n.run_id, r.started_at, r.finished_at
+    """The newest run that wrote News rows. 0198: the runs newest first, each asked whether it has a row (by
+    mx_news' (run_id, first_at) index), not every row of every run grouped (keep everything: ~100k rows on the server,
+    read on every page load and every look of the jobs runner)."""
+    cur.execute("""SELECT r.id::text FROM mx_runs r WHERE EXISTS (SELECT 1 FROM mx_news n WHERE n.run_id = r.id)
                     ORDER BY r.started_at DESC, r.finished_at DESC NULLS LAST LIMIT 1""")
     row = cur.fetchone()
     return row[0] if row else None
