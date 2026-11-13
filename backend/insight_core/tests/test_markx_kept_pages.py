@@ -215,7 +215,21 @@ class TheJobsKeepNews(_World):
         states["news"]["started_at"] = t0 - timedelta(seconds=30)
         self.assertEqual(jobs.due(states, t0, kept_missing=["news", "labels"]), "labels")
         self.assertIsNone(jobs.due(states, t0, kept_missing=["news"]))
-        self.assertTrue(jobs._kept_may("news", states["news"], t0, jobs.GAP, after_run=True))   # a new run: at once
+        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])   # a new run: at once
+
+    def test_a_view_built_only_when_wanted_is_one_policy(self):
+        """A view whose policy is "wanted" is built (after a run or not) only when its job was wanted since its last
+        build: the same after-run step, no second path."""
+        t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+        states = {j: {"job": j, "wanted_at": None, "started_at": t0 - timedelta(hours=1), "stage": None,
+                      "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
+        states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
+        views = (jobs.KEPT_VIEWS[0], jobs.KeptView("labels", jobs.KEPT_VIEWS[1].missing, when="wanted"))
+        with mock.patch.object(jobs, "KEPT_VIEWS", views):
+            self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])
+            states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
+            self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])
+            self.assertEqual(jobs.due(states, t0, kept_missing=["labels"]), "labels")
 
 
 class TheEntityPageKept(_World):
