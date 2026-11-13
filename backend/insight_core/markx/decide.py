@@ -85,6 +85,7 @@ class Config:
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
     back_open: int = 50             # 0136: no new back question while this many wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
+    roundup_first: bool = True      # 0204: ... and a roundup that is its story's first post
     two_event_guard: bool = True    # a post with several events is demoted, never removed
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
@@ -102,7 +103,7 @@ class Config:
     @staticmethod
     def prototype() -> "Config":
         return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
-                      link_keeps=False, confirm_check=False, document_merges=False)
+                      link_keeps=False, confirm_check=False, document_merges=False, roundup_first=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -253,7 +254,8 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             # 0204: a roundup is checked even when it is the story's first post: two digests citing one outside page
             # made a story of their own (Mark IX's citation join), its first digest never asked, its second asked
             # against the first; the check against the story's other reports demotes it ("digest item"), as any roundup
-            if (m.post == origin and not roundup) or not voice.is_voice(p.kind) or m.post in copies.get(key, ()):
+            if (m.post == origin and not (roundup and config.roundup_first)) or not voice.is_voice(p.kind) \
+                    or m.post in copies.get(key, ()):
                 continue
             if m.why in certain and not roundup:
                 continue
