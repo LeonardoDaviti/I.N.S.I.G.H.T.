@@ -52,11 +52,13 @@ function when(issue: Pick<MarkxRoundupIssue, 'span' | 'from' | 'until'>, offsetM
 
 function Issue({ issue, offset }: { issue: MarkxRoundupIssue; offset: number }) {
   const items = issue.items ?? [];
+  const left = Object.values(issue.left_out ?? {}).reduce((a, b) => a + b, 0);
   return (
     <div data-roundup-issue={issue.id}>
       <p className="text-[0.75rem] text-fg-2">
         {issue.span === 'day' ? 'Daily' : 'Weekly'} · {when(issue, offset)} · {plural(issue.roundups, 'round-up')} ·{' '}
         {plural(issue.count, 'item')}{issue.version > 1 ? ` · version ${issue.version}` : ''}
+        {left ? ` · ${left} left out (not news)` : ''}
       </p>
       {items.length ? <ul aria-label="Round-up items">{items.map((i) => <Row key={i.key} item={i} />)}</ul>
         : <p className="text-[0.8125rem] text-fg-2">No round-up items in this {issue.span}.</p>}

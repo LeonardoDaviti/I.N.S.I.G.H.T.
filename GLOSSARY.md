@@ -49,5 +49,6 @@ post date); its own dates are never rewritten.
 
 **Unit** — what is compared: a post, or one item (span) of a round-up: (post, n, span, links, text, at), stored
 (`mx_units`). A unit is attached (Pairing's *attach* relation) to the stored post it links and the story holding it,
-as a digest item: the story shows "also in round-ups", and the own round-up (the digest) counts its curators. A unit
-is never a voice, a member, a mention or a News count.
+as a digest item: the story shows "also in round-ups", and the own round-up (the digest) counts its curators. The
+worker gives each unit a type (the event types, with `promo`), a short headline and whether it only continues the
+unit before; an own round-up keeps the news types. A unit is never a voice, a member, a mention or a News count.

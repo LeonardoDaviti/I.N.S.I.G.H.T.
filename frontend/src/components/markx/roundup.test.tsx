@@ -12,7 +12,7 @@ import { renderWithProviders } from '../../test/render';
 
 const DAILY: MarkxRoundupIssue = {
   id: 7, span: 'day', from: '2100-06-01T20:00:00+00:00', until: '2100-06-02T20:00:00+00:00', version: 1,
-  built_at: '2100-06-03T03:00:00+00:00', roundups: 2, units: 3, count: 2,
+  built_at: '2100-06-03T03:00:00+00:00', roundups: 2, units: 3, count: 2, left_out: { promo: 3, other: 2 },
   items: [
     { key: 'mx:s1', kind: 'mx_story', ref: 's1', headline: 'Acme releases Widget 4.1', curators: 2, issues: 2,
       only_roundups: false, at: '2100-06-02T10:00:00+00:00', posts: ['p1'],
@@ -36,7 +36,7 @@ describe('Own round-up (0181)', () => {
     vi.spyOn(markxRoundupApi, 'issues').mockResolvedValue(ISSUES);
     renderWithProviders(<MarkXRoundup />, { api: makeFakeApi({}) });
     const region = await screen.findByRole('region', { name: 'Own round-up' });
-    expect(await within(region).findByText(/Daily · 2 Jun · 2 round-ups · 2 items/)).toBeInTheDocument();
+    expect(await within(region).findByText(/Daily · 2 Jun · 2 round-ups · 2 items · 5 left out \(not news\)/)).toBeInTheDocument();
     const rows = within(within(region).getByRole('list', { name: 'Round-up items' })).getAllByRole('listitem');
     expect(rows[0]).toHaveTextContent('Acme releases Widget 4.1');
     expect(rows[0]).toHaveTextContent('2 curators · Example Digest, Example Links');
