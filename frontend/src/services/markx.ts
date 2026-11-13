@@ -682,6 +682,8 @@ export interface MarkxStoryView {
   members: MarkxPerspectiveLine[];
   counts: { members: number; worth: number; same: number; copies: number; unjudged: number };
   posts: Record<string, MarkxStoryPost>;
+  /** 0181: the round-ups carrying a member as an item (display only, never a voice). */
+  roundups?: { post: string; source: string | null; title: string | null; n: number; item: string }[];
 }
 
 export interface MarkxRate {

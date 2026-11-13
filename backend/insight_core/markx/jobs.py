@@ -177,6 +177,32 @@ def _happenings_step(cur: Any) -> Dict[str, Any]:
         return {"error": str(exc)[:300]}
 
 
+def _units_step(cur: Any) -> Dict[str, Any]:
+    """0181: one step of the round-up split (units.backfill: new and never-split posts newest first, then the attach
+    of the recent round-ups again) in a savepoint of the candidates run: a failure is logged and leaves the
+    candidates run standing (the next run tries again)."""
+    from insight_core.markx import units
+    try:
+        with cur.connection.transaction():
+            return units.backfill(cur)
+    except Exception as exc:
+        log.exception("Mark X candidates: the units step failed")
+        return {"error": str(exc)[:300]}
+
+
+def _issues_step(cur: Any, now: datetime) -> Dict[str, Any]:
+    """0181 (owner 2026-11-12): the own round-ups of the closed days and weeks not built yet (units.issues_step), after
+    the units step, in a savepoint of the candidates run (its own process, never the API): a failure is logged and
+    leaves the candidates run standing."""
+    from insight_core.markx import units
+    try:
+        with cur.connection.transaction():
+            return units.issues_step(cur, now)
+    except Exception as exc:
+        log.exception("Mark X candidates: the own round-ups step failed")
+        return {"error": str(exc)[:300]}
+
+
 def _json(value: Any) -> str:
     import json
     return json.dumps(value, default=str)
@@ -236,6 +262,8 @@ class Jobs:
                 cur.execute("UPDATE mx_candidate_posts SET found_at = %s WHERE post_id = ANY(%s::uuid[])", (started, ids))
                 backfill = candidates.backfill(cur, started)   # 0144 A2: the story window's next step, newest first
                 keyed = _happenings_step(cur)                   # 0175: stored happening keys, a resumable step
+                split = _units_step(cur)                        # 0181: round-ups split into units, a resumable step
+                built = _issues_step(cur, started)              # 0181: the closed days' and weeks' own round-ups
         except Exception as exc:   # the posts wait for the next run
             log.exception("Mark X candidates: the run failed; the posts wait for the next")
             self._finish("candidates", {"ok": False, "error": str(exc)[:500], "mentions_since": since_text,
@@ -247,7 +275,9 @@ class Jobs:
                                     "mentions_since": (started - MENTIONS_MARGIN).isoformat(),
                                     **({"more": True} if more else {}),
                                     **({"backfill": backfill} if backfill else {}),
-                                    **({"happenings": keyed} if keyed else {})}, again=more)
+                                    **({"happenings": keyed} if keyed else {}),
+                                    **({"units": split} if split else {}),
+                                    **({"issues": built} if built else {})}, again=more)
         return counts
 
     def plan(self) -> Dict[str, Any]:

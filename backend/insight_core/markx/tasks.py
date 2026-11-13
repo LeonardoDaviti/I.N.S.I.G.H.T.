@@ -879,6 +879,20 @@ def _note_happening(cur: Cursor, task: Dict[str, Any]) -> None:
         happening.note(cur, [str(task["a"])])
 
 
+def _note_units(cur: Cursor, task: Dict[str, Any]) -> None:
+    """0181: a read-v2 reading landed: the post split again now (a reading may make it a round-up: units.note), in a
+    savepoint: a failure is logged and the reading stands (the candidates job's step splits it later)."""
+    from insight_core.markx import units
+    if task["guide"] != units.READING_GUIDE:
+        return
+    try:
+        with cur.connection.transaction():
+            units.note(cur, [str(task["a"])])
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Mark X: splitting a read post into units failed")
+
+
 def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> None:
     """The rows a task's first valid answer adds: a post's reading (mx_readings) or its entities (mx_mentions)."""
     if task["a"] is None:
@@ -889,6 +903,7 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
                          events=answer.get("events"), lang=answer.get("lang"), headline=main.get("headline_en"),
                          reading=answer)
         _note_happening(cur, task)
+        _note_units(cur, task)
     elif task["kind"] == "relate":                 # 0131: asked until it has graph.RELATE_RUNS valid answers
         from insight_core.markx import graph
         graph.after_answer(cur, task)

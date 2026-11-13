@@ -13,9 +13,11 @@ The interface (what a caller must know):
   - `admits_stories(policy, cos, voices_a, voices_b)` and `story_pairs(cur, policy, groups, posts)`: the same for
     two stories (by their centroids, their first posts within the story window).
   - `policy(relation, **overrides)`: the row, with a caller's overrides (decide.Config's bars).
-  - the basics every module reads the same way: `post_date` (the post's date: when it surfaced, else published, else
-    fetched), `is_voice` and `voices` (a saved post is no voice; voices are distinct sources), `page_key` and its
-    lower layer `page_address` (a page's compared form), `document_key` (a document page's key).
+  - `attach_targets(cur, units)` and `attaches(policy, ...)`: the attach relation (0181) for round-up items.
+  - the basics every module reads the same way: `post_date` (the post's date: a round-up's issue time when its items
+    are known, else when it surfaced, else published, else fetched), `is_voice` and `voices` (a saved post is no
+    voice; voices are distinct sources), `page_key` and its lower layer `page_address` (a page's compared form),
+    `document_key` (a document page's key).
 
 The sources (adapters; each idempotent, each writes only mx_candidates):
   - `embedding`: a post's nearest posts by cosine among other sources' voices within the window, at the cosine bar,
@@ -31,12 +33,16 @@ The sources (adapters; each idempotent, each writes only mx_candidates):
     window; a roundup's links never count.
   - `happening` (markx/happening.py, off unless the mx_settings flag HAPPENING_KEY is on): posts of different voices
     whose readings name one happening (action group and parties) within the group's window.
+  - `link` (attach, 0181; stored by units.py, never in mx_candidates): a round-up's item (a unit) and the
+    stored post whose address it links, from ATTACH_WINDOW before the round-up to ATTACH_AFTER after it.
 
 Step 1 of 0166 moved the sources and decide's re-gates here unchanged (the equivalence tests:
 tests/test_markx_pairing.py). 0180 (anchors): the third relation, `develops` (a post that follows up an anchor: a
 story or a happening), holds back.py's and later.py's gates (their windows, type lists, quiet rule) and E6's
 happening windows; `develops(pol, earlier, later, gap)` is its happening gate, `specific(pol, ...)` its subject gate.
-graph.py keeps its own gates for now.
+graph.py keeps its own gates for now. 0181 (units): the fourth relation, `attach` (a round-up's item -> the stored
+post it links, and the story holding it, as a digest item, never a voice), and the round-up's issue time in
+`post_date` (its latest attached item's time), so every consumer of the post date reads it.
 """
 from __future__ import annotations
 
@@ -58,17 +64,32 @@ log = logging.getLogger(__name__)
 
 MODEL = "bge-m3"
 POST_POST, STORY_STORY = "post_post", "story_story"
-SAME_STORY, CONNECTED, DEVELOPS = "same_story", "connected", "develops"
+SAME_STORY, CONNECTED, DEVELOPS, ATTACH = "same_story", "connected", "develops", "attach"
 HAPPENING_KEY = "pairing_happening"   # mx_settings: the happening source on (off by default, until E1 sets its bars)
 
 # ---- the basics ------------------------------------------------------------------------------------------
 
-POST_DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"   # Mark X's time of a post
+ORDINARY_DATE = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"   # a post's own time
+# 0181: a round-up's time is its issue's (mx_roundups.issue_at: its latest attached item's time within ISSUE_REACH of
+# its own date), when its items are known; every other post's (and a round-up's with no such item) is its own time.
+# The issue times are read once a query (an InitPlan: one object of a few hundred rows, by a partial index) and looked
+# up per row: a correlated lookup on every row made the callers' window queries 3-6x slower on the scratch copy
+# (its cost estimate also switched JIT on); this form measured as fast as the old expression (plan/research, private).
+POST_DATE = ("COALESCE(((SELECT jsonb_object_agg(r_.post_id, r_.issue_at) FROM mx_roundups r_ "
+             "WHERE r_.issue_at IS NOT NULL) ->> ({p}.id::text))::timestamptz, "
+             + ORDINARY_DATE + ")")   # Mark X's time of a post
 
 
 def post_date(alias: str = "p") -> str:
-    """The post's date as SQL: when INSIGHT first saw it surface, else its published time, else its fetch."""
+    """The post's date as SQL: a round-up's issue time when its items are known (0181); else when INSIGHT first saw
+    it surface, else its published time, else its fetch. Never a rewrite of the post's own dates."""
     return POST_DATE.format(p=alias)
+
+
+def ordinary_date(alias: str = "p") -> str:
+    """The post's own date as SQL (surfaced, else published, else fetched), round-up or not: what the issue time of a
+    round-up is computed from (units.py), never what a consumer compares."""
+    return ORDINARY_DATE.format(p=alias)
 
 
 NOT_VOICE = frozenset({"saved"})      # a post the owner saved is no independent voice
@@ -171,7 +192,9 @@ def document_key(url: Optional[str]) -> Optional[str]:
 # ---- the policy table ------------------------------------------------------------------------------------
 
 OTHER_SOURCE = "other_source"   # two posts: both voices, of different sources (burst: of different places)
+NEVER_VOICE = "never_voice"     # attach (0181): a round-up's item is a digest item, never a voice, of any source
 ROUNDUP_WHOLE_EXCLUDED = "roundup_whole_excluded"   # a roundup is never judged as a whole (until units exist)
+ROUNDUP_UNITS = "roundup_units"   # attach (0181): a round-up is compared by its items (units), never whole
 ROUNDUP_ANCHORS = 3             # story_rules.ROUNDUP_ANCHORS: a post with 3+ links is about its first only (burst)
 SPECIFIC_TYPES = ("model", "product", "software", "document", "dataset")   # 0133: ent-v3's paper is read as document
 H, D = timedelta(hours=1), timedelta(days=1)
@@ -186,13 +209,21 @@ HAPPENING_GROUPS = ("deal", "funding", "legal", "people")
 # (12/12 right), a legal step to 30 (company follow-ups with 2+ parties 23/27 = 85%); funding and people moves never
 # (one participant 8/21); release, research, pricing and announcement unmeasured, so never.
 DEVELOPS_WINDOWS: Mapping[str, Tuple[timedelta, timedelta]] = {"deal": (3 * D, 120 * D), "legal": (3 * D, 30 * D)}
+# 0181 (plan/research/roundups-1016, private): a round-up's cited post is dated at most ATTACH_WINDOW before it and
+# ATTACH_AFTER after it (a daily digest dated at the start of its day cites that day's posts: 591 of 642 forward hits
+# within 42 hours; the rest were an archive's issues stored under one date). The issue's time is its latest item
+# within ISSUE_REACH of its own date (a weekly's two-week-old background link never moves it).
+ATTACH_WINDOW = 14 * D
+ATTACH_AFTER = 2 * D
+ISSUE_REACH = 2 * D
 
 
 @dataclass(frozen=True)
 class Policy:
     """One relation's gates. Post pairs: `window`, `cosine`, `nearest`, `types`, `late_after`, `happening_windows`,
     `min_words`, `roundups`, `independence`. Story pairs: `story_window`, `story_cosine`, `document_window`,
-    `min_voices`. `units`: what is compared (a post; planned: a span of a roundup)."""
+    `min_voices`. `units`: what is compared (a post, or a round-up's item: `unit`, the attach relation, 0181).
+    Attach: `window` back from the round-up and `after` forward (a cited post stored after its digest)."""
     relation: str
     sources: Tuple[str, ...]
     window: Optional[timedelta] = None          # two posts at most this far apart (post_date)
@@ -224,6 +255,8 @@ class Policy:
     quiet_days: Optional[int] = None            # later: in the days before a follow-up ...
     quiet_max: Optional[int] = None             # ... at most this many sources named its subject (subject matches)
     quiet_for_links: bool = True                # ... and for page matches too
+    after: Optional[timedelta] = None           # attach (0181): a cited post at most this long after its round-up
+    issue_reach: Optional[timedelta] = None     # ... and an item this close to it (either side) sets the issue's time
 
     def within(self, ta: Any, tb: Any) -> bool:
         return abs(ta - tb) <= self.window
@@ -264,6 +297,12 @@ POLICIES: Dict[str, Policy] = {
                      hub_weeks=6, always_types=("paper", "document", "dataset", "method"),
                      release_types=("model", "software"), release_levels=("version", "variant", "checkpoint"),
                      main_share=0.5, quiet_days=14, quiet_max=2, quiet_for_links=True),
+    # 0181: a round-up's item (a unit, markx/units.py) -> the stored post it links, and the story holding it, as a
+    # digest item. NEVER a voice (`independence`), never a member, a mention or a News count: stored by units.py,
+    # read only by "also in round-ups" and the digest. A round-up's own source may be cited (a channel's weekly digest
+    # of its own posts); the target is no round-up and not the round-up itself. Windows: ATTACH_WINDOW, ATTACH_AFTER.
+    ATTACH: Policy(ATTACH, sources=("link",), window=ATTACH_WINDOW, after=ATTACH_AFTER, issue_reach=ISSUE_REACH,
+                   independence=NEVER_VOICE, min_voices=0, roundups=ROUNDUP_UNITS, units="unit"),
 }
 
 
@@ -685,6 +724,50 @@ def happening_on(cur: Cursor) -> bool:
 def happening_pairs(cur: Cursor, posts: Posts, new: Iterable[str]) -> int:
     from insight_core.markx import happening
     return happening.pairs(cur, posts, new)
+
+
+# ---- attach (0181): a round-up's items -> the stored posts they link --------------------------------------------
+
+def attaches(pol: Policy, roundup_at: datetime, target_at: datetime, *, target_is_roundup: bool,
+             same_post: bool) -> bool:
+    """Whether a unit may attach to a stored post it links (the attach row): not its own round-up, no round-up
+    itself, dated from `window` before the round-up to `after` after it. Who wrote it never matters: an item is
+    never a voice (`independence` NEVER_VOICE), so no voice rule applies."""
+    if same_post or target_is_roundup:
+        return False
+    return roundup_at - pol.window <= target_at <= roundup_at + pol.after
+
+
+def attach_targets(cur: Cursor, units: Sequence[Any], pol: Optional[Policy] = None) -> List[Tuple[int, str, str]]:
+    """The attach relation's `link` source: [(unit id, stored post, 'link')] for units (.id, .post, .links) whose
+    links are a stored post's address (posts.normalized_url, as post_links targets join posts), gated by `attaches`.
+    Each round-up's and each target's own date (`ordinary_date`: the issue time is made from these, never read)."""
+    pol = pol or POLICIES[ATTACH]
+    links = sorted({u for x in units for u in x.links})
+    if not links:
+        return []
+    cur.execute(f"""SELECT p.id::text, p.normalized_url, {ordinary_date('p')}, COALESCE(r.roundup, false)
+                      FROM posts p LEFT JOIN mx_roundups r ON r.post_id = p.id
+                     WHERE p.normalized_url = ANY(%s)""", (links,))
+    by_url: Dict[str, List[Tuple[str, datetime, bool]]] = defaultdict(list)
+    for pid, url, at, rd in cur.fetchall():
+        if at is not None:
+            by_url[url].append((pid, at, rd))
+    cur.execute(f"SELECT p.id::text, {ordinary_date('p')} FROM posts p WHERE p.id = ANY(%s::uuid[])",
+                (sorted({x.post for x in units}),))
+    own_at = dict(cur.fetchall())
+    out: List[Tuple[int, str, str]] = []
+    for x in units:
+        at = own_at.get(x.post)
+        if at is None:
+            continue
+        seen: Set[str] = set()
+        for url in x.links:
+            for pid, t_at, rd in by_url.get(url, ()):
+                if pid not in seen and attaches(pol, at, t_at, target_is_roundup=rd, same_post=pid == x.post):
+                    seen.add(pid)
+                    out.append((x.id, pid, "link"))
+    return out
 
 
 # ---- the interface -------------------------------------------------------------------------------------------

@@ -7,8 +7,9 @@ first needed, and its module is named where one owns it.
 (`backend/insight_core/markx/pairing.py`). Every candidate source and every gate before a judge lives behind it.
 
 **Relation** — a question a judge may later be asked about a pair: *same story* (one story? the join, pair and
-merge questions), *connected* (a typed link between two stories) or *develops* (a later post follows up an
-anchor). Each relation has one row in Pairing's policy table.
+merge questions), *connected* (a typed link between two stories), *develops* (a later post follows up an
+anchor) or *attach* (a round-up's item carries a stored post: a digest item, never a voice). Each relation has one
+row in Pairing's policy table.
 
 **Gate** — one condition a pair must pass before it is judged: a window (how far apart in time), a cosine bar, an
 entity-type list, a word count, a unit rule. Gates belong to a relation's policy row, never to a caller.
@@ -36,5 +37,12 @@ stage of one happening is a development, not a new happening.
 (`backend/insight_core/markx/anchors.py`). Back in the news and later developments ask Pairing's *develops* relation
 for an anchor's follow-ups: its happening first, its subject second. In Shadow beside the old engines (0180).
 
-**Unit** *(planned)* — what is compared: a post, or one item (span) of a round-up. Today every unit is a whole post,
-and a round-up is never compared as a whole.
+**Round-up** — a post that carries many separate items: a daily digest, a link list, a long newsletter. Its reading
+says so, or it has a digest's shape and its source's posts mostly have it (`backend/insight_core/markx/units.py`). A
+round-up its reading names is never compared as a whole; its items (units) are never voices. Its time is its issue's: its latest attached item's (Pairing's
+post date); its own dates are never rewritten.
+
+**Unit** — what is compared: a post, or one item (span) of a round-up: (post, n, span, links, text, at), stored
+(`mx_units`). A unit is attached (Pairing's *attach* relation) to the stored post it links and the story holding it,
+as a digest item: the story shows "also in round-ups", and the own round-up (the digest) counts its curators. A unit
+is never a voice, a member, a mention or a News count.

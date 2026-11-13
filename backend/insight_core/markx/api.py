@@ -905,8 +905,11 @@ class FactLabelIn(BaseModel):
 def mx_story_view(story_id: str):
     from insight_core.markx import perspective_views
     found = _uuid(story_id)
+    from insight_core.markx import units
     with transaction() as cur:
         got = perspective_views.story_view(cur, str(found)) if found else None
+        if got is not None:   # 0181: the round-ups carrying a member, display only (never a voice or a member)
+            got["roundups"] = units.also_in_story(cur, got["story"]["id"])
     if got is None:
         raise HTTPException(status_code=404, detail="No such Mark X story")
     return got
@@ -985,6 +988,7 @@ from insight_core.markx import sources_api as _sources_api; router.include_route
 from insight_core.markx import back_api as _back_api; router.include_router(_back_api.router)  # noqa: E402,E702  0136: back in the news
 from insight_core.markx import later_api as _later_api; router.include_router(_later_api.router)  # noqa: E402,E702  0163: later developments
 from insight_core.markx import anchors_api as _anchors_api; router.include_router(_anchors_api.router)  # noqa: E402,E702  0180: anchors in Shadow
+from insight_core.markx import units_api as _units_api; router.include_router(_units_api.router)  # noqa: E402,E702  0181: own round-ups
 from insight_core.markx import track_counts as _track_counts; router.include_router(_track_counts.router)  # noqa: E402,E702  v10.12.1: a topic track's sidebar count (before tracks_api: /tracks/{id})
 from insight_core.markx import tracks_api as _tracks_api; router.include_router(_tracks_api.router)  # noqa: E402,E702  0145: tracks as topics
 from insight_core.markx import scout_api as _scout_api; router.include_router(_scout_api.router)  # noqa: E402,E702  0148: the track scout

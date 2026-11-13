@@ -1,6 +1,7 @@
 import { Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import MarkXNews from '../components/markx/MarkXNews';
 import MarkXBack from '../components/markx/MarkXBack';   // 0136: back in the news (Shadow)
+import MarkXRoundup from '../components/markx/MarkXRoundup';   // 0181: own round-up
 import MarkXLabels from '../components/markx/MarkXLabels';
 import { MarkXBriefing, MarkXWorker } from '../components/markx/MarkXOverview';
 import MarkXEntities from '../components/markx/MarkXEntities';   // 0119 A3: the list, the review queue
@@ -28,7 +29,7 @@ export default function MarkXPage() {
           <TabsList aria-label="Mark X">
             {TABS.map((t) => <TabsTrigger key={t} value={t}>{t}</TabsTrigger>)}
           </TabsList>
-          <TabsContent value="news"><MarkXBack /><MarkXNews /></TabsContent>
+          <TabsContent value="news"><MarkXBack /><MarkXNews /><MarkXRoundup /></TabsContent>
           <TabsContent value="briefing"><MarkXBriefing /></TabsContent>
           <TabsContent value="entities"><MarkXEntities /></TabsContent>
           <TabsContent value="worker"><MarkXWorker /></TabsContent>

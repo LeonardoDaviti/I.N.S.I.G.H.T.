@@ -1879,6 +1879,24 @@ export const markxBackApi = {
       '/api/markx/labels/back', { method: 'POST', body: { row, answer } }),
 };
 
+// 0181: own round-ups. A round-up's item is display only: never a voice, a member or a News count.
+export interface MarkxRoundupItem {
+  key: string; kind: 'mx_story' | 'ix_story' | 'post' | 'page' | 'unit'; ref: string | null; headline: string | null;
+  curators: number; issues: number; only_roundups: boolean; at: string; posts: string[];
+  units: { unit: number; post: string; n: number; item: string; source: string | null; title: string | null }[];
+}
+export interface MarkxRoundupIssue {
+  id: number; span: 'day' | 'week'; from: string; until: string; version: number; built_at: string;
+  roundups: number; units: number; count: number; items?: MarkxRoundupItem[];
+}
+export interface MarkxRoundupIssues {
+  daily: MarkxRoundupIssue | null; weekly: MarkxRoundupIssue | null; past: MarkxRoundupIssue[]; tz_offset_minutes: number;
+}
+export const markxRoundupApi = {
+  issues: () => request<MarkxRoundupIssues>('/api/markx/roundups/issues'),
+  issue: (id: number) => request<MarkxRoundupIssue>(`/api/markx/roundups/issues/${id}`),
+};
+
 // 0132 C2: channel profiles and the channels you don't follow (declaration merging adds the suggestions' fields).
 export interface NotFollowedChannel {
   key: string; url: string; label: string; platform: string; of: string[]; hosts?: number;
