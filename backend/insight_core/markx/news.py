@@ -161,7 +161,8 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     from insight_core.markx import incremental
     found = incremental.surges(cur, memo)
     from insight_core.markx import built as mx_built   # 0203: the judge's story connections guard two large stories
-    judged = mx_built._connected(cur, sorted(sid for sid in stories if not sid.startswith("one:")))
+    # a stored story's id only: a dry reading's new stories are "new:..." and a post of no story "one:..."
+    judged = mx_built._connected(cur, sorted(sid for sid in stories if not sid.startswith(("one:", "new:"))))
     made = NewsService.rows(posts=list(sp.values()), stories=built, found=found, since=since, judged=judged)
     out = []
     for s in made:
