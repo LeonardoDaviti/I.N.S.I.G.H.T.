@@ -17,11 +17,17 @@ export interface NavItem {
   to: string;
 }
 
+/**
+ * The blog and the Design Studio are dev-only pages (v10.17, issue 0190: never in the production bundle, App.tsx),
+ * so their nav word and ⌘K entries are too: a production build links to no page it does not have.
+ */
+export const DEV_PAGES: boolean = import.meta.env.DEV;
+
 /** The top bar's words. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'feed', label: 'feed', to: '/' },
   { key: 'sources', label: 'sources', to: '/settings/sources' },
-  { key: 'blog', label: 'blog', to: '/blog' },
+  ...(DEV_PAGES ? [{ key: 'blog', label: 'blog', to: '/blog' } as const] : []),
 ];
 
 /** Mark X's page (issue 0086 E): one more word, only while INSIGHT_MARKX is on. */
@@ -62,7 +68,7 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source health cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },
   { id: 'data', label: 'Export data', group: 'sources', to: '/settings/sources?tab=data', keywords: 'export backup dump download database zip csv sources.json' },
-  { id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' },
+  ...(DEV_PAGES ? [{ id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' }] : []),
   // Save any page (issue 0031): the save page with a field for the address.
   { id: 'save-page', label: 'Save a page…', group: 'save', to: '/save', keywords: 'save page url link bookmark bookmarklet keep saved paste' },
 ];
@@ -93,7 +99,7 @@ export interface TrackRef {
  * What ⌘K can jump to: the feed entries, then one entry per track (to
  * `/read/folder/:id`, the reader scoped to it) in the order given, then the rest.
  * The design studio comes last, unless `studio` is false (⌘K inside one of the
- * studio's own frames).
+ * studio's own frames) or the build is a production one (DEV_PAGES).
  */
 /** Mark X's page in ⌘K (issue 0086 E), only while it is on. */
 export const MARKX_DESTINATION: Destination = {
@@ -104,7 +110,7 @@ export function destinations(
   tracks: readonly TrackRef[] = [],
   { studio = true, markx = false }: { studio?: boolean; markx?: boolean } = {},
 ): Destination[] {
-  const last = [...(markx ? [MARKX_DESTINATION] : []), ...(studio ? [DESIGN_STUDIO] : [])];
+  const last = [...(markx ? [MARKX_DESTINATION] : []), ...(studio && DEV_PAGES ? [DESIGN_STUDIO] : [])];
   const trackItems = tracks.map((track): Destination => ({
     id: `track-${track.id}`,
     label: track.name,

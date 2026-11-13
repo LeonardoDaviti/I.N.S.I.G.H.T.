@@ -58,3 +58,9 @@ Migration 0117 (`mx_news_section_asks`, `mx_news_sections`, subject kind `news_r
 ## Not done
 
 - No owner labels on sections yet; no per-section collapse; the main reader's News is unchanged (Mark X page only).
+
+## Addendum (v10.17): new rows placed between sectionings
+
+Rows added between two full sectionings no longer wait under "New since" for the 20% rule: issue
+[0197](0197-news-sections-placement.md) places them into the existing sections with one small question (`news_place`,
+news-place-v1), at most every 10 minutes; a full sectioning (rules unchanged) supersedes the placements.

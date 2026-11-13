@@ -922,6 +922,18 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(again["run"]["kind"], "incremental")
         self.assertNotIn("deferred", again)                          # the next run does the back stage
 
+    def test_a_stage_asked_skipped_is_deferred_and_the_run_kept(self):
+        """0188: jobs.py asks a stage skipped after two runs in a row over the limit in it: deferred, the run kept."""
+        with D.snapshot(db_url()) as cur:
+            out = D.run(cur, now=self.now, skip=["graph", "entities"])
+        self.assertIn("skipped this run", out["deferred"]["graph"])
+        self.assertIn("skipped this run", out["deferred"]["entities"])
+        self.assertIsNone(out["graph"])
+        self.assertNotIn("entities", out)
+        self.assertIn("back", out)                                   # the other stages ran
+        self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+
 
 class Routes(unittest.TestCase):
     def test_the_page_routes_are_404_when_off(self):

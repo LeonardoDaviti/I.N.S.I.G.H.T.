@@ -28,7 +28,8 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
-from insight_core.markx import pairing, repo, tasks, units
+from insight_core.markx import pairing, repo, tasks, units, validate
+from insight_core.utils import voice
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -71,8 +72,62 @@ why it is hard to see from inside the work itself.</p>
 SECTIONS = """<h2>Acme raises a round</h2><p>Acme raised money, says <a href="https://example.com/acme-round">the report</a>.</p>
 <h2>Gizmo is sued</h2><p>A lawsuit, <a href="https://example.com/gizmo-suit">filed today</a>.</p>"""
 
+# A newsletter of paragraphs (0181 round 2): a lead story under a heading, numbered bold items whose sentence and
+# related links follow on <br> lines, a bold label, fun extras.
+NEWSLETTER = """<p><em>This is today's edition of </em><a href="https://letter.example/about">The Brief</a>.</p>
+<h3>How a new method keeps agents in check</h3>
+<p>A new approach aims to control models by designing incentives.</p>
+<p>Researchers believe it could help, but questions remain.</p>
+<p><a href="https://letter.example/2100/06/01/method">Here's how the method works</a>.</p>
+<p><em>-A Writer</em></p>
+<p><strong>The must-reads</strong></p>
+<p><em>The stories worth your time today.</em></p>
+<p><strong>1 Acme is ordering clients to limit a business</strong><br>It told providers that most sales must be elsewhere. (<a href="https://news.example/acme-order">Paper</a>)<br><em>+ The move follows pressure.</em> (<a href="https://news.example/acme-pressure">Wire</a>)</p>
+<p><strong>2 Hackers turned fridges into a risk<br></strong>Attacks put systems on alert. (<a href="https://news.example/fridges">TV</a>)</p>
+<p><strong>We can still have nice things</strong></p>
+<p>+ Watch <a href="https://zoo.example/cubs">five cubs</a> grow up.<br>+ The <a href="https://photos.example/contest">photo contest</a> winners.</p>"""
+
+# Release notes of paragraphs: each item a paragraph led by its link, a second paragraph with no link, a section
+# heading over led paragraphs, a later paragraph with a link of its own (an item or more of the last: the type
+# question's `continues` says).
+RELEASES = """<p>This week's news, gathered from <a href="https://feeds.example/list">release feeds</a>.</p>
+<h2>Releases</h2>
+<p><a href="https://code.example/loom/v1">loom 1.0</a> merges feature branches into one integration branch.</p>
+<p>Stacked branches are pushed as one pull request each, and the IDs stay the same.</p>
+<p><a href="https://code.example/diffy/0.72">diffy 0.72</a> changes its heuristics and drops two parsers.</p>
+<p>This release also adds a flag, and <a href="https://code.example/diffy/0.73">0.73</a> fixes a regression.</p>
+<p>Also out: <a href="https://code.example/gizmos/0.3.1">gizmos 0.3.1</a>.</p>
+<p><a href="https://code.example/gt/1.0">gt 1.0</a> is the first stable release of the command line tool.</p>
+<p><a href="https://code.example/butler/0.23">butler 0.23</a> stops commits from disturbing staged files.</p>"""
+
 
 class Splitters(unittest.TestCase):
+    def test_a_newsletters_numbered_items_keep_their_headline_and_their_lines(self):
+        s = units.split(NEWSLETTER, None, URL, {"kind": "roundup", "items": []})
+        self.assertEqual(s.adapter, "lines")
+        by_head = {i.headline: i for i in s.items}
+        acme = by_head["Acme is ordering clients to limit a business"]          # its numbering dropped
+        self.assertIn("It told providers", acme.text)                            # the sentence under the bold line
+        self.assertEqual(acme.links, ("https://news.example/acme-order", "https://news.example/acme-pressure"))
+        self.assertFalse(any(i.text.startswith(("It told providers", "+ The move")) for i in s.items))
+        self.assertEqual(by_head["Hackers turned fridges into a risk"].links, ("https://news.example/fridges",))
+        lead = by_head["How a new method keeps agents in check"]                 # a heading over its paragraphs
+        self.assertEqual(lead.links, ("https://letter.example/2100/06/01/method",))
+        self.assertIn("Researchers believe", lead.text)
+        self.assertNotIn("must-reads", " ".join(i.text for i in s.items))      # a bold label with no link: no item
+        extras = by_head["We can still have nice things"]                       # one item, typed by the question
+        self.assertEqual(extras.links, ("https://zoo.example/cubs", "https://photos.example/contest"))
+
+    def test_release_notes_keep_a_paragraph_with_no_link_in_its_item(self):
+        s = units.split(RELEASES, None, URL, {"kind": "roundup", "items": []})
+        self.assertEqual(s.adapter, "lines")
+        texts = [i.text for i in s.items]
+        self.assertEqual(len(texts), 7)
+        self.assertTrue(texts[1].startswith("loom 1.0") and "Stacked branches" in texts[1])
+        self.assertFalse(any(t.startswith(("Releases", "Stacked")) for t in texts))   # a heading over leads: a label
+        self.assertTrue(texts[3].startswith("This release also adds"))          # its own link: an item (or `continues`)
+        self.assertEqual([i.headline for i in s.items], [None] * 7)               # a link lead names no headline
+
     def test_a_digests_unclosed_items_each_an_item_its_link_less_detail_in_it(self):
         s = units.split(DIGEST, None, URL, None)
         self.assertTrue(s.structured)
@@ -317,6 +372,88 @@ class Digest(_Db):
         self.assertIn("https://example.com/news/s0-0", keys)
 
 
+class Types(_Db):
+    """0181 round 2: each item is asked its type, a short headline and whether it continues the item before it (kind
+    unit_types, ~20 a question); an own round-up keeps the news types; single-curator items rank below and are capped."""
+
+    def answer(self, task_id, units_answer):
+        task = repo.get_task(self.cur, task_id)
+        answer, error = validate.check("unit_types", {"units": units_answer}, task["input"], task["guide"])
+        self.assertIsNone(error)
+        call = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True, answer=answer)
+        repo.answer_task(self.cur, task_id)
+        tasks.record(self.cur, task, call, answer)
+
+    def asked(self):
+        self.cur.execute("SELECT id, input FROM mx_tasks WHERE kind = 'unit_types' ORDER BY created_at, id")
+        return self.cur.fetchall()
+
+    def test_items_are_asked_once_by_their_words_and_an_issue_keeps_the_news(self):
+        self.post(self.news, T0 - 3 * H, url="https://test.invalid/units/ta", title="Acme ships Widget 4.1")
+        rd = self.post(self.digest, T0, html=self.digest_html(
+            ["https://test.invalid/units/ta", "https://example.com/books/my-novel", "https://example.com/2011/old-story",
+             "https://example.com/news/widget-more", "https://example.com/papers/sparse"]))
+        self.read(rd)
+        self.assertEqual(units.digest(self.cur, "day", T0 + 3 * H)["untyped"], 5)
+        self.assertEqual(units.plan_types(self.cur, now=T0 + H), 1)
+        self.assertEqual(units.plan_types(self.cur, now=T0 + H), 0)            # asked once
+        (tid, text), = self.asked()
+        self.assertIn("ROUND-UP: Example Digest", text)
+        self.assertEqual(re.findall(r"^\[(u\d+)\] ", text, re.M), ["u1", "u2", "u3", "u4", "u5"])
+        task = repo.get_task(self.cur, tid)
+        bad = [{"key": "u1", "type": "product_release", "headline": "Acme ships Widget 4.1", "continues": False}]
+        self.assertIn("not answered", validate.check("unit_types", {"units": bad}, task["input"], task["guide"])[1])
+        self.answer(tid, [
+            {"key": "u1", "type": "product_release", "headline": "Acme ships Widget 4.1 to everyone", "continues": False},
+            {"key": "u2", "type": "promo", "headline": "The author's novel", "continues": False},
+            {"key": "u3", "type": "other", "headline": "A story from 2011", "continues": False},
+            {"key": "u4", "type": "product_release", "headline": "More on Widget", "continues": True},
+            {"key": "u5", "type": "research_result", "headline": "A paper on sparse attention.", "continues": False}])
+        d = units.digest(self.cur, "day", T0 + 3 * H)
+        self.assertEqual((d["left_out"], d["untyped"]), ({"continues": 1, "other": 1, "promo": 1}, 0))
+        self.assertEqual([i["headline"] for i in d["items"]],
+                         ["Acme ships Widget 4.1 to everyone", "A paper on sparse attention"])   # the worker's headline
+        # a new split of the same words keeps their answers: only the new item is asked
+        self.cur.execute("UPDATE posts SET content_html = content_html || '<li><p>Item new: <a href=\"https://example.com/news/new\">x</a>.</p>' WHERE id = %s", (rd,))
+        units.note(self.cur, [rd])
+        self.assertEqual(units.digest(self.cur, "day", T0 + 3 * H)["untyped"], 1)
+        self.assertEqual(units.plan_types(self.cur, now=T0 + H), 1)
+        (_, again), = [t for t in self.asked() if t[0] != tid]
+        self.assertEqual(re.findall(r"^\[(u\d+)\] ", again, re.M), ["u1"])
+        self.assertIn("(before u1: Item 4", again)                               # the item before, for context
+
+    def test_what_insight_holds_or_two_curators_carry_ranks_first_single_curator_items_capped(self):
+        second = insert_scratch_source(self.cur, platform="rss", settings_json=json.dumps({"display_name": "Example Links"}))
+        many = [f"https://example.com/news/m{k}" for k in range(units.SOLO_PER_SOURCE + 2)]
+        rd1 = self.post(self.digest, T0, html=self.digest_html(many + ["https://example.com/news/shared"]))
+        rd2 = self.post(second, T0 + H, html=self.digest_html(["https://example.com/news/shared"],
+                                                              [f"https://example.com/news/s{k}" for k in range(4)]))
+        for p in (rd1, rd2):
+            self.read(p)
+        d = units.digest(self.cur, "day", T0 + 3 * H)
+        self.assertEqual(d["items"][0]["ref"], "https://example.com/news/shared")       # 2 curators: first
+        solo = [i for i in d["items"] if i["tier"] == 2]
+        self.assertEqual(sum(1 for i in solo if i["units"][0]["post"] == rd1), units.SOLO_PER_SOURCE)
+        self.assertEqual(d["capped"], 2)
+        self.assertEqual([i["place"] for i in solo], sorted(i["place"] for i in solo))   # the round-ups' own order
+
+    def test_an_issue_waits_for_its_items_types_then_keeps_the_news(self):
+        repo.set_setting(self.cur, units.TZ_KEY, 0)
+        rd = self.post(self.digest, T0 + 5 * H, html=self.digest_html([f"https://example.com/news/w{k}" for k in range(5)]))
+        self.read(rd)
+        units.backfill(self.cur, now=T0 + D + 7 * H)                        # splits, and asks the items' types
+        (tid, _), = self.asked()
+        units.issues_step(self.cur, T0 + D + 7 * H)
+        self.cur.execute("SELECT count(*) FROM mx_roundup_issues WHERE span = 'day' AND period_start = %s", (T0,))
+        self.assertEqual(self.cur.fetchone()[0], 0)                          # settled, but its types wait
+        self.answer(tid, [{"key": f"u{k}", "type": "promo" if k == 1 else "incident", "headline": f"Item {k} happened",
+                           "continues": False} for k in range(1, 6)])
+        built = units.issues_step(self.cur, T0 + D + 7 * H)
+        issue = units.issue(self.cur, built["day"][-1])
+        self.assertEqual((issue["from"], issue["count"], issue["left_out"], issue["untyped"]),
+                         (T0.isoformat(), 4, {"promo": 1}, 0))
+
+
 class Periods(unittest.TestCase):
     def test_the_owners_days_and_weeks_at_the_offset(self):
         plus4 = timedelta(hours=4)
@@ -394,8 +531,9 @@ class Issues(_Db):
 
 # ---- never a voice -----------------------------------------------------------------------------------------------------
 
-UNIT_TABLES = re.compile(r"\bmx_(units|attach|roundups)\b")
-READERS = {"markx/units.py", "markx/pairing.py", "db/migrations/0123_markx_units.sql"}
+UNIT_TABLES = re.compile(r"\bmx_(units|attach|roundups|unit_types|unit_type_asks)\b")
+READERS = {"markx/units.py", "markx/pairing.py", "markx/event_types.py",   # event_types: of_units, the type seam
+           "db/migrations/0123_markx_units.sql", "db/migrations/0125_markx_unit_types.sql"}
 
 
 class NoOtherReader(unittest.TestCase):
@@ -411,6 +549,9 @@ class NoOtherReader(unittest.TestCase):
             if UNIT_TABLES.search(path.read_text(encoding="utf-8", errors="ignore")):
                 found.add(path.relative_to(root).as_posix())
         self.assertEqual(found, READERS)
+        from insight_core.markx import event_types
+        src = pathlib.Path(event_types.__file__).read_text()
+        self.assertEqual(set(UNIT_TABLES.findall(src)), {"unit_types"})     # the seam reads the types only
 
     def test_pairings_reads_are_the_issue_time_and_the_attach_source_only(self):
         src = pathlib.Path(pairing.__file__).read_text()
@@ -515,7 +656,8 @@ class NeverAVoice(_World):
             members = {m.id for m in a.members}
             self.assertNotIn(self.digest, {m.src for m in a.members})
             if members & targets:
-                self.assertEqual(a.voices, pairing.voices((m.src, "saved" if m.saved else None) for m in a.members))
+                self.assertEqual(a.voices, voice.count((voice.Said(m.src, "saved" if m.saved else None)
+                                                        for m in a.members), voice.Policy.MARKX))
 
 
 class PostDateIdentity(_World):

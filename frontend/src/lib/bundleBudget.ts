@@ -1,6 +1,6 @@
 /**
- * The reader's download budget (Design Studio D8, issue 0061): the studio is a
- * lazy chunk, and what two routes download first, in gzip bytes, may grow at
+ * The reader's download budget (Design Studio D8, issue 0061): the studio and the
+ * blog are dev-only, absent from the production build (v10.17, issue 0190), and what two routes download first, in gzip bytes, may grow at
  * most 1% over the release's baseline and never past 110% of the v9.8 ceiling
  * base, which no `--update` resets. Pure functions over Vite's build manifest,
  * so the build check (`scripts/bundle-check.mjs`) and its test share them.
@@ -19,18 +19,32 @@ export type Manifest = Record<string, ManifestChunk>;
 
 /**
  * What each route downloads before it shows: opening the feed (`/`, the app entry
- * and the reader), and opening a post from it (the feed's files and the post page's).
+ * and the reader), and opening a post from it (the feed's files and the post page's);
+ * Mark X's page, an entity's and a story's, each opened from a link (issue 0195).
  */
 export const ROUTES = {
   feed: ['index.html', 'src/pages/ReaderPage.tsx'],
   post: ['index.html', 'src/pages/ReaderPage.tsx', 'src/pages/PostDetailPage.tsx'],
+  markx: ['index.html', 'src/pages/MarkXPage.tsx'],
+  markxEntity: ['index.html', 'src/pages/MarkXEntityPage.tsx'],
+  markxStory: ['index.html', 'src/pages/MarkXStoryPage.tsx'],
 } as const;
 
 export type Route = keyof typeof ROUTES;
 export type RouteBytes = Record<Route, number>;
+/** A saved baseline: a route added after it was recorded has no number yet (its first `--update` records it). */
+export type SavedBytes = Partial<RouteBytes>;
 
-/** The studio's own chunks, the studio and the frame route inside its iframes: they must stay lazy. */
-export const STUDIO_ENTRIES = ['src/design/DesignStudio.tsx', 'src/design/frame/FrameApp.tsx'] as const;
+/** Every file any route downloads first (the files the check measures). */
+export function allInitialFiles(manifest: Manifest): string[] {
+  return [...new Set((Object.keys(ROUTES) as Route[]).flatMap((route) => initialFiles(manifest, ROUTES[route])))];
+}
+
+/**
+ * The dev-only code (issue 0190): the Design Studio (src/design), the blog's posts (src/blog) and its page. A
+ * production build's manifest holds none of it; `npm run dev` serves it (App.tsx, `import.meta.env.DEV`).
+ */
+export const DEV_ONLY_PREFIXES = ['src/design/', 'src/blog/', 'src/pages/BlogPage'] as const;
 
 /** The growth a route may take over its baseline within a release. */
 export const BUDGET = 0.01;
@@ -57,7 +71,7 @@ export function initialFiles(manifest: Manifest, entries: readonly string[]): st
 /** Each route's first download in bytes, given each file's (gzip) size. */
 export function routeBytes(manifest: Manifest, sizes: Record<string, number>): RouteBytes {
   const total = (route: Route) => initialFiles(manifest, ROUTES[route]).reduce((sum, file) => sum + (sizes[file] ?? 0), 0);
-  return { feed: total('feed'), post: total('post') };
+  return Object.fromEntries((Object.keys(ROUTES) as Route[]).map((route) => [route, total(route)])) as RouteBytes;
 }
 
 /** Why the build breaks the budget; empty when it holds. */
@@ -69,26 +83,24 @@ export function budgetProblems({
 }: {
   manifest: Manifest;
   sizes: Record<string, number>;
-  baseline: RouteBytes;
-  ceilingBase: RouteBytes;
+  baseline: SavedBytes;
+  ceilingBase: SavedBytes;
 }): string[] {
   const problems: string[] = [];
-  for (const entry of STUDIO_ENTRIES) {
-    if (!manifest[entry]?.isDynamicEntry) problems.push(`${entry} is not a lazy chunk`);
-  }
-  const initial = new Set(initialFiles(manifest, ROUTES.post));
-  for (const [key, chunk] of Object.entries(manifest)) {
-    if (key.startsWith('src/design/') && initial.has(chunk.file)) problems.push(`the reader's first download includes ${key}`);
+  for (const key of Object.keys(manifest)) {
+    if (DEV_ONLY_PREFIXES.some((prefix) => key.startsWith(prefix))) problems.push(`the production build includes ${key} (dev-only)`);
   }
   const bytes = routeBytes(manifest, sizes);
   for (const route of Object.keys(ROUTES) as Route[]) {
-    if (bytes[route] > baseline[route] * (1 + BUDGET)) {
-      const over = ((bytes[route] / baseline[route] - 1) * 100).toFixed(2);
-      problems.push(`the ${route} route is ${bytes[route]} gzip bytes, ${over}% over its baseline of ${baseline[route]} (the budget is +${BUDGET * 100}%)`);
+    const base = baseline[route];
+    if (base !== undefined && bytes[route] > base * (1 + BUDGET)) {
+      const over = ((bytes[route] / base - 1) * 100).toFixed(2);
+      problems.push(`the ${route} route is ${bytes[route]} gzip bytes, ${over}% over its baseline of ${base} (the budget is +${BUDGET * 100}%)`);
     }
-    const ceiling = Math.round(ceilingBase[route] * CEILING);
-    if (bytes[route] > ceiling) {
-      problems.push(`the ${route} route is ${bytes[route]} gzip bytes, over its ceiling of ${ceiling} (${Math.round(CEILING * 100)}% of ${ceilingBase[route]}, never reset)`);
+    const ceilingOf = ceilingBase[route];
+    const ceiling = ceilingOf === undefined ? undefined : Math.round(ceilingOf * CEILING);
+    if (ceiling !== undefined && bytes[route] > ceiling) {
+      problems.push(`the ${route} route is ${bytes[route]} gzip bytes, over its ceiling of ${ceiling} (${Math.round(CEILING * 100)}% of ${ceilingOf}, never reset)`);
     }
   }
   return problems;

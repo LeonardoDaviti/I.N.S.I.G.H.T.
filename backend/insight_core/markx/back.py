@@ -23,7 +23,7 @@ only read, and the row never enters Mark IX's News.
   3. **The row** (`page`): each candidate judged development, with the owner's label (development / retold /
      related / unrelated) and the running precision of those labels.
 
-Dates are the reader's: COALESCE(surfaced_at, published_at, fetched_at) (the lab's).
+Dates are Pairing's post date (`pairing.post_date`, 0166; a round-up's issue time since 0181).
 
 0180 (anchors): the gates above are Pairing's `develops` row, read here. This module's rows are engine 'old'; the
 anchors engine (markx/anchors.py: Mark IX and Mark X stories, a happening's H hits first) writes engine 'anchors'
@@ -39,7 +39,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import pairing
+from insight_core.markx import pairing, validate
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,10 @@ OLD_SHOWN = 4                 # the question shows the old story's earliest 4 po
 OLD_CHARS = 300               # ... at 300 characters, and each new post at 500 (the lab's render)
 NEW_CHARS = 500
 RUNS = 3
+# 0191: a first answer whose relation settles the candidate alone: never asked a second and third time. On the lab's
+# frozen test set (98 candidates, each run in turn taken as the first) 0 of 294 development decisions changed and 37%
+# of back calls were saved (dev sets: 2 of 198 changed); stopping on `retold` too changed 1 of 294 on test.
+SETTLES = ("unrelated", "related")
 OPEN = 50                     # decide.Config.back_open
 FIRST_SCAN_DAYS = 30          # the first run reads this far back; each next one, from its last run's clock less WINDOW
 MARGIN = timedelta(hours=1)
@@ -156,18 +161,25 @@ class Story:
         return max(t, self.again) if self.again else t
 
 
+def sources(members: Iterable[_P]) -> int:
+    """How many voices a story's members are (Voice's MARKX rule over their sources)."""
+    return voice.count((voice.Said(m.src, "saved" if m.saved else None) for m in members), voice.Policy.MARKX)
+
+
 def stories(cur: Any, now: datetime) -> Dict[str, Story]:
     """Mark IX's stories of 2+ sources that may fire by `now` and never did, with their subjects and pages (hubs not
     yet taken out)."""
-    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url
-                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id""")
+    cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
+                           s.platform = 'saved'
+                      FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
+                      JOIN sources s ON s.id = p.source_id""")
     by: Dict[str, List[_P]] = defaultdict(list)
     origin: Dict[str, Optional[str]] = {}
-    for sid, pid, src, at, url, o in cur.fetchall():
+    for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(_P(pid, src, at, url, False))
+            by[sid].append(_P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
             origin[sid] = o
-    out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if len({m.src for m in ms}) >= MIN_SOURCES}
+    out = {sid: Story(sid, ms, origin.get(sid)) for sid, ms in by.items() if sources(ms) >= MIN_SOURCES}
     cur.execute("SELECT story::text, max(window_at) FROM mx_back WHERE engine = %s GROUP BY story", (ENGINE,))
     fired = dict(cur.fetchall())
     again = sorted(sid for sid in fired if sid in out)
@@ -251,7 +263,7 @@ def burst(hits: Sequence[Tuple[datetime, str]], src: Dict[str, str]) -> Optional
     """The start of the first WINDOW of `hits` (sorted [(at, post)]) with MIN_SOURCES distinct sources, or None."""
     for a in range(len(hits)):
         end = hits[a][0] + WINDOW
-        if len({src[i] for t, i in hits[a:] if t <= end}) >= MIN_SOURCES:
+        if voice.count((voice.Said(src[i]) for t, i in hits[a:] if t <= end), voice.Policy.MARKX) >= MIN_SOURCES:
             return hits[a][0]
     return None
 
@@ -271,7 +283,8 @@ def candidate(story: Story, hits: Dict[str, Sequence[Tuple[datetime, str]]], src
             if start <= t <= start + WINDOW:
                 by[i].add(k)
                 at[i] = t
-    trig = [k for k in TRIGS if len({src[i] for i in by if k in by[i]}) >= MIN_SOURCES]
+    trig = [k for k in TRIGS if voice.count((voice.Said(src[i]) for i in by if k in by[i]), voice.Policy.MARKX)
+            >= MIN_SOURCES]
     posts = sorted(by, key=lambda i: (-len(by[i] & set(PRIMARY)), at[i], i))[:MAX_POSTS]
     return {"window_at": start, "trig": trig, "posts": posts, "post_trig": {i: sorted(by[i]) for i in posts}}
 
@@ -366,13 +379,9 @@ def render(members: Sequence[Any], new: Sequence[Any]) -> str:
     return "\n".join(lines)
 
 
-_NUMBERED = re.compile(r"^(\d+)\. \[", re.M)
-
-
 def numbered(input: str) -> int:
-    """How many new posts a back question numbers."""
-    _, _, tail = (input or "").partition("NEW POSTS")
-    return len(_NUMBERED.findall(tail))
+    """How many new posts a back question numbers (validate.back_numbered: 0191, the worker runs the same check)."""
+    return validate.back_numbered(input)
 
 
 def plan(cur: Any, *, open_cap: int = OPEN, now: Optional[datetime] = None, **_kw: Any) -> int:
@@ -422,10 +431,17 @@ def planned(cur: Any, add: Any, link: str, row: str) -> Optional[Tuple[Any, bool
         return None
 
 
+def settles(answer: Optional[Dict[str, Any]]) -> bool:
+    """0191: a first answer that settles its candidate without a second and third run."""
+    return relation(answer) in SETTLES
+
+
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
-    """A back task's valid answer (tasks.record): asked again until it has RUNS valid answers. Whether it reopened."""
-    cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s AND valid", (task["id"],))
-    if cur.fetchone()[0] >= RUNS:
+    """A back task's valid answer (tasks.record): asked again until it has RUNS valid answers, unless its first answer
+    settles it alone (0191). Whether it reopened."""
+    cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task["id"],))
+    got = [r[0] for r in cur.fetchall()]
+    if len(got) >= RUNS or (len(got) == 1 and settles(got[0])):
         return False
     cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL WHERE id = %s", (task["id"],))
     return cur.rowcount == 1
@@ -449,9 +465,11 @@ def relation(answer: Optional[Dict[str, Any]]) -> Optional[str]:
 
 def verdict(answers: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """The first RUNS valid answers' verdict: {relation (the majority's, or unknown when no two agree), runs}; None
-    until RUNS came."""
+    until RUNS came, except a candidate whose first answer settles it alone (0191, SETTLES: its relation, one run)."""
     runs = list(answers)[:RUNS]
     if len(runs) < RUNS:
+        if runs and settles(runs[0]):
+            return {"relation": relation(runs[0]), "runs": [relation(runs[0])]}
         return None
     rels = [relation(a) for a in runs]
     top, n = Counter(rels).most_common(1)[0]
@@ -502,11 +520,13 @@ def _shown_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     ids = sorted(set(ids))
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.title, p.url, {_date()},
-                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
-                                    s.handle_or_url)
-                      FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY(%s::uuid[])""", (ids,))
-    return {i: {"title": t or None, "url": u, "at": at, "source": src} for i, t, u, at, src in cur.fetchall()}
+    from insight_core.utils import byline
+    cur.execute(f"""SELECT p.id::text, p.title, p.url, {_date()}, {byline.SOURCE_NAME}, {byline.COLUMNS}
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    # issue 0185: each line's byline (who wrote it, via whom)
+    return {i: {"title": t or None, "url": u, "at": at, "source": src, "byline": byline.of_row(src, *by)}
+            for i, t, u, at, src, *by in cur.fetchall()}
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -550,7 +570,7 @@ def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
                    for a in runs]
             top, n = Counter(x for x in per if x).most_common(1)[0] if any(per) else (None, 0)
             lines.append({"id": pid, "n": k, "title": p.get("title"), "source": p.get("source"), "at": _iso(p.get("at")),
-                          "url": p.get("url"), "trig": ptrig.get(pid) or [],
+                          "byline": p.get("byline"), "url": p.get("url"), "trig": ptrig.get(pid) or [],
                           "verdict": _MAP.get(top, top) if n >= 2 else None,
                           "about": next((x.get("about") for a in dev for x in (a.get("posts") or [])
                                          if isinstance(x, dict) and x.get("n") == k and x.get("about")), None)})

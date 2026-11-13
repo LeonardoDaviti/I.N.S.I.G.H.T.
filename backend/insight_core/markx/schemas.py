@@ -396,6 +396,33 @@ NEWS_SECTIONS_SCHEMA = {
                        "row_ids": {"type": "array", "minItems": 1,
                                    "items": {"type": "string", "pattern": "^r[0-9]{1,4}$"}}}}}},
 }
+# 0197 (news placement): the rows added since the last sectioning, each placed into one of its sections (keyed s1..sM in
+# the question) or "new" (none fits: it waits for the next full sectioning), news-place-v1. Every row once (validate.py).
+NEWS_PLACE_SCHEMA = {
+    "type": "object",
+    "required": ["placements"],
+    "properties": {"placements": {"type": "array", "minItems": 1, "items": {
+        "type": "object", "required": ["row_id", "section"],
+        "properties": {"row_id": {"type": "string", "pattern": "^r[0-9]{1,4}$"},
+                       "section": {"type": "string", "pattern": "^(s[0-9]{1,2}|new)$"}}}}},
+}
+
+# 0181: a round-up's items (units, markx/units.py), ~20 a question: each its type, a short headline and whether it
+# only continues the item before it. The types are read-v3's for one item, with `promo` (an ad; the author's own book,
+# talk, event list or sign-up; a bare link said nothing about) in place of `promotion_event`, and no `digest` (an item
+# is one thing). Which of them are news: markx/event_types.py (UNIT_NEWS).
+UNIT_TYPES = [t for t in EVENT_TYPES if t not in ("digest", "promotion_event")] + ["promo"]
+UNIT_HEADLINE_WORDS = 14
+UNITS_PER_QUESTION = 20
+UNIT_TYPES_SCHEMA = {
+    "type": "object",
+    "required": ["units"],
+    "properties": {"units": {"type": "array", "minItems": 1, "maxItems": UNITS_PER_QUESTION, "items": {
+        "type": "object", "required": ["key", "type", "headline", "continues"],
+        "properties": {"key": {"type": "string", "pattern": "^u[0-9]{1,3}$"}, "type": {"enum": UNIT_TYPES},
+                       "headline": {"type": "string", "minLength": 1, "maxLength": 200},
+                       "continues": {"type": "boolean"}}}}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -442,6 +469,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
     Kind("source_judge", "source-judge-v1", "source_candidate", SOURCE_JUDGE_SCHEMA),   # 0173: a candidate worth it?
     Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
+    Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # 0197: new rows into those sections
+    Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
 )}
 
 

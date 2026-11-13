@@ -324,6 +324,44 @@ class Scanned(_Api):
         _, body = call("GET", "/api/discover/main-source", query={"test": "false"})
         self.assertEqual([r for r in body["rows"] if r["actor"]["id"] == self.acme], [])
 
+    def test_the_scan_never_reads_the_whole_entity_book(self):
+        """v10.17 (0186): the scan asks the book for what its stories name (identity.lazy_book)."""
+        from insight_core.markx import identity
+        self.event()
+        with mock.patch.object(identity, "load_book", side_effect=AssertionError("the whole book")):
+            got = [r for r in self.rows() if r["actor"]["id"] == self.acme]
+        self.assertEqual([r["key"] for r in got], ["main:acme.example/blog/"])
+
+    def test_the_list_is_kept_until_what_it_is_made_of_changes(self):
+        """v10.17 (0186): a read-v3 answer of a post in no announced story keeps the list (it was made again on every
+        answer anywhere); one of a picked story's member, a new member, or a source changed makes it again."""
+        from insight_core.markx import repo
+        ms = M.MainSource(self.dsn())
+        sid = self.event()
+        scans = []
+        real = M.scan
+
+        def counted(*a, **k):
+            scans.append(1)
+            return real(*a, **k)
+
+        with mock.patch.object(M, "scan", counted):
+            first = ms.found()
+            elsewhere = self.post(title="Unrelated", at=datetime.now(timezone.utc) - 3 * D)
+            self.read(elsewhere, read3(event_type="research_result"))                  # in no story
+            self.assertEqual((ms.found(), len(scans)), (first, 1))
+            now = datetime.now(timezone.utc)
+            p3 = self.post(title="Widget 5 hands-on", source=self.other, at=now - D / 2)
+            repo.open_membership(self.cur, story_id=sid, post_id=p3, role="member", reason="test", run_id=self.run)
+            ms.found()
+            self.assertEqual(len(scans), 2)                                             # a member joined the story
+            self.read(p3, read3(event_type="model_release"))
+            ms.found()
+            self.assertEqual(len(scans), 3)                                             # its reading
+            self.site_source("https://example.org/feed", name="Another")
+            ms.found()
+            self.assertEqual(len(scans), 4)                                             # a source added
+
     def test_mark_x_tables_are_untouched(self):
         from insight_core.tests.test_markx_decide import checksums
         self.event()

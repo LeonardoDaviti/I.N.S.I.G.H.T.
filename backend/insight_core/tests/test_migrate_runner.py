@@ -11,7 +11,9 @@ import psycopg
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.db.migrate import MIGRATION_LOCK_KEY, acquire_migration_lock, apply_one
+from insight_core.db.migrate import (MIGRATION_LOCK_KEY, acquire_migration_lock, apply_one, hold_migration_lock,
+                                     migrate as migrate_all, no_transaction, pending_report, release_migration_lock,
+                                     run_one, split_statements, touched_tables)
 from insight_core.tests._db import insert_scratch_source, requires_test_db
 from insight_core.utils.titles import title_key
 
@@ -624,6 +626,168 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
         finally:
             conn.rollback()
             conn.close()
+
+
+
+class MigrationFileTests(unittest.TestCase):
+    """v10.17 (0188): the runner's reading of a file, no database."""
+
+    def test_split_statements_keeps_quotes_comments_and_dollar_bodies(self):
+        sql = """-- no transaction
+-- a header; with a semicolon
+CREATE TABLE IF NOT EXISTS t (a text DEFAULT 'x;y');
+/* a block; comment */
+CREATE OR REPLACE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql;
+DO $body$ BEGIN PERFORM 1; END $body$;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS t_a ON t (a)
+"""
+        parts = split_statements(sql)
+        self.assertEqual(len(parts), 4, parts)
+        self.assertIn("'x;y'", parts[0])
+        self.assertTrue(parts[1].startswith("/* a block; comment */"))
+        self.assertIn("RETURN 1; END $$", parts[1])
+        self.assertIn("PERFORM 1; END $body$", parts[2])
+        self.assertTrue(parts[3].startswith("CREATE INDEX CONCURRENTLY"))
+        self.assertEqual(split_statements("-- only a comment\n;\n"), [])
+
+    def test_no_transaction_marker_is_read_from_the_header_only(self):
+        self.assertTrue(no_transaction("-- 0200_big_index.sql\n-- no transaction\nCREATE INDEX CONCURRENTLY x ON t (a);"))
+        self.assertFalse(no_transaction("-- 0200.sql\nSELECT 1;"))
+        self.assertFalse(no_transaction("\n" * 10 + "-- no transaction\nSELECT 1;"))
+
+    def test_touched_tables(self):
+        sql = """-- UPDATE commented_out SET a = 1;
+CREATE TABLE IF NOT EXISTS mx_new (id int);
+ALTER TABLE ONLY public.posts ADD COLUMN IF NOT EXISTS x int;
+CREATE UNIQUE INDEX IF NOT EXISTS posts_x ON posts (x);
+CREATE INDEX CONCURRENTLY ON ONLY "sources" (id);
+UPDATE sources SET x = 1 WHERE false;
+INSERT INTO schema_migrations (version) VALUES ('v');
+DELETE FROM mx_old WHERE false;
+CREATE TRIGGER t_x AFTER INSERT OR UPDATE ON mx_new FOR EACH ROW EXECUTE FUNCTION f();
+"""
+        self.assertEqual(touched_tables(sql), ["mx_new", "public.posts", "posts", "sources", "schema_migrations",
+                                               "mx_old"])
+
+
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class PerMigrationTransactionTests(unittest.TestCase):
+    """v10.17 (0188): a transaction per migration, a lock timeout with retries, `-- no transaction` files, the
+    runner's session lock and --pending's tables. Scratch tables named for this process, dropped after."""
+
+    def setUp(self):
+        self.tag = f"zz_mig_{os.getpid()}"
+        self.dir = Path(tempfile.mkdtemp())
+        self.conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        self.versions = []
+
+    def tearDown(self):
+        try:
+            self.conn.execute(f"DROP TABLE IF EXISTS {self.tag}, {self.tag}_b CASCADE")
+            self.conn.execute("DELETE FROM schema_migrations WHERE version = ANY(%s)", (self.versions,))
+        finally:
+            self.conn.close()
+            for p in self.dir.iterdir():
+                p.unlink()
+            self.dir.rmdir()
+
+    def file(self, name: str, sql: str) -> Path:
+        version = f"9990_{self.tag}_{name}.sql"
+        self.versions.append(version)
+        path = self.dir / version
+        path.write_text(sql, encoding="utf-8")
+        return path
+
+    def recorded(self, path: Path) -> bool:
+        return self.conn.execute("SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = %s)",
+                                 (path.name,)).fetchone()[0]
+
+    def test_a_failed_migration_keeps_the_ones_before_it(self):
+        ok = self.file("a", f"CREATE TABLE {self.tag} (a int);")
+        bad = self.file("b", f"CREATE TABLE {self.tag}_b (a int); SELECT 1 / 0;")
+        with self.assertRaises(psycopg.errors.DivisionByZero):
+            migrate_all(self.conn, self.dir)
+        self.assertTrue(self.recorded(ok), "the first migration is committed on its own")
+        self.assertFalse(self.recorded(bad))
+        self.assertIsNone(self.conn.execute("SELECT to_regclass(%s)", (f"{self.tag}_b",)).fetchone()[0],
+                          "the failed migration's own statements rolled back")
+        probe = psycopg.connect(DATABASE_URL, autocommit=True)
+        try:
+            self.assertTrue(probe.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (MIGRATION_LOCK_KEY,)).fetchone()[0],
+                            "the runner's lock is released after a failure")
+            probe.execute("SELECT pg_advisory_unlock(hashtext(%s))", (MIGRATION_LOCK_KEY,))
+        finally:
+            probe.close()
+
+    def test_a_held_lock_is_waited_for_with_retries(self):
+        self.conn.execute(f"CREATE TABLE {self.tag} (a int)")
+        path = self.file("alter", f"ALTER TABLE {self.tag} ADD COLUMN IF NOT EXISTS b int;")
+        holder = psycopg.connect(DATABASE_URL)
+        holder.execute(f"LOCK TABLE {self.tag} IN ACCESS EXCLUSIVE MODE")
+        waits = []
+
+        def sleep(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                holder.rollback()          # the long query ends while the migration waits
+        try:
+            self.assertTrue(run_one(self.conn, path, path.name, lock_timeout=0.2, retries=3, wait=0.5, sleep=sleep))
+        finally:
+            holder.close()
+        self.assertEqual(waits, [0.5, 1.0])
+        self.assertTrue(self.recorded(path))
+
+    def test_a_lock_never_freed_fails_after_the_retries(self):
+        self.conn.execute(f"CREATE TABLE {self.tag} (a int)")
+        path = self.file("alter", f"ALTER TABLE {self.tag} ADD COLUMN b int;")
+        holder = psycopg.connect(DATABASE_URL)
+        holder.execute(f"LOCK TABLE {self.tag} IN ACCESS EXCLUSIVE MODE")
+        waits = []
+        try:
+            with self.assertRaises(psycopg.errors.LockNotAvailable):
+                run_one(self.conn, path, path.name, lock_timeout=0.1, retries=1, wait=0.0, sleep=waits.append)
+        finally:
+            holder.close()
+        self.assertEqual(len(waits), 1)
+        self.assertFalse(self.recorded(path))
+        self.assertEqual(self.conn.execute("SHOW lock_timeout").fetchone()[0], "0",
+                         "the lock timeout is the migration's own (SET LOCAL)")
+
+    def test_no_transaction_file_builds_an_index_concurrently(self):
+        path = self.file("index", f"""-- {self.tag}: a big index
+-- no transaction
+CREATE TABLE IF NOT EXISTS {self.tag} (a int);
+DROP INDEX CONCURRENTLY IF EXISTS {self.tag}_a;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS {self.tag}_a ON {self.tag} (a);
+""")
+        self.assertTrue(run_one(self.conn, path, path.name))
+        self.assertTrue(self.recorded(path))
+        self.assertIsNotNone(self.conn.execute("SELECT to_regclass(%s)", (f"{self.tag}_a",)).fetchone()[0])
+        self.assertEqual(self.conn.execute("SHOW lock_timeout").fetchone()[0], "0")
+
+    def test_the_runner_lock_outlives_a_commit(self):
+        probe = psycopg.connect(DATABASE_URL, autocommit=True)
+        try:
+            hold_migration_lock(self.conn)
+            with self.conn.transaction():
+                self.conn.execute("SELECT 1")
+            self.assertFalse(probe.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))",
+                                           (MIGRATION_LOCK_KEY,)).fetchone()[0],
+                             "a second runner (or a restore) waits while the first runs, across its commits")
+            release_migration_lock(self.conn)
+            self.assertTrue(probe.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))",
+                                          (MIGRATION_LOCK_KEY,)).fetchone()[0])
+        finally:
+            probe.close()
+
+    def test_pending_lists_the_tables_and_their_rows(self):
+        self.file("touch", f"-- {self.tag}: touch\nUPDATE sources SET name = name WHERE false;\n"
+                           f"CREATE TABLE {self.tag} (a int);\n")
+        with self.conn.cursor() as cur:
+            lines = pending_report(cur, self.dir)
+        self.assertEqual(lines[0], f"  {self.tag}: touch")
+        self.assertRegex(lines[1], rf"touches: sources \((~[\d,]+ rows|rows unknown)\), {self.tag} \(new\)")
+        self.assertEqual(lines[-1], "1 migration(s) will run at the start")
 
 
 if __name__ == "__main__":

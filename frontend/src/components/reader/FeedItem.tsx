@@ -16,8 +16,9 @@ import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
 import {
-  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, type StoryLine,
+  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, storyTree, type StoryLine,
 } from '../../lib/story';
+import { bylineName, carried, carriedLine } from '../../lib/byline';
 import { TextLink } from '../ui/TextLink';
 
 // "Also on <channel>" (issue 0132 A): its own chunk, loaded the first time a row has one (the reader's JS budget).
@@ -126,7 +127,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     <li data-depth={line.depth} className={indent}>
       <Under name={line.under} />
       {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-      <span className={LINE_NAME} title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
+      <span className={LINE_NAME} title={sourceLabel(post.source_display_name)}>{middleTruncate(bylineName(post), 32)}</span>
       <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
       <Link
         to={postHref(post.id, null)}
@@ -136,7 +137,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
       >
         {post.title?.trim() || 'Untitled post'}
       </Link>
-      {post.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(post.source_display_name)}</span>
+      {carried(post) ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(post.source_display_name)}</span>
         : post.role === 'share' ? <span className="shrink-0">· share</span> : null}
       <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
         {feedDateLabel(post.sort_at, now ?? new Date())}
@@ -240,6 +241,7 @@ function FeedItem({
   );
   const fullTime = useMemo(() => feedFullTime(time), [time]);
   const source = sourceLabel(item.source_display_name);
+  const carriedText = carriedLine(item);
   // The date column is when the post reached you; a changed or late-found page says why.
   const pageNote = item.update
     ? `updated ${updateChanges(item.update)}`.trim()
@@ -250,7 +252,7 @@ function FeedItem({
   const barLine = progress !== null;
   const lengthPart = length ? (
     <>
-      <Dot wide={showSource || Boolean(item.repost || item.counts)} phone={!barLine || Boolean(item.repost || item.counts)} className="sm:order-2" />
+      <Dot wide={showSource || Boolean(carriedText || item.counts)} phone={!barLine || Boolean(carriedText || item.counts)} className="sm:order-2" />
       {/* On a phone a long source name gives way first; beside a short one the length may, rather than
           run under the actions (issue 0073). */}
       <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap sm:order-2 ${showSource && source.length > 12 ? '' : 'max-sm:min-w-0 max-sm:shrink'}`}>
@@ -327,21 +329,21 @@ function FeedItem({
             </time>
             {barLine ? null : lengthPart}
           </span>
-          {item.repost || item.counts || barLine ? (
+          {carriedText || item.counts || barLine ? (
             <span className={META_LINE}>
-              {/* A repost (issue 0066): its author, beside the source that reposted it (issue 0070). */}
-              {item.repost ? <span className="min-w-0 truncate sm:order-1">{repostLine(item.repost)}</span> : null}
+              {/* A repost or forward (issue 0066): its author, beside the source that carried it (issue 0070); whom it quotes (Byline, 0185). */}
+              {carriedText ? <span className="min-w-0 truncate sm:order-1">{carriedText}</span> : null}
               {/* A Hacker News item's counts (issue 0070), no longer its text. */}
               {item.counts ? (
                 <>
-                  <Dot wide={showSource || Boolean(item.repost)} phone={Boolean(item.repost)} className="sm:order-1" />
+                  <Dot wide={showSource || Boolean(carriedText)} phone={Boolean(carriedText)} className="sm:order-1" />
                   <span className="shrink-0 truncate max-sm:min-w-0 max-sm:shrink sm:order-1">{countsLabel(item.counts)}</span>
                 </>
               ) : null}
               {barLine ? lengthPart : null}
               {barLine ? (
                 <>
-                  <Dot wide phone={Boolean(item.repost || item.counts || length)} className="sm:order-2" />
+                  <Dot wide phone={Boolean(carriedText || item.counts || length)} className="sm:order-2" />
                   {/* Started, not finished (issue 0030): a hairline track, filled as far as read. */}
                   <span aria-hidden="true" data-reading-progress className="h-px w-10 shrink-0 bg-line sm:order-2">
                     <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
@@ -353,7 +355,7 @@ function FeedItem({
           ) : null}
           {pageNote ? (
             <span className={META_LINE}>
-              <Dot wide={showSource || Boolean(length || item.repost || item.counts)} phone={false} className="sm:order-3" />
+              <Dot wide={showSource || Boolean(length || carriedText || item.counts)} phone={false} className="sm:order-3" />
               {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
               <span data-page-note className="min-w-0 truncate sm:order-3" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
             </span>

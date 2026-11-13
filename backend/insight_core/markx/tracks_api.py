@@ -9,15 +9,19 @@ POST /api/markx/tracks/{id}/labels             {post, answer: in | out | undo} -
 POST /api/markx/tracks/{id}/subtopics          {action: rename | merge | split | lock | unlock | add, id, ids, name,
                                                definition, keys} -> [sub-topics]
 POST /api/markx/tracks/{id}/sources/{source}   make a suggested passive source active -> {added}
+GET  /api/markx/tracks/{id}/why?post=<id or address>   where one post stands and why (markx/track_why, 0185)
+
+Every item a track page shows carries its `byline` (issue 0185: who wrote it, via whom).
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from insight_core.markx import tracks
+from insight_core.markx import track_why, tracks
+from insight_core.utils.byline import bylines
 
 router = APIRouter()
 
@@ -50,6 +54,15 @@ class SubtopicEdit(BaseModel):
     keys: List[str] = []
 
 
+def _with_bylines(cur: Any, page: Dict[str, Any]) -> Dict[str, Any]:
+    """The page's items, each with its byline (issue 0185), read in one query."""
+    items = [it for s in page.get("sections") or [] for it in s["items"]] + list(page.get("discover") or [])
+    bys = bylines(cur, [it["post_id"] for it in items])
+    for it in items:
+        it["byline"] = bys.get(it["post_id"])
+    return page
+
+
 @router.get("/tracks")
 def mx_tracks():
     from insight_core.markx.api import transaction
@@ -70,7 +83,22 @@ def mx_track_page(track_id: str):
     tid = _id(track_id)
     with transaction() as cur:
         try:
-            return tracks.page(cur, tid)
+            return _with_bylines(cur, tracks.page(cur, tid))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
+@router.get("/tracks/{track_id}/why")
+def mx_track_why(track_id: str, post: str = ""):
+    """Where one post stands in the track and why (0185): read only, stored rows."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        pid = track_why.find_post(cur, post)
+        if pid is None:
+            raise HTTPException(status_code=404, detail="No such post")
+        try:
+            return track_why.why(cur, tid, pid)
         except KeyError:
             raise HTTPException(status_code=404, detail="No such track")
 
@@ -82,7 +110,7 @@ def mx_track_topic(track_id: str, body: TopicIn):
     with transaction() as cur:
         try:
             tracks.set_topic(cur, tid, description=body.description, excludes=body.excludes)
-            return tracks.page(cur, tid)
+            return _with_bylines(cur, tracks.page(cur, tid))
         except KeyError:
             raise HTTPException(status_code=404, detail="No such track")
 

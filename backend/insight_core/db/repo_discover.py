@@ -30,9 +30,9 @@ Measured on a copy of the lab (41.7k posts, 138.6k kept links, 2026-10-31): the 
 a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.56 s and 9 MB,
 with the same list in the same order.
 
-Issue 0067: each voice also says whether it links a key only in roundups (posts of 3+ anchors,
-discover_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
-are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
+Issue 0067: each voice also says whether it links a key only in roundups (v10.17, 0190: the posts markx/units.py
+tags a round-up, the one predicate; 3+ anchors before), which Discover's order weighs half; the other pages
+of a host where tweets are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
 (system_settings `discover_counts`): the story job counts them after it fills the addresses, and
 an open reads them while their stamp (the rules, the last story run, the sources with posts) holds.
 Hidden and followed keys are left out when read, so hiding or following needs no recount.
@@ -49,12 +49,13 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_post_parts import shown_title
+from insight_core.markx import pairing, units
+from insight_core.utils import voice as voice_keys
 from insight_core.utils.addresses import host_of
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, ORIGIN_MIN_VOICES, OWNER_DEPTH,
                                                Origin, Platforms, address_stamp, discover_address, discover_article,
                                                find_platforms)
-from insight_core.utils.story_rules import ROUNDUP_ANCHORS
 from insight_core.utils.url_normalization import TWEET_SHAPE
 
 LOCK_KEY = "insight.discover_addresses"
@@ -118,16 +119,9 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses, bu
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
-roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (discover_rules.is_roundup): each
-    SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
-    WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster;
-      AND (%(keys)s::text[] IS NULL OR pl.post_id IN (SELECT post_id FROM linked))   -- for a few keys, those)
-      AND (pl.target_url !~ %(home)s                                        -- a home page no post is at
-           OR EXISTS (SELECT 1 FROM posts tp WHERE tp.normalized_url = pl.target_url))
-      AND (pl.target_url IS DISTINCT FROM p.normalized_url                  -- and the post itself (the
-           OR p.id <> (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url   -- first stored
-                       ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1))           -- at its address)
-    GROUP BY pl.post_id HAVING count(*) >= %(roundup_anchors)s
+roundup AS MATERIALIZED (         -- the linking posts that are round-ups (markx/units.py owns the predicate,
+    SELECT DISTINCT l.post_id FROM linked l   -- GLOSSARY "Round-up"; v10.17, 0190: 3+ anchors before)
+    WHERE """ + units.roundup_sql("l.post_id") + """
 ),
 author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it (post_parts, issue 0076)
     SELECT pp.post_id AS id, pp.author FROM post_parts pp
@@ -135,9 +129,7 @@ author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes 
 ),
 link AS MATERIALIZED (            -- with their voices (StoryPost.voice), and whether a roundup linked it
     SELECT l.key, l.url, l.article, l.post_id, l.source_id,
-           (CASE WHEN l.kind = 'site' THEN 'site:' || l.own_site
-                 WHEN l.kind = 'reddit' AND a.author IS NOT NULL THEN 'reddit:' || a.author
-                 ELSE 'source:' || l.source_id::text END) COLLATE "C" AS voice,
+           """ + voice_keys.key_sql("l.kind", "l.own_site", "a.author", "l.source_id") + """ COLLATE "C" AS voice,
            l.post_id IN (SELECT post_id FROM roundup) AS roundup
     FROM linked l LEFT JOIN author a ON a.id = l.post_id
 ),
@@ -185,7 +177,7 @@ HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
 # The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
 _COUNT_RULES = {"home": HOME, "depth": OWNER_DEPTH,
-                "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
+                "min_voices": DISCOVER_MIN_VOICES,
                 "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
 
 # The platform rule's links (issue 0080, discover_rules.platform_rows in SQL): every kept link but Saved's,
@@ -197,7 +189,7 @@ WITH src AS (
 ),
 link AS (
     SELECT DISTINCT pl.target_url AS url, s.selves,
-           CASE WHEN s.kind = 'site' THEN 'site:' || s.own_site ELSE 'source:' || p.source_id::text END AS voice
+           """ + voice_keys.source_key_sql("s.kind", "s.own_site", "p.source_id") + """ AS voice
     FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN src s ON s.id = p.source_id
     WHERE NOT pl.boilerplate AND s.kind <> 'saved' AND pl.target_url !~ %(tweet)s
 ),
@@ -216,8 +208,8 @@ GROUP BY 1, 2
 
 # Each suggestion's activity (issue 0080: Discover's order): when your sources last linked it, and how many
 # of the posts linking it you opened or read.
-_ACTIVITY = """
-SELECT d.key, max(COALESCE(p.published_at, p.fetched_at)),
+_ACTIVITY = f"""
+SELECT d.key, max({pairing.ix_date('p')}),
        count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
            SELECT 1 FROM post_interactions i WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session')))
 FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND NOT pl.boilerplate
@@ -230,7 +222,7 @@ GROUP BY d.key
 # the sites more than one website source shares (the others have one source).
 _SITE_NAMERS = """
 SELECT DISTINCT ON (voice) voice, source_id FROM (
-    SELECT 'site:' || s.own_site AS voice, p.source_id, min(p.id::text COLLATE "C") AS first
+    SELECT """ + voice_keys.site_key_sql("s.own_site") + """ AS voice, p.source_id, min(p.id::text COLLATE "C") AS first
     FROM posts p JOIN unnest(%(ids)s::uuid[], %(sites)s::text[]) AS s(id, own_site) ON s.id = p.source_id
     WHERE EXISTS (SELECT 1 FROM post_links pl WHERE pl.post_id = p.id AND NOT pl.boilerplate)
     GROUP BY 1, 2
@@ -243,7 +235,7 @@ SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, {s
        s.first_at, EXISTS (SELECT 1 FROM posts held WHERE s.origin_url IS NOT NULL AND held.normalized_url = s.origin_url),
        (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id),
        (SELECT array_agg(DISTINCT rp.source_id::text) FROM story_posts sp JOIN posts rp ON rp.id = sp.post_id
-        WHERE sp.story_id = s.id AND sp.voice LIKE 'reddit:%%')
+        WHERE sp.story_id = s.id AND sp.voice LIKE '{voice_keys.POSTER_LIKE}')
 FROM stories s
 LEFT JOIN LATERAL (
     SELECT min(sp.post_id::text)::uuid AS post_id FROM story_posts sp
@@ -351,7 +343,7 @@ class DiscoverRepository:
     def name_voices(cur: Cursor, found: List[Dict[str, Any]], kinds: Dict[str, str], own_sites: Dict[str, str]) -> None:
         """Each suggestion's voices as (voice, the source naming it; voice_source)."""
         voices = [[v[0] if isinstance(v, (list, tuple)) else v for v in s["voices"]] for s in found]
-        namers = DiscoverRepository._site_namers(cur, kinds, own_sites, {v for vs in voices for v in vs if v.startswith("site:")})
+        namers = DiscoverRepository._site_namers(cur, kinds, own_sites, {v for vs in voices for v in vs if voice_keys.is_site(v)})
         for s, vs in zip(found, voices):
             s["voices"] = [(voice, voice_source(voice, namers)) for voice in vs]
 
@@ -465,7 +457,7 @@ class DiscoverRepository:
         stored: Dict[str, List[str]] = defaultdict(list)
         for sid, url in cur.fetchall():
             stored[sid].append(url)
-        cur.execute("SELECT source_id::text, max(COALESCE(published_at, fetched_at)) FROM posts WHERE source_id = ANY(%s::uuid[]) "
+        cur.execute(f"SELECT source_id::text, max({pairing.ix_date('')}) FROM posts WHERE source_id = ANY(%s::uuid[]) "
                     "GROUP BY 1", (ids,))
         newest = dict(cur.fetchall())
         out = {}
@@ -501,11 +493,13 @@ class DiscoverRepository:
         SystemSettingsRepository.upsert(cur, READS_KEY, reads)
 
     @staticmethod
-    def base() -> str:
+    def base(cur: Cursor) -> str:
         """What the counts are counted by, a story run aside: the rules (issue 0072: while they hold, a story
         run counts again only the keys its posts link; a source whose facts change has its posts queued, so
-        the keys they link are among those)."""
-        return hashlib.sha1(json.dumps([_COUNTS, _COUNT_RULES, ADDRESS_RULES]).encode()).hexdigest()[:16]
+        the keys they link are among those) and the round-up tags (units.tags_stamp, 0190: a post tagged since
+        moves the voices that link only in round-ups, whatever keys a run's posts link)."""
+        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES, units.tags_stamp(cur)]
+        return hashlib.sha1(json.dumps(what).encode()).hexdigest()[:16]
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
@@ -515,7 +509,7 @@ class DiscoverRepository:
         same counts."""
         cur.execute(f"SELECT {DISCOVER_AT} FROM system_settings WHERE key = 'stories'")
         row = cur.fetchone()
-        what = json.dumps([_COUNTS, _COUNT_RULES, ADDRESS_RULES, row[0] if row else None, facts])
+        what = json.dumps([DiscoverRepository.base(cur), row[0] if row else None, facts])
         return hashlib.sha1(what.encode()).hexdigest()[:16]
 
     @staticmethod
@@ -527,7 +521,7 @@ class DiscoverRepository:
         cur.execute(_ORIGINS, {"min_voices": ORIGIN_MIN_VOICES})
         rows = cur.fetchall()
         namers = DiscoverRepository._site_namers(
-            cur, kinds, own_sites, {v for *_, voices, _ in rows for v in voices if v.startswith("site:")})
+            cur, kinds, own_sites, {v for *_, voices, _ in rows for v in voices if voice_keys.is_site(v)})
         return [Origin(str(story_id), url, title if source_id else origin_title,
                        str(source_id) if source_id else None, first_at, {v: voice_source(v, namers) or "" for v in voices},
                        reddit_sources=tuple(reddit or ()), at_post=bool(held))
@@ -543,7 +537,7 @@ class DiscoverRepository:
     @staticmethod
     def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:
         """Each source's first post (published, else fetched): how far back it holds."""
-        cur.execute("SELECT source_id, min(COALESCE(published_at, fetched_at)) FROM posts "
+        cur.execute(f"SELECT source_id, min({pairing.ix_date('')}) FROM posts "
                     "WHERE source_id = ANY(%s::uuid[]) GROUP BY 1", (sorted(source_ids),))
         return {str(source_id): first for source_id, first in cur.fetchall() if first}
 
@@ -572,8 +566,8 @@ class DiscoverRepository:
         the sources sharing the site the one whose kept links come first in post order."""
         by_site: Dict[str, List[str]] = defaultdict(list)
         for source_id, kind in kinds.items():
-            if kind == "site" and "site:" + own_sites.get(source_id, "") in voices:
-                by_site["site:" + own_sites.get(source_id, "")].append(source_id)
+            if kind == "site" and voice_keys.site_key(own_sites.get(source_id, "")) in voices:
+                by_site[voice_keys.site_key(own_sites.get(source_id, ""))].append(source_id)
         namers = {voice: ids[0] for voice, ids in by_site.items() if len(ids) == 1}
         shared = sorted(i for ids in by_site.values() if len(ids) > 1 for i in ids)
         if shared:
@@ -655,15 +649,15 @@ def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> Lis
         ids = [sid for sid, s in facts.site.items() if s and (s == key or s == site or site_of(s) == site_of(site))
                and sid in created and created[sid] >= at]
         for sid in ids:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT count(*) FROM posts p
-                 WHERE p.source_id = %(s)s AND COALESCE(p.published_at, p.fetched_at) >= %(at)s
+                 WHERE p.source_id = %(s)s AND {pairing.ix_date('p')} >= %(at)s
                    AND (EXISTS (SELECT 1 FROM mx_entity_addresses a WHERE a.url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM stories st WHERE st.origin_url = p.normalized_url)
                         OR EXISTS (SELECT 1 FROM story_originals o WHERE o.url = p.normalized_url))
                    AND NOT EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
                                     WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
-                                      AND COALESCE(q.published_at, q.fetched_at) < COALESCE(p.published_at, p.fetched_at))""",
+                                      AND {pairing.ix_date('q')} < {pairing.ix_date('p')})""",
                         {"s": sid, "at": created[sid]})
             out.append({"key": key, "source_id": sid, "name": facts.name.get(sid, ""),
                         "followed_at": created[sid].isoformat(), "originals_first": cur.fetchone()[0]})
@@ -673,9 +667,8 @@ def supplied_first(cur: Cursor, suggested: Dict[str, str], *, facts: Any) -> Lis
 def voice_source(voice: str, site_namers: Dict[str, str]) -> Optional[str]:
     """The source a voice is named after (SourceFacts.voice_name): a website the source of its
     first kept link (`site_namers`), a source voice its own; a Reddit author none."""
-    if voice.startswith("source:"):
-        return voice.split(":", 1)[1]
-    return site_namers.get(voice)
+    source_id = voice_keys.source_of(voice)
+    return source_id if source_id is not None else site_namers.get(voice)
 
 
 __all__ = ["DiscoverRepository", "ADDRESS_RULES"]

@@ -28,13 +28,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from insight_core.markx import repo, tasks
+from insight_core.markx import event_types, pairing, repo, tasks
 
 KIND, GUIDE = "read3", "read-v3"
 PER_CALL = 5                     # the lab's rv3d batch size (the worker's PER_CALL names it)
-NEWS_TYPES = ("model_release", "product_release", "research_result", "business_event", "policy_legal", "incident",
-              "public_statement", "promotion_event")
-LEAK = "leak_rumour"
+NEWS_TYPES = event_types.NEWS_TYPES   # the seam's lists (0190)
+LEAK = event_types.LEAK
 ANSWERS = ("same", "not_same", "undo")
 LAB = {"f1": 0.70, "single_runs": [0.68, 0.72, 0.71], "set": "60 unseen lab clusters, 214 members", "date": "2026-11-06"}
 
@@ -150,7 +149,7 @@ def read3_input(p: Any, *, url: Optional[str], repost: Optional[Mapping[str, Any
 
 def _extras(cur: Any, ids: Sequence[str]) -> Dict[str, Tuple[Optional[str], Optional[dict]]]:
     """{post: (its url, its repost {by, author} or None)} as the reader names a repost (issue 0066)."""
-    from insight_core.db.repo_reader import repost_of
+    from insight_core.utils.byline import repost_of
     if not ids:
         return {}
     cur.execute("""SELECT p.id::text, p.url, s.platform, s.handle_or_url, p.author, p.reposted_by
@@ -185,18 +184,18 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
         days = tasks.reading_window(cur)
     cur.execute(
         f"""SELECT p.id::text, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int
+                                    - {pairing.ordinary_date('p')})) / 86400))::int
              FROM posts p
             WHERE p.id IN (SELECT sp.post_id FROM mx_story_posts sp
                             WHERE sp.valid_to IS NULL AND sp.role = 'member'
                               AND sp.story_id IN (SELECT story_id FROM mx_story_posts
                                                    WHERE valid_to IS NULL AND role = 'member'
                                                    GROUP BY story_id HAVING count(*) >= 2))
-              AND (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+              AND (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND (%(fresh)s::timestamptz IS NULL OR {tasks.fresh_sql()})
               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
-            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id
+            ORDER BY {pairing.ordinary_date('p')} DESC, p.id
             LIMIT %(limit)s""", {"now": now, "days": days, "kind": KIND, "guide": GUIDE, "limit": limit,
                                  "fresh": fetched_since})
     rows = cur.fetchall()
@@ -229,8 +228,7 @@ def story_folds(cur: Any, story_ids: Iterable[str]) -> Dict[str, Group]:
     story_ids = sorted({str(s) for s in story_ids if s})
     if not story_ids:
         return {}
-    from insight_core.markx import event_types   # 0175: a post's type through the seam, whichever guide gave it
-    cur.execute("""SELECT sp.story_id::text, sp.post_id::text, COALESCE(p.published_at, p.surfaced_at, p.fetched_at)
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, {pairing.published_date('p')}
                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                     WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
                 (story_ids,))
@@ -292,9 +290,9 @@ def story_view(cur: Any, story: str) -> Dict[str, Any]:
     g = story_folds(cur, [story]).get(story)
     if g is None:
         raise KeyError(story)
-    cur.execute("""SELECT sp.post_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
+    cur.execute(f"""SELECT sp.post_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                     WHERE sp.story_id = %s AND sp.valid_to IS NULL AND sp.role = 'member'
-                    ORDER BY COALESCE(p.published_at, p.surfaced_at, p.fetched_at), p.id""", (story,))
+                    ORDER BY {pairing.published_date('p')}, p.id""", (story,))
     posts = [r[0] for r in cur.fetchall()]
     return {"story": story, "head": g.head,
             "posts": [{"id": p, "role": g.rule.get(p), **(g.view(p) or {"state": None})} for p in posts]}

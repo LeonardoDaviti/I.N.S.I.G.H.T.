@@ -260,7 +260,7 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_a_repost_counts_as_its_author_only_when_a_source_follows_the_author(self):
-        """Mark IX's rule in Mark X's decisions (pairing.counted_voice): two feeds forwarding one followed channel are
+        """Mark IX's rule in Mark X's decisions (voice.counted_source): two feeds forwarding one followed channel are
         that channel's one voice (their story is never checked); forwards of a stranger stay their feeds' two voices;
         a feed quoting a stranger is one voice. In a full run and in the state an incremental run keeps; a source that
         starts following an author makes the next run full."""

@@ -27,6 +27,8 @@ from urllib.parse import urlsplit
 
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
+from insight_core.markx import pairing
+from insight_core.utils import voice
 
 TOP = 8
 BEFORE = 3
@@ -118,8 +120,8 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
     out = Lines()
     if not ids:
         return out
-    cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
-                          COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.source_id::text, p.url
+    cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
+                          {pairing.post_date('p')}, p.source_id::text, p.url
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                     WHERE m.guide = ANY(%s) AND (m.entity_id = ANY(%s::uuid[]) OR (m.post_id, m.guide, m.n) IN
                           (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[])))""",
@@ -192,8 +194,8 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         out.append(_event("release", rows[p]["at"], p, name=name(sorted(rows[p]["as"])[0]),
                           rank=RANK["release"] if k in (0, len(rel) - 1) else RANK["outside"]))
     if book.ents[root].level in ("family", "thing"):
-        kids = sorted({book.root(x) for x, e in book.ents.items() if e.level in I.VERSION_LEVELS and e.parent
-                       and e.parent in members and book.root(x) != root})
+        kids = sorted({book.root(x) for x in book.with_parent_in(root)   # v10.17 (0186): asked, not walked
+                       if (e := book.ents[x]).level in I.VERSION_LEVELS and e.parent in members and book.root(x) != root})
         if kids:
             kl = lines_of(cur, book, {m for k in kids for m in book.cluster(k)})
             firsts: Dict[str, str] = {}
@@ -222,7 +224,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
         for month, ps in sorted(months.items()):
             out.append(_event("outside", rows[ps[0]]["at"], ps[0], month=month, n=len(ps),
-                              sources=len({rows[p]["source"] for p in ps})))
+                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX)))
     out = _dedupe(out)
     if light:
         return out
@@ -259,7 +261,7 @@ def _linking_back(cur: Any, posts: Set[str]) -> Dict[str, Tuple[datetime, str]]:
     or refers back to the older)."""
     if not posts:
         return {}
-    cur.execute("""SELECT DISTINCT x.a::text, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.source_id::text
+    cur.execute(f"""SELECT DISTINCT x.a::text, {pairing.post_date('p')}, p.source_id::text
                      FROM mx_connections x JOIN posts p ON p.id = x.a
                     WHERE x.valid_to IS NULL AND x.a_kind = 'post' AND x.b_kind = 'post'
                       AND x.b = ANY(%s::uuid[]) AND NOT x.a = ANY(%s::uuid[])""", (sorted(posts), sorted(posts)))
@@ -312,7 +314,7 @@ def _shown(cur: Any, evs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for e in evs:
         p = posts.get(e["post"]) if e.get("post") else None
         out.append({**{k: v for k, v in e.items() if k != "post"},
-                    "post": {k: p.get(k) for k in ("id", "title", "source", "kind", "url")} if p else None})
+                    "post": {k: p.get(k) for k in ("id", "title", "source", "kind", "url", "byline")} if p else None})
     return out
 
 
@@ -338,14 +340,14 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
     entities, not an org or person), up to `limit` previous events (the birth, the last release before it, the
     first outside mention before it), oldest first: [{entity: {id, name}, items}]. `skip`: posts already listed."""
     from insight_core.markx import schemas
-    cur.execute("""SELECT m.guide, m.n, m.entity_id::text, COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+    cur.execute(f"""SELECT m.guide, m.n, m.entity_id::text, {pairing.post_date('p')}
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                     WHERE m.post_id = %s AND m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL
                     ORDER BY m.n""", (post_id, schemas.mention_guides()))
     rows = cur.fetchall()
     if not rows:
         return []                                   # no subject linked: the book is not read
-    book = book or I.load_book(cur)
+    book = book or I.lazy_book(cur)   # v10.17 (0186): what the post's subjects ask of the book
     skip = set(skip) | {post_id}
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()

@@ -7,6 +7,7 @@ The DB part runs only on a database whose name ends in _test (it empties the mx_
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import random
 import unittest
 import uuid
@@ -36,6 +37,21 @@ class Mapping(unittest.TestCase):
         for v in verbs:
             self.assertEqual(ET.action_group(v), OLD._group(v), v)
             self.assertEqual(HP._group(v), OLD._group(v), v)
+
+    def test_the_type_lists_are_made_here_from_the_closed_types(self):
+        """v10.17 (0190): one owner; the values the three hand-written copies had."""
+        news = ("model_release", "product_release", "research_result", "business_event", "policy_legal", "incident",
+                "public_statement", "promotion_event")
+        self.assertEqual(ET.NEWS_TYPES, news)
+        self.assertEqual(ET.UNIT_NEWS, ("model_release", "product_release", "research_result", "business_event",
+                                        "policy_legal", "incident", "public_statement", "leak_rumour"))
+        self.assertEqual(ET.ANNOUNCED, frozenset(news) - {"policy_legal"})
+        self.assertEqual(ET.LEAK, "leak_rumour")
+        self.assertEqual(set(ET.NEWS_TYPES) | {ET.LEAK} | set(ET.NOT_HAPPENINGS), set(schemas.EVENT_TYPES))
+        self.assertIs(folds.NEWS_TYPES, ET.NEWS_TYPES)
+        self.assertIs(built.NEWS_TYPES, ET.NEWS_TYPES)
+        self.assertIs(DMS.ANNOUNCED, ET.ANNOUNCED)
+        self.assertTrue(set(ET.UNIT_NEWS) <= set(ET.UNIT_TYPES))
 
     def test_from_reading_by_guide(self):
         r2 = {"kind": "report", "main": {"action": "acquired"}}
@@ -195,7 +211,11 @@ class Consumers(unittest.TestCase):
                 self.cur.execute("SAVEPOINT w")
                 rnd, posts, stories, rows = self.world(seed)
                 self.assertEqual(folds.story_folds(self.cur, stories), old_story_folds(self.cur, stories))
-                self.assertEqual(built._load(self.cur, stories), old_built_load(self.cur, stories))
+                # members in any order: neither query orders its rows (the plan decides; v10.17's ANALYZE moved it)
+                # 0189: built's members also carry their source's kind (a saved page is no voice); the types as before
+                by_id = lambda got: {s: sorted(({k: v for k, v in m.items() if k != "kind"} for m in ms),  # noqa: E731
+                                               key=lambda m: m["id"]) for s, ms in got.items()}
+                self.assertEqual(by_id(built._load(self.cur, stories)), by_id(old_built_load(self.cur, stories)))
                 for _ in range(3):
                     lo = T0 + rnd.randint(0, 30 * 24) * H
                     hi = lo + rnd.randint(1, 20 * 24) * H
@@ -203,7 +223,9 @@ class Consumers(unittest.TestCase):
                     self.assertEqual(built._neighbours(self.cur, lo, hi, have), old_neighbours(self.cur, lo, hi, have))
                 self.assertEqual(news_sections._types(self.cur, rows), old_types(self.cur, rows))
                 self.assertEqual(news_sections._types(self.cur, []), old_types(self.cur, []))
-                self.assertEqual(DMS._stories(self.cur, T0 + 5 * 24 * H), old_discover_stories(self.cur, T0 + 5 * 24 * H))
+                kindless = {s: {**x, "posts": {p: replace(post, kind=None) for p, post in x["posts"].items()}}
+                            for s, x in DMS._stories(self.cur, T0 + 5 * 24 * H).items()}   # 0189: and each source's kind
+                self.assertEqual(kindless, old_discover_stories(self.cur, T0 + 5 * 24 * H))
                 self.cur.execute("ROLLBACK TO SAVEPOINT w")
 
     def test_of_posts_by_guide(self):

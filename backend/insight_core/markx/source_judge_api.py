@@ -43,7 +43,7 @@ def mx_source_judge(address: str = ""):
 
 
 @router.post("/source-judge")
-async def mx_source_judge_ask(body: Dict[str, Any], background: BackgroundTasks):
+def mx_source_judge_ask(body: Dict[str, Any], background: BackgroundTasks):
     from insight_core.markx.api import transaction
     address = str((body or {}).get("address") or "")
     again = bool((body or {}).get("again"))

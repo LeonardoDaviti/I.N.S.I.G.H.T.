@@ -37,7 +37,8 @@ from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.addresses import account_key, site_of
 from insight_core.utils.post_links import extract_links, is_home, source_kind
 from insight_core.utils.discover_rules import suggestions
-from insight_core.utils.story_rules import StoryPost, count_voices, group, named_voices, roles
+from insight_core.utils import voice
+from insight_core.utils.story_rules import StoryPost, group, named_voices, roles
 from insight_core.utils.url_normalization import normalize_url
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -135,7 +136,7 @@ class JoiningRulesTests(unittest.TestCase):
         same_sub = post("c", "r1", kind="reddit", author="bob", hours=2, links=[(page, None)], words=10)
         self.assertEqual(group([a, same_sub]), [], "one subreddit, one story source: no join through the link")
         c = post("c", "r1", kind="reddit", author="bob", title="XREAL 1S is one of my favourites", hours=1)
-        self.assertEqual(count_voices([a, b, c]), 2, "the person, not the subreddit")
+        self.assertEqual(voice.count([a, b, c], voice.Policy.STORIES_IX), 2, "the person, not the subreddit")
 
     def test_a_citation_of_another_voice_within_72_hours(self):
         cited = post("a", "s1")
@@ -213,7 +214,7 @@ class NamedVoicesTests(unittest.TestCase):
                           ("r1", "u/alice", "r/sub"), ("r1", "u/bob", "r/sub")],
                          "followed sources first, then Reddit authors (issue 0103), each by its first post")
         self.assertEqual([[s["id"] for s in v["with"]] for v in named], [["s2"], ["tg2"], [], []])
-        self.assertEqual(len(named), count_voices(posts), "the count is the names")
+        self.assertEqual(len(named), voice.count(posts, voice.Policy.STORIES_IX), "the count is the names")
 
     def test_one_voice_lists_its_sources(self):
         """No count shows for one voice ("also shared by", 0072): its names are who said and shared it."""
@@ -230,12 +231,12 @@ class NamedVoicesTests(unittest.TestCase):
         repost = post("a", "x2", kind="x", author="accounta", reposted=True, author_source="x1")
         named = self._named([repost], {"a": ["x1"]})
         self.assertEqual([v["name"] for v in named], ["Account B", "Account A"])
-        self.assertEqual(len(named), count_voices([repost]))
+        self.assertEqual(len(named), voice.count([repost], voice.Policy.STORIES_IX))
         # The author's own tweet in the story too: one voice, its tweet's source.
         own = post("b", "x1", kind="x", author="accounta", hours=-1)
         named = self._named([own, repost], {"a": ["x1"]})
         self.assertEqual([(v["name"], v["with"]) for v in named], [("Account A", []), ("Account B", [])])
-        self.assertEqual(len(named), count_voices([own, repost]))
+        self.assertEqual(len(named), voice.count([own, repost], voice.Policy.STORIES_IX))
 
 
 # ---- Discover ---------------------------------------------------------------------------------

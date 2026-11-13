@@ -3,6 +3,7 @@
  * Types only, so the reader's bundle carries none of it (the page and the panel are their own chunks).
  */
 
+import type { Byline } from '../lib/byline';
 export type MarkxTag = 'NEW' | 'MERGED' | 'SPLIT' | 'CHANGED' | 'SAME';
 
 /** Why a post is in a Mark X story: the rule (Mark IX's link evidence) or the judge's relation, p and words. */
@@ -24,6 +25,8 @@ export interface MarkxLine {
   id: string;
   title: string | null;
   source: string | null;
+  /** Who wrote it, via whom (issue 0185). */
+  byline?: Byline | null;
   kind: string | null;
   at: string | null;
   url?: string | null;
@@ -65,6 +68,7 @@ export interface MarkxLeftOut {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind: string | null;
   at: string | null;
   /** The newest check of it, when one was asked. */
@@ -157,7 +161,7 @@ export interface MarkxTimelineEvent {
   rank: number;
   /** One of the 8 most important (shown before "all"). */
   top?: boolean;
-  post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null } | null;
+  post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null; byline?: Byline | null } | null;
   /** The name it was written as (birth, release), its earlier name (earlier_name), its name now (renamed). */
   name?: string | null;
   /** Other reasons the same post is on the line (the birth may be the maker's release, the first outside mention). */
@@ -185,6 +189,7 @@ export interface MarkxBefore {
   at: string | null;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   label: 'right' | 'wrong' | null;
 }
 
@@ -196,7 +201,11 @@ export interface MarkxJob {
   stage_at: string | null;
   wanted_at: string | null;
   finished_at: string | null;
-  last: { ok?: boolean; error?: string; seconds?: number } | null;
+  last: { ok?: boolean; error?: string; seconds?: number; skip_next?: string } | null;
+  /** 0188: failed runs in a row, shown failing from 3 on, and the next try after its backoff (absent from an older API). */
+  failures?: number;
+  failing?: boolean;
+  retry_at?: string | null;
 }
 
 export interface MarkxOverview {
@@ -206,7 +215,8 @@ export interface MarkxOverview {
     tokens: { calls: number; tokens_in: number; tokens_out: number; paid_usd: number; api_usd: number };
     failed: { kind: string; error: string | null; tasks: number }[];
     invalid: { kind: string; error: string | null; at: string }[];
-    workers: { worker: string; last_contact: string | null; leased: number }[];
+    /** stale (0188): silent for over 3 days (absent from an older API). */
+    workers: { worker: string; last_contact: string | null; leased: number; stale?: boolean }[];
     last_run: { id: string; started_at: string; finished_at: string | null; code_version: string | null;
       counts: Record<string, unknown> | null } | null;
     /** Mark X's jobs, run by insight-ingestion (issue 0112 Decided 10, 12); absent from an older API. */
@@ -215,7 +225,7 @@ export interface MarkxOverview {
   briefing: { day: string | null; briefings: { created_at: string; guide: string | null;
     lines: { text: string; keys: string[]; stories: string[]; rows?: string[] }[] }[] };
   entities: Record<'today' | 'week', { key: string; version: string | null; name: string; type: string | null; posts: number;
-    voices: number; examples: { id: string | null; title: string | null; source: string | null }[] }[]>;
+    voices: number; examples: { id: string | null; title: string | null; source: string | null; byline?: Byline | null }[] }[]>;
   /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
   reading_window: { days: number | null; default: number };
   /** 0144: how far back the decision run makes Mark X's own stories (absent from an older API). */
@@ -398,6 +408,7 @@ export interface MarkxEntityPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind?: string | null;
   at: string | null;
   url?: string | null;
@@ -464,6 +475,9 @@ export interface MarkxEntityList {
   queue: number;
 }
 
+/** Issue 0195: how many stories and posts in no story an entity's page lists (GET ...?stories_limit=&loose_limit=). */
+export interface MarkxEntityLimits { stories?: number; loose?: number }
+
 export interface MarkxEntityPage {
   entity: MarkxEntityRef;
   asked: string;
@@ -476,6 +490,9 @@ export interface MarkxEntityPage {
   voices: number;
   stories: MarkxEntityStory[];
   loose: MarkxEntityPost[];
+  /** Issue 0195: how many stories and posts in no story there are; `stories` and `loose` list the first ones. */
+  stories_total?: number;
+  loose_total?: number;
   /** 0144 B4: the loose posts by role: subject or actor, by, venue / source / recommended, mentions. */
   loose_counts?: Record<'report' | 'by' | 'other' | 'mention', number>;
   /** 0144 B1 (absent from an older API). */
@@ -529,6 +546,7 @@ export interface MarkxOlderPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   at: string | null;
   url: string | null;
   guide: string;
@@ -552,7 +570,7 @@ export interface MarkxEntityGroup {
 
 export interface MarkxQueueSide extends MarkxEntityRef {
   root: string;
-  posts: { id: string; title: string | null; source: string | null; at: string | null; span: string; role: string | null }[];
+  posts: { id: string; title: string | null; source: string | null; byline?: Byline | null; at: string | null; span: string; role: string | null }[];
   group?: MarkxEntityGroup;
 }
 
@@ -607,6 +625,8 @@ export interface MarkxEntityQueue {
     automatic: boolean; at: string; undone_at: string | null; confidence: number | null; kind?: 'same' | 'rename' }[];
   counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
   accuracy: MarkxEntityAccuracy;
+  /** Issue 0195: `open` is a page; the offset of the next one, null at the end (absent from an older API). */
+  next_offset?: number | null;
 }
 
 // ---- perspectives inside a story and the story sheet (issue 0119 B6-B7) ----------------------------------------
@@ -669,6 +689,7 @@ export interface MarkxStoryPost {
   id: string;
   title: string | null;
   source: string | null;
+  byline?: Byline | null;
   kind: string | null;
   at: string;
   url: string | null;

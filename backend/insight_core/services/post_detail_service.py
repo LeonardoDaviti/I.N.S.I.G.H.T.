@@ -16,7 +16,9 @@ from insight_core.ingestion import full_text
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_post_refs import PostRefsRepository
-from insight_core.db.repo_reader import ReaderRepository, repost_of, voice_sources
+from insight_core.db.repo_reader import ReaderRepository, voice_sources
+from insight_core.utils.byline import repost_of
+from insight_core.utils.byline import of_row as byline_of
 from insight_core.services.news_service import NewsService
 from insight_core.db.repo_post_parts import body, shown_title
 from insight_core.utils.media import post_media
@@ -142,6 +144,9 @@ class PostDetailService:
             "story": story,
             # A repost (issue 0066): "↻ @by, from @author", as the feed row says it.
             "repost": repost_of(row[21], row[22], row[24], row[25]),
+            # Who wrote it, via whom, quoting whom (issue 0185: Byline), as every view says it.
+            "byline": byline_of(source_settings.get("display_name") or row[22], row[21], row[22], row[24],
+                                ((row[11] or {}).get("forwarded_from") or {}).get("name"), row[36]),
             "internal_links": internal,
             # A link post's page (issue 0072): {url, title, post_id}, read when the post has no words of its own.
             "link": link,

@@ -7,7 +7,7 @@ a keyset cursor and a view (a stream, or one group per source).
 Read state lives in the `post_reader_state` projection (0020). `post_interactions` stays the
 audit log; a list query cannot aggregate it per row cheaply.
 
-Every feed is ordered by the sort key `(COALESCE(surfaced_at, published_at, fetched_at), id)`
+Every feed is ordered by the sort key `(pairing.ordinary_date, id)` (surfaced, else published, else fetched)
 descending, which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort
 node). surfaced_at (0037, issue 0039) is set only for a page that was new to you long after its
 date, or a watched page that changed: it sorts at when it reached you, every other post as before;
@@ -42,11 +42,13 @@ from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.json_safe import iso
 from insight_core.utils.media import feed_thumb
-from insight_core.utils.addresses import x_account
+from insight_core.utils import voice
+from insight_core.utils.byline import of_row as byline_of, repost_of, tweet_account
 from insight_core.utils.post_links import source_kind
-from insight_core.utils.story_rules import confirmed, named_voices, text_key
+from insight_core.utils.story_rules import named_voices, text_key
 from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.post_fields import SAVED_KEY, STORY_ONLY_KEY, TITLE_TEXT_CHARS
+from insight_core.markx import pairing
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -60,7 +62,7 @@ DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-ti
 EXCERPT_CHARS = 280
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
-SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+SORT_KEY = pairing.ordinary_date("p")
 # "Unread" as an anti-join, not `rs.read_at IS NULL` on the LEFT JOIN: the planner
 # estimates a null-extended LEFT JOIN column at ~0 rows, gives up on the LIMIT, and
 # seq-scans + sorts posts. The anti-join keeps the posts_feed_order_idx Index Scan.
@@ -99,7 +101,7 @@ _EVERY_SOURCE_FILTERS = ("later", "history")
 
 
 # A story's posts, first posted first (its lead: the first report shown, else the first share).
-_STORY_RANK = "COALESCE({p}.published_at, {p}.fetched_at), {p}.id"
+_STORY_RANK = pairing.IX_DATE + ", {p}.id"   # Mark IX's time
 # A story post's place in its story's order (issue 0072 D: a date alone counts as that day's earliest
 # timed post), then the time: compares two posts of one story ({sp}: story_posts' or news_posts' row).
 _ORDER_RANK = "COALESCE({sp}.position, 0), " + _STORY_RANK
@@ -271,24 +273,6 @@ def _excerpt(content: str | None) -> str:
     return clean_text(content)[:EXCERPT_CHARS]
 
 
-@lru_cache(maxsize=1024)
-def _own_account(platform: str | None, handle: str | None) -> str:
-    """The X account a source follows ("badlogicgames"), else ""."""
-    account = source_account(platform, handle) or ""
-    return account[len("x.com/"):] if account.startswith("x.com/") else ""
-
-
-def repost_of(platform: str | None, handle: str | None, author: str | None,
-              reposted_by: Sequence[str] | None) -> Dict[str, Any] | None:
-    """A row its source reposted (issue 0066): {by, author}, `by` the other accounts of yours that
-    reposted it, never the row's own source (issue 0070: "badlogicgames ↻ from @thsottiaux"). None
-    when the row's source didn't repost it (its author's own tweet, the others said in its story)."""
-    own = _own_account(platform, handle)
-    if not author or not own or own not in [a.lower() for a in reposted_by or ()]:
-        return None
-    return {"by": [a for a in reposted_by or () if a.lower() != own], "author": author}
-
-
 def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[str, Dict[str, str]]],
                  owners: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]:
     """A story's voices, named (story_rules.named_voices, issue 0082: the count's names), from its
@@ -300,23 +284,23 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
     issue 0111: SourceFacts.owners, as the job kept them): a voice -> its owner's, one owner's channels one voice."""
     owners = owners or {}
 
-    def owner(voice: str) -> Optional[str]:
-        return owners.get(voice.lower() if voice.startswith("reddit:") else voice)
+    def owner(key: str) -> Optional[str]:
+        return voice.owner_of(owners, key)
     shaped = []
     for p in posts:
         kind = source_kind(p["platform"], p["handle"])
         others: List[Dict[str, str]] = []
         if p["reposted_by"] or (kind == "x" and p["author"]):
             accounts = followed()
-            author = accounts.get(x_account(p["author"])) if kind == "x" and p["author"] else None
+            author = accounts.get(tweet_account(p["author"])) if kind == "x" and p["author"] else None
             others = [author] if author and author["id"] != p["source_id"] else []
-            by = {s["id"]: s for s in (accounts.get(x_account(a)) for a in p["reposted_by"] or ()) if s}
+            by = {s["id"]: s for s in (accounts.get(tweet_account(a)) for a in p["reposted_by"] or ()) if s}
             others += [by[i] for i in sorted(set(by) - {p["source_id"], author and author["id"]})]
-        voice = p["voice"] or "source:" + p["source_id"]
+        own = p["voice"] or voice.source_key(p["source_id"])
         if owners:
-            others = [{**o, "owner": owner("source:" + o["id"])} for o in others]
+            others = [{**o, "owner": owner(voice.source_key(o["id"]))} for o in others]
         shaped.append({"source_id": p["source_id"], "name": p["name"], "kind": kind, "others": others,
-                       "voice": voice, "owner": owner(voice) if owners else None,
+                       "voice": own, "owner": owner(own) if owners else None,
                        "text_key": text_key(p["content_hash"], p["text_chars"] or 0)})
     voices = named_voices(shaped)
     return voice_sources(voices) if len(voices) == 1 else voices
@@ -326,7 +310,7 @@ def confirmed_owners(cur: Cursor) -> Dict[str, str]:
     """The owners the last story run counted stories by (issue 0132 A): a voice -> its confirmed voice, only the
     channels the owner joined (the rest of News's owners count News alone), a Reddit poster never."""
     from insight_core.db.repo_news import NewsRepository
-    return {v: o for v, o in NewsRepository.owners(cur).items() if confirmed(o) and not v.startswith("reddit:")}
+    return {v: o for v, o in NewsRepository.owners(cur).items() if voice.is_confirmed(o) and not voice.is_poster(v)}
 
 
 def voiced(row: Sequence[Any], voice: Optional[str], content_hash: Optional[str]) -> Dict[str, Any]:
@@ -353,7 +337,8 @@ _ITEM_COLUMNS = f"""
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
-    pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved'
+    pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved',
+    NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''), pp.quoted
 """
 
 
@@ -395,6 +380,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "repost": repost_of(platform, row[20], row[18], row[19]),
         # A page you saved that is a followed source's post (issue 0122): "<source> · saved by you".
         "saved_by_you": bool(row[23]),
+        # Who wrote it, via whom, quoting whom (issue 0185: Byline).
+        "byline": byline_of(row[5], platform, row[20], row[18], row[24], row[25]),
     }
 
 
@@ -524,7 +511,9 @@ class ReaderRepository:
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
                    p.reposted_by, p.author, s.handle_or_url, (SELECT pp.quote_only FROM post_parts pp WHERE pp.post_id = p.id),
-                   COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content)
+                   COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content),
+                   NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''),
+                   (SELECT pp.quoted FROM post_parts pp WHERE pp.post_id = p.id)
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -543,7 +532,7 @@ class ReaderRepository:
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
              origin_linked_by, reposted_by, author, handle, quotes, address, position, voice, content_hash,
-             text_chars) in cur.fetchall():
+             text_chars, forwarded, quoted_tweet) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -576,7 +565,7 @@ class ReaderRepository:
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
-                    "repost": repost, **parent,
+                    "repost": repost, "byline": byline_of(name, platform, handle, author, forwarded, quoted_tweet), **parent,
                 })
             else:
                 story.update(parent)
@@ -598,12 +587,12 @@ class ReaderRepository:
         # its address, `url`, is the compared one, without the token).
         with_origin = [story["id"] for story in stories.values() if story["origin"] is not None]
         if with_origin:
-            cur.execute("""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
+            cur.execute(f"""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
                            FROM story_posts sp JOIN stories st ON st.id = sp.story_id
                            JOIN post_links pl ON pl.post_id = sp.post_id AND pl.target_url = st.origin_url
                            JOIN posts p ON p.id = sp.post_id
                            WHERE sp.story_id = ANY(%s::uuid[]) AND pl.shared_url IS NOT NULL
-                           ORDER BY sp.story_id, COALESCE(p.published_at, p.fetched_at), p.id""", (with_origin,))
+                           ORDER BY sp.story_id, {pairing.ix_date('p')}, p.id""", (with_origin,))
             shared = {str(story_id): url for story_id, url in cur.fetchall()}
             for story in stories.values():
                 if story["origin"] is not None:

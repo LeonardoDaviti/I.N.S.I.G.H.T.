@@ -73,10 +73,10 @@ JOBS=6 scripts/test-backend.sh                                    # once, before
   stays in `~/.cache/insight-prep/shards/<pid>/`. Within a shard the modules are imported first and run in name
   order, as `unittest discover` did (some tests mix several modules' import-time `NOW`, some read what earlier
   modules left); `DISCOVER=1` runs the old single `unittest discover`.
-- A run's databases are dropped in the background when it ends, and a run first removes what ended runs left
-  behind: their test containers and `insight_run_<time>_<pid>_*test` databases (on both servers) once the pid is gone
-  and they are 10 minutes old and unused, or anything of theirs over `CLEAN_HOURS` (6) old (`CLEAN_ORPHANS=0` skips,
-  `=dry` lists).
+- A run's databases are dropped in the background when it ends, and a run first removes what runs it can prove
+  ended left behind: each run stamps its databases (comment) and containers (label) with `run-tests:<boot id>:<pid>:<pid
+  start time>`; one is removed only when that boot is over, or that pid is gone or now another process, and nobody is
+  connected. Nothing unstamped is ever touched, however old (`CLEAN_ORPHANS=0` skips, `=dry` lists).
 - Run the full suite once per slice at merge time, not after every change.
 - Tests empty tables with `tests/_db.clear_tables(cur, tables, cascade=False)`, not `TRUNCATE`: a TRUNCATE makes
   new files and syncs every empty index (11-48 s for the Mark X tables on a busy disk; the DELETE 0.36 s).

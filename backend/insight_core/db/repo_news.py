@@ -22,11 +22,12 @@ from insight_core.utils.news_rules import NewsStory, Surge
 from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.post_fields import MOVED_KEY
 from insight_core.utils.url_normalization import normalize_url
+from insight_core.markx import pairing
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
 OWNERS_KEY = "news_owners"   # system_settings: the voices News counts by owner (issue 0111, SourceFacts.owners)
 # A post's date as the story rules read it (published, else fetched).
-POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
+POST_TIME = pairing.ix_date("p")
 
 
 def _scope_sql(scope: FeedScope) -> Tuple[str, List[Any]]:
@@ -355,7 +356,7 @@ class NewsRepository:
             WHERE ns.first_at >= %s {one}
               AND (EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
                            WHERE o.news_id = ns.id AND {scope_sql}){mentioned})
-            ORDER BY ns.id, np.position NULLS LAST, COALESCE(p.published_at, p.fetched_at), p.id
+            ORDER BY ns.id, np.position NULLS LAST, {pairing.ix_date('p')}, p.id
             """,
             [*params, since, *([news_id] if news_id else []), *params, *mention_params],
         )

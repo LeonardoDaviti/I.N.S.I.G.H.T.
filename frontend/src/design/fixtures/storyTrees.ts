@@ -47,6 +47,7 @@ export function xItems(now: Date): FeedItem[] {
     id: 'p-steipete-rt', title: 'how i work with agents in 2026.', excerpt: 'ignore all other guides on here.',
     source_id: sourceId('s-steipete'), source_display_name: 'steipete', sort_at: at(now, -2 * HOUR), published_at: at(now, -2 * HOUR),
     url: 'https://nitter.local/badlogicgames/status/2114444636303364349#m', read_at: null, repost: { by: [], author: 'badlogicgames' },
+    byline: { author: '@badlogicgames', via: 'steipete', quoting: null },
     // Issue 0068: badlogicgames, whom you follow, wrote it; steipete reposted it: two voices.
     story: { id: 'p-steipete-rt', voices: 2, first: 'p-steipete-rt', parent_id: null, parent_reason: null, origin: null, reposted_by: ['steipete'],
       sources: [{ id: sourceId('s-steipete'), name: 'steipete' }, { id: sourceId('s-bg'), name: 'badlogicgames' }], posts: [] },

@@ -87,7 +87,7 @@ def forwards_on() -> bool:
 def forwarded_from(message: Any) -> Optional[Dict[str, Any]]:
     """0132 C3: who a forwarded message came from, as Telegram's forward header says it (the RSS bridge drops it):
     {channel_id, user_id, name, post, date}, the fields it has; None for a message of the channel's own. The source
-    stats count such a post as a repost (markx/source_stats.is_repost)."""
+    stats count such a post as a repost (Byline's rule, utils/byline.is_repost)."""
     fwd = getattr(message, "fwd_from", None)
     if fwd is None:
         return None

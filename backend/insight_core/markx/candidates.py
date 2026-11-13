@@ -49,7 +49,6 @@ MODEL = pairing.MODEL
 POST_POST, STORY_STORY = pairing.POST_POST, pairing.STORY_STORY
 SPECIFIC_TYPES = pairing.SPECIFIC_TYPES
 ROUNDUP_ANCHORS = pairing.ROUNDUP_ANCHORS
-NOT_VOICE = tuple(pairing.NOT_VOICE)
 ENTITY_GUIDE = "ent-v3"       # 0133: the default arm; the subjects are read from the current set (mx_mentions_now)
 Posts = pairing.Posts
 document_key = pairing.document_key
@@ -110,8 +109,8 @@ def read_since(cur: Cursor, since: datetime) -> List[str]:
 
 # ---- the story window's backfill (0144 A2) ------------------------------------------------------------
 
-_UNFOUND = """FROM posts p
-               WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %(since)s
+_UNFOUND = f"""FROM posts p
+               WHERE {pairing.ordinary_date('p')} >= %(since)s
                  AND EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = p.id AND e.model = %(model)s)
                  AND NOT EXISTS (SELECT 1 FROM mx_candidate_posts c WHERE c.post_id = p.id AND c.found_at IS NOT NULL)"""
 
@@ -119,7 +118,7 @@ _UNFOUND = """FROM posts p
 def unfound(cur: Cursor, since: datetime, limit: int, model: str = MODEL) -> List[str]:
     """The embedded posts since `since` the finder never read (no mx_candidate_posts row found), newest first."""
     cur.execute(f"""SELECT p.id::text {_UNFOUND}
-                     ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id LIMIT %(limit)s""",
+                     ORDER BY {pairing.ordinary_date('p')} DESC, p.id LIMIT %(limit)s""",
                 {"since": since, "model": model, "limit": limit})
     return [r[0] for r in cur.fetchall()]
 

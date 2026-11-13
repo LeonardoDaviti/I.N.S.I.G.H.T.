@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { tracksApi, type TrackItem, type TrackLabel, type TrackPage } from '../../services/tracks';
-import { Button, TextLink } from '../ui';
+import { Button, Input, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import TrackSheet from './TrackSheet';
 import TrackScout from './TrackScout';
-import { foundByLine, joinLine, precisionLine, rankWords, suggestionLine, footerLine } from './trackWords';
+import { foundByLine, joinLine, precisionLine, rankWords, suggestionLine, footerLine, whyLine } from './trackWords';
+import { bylineText } from '../../lib/byline';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
 
@@ -51,7 +52,7 @@ function Row({ folderId, item, discover = false }: { folderId: string; item: Tra
         </p>
         <p className="mt-0.5 text-[0.8125rem] tabular-nums leading-5 text-fg-3 [overflow-wrap:anywhere]"
           title={foundByLine(item) ?? undefined}>
-          {[item.source, item.at ? postBylineTime(item.at) : null,
+          {[bylineText(item.byline, item.source), item.at ? postBylineTime(item.at) : null,
             item.place === 'joined' ? 'joined by INSIGHT' : null,
             discover ? rankWords(item) : null].filter(Boolean).join(' · ')}
         </p>
@@ -59,6 +60,27 @@ function Row({ folderId, item, discover = false }: { folderId: string; item: Tra
       </div>
       <Labels folderId={folderId} item={item} />
     </li>
+  );
+}
+
+/** Issue 0185: why a post is, or isn't, in this track — Haiku's stored verdict for it, read on demand. */
+function WhyNotHere({ folderId }: { folderId: string }) {
+  const [post, setPost] = useState('');
+  const ask = useMutation({ mutationFn: (ref: string) => tracksApi.why(folderId, ref) });
+  return (
+    <form className="mb-6" aria-label="Why is a post not here?"
+      onSubmit={(e) => { e.preventDefault(); if (post.trim()) ask.mutate(post.trim()); }}>
+      <div className="flex items-center gap-2">
+        <Input value={post} onChange={(e) => setPost(e.target.value)} placeholder="A post’s link or address"
+          aria-label="A post’s link or address" className="h-8 text-[0.8125rem]" />
+        <Button size="sm" variant="ghost" type="submit" className="text-[0.75rem]" disabled={ask.isPending || !post.trim()}>
+          Why not here?
+        </Button>
+      </div>
+      {ask.data ? <p className="mt-1 text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]" data-track-why={ask.data.state}>
+        {whyLine(ask.data)}</p> : null}
+      {ask.isError ? <p role="alert" className="mt-1 text-[0.8125rem] text-fg">No such post in INSIGHT.</p> : null}
+    </form>
   );
 }
 
@@ -139,6 +161,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         {page.discover.length ? <ul>{page.discover.map((it) => <Row key={it.post_id} folderId={folderId} item={it} discover />)}</ul>
           : <p className="mt-2 text-[0.8125rem] text-fg-2">Nothing waiting.</p>}
       </section>
+      <WhyNotHere folderId={folderId} />
       <TrackScout folderId={folderId} />
       {page.footer ? <p className="text-[0.75rem] tabular-nums text-fg-3">{footerLine(page.footer, counts)}</p> : null}
       {sheet}

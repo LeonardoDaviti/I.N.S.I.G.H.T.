@@ -30,6 +30,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import identity as I
 from insight_core.markx import names as N
+from insight_core.markx import pairing
 
 KIND = "rename"
 NAMED_POSTS = 3              # the newer one's first posts about it read for the older one's name
@@ -135,8 +136,8 @@ def spans_of(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, Span]:
     members = sorted(m for r in roots for m in book.cluster(r))
     if not members:
         return {}
-    cur.execute("""SELECT m.entity_id::text, m.post_id::text, m.guide, m.n, m.role, m.span,
-                          COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+    cur.execute(f"""SELECT m.entity_id::text, m.post_id::text, m.guide, m.n, m.role, m.span,
+                          {pairing.ordinary_date('p')}
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                     WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[])""", (schemas.mention_guides(), members))
     out: Dict[str, Span] = {}

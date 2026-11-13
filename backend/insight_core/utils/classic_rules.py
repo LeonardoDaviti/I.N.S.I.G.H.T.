@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from insight_core.utils import voice
 from insight_core.utils.addresses import bare, publication_of, site_of
 from insight_core.utils.post_links import is_reference, titled_link_text
 
@@ -68,7 +69,7 @@ def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetim
     out = []
     for target, cites in by_target.items():
         host = bare(target).split("/", 1)[0]
-        own = {"site:" + publication_of(host), "site:" + site_of(host)}   # its own publication, or site's
+        own = {voice.site_key(publication_of(host)), voice.site_key(site_of(host))}   # its own publication, or site's
         post = stored.get(cites[0].stored) if cites[0].stored else None
         if post is not None:
             own.add(post[0])

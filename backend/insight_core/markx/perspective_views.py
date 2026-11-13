@@ -157,6 +157,8 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     acc = accuracy(cur)
     cur.execute("SELECT id::text, url FROM posts WHERE id = ANY(%s::uuid[])", (ids,))
     urls = dict(cur.fetchall())
+    from insight_core.utils.byline import bylines
+    bys = bylines(cur, posts)   # issue 0185: who wrote each, via whom
     return {   # 0128's `built`: event type, the original first, leaks and "came true"
         "story": {"id": sid, "headline": st.get("headline"), "first_at": st.get("first_at")},
         "built": built.build(cur, [sid]).get(sid),
@@ -167,7 +169,7 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
                    "same": sum(1 for l in lines if l["label"] == "same"),
                    "copies": sum(len(l["copies"]) for l in lines), "unjudged": sum(1 for l in lines if l["label"] is None)},
         "posts": {p: {"id": p, "title": m.title, "source": m.src_name, "kind": m.kind, "at": pub(m).isoformat(),
-                      "url": urls.get(p)} for p, m in posts.items()},
+                      "url": urls.get(p), "byline": bys.get(p)} for p, m in posts.items()},
     }
 
 

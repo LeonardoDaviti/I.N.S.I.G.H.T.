@@ -15,9 +15,13 @@ The interface (what a caller must know):
   - `note(cur, post_ids)`: split the posts now and store what changed (a reading landed: tasks.record; a new post).
   - `tag(cur, sources)`: the round-up tags of these sources' posts made current (a digest source's shaped posts).
   - `backfill(cur)`: one resumable step of the candidates job: posts never split by this code, newest first, bounded;
-    then the attach of the recent round-ups again (a cited post stored after its digest).
+    then the attach of the recent round-ups again (a cited post stored after its digest); then `plan_types`.
+  - `plan_types(cur)` / `after_types(cur, task, call, answer)`: the worker's question about recent round-ups' items
+    (kind `unit_types`, UNITS_PER_QUESTION a question): each item's type, a short headline and whether it only continues
+    the item before it; keyed by the item's words. Read back through the event-type seam (event_types.of_units).
   - `also_in(cur, post_ids)` / `also_in_story(cur, story_id)`: the round-ups carrying these posts (a story's line).
-  - `digest(cur, span, until)`: INSIGHT's own round-up of a day or a week (read on request; no job writes it).
+  - `digest(cur, span, until)`: INSIGHT's own round-up of a day or a week, news items only, ranked (what an issue
+    is built from); `issues_step(cur, now)` builds the closed days' and weeks' issues (the candidates job's process).
 
 The splitter adapters (each reads the post's HTML as the reader renders it; the finest split is used). No item links
 the post's own page (a table of contents) or its source's signature (post_links.boilerplate):
@@ -26,7 +30,10 @@ the post's own page (a table of contents) or its source's signature (post_links.
     <ul> unclosed: each next topic would else nest under the last).
   - `sections`: headed sections (<h1>-<h6>) carrying a link.
   - `lines`: paragraphs or lines (<p>, <br>): when bullets ("-", "—", "•", "1.") open half the lines that link, a
-    bulleted line starts an item and the lines after it continue it; else each line carrying a link is an item.
+    bulleted line starts an item and the lines after it continue it; else, when leads (a paragraph whose first words
+    are a link or bold) open half the paragraphs that link, paragraph items: a lead, or a heading over plain
+    paragraphs, starts an item (its bold line or heading its headline), its <br> lines and the paragraphs with no link
+    after it continue it; else each line carrying a link is an item.
   - `reading`: a round-up the reading names (read-v2 kind `roundup`) whose HTML gives too few items: the reading's own
     items (headline and link), each placed on the line that links it when one does.
 
@@ -75,6 +82,11 @@ DIGEST_SHARE = 0.5             # a digest source: more than half of its split po
 DIGEST_WORDS = 150             # ... of this many words ...
 DIGEST_POSTS = 4               # ... at least this many of them, have a digest's shape
 SIGNATURE = 4                  # the digest: a page one source's round-ups link in this many issues is its signature
+# The digest's single-curator items attached to nothing, a round-up source at most: in a daily, most items have one
+# curator and nothing attached, and one long round-up (a 40-item newsletter) would fill the issue with its own list
+# (the 2 Nov daily on the server copy: 3 sources gave 85 of its 100 rows). Its first items (an editor leads with
+# what matters) stand for it; what INSIGHT holds and what 2+ curators carry are never capped.
+SOLO_PER_SOURCE = 5
 
 # ---- the splitter (pure) -------------------------------------------------------------------------------------------
 
@@ -83,10 +95,14 @@ _BREAKS = {"p", "div", "blockquote", "section", "article", "tr", "pre", "table",
 _HEADS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
 _LISTS = {"ul", "ol"}
 _SKIP = {"script", "style", "noscript", "template", "svg"}
+_BOLD = {"b", "strong"}
 BULLET = re.compile(r"^\s*(?:[-–—•·*▪►➤▸◦○●■□✓✔✅☑🔹🔸🔥👉📌⚡️]|\d{1,2}[.)]|\(\d{1,2}\))\s*\S")
 MEDIA = re.compile(r"\.(jpe?g|png|gif|webp|svg|mp4|webm|mp3|m4a|avif|ico)$", re.I)
 SCHEMELESS = re.compile(r"^(?:t\.me|x\.com|twitter\.com|github\.com|huggingface\.co|arxiv\.org|youtu\.be)/", re.I)
 WORD = re.compile(r"\w+", re.U)
+NUMBERING = re.compile(r"^\s*(?:\d{1,2}[.):]?|[-–—•·*])\s+")
+LABEL_WORDS = 12               # a bold paragraph of at most this many words and no link is a heading (a label)
+HEADLINE_MIN_WORDS = 3         # a lead's bold words shorter than this are no headline ("Update:", a name)
 
 
 @dataclass
@@ -105,6 +121,14 @@ class _Line:
     head: int = 0                      # inside a heading of this level
     li: Optional[int] = None           # the innermost open list item
     gap: bool = False                  # an empty line (a paragraph's end, <br><br>) came before it
+    block: int = 0                     # the block (paragraph, list item, heading) it is in: a <br> ends a line only
+    lead: Optional[str] = None         # what its first words are in: 'a' (a link), 'b' (bold), 'text'
+    bold: List[str] = field(default_factory=list)   # its bold words
+    plain: bool = False                # it has words outside bold
+
+    @property
+    def bold_words(self) -> str:
+        return " ".join("".join(self.bold).split())
 
     @property
     def words(self) -> str:
@@ -129,12 +153,15 @@ class _Lines(HTMLParser):
         self.skip = 0
         self.cur: Optional[_Line] = None
         self.gap = False
+        self.block = 0
+        self.in_a = 0
+        self.in_b = 0
 
     def _pos(self) -> int:
         line, col = self.getpos()
         return self.starts[line - 1] + col
 
-    def _break(self) -> None:
+    def _break(self, br: bool = False) -> None:
         pos = self._pos()
         if self.cur is not None and (self.cur.words or self.cur.links):
             self.cur.end = pos
@@ -143,11 +170,13 @@ class _Lines(HTMLParser):
         elif self.cur is not None or not self.lines:
             self.gap = True
         self.cur = None
+        if not br:
+            self.block += 1                   # a block ends here; a <br> only ends a line of it
 
     def _line(self) -> _Line:
         if self.cur is None:
             self.cur = _Line(start=self._pos(), head=self.head, li=self.open_lis[-1].id if self.open_lis else None,
-                             gap=self.gap)
+                             gap=self.gap, block=self.block)
         return self.cur
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
@@ -172,19 +201,24 @@ class _Lines(HTMLParser):
         elif tag == "br" or tag in _BREAKS:
             if tag == "br" and self.cur is None:
                 self.gap = True
-            self._break()
+            self._break(br=tag == "br")
         elif tag == "a" and not self.skip:
+            self.in_a += 1
             href = dict(attrs).get("href")
             if href:
                 self._line().links.append(href.strip())
+        elif tag in _BOLD:
+            self.in_b += 1
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if tag == "br" or tag in _BREAKS:
             if tag == "br" and self.cur is None:
                 self.gap = True
-            self._break()
-        elif tag == "a":
-            self.handle_starttag(tag, attrs)
+            self._break(br=tag == "br")
+        elif tag == "a" and not self.skip:
+            href = dict(attrs).get("href")
+            if href:
+                self._line().links.append(href.strip())
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _SKIP:
@@ -204,6 +238,10 @@ class _Lines(HTMLParser):
                 self.open_lis.pop()
         elif tag in _BREAKS:
             self._break()
+        elif tag == "a":
+            self.in_a = max(0, self.in_a - 1)
+        elif tag in _BOLD:
+            self.in_b = max(0, self.in_b - 1)
 
     def handle_data(self, data: str) -> None:
         if self.skip or not data:
@@ -212,7 +250,14 @@ class _Lines(HTMLParser):
             if self.cur is not None:
                 self.cur.text.append(" ")
             return
-        self._line().text.append(data)
+        ln = self._line()
+        if ln.lead is None:
+            ln.lead = "a" if self.in_a else "b" if self.in_b else "text"
+        if self.in_b:
+            ln.bold.append(data)
+        else:
+            ln.plain = True
+        ln.text.append(data)
 
     def close(self) -> None:
         super().close()
@@ -358,9 +403,90 @@ def split_sections(lines: Sequence[_Line], base: Optional[str], own: Any) -> Lis
     return _numbered(groups, base, own)
 
 
+def _headline(text: str) -> Optional[str]:
+    """A lead's words as an item's headline (its numbering dropped), or None when too short to say anything."""
+    h = NUMBERING.sub("", " ".join(text.split())).strip(" :.–—-")
+    return h if len(h.split()) >= HEADLINE_MIN_WORDS else None
+
+
+def _blocks(lines: Sequence[_Line]) -> List[List[_Line]]:
+    """The lines outside lists grouped by their block (a paragraph and its <br> lines); a list item is a block of
+    its own (a boundary)."""
+    out: List[List[_Line]] = []
+    for ln in lines:
+        if out and out[-1][0].block == ln.block and (out[-1][0].li is None) == (ln.li is None):
+            out[-1].append(ln)
+        else:
+            out.append([ln])
+    return out
+
+
+def _block_kind(b: Sequence[_Line], linked: bool) -> str:
+    """'list' (a list item), 'head' (a heading), 'label' (a short bold paragraph with no link: a heading in all but
+    its tag), 'link' or 'bold' (a lead: its first words are a link or bold), else 'plain'."""
+    first = b[0]
+    if first.li is not None:
+        return "list"
+    if first.head:
+        return "head"
+    words = sum(len(ln.words.split()) for ln in b)
+    if not linked and not any(ln.plain for ln in b) and words <= LABEL_WORDS:
+        return "label"
+    return {"a": "link", "b": "bold"}.get(first.lead or "", "plain")
+
+
+def _paragraph_items(lines: Sequence[_Line], base: Optional[str], own: Any) -> Optional[List[Item]]:
+    """Paragraph items (a newsletter whose items are paragraphs): an item starts at a lead, a paragraph whose first
+    words are a link or bold (its bold line its headline), at a heading followed by plain paragraphs (the heading its
+    headline), or at a plain paragraph with a link of its own after an item that has one. The <br> lines of its
+    paragraph (a story's "+" related links) and the plain paragraphs with no link after it continue it (a release's
+    second paragraph); a link continues an item that has none yet (a section's "read the full story"). Whether a
+    later paragraph with a link of its own is a new item or more of the last ("This release also adds ...") is a
+    matter of meaning: the unit's type question says (`continues`). A heading, a short bold label or a list ends an
+    item; plain paragraphs before any item are none's. None when leads open fewer than half the paragraphs that link
+    (an essay's linking paragraphs: each line its own item)."""
+    blocks = _blocks(lines)
+    linked = [bool(_pages(b, base, own)) for b in blocks]
+    kinds = [_block_kind(b, k) for b, k in zip(blocks, linked)]
+    leads = sum(1 for k, x in zip(kinds, linked) if x and k in ("link", "bold"))
+    if leads < MIN_ITEMS or 2 * leads < sum(1 for k, x in zip(kinds, linked) if x and k != "list"):
+        return None
+    groups: List[Tuple[List[_Line], Optional[str]]] = []
+    item: Optional[List[_Line]] = None
+    has_link = False
+    pending: Optional[List[_Line]] = None
+    for b, kind, x in zip(blocks, kinds, linked):
+        if kind in ("list", "head", "label"):
+            item, pending = None, (b if kind != "list" else None)
+            continue
+        if kind == "link" and item is not None and not has_link:
+            item.extend(b)                                   # a section's link after its words
+            has_link = x
+        elif kind in ("link", "bold"):
+            item, has_link, pending = list(b), x, None
+            groups.append((item, _headline(b[0].bold_words) if kind == "bold" else None))
+        elif item is not None and not (x and has_link):
+            item.extend(b)                                   # a plain paragraph continues the item
+            has_link = has_link or x
+        elif pending is not None:
+            item, has_link = list(pending) + list(b), x      # a heading over its plain paragraphs
+            groups.append((item, _headline(" ".join(ln.words for ln in pending))))
+            pending = None
+        elif x:
+            item, has_link = list(b), True                   # a plain paragraph with a link of its own: an item
+            groups.append((item, None))
+    out = []
+    for g, head in groups:
+        it = _item(len(out) + 1, g, base, own, head)
+        if it.links and it.text:
+            out.append(it)
+    return out
+
+
 def split_lines(lines: Sequence[_Line], base: Optional[str], own: Any) -> Tuple[List[Item], bool]:
     """`lines`: bulleted lines (and the lines continuing them) when bullets open at least half the lines that link;
-    else each line carrying a link. (items, bulleted)."""
+    else paragraph items when leads open most linking paragraphs (`_paragraph_items`); else each line carrying a link.
+    (items, bulleted)."""
     plain = [ln for ln in lines if ln.li is None and not ln.head]
     bullets = [ln for ln in plain if BULLET.match(ln.words)]
     groups: List[List[_Line]] = []
@@ -377,6 +503,9 @@ def split_lines(lines: Sequence[_Line], base: Optional[str], own: Any) -> Tuple[
             elif groups and groups[-1]:
                 groups.append([])
         return _numbered([g for g in groups if g], base, own), True
+    paragraphs = _paragraph_items(lines, base, own)
+    if paragraphs is not None:
+        return paragraphs, False
     return _numbered([[ln] for ln in plain], base, own), False
 
 
@@ -562,6 +691,21 @@ def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
     return {"split": len(now), "roundups": n, "units": int(u)}
 
 
+def roundup_sql(post: str) -> str:
+    """The round-up predicate as SQL (GLOSSARY "Round-up": this module owns it): the post (the column `post`) is a
+    round-up as `tag` keeps it current (its reading says so, or it has a digest's shape in a digest source). For a
+    query over many posts (Discover's counts, v10.17's 0190)."""
+    return f"EXISTS (SELECT 1 FROM mx_roundups r_ WHERE r_.post_id = {post} AND r_.roundup)"
+
+
+def tags_stamp(cur: Any) -> str:
+    """What the round-up tags are now, as a short hash (the tagged posts): a reader that keeps counts made with
+    `roundup_sql` counts again when it moves (Discover's kept counts)."""
+    cur.execute("""SELECT md5(COALESCE(string_agg(post_id::text, ',' ORDER BY post_id), ''))
+                     FROM mx_roundups WHERE roundup""")
+    return cur.fetchone()[0][:16]
+
+
 def digest_sources(cur: Any, source_ids: Iterable[str]) -> Set[str]:
     """The sources whose posts are mostly shaped as round-ups: more than DIGEST_SHARE of their split posts of
     DIGEST_WORDS+ words, DIGEST_POSTS+ of them (a daily digest; an essayist's post with a list of links is not)."""
@@ -665,7 +809,105 @@ def backfill(cur: Any, *, limit: int = BACKFILL_PAGE, recheck: int = RECHECK_PAG
             attach(cur, ids)
             rechecked = len(ids)
     cur.execute(f"SELECT count(*) {missing}", params)
-    return {**got, "rechecked": rechecked, "left": cur.fetchone()[0]}
+    left = cur.fetchone()[0]
+    asked = plan_types(cur, now=now)
+    return {**got, "rechecked": rechecked, "left": left, **({"typed_asked": asked} if asked else {})}
+
+
+# ---- the items' types: the worker's question (kind `unit_types`) ------------------------------------------------------
+#
+# Each current item of a recent round-up is asked, UNITS_PER_QUESTION a question in the round-up's order, its type (the
+# event-type seam's UNIT_TYPES), a short headline and whether it only continues the item before it. Keyed by the item's
+# words (sha256 of its text), so a new split of the same words keeps its answer. Planned by the candidates job's units
+# step (its own process); the answer is stored by tasks.record (`after_types`). An own round-up keeps the news types.
+
+TYPE_KIND = "unit_types"
+TYPE_DAYS = timedelta(days=16)     # round-ups this recent are asked (the issues it may still build: 2 weeks, settled)
+TYPE_PLAN_MAX = 60                 # questions a run adds at most (a first run's backlog: the next runs go on)
+TYPE_TEXT = 400                    # an item's words shown
+TYPE_LINKS = 2                     # and its first pages
+SHA = "encode(sha256(convert_to({t}, 'UTF8')), 'hex')"
+
+
+def text_sha(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _short(url: str) -> str:
+    u = urlparse(url)
+    return ((u.hostname or "").removeprefix("www.") + (u.path or ""))[:90]
+
+
+def type_question(head: Mapping[str, Any], items: Sequence[Mapping[str, Any]], before: Optional[str]) -> str:
+    """One question's input: the round-up (source, title, date), the item before the first (context), then each item
+    keyed u1..uN with its words and first pages."""
+    at = head.get("at")
+    lines = [f"ROUND-UP: {head.get('source') or 'a source'} - {' '.join((head.get('title') or '').split())[:160]}"
+             f" ({at.date().isoformat() if at else 'no date'})"]
+    if before:
+        lines.append(f"(before u1: {' '.join(before.split())[:200]})")
+    lines.append("")
+    for k, it in enumerate(items, 1):
+        words = " ".join((it.get("text") or "").split())[:TYPE_TEXT]
+        links = ", ".join(_short(x) for x in (it.get("links") or [])[:TYPE_LINKS])
+        lines.append(f"[u{k}] {words}" + (f" | links: {links}" if links else ""))
+    return "\n".join(lines)
+
+
+def plan_types(cur: Any, *, now: Optional[datetime] = None, limit: int = TYPE_PLAN_MAX) -> int:
+    """The type questions of recent round-ups' items never typed nor asked (TYPE_DAYS back by Pairing's post date):
+    UNITS_PER_QUESTION items a question, in each round-up's order. How many questions were added."""
+    from insight_core.markx import pairing, schemas, tasks
+    sha = SHA.format(t="u.text")
+    cur.execute(f"""SELECT u.post_id::text, u.n, u.text, u.links, {sha}, v.text
+                      FROM mx_units u JOIN mx_roundups r ON r.post_id = u.post_id AND r.basis = u.basis AND r.roundup
+                      JOIN posts p ON p.id = u.post_id
+                      LEFT JOIN mx_units v ON v.post_id = u.post_id AND v.basis = u.basis AND v.n = u.n - 1
+                     WHERE {pairing.post_date('p')} >= COALESCE(%s::timestamptz, now()) - %s
+                       AND NOT EXISTS (SELECT 1 FROM mx_unit_types t WHERE t.post_id = u.post_id AND t.text_sha = {sha})
+                       AND NOT EXISTS (SELECT 1 FROM mx_unit_type_asks a WHERE a.post_id = u.post_id AND {sha} = ANY(a.texts))
+                     ORDER BY {pairing.post_date('p')} DESC, u.post_id, u.n""", (now, TYPE_DAYS))
+    by_post: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for pid, n, text, links, h, before in cur.fetchall():
+        by_post[pid].append({"n": n, "text": text, "links": list(links or ()), "sha": h, "before": before})
+    if not by_post:
+        return 0
+    heads = _source_names(cur, by_post)
+    cur.execute(f"SELECT p.id::text, {pairing.post_date('p')} FROM posts p WHERE p.id = ANY(%s::uuid[])", (list(by_post),))
+    dates = dict(cur.fetchall())
+    added = 0
+    for pid, items in by_post.items():
+        for k in range(0, len(items), schemas.UNITS_PER_QUESTION):
+            if added >= limit:
+                return added
+            chunk = items[k:k + schemas.UNITS_PER_QUESTION]
+            head = {**(heads.get(pid) or {}), "at": dates.get(pid)}
+            text = type_question(head, chunk, chunk[0]["before"])
+            tid, new = tasks.add(cur, TYPE_KIND, text, a=pid)
+            cur.execute("""INSERT INTO mx_unit_type_asks (task_id, post_id, texts) VALUES (%s, %s, %s)
+                           ON CONFLICT (task_id) DO NOTHING""", (tid, pid, [x["sha"] for x in chunk]))
+            added += 1 if new else 0
+    return added
+
+
+def after_types(cur: Any, task: Mapping[str, Any], call_id: Any, answer: Mapping[str, Any]) -> int:
+    """A valid answer's items as rows (mx_unit_types), keyed by their words; the first answer for an item stays."""
+    cur.execute("SELECT post_id, texts FROM mx_unit_type_asks WHERE task_id = %s", (task["id"],))
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    pid, texts = row
+    got = 0
+    for u in answer.get("units") or []:
+        k = int(u["key"][1:])
+        if not 1 <= k <= len(texts):
+            continue
+        cur.execute("""INSERT INTO mx_unit_types (post_id, text_sha, type, headline, continues, task_id, call_id)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (post_id, text_sha) DO NOTHING""",
+                    (pid, texts[k - 1], u["type"], " ".join(u["headline"].split()).rstrip("."), bool(u["continues"]),
+                     task["id"], call_id))
+        got += cur.rowcount or 0
+    return got
 
 
 # ---- reads: "also in round-ups" and the digest ----------------------------------------------------------------------
@@ -718,27 +960,72 @@ def _neg_time(iso: str) -> float:
     return -datetime.fromisoformat(iso).timestamp()
 
 
-def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit: int = 60) -> Dict[str, Any]:
-    """INSIGHT's own round-up of a day or a week (no job writes it: read on request). The items of the round-ups whose
-    unit time is in the span, grouped by what they carry: the Mark X story holding the attached post, else its Mark IX
-    story, else the post; an item attached to nothing by its first page that is no reference page. Ranked by curators
-    (separate round-up sources carrying it: not the source of the post it carries), then what INSIGHT holds, the
-    issues carrying it, the latest. `only_roundups`: no stored post outside round-ups carries it (nothing attached,
-    and no post that is not a round-up links its page in the span). Display only: nothing here is a voice."""
+def _lead_page(links: Sequence[str]) -> Optional[str]:
+    """The page an item attached to nothing is grouped by: its first page that is no page to look things up in (a site
+    root, a docs, pricing, help or legal page: post_links' REFERENCE and LEGAL), else its first page. Not
+    post_links.is_reference whole: it counts every one-segment path as a profile, and a blog's article slug
+    (site/some-title) is one; an item's first link is its subject in a digest (an item linking a news article and,
+    later, the round-up's own earlier issue is the article's)."""
     from insight_core.markx import pairing
-    from insight_core.utils.post_links import is_reference
+    from insight_core.utils.post_links import LEGAL, REFERENCE, bare
+    pages = [x for x in links if pairing.page_key(x)]
+    for x in pages:
+        _, _, rest = bare(x).partition("/")
+        path = "/" + rest.split("?", 1)[0].split("#", 1)[0]
+        if path.strip("/") and not REFERENCE.search("/" + rest) and not LEGAL.search(path):
+            return x
+    return pages[0] if pages else None
+
+
+def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit: int = 60) -> Dict[str, Any]:
+    """INSIGHT's own round-up of a day or a week (what an issue is built from; no route computes it). The items of the
+    round-ups whose unit time is in the span:
+
+    - **News only**: an item the worker typed (event_types.of_units) is kept when its type is news
+      (event_types.UNIT_NEWS) and it does not only continue the item before it; `left_out` counts the rest by type
+      (and `continues`). An item not typed yet is kept and counted (`untyped`).
+    - **Grouped** by what it carries: the Mark X story holding the attached post, else its Mark IX story, else the post;
+      an item attached to nothing by its first page that is no reference page (a source's signature page, linked by
+      its round-ups in SIGNATURE+ issues, is no item).
+    - **Headline**: the Mark X story's, else the worker's headline of its first typed item, else the attached post's
+      title, else the item's own lead (a splitter headline), else its words.
+    - **Ranked**: first what INSIGHT holds as a story or 2+ separate curators carry (round-up sources that are not the
+      source of what they carry: a site's own newsletter listing its own article curates nothing), by curators, then
+      issues, then the latest; then single-curator items attached to a stored post; then single-curator items attached
+      to nothing, at most SOLO_PER_SOURCE a round-up source (`capped` counts the rest). Inside the last two tiers the
+      round-ups' own order (an item's place in its round-up: editors lead with what matters) comes first.
+      `only_roundups`: nothing attached and no post outside round-ups links its page in the span.
+    Display only: nothing here is a voice."""
+    from insight_core.markx import event_types, pairing
     if span not in SPANS:
         raise ValueError(f"span must be one of {', '.join(SPANS)}")
     cur.execute("SELECT COALESCE(%s::timestamptz, now())", (until,))
     hi = cur.fetchone()[0]
     lo = hi - SPANS[span]
     cur.execute(f"""SELECT u.id, u.post_id::text, u.n, u.links, u.text, u.headline,
-                           COALESCE(u.at, {pairing.post_date('p')}) AS at, p.source_id::text
+                           COALESCE(u.at, {pairing.post_date('p')}) AS at, p.source_id::text, {SHA.format(t="u.text")}
                       FROM mx_units u JOIN mx_roundups r ON r.post_id = u.post_id AND r.basis = u.basis AND r.roundup
                       JOIN posts p ON p.id = u.post_id
                      WHERE COALESCE(u.at, {pairing.post_date('p')}) > %s AND COALESCE(u.at, {pairing.post_date('p')}) <= %s
                      ORDER BY 7, 2, 3""", (lo, hi))
-    rows = cur.fetchall()
+    all_rows = cur.fetchall()
+    typed = event_types.of_units(cur, {r[1] for r in all_rows})
+    left_out: Dict[str, int] = defaultdict(int)
+    untyped = 0
+    untyped_roundups: Set[str] = set()
+    rows = []
+    for r in all_rows:
+        t = typed.get((r[1], r[8]))
+        if t is None:
+            untyped += 1
+            untyped_roundups.add(r[1])
+        elif t.continues and r[2] > 1:
+            left_out["continues"] += 1
+            continue
+        elif not event_types.unit_is_news(t.type):
+            left_out[t.type] += 1
+            continue
+        rows.append((*r, t.headline if t else None))
     unit_ids = [r[0] for r in rows]
     cur.execute("SELECT unit_id, target_id::text FROM mx_attach WHERE unit_id = ANY(%s)", (unit_ids,))
     targets: Dict[int, List[str]] = defaultdict(list)
@@ -755,23 +1042,27 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
     cur.execute("SELECT post_id::text, story_id::text FROM story_posts WHERE post_id = ANY(%s::uuid[])", (all_targets,))
     ix = dict(cur.fetchall())
     groups: Dict[str, Dict[str, Any]] = {}
-    for uid, rid, n, links, text, head, at, source in rows:
+    for uid, rid, n, links, text, head, at, source, _sha, worker_head in rows:
         ts = targets.get(uid) or []
         if ts:
             t = sorted(ts)[0]
             key, kind, ref = ((f"mx:{mx[t][0]}", "mx_story", mx[t][0]) if t in mx else
                               (f"ix:{ix[t]}", "ix_story", ix[t]) if t in ix else (f"post:{t}", "post", t))
         else:
-            link = next((x for x in links or () if pairing.page_key(x) and not is_reference(x)), None)
+            link = _lead_page(links or ())
             key, kind, ref = (f"page:{pairing.page_key(link)}", "page", link) if link else (f"unit:{uid}", "unit", None)
         g = groups.setdefault(key, {"key": key, "kind": kind, "ref": ref, "targets": set(),
                                     "headline": mx[sorted(ts)[0]][1] if kind == "mx_story" else None,
-                                    "curators": set(), "units": [], "at": at, "pages": set()})
+                                    "worker": None, "lead": None, "curators": set(), "units": [], "at": at,
+                                    "pages": set(), "place": n})
         g["targets"].update(ts)
         g["curators"].add(source)
         g["pages"].update(pairing.page_key(x) for x in links or () if pairing.page_key(x))
         g["at"] = max(g["at"], at)
-        g["units"].append({"unit": uid, "post": rid, "n": n, "item": (head or text or "")[:240]})
+        g["place"] = min(g["place"], n)
+        g["worker"] = g["worker"] or worker_head
+        g["lead"] = g["lead"] or head
+        g["units"].append({"unit": uid, "post": rid, "n": n, "item": (worker_head or head or text or "")[:240]})
     # only in round-ups: nothing attached, and no post that is not a round-up links its page in the span
     loose = sorted({p for g in groups.values() if not g["targets"] for p in g["pages"] if p})
     linked: Set[str] = set()
@@ -801,22 +1092,32 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
     for g in groups.values():
         only = not g["targets"] and not (g["pages"] & linked)
         first_target = sorted(g["targets"])[0] if g["targets"] else None
-        headline = g["headline"] or ((titles.get(first_target) or {}).get("title") if first_target else None) \
-            or g["units"][0]["item"]
-        # a separate curator: a round-up source that is not the source of what it carries (a site's own newsletter
-        # listing its own article curates nothing)
+        headline = (g["headline"] or g["worker"]
+                    or ((titles.get(first_target) or {}).get("title") if first_target else None)
+                    or g["lead"] or g["units"][0]["item"])
         theirs = {(titles.get(t) or {}).get("source_id") for t in g["targets"]}
+        curators = len(g["curators"] - theirs)
+        tier = 0 if g["kind"] in ("mx_story", "ix_story") or curators >= 2 else 1 if g["targets"] else 2
         items.append({"key": g["key"], "kind": g["kind"], "ref": g["ref"], "headline": headline,
-                      "curators": len(g["curators"] - theirs), "issues": len({u["post"] for u in g["units"]}),
-                      "only_roundups": only, "at": g["at"].isoformat(),
+                      "curators": curators, "issues": len({u["post"] for u in g["units"]}), "tier": tier,
+                      "only_roundups": only, "at": g["at"].isoformat(), "place": g["place"],
                       "posts": sorted(g["targets"]),
                       "units": [{**u, "source": (titles.get(u["post"]) or {}).get("source"),
                                  "title": (titles.get(u["post"]) or {}).get("title")} for u in g["units"]]})
-    # curators first; then what INSIGHT holds (an attached post), the issues carrying it (one issue's deep dive
-    # counts once), the latest. An item grouped by a reference page (a profile, a licence, docs) is its own row.
-    items.sort(key=lambda i: (-i["curators"], not i["posts"], -i["issues"], _neg_time(i["at"]), i["key"]))
-    return {"span": span, "from": lo.isoformat(), "until": hi.isoformat(), "roundups": len({r[1] for r in rows}),
-            "units": len(rows), "items": items[:limit], "count": len(items)}
+    items.sort(key=lambda i: (i["tier"], -i["curators"], -i["issues"], _neg_time(i["at"]), i["key"]) if i["tier"] == 0
+               else (i["tier"], i["place"], _neg_time(i["at"]), i["key"]))
+    kept, per_source, capped = [], defaultdict(int), 0
+    for i in items:
+        if i["tier"] == 2:
+            src = (titles.get(i["units"][0]["post"]) or {}).get("source_id")
+            if per_source[src] >= SOLO_PER_SOURCE:
+                capped += 1
+                continue
+            per_source[src] += 1
+        kept.append(i)
+    return {"span": span, "from": lo.isoformat(), "until": hi.isoformat(), "roundups": len({r[1] for r in all_rows}),
+            "units": len(all_rows), "items": kept[:limit], "count": len(kept), "capped": capped,
+            "left_out": dict(sorted(left_out.items())), "untyped": untyped, "untyped_roundups": sorted(untyped_roundups)}
 
 
 # ---- the stored issues: a daily and a weekly own round-up (owner 2026-11-12) -------------------------------------------
@@ -831,8 +1132,11 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
 TZ_KEY = "roundup_tz_offset_minutes"
 TZ_DEFAULT = 240                        # UTC+4, the owner's
 ISSUE_SETTLE = timedelta(hours=6)       # a period is built this long after it closes
-ISSUE_CATCHUP = {"day": 7, "week": 4}   # closed periods a run builds at most, newest first (a job that was off)
+ISSUE_CATCHUP = {"day": 7, "week": 2}   # closed periods a run builds at most, newest first (a job that was off;
+                                        # within TYPE_DAYS: older periods' items were never asked their types)
 ISSUE_ITEMS = 100                       # items kept in an issue
+TYPE_WAIT = timedelta(hours=18)         # a settled period waits this long more for its items' types (the worker
+                                        # answers in its cycles); then it is built and its untyped items counted
 
 
 def tz_offset(cur: Any) -> timedelta:
@@ -869,20 +1173,29 @@ def closed_periods(span: str, now: datetime, offset: timedelta, n: int) -> List[
     return out
 
 
-def build_issue(cur: Any, span: str, start: datetime, *, rebuild: bool = False) -> Optional[int]:
+def build_issue(cur: Any, span: str, start: datetime, *, rebuild: bool = False,
+                now: Optional[datetime] = None) -> Optional[int]:
     """The issue of the period starting at `start`: written when the period has none (or as a new version with
-    `rebuild`); a past issue is never changed. Its id, or None (one exists and no rebuild)."""
+    `rebuild`); a past issue is never changed. With `now` (the job's step), a period whose items are not all typed
+    waits TYPE_WAIT after it settled, or after its round-ups' items were last asked (a first run asks a backlog). Its
+    id, or None (one exists and no rebuild, or it waits)."""
     cur.execute("SELECT max(version) FROM mx_roundup_issues WHERE span = %s AND period_start = %s", (span, start))
     have = cur.fetchone()[0]
     if have is not None and not rebuild:
         return None
     end = start + SPANS[span]
     d = digest(cur, span, end, limit=ISSUE_ITEMS)
+    if d["untyped"] and now is not None:
+        cur.execute("SELECT max(asked_at) FROM mx_unit_type_asks WHERE post_id = ANY(%s::uuid[])",
+                    (d["untyped_roundups"],))
+        asked = cur.fetchone()[0]
+        if now < max(end + ISSUE_SETTLE, asked or end + ISSUE_SETTLE) + TYPE_WAIT:
+            return None
     cur.execute("""INSERT INTO mx_roundup_issues (span, period_start, period_end, version, code_version, roundups,
-                                                  units, count, items)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb) RETURNING id""",
+                                                  units, count, items, left_out, untyped, capped)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s) RETURNING id""",
                 (span, start, end, (have or 0) + 1, version(), d["roundups"], d["units"], d["count"],
-                 json.dumps(d["items"], default=str)))
+                 json.dumps(d["items"], default=str), json.dumps(d["left_out"]), d["untyped"], d["capped"]))
     return cur.fetchone()[0]
 
 
@@ -899,7 +1212,8 @@ def _split_from(cur: Any, since: datetime) -> Optional[datetime]:
 def issues_step(cur: Any, now: datetime) -> Dict[str, List[int]]:
     """The candidates job's step: the closed days and weeks (ISSUE_CATCHUP of each, newest first) with no issue yet,
     built. A period waits while a post that may carry its items was never split (a first backfill still under way: a
-    round-up from ATTACH_AFTER before the period on may list them), as an issue is never changed once written.
+    round-up from ATTACH_AFTER before the period on may list them), and while its items wait for their types (at
+    most TYPE_WAIT), as an issue is never changed once written.
     {span: [issue ids written]}."""
     from insight_core.markx import pairing
     offset = tz_offset(cur)
@@ -908,20 +1222,22 @@ def issues_step(cur: Any, now: datetime) -> Dict[str, List[int]]:
     unsplit = _split_from(cur, min(s for ps in periods.values() for s, _ in ps) - after)
     out: Dict[str, List[int]] = {}
     for span, ps in periods.items():
-        built = [i for i in (build_issue(cur, span, s) for s, _ in ps if unsplit is None or unsplit < s - after) if i]
+        built = [i for i in (build_issue(cur, span, s, now=now) for s, _ in ps
+                             if unsplit is None or unsplit < s - after) if i]
         if built:
             out[span] = built
     return out
 
 
-_ISSUE_COLS = "id, span, period_start, period_end, version, built_at, roundups, units, count, items"
+_ISSUE_COLS = "id, span, period_start, period_end, version, built_at, roundups, units, count, left_out, untyped, capped, items"
 
 
 def _issue_row(r: Sequence[Any], items: bool) -> Dict[str, Any]:
     out = {"id": r[0], "span": r[1], "from": r[2].isoformat(), "until": r[3].isoformat(), "version": r[4],
-           "built_at": r[5].isoformat(), "roundups": r[6], "units": r[7], "count": r[8]}
+           "built_at": r[5].isoformat(), "roundups": r[6], "units": r[7], "count": r[8], "left_out": r[9] or {},
+           "untyped": r[10], "capped": r[11]}
     if items:
-        out["items"] = r[9]
+        out["items"] = r[12]
     return out
 
 

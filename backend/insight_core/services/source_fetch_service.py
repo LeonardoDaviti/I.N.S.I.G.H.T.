@@ -199,7 +199,9 @@ class SourceFetchService:
         archives first. A source that cannot archive (see archive_support) is left out."""
         catalog = []
         availability = self.availability()
-        for source in self.sources_service.get_all_sources_with_settings():
+        # Issue 0195: the list's settings (one query; no archive history, no checkpoint resume lists), not each
+        # source's settings read one by one with the lists the catalog never shows.
+        for source in self.sources_service.list_sources():
             if not source.get("enabled"):
                 continue
             settings = source.get("settings") or {}

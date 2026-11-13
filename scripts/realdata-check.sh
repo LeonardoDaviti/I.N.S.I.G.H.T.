@@ -98,7 +98,7 @@ else
 fi
 
 cleanup() {
-  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" "$RUN_ID-hash" >/dev/null 2>&1 || true   # by name only
+  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" "$RUN_ID-hash" "$RUN_ID-analyze" >/dev/null 2>&1 || true   # by name only
   if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ]; then
     # detached when it can be: a DROP DATABASE waits for a checkpoint (minutes on a busy disk), and nothing waits on it
     docker exec -d "${PGCONTAINER:-insight-db}" psql -q -U insight -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH_A WITH (FORCE)" \
@@ -155,6 +155,14 @@ else
   wait $pid_hash || { echo "hashing the dump failed" >&2; exit 2; }
   grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error \
     && { echo "restore failed" >&2; exit 2; } || true
+  # Planner statistics before any copy is taken or checked (v10.16.2, 9fcd09a): pg_restore writes none, and the
+  # template copy takes the catalog but not the activity counters, so autovacuum analyzed one copy and never the
+  # other's untouched tables (post_parts, sources): that side's API planned /api/feed blind, every request slow, and
+  # markx.api_during_run / _rebuild were "not measured" or rose on it whatever its code. Analyzed once here, on the
+  # scratch server, the head's copy has them on a cached run too, and the base's copy (a template copy of this one)
+  # starts with the same ones.
+  say "analyze $SCRATCH_B"
+  docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$SCRATCH_B"
   rm -f "$WORK/copy.dump"
 
   # the base side's cache key: what its outputs depend on
@@ -165,7 +173,7 @@ else
                    backend/insight_core/scripts/check_invariants.py) | sha256sum | cut -c1-64)"
   CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
   IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
-  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA image=$IMAGE_ID now=$NOW"
+  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA image=$IMAGE_ID now=$NOW copy=analyzed-v1"   # copy: how the copies are prepared (a change there is a new key)
   KEY="$(echo "$KEY_TEXT" | sha256sum | cut -c1-24)"
   CACHED=""
   if [ "$NO_CACHE" != "1" ] && [ -f "$CACHE_DIR/$KEY/key.txt" ] && [ -d "$CACHE_DIR/$KEY/base" ]; then CACHED="$CACHE_DIR/$KEY"; fi

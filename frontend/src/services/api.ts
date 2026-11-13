@@ -2,11 +2,12 @@
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
+import type { Byline } from '../lib/byline';
 import type {
   MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
   MarkxPrecision, MarkxSettings,
 } from './markx';
-import type { MarkxEntityAnswer, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
+import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
 
@@ -76,6 +77,8 @@ export interface Post {
   internal_links?: Record<string, string>;
   /** A repost (issue 0066): who reposted it, and its author; null when none. */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
   /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
   counts?: Counts | null;
   /** A link post's page (issue 0072): its title when known, and the stored post at it. */
@@ -87,6 +90,7 @@ export interface Post {
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
+export type { Byline };
 export interface Counts { points: number; comments: number; }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
@@ -148,6 +152,8 @@ export interface FeedItem {
   news?: NewsScore | null;
   /** A repost (issue 0066); null or absent when none. */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
   /** A Hacker News item's points and comments (issue 0070): "1,675 points · 1,628 comments". */
   counts?: Counts | null;
   /** A page you saved that is its source's post (issue 0122): "<source> · saved by you". */
@@ -177,7 +183,8 @@ export interface Classic {
   citers: { name: string; at: string; place?: string | null }[];
   read_at: string | null; later_at: string | null;
 }
-export interface ClassicsResponse { success: true; classics: Classic[]; }
+/** GET /api/classics: a page of them (issue 0195: 100 a page); next_cursor asks the next, null at the end. */
+export interface ClassicsResponse { success: true; classics: Classic[]; next_cursor?: string | null; }
 export interface StoryVoice { id: string; name: string; place?: string | null; with?: { id: string; name: string }[]; }
 /** One story, many sources (issue 0050). `sources` in the order they covered it. */
 export interface FeedStory {
@@ -234,6 +241,8 @@ export interface StoryPost {
   reposted_by?: string[] | null;
   /** A tweet its source reposted (issue 0070): the line names its author, "@danintheory · … · ↻ sama". */
   repost?: Repost | null;
+  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
+  byline?: Byline | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */
@@ -773,6 +782,11 @@ export interface BackgroundWorkResponse extends Envelope {
   stories: { running: boolean; last_run: StoriesRunSummary | null };
   search: BackgroundProgress;
   links: BackgroundProgress;
+}
+
+/** GET /api/operations/running (issue 0195): the recent jobs, newest first, as the overview lists them. */
+export interface RunningJobsResponse extends Envelope {
+  jobs?: JobRun[];
 }
 
 export interface OperationsOverviewResponse extends Envelope {
@@ -1326,11 +1340,11 @@ export function createApi() {
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
     /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. */
-    getNews: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
-      request<FeedPage>(`/api/news?scope=${enc(scope)}`, { signal }),
+    getNews: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
+      request<FeedPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
-    getClassics: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
-      request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}`, { signal }),
+    getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
+      request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
     /** Hide a classic: "I know it" and "not for me"; it never comes back. */
     hideClassic: (url: string) => request<Envelope>('/api/classics/hide', { method: 'POST', body: { url } }),
     /** Show one source in the Main feed (true) or leave it out (false). */
@@ -1368,6 +1382,8 @@ export function createApi() {
     fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
       runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
     getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
+    /** What runs now (issue 0195): the overview's recent jobs without its source health. */
+    getRunningJobs: () => request<RunningJobsResponse>('/api/operations/running'),
     getBackgroundWork: () => request<BackgroundWorkResponse>('/api/operations/background'),
     getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
     getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
@@ -1466,12 +1482,17 @@ export function createApi() {
         { method: 'POST', body: { story, post, answer } }),
     // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
-    /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too. */
-    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean) => {
-      const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : ''].filter(Boolean).join('&');
+    /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too.
+     *  Issue 0195: `limits`, the stories and the posts in no story listed (the API's 50 and 100 by default). */
+    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean, limits?: MarkxEntityLimits) => {
+      const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : '',
+        limits?.stories !== undefined ? `stories_limit=${limits.stories}` : '',
+        limits?.loose !== undefined ? `loose_limit=${limits.loose}` : ''].filter(Boolean).join('&');
       return request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${q ? `?${q}` : ''}`);
     },
-    getMarkxEntityQueue: () => request<MarkxEntityQueue>('/api/markx/entities/queue'),
+    /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. */
+    getMarkxEntityQueue: (limit?: number) =>
+      request<MarkxEntityQueue>(`/api/markx/entities/queue${limit !== undefined ? `?limit=${limit}` : ''}`),
     answerMarkxEntity: (item: string, answer: MarkxEntityAnswer) =>
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
     undoMarkxMerge: (redirect: string) =>
@@ -1578,6 +1599,8 @@ export interface ConnectedRow {
   address?: string;
   host?: string;
   source: string | null;
+  /** Who wrote it, via whom (issue 0185); stored rows only. */
+  byline?: Byline | null;
   source_id?: string;
   date: string | null;
   title: string | null;
@@ -1859,7 +1882,7 @@ export const telegramBridge = async (): Promise<string | null> =>
 // owner's label on each. Read by components/markx/MarkXBack.tsx (the Mark X chunk).
 export type MarkxBackLabel = 'development' | 'retold' | 'related' | 'unrelated';
 export interface MarkxBackPost {
-  id: string; n: number; title: string | null; source: string | null; at: string | null; url: string | null;
+  id: string; n: number; title: string | null; source: string | null; byline?: Byline | null; at: string | null; url: string | null;
   trig: string[]; verdict: MarkxBackLabel | null; about: string | null;
 }
 export interface MarkxBackRow {
@@ -1888,6 +1911,8 @@ export interface MarkxRoundupItem {
 export interface MarkxRoundupIssue {
   id: number; span: 'day' | 'week'; from: string; until: string; version: number; built_at: string;
   roundups: number; units: number; count: number; items?: MarkxRoundupItem[];
+  /** 0181 round 2: the items left out as no news ({type: n}, `continues`), still untyped, and over the per-source cap. */
+  left_out?: Record<string, number>; untyped?: number; capped?: number;
 }
 export interface MarkxRoundupIssues {
   daily: MarkxRoundupIssue | null; weekly: MarkxRoundupIssue | null; past: MarkxRoundupIssue[]; tz_offset_minutes: number;

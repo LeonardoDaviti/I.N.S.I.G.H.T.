@@ -36,7 +36,7 @@ def _makers(book: I.Book, root: str, members: Optional[Dict[str, Set[str]]] = No
     """The name keys of who makes it: its members' stated maker and their parent (a thing's maker entity).
     `members` (book.members(), v10.13.9): read once for many roots (each root walked every entity before)."""
     out: Set[str] = set()
-    ids = members.get(root, ()) if members is not None else [eid for eid in book.ents if book.root(eid) == root]
+    ids = members.get(root, ()) if members is not None else book.cluster(root)   # v10.17 (0186): not a walk
     for eid in ids:
         e = book.ents[eid]
         if e.maker:
@@ -221,11 +221,12 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
     roots = None if roots is None else set(roots)
     cols = "entity_id::text, url, kind, rule, first_at, post_id::text, owner"
     if roots is not None:
-        members = sorted(e for e in book.ents if book.root(e) in roots)
+        members = sorted({e for r in roots for e in book.cluster(r)})   # v10.17 (0186): not a walk of the book
         cur.execute(f"SELECT {cols} FROM mx_entity_addresses WHERE entity_id = ANY(%s::uuid[])", (members,))
     else:
         cur.execute(f"SELECT {cols} FROM mx_entity_addresses")
     rows = cur.fetchall()
+    book.prime(ids=[r[0] for r in rows])   # v10.17 (0186): a page's book reads them in one go
     posts = sorted({r[5] for r in rows if r[5]})
     named: Set[Tuple[str, str]] = set()
     if posts:
@@ -242,13 +243,10 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
         if pid and (pid, root) not in named:
             continue
         out[root].append((kind, url, rule, at, pid, owner))
-    members: Optional[Dict[str, Set[str]]] = None
     for root, got in out.items():   # a fork or a namesake: 2+ owners of one kind keep the stated maker's only
         repo = [(k, u, o) for k, u, r, _, _, o in got if r == R.REPO]
         if len({(k, N.squash((o or "").casefold())) for k, _, o in repo}) > len({k for k, _, _ in repo}):
-            if members is None and roots is None:
-                members = book.members()
-            keep = R.one_owner(repo, _makers(book, root, members), N.squash)
+            keep = R.one_owner(repo, _makers(book, root), N.squash)   # v10.17 (0186): its cluster, not book.members()
             out[root] = [g for g in got if g[2] != R.REPO or g[1] in keep]
     return out
 

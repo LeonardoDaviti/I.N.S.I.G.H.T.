@@ -44,6 +44,40 @@ class Due(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0), "candidates")
 
 
+class TheBackoff(unittest.TestCase):
+    """0188: a job whose runs fail waits GAP x 2^failures after the failed run's end (at most 6 hours) before it is
+    tried again, whatever makes it due; from FAILING_AFTER failures on it shows as failing, and is still tried."""
+
+    def failed(self, n, ended_ago):
+        return {"started_at": T0 - timedelta(seconds=ended_ago + 30), "finished_at": T0 - timedelta(seconds=ended_ago),
+                "last": {"ok": False, "error": "boom"}, "failures": n, "wanted_at": T0 - timedelta(hours=7)}
+
+    def test_the_wait_doubles_up_to_six_hours(self):
+        self.assertEqual(jobs.backoff({"failures": 0}), 0)
+        self.assertEqual([jobs.backoff({"failures": n}) for n in (1, 2, 3, 4)], [600, 1200, 2400, 4800])
+        self.assertEqual(jobs.backoff({"failures": 7}), jobs.MAX_BACKOFF)
+        self.assertEqual(jobs.backoff({"failures": 10_000}), jobs.MAX_BACKOFF)   # no overflow
+
+    def test_every_job_waits_out_its_backoff(self):
+        self.assertIsNone(jobs.due(_states(decide=self.failed(2, 1199)), T0))
+        self.assertEqual(jobs.due(_states(decide=self.failed(2, 1201)), T0), "decide")
+        recent = {"started_at": T0 - timedelta(minutes=10)}
+        self.assertIsNone(jobs.due(_states(decide=recent, candidates=self.failed(1, 599)), T0))
+        self.assertEqual(jobs.due(_states(decide=recent, candidates=self.failed(1, 601)), T0), "candidates")
+        self.assertNotEqual(jobs.due(_states(plan=self.failed(3, 60)), T0, plan_every=300), "plan")
+        self.assertEqual(jobs.due(_states(plan=self.failed(3, 2401)), T0, plan_every=300), "plan")
+
+    def test_a_killed_run_is_not_restarted_at_the_next_look(self):
+        killed = {**self.failed(1, 30), "last": {"ok": False, "error": "killed after 900 s"}}
+        self.assertIsNone(jobs.due(_states(decide=killed), T0))
+
+    def test_failing_after_three_and_still_tried_at_the_longest_wait(self):
+        self.assertFalse(jobs.failing({"failures": 2}))
+        self.assertTrue(jobs.failing({"failures": 3}))
+        self.assertIsNone(jobs.due(_states(decide=self.failed(50, 6 * 3600 - 1)), T0))
+        self.assertEqual(jobs.due(_states(decide=self.failed(50, 6 * 3600 + 1)), T0), "decide")
+
+
 class TheLabelsQueue(unittest.TestCase):
     """0182: the Labels queue is built here when the newest run's is not kept, after a decision run is due."""
 
@@ -55,11 +89,12 @@ class TheLabelsQueue(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0, labels_missing=True),
                          "labels")
 
-    def test_a_failed_build_waits_for_the_gap(self):
+    def test_a_failed_build_waits_for_its_backoff(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
-        failed = {"started_at": T0 - timedelta(minutes=2), "last": {"ok": False, "error": "boom"}}
+        failed = {"started_at": T0 - timedelta(minutes=3), "finished_at": T0 - timedelta(minutes=2),
+                  "last": {"ok": False, "error": "boom"}, "failures": 1}
         self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True))
-        failed["started_at"] = T0 - timedelta(minutes=6)
+        failed["finished_at"] = T0 - timedelta(minutes=11)                                    # GAP x 2 after its end
         self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True), "labels")
         ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}}                   # a newer run's
         self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, labels_missing=True), "labels")
@@ -209,9 +244,11 @@ class TheRunner(_Api):
         self.assertEqual(self.cur.fetchone()[0], 2)                 # the run is never lost
         self.assertFalse(s["labels"]["last"]["ok"])
         self.assertTrue(labels.missing(self.cur))
-        self.assertIsNone(self.runner().tick())                      # within GAP of the failed build
+        self.assertEqual(s["labels"]["failures"], 1)
+        self.assertIsNone(self.runner().tick())                      # within its backoff (0188: GAP x 2 after its end)
         with self.conn.transaction():
-            self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '10 minutes' WHERE job = 'labels'")
+            self.cur.execute("""UPDATE mx_jobs SET started_at = started_at - interval '11 minutes',
+                                       finished_at = finished_at - interval '11 minutes' WHERE job = 'labels'""")
         self.assertEqual(self.runner().tick(), "labels")
         self.assertFalse(labels.missing(self.cur))
 
@@ -411,7 +448,8 @@ class TheLimitAndTheStages(_Api):
         # 0124 (the v10.0.2 review's W6): the stage's whole name, and the retry as it happens (the 5-minute gap)
         self.assertEqual(s["last"]["stopped_before"], s["last"]["error"].split("stopped before ", 1)[1])
         self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "graph", "back", "later", "headlines", "news"))
-        self.assertIn("it runs again within 5 minutes", "\n".join(logs.output))
+        self.assertIn("it runs again after its backoff", "\n".join(logs.output))
+        self.assertEqual(s["failures"], 1)                     # 0188: one failure in a row, the backoff counts it
 
     def test_the_entities_stages_own_budget_is_not_counted_in_the_limit(self):
         """0128: a 100 s entities stage inside a run of 150 s stays under the 120 s limit; the budget reaches the run."""
@@ -444,6 +482,66 @@ class TheLimitAndTheStages(_Api):
         with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", slow), \
                 self.assertLogs(jobs.log, "WARNING"):
             self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
+
+    def test_failures_count_in_a_row_and_a_good_run_clears_them(self):
+        j = jobs.Jobs(db_url())
+        for _ in range(3):
+            j._finish("labels", {"ok": False, "error": "boom"})
+        view = jobs.view(self.cur)["labels"]
+        self.assertEqual(view["failures"], 3)
+        self.assertTrue(view["failing"])
+        self.assertIsNotNone(view["retry_at"])
+        j._finish("decide", {"ok": False, "skipped": "another decision run holds the lock"})
+        self.assertEqual(jobs.state(self.cur)["decide"]["failures"], 0)             # a skipped run is no failure
+        j._finish("labels", {"ok": True})
+        view = jobs.view(self.cur)["labels"]
+        self.assertEqual((view["failures"], view["failing"], view["retry_at"]), (0, False, None))
+
+    def test_over_the_limit_twice_in_the_same_stage_skips_it_once(self):
+        """0188: the identical run is not repeated: the next run defers the stage it ran over in, then tries it again."""
+        clock, seen = [0.0], []
+
+        def run(cur, *, stage, skip=(), **kw):
+            seen.append(list(skip))
+            for name, secs in (("load", 10), ("questions and decisions", 10), ("graph", 0 if "graph" in skip else 200),
+                               ("back", 5)):
+                stage(name)
+                clock[0] += secs
+            return {"run": "x", "stories": 0}
+        with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
+                mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "WARNING") as logs:
+            j = jobs.Jobs(db_url(), limit=120)
+            self.assertIsNone(j.decide())
+            first = jobs.state(self.cur)["decide"]["last"]
+            self.assertEqual((first["over_in"], first.get("skip_next")), ("graph", None))
+            self.assertIsNone(j.decide())
+            second = jobs.state(self.cur)["decide"]
+            self.assertEqual(second["last"]["skip_next"], "graph")
+            self.assertEqual(second["failures"], 2)
+            self.assertEqual(j.decide(), {"run": "x", "stories": 0})
+            third = jobs.state(self.cur)["decide"]
+            self.assertEqual(third["last"]["skipped_stages"], ["graph"])
+            self.assertEqual(third["failures"], 0)
+            self.assertIsNone(j.decide())                                           # tried again the run after
+        self.assertEqual(seen, [[], [], ["graph"], []])
+        self.assertIn("the next run skips it", "\n".join(logs.output))
+
+    def test_a_core_stage_is_never_skipped(self):
+        clock = [0.0]
+
+        def run(cur, *, stage, skip=(), **kw):
+            self.assertEqual(list(skip), [])
+            for name, secs in (("load", 10), ("questions and decisions", 200), ("write", 5)):
+                stage(name)
+                clock[0] += secs
+        with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
+                mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "WARNING"):
+            j = jobs.Jobs(db_url(), limit=120)
+            for _ in range(3):
+                self.assertIsNone(j.decide())
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertEqual(last["over_in"], "questions and decisions")
+        self.assertNotIn("skip_next", last)
 
     def test_the_status_shows_a_running_run_with_its_start_and_stage(self):
         seen = {}
@@ -482,7 +580,8 @@ class PlanningInTheBackground(_Api):
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
-        self.assertEqual({k: v["added"] for k, v in got.items()}, {"check": 7, "cite": 2, "track": 0})
+        self.assertEqual({k: v["added"] for k, v in got.items() if k != "track_places"}, {"check": 7, "cite": 2, "track": 0})
+        self.assertIn("placed", got["track_places"])   # issue 0195: the track placements kept after the planners
 
     def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks
@@ -513,6 +612,18 @@ class PlanningInTheBackground(_Api):
         last = jobs.state(self.cur)["plan"]["last"]
         self.assertTrue(last["ok"], last)
         self.assertEqual(last["kinds"]["cite"]["added"], 1)
+
+    def test_keeping_the_track_placements_never_fails_the_plan(self):
+        from insight_core.markx import tasks, track_kept
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track")}
+        with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
+                mock.patch.dict(tasks.PLANNERS, planners), \
+                mock.patch.object(track_kept, "refresh", mock.Mock(side_effect=RuntimeError("no places"))):
+            self.jobs_().plan()
+        last = jobs.state(self.cur)["plan"]["last"]
+        self.assertTrue(last["ok"], last)
+        self.assertIn("no places", last["kinds"]["track_places"]["failed"])
+        self.assertEqual(last["kinds"]["track"]["added"], 1)
 
     def test_the_plan_job_is_due_every_5_minutes_before_a_decision_run(self):
         s = _states(plan={"started_at": T0 - timedelta(seconds=301)}, decide={"started_at": T0 - timedelta(hours=2)})

@@ -28,9 +28,9 @@ exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits
 a card, a headline or a briefing reads it: "Author: @acme (a post by @acme shared by <feed>)", members as
 "[a post by @acme shared by <feed>, x, ...]", so a story never reads "<feed> announces" for another account's post.
 It counts as its author's voice (`voices`) only when one of the sources follows that author, as Mark IX counts it
-(pairing.counted_voice); a stranger's post its feed carries stays the feed's voice. The sameness questions
-(check, join, pair, merge, connect) are unchanged: they ask whether two posts tell one story, not who said it (and are
-not asked again).
+(Voice's rule, utils/voice.py: voice.counted_source); a stranger's post its feed carries stays the feed's voice. The
+sameness questions (check, join, pair, merge, connect) are unchanged: they ask whether two posts tell one story, not
+who said it (and are not asked again).
 
 Who creates which tasks: `plan_posts` (read, entities: the newest posts of the last 30 days first,
 corrections 8) and `plan_checks` (check: Mark IX's uncertain members) here, called when the worker asks
@@ -50,6 +50,8 @@ from uuid import UUID
 from psycopg import Cursor
 
 from insight_core.markx import pairing, plan_marks, repo, schemas
+from insight_core.utils import byline, voice
+from insight_core.utils.byline import author_account, original_author  # 0168 E's rule lives in Byline (0185, 0189)
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.post_parts import Body, shown
 
@@ -61,7 +63,6 @@ READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
 STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
 CARD_MEMBERS, HEADLINE_MEMBERS, CONNECT_MEMBERS, BRIEFING_POSTS = 8, 6, 5, 4
 PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
-NOT_VOICE = pairing.NOT_VOICE   # Pairing's voice rule (0166)
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
 PLAN_DAYS = 30                             # corrections 8: the first runs read the last 30 days only; since
@@ -86,7 +87,7 @@ def fresh_sql(alias: str = "p", since: str = "%(fresh)s") -> str:
     """The fresh lane's condition over posts `alias`, `since` the lane's start (now - FRESH_HOURS): fetched or surfaced
     since then, and dated (surfaced, published, fetched) within FRESH_DATED_DAYS."""
     return (f"(GREATEST({alias}.fetched_at, {alias}.surfaced_at) >= {since} "
-            f"AND COALESCE({alias}.surfaced_at, {alias}.published_at, {alias}.fetched_at) "
+            f"AND {pairing.ordinary_date(alias)} "
             f">= {since}::timestamptz + make_interval(hours => {FRESH_HOURS}) - make_interval(days => {FRESH_DATED_DAYS}))")
 
 
@@ -136,6 +137,7 @@ class Post:
     lang: Optional[str] = None
     by: Optional[str] = None  # 0168 E: a repost's (or a Telegram forward's) original author ("@acme"), not the feed's
     counts_as: Optional[str] = None   # v10.15: the source its author is, when one of the sources follows the author
+                                      # (voice.counted_source); Voice counts a Post by Policy.MARKX
 
     @property
     def iso(self) -> str:
@@ -143,14 +145,15 @@ class Post:
 
     @property
     def who(self) -> str:
-        """0168 E: who a render says wrote it: the source, or "a post by @X shared by <source>" for a repost."""
-        return f"a post by {self.by} shared by {self.source}" if self.by else self.source
+        """0168 E: who a render says wrote it: the source, or "a post by @X shared by <source>" for a repost (Byline's
+        words, issue 0185)."""
+        return byline.who({"author": self.by, "via": self.source})
 
     @property
     def voice(self) -> str:
-        """The voice it counts as (pairing.counted_voice, Mark IX's rule): a repost's original author when one of the
-        sources follows that author, else its own source. `by` is the credit a render shows, whoever the author."""
-        return self.counts_as or self.source_id
+        """The voice it counts as (Voice's MARKX rule): a repost's original author when one of the sources follows
+        that author, else its own source. `by` is the credit a render shows, whoever the author."""
+        return voice.voice_of(self, voice.Policy.MARKX)
 
 
 def _squash(s: Optional[str]) -> str:
@@ -163,10 +166,10 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
     if not ids:
         return {}
     cur.execute(
-        """SELECT p.id, s.platform, s.handle_or_url,
+        f"""SELECT p.id, s.platform, s.handle_or_url,
                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                            s.handle_or_url),
-                  p.source_id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at), COALESCE(pp.title, p.title),
+                  p.source_id, {pairing.ordinary_date('p')}, COALESCE(pp.title, p.title),
                   p.content, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.quoted,
                   p.language_code, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''),
                   NULLIF(btrim(p.metadata->'forwarded_from'->>'username'), '')
@@ -182,8 +185,8 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
         by = original_author(kind, platform, handle, author, forwarded, owns)
         account = author_account(kind, by, forwarded_user)
         if account and followed is None:
-            followed = pairing.followed_accounts(cur)
-        counts = pairing.counted_voice(str(source_id), account, followed or {}) if account else None
+            followed = voice.followed_accounts(cur)
+        counts = voice.counted_source(str(source_id), account, followed or {}) if account else None
         out[str(pid)] = Post(id=str(pid), kind=kind, source=name or "", source_id=str(source_id),
                              at=at, title=_squash(title), text=(text or "").strip(), quote=quoted, lang=lang,
                              by=by, counts_as=counts if counts != str(source_id) else None)
@@ -193,36 +196,6 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
         if str(pid) in out:
             out[str(pid)].links.append((url, anchor))
     return out
-
-
-def author_account(kind: str, by: Optional[str], forwarded_user: Optional[str] = None) -> Optional[str]:
-    """The account (Mark IX's form, repo_stories.source_account's) of a repost's original author: x.com/<user> for an
-    X repost, t.me/<channel> for a Telegram forward whose header names the channel; None otherwise (a forward by name
-    alone names no account)."""
-    from insight_core.utils.addresses import x_account
-    if kind == "x" and by:
-        return x_account(by.lstrip("@"))
-    if kind == "telegram" and by and forwarded_user:
-        return "t.me/" + forwarded_user.lstrip("@").lower()
-    return None
-
-
-def original_author(kind: str, platform: Optional[str], handle: Optional[str], author: Optional[str],
-                    forwarded: Optional[str], owns: Optional[Dict[Tuple[Any, Any], str]] = None) -> Optional[str]:
-    """0168 E: the original author of a post its feed carries but did not write: on X a row whose author is not the
-    feed's own account ("@acme", a repost); a Telegram forward's channel as its header names it. None: the feed's
-    own post (or unknown)."""
-    if kind == "x" and author:
-        from insight_core.db.repo_reader import _own_account
-        key = (platform, handle)
-        own = owns.get(key) if owns is not None and key in owns else _own_account(platform, handle)
-        if owns is not None:
-            owns[key] = own
-        a = author.strip().lstrip("@")
-        return "@" + a if own and a and a.casefold() != own.casefold() else None
-    if kind == "telegram" and forwarded:
-        return forwarded.strip()
-    return None
 
 
 def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:
@@ -271,8 +244,8 @@ def near_copies(members: Sequence[Post]) -> set:
 
 
 def voices(posts: Iterable[Post]) -> int:
-    """Distinct voices (Post.voice: a repost counts as its author only when a source follows the author)."""
-    return pairing.voices((p.voice, p.kind) for p in posts)
+    """Distinct voices (Voice's MARKX rule: a repost counts as its author only when a source follows the author)."""
+    return voice.count(posts, voice.Policy.MARKX)
 
 
 def _cut(text: str, n: int) -> str:
@@ -499,7 +472,8 @@ def connect_input(members_a: Sequence[Post], members_b: Sequence[Post]) -> str:
     prototype showed the members nearest the story's centroid; until S2's vectors, the earliest."""
     def one(tag: str, ps: Sequence[Post]) -> str:
         ps = _earliest(ps)
-        n = pairing.voices((p.source_id, p.kind) for p in ps)   # by source, as before 0168 (not asked again)
+        # by source, as before 0168 (not asked again)
+        n = voice.count((voice.Said(p.source_id, p.kind) for p in ps), voice.Policy.MARKX)
         lines = [f"STORY {tag} — first seen {ps[0].iso[:10]}; {n} sources", "Members (earliest first):"]
         lines += [_member_line(p, 300, p.iso[:10]) for p in ps[:CONNECT_MEMBERS]]
         return "\n".join(lines)
@@ -655,17 +629,17 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     for _page in range(SCAN_PAGES):
         rows = plan_marks.execute(cur,
             f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                        - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
-                      COALESCE(p.surfaced_at, p.published_at, p.fetched_at), {plan_marks.STAMP}
+                                        - {pairing.ordinary_date('p')})) / 86400))::int,
+                      {pairing.ordinary_date('p')}, {plan_marks.STAMP}
                  FROM posts p
-                WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND (%(fresh)s::timestamptz IS NULL OR {fresh_sql()})
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
-                       OR (COALESCE(p.surfaced_at, p.published_at, p.fetched_at), p.id) < (%(at)s::timestamptz, %(id)s::uuid))
-                ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                       OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
+                ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "kind": kind, "guide": guide, "limit": limit, "fresh": fetched_since,
              "at": after[0] if after else None, "id": after[1] if after else None})
@@ -704,18 +678,38 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
         threads = Config().check_threads
     certain = CERTAIN - {"thread"} if threads else CERTAIN
     cur.execute(
-        """SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
+        f"""SELECT sp.story_id, sp.post_id, sp.role, sp.parent_reason FROM story_posts sp
             WHERE %(days)s::int IS NULL
                OR sp.story_id IN (SELECT sp2.story_id FROM story_posts sp2 JOIN posts p ON p.id = sp2.post_id
-                                   WHERE COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                                   WHERE {pairing.ordinary_date('p')}
                                          >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))""",
         {"now": now, "days": days})
     stories: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
     for story, post, role, reason in cur.fetchall():
         stories.setdefault(str(story), []).append((str(post), role, reason))
-    posts = load_posts(cur, {p for ms in stories.values() for p, _, _ in ms})
-    rd = readings(cur, list(posts))
-    for ms in stories.values():
+    # 0183: the stories' posts read a chunk of stories at a time, and of their readings only the kind (was: every
+    # story's texts and whole readings at once, the plan job's peak). The same stories in the same order.
+    order = list(stories.values())
+    for at in range(0, len(order), CHECK_CHUNK):
+        chunk = order[at:at + CHECK_CHUNK]
+        posts = load_posts(cur, {p for ms in chunk for p, _, _ in ms})
+        kinds = reading_kinds(cur, list(posts))
+        yield from _checks_of(chunk, posts, kinds, certain)
+
+
+CHECK_CHUNK = 500   # stories a check planner reads at once (0183)
+
+
+def reading_kinds(cur: Cursor, ids: Sequence[str], guide: str = "read-v2") -> Dict[str, Any]:
+    """{post id: its reading's kind} of the posts read under `guide` (the reading's own value, as `readings` gives it)."""
+    cur.execute("SELECT post_id::text, reading->'kind' FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = %s",
+                (list(ids), guide))
+    return dict(cur.fetchall())
+
+
+def _checks_of(stories: Sequence[List[Tuple[str, str, Optional[str]]]], posts: Dict[str, Post], kinds: Dict[str, Any],
+               certain: Any) -> Iterable[Tuple[Post, str]]:
+    for ms in stories:
         members = _earliest(posts[p] for p, _, _ in ms if p in posts)
         if voices(members) < 2:
             continue
@@ -723,9 +717,9 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
         reports = {p for p, role, _ in ms if role == "report"}
         copies = near_copies(members)
         for p in members[1:]:
-            if p.kind in NOT_VOICE or p.id in copies:
+            if not voice.is_voice(p.kind) or p.id in copies:
                 continue
-            roundup = (rd.get(p.id) or {}).get("kind") == "roundup"
+            roundup = kinds.get(p.id) == "roundup"
             if (why.get(p.id) in certain or words(p) < MIN_WORDS) and not roundup:
                 continue
             side = check_side(p, members, reports)
@@ -754,6 +748,38 @@ def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None
     return kind in BACKGROUND_PLANNED
 
 
+# 0183: what each background planner reads and writes (markx/unchanged.py skips a pass while these are as they were at
+# its last pass that planned nothing). Every table a planner reads or writes is named; the key holds what else it
+# depends on: its code and its settings as it computes them. The clock only narrows check's and cite's windows within
+# a day (now - days: a post that leaves the window adds no question, and an age is only a new task's priority), so the
+# window's length in days is in their key. track's bar and windows move with the clock itself (the share of the last
+# 30 days' posts a probe passes): it has no declaration and always runs.
+_TEXT = ("posts", "post_parts", "post_links", "sources")
+BACKGROUND_INPUTS = {
+    "check": _TEXT + ("story_posts", "mx_readings", "mx_tasks", "mx_settings", "mx_guides"),
+    "cite": _TEXT + ("mx_tasks", "mx_plan_marks", "mx_settings", "mx_guides"),
+}
+_PLANNER_CODE = ("insight_core.markx.tasks", "insight_core.markx.plan_marks", "insight_core.markx.ent42",
+                 "insight_core.markx.story_window", "insight_core.markx.pairing", "insight_core.markx.schemas",
+                 "insight_core.markx.repo", "insight_core.utils.post_parts", "insight_core.utils.post_links",
+                 "insight_core.utils.voice", "insight_core.utils.byline")
+
+
+def background_inputs(cur: Cursor, kind: str, now: datetime) -> Tuple[Sequence[str], Any]:
+    """0183: (tables, key) of the background planner `kind`'s pass at `now` (unchanged.run); key None: it always runs."""
+    if kind not in BACKGROUND_INPUTS:
+        return (), None
+    from insight_core.markx import unchanged
+    key: Dict[str, Any] = {"kind": kind, "code": unchanged.code_stamp(_PLANNER_CODE), "limit": PLAN_LIMIT}
+    if kind == "check":
+        from insight_core.markx import story_window
+        from insight_core.markx.decide import Config
+        key.update(days=story_window.days_for_run(cur, now), threads=Config().check_threads)
+    else:
+        key.update(days=reading_window(cur), arm=schemas.entities_arm(cur).guide)
+    return BACKGROUND_INPUTS[kind], key
+
+
 def checks_in_background(cur: Cursor, now: Optional[datetime] = None) -> bool:
     """v10.13.2: while the story window reaches past RECENT days, planning the checks reads every story it reaches
     (over a minute on the server with `everything`, longer than a worker waits for its lease), so the decision job
@@ -780,13 +806,15 @@ def plan_checks(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, no
                     break
         return added
     edge = at - timedelta(days=story_window.RECENT)
-    asked = sorted(check_questions(cur, days=days, now=now), key=lambda pt: (pt[0].at, pt[0].id), reverse=True)
+    # 0183: what the sort keeps of each question is its post's time and id and the input (not the post's whole text)
+    asked = sorted(((p.at, p.id, text) for p, text in check_questions(cur, days=days, now=now)),
+                   key=lambda q: (q[0], q[1]), reverse=True)
     added = old = 0
-    for p, text in asked:
-        late = p.at < edge
+    for when, pid, text in asked:
+        late = when < edge
         if late and old >= story_window.BACKFILL_PAGE or not late and added >= limit:
             continue
-        if add(cur, "check", text, a=p.id, priority=story_window.BACKFILL_PRIORITY if late else 0)[1]:
+        if add(cur, "check", text, a=pid, priority=story_window.BACKFILL_PRIORITY if late else 0)[1]:
             if late:
                 old += 1
             else:
@@ -957,6 +985,12 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "news_sections":           # 0174: Mark X News' titled sections
         from insight_core.markx import news_sections
         news_sections.after_answer(cur, task, call_id, answer)
+    elif task["kind"] == "news_place":              # 0197: new News rows into those sections
+        from insight_core.markx import news_sections
+        news_sections.after_place(cur, task, call_id, answer)
+    elif task["kind"] == "unit_types":              # 0181: a round-up's items: type, headline, continues
+        from insight_core.markx import units
+        units.after_types(cur, task, call_id, answer)
     if task["kind"] in SEARCHED_KINDS:     # 0139: the post's English layer in search, from its answers as they are now
         from insight_core.markx import search
         search.refresh_safely(cur, [task["a"]])
@@ -1003,11 +1037,11 @@ def plan_stance(cur: Cursor, *, now: Optional[datetime] = None, limit: int = PLA
     cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = 'stance' AND a IS NOT NULL
                     AND created_at >= date_trunc('month', %s::timestamptz)""", (now,))
     asked = {r[0] for r in cur.fetchall()}
-    cur.execute("""SELECT p.id::text, p.source_id::text, COALESCE(p.title, ''), COALESCE(p.content, ''), p.author,
+    cur.execute(f"""SELECT p.id::text, p.source_id::text, COALESCE(p.title, ''), COALESCE(p.content, ''), p.author,
                           p.reposted_by, (p.metadata ? 'forwarded_from')
                      FROM posts p
                     WHERE p.source_id = ANY(%s::uuid[])
-                      AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at) >= %s
+                      AND {pairing.ordinary_date('p')} >= %s
                       AND length(COALESCE(p.title, '')) + length(COALESCE(p.content, '')) >= %s
                     ORDER BY p.id""",
                 ([s for s in srcs if s not in asked and srcs[s].kind != "reddit"], now - timedelta(days=STANCE_DAYS),
@@ -1053,9 +1087,9 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
         f"""WITH few AS (SELECT s.id FROM sources s
                           WHERE s.platform <> 'saved'
                             AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id AND EXISTS ({done})) < %(below)s),
-                 last AS (SELECT p.id, COALESCE(p.surfaced_at, p.published_at, p.fetched_at) AS at,
+                 last AS (SELECT p.id, {pairing.ordinary_date('p')} AS at,
                                  row_number() OVER (PARTITION BY p.source_id ORDER BY
-                                                    COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC) AS k
+                                                    {pairing.ordinary_date('p')} DESC, p.id DESC) AS k
                             FROM posts p WHERE p.source_id IN (SELECT id FROM few))
             SELECT l.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now()) - l.at)) / 86400))::int
               FROM last l
@@ -1106,16 +1140,16 @@ def plan_windows(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, n
         days = reading_window(cur)
     rows = plan_marks.execute(cur,
         f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
-                                    - COALESCE(p.surfaced_at, p.published_at, p.fetched_at))) / 86400))::int,
+                                    - {pairing.ordinary_date('p')})) / 86400))::int,
                   {plan_marks.STAMP}
              FROM posts p
-            WHERE (%(days)s::int IS NULL OR COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+            WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND octet_length(p.content) > %(chars)s   -- bytes: a toasted text is not decompressed
               AND (SELECT count(*) FROM mx_tasks t                -- its first window's task only (no input read)
                     WHERE t.a = p.id AND t.kind = 'entities' AND t.guide = %(guide)s) = 1
               AND {plan_marks.unmarked()}
-            ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+            ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
             LIMIT %(limit)s""",
         {"now": now, "days": days, "chars": chars, "guide": guide, "kind": WINDOWS_MARK, "limit": limit})
     posts = load_posts(cur, [r[0] for r in rows])
@@ -1209,3 +1243,11 @@ def _plan_news_sections(cur: Cursor, **kw: Any) -> int:   # 0174: News' sections
 
 
 PLANNERS["news_sections"] = _plan_news_sections                            # 0174
+
+
+def _plan_news_place(cur: Cursor, **kw: Any) -> int:   # 0197: the rows added since, into the sections (news_sections.place)
+    from insight_core.markx import news_sections
+    return news_sections.place(cur, **kw)
+
+
+PLANNERS["news_place"] = _plan_news_place                                  # 0197

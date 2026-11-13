@@ -163,6 +163,8 @@ def _cors_origins() -> list[str]:
             origins.append(origin)
     return origins
 
+# Issue 0188: a request's statements end after 30 s (database.RequestTimeouts); added first, so it is innermost.
+app.add_middleware(database.RequestTimeouts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -170,6 +172,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Issue 0195: the polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
+from insight_core.routers.conditional import ConditionalGet  # noqa: E402
+app.add_middleware(ConditionalGet)
 
 
 # ============= ERRORS =============
@@ -301,6 +306,9 @@ class SystemStatus(BaseModel):
     folders: List[FolderStatus] = []
     recent_jobs: List[JobStatus] = []
     source_health_summary: Dict[str, int] = {}
+    # Issue 0188: what `healthy` is computed from (reasons, warnings, checks), and the biggest tables' sizes
+    health: Dict[str, Any] = {}
+    table_sizes: List[Dict[str, Any]] = []
 
 
 class ArchiveRequest(BaseModel):
@@ -648,14 +656,14 @@ def _export_sources_json() -> None:
 
 
 @app.get("/")
-async def root():
+def root():
     return {"message": "INSIGHT API", "status": "operational"}
 
 # ============= POSTS =============
 
 @app.get("/api/posts/item/{post_id}")
 @error_detail("load the post")
-async def get_post_detail(post_id: str):
+def get_post_detail(post_id: str):
     """One post with its source metadata and reader state. 404 for an unknown post."""
     detail = services().post_detail
     post = detail.get_post_by_id(post_id)
@@ -680,14 +688,14 @@ async def get_post_connected(post_id: str, all: bool = False):
 
 @app.post("/api/posts/item/{post_id}/opened")
 @error_detail("record the post open")
-async def record_post_open(post_id: str, request: PostOpenRequest | None = None):
+def record_post_open(post_id: str, request: PostOpenRequest | None = None):
     metadata = request.metadata if request else None
     return {"success": True, "event": services().post_detail.record_post_open(post_id, metadata=metadata)}
 
 
 @app.post("/api/posts/item/{post_id}/reading-session")
 @error_detail("record the reading session")
-async def record_post_reading_session(post_id: str, request: PostReaderSessionRequest):
+def record_post_reading_session(post_id: str, request: PostReaderSessionRequest):
     event = services().post_detail.record_reading_session(
         post_id,
         duration_seconds=int(request.durationSeconds or 0),
@@ -698,13 +706,13 @@ async def record_post_reading_session(post_id: str, request: PostReaderSessionRe
 
 @app.post("/api/posts/item/{post_id}/favorite")
 @error_detail("update the star")
-async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
+def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
     return {"success": True, **services().post_detail.toggle_favorite(post_id, bool(request.favorited))}
 
 
 @app.put("/api/posts/item/{post_id}/position")
 @error_detail("save where you stopped")
-async def save_post_position(post_id: str, request: PostPositionRequest):
+def save_post_position(post_id: str, request: PostPositionRequest):
     services().post_detail.save_position(post_id, request.block, request.blocks)
     return {"success": True}
 
@@ -729,7 +737,7 @@ def _require_post_ids(ids: List[str]) -> List[str]:
 
 @app.get("/api/feed")
 @error_detail("load the feed")
-async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
+def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
                    cursor: str | None = None, limit: int = 30, days: int | None = None,
                    date: str | None = None, all_sources: bool = False):
     """Every post list: newest first, keyset-paginated. FeedPage (stream) or FeedGroupsPage
@@ -747,7 +755,7 @@ async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream"
 
 @app.get("/api/search")
 @error_detail("search")
-async def search_posts(q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
+def search_posts(q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
                        order: str | None = None, cursor: str | None = None, limit: int = 30):
     """Search every post (issue 0040): title, source name and full text, word forms in English
     and Russian, "phrases", -word; a version word by its parts ("kimi 3.1" finds K3.1, issue 0056).
@@ -768,13 +776,13 @@ async def search_posts(q: str, scope: str | None = None, filter: str = "all", da
 
 @app.get("/api/feed/unread-counts")
 @error_detail("load unread counts")
-async def get_feed_unread_counts():
+def get_feed_unread_counts():
     return services().reader.unread_counts()
 
 
 @app.put("/api/feed/read")
 @error_detail("update read state")
-async def set_read_state(request: ReadStateRequest):
+def set_read_state(request: ReadStateRequest):
     """Read state, three ways, one answer {success, updated, ids} (ids: the posts changed):
     - {ids, read}: one post or many (at most 500), read or unread; marking read also takes
       them out of Later, unless keep_later (the read is only an open);
@@ -801,7 +809,7 @@ async def set_read_state(request: ReadStateRequest):
 
 @app.put("/api/feed/later")
 @error_detail("update Later")
-async def set_later_state(request: LaterRequest):
+def set_later_state(request: LaterRequest):
     """Read later (issue 0022): {ids, later}, at most 500 ids; one answer {success, updated, ids}.
     Nothing clears Later on a clock; an explicit mark read (PUT /api/feed/read) does."""
     return services().reader.set_later(_require_post_ids(request.ids), bool(request.later))
@@ -839,7 +847,7 @@ async def get_media(post: str, url: str):
 
 @app.get("/api/sources")
 @error_detail("load the sources")
-async def list_sources():
+def list_sources():
     """Every source with its settings (platform defaults merged), post_count and in_main_digest; the
     archive's history left out (issue 0105: 98.7% of the answer; GET /api/archive/{id}/status has it)."""
     sources = services().sources.list_sources()
@@ -895,7 +903,7 @@ def sources_opml(sources: List[Dict[str, Any]], folders: List[Dict[str, Any]],
 
 @app.get("/api/sources/export.opml")
 @error_detail("export the sources")
-async def export_sources_opml():
+def export_sources_opml():
     """Every source as OPML 2.0, grouped by track, for another reader or an off-site copy (issue 0035)."""
     folders_service = services().folders
     sources = services().sources.get_all_sources_with_settings()
@@ -913,12 +921,12 @@ async def add_source(request: NewSourceRequest):
     settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority"}, exclude_none=True)
     if request.page_watch is not None:
         settings["page_watch"] = request.page_watch
-    created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
-                                                   enabled=(request.state or "enabled") == "enabled")
+    created = await asyncio.to_thread(services().sources.add_with_settings, platform, request.handle_or_url,
+                                      settings=settings, enabled=(request.state or "enabled") == "enabled")
     recognised = await _recognise_new_source(created["source_id"], platform, created["handle"], settings)
     named = None if str(settings.get("display_name") or "").strip() else await _name_new_source(
         created["source_id"], platform, created["handle"], settings)
-    _export_sources_json()
+    await asyncio.to_thread(_export_sources_json)
     # Issue 0167: following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
     archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
@@ -1007,7 +1015,7 @@ def _known_feeds(address: str) -> List[str]:
 
 @app.get("/api/sources/telegram-bridge")
 @error_detail("read the Telegram bridge")
-async def get_telegram_bridge():
+def get_telegram_bridge():
     """The Telegram RSS bridge a channel's address is built on (issue 0135): {bridge: "https://host"},
     the first of TELEGRAM_RSS_HOSTS ("https://telegram.local" when unset), or null when it is set empty:
     the Add-source dialog then says so instead of building a dead address."""
@@ -1066,33 +1074,39 @@ async def save_page(request: SavePageRequest, background_tasks: BackgroundTasks)
                                        after_fetch=request.after_fetch)
 
 
+NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top rows the whole list began with
+
+
 @app.get("/api/news")
 @error_detail("load News")
-async def get_news(scope: str = "all"):
+async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
     counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
     and `news` {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions,
     score}, recent first, then by score, then the newest. On one source (issue 0077) also the
-    stories its roundups mention, and `news.scope_role`: origin | report | share | mention."""
-    return await asyncio.to_thread(services().news.news, scope)
+    stories its roundups mention, and `news.scope_role`: origin | report | share | mention.
+    Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end."""
+    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor)
 
 
 @app.get("/api/classics")
 @error_detail("load Classics")
-async def get_classics(scope: str = "all"):
+async def get_classics(scope: str = "all", limit: int = Query(CLASSICS_PAGE, ge=1, le=1000),
+                       cursor: str | None = None):
     """Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope
     among them, that you did not hide. Cited again this week first, then most voices, then cited
     longest. {classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again,
     citers [{name, at}], read_at, later_at}]}; on one source also its own pages, each with
     `scope_role`: origin (its own post) | report (it cites it), issue 0077. Nothing is fetched: an outside page is read
-    through Save any page (POST /api/saved), on click."""
-    return await asyncio.to_thread(services().news.classics, scope)
+    through Save any page (POST /api/saved), on click. Issue 0195: `limit` a page (100) from `cursor`; `next_cursor`
+    names the next page, null at the end."""
+    return await asyncio.to_thread(services().news.classics, scope, limit=limit, cursor=cursor)
 
 
 @app.post("/api/classics/hide")
 @error_detail("hide the classic")
-async def hide_classic(request: ClassicHideRequest):
+def hide_classic(request: ClassicHideRequest):
     """Hide a classic ({url}): "I know it" and "not for me" in one; it never comes back."""
     return services().news.hide(request.url)
 
@@ -1126,14 +1140,14 @@ async def get_suggested_sources(offset: int = Query(0, ge=0), limit: int = Query
 
 @app.post("/api/sources/suggested/hide")
 @error_detail("hide the suggestion")
-async def hide_suggested_source(request: DiscoverHideRequest):
+def hide_suggested_source(request: DiscoverHideRequest):
     """Not interested: {key} is never suggested again."""
     return services().stories.hide(request.key)
 
 
 @app.put("/api/sources/{source_id}/settings")
 @error_detail("update the source settings")
-async def update_source_settings(source_id: str, settings: dict):
+def update_source_settings(source_id: str, settings: dict):
     """Body: any of {display_name, fetch_delay_seconds, priority}; posts per fetch is the kind's own."""
     result = services().sources.update_source_settings(source_id, settings)
     return {"success": True, "source_id": source_id, "settings": result.get("settings", {})}
@@ -1141,7 +1155,7 @@ async def update_source_settings(source_id: str, settings: dict):
 
 @app.put("/api/sources/{source_id}/enabled")
 @error_detail("update the source")
-async def set_source_enabled(source_id: str, request: SourceEnabledRequest):
+def set_source_enabled(source_id: str, request: SourceEnabledRequest):
     services().sources.update_source_status(source_id, request.enabled)
     _export_sources_json()
     return {"success": True, "source_id": source_id, "enabled": request.enabled}
@@ -1149,7 +1163,7 @@ async def set_source_enabled(source_id: str, request: SourceEnabledRequest):
 
 @app.put("/api/sources/{source_id}/main-digest")
 @error_detail("update the main-digest setting")
-async def set_source_main_digest(source_id: str, request: MainDigestRequest):
+def set_source_main_digest(source_id: str, request: MainDigestRequest):
     """Include (true) or exclude (false) one source from the "all" feed."""
     result = services().sources.set_in_main_digest(source_id, request.in_main_digest)
     _export_sources_json()
@@ -1158,7 +1172,7 @@ async def set_source_main_digest(source_id: str, request: MainDigestRequest):
 
 @app.delete("/api/sources/{source_id}")
 @error_detail("delete the source")
-async def delete_source(source_id: str):
+def delete_source(source_id: str):
     """Delete one source and its posts."""
     if not services().sources.delete_source(source_id):
         raise LookupError(f"Source {source_id} not found")
@@ -1175,14 +1189,14 @@ async def switch_source(source_id: str, request: SwitchSourceRequest):
     source; 400 for a bad address or one already a source."""
     old = await asyncio.to_thread(services().source_config_sync.switch_source, source_id, request.url,
                                   request.page_watch)
-    source = services().sources.get_source_by_id(source_id) or {}
+    source = await asyncio.to_thread(services().sources.get_source_by_id, source_id) or {}
     return {"success": True, "source_id": source_id, "handle_or_url": source.get("handle_or_url"),
             "previous": old["handle_or_url"]}
 
 
 @app.post("/api/sources/{source_id}/replacement/dismiss")
 @error_detail("dismiss the replacement")
-async def dismiss_replacement(source_id: str):
+def dismiss_replacement(source_id: str):
     """Hide the source doctor's finding until the next failure streak; the fresh health row.
     404 when the source has no finding."""
     return {"success": True, "row": services().operations.dismiss_replacement(source_id)}
@@ -1198,7 +1212,7 @@ async def source_stopped(source_id: str):
 
 @app.post("/api/sources/{source_id}/tidy/keep")
 @error_detail("keep the source")
-async def keep_source(source_id: str):
+def keep_source(source_id: str):
     """Keep a source marked quiet or never opened (issue 0046): its marks hide for 90 days
     and come back then only if still true. The fresh health row; 404 for no such source."""
     return {"success": True, "row": services().operations.keep_source(source_id)}
@@ -1206,7 +1220,7 @@ async def keep_source(source_id: str):
 
 @app.get("/api/sources/{source_id}/folders")
 @error_detail("load the source's folders")
-async def get_source_folders(source_id: str):
+def get_source_folders(source_id: str):
     """The folder ids a source belongs to."""
     return {"success": True, "folder_ids": services().folders.list_folders_for_source(source_id)}
 
@@ -1216,7 +1230,7 @@ async def get_source_folders(source_id: str):
 
 @app.get("/api/folders")
 @error_detail("load the folders")
-async def get_folders():
+def get_folders():
     """Folders with source and post counts."""
     folders = services().folders.list_folders()
     return {"success": True, "folders": folders, "total": len(folders)}
@@ -1224,7 +1238,7 @@ async def get_folders():
 
 @app.post("/api/folders")
 @error_detail("create the folder")
-async def create_folder(config: dict):
+def create_folder(config: dict):
     """Create a folder or track.
 
     Body: {name, description?, sort_order?, kind?, exclude_from_main_digest?, match_keywords?}
@@ -1246,14 +1260,14 @@ async def create_folder(config: dict):
 
 @app.put("/api/folders/{folder_id}")
 @error_detail("update the folder")
-async def update_folder(folder_id: str, fields: dict):
+def update_folder(folder_id: str, fields: dict):
     """Body: any of {name, description, sort_order, kind, exclude_from_main_digest, match_keywords}"""
     return {"success": True, "folder": services().folders.update_folder(folder_id, fields)}
 
 
 @app.delete("/api/folders/{folder_id}")
 @error_detail("delete the folder")
-async def delete_folder(folder_id: str):
+def delete_folder(folder_id: str):
     if not services().folders.delete_folder(folder_id):
         raise LookupError(f"Folder {folder_id} not found")
     return {"success": True, "deleted": True, "folder_id": folder_id}
@@ -1261,7 +1275,7 @@ async def delete_folder(folder_id: str):
 
 @app.post("/api/folders/{folder_id}/sources")
 @error_detail("add the source to the folder")
-async def add_folder_source(folder_id: str, request: FolderSourceRequest):
+def add_folder_source(folder_id: str, request: FolderSourceRequest):
     """Attach a source to a folder. Body: {source_id}"""
     source_id = request.source_id.strip()
     if not source_id:
@@ -1272,14 +1286,14 @@ async def add_folder_source(folder_id: str, request: FolderSourceRequest):
 
 @app.delete("/api/folders/{folder_id}/sources/{source_id}")
 @error_detail("remove the source from the folder")
-async def remove_folder_source(folder_id: str, source_id: str):
+def remove_folder_source(folder_id: str, source_id: str):
     removed = services().folders.remove_source(folder_id, source_id)
     return {"success": True, "removed": removed, "folder_id": folder_id, "source_id": source_id}
 
 
 @app.put("/api/folders/{folder_id}/main-digest")
 @error_detail("update the main-digest setting")
-async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
+def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
     """Apply the digest switch to every source in a folder/track. Sending false keeps a
     track's sources out of the "all" feed while they are still ingested. The sources hold the
     answer; the track shows what its sources say (issue 0027)."""
@@ -1289,7 +1303,7 @@ async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
 
 
 @app.post("/api/folders/{folder_id}/ingest")
-async def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
+def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
     """Fetch every enabled source in a folder/track now (forced). Body: {limit?: int}.
 
     Returns 202 with the ingestion_run job; poll /api/operations/jobs/{id} for the run report.
@@ -1305,7 +1319,7 @@ async def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body:
 
 @app.get("/api/archive/{source_id}/status")
 @error_detail("load the archive status")
-async def get_archive_status(source_id: str):
+def get_archive_status(source_id: str):
     """Persisted archive metadata plus current storage stats, what the source can archive, and
     the newest archive job (a running one the sheet attaches to, or the last result)."""
     svc = services()
@@ -1364,7 +1378,7 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
         return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
     if not summary["readable"]:
         return _unavailable("This source's pages can't be read one page at a time")
-    latest = services().operations.latest_job_for_source("archive_source", source_id)
+    latest = await asyncio.to_thread(services().operations.latest_job_for_source, "archive_source", source_id)
     if source_id in _archiving_sources or (latest or {}).get("status") == "running":
         reason = "An archive of this source is already running"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
@@ -1377,8 +1391,9 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
         reason = "This source's archive is waiting for its host; it continues by itself"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     try:   # under the start lock, as an archive (0112 Decided 11: two API processes)
-        job_id = services().operations.start_job_unless_running("archive_source", trigger="manual", source_id=source_id,
-                                                                message="Fetch linked pages", payload={"linked": True})
+        job_id = await asyncio.to_thread(services().operations.start_job_unless_running, "archive_source",
+                                         trigger="manual", source_id=source_id, message="Fetch linked pages",
+                                         payload={"linked": True})
     except Exception:   # logged by the operations service
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
     if not job_id:   # the other API process started one between the check above and here
@@ -1395,7 +1410,7 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
 async def get_archive_catalog():
     """List enabled sources with their persisted archive status; the sources whose last archive a restart
     interrupted and the queued ones (issue 0130: Resume interrupted archives)."""
-    catalog = services().source_fetch.archive_catalog()
+    catalog = await asyncio.to_thread(services().source_fetch.archive_catalog)
     queue = _archive_jobs().queue
     try:
         interrupted = [row["source_id"] for row in await asyncio.to_thread(queue.interrupted)]
@@ -1423,7 +1438,7 @@ async def queue_archive(source_id: str, request: ArchiveRequest):
     """Queue an archive of the source (issue 0130 C): it runs in its turn, one per lane at a time. 409 when the
     source cannot archive or already has one running, waiting or queued."""
     try:
-        support = services().source_fetch.archive_support(source_id)
+        support = await asyncio.to_thread(services().source_fetch.archive_support, source_id)
     except LookupError as exc:
         return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
     if not support.get("archivable"):
@@ -1498,7 +1513,7 @@ async def run_archive(source_id: str, request: ArchiveRequest, background_tasks:
 
 
 @app.post("/api/sources/{source_id}/fetch-now")
-async def fetch_source_now(source_id: str, request: LiveFetchRequest, background_tasks: BackgroundTasks):
+def fetch_source_now(source_id: str, request: LiveFetchRequest, background_tasks: BackgroundTasks):
     """Fetch one source now (forced, even when disabled). 202 + ingestion_run job."""
     fetch = FetchRequest(SourceSelector.source(source_id), Trigger.MANUAL, force=True, limit=request.limit)
     return _accept_ingestion_run(background_tasks, fetch, message=f"Fetch source {source_id}", source_id=source_id)
@@ -1506,7 +1521,7 @@ async def fetch_source_now(source_id: str, request: LiveFetchRequest, background
 
 @app.get("/api/sources/health")
 @error_detail("load source health")
-async def get_sources_health():
+def get_sources_health():
     """SourcesHealthResponse: every source's schedule (decide_fetch preview) + a summary."""
     return services().operations.get_source_health()
 
@@ -1526,7 +1541,7 @@ async def get_sources_anatomy():
 
 @app.put("/api/sources/{source_id}/cadence")
 @error_detail("set the cadence override")
-async def set_source_cadence(source_id: str, request: CadenceOverrideRequest):
+def set_source_cadence(source_id: str, request: CadenceOverrideRequest):
     """Set (or clear, with null) a source's fetch interval override, in hours [1, 2160].
     404 for an unknown source."""
     hours = request.override_hours
@@ -1566,20 +1581,20 @@ class TelegramLoginPasswordRequest(BaseModel):
 
 @app.get("/api/credentials")
 @error_detail("load the connections")
-async def get_credentials():
+def get_credentials():
     """Every connection: per field {set, last4, updated_at, source}, the last test, sign-in stage."""
     return services().credentials.list()
 
 
 @app.put("/api/credentials/{provider}/{key}")
 @error_detail("save the connection")
-async def put_credential(provider: str, key: str, request: CredentialValueRequest):
+def put_credential(provider: str, key: str, request: CredentialValueRequest):
     return services().credentials.put(provider, key, request.value)
 
 
 @app.delete("/api/credentials/{provider}/{key}")
 @error_detail("remove the connection")
-async def delete_credential(provider: str, key: str):
+def delete_credential(provider: str, key: str):
     return services().credentials.delete(provider, key)
 
 
@@ -1612,7 +1627,7 @@ async def telegram_login_password(request: TelegramLoginPasswordRequest):
 
 @app.post("/api/credentials/telegram/login/cancel")
 @error_detail("cancel the Telegram sign-in")
-async def telegram_login_cancel():
+def telegram_login_cancel():
     return services().credentials.login_cancel()
 
 
@@ -1700,7 +1715,7 @@ async def debug_spin(seconds: float = Query(default=300, ge=1, le=900)):
 
 
 @app.get("/api/version")
-async def get_version():
+def get_version():
     """The build this image was stamped with (INSIGHT_VERSION, INSIGHT_COMMIT,
     INSIGHT_COMMIT_DATE; issue 0020). Each is null when unset, as in local dev."""
     return {key: os.getenv(f"INSIGHT_{key.upper()}") or None for key in ("version", "commit", "commit_date")}
@@ -1708,16 +1723,19 @@ async def get_version():
 
 @app.get("/api/status", response_model=SystemStatus)
 @error_detail("build the system status")
-async def get_status():
+def get_status():
     """Unified machine-readable system state: corpus freshness, sources, folders,
     scheduler config, and recent jobs.
     Designed as the single read an agent makes to understand the whole system."""
     svc = services()
     ops = svc.operations
     health_summary = ops.get_source_health()["summary"]
+    health = ops.system_health(failing_sources=sources_failing(health_summary))   # issue 0188: no literal True
     return {
         "success": True,
-        "healthy": True,
+        "healthy": health["healthy"],
+        "health": health,
+        "table_sizes": ops.table_sizes(),
         "generated_at": datetime.now().isoformat(),
         "corpus": {**ops.get_database_counts(), "total_sources": len(svc.sources.get_all_sources()),
                    **ops.get_corpus_freshness()},
@@ -1744,7 +1762,7 @@ async def get_status():
 # ============= INGESTION ENDPOINTS =============
 
 @app.post("/api/ingestion/run")
-async def run_ingestion_cycle(background_tasks: BackgroundTasks, request: IngestionRunRequest | None = None):
+def run_ingestion_cycle(background_tasks: BackgroundTasks, request: IngestionRunRequest | None = None):
     """The manual "Run cycle": every enabled source; due ones only unless force. 202 + job."""
     force = bool(request.force) if request else False
     fetch = FetchRequest(SourceSelector.all(), Trigger.MANUAL, force=force)
@@ -1754,7 +1772,7 @@ async def run_ingestion_cycle(background_tasks: BackgroundTasks, request: Ingest
 
 @app.get("/api/ingestion/logs")
 @error_detail("read the log")
-async def get_ingestion_logs(
+def get_ingestion_logs(
     log: str = Query(default="application"),
     lines: int = Query(default=200, ge=1, le=1000),
 ):
@@ -1764,8 +1782,17 @@ async def get_ingestion_logs(
 
 @app.get("/api/operations/overview")
 @error_detail("load the operations overview")
-async def get_operations_overview():
+def get_operations_overview():
+    """The Ingestion tab's overview: recent jobs, alerts, source health's worst rows and summary, counts."""
     return services().operations.get_operations_overview()
+
+
+@app.get("/api/operations/running")
+@error_detail("load the running jobs")
+def get_running_jobs():
+    """What runs now, for the top bar on every page (issue 0195): {success, jobs}, the overview's recent jobs
+    without its source health and counts."""
+    return services().operations.running()
 
 
 @app.get("/api/operations/background")
@@ -1777,7 +1804,7 @@ async def get_background_work():
 
 @app.get("/api/operations/jobs/{job_id}")
 @error_detail("load the job")
-async def get_operation_job(job_id: str):
+def get_operation_job(job_id: str):
     job = services().operations.get_job(job_id)
     if not job:
         raise LookupError(f"Job {job_id} not found")
@@ -1786,7 +1813,7 @@ async def get_operation_job(job_id: str):
 
 @app.get("/api/operations/scheduler")
 @error_detail("load the scheduler settings")
-async def get_scheduler_config():
+def get_scheduler_config():
     ops = services().operations
     scheduler = ops.get_scheduler_config()
     try:
@@ -1799,7 +1826,7 @@ async def get_scheduler_config():
 
 @app.put("/api/operations/scheduler")
 @error_detail("save the scheduler settings")
-async def update_scheduler_config(request: SchedulerConfigRequest):
+def update_scheduler_config(request: SchedulerConfigRequest):
     logger.info("⏱️ Updating scheduler config")
     payload = {}
     if request.intervalHours is not None:
@@ -1821,13 +1848,13 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
 
 @app.get("/api/youtube/progress/{video_id}")
 @error_detail("load the watch progress")
-async def get_youtube_watch_progress(video_id: str):
+def get_youtube_watch_progress(video_id: str):
     return {"success": True, "progress": services().youtube.get_watch_progress(video_id)}
 
 
 @app.put("/api/youtube/progress/{video_id}")
 @error_detail("save the watch progress")
-async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressRequest):
+def save_youtube_watch_progress(video_id: str, request: YouTubeProgressRequest):
     progress = services().youtube.save_watch_progress(
         video_id=video_id,
         video_url=request.videoUrl,

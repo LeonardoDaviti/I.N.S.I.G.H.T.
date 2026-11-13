@@ -1,8 +1,19 @@
+# Issue 0188: every container's own log (docker logs) is capped: json-file rotated at INSIGHT_DOCKER_LOG_SIZE, 5 kept.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${INSIGHT_DOCKER_LOG_SIZE:-20m}
+    max-file: "5"
+
 services:
   postgres:
     image: pgvector/pgvector:pg15
     container_name: insight-db
     restart: unless-stopped
+    logging: *logging
+    # Issue 0188: generous (its own processes are small; the page cache it fills is reclaimed, never killed for);
+    # a cap so a runaway query can't take the host. DEPLOYMENT.md, "Memory".
+    mem_limit: ${INSIGHT_DB_MEM_LIMIT:-6g}
     # v10.15.1: parallel queries keep their hash tables in /dev/shm; Docker's default 64 MB made a decision run fail
     # with 'could not resize shared memory segment ... to 16777216 bytes' (server, 2026-11-12). Used only on demand.
     shm_size: "1gb"
@@ -32,6 +43,10 @@ services:
         INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-api
     restart: unless-stopped
+    logging: *logging
+    # Issue 0188: above the API's measured peaks (3.2 GB at most on the server before 0186; an export's 7.5 GB in the
+    # 0186 harness), so it never ends a normal request. DEPLOYMENT.md, "Memory".
+    mem_limit: ${INSIGHT_API_MEM_LIMIT:-10g}
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +111,11 @@ services:
         INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-ingestion
     restart: unless-stopped
+    logging: *logging
+    # Issue 0188: past this the kernel ends a process of this container (a Mark X job's child, the biggest: recorded
+    # as a failed run, backed off), never Postgres. Above the server's measured peak (7.0-7.75 GiB in decision runs,
+    # 0183). DEPLOYMENT.md, "Memory".
+    mem_limit: ${INSIGHT_INGESTION_MEM_LIMIT:-12g}
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,15 +144,16 @@ services:
     command: ["/app/docker/start-ingestion.sh"]
     # The image's HEALTHCHECK curls localhost:8000/health, which only exists in the API
     # container. Inherited here it can never pass, so this service reported "unhealthy"
-    # for its entire life and a real failure was indistinguishable from normal. The
-    # scheduler has no port to probe; assert the process is alive instead.
+    # for its entire life and a real failure was indistinguishable from normal.
+    # Issue 0188: the scheduler's and Mark X's loops write a heartbeat in the logs volume
+    # (insight_core/utils/heartbeat.py); a stale one is unhealthy (a hung loop kept the
+    # process name the old /proc grep looked for).
     healthcheck:
-      # ps is not in the slim image; /proc always is. PID 1 is tini, so scan all procs.
-      test: ["CMD-SHELL", "grep -qa run_scheduler /proc/*/cmdline || exit 1"]
+      test: ["CMD", "python", "-I", "insight_core/utils/heartbeat.py"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
     networks:
       - insight-network
 
@@ -149,6 +170,15 @@ services:
         INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-frontend
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${INSIGHT_FRONTEND_MEM_LIMIT:-256m}
+    # Issue 0188: nginx answers the app's page (busybox wget is in nginx:alpine)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       backend:
         condition: service_healthy

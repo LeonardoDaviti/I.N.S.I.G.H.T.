@@ -118,6 +118,17 @@ def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict
     return _one(cur)
 
 
+def tasks_for(cur: Cursor, *, kind: str, guide: str, inputs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{input: the task already asking it} for many questions, in one read (v10.17, 0186: a page asked them one by
+    one)."""
+    by_hash = {sha256_hex(i): i for i in inputs}
+    if not by_hash:
+        return {}
+    cur.execute("SELECT * FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = ANY(%s)",
+                (kind, guide, sorted(by_hash)))
+    return {by_hash[t["input_hash"]]: t for t in _rows(cur)}
+
+
 def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
                 minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None,
                 fresh: Sequence[str] = (), fresh_hours: Optional[int] = None, fresh_share: float = 0.75,
@@ -155,19 +166,20 @@ def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minute
     """One lease query: every task (`lane` None), the fresh lane's only (True) or every other (False)."""
     if limit <= 0:
         return []
-    fresh_sql = """(t.kind = ANY(%(fresh)s) AND f.id IS NOT NULL
+    from insight_core.markx import pairing   # pairing imports this module
+    fresh_sql = f"""(t.kind = ANY(%(fresh)s) AND f.id IS NOT NULL
                     AND GREATEST(f.fetched_at, f.surfaced_at) >= now() - make_interval(hours => %(hours)s)
-                    AND COALESCE(f.surfaced_at, f.published_at, f.fetched_at) >= now() - make_interval(days => %(dated)s))"""
+                    AND {pairing.ordinary_date('f')} >= now() - make_interval(days => %(dated)s))"""
     where = "" if lane is None else f"AND {'' if lane else 'NOT '}COALESCE({fresh_sql}, false)"
     join = "LEFT JOIN posts f ON t.kind = ANY(%(fresh)s) AND f.id = t.a" if lane is not None else ""
     cur.execute(f"""WITH picked AS (
                      SELECT t.id,
                             (p.id IS NOT NULL AND %(days)s::int IS NOT NULL
-                             AND COALESCE(p.surfaced_at, p.published_at, p.fetched_at)
+                             AND {pairing.ordinary_date('p')}
                                  < now() - make_interval(days => %(days)s)) AS outside,
                             CASE WHEN p.id IS NULL OR t.priority < 0 THEN t.priority
-                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - COALESCE(p.surfaced_at,
-                                                  p.published_at, p.fetched_at))) / 86400))::int END AS rank
+                                 ELSE GREATEST(0, floor(extract(epoch FROM (now() - {pairing.ordinary_date('p')}))
+                                                  / 86400))::int END AS rank
                        FROM mx_tasks t
                        LEFT JOIN posts p ON t.kind = ANY(%(windowed)s) AND p.id = t.a
                        {join}
@@ -233,12 +245,10 @@ def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
 
 
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
-    """{kind: {status: tasks}} (GET /api/markx/status)."""
-    cur.execute("SELECT kind, status, count(*) FROM mx_tasks GROUP BY kind, status ORDER BY kind, status")
-    out: Dict[str, Dict[str, int]] = {}
-    for kind, status, n in cur.fetchall():
-        out.setdefault(kind, {})[status] = n
-    return out
+    """{kind: {status: tasks}} (GET /api/markx/status): the kept totals (issue 0195, markx/kept_counts.py), equal to
+    the GROUP BY over every task they replace."""
+    from insight_core.markx import kept_counts
+    return kept_counts.queue_counts(cur)
 
 
 # ---- calls ----------------------------------------------------------------------------------------
@@ -278,6 +288,16 @@ def valid_call(cur: Cursor, task_id: Id) -> Optional[Dict[str, Any]]:
     """The task's first valid call (the answer that counts), if any."""
     cur.execute("SELECT * FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid LIMIT 1", (task_id,))
     return _one(cur)
+
+
+def valid_calls(cur: Cursor, task_ids: Iterable[Id]) -> Dict[str, Dict[str, Any]]:
+    """{task id: its first valid call} for many tasks, in one read (valid_call's answer for each)."""
+    ids = sorted({str(t) for t in task_ids})
+    if not ids:
+        return {}
+    cur.execute("""SELECT DISTINCT ON (task_id) * FROM mx_calls WHERE task_id = ANY(%s::uuid[]) AND valid
+                    ORDER BY task_id, created_at, ctid""", (ids,))
+    return {str(c["task_id"]): c for c in _rows(cur)}
 
 
 # ---- readings and mentions ------------------------------------------------------------------------

@@ -21,13 +21,34 @@ Environment (read when a pool is built):
   INSIGHT_DB_POOL_MIN (1), INSIGHT_DB_POOL_MAX (10)  connections per process
   INSIGHT_DB_POOL_TIMEOUT_SECONDS (10)               wait for a free connection, then fail
   INSIGHT_DB_STATEMENT_TIMEOUT_MS (300000)           0 turns the timeout off
+  INSIGHT_DB_IDLE_IN_TRANSACTION_MS (by role)        0 turns it off
+  INSIGHT_DB_REQUEST_TIMEOUT_MS (30000)              an API request's statements; 0 turns it off
+  INSIGHT_DB_ROLE ("jobs", "api" or unset)           see Roles
 
 The statement timeout is 5 minutes, not less: deleting a big source cascades to every
 post it collected, and that one DELETE can run for minutes.
+
+Roles (issue 0188): a process says what it is in INSIGHT_DB_ROLE, read when a pool is built; the processes it
+spawns inherit it with the environment.
+  - "jobs" (insight-ingestion: the scheduler, its archives and Mark X's job processes; run_scheduler.py sets it):
+    a statement ends just under a job's HARD_LIMIT (JOBS_STATEMENT_TIMEOUT_MS), and a transaction idle for longer
+    than any job lives (JOBS_IDLE_IN_TRANSACTION_MS) is ended by Postgres, its locks freed.
+  - "api" (the API's processes; scripts/api_supervisor.py sets it): the process default stays 5 minutes (its
+    background tasks: archives, fetches, research), an idle transaction ends after API_IDLE_IN_TRANSACTION_MS, and
+    a request's own statements get REQUEST_STATEMENT_TIMEOUT_MS, set by `RequestTimeouts` (main.py's innermost
+    middleware) until the response is sent, so the background tasks Starlette runs after it have the process
+    default. A request that legitimately runs a long statement says so: `with long_statements():` (deleting a
+    source).
+  - unset (scripts, tests, the real-data check): as before.
+Every connection also has client_connection_check_interval (CLIENT_CHECK_MS): a statement whose client died (a job
+process killed at HARD_LIMIT, or by the kernel's OOM killer) is cancelled within seconds, its locks freed, instead
+of running to its end.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -44,6 +65,70 @@ CONNECT_TIMEOUT_SECONDS = 10
 STATEMENT_TIMEOUT_MS = 300_000   # 5 minutes: the cascading delete of a big source
 LOCKED_WAIT_SECONDS = 1.0        # fill_until_done: a batch found only rows another worker holds
 POOL_MAX = 10
+CLIENT_CHECK_MS = 10_000                 # 0188: a statement whose client is gone is cancelled within this
+JOBS_STATEMENT_TIMEOUT_MS = 840_000      # 0188: just under markx/jobs.HARD_LIMIT (900 s): Postgres ends it first
+JOBS_IDLE_IN_TRANSACTION_MS = 960_000    # 0188: longer than any job lives (HARD_LIMIT + a minute)
+API_IDLE_IN_TRANSACTION_MS = 120_000     # 0188: no API code holds a transaction across a fetch
+REQUEST_STATEMENT_TIMEOUT_MS = 30_000    # 0188: a request's own statements (RequestTimeouts)
+ROLES = {
+    "jobs": {"statement_timeout_ms": JOBS_STATEMENT_TIMEOUT_MS, "idle_in_transaction_ms": JOBS_IDLE_IN_TRANSACTION_MS},
+    "api": {"statement_timeout_ms": STATEMENT_TIMEOUT_MS, "idle_in_transaction_ms": API_IDLE_IN_TRANSACTION_MS},
+}
+ROLE_ENV = "INSIGHT_DB_ROLE"
+
+# 0188: the statement timeout of the request being served (None: the process default); RequestTimeouts sets it
+_request_timeout_ms: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("insight_request_timeout",
+                                                                                   default=None)
+_TIMEOUT_ATTR = "_insight_statement_timeout"
+
+
+def role() -> Optional[str]:
+    value = (os.getenv(ROLE_ENV) or "").strip().lower()
+    return value if value in ROLES else None
+
+
+def use_role(name: str) -> None:
+    """This process, and the processes it spawns, open connections as `name` (ROLES); call it before the first
+    pool is built."""
+    if name not in ROLES:
+        raise ValueError(f"unknown database role {name!r}")
+    os.environ[ROLE_ENV] = name
+
+
+@contextmanager
+def long_statements() -> Iterator[None]:
+    """0188: inside a request, statements run with the process default (5 minutes), not the request's 30 s: for a
+    request that legitimately runs a long one (deleting a big source cascades to every post it collected)."""
+    token = _request_timeout_ms.set(None)
+    try:
+        yield
+    finally:
+        _request_timeout_ms.reset(token)
+
+
+class RequestTimeouts:
+    """0188: the API's middleware (pure ASGI, added innermost in main.py): an HTTP request's statements get
+    REQUEST_STATEMENT_TIMEOUT_MS (INSIGHT_DB_REQUEST_TIMEOUT_MS; 0 turns it off) until its response's last body is
+    sent; the background tasks Starlette runs after that have the process default."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.ms = env_int("INSIGHT_DB_REQUEST_TIMEOUT_MS", REQUEST_STATEMENT_TIMEOUT_MS, minimum=0)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or not self.ms:
+            await self.app(scope, receive, send)
+            return
+        token = _request_timeout_ms.set(self.ms)
+
+        async def sent(message: Any) -> None:
+            await send(message)
+            if message.get("type") == "http.response.body" and not message.get("more_body", False):
+                _request_timeout_ms.set(None)    # the response is out: what runs after it is background work
+        try:
+            await self.app(scope, receive, sent)
+        finally:
+            _request_timeout_ms.reset(token)
 
 
 class Database:
@@ -55,10 +140,16 @@ class Database:
         max_size: Optional[int] = None,
         timeout: Optional[float] = None,
         statement_timeout_ms: Optional[int] = None,
+        idle_in_transaction_ms: Optional[int] = None,
     ) -> None:
         self.url = url
+        settings = ROLES.get(role() or "", {})
         self.statement_timeout_ms = (statement_timeout_ms if statement_timeout_ms is not None
-                                     else env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS", STATEMENT_TIMEOUT_MS))
+                                     else env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS",
+                                                  settings.get("statement_timeout_ms", STATEMENT_TIMEOUT_MS)))
+        self.idle_in_transaction_ms = (idle_in_transaction_ms if idle_in_transaction_ms is not None
+                                       else env_int("INSIGHT_DB_IDLE_IN_TRANSACTION_MS",
+                                                    settings.get("idle_in_transaction_ms", 0), minimum=0))
         max_size = max_size or env_int("INSIGHT_DB_POOL_MAX", POOL_MAX)
         min_size = min(min_size if min_size is not None else env_int("INSIGHT_DB_POOL_MIN", 1), max_size)
         self._pool = ConnectionPool(
@@ -78,9 +169,12 @@ class Database:
         # JIT off: INSIGHT's queries are small aggregates the planner overestimates. Measured on the
         # server's data (the lab, 2026-10-30): compiling cost ~300 ms of the Sources list's 370 ms, and
         # no endpoint got slower without it.
-        options = ["-c jit=off"]
+        check = env_int("INSIGHT_DB_CLIENT_CHECK_MS", CLIENT_CHECK_MS, minimum=0)
+        options = ["-c jit=off", f"-c client_connection_check_interval={check}"]
         if self.statement_timeout_ms > 0:
             options.append(f"-c statement_timeout={self.statement_timeout_ms}")
+        if self.idle_in_transaction_ms > 0:
+            options.append(f"-c idle_in_transaction_session_timeout={self.idle_in_transaction_ms}")
         return {"connect_timeout": CONNECT_TIMEOUT_SECONDS, "options": " ".join(options)}
 
     def _ensure_open(self) -> None:
@@ -97,7 +191,21 @@ class Database:
         """A pooled connection: commit on a clean exit, roll back on an error."""
         self._ensure_open()
         with self._pool.connection() as conn:
+            self._timeout_for(conn)
             yield conn
+
+    def _timeout_for(self, conn: psycopg.Connection) -> None:
+        """0188: the connection's statement timeout as the code using it needs: a request's (RequestTimeouts) or the
+        process default. Set, and committed so a roll back of the block keeps it, only when it differs from what the
+        connection has: one round trip when a connection passes between a request and background work."""
+        want = _request_timeout_ms.get()
+        want = self.statement_timeout_ms if want is None else want
+        if getattr(conn, _TIMEOUT_ATTR, self.statement_timeout_ms) == want:
+            return
+        conn.execute(f"SET statement_timeout = {int(want)}")
+        if not conn.autocommit:
+            conn.commit()
+        setattr(conn, _TIMEOUT_ATTR, want)
 
     @contextmanager
     def transaction(self) -> Iterator[psycopg.Cursor]:

@@ -42,7 +42,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import source_role as R
+from insight_core.markx import pairing, source_role as R
+from insight_core.utils import byline, voice
 
 log = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ class Data:
 
     def voice_of(self, source_id: str) -> str:
         s = self.sources.get(source_id)
-        return f"v:{s.voice}" if s and s.voice else f"s:{source_id}"
+        return voice.channel_key(source_id, s.voice if s else None)
 
 
 def _exists(cur: Any, table: str, column: Optional[str] = None) -> bool:
@@ -221,20 +222,12 @@ def voices_exist(cur: Any) -> bool:
     return _exists(cur, "voices") and _exists(cur, "sources", "voice_id")
 
 
-AT = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+AT = pairing.ordinary_date("p")   # a post's own date (0190)
 
 
 def is_repost(s: Src, title: Optional[str], author: Optional[str], reposted_by: Any, forwarded: Any = False) -> bool:
-    """Not the source's own post: a Telegram forward (Part C3's "forwarded from"), a retweet ("RT by @", or a row its
-    source reposted, issue 0066), or on X a post another account wrote."""
-    from insight_core.db.repo_reader import repost_of
-    if forwarded or (title or "").startswith("RT by @"):
-        return True
-    if repost_of(s.platform, s.handle, author, reposted_by) is not None:
-        return True
-    if s.kind == "x" and author and s.own_account:
-        return author.lower().lstrip("@") != s.own_account.split("/", 1)[-1]
-    return False
+    """Not the source's own post (Byline's rule, byline.is_repost, over the source's facts)."""
+    return byline.is_repost(s.kind, s.platform, s.handle, s.own_account, title, author, reposted_by, forwarded)
 
 
 def sources(cur: Any) -> Dict[str, Src]:
@@ -284,7 +277,7 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
     # the window's posts
     cur.execute(f"""SELECT p.id::text, p.source_id::text, {AT}, COALESCE(p.title, ''), left(COALESCE(p.content, ''), 1500),
                            p.author, p.reposted_by, p.normalized_url, p.url, p.language_code, p.published_precision,
-                           (p.metadata ? 'forwarded_from'), p.metadata->>'view_count'
+                           {byline.forwarded_sql("p")}, p.metadata->>'view_count'
                       FROM posts p
                      WHERE p.source_id = ANY(%s::uuid[]) AND {AT} >= %s""", (ids, since))
     posts: Dict[str, P] = {}
@@ -305,7 +298,7 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
         for k, n in c.items():
             if s.kind == "site" and tot and n / tot >= 0.5 and not k.startswith(("x.com/", "t.me/", "youtube.com/")):
                 s.keys.add(k)
-    cur.execute("""SELECT source_id::text, count(*), min(COALESCE(published_at, fetched_at)),
+    cur.execute(f"""SELECT source_id::text, count(*), min({pairing.ix_date("")}),
                           count(DISTINCT NULLIF(btrim(COALESCE(metadata->>'author_display_name', metadata->>'author_name',
                                                                metadata->>'primary_author', metadata->>'author', '')), ''))
                      FROM posts WHERE source_id = ANY(%s::uuid[]) GROUP BY 1""", (ids,))
@@ -379,8 +372,8 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
     read_reposts: Set[str] = set()
     mentions: Dict[str, List[R.Mention]] = defaultdict(list)
     if _exists(cur, "mx_readings"):
-        cur.execute("""SELECT DISTINCT ON (r.post_id) r.post_id::text, r.kind, p.source_id::text, p.title, p.author,
-                              p.reposted_by, (p.metadata ? 'forwarded_from')
+        cur.execute(f"""SELECT DISTINCT ON (r.post_id) r.post_id::text, r.kind, p.source_id::text, p.title, p.author,
+                              p.reposted_by, {byline.forwarded_sql("p")}
                          FROM mx_readings r JOIN posts p ON p.id = r.post_id
                         WHERE p.source_id = ANY(%s::uuid[]) AND r.guide IN ('read-v2', 'read-v3')
                         ORDER BY r.post_id, r.guide""", (ids,))
@@ -432,7 +425,7 @@ def long_post_counts(cur: Any, ids: Sequence[str], now: datetime) -> Dict[str, i
     cur.execute(f"""SELECT p.source_id::text, count(*) FROM posts p
                      WHERE p.source_id = ANY(%s::uuid[]) AND {AT} >= %s
                        AND length(COALESCE(p.title, '')) + length(COALESCE(p.content, '')) >= %s
-                       AND NOT COALESCE(p.title, '') LIKE 'RT by @%%' AND NOT (p.metadata ? 'forwarded_from')
+                       AND {byline.not_retold_sql("p")}
                      GROUP BY 1""", (list(ids), now - timedelta(days=WINDOW_DAYS), STANCE_MIN_CHARS))
     return {sid: n for sid, n in cur.fetchall()}
 
@@ -467,14 +460,14 @@ def _post_ev(d: Data, pid: str, **extra: Any) -> Dict[str, Any]:
     return {"id": pid, "title": (title or "")[:140], "at": _iso(at), "source": s.name if s else None, **extra}
 
 
-def _voice_name(d: Data, voice: str) -> str:
-    kind, _, vid = voice.partition(":")
-    if kind == "v":
+def _voice_name(d: Data, key: str) -> str:
+    kind, vid = voice.channel_of(key)
+    if kind == "voice":
         return (d.voices.get(vid) or {}).get("name") or "a voice"
-    if kind == "s":
+    if kind == "source":
         s = d.sources.get(vid)
         return s.name if s else "a source"
-    return vid or voice
+    return vid or key
 
 
 def _share(a: int, b: int) -> Optional[float]:
@@ -484,10 +477,8 @@ def _share(a: int, b: int) -> Optional[float]:
 def _story_voice(d: Data, m: Dict[str, Any]) -> str:
     """A story member's voice as these signals count it: its source's voice (0132 A), or Mark IX's voice key when the
     post speaks for someone else (a Reddit author, a page's site)."""
-    v = m["voice"] or ""
-    if v.startswith("source:") or not v:
-        return d.voice_of(m["source"])
-    return v
+    s = d.sources.get(m["source"])
+    return voice.story_channel_key(m["voice"], m["source"], s.voice if s else None)
 
 
 def _member_time(m: Dict[str, Any]) -> Optional[datetime]:

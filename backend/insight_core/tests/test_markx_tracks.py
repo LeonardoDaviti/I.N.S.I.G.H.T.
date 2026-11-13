@@ -188,6 +188,18 @@ class AFolder(_Tracks):
         self.assertEqual((body["track"]["version"], body["track"]["excludes"]), (2, "cloud GPUs"))
         listed = {t["id"]: t for t in call("GET", "/api/markx/tracks")[1]}
         self.assertTrue(listed[self.folder]["topic"])
+        # 0191: an edit that changes no word keeps the version (and its history pass); the text shown follows it
+        self.cur.execute("UPDATE mx_tracks SET history_done_at = now() WHERE folder_id = %s", (self.folder,))
+        _, body = call("PUT", f"/api/markx/tracks/{self.folder}", body={"description": "cheap local AI setups.",
+                                                                         "excludes": "Cloud GPUs"})
+        self.assertEqual((body["track"]["version"], body["track"]["description"], body["track"]["excludes"]),
+                         (2, "cheap local AI setups.", "Cloud GPUs"))
+        self.assertIsNotNone(tracks.get(self.cur, self.folder)["history_done_at"], "the history pass is not restarted")
+        _, body = call("PUT", f"/api/markx/tracks/{self.folder}", body={"description": "Cheap local AI rigs",
+                                                                         "excludes": "Cloud GPUs"})
+        self.assertEqual(body["track"]["version"], 3)                         # a word changed: a new version
+        self.assertIsNone(tracks.get(self.cur, self.folder)["history_done_at"])
+        self.assertEqual(tracks.material(" Cheap, local AI\nsetups! "), "cheap local ai setups")
 
 
 class Planning(_Tracks):
@@ -419,6 +431,63 @@ class Routing(_Tracks):
         f = self.page()["footer"]
         self.assertEqual((f["tasks"], f["cost_usd"]), (1, 0.0001))
         self.assertEqual(f["items_per_day"], round(1 / 7, 2))
+
+
+class KeptPlaces(_Tracks):
+    """Issue 0195: the page, the suggestions and the sidebar counts read the kept placements (markx/track_kept.py)
+    and answer exactly what placing live answers; a change to a track's inputs makes it read live until placed
+    again."""
+
+    def setUp(self):
+        super().setUp()
+        self.describe()
+        self.desc_vector(unit((0, 1)))
+        self.cur.execute("DELETE FROM mx_track_places_state")
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_track_places_state")
+
+    def answers(self):
+        from insight_core.markx import track_counts
+        with self.conn.transaction():
+            return (self.page(), tracks.suggestions(self.cur, now=NOW + DAY), track_counts.topic_counts(self.cur))
+
+    def keep(self):
+        from insight_core.markx import track_kept
+        with self.conn.transaction():
+            return track_kept.refresh(self.cur)
+
+    def kept(self) -> bool:
+        from insight_core.markx import track_kept
+        return track_kept.calibration(self.cur, self.folder) is not None
+
+    def test_kept_answers_are_the_live_ones(self):
+        a, b = self.post(title="active in"), self.post(title="active out")
+        passive = []
+        for k in range(4):
+            p = self.post(title=f"passive {k}", source=self.other, at=NOW - k * DAY)
+            self.vector(p, unit((0, 1), (3, 0.2)))
+            passive.append(p)
+        self.plan()
+        self.judge(a, verdict())
+        self.judge(b, verdict(False, 0.8))
+        for k, p in enumerate(passive):
+            self.judge(p, verdict(conf=0.6 + k / 10))
+        live = self.answers()
+        self.assertFalse(self.kept())
+        self.assertEqual(self.keep(), 1)
+        self.assertTrue(self.kept())
+        self.assertEqual(self.answers(), live)
+        self.assertTrue(live[1], "a passive source with 3+ items in: a suggestion")
+        self.label(passive[0], "in")                       # the owner's label: read live until placed again
+        self.assertFalse(self.kept())
+        changed = self.answers()
+        self.assertIn(passive[0], [it["post_id"] for s in changed[0]["sections"] for it in s["items"]])
+        self.keep()
+        self.assertTrue(self.kept())
+        self.assertEqual(self.answers(), changed)
+        self.cur.execute("DELETE FROM source_folders WHERE folder_id = %s AND source_id = %s", (self.folder, self.source))
+        self.assertFalse(self.kept(), "its sources changed")
+        self.keep()
+        self.assertEqual(self.keep(), 0, "nothing changed since")
 
 
 class Subtopics(_Tracks):

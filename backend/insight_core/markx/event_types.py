@@ -18,6 +18,13 @@ The interface (what a caller must know):
     a window too wide to fetch every post's type first.
   - `action_group(action) -> (group, stage)` and `from_reading(reading, guide) -> EventType`: the pure mapping, for a
     caller that already holds a reading (happening.key).
+  - A round-up's items (units, markx/units.py) are typed by their own question (kind `unit_types`): `of_units(cur,
+    post_ids) -> {(post, text sha): UnitType}` (type, headline, continues) and `UNIT_NEWS` / `unit_is_news`: the types
+    an own round-up keeps (the News types: no promotion, opinion, explainer, community post, promo or other).
+  - The type lists (v10.17, 0190), each made from schemas.EVENT_TYPES: `NEWS_TYPES` (a confirmed happening: what
+    makes a story News), `LEAK`, `ANNOUNCED` (Discover's main source: an actor's own announcement) and `UNIT_NEWS`.
+  - `main_objects(cur, post_ids) -> {post: object}`: the thing the main action is about, as GROUP_GUIDE's reading
+    says it (components reads it to tell a component from its product).
 
 Which guide gives what (the adapters; a new guide is one entry here, its consumers unchanged):
   - `type` / `origin`: the first of TYPE_GUIDES with a reading (today read-v3's `event_type` and `origin`, asked of
@@ -31,7 +38,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+from insight_core.markx import pairing, schemas
 
 TYPE_GUIDES: Tuple[str, ...] = ("read-v3",)   # readings with a closed event type, preferred first
 GROUP_GUIDE = "read-v2"                       # the reading whose main action names the happening group
@@ -61,6 +70,42 @@ SYNONYMS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
 # A closed event type -> its happening group, once a guide's type is trusted to name one (none yet: read-v3's types
 # are a story's kind, too coarse for a happening; 0166's guide change fills this, measured first).
 TYPE_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+
+
+# The type lists every consumer reads, each made here from the closed types (schemas.EVENT_TYPES; v10.17, 0190: they
+# were three hand-written copies in folds, event_types and Discover's main source).
+LEAK = "leak_rumour"              # a reported, unconfirmed happening
+NOT_HAPPENINGS = ("opinion_analysis", "tutorial_explainer", "digest", "community_post", "other")
+# A confirmed happening's types: what makes a story News (folds.story_type, built), in EVENT_TYPES' order.
+NEWS_TYPES: Tuple[str, ...] = tuple(t for t in schemas.EVENT_TYPES if t != LEAK and t not in NOT_HAPPENINGS)
+# Discover's main source (0170): a happening its actor announces itself, never a lawsuit's or a regulator's.
+ANNOUNCED: FrozenSet[str] = frozenset(NEWS_TYPES) - {"policy_legal"}
+# 0181: a round-up item's types (schemas.UNIT_TYPES) and those an own round-up keeps: the News types (promotion_event
+# is no unit type: an item's promotion is `promo`) and LEAK.
+UNIT_TYPES: Tuple[str, ...] = tuple(schemas.UNIT_TYPES)
+UNIT_NEWS: Tuple[str, ...] = tuple(t for t in NEWS_TYPES if t != "promotion_event") + (LEAK,)
+
+
+@dataclass(frozen=True)
+class UnitType:
+    type: str
+    headline: Optional[str]
+    continues: bool
+
+
+def unit_is_news(t: Optional[str]) -> bool:
+    return t in UNIT_NEWS
+
+
+def of_units(cur: Any, post_ids: Iterable[str]) -> Dict[Tuple[str, str], UnitType]:
+    """{(round-up post, sha256 of the item's text): its UnitType} of these round-ups' typed items (mx_unit_types: the
+    first valid answer for an item's text; a new split of the same words keeps its type)."""
+    ids = sorted({str(p) for p in post_ids if p})
+    if not ids:
+        return {}
+    cur.execute("""SELECT post_id::text, text_sha, type, headline, continues FROM mx_unit_types
+                    WHERE post_id = ANY(%s::uuid[])""", (ids,))
+    return {(p, sha): UnitType(t, h, bool(c)) for p, sha, t, h, c in cur.fetchall()}
 
 
 @dataclass(frozen=True)
@@ -134,7 +179,7 @@ def of_stories(cur: Any, stories: Mapping[str, Sequence[str]]) -> Dict[str, Opti
     if not ids:
         return {s: None for s in stories}
     types = of_posts(cur, ids)
-    cur.execute("""SELECT id::text, COALESCE(published_at, surfaced_at, fetched_at) FROM posts
+    cur.execute(f"""SELECT id::text, {pairing.published_date('')} FROM posts
                     WHERE id = ANY(%s::uuid[])""", (ids,))
     at: Dict[str, datetime] = dict(cur.fetchall())
     got = {p: folds.Member(id=p, at=at[p], event_type=t.type, origin=t.origin)
@@ -155,11 +200,22 @@ def typed_sql(post: str, types: str) -> str:
     return "(" + " OR ".join(conds) + ")"
 
 
+def main_objects(cur: Any, post_ids: Iterable[str]) -> Dict[str, str]:
+    """{post: the object of its main action} under GROUP_GUIDE (posts with none absent)."""
+    ids = sorted({str(p) for p in post_ids if p})
+    if not ids:
+        return {}
+    cur.execute("""SELECT post_id::text, reading->'main'->>'object' FROM mx_readings
+                    WHERE post_id = ANY(%s::uuid[]) AND guide = %s""", (ids, GROUP_GUIDE))
+    return {pid: o for pid, o in cur.fetchall() if o}
+
+
 def verbs(groups: Iterable[str]) -> List[str]:
     """The main actions whose group is one of these (lower case)."""
     gs = set(groups)
     return sorted(a for a, (g, _s) in {**ACTION_GROUPS, **SYNONYMS}.items() if g in gs)
 
 
-__all__ = ["ACTION_GROUPS", "EventType", "GROUPS", "GROUP_GUIDE", "SYNONYMS", "TYPE_GUIDES", "action_group", "typed_sql",
-           "from_reading", "of_posts", "of_stories", "types_of", "verbs"]
+__all__ = ["ACTION_GROUPS", "ANNOUNCED", "EventType", "GROUPS", "GROUP_GUIDE", "LEAK", "NEWS_TYPES", "NOT_HAPPENINGS",
+           "SYNONYMS", "TYPE_GUIDES", "UNIT_NEWS", "UNIT_TYPES", "UnitType", "action_group", "typed_sql",
+           "from_reading", "main_objects", "of_posts", "of_stories", "of_units", "types_of", "unit_is_news", "verbs"]

@@ -57,6 +57,15 @@ class TheKind(unittest.TestCase):
         self.assertEqual(v, {"relation": "development", "runs": ["retold", "development", "development"]})
         self.assertEqual(back.verdict([ans("retold"), ans("related"), ans("unrelated")])["relation"], "unknown")
 
+    def test_a_first_related_or_unrelated_settles_the_candidate_alone(self):
+        # 0191: ask once; a second and third time only when the first is development or retold
+        self.assertEqual(back.verdict([ans("related")]), {"relation": "related", "runs": ["related"]})
+        self.assertEqual(back.verdict([ans("unrelated", "unrelated")]), {"relation": "unrelated", "runs": ["unrelated"]})
+        self.assertIsNone(back.verdict([ans("retold")]))
+        self.assertIsNone(back.verdict([ans("related", "development")]))
+        v = back.verdict([ans("related"), ans("development"), ans("development")])   # three asked: the majority
+        self.assertEqual(v["relation"], "development")
+
     def test_pages(self):
         self.assertEqual(back.norm("https://www.example.com/a/B/"), "example.com/a/b")
         self.assertIsNone(back.norm("https://example.com/"))
@@ -294,6 +303,15 @@ class TheQuestions(_Back):
         self.assertEqual(row["what_new"], ["The fix shipped."])
         self.assertEqual(page["counts"], {"candidates": 1, "development": 1})
         self.assertEqual(page["measured"]["words"], "measured 87% precise (68–96%), about 1 in 8 wrong")
+
+    def test_a_first_unrelated_is_asked_once_and_not_shown(self):
+        self.candidate()
+        _, body = self.lease("back")
+        tid = body["tasks"][0]["id"]
+        self.assertEqual(self.answer((tid, ans("unrelated", "related")))[1]["valid"], 1)
+        self.assertEqual(self.row(tid)["status"], "answered")          # 0191: never asked again
+        _, page = call("GET", "/api/markx/back")
+        self.assertEqual((page["items"], page["counts"]), ([], {"candidates": 1, "related": 1}))
 
     def test_the_cap(self):
         self.candidate()

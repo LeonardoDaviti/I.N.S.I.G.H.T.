@@ -29,13 +29,14 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
-from insight_core.markx import event_types, folds
+from insight_core.markx import event_types, folds, pairing
+from insight_core.utils import voice
 
-PUBLISHED = "COALESCE(p.published_at, p.surfaced_at, p.fetched_at)"
+PUBLISHED = pairing.published_date("p")
 JOIN_HOURS = 24          # a leak this close before its release, with no coverage of its own, joins the release
 CAME_TRUE_DAYS = 30      # a leak story is linked to a release at most this long after its first post
-LEAK = folds.LEAK
-NEWS_TYPES = folds.NEWS_TYPES
+LEAK = event_types.LEAK
+NEWS_TYPES = event_types.NEWS_TYPES
 CONNECTED = ("development", "follows_up", "same_event")
 # A shared main subject alone as the "came true" evidence. Off (measured 2026-11-07, 0128): on the lab's unseen rumour
 # set it linked 0 of 5 right (run 1; runs 2-3: 0/2, 0/2; dev 0/1, 4/4, 0/0): a later post on the same subject is
@@ -57,6 +58,7 @@ class Post:
     event_type: Optional[str]          # None: no read-v3 reading yet
     origin: Optional[str] = None
     subjects: FrozenSet[str] = frozenset()   # the entity roots the post names as its subject
+    kind: Optional[str] = None         # its source's kind (post_links.source_kind): a saved page is no voice (0189)
 
 
 def _read(posts: Iterable[Post]) -> List[Post]:
@@ -99,7 +101,7 @@ def leaks_inside(posts: Sequence[Post], join_hours: float = JOIN_HOURS) -> List[
         return []
     leaks = [p for p in _read(posts) if p.event_type == LEAK and p.at < rel]
     early = [p for p in leaks if _hours(p.at, rel) > join_hours]
-    own = len({p.source for p in early}) >= 2
+    own = voices(early) >= 2
     return [{"post": p.id, "hours": _hours(p.at, rel), "joins": not (own and p in early),
              "own_coverage": own and p in early} for p in leaks]
 
@@ -119,8 +121,10 @@ def _related(a: Set[str], b: Set[str], family: Callable[[str], Iterable[str]]) -
     return any(x in set(family(y)) for x in a for y in b) or any(y in set(family(x)) for x in a for y in b)
 
 
-def voices(posts: Sequence[Post]) -> int:
-    return len({p.source for p in posts})
+def voices(posts: Iterable[Post]) -> int:
+    """A story's voices by Voice's MARKX rule over each member's source: a saved page is none (0189: v10.16 counted
+    every member's source, a saved page's too)."""
+    return voice.count((voice.Said(p.source, p.kind) for p in posts), voice.Policy.MARKX)
 
 
 def came_true(stories: Mapping[str, Sequence[Post]], *, connected: Iterable[FrozenSet[str]] = (),
@@ -192,30 +196,38 @@ def in_published_order(cur: Any, posts: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
-    """{story: [{id, source, at (published), event_type, origin}]} over each story's current members."""
+    """{story: [{id, source, kind (its source's), at (published), event_type, origin}]} over each story's current
+    members."""
+    from insight_core.utils.post_links import source_kind
     if not story_ids:
         return {}
-    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED}
-                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {PUBLISHED}, s.platform, s.handle_or_url
+                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id JOIN sources s ON s.id = p.source_id
                      WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
                 (list(story_ids),))
     rows = cur.fetchall()
     types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for sid, pid, src, at in rows:
+    for sid, pid, src, at, platform, handle in rows:
         et, origin = types[pid]
-        out[sid].append({"id": pid, "source": src, "at": at, "event_type": et, "origin": origin})
+        out[sid].append({"id": pid, "source": src, "kind": source_kind(platform, handle), "at": at, "event_type": et,
+                         "origin": origin})
     return dict(out)
 
 
-def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str]) -> List[str]:
+def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Optional[Iterable[str]] = None) -> List[str]:
     """The current, unmerged Mark X stories of 2+ members with a member published in [lo, hi] and a read-v3 reading
-    of a leak or a news type: the stories a viewed one may be linked "came true" to."""
+    of a leak or a news type: the stories a viewed one may be linked "came true" to. `among`: only these stories
+    (v10.17: those a judged connection joins to a viewed one, when only a connection links, SUBJECT_LINKS off)."""
+    among = None if among is None else sorted(set(among) - have)
+    if among is not None and not among:
+        return []
     cur.execute(f"""SELECT DISTINCT sp.story_id::text FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
                       JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %(lo)s AND %(hi)s
+                       {"AND sp.story_id = ANY(%(among)s::uuid[])" if among is not None else ""}
                        AND {event_types.typed_sql("sp.post_id", "%(types)s")}""",   # 0175: through the seam
-                {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES]})
+                {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES], "among": among})
     return sorted({r[0] for r in cur.fetchall()} - have)
 
 
@@ -286,8 +298,9 @@ def stories_of(cur: Any, story_ids: Iterable[str], *, book: Any = None, links: b
     if not every:
         return {}
     posts = in_published_order(cur, P.load_members(cur, every))
-    book = book if book is not None else identity.load_book(cur)
+    book = book if book is not None else identity.lazy_book(cur)
     makers = P.Makers(book, P.mentions_of(cur, every))
+    makers.prepare(posts)   # v10.17 (0186): what the stories ask of the book, in a few reads, not one each
     return {sid: P.Story([m["id"] for m in ms if m["id"] in posts], posts, makers)
             for sid, ms in rows.items() if any(m["id"] in posts for m in ms)}
 
@@ -300,14 +313,19 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     rows = _load(cur, ids)
     if not rows:
         return {}
-    book = identity.load_book(cur)
+    book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
     times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
+    # v10.17 (0186): a story is linked "came true" only through a judged connection while SUBJECT_LINKS is off, so
+    # only the stories connected to a viewed one can be linked to it (was: every typed story of the window, ~60 days
+    # of stories, their subjects and every leak x release pair among them, for the same links)
+    among = None if SUBJECT_LINKS else {s for c in _connected(cur, ids) for s in c}
     near = _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
-                       set(rows)) if times else []
+                       set(rows), among) if times else []
     rows.update(_load(cur, near))
-    subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book)
+    subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book) if SUBJECT_LINKS else {}
     world = {sid: [Post(id=m["id"], source=m["source"], at=m["at"], event_type=m["event_type"], origin=m["origin"],
-                        subjects=frozenset(subj.get(m["id"], ()))) for m in ms] for sid, ms in rows.items()}
+                        subjects=frozenset(subj.get(m["id"], ())), kind=m["kind"]) for m in ms]
+             for sid, ms in rows.items()}
     links = came_true(world, connected=_connected(cur, sorted(world)), family=_family(book), by_subject=SUBJECT_LINKS)
     firsts = {s: min(ps, key=lambda p: (p.at, p.id)).id for s, ps in world.items() if ps}
     titles = _titles(cur, sorted({x[k] for x in links for k in ("leak", "release")}), firsts)

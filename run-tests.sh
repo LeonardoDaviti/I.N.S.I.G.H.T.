@@ -78,7 +78,7 @@ template_db() {
     building="insight_tmplbuild_$$_test"
     echo "==> building the test template ${name} (the migrations changed)" >&2
     admin "DROP DATABASE IF EXISTS $building" >/dev/null 2>&1
-    admin "CREATE DATABASE $building" >/dev/null
+    admin_many -c "CREATE DATABASE $building" -c "COMMENT ON DATABASE $building IS '$RUN_TAG'" >/dev/null
     local out
     if ! out="$(docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e DATABASE_URL="$SERVER/$building" -w /app "$IMAGE" \
                 python -m insight_core.db.migrate 2>&1)"; then
@@ -86,7 +86,7 @@ template_db() {
       admin "DROP DATABASE IF EXISTS $building" >/dev/null || true
       echo "error: migrating the test template failed" >&2; return 1
     fi
-    admin "ALTER DATABASE $building ALLOW_CONNECTIONS false" >/dev/null
+    admin_many -c "ALTER DATABASE $building ALLOW_CONNECTIONS false" -c "COMMENT ON DATABASE $building IS NULL" >/dev/null
     if ! admin "ALTER DATABASE $building RENAME TO $name" >/dev/null 2>&1; then
       admin "DROP DATABASE IF EXISTS $building" >/dev/null   # another run made it first
     fi
@@ -99,6 +99,11 @@ template_db() {
   echo "$name"
 }
 
+# This run's identity (stamped on its databases and containers; see clean_orphans below)
+BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
+pid_start() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
+RUN_TAG="run-tests:${BOOT_ID}:$$:$(pid_start $$)"
+
 # Several suites INSERT and commit rows, so each run (each shard) gets a database of its own (issue 0071): created
 # here, and dropped when the run ends, so two runs at once never share rows. Its name ends in _test, which the
 # committing suites require. Never the live `insight`. The drop runs in a detached container: a DROP DATABASE waits
@@ -106,7 +111,7 @@ template_db() {
 CREATED=()
 drop_all() {
   # this run's test containers first (a run stopped by Ctrl-C or a kill left them running against the database)
-  docker ps -q --filter "label=insight.test-pid=$$" | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker ps -q --filter "label=insight.test-run=$RUN_TAG" | xargs -r docker rm -f >/dev/null 2>&1 || true
   [ "${#CREATED[@]}" -gt 0 ] || return 0
   local args=() db
   for db in "${CREATED[@]}"; do args+=(-c "DROP DATABASE IF EXISTS $db WITH (FORCE)"); done
@@ -116,63 +121,45 @@ drop_all() {
 trap drop_all EXIT
 
 # What earlier runs left behind (v10.17: one module took 79, 378, then 781 s on three runs in a row while leftovers
-# piled up; idle test containers waited 6 h): the test containers and run databases of runs that ended.
-#   - a container labelled by a run (insight.test-pid, every run's since v10.17) whose pid is not running on this
-#     host and is over 10 minutes old, or any labelled one over CLEAN_HOURS (6) old;
-#   - an unlabelled test container (an image insight-backend:test-*, running unittest: runs before v10.17) over
-#     CLEAN_HOURS old;
-#   - a run's database (insight_run_<time>_<pid>_..._test, insight_tmplbuild_<pid>_test), on the scratch server and on
-#     insight-db (where runs made them before v10.17), that no session uses now, whose pid is gone and is over 10
-#     minutes old, or that is over CLEAN_HOURS old.
-# A run still running is never touched. CLEAN_ORPHANS=0 skips this; CLEAN_ORPHANS=dry lists what it would remove.
+# piled up): the containers and databases of runs that ENDED, and only those this runner can prove ended. Every run
+# stamps what it makes with its identity, RUN_TAG = run-tests:<boot id>:<pid>:<the pid's start time> (a database's
+# comment, a container's label insight.test-run). A run is proven ended when the machine has rebooted since (another
+# boot id), or its pid is not running, or the pid now running started at another time (a reused pid). Anything without
+# such a stamp - another tool's database, a run made before v10.17, an unlabelled container - is never touched, however
+# old; neither is a database someone is connected to. Only on the server this run uses (the scratch one by default).
+# CLEAN_ORPHANS=0 skips this; CLEAN_ORPHANS=dry lists what it would remove.
+ended() {   # ended <tag>: true only when the tagged run is proven over
+  local boot pid start
+  IFS=: read -r _ boot pid start <<<"$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [ "$boot" != "$BOOT_ID" ] && [ "$BOOT_ID" != unknown ] && return 0
+  [ -d "/proc/$pid" ] || return 0
+  [ -n "$start" ] && [ "$(pid_start "$pid")" != "$start" ]
+}
 clean_orphans() {
   [ "${CLEAN_ORPHANS:-1}" = "0" ] && return 0
-  local now cid pid t img cmd age=$(( ${CLEAN_HOURS:-6} * 3600 )) dry=0 server db
+  local dry=0 cid tag db
   local -a dbs args
   [ "${CLEAN_ORPHANS:-1}" = "dry" ] && dry=1
-  now=$(date +%s)
-  while read -r cid pid t; do
-    [ -n "$cid" ] || continue
-    if { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ $(( now - ${t:-$now} )) -gt 600 ]; } \
-       || [ $(( now - ${t:-$now} )) -gt "$age" ]; then
-      if [ "$dry" = 1 ]; then echo "==> would remove container $cid (run $pid)" >&2
-      else docker rm -f "$cid" >/dev/null 2>&1 || true; fi
-    fi
-  done < <(docker ps -a --filter "label=insight.test-pid" \
-             --format '{{.ID}} {{.Label "insight.test-pid"}} {{.Label "insight.test-started"}}')
-  while read -r cid img; do
-    [ -n "$cid" ] || continue
-    case "$img" in insight-backend:test-*) ;; *) continue;; esac
-    cmd="$(docker inspect -f '{{join .Config.Cmd " "}}' "$cid" 2>/dev/null)" || continue
-    [[ "$cmd" == *unittest* ]] || continue
-    [ -z "$(docker inspect -f '{{index .Config.Labels "insight.test-pid"}}' "$cid" 2>/dev/null)" ] || continue
-    t="$(date -d "$(docker inspect -f '{{.Created}}' "$cid")" +%s 2>/dev/null)" || continue
-    if [ $(( now - t )) -gt "$age" ]; then
-      if [ "$dry" = 1 ]; then echo "==> would remove container $cid ($img, $(( (now - t) / 3600 )) h old)" >&2
-      else docker rm -f "$cid" >/dev/null 2>&1 || true; fi
-    fi
-  done < <(docker ps -a --format '{{.ID}} {{.Image}}')
-  for server in "$PGCONTAINER" insight-db; do
-    docker exec "$server" true >/dev/null 2>&1 || continue
-    dbs=()
-    while read -r db; do
-      [ -n "$db" ] || continue
-      if [[ "$db" =~ ^insight_run_([0-9]+)_([0-9]+)_[a-z0-9_]*test$ ]]; then t="${BASH_REMATCH[1]}"; pid="${BASH_REMATCH[2]}"
-      elif [[ "$db" =~ ^insight_tmplbuild_([0-9]+)_test$ ]]; then t=0; pid="${BASH_REMATCH[1]}"
-      else continue; fi
-      if { ! kill -0 "$pid" 2>/dev/null && [ $(( now - t )) -gt 600 ]; } || [ $(( now - t )) -gt "$age" ]; then
-        dbs+=("$db")
-      fi
-    done < <(docker exec -i "$server" psql -X -q -At -U insight -d postgres -c "SELECT d.datname FROM pg_database d
-               WHERE d.datname ~ '^insight_(run_[0-9]+_[0-9]+_|tmplbuild_[0-9]+_)'
-                 AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)")   # none in use now
-    [ "${#dbs[@]}" -gt 0 ] || continue
-    if [ "$dry" = 1 ]; then printf "==> would drop %s on $server\n" "${dbs[@]}" >&2; continue; fi
-    echo "==> dropping ${#dbs[@]} database(s) on $server that runs which ended left behind" >&2
-    args=()
-    for db in "${dbs[@]}"; do args+=(-c "DROP DATABASE IF EXISTS $db WITH (FORCE)"); done
-    docker exec -d "$server" psql -X -q -U insight -d postgres "${args[@]}" >/dev/null 2>&1 || true
-  done
+  while read -r cid tag; do
+    [ -n "$cid" ] && [[ "$tag" == run-tests:* ]] && ended "$tag" || continue
+    if [ "$dry" = 1 ]; then echo "==> would remove container $cid (its run ended: $tag)" >&2
+    else docker rm -f "$cid" >/dev/null 2>&1 || true; fi
+  done < <(docker ps -a --filter "label=insight.test-run" --format '{{.ID}} {{.Label "insight.test-run"}}')
+  docker exec "$PGCONTAINER" true >/dev/null 2>&1 || return 0
+  dbs=()
+  while IFS=$'\t' read -r db tag; do
+    [ -n "$db" ] && [[ "$tag" == run-tests:* ]] && ended "$tag" && dbs+=("$db")
+  done < <(docker exec -i "$PGCONTAINER" psql -X -q -At -F $'\t' -U insight -d postgres -c "SELECT d.datname,
+             shobj_description(d.oid, 'pg_database') FROM pg_database d
+            WHERE shobj_description(d.oid, 'pg_database') LIKE 'run-tests:%'
+              AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)")   # none in use now
+  [ "${#dbs[@]}" -gt 0 ] || return 0
+  if [ "$dry" = 1 ]; then printf "==> would drop %s (its run ended)\n" "${dbs[@]}" >&2; return 0; fi
+  echo "==> dropping ${#dbs[@]} database(s) that runs which ended left behind" >&2
+  args=()
+  for db in "${dbs[@]}"; do args+=(-c "DROP DATABASE IF EXISTS $db WITH (FORCE)"); done
+  admin_bg "${args[@]}" >/dev/null 2>&1 || true
 }
 clean_orphans
 
@@ -180,20 +167,20 @@ new_db() {   # new_db <name>: a fresh database for a run, migrated (from the tem
   local name="$1"
   CREATED+=("$name")
   if [ "${NO_TEMPLATE:-0}" = "1" ]; then
-    admin "CREATE DATABASE $name" >/dev/null
+    admin_many -c "CREATE DATABASE $name" -c "COMMENT ON DATABASE $name IS '$RUN_TAG'" >/dev/null
     echo "==> migrating ${name}" >&2
     docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e DATABASE_URL="$SERVER/$name" -w /app "$IMAGE" python -m insight_core.db.migrate >&2
   else
     # synchronous_commit off for the run's database (a setting of the database, not copied from the template): the
     # suites commit often, and each commit waited for its WAL flush on a disk other copies keep busy
-    admin_many -c "CREATE DATABASE $name TEMPLATE $TEMPLATE" \
+    admin_many -c "CREATE DATABASE $name TEMPLATE $TEMPLATE" -c "COMMENT ON DATABASE $name IS '$RUN_TAG'" \
       -c "ALTER DATABASE $name SET synchronous_commit = off" >/dev/null
   fi
 }
 
 in_image() {   # in_image <db url> cmd...
   local url="$1"; shift
-  docker run --rm --network "$NETWORK" --label "insight.test-pid=$$" --label "insight.test-started=$(date +%s)" \
+  docker run --rm --network "$NETWORK" --label "insight.test-run=$RUN_TAG" \
     --env-file "$ENV_FILE" -e DATABASE_URL="$url" -e ADMIN_DATABASE_URL="$SERVER/postgres" -e DB_HOST="$DBHOST" \
     -w /app "$IMAGE" "$@"
 }

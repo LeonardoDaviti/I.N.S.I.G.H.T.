@@ -5,6 +5,7 @@ import { markxBackApi, type MarkxBackLabel, type MarkxBackRow } from '../../serv
 import { Button, TextLink } from '../ui';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
+import { bylineText } from '../../lib/byline';
 
 const LABELS: MarkxBackLabel[] = ['development', 'retold', 'related', 'unrelated'];
 const TRIG_WORDS: Record<string, string> = { E: 'names its subject', L: 'links its page', V: 'reads like it' };
@@ -63,7 +64,7 @@ function Row({ row }: { row: MarkxBackRow }) {
             <span className="text-fg-3">{p.n}. </span>
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
             <span className="text-fg-3">
-              {p.source ? ` · ${p.source}` : ''}{p.at ? ` · ${postBylineTime(p.at)}` : ''}
+              {p.source ? ` · ${bylineText(p.byline, p.source)}` : ''}{p.at ? ` · ${postBylineTime(p.at)}` : ''}
               {p.verdict ? ` · ${p.verdict}` : ''}
             </span>
           </li>

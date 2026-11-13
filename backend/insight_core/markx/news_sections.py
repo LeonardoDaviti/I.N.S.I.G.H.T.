@@ -17,6 +17,15 @@ its most important row. `view` gives the page the newest answer's sections over 
 the rows the answer did not cover (added since) are `new`, shown first ("New since"). A pending question never holds
 the page back: the last valid sectioning is shown meanwhile.
 
+**Placement** (`place`, kind `news_place`, guide news-place-v1, issue 0197): between two sectionings, the rows the
+newest one does not cover (`unplaced`) are placed by one small question: the sections' titles (keyed s1..sM, each with
+its most important current headlines) and the new rows only (keyed r1..rK, the sections question's lines), answered
+row by row with a section key or "new". Asked when such rows exist and no full sectioning is due (CHANGE_SHARE) or
+waiting, at most once every PLACE_EVERY, never while one waits. Each placement is a row (mx_news_placements, keep
+everything) tied to the sectioning it placed into, so `last_sectioning` (the page, the next sections question) reads
+the sectioning with its placements, and a newer full sectioning supersedes them. A row answered "new" stays under "New
+since" until the next full sectioning.
+
 **Titles** (`title_rows`, the decision run's stage after News): every row still showing its lead's title has its
 headline task asked first (priority PRIORITY: the open ones raised, a missing one added); a failed one is counted.
 """
@@ -36,6 +45,9 @@ PRIORITY = -1                         # first among its kind's open tasks (repo.
 ENTITIES_SHOWN = 3
 HEADLINE_CHARS = 160
 NEW_SINCE = "New since"
+PLACE_KIND, PLACE_GUIDE = "news_place", "news-place-v1"
+PLACE_EVERY = timedelta(minutes=10)   # 0197: at most one placement question in this time
+EXAMPLES = 3                          # 0197: a section's most important current headlines shown with its title
 
 
 # ---- the rows ------------------------------------------------------------------------------------------------
@@ -86,7 +98,9 @@ def _types(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Optional[str]]
 
 
 def last_sectioning(cur: Any) -> Optional[Dict[str, Any]]:
-    """The newest valid answer's sections: {task, call, at, sections: [{title, rows}]} in their order; None: none yet."""
+    """The newest valid answer's sections with the rows placed into them since (0197): {task, call, at, sections:
+    [{title, rows}] in their order, placed: {row id: title}, kept_new: {row ids answered "new"}}; None: none yet. A
+    placed row follows its section's own rows; a row's newest placement counts."""
     cur.execute("""SELECT task_id::text, call_id::text, at FROM mx_news_sections
                     ORDER BY at DESC, call_id DESC LIMIT 1""")
     row = cur.fetchone()
@@ -94,8 +108,22 @@ def last_sectioning(cur: Any) -> Optional[Dict[str, Any]]:
         return None
     task, call, at = row
     cur.execute("SELECT title, row_ids FROM mx_news_sections WHERE call_id = %s ORDER BY position", (call,))
-    return {"task": task, "call": call, "at": at,
-            "sections": [{"title": t, "rows": [str(x) for x in ids]} for t, ids in cur.fetchall()]}
+    sections = [{"title": t, "rows": [str(x) for x in ids]} for t, ids in cur.fetchall()]
+    covered = {rid for s in sections for rid in s["rows"]}
+    of_title = {s["title"]: s for s in sections}
+    placed: Dict[str, str] = {}
+    kept_new = set()
+    cur.execute("""SELECT DISTINCT ON (row_id) row_id::text, title FROM mx_news_placements WHERE base_call = %s
+                    ORDER BY row_id, at DESC, call_id DESC""", (call,))
+    for rid, title in cur.fetchall():
+        if rid in covered:
+            continue
+        if title is None:
+            kept_new.add(rid)
+        elif title in of_title:
+            placed[rid] = title
+            of_title[title]["rows"].append(rid)
+    return {"task": task, "call": call, "at": at, "sections": sections, "placed": placed, "kept_new": kept_new}
 
 
 def _squash(s: Optional[str], n: int) -> str:
@@ -106,16 +134,22 @@ def _squash(s: Optional[str], n: int) -> str:
 def question(cur: Any, rows: Sequence[Dict[str, Any]], last: Optional[Dict[str, Any]] = None) -> str:
     """The input: the rows keyed r1..rN in their order, each with its headline, entities, type, voices and last
     section (s1..sM, the last answer's titles in their order)."""
-    from insight_core.markx import news
-    heads = news.headlines(cur, rows)
-    ents = _entities(cur, rows)
-    types = _types(cur, rows)
     titles = [s["title"] for s in (last or {}).get("sections") or []]
     was = {rid: f"s{n}" for n, s in enumerate((last or {}).get("sections") or [], 1) for rid in s["rows"]}
     lines = [f"NEWS: {len(rows)} rows, most important first"]
     if titles:
         lines.append("LAST TIME'S SECTIONS: " + " | ".join(f"[s{n}] {t}" for n, t in enumerate(titles, 1)))
     lines.append("")
+    return "\n".join(lines + _row_lines(cur, rows, was))
+
+
+def _row_lines(cur: Any, rows: Sequence[Dict[str, Any]], was: Optional[Dict[str, str]] = None) -> List[str]:
+    """Each row as the questions show it: "[r<n>] headline | entities: ... | type: ... | N voices[ | last: s<k>]"."""
+    from insight_core.markx import news
+    heads = news.headlines(cur, rows)
+    ents = _entities(cur, rows)
+    types = _types(cur, rows)
+    lines = []
     for n, r in enumerate(rows, 1):
         rid = str(r["id"])
         parts = [f"[r{n}] {_squash(heads[rid]['text'], HEADLINE_CHARS) or '(no title)'}"]
@@ -124,10 +158,10 @@ def question(cur: Any, rows: Sequence[Dict[str, Any]], last: Optional[Dict[str, 
         if types.get(rid):
             parts.append("type: " + types[rid].replace("_", " "))
         parts.append(f"{r['voices']} voice" + ("" if r["voices"] == 1 else "s"))
-        if rid in was:
+        if was and rid in was:
             parts.append(f"last: {was[rid]}")
         lines.append(" | ".join(parts))
-    return "\n".join(lines)
+    return lines
 
 
 # ---- when ---------------------------------------------------------------------------------------------------
@@ -207,6 +241,119 @@ def after_answer(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
         cur.execute("""INSERT INTO mx_news_sections (task_id, call_id, run_id, position, title, row_ids)
                        VALUES (%s, %s, %s, %s, %s, %s::uuid[]) ON CONFLICT DO NOTHING""",
                     (task["id"], call_id, run, n, title, ids))
+    return len(got)
+
+
+# ---- placement (0197) ---------------------------------------------------------------------------------------
+
+def unplaced(last: Optional[Dict[str, Any]], rows: Sequence[str]) -> List[str]:
+    """The rows (ids, in their order) the sectioning `last` (with its placements) does not cover and no placement into
+    it answered "new"."""
+    if last is None:
+        return []
+    covered = {rid for s in last["sections"] for rid in s["rows"]} | set(last["kept_new"])
+    return [str(r) for r in rows if str(r) not in covered]
+
+
+def place_due(section_asks: Sequence[Dict[str, Any]], place_waiting: bool, place_last: Optional[datetime],
+              rows: Sequence[str], new: Sequence[str], now: datetime) -> Tuple[bool, str]:
+    """Whether to ask a placement now, and why (or why not): `section_asks` newest first (as `due` reads them), whether
+    a placement waits, when the newest placement was asked, the current rows and the unplaced ones. Never when a full
+    sectioning is waiting or due by its change rule (it supersedes placements); its 30 minutes do not hold one back."""
+    if not new:
+        return False, "no new rows"
+    if any(a["status"] in ("open", "leased") for a in section_asks):
+        return False, "a sectioning is waiting"
+    base = next((a for a in section_asks if a["status"] != "failed"), None)
+    if base is None or changed_share(base["row_ids"], rows) >= CHANGE_SHARE:
+        return False, "a full sectioning is due"
+    if place_waiting:
+        return False, "one is waiting"
+    if place_last is not None and now - place_last < PLACE_EVERY:
+        return False, f"asked less than {PLACE_EVERY.seconds // 60} minutes ago"
+    return True, f"{len(new)} new rows"
+
+
+def place_question(cur: Any, rows: Sequence[Dict[str, Any]], new: Sequence[Dict[str, Any]],
+                   last: Dict[str, Any]) -> str:
+    """The input: the sections keyed s1..sM in their order, each with its EXAMPLES most important current headlines
+    (`rows`, in News' order), then the new rows keyed r1..rK as the sections question shows rows."""
+    from insight_core.markx import news
+    of = {rid: n for n, s in enumerate(last["sections"]) for rid in s["rows"]}
+    examples: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        n = of.get(str(r["id"]))
+        if n is not None and len(examples[n]) < EXAMPLES:
+            examples[n].append(r)
+    heads = news.headlines(cur, [r for ex in examples.values() for r in ex])
+    lines = [f"SECTIONS: {len(last['sections'])}, each with its most important headlines"]
+    for n, s in enumerate(last["sections"]):
+        shown = "; ".join(f'"{_squash(heads[str(r["id"])]["text"], HEADLINE_CHARS)}"' for r in examples[n])
+        lines.append(f"[s{n + 1}] {s['title']}" + (f" | e.g. {shown}" if shown else ""))
+    lines += ["", f"NEW ROWS: {len(new)}, most important first"]
+    return "\n".join(lines + _row_lines(cur, new))
+
+
+def place_asks(cur: Any) -> Tuple[bool, Optional[datetime]]:
+    """(whether a placement waits, when the newest was asked)."""
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_news_place_asks a JOIN mx_tasks t ON t.id = a.task_id
+                                   WHERE t.status IN ('open', 'leased')),
+                          (SELECT max(asked_at) FROM mx_news_place_asks)""")
+    waiting, at = cur.fetchone()
+    return bool(waiting), at
+
+
+def place(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
+    """The placement question for the rows the newest sectioning does not cover, when `place_due`: 1 when a task was
+    added, else 0. The cheap checks first: a waiting one or one asked within PLACE_EVERY reads no row."""
+    from insight_core.markx import tasks
+    now = now or datetime.now(timezone.utc)
+    waiting, at = place_asks(cur)
+    if waiting or (at is not None and now - at < PLACE_EVERY):
+        return 0
+    last = last_sectioning(cur)
+    if last is None:
+        return 0
+    run, rows = current_rows(cur, now)
+    if run is None:
+        return 0
+    ids = [str(r["id"]) for r in rows]
+    new = unplaced(last, ids)
+    ok, _why = place_due(asks(cur), waiting, at, ids, new, now)
+    if not ok:
+        return 0
+    fresh = set(new)
+    text = place_question(cur, rows, [r for r in rows if str(r["id"]) in fresh], last)
+    tid, added = tasks.add(cur, PLACE_KIND, text, a=run, priority=PRIORITY)
+    cur.execute("""INSERT INTO mx_news_place_asks (task_id, run_id, base_call, row_ids, titles, asked_at)
+                   VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s) ON CONFLICT (task_id) DO NOTHING""",
+                (tid, run, last["call"], json.dumps(new), json.dumps([s["title"] for s in last["sections"]]), now))
+    return 1 if added else 0
+
+
+def placements_of(answer: Dict[str, Any], row_ids: Sequence[str], titles: Sequence[str]) -> List[Tuple[str, Optional[str]]]:
+    """[(row id, its section's title or None for "new")] in the answer's order (a checked answer: known keys only)."""
+    out = []
+    for p in answer.get("placements") or []:
+        r, s = int(p["row_id"][1:]), p["section"]
+        if not 1 <= r <= len(row_ids):
+            continue
+        k = int(s[1:]) if s != "new" else 0
+        out.append((str(row_ids[r - 1]), titles[k - 1] if 1 <= k <= len(titles) else None))
+    return out
+
+
+def after_place(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> int:
+    """A valid placement answer as rows (mx_news_placements, tied to the sectioning it placed into): how many."""
+    cur.execute("SELECT base_call, row_ids, titles FROM mx_news_place_asks WHERE task_id = %s", (task["id"],))
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    base, row_ids, titles = row
+    got = placements_of(answer, row_ids, titles)
+    for rid, title in got:
+        cur.execute("""INSERT INTO mx_news_placements (task_id, call_id, base_call, row_id, title)
+                       VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", (task["id"], call_id, base, rid, title))
     return len(got)
 
 

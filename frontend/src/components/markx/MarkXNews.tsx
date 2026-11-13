@@ -16,6 +16,7 @@ import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/ma
 import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
 import { CameTrue, eventWords, LineRole } from './MarkXBuilt';   // 0128: how the story is built
 import type { BuiltLine, BuiltRow } from './MarkXBuilt';
+import { bylineText } from '../../lib/byline';
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
 
@@ -70,7 +71,7 @@ function PostLine({ line, now, extra }: { line: MarkxLine; now: Date; extra?: Re
         <LineRole role={(line as BuiltLine).built} />
         <span className="block min-w-0 text-[0.875rem] leading-5 text-fg [overflow-wrap:anywhere]">
           <TextLink to={`/posts/${encodeURIComponent(line.id)}`}>{line.title || '(no title)'}</TextLink>
-          <span className="text-fg-3"> · {line.source}</span>
+          <span className="text-fg-3"> · {bylineText(line.byline, line.source)}</span>
         </span>
         <span className="mt-0.5 block text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
           {line.why ? whyWords(line.why) : line.name
@@ -101,7 +102,7 @@ function LeftOutLine({ post, now, rows }: { post: MarkxLeftOut; now: Date; rows:
       <span className="min-w-0">
         <span className="block text-[0.875rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
           <TextLink to={`/posts/${encodeURIComponent(post.id)}`} muted>{post.title || '(no title)'}</TextLink>
-          <span className="text-fg-3"> · {post.source}</span>
+          <span className="text-fg-3"> · {bylineText(post.byline, post.source)}</span>
         </span>
         <span className="block text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
           {what}

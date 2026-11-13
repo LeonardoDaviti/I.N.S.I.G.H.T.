@@ -41,11 +41,21 @@ export default function DataPanel() {
   const [token, setToken] = useState<string | null>(null);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
 
-  // Follow the download the server is writing: bytes so far, then done or stopped.
+  // Follow the download the server is writing: bytes so far, then done or stopped. Only while this tab (Settings →
+  // Data, mounted only while shown) and the browser tab are visible (issue 0195): a hidden tab asks again on its return.
   useEffect(() => {
     if (!token) return undefined;
     let stopped = false;
+    const onVisible = () => {
+      if (document.hidden || stopped) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      void poll();
+    };
     const poll = async () => {
+      if (document.hidden) {
+        document.addEventListener('visibilitychange', onVisible);
+        return;
+      }
       try {
         const state = await api.getExportProgress(token);
         if (stopped) return;
@@ -59,7 +69,7 @@ export default function DataPanel() {
       if (!stopped) timer = window.setTimeout(poll, POLL_MS);
     };
     let timer = window.setTimeout(poll, POLL_MS);
-    return () => { stopped = true; window.clearTimeout(timer); };
+    return () => { stopped = true; window.clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [api, queryClient, token]);
 
   const start = () => {

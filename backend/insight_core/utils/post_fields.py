@@ -10,6 +10,7 @@ import urllib.parse
 from typing import Any, Dict, List, Tuple
 
 from .addresses import tweet_author
+from .byline import RT_BY
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
 from .post_links import quoted_tweet
@@ -45,7 +46,7 @@ TAKEN_KEY = "taken_from"
 # {url, normalized_url, post_id}. Its address is the page's with CITATION_FRAGMENT and the source's id.
 CITES_KEY = "cites"
 CITATION_FRAGMENT = "#!/cited-by/"
-REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
+REPOST_BY_RE = RT_BY   # Nitter's "RT by @user: " (Byline's one pattern, issue 0189)
 REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
 

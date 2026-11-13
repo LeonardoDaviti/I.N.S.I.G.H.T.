@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.markx import event_types
 from insight_core.utils.addresses import PLATFORM_SITES, host_of, is_tweet, publication_of, site_of, tweet_author
 from insight_core.utils.discover_rules import CHECK_DAYS, PLACE_TESTS
 from insight_core.utils.entity_originals import CODE_SITES, MODEL_HUBS, RELEASE, WORK
@@ -77,8 +78,7 @@ KEY = "discover_main_source"      # system_settings: {"tests": {channel key: {la
 HIDE_PREFIX = "main:"             # a row's key in discover_hidden (Not interested), apart from Discover's own keys
 WITHIN_DAYS = 30
 MIN_VOICES = 2
-ANNOUNCED = frozenset({"model_release", "product_release", "research_result", "business_event", "incident",
-                       "public_statement", "promotion_event"})
+ANNOUNCED = event_types.ANNOUNCED  # the seam's list (0190): a happening its actor announces, never a lawsuit's
 ACTOR_TYPES = ("org", "person")
 ACTOR_ROLES = ("subject", "actor")
 ADDRESS_KINDS = (RELEASE, WORK)
@@ -345,19 +345,21 @@ def _with_sections(cur: Any, sources: Dict[str, Src], sites: Set[str]) -> Dict[s
 
 def _stories(cur: Any, since: datetime) -> Dict[str, Dict[str, Any]]:
     from insight_core.markx import built, event_types
+    from insight_core.utils.post_links import source_kind
     cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {built.PUBLISHED}, s.headline,
-                           s.first_at
+                           s.first_at, so.platform, so.handle_or_url
                       FROM mx_story_posts sp JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
-                      JOIN posts p ON p.id = sp.post_id
+                      JOIN posts p ON p.id = sp.post_id JOIN sources so ON so.id = p.source_id
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s""", (since,))
     rows = cur.fetchall()
     types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
     out: Dict[str, Dict[str, Any]] = {}
-    for sid, pid, src, at, headline, first_at in rows:
+    for sid, pid, src, at, headline, first_at, platform, handle in rows:
         et, origin = types[pid]
         s = out.setdefault(sid, {"headline": headline or "", "first_at": first_at, "posts": {}})
         if pid not in s["posts"] or et is not None:
-            s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin)
+            s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin,
+                                         kind=source_kind(platform, handle))   # a saved page is no voice (0189)
     return out
 
 
@@ -467,19 +469,23 @@ def _named(cur: Any, mk: Any) -> Dict[str, Tuple[Set[str], Set[str]]]:
     actor's own when the actor is among them (perspectives.Makers.author_is, read once for every source)."""
     from insight_core.markx import names as N
     cur.execute("SELECT id::text, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
+    rows = cur.fetchall()
+    mk.book.prime(keys=[N.key(name) for _sid, name in rows])   # v10.17 (0186): the sources' names, one read
     out = {}
-    for sid, name in cur.fetchall():
+    for sid, name in rows:
         r = mk.of_name(name)
         roots = {r, *mk.ancestors(r)} if r else set()
         out[sid] = (roots, set(N.handle_forms(re.sub(r"\s+", "", (name or "").lower()))))
     return out
 
 
-def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Tuple[List[Event], int]:
-    """The events to judge (the module's rule) and how many stories of 2+ voices were checked."""
-    from insight_core.markx import built, identity, schemas
-    from insight_core.markx import entity_addresses as EA
-    from insight_core.markx import perspectives as P
+Picked = Tuple[Dict[str, Tuple[Dict[str, Any], str, int]], int]
+
+
+def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Picked:
+    """The window's stories of 2+ voices whose event type is announced ({story: (story, type, voices)}) and how many
+    stories of 2+ voices were checked: all `events` reads of the stories besides their texts and mentions."""
+    from insight_core.markx import built
     stories = _stories(cur, now - timedelta(days=within))
     picked: Dict[str, Tuple[Dict[str, Any], str, int]] = {}
     checked = 0
@@ -492,9 +498,39 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Tuple[List[
         et = built.event_type(posts)
         if et in ANNOUNCED:
             picked[sid] = (s, et, voices)
+    return picked, checked
+
+
+def picked_stamp(cur: Any, got: Picked) -> str:
+    """v10.17 (0186): what the list is made from, as a digest: the picked stories (their members, sources, dates,
+    types and origins), the count checked, and the readings and entity answers of the picked stories' members. An
+    answer elsewhere (a read-v3 of a post in no announced story, the worker's steady stream) leaves it unchanged."""
+    import hashlib
+    picked, checked = got
+    ids = sorted({p for s, _et, _v in picked.values() for p in s["posts"]})
+    cur.execute("""SELECT (SELECT count(*) FROM mx_readings WHERE post_id = ANY(%(ids)s::uuid[])
+                                                             AND guide IN ('read-v2', 'read-v3')),
+                          (SELECT max(at)::text FROM mx_mention_sets WHERE post_id = ANY(%(ids)s::uuid[]))""",
+                {"ids": ids})
+    reads, sets = cur.fetchone()
+    h = hashlib.sha256(repr((checked, reads, sets)).encode())
+    for sid in sorted(picked):
+        s, et, voices = picked[sid]
+        h.update(repr((sid, s["headline"], str(s["first_at"]), et, voices,
+                       sorted((p.id, p.source, str(p.at), p.event_type, p.origin) for p in s["posts"].values()))).encode())
+    return h.hexdigest()
+
+
+def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Optional[Picked] = None) -> Tuple[List[Event], int]:
+    """The events to judge (the module's rule) and how many stories of 2+ voices were checked. `picked`: `pick`'s
+    answer, when the caller has it."""
+    from insight_core.markx import built, identity, schemas
+    from insight_core.markx import entity_addresses as EA
+    from insight_core.markx import perspectives as P
+    picked, checked = picked if picked is not None else pick(cur, now, within=within)
     if not picked:
         return [], checked
-    book = identity.load_book(cur)
+    book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
     sts = built.stories_of(cur, picked, book=book)
     actors: Dict[str, str] = {}
     for sid, st in sts.items():
@@ -550,9 +586,9 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Tuple[List[
     return out, checked
 
 
-def scan(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Dict[str, Any]:
-    """{rows (every one, hidden ones too), checked, events}: read only."""
-    evs, checked = events(cur, now, within=within)
+def scan(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Optional[Picked] = None) -> Dict[str, Any]:
+    """{rows (every one, hidden ones too), checked, events}: read only. `picked`: `pick`'s answer, when kept."""
+    evs, checked = events(cur, now, within=within, picked=picked)
     sources = _sources(cur)
     sites = {ch.site for ev in evs for o in ev.pages if (ch := channel_of(o.url)) is not None and ch.kind == "site"}
     sources = _with_sections(cur, sources, sites)
@@ -637,20 +673,24 @@ class MainSource:
         self._lock = threading.Lock()
         self._running: Optional[asyncio.Task] = None
 
-    def _stamp(self, cur: Any) -> Tuple:
-        cur.execute("""SELECT (SELECT max(valid_from) FROM mx_story_posts), (SELECT max(valid_to) FROM mx_story_posts),
-                              (SELECT count(*) FROM mx_readings WHERE guide = 'read-v3'),
-                              (SELECT max(updated_at) FROM sources), (SELECT count(*) FROM sources)""")
-        return tuple(cur.fetchone())
+    def _stamp(self, cur: Any, picked: Picked) -> Tuple:
+        """v10.17 (0186): the picked stories' digest (`picked_stamp`) and the sources'. Was every membership change
+        and every read-v3 answer anywhere: with the worker answering, the list was made again on almost every open
+        (17-20 s on the server)."""
+        digest = picked_stamp(cur, picked)
+        cur.execute("SELECT (SELECT max(updated_at) FROM sources), (SELECT count(*) FROM sources)")
+        return (digest, *cur.fetchone())
 
     def found(self) -> Dict[str, Any]:
         from insight_core.db import database as db
         with self._lock, db.connection(self.db_url) as conn, conn.cursor() as cur:
-            stamp = self._stamp(cur)
+            now = self.clock()
+            picked = pick(cur, now)
+            stamp = self._stamp(cur, picked)
             kept_stamp, kept_at, kept = self._cache
             if kept is not None and kept_stamp == stamp and time.monotonic() - kept_at < CACHE_SECONDS:
                 return kept
-            got = scan(cur, self.clock())
+            got = scan(cur, now, picked=picked)
             conn.rollback()
             self._cache = (stamp, time.monotonic(), got)
             return got

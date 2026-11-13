@@ -54,7 +54,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.markx import repo, schemas
+from insight_core.markx import pairing, repo, schemas
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ DOMAIN_CLASSES = {
            r"3d[- ]print|\bprints?\b|\bstl\b|printable"),
 }
 UNIT_RE = re.compile(r"\d[\d.,]*\s*([a-z$€£%/][a-z/$€£%]{0,8})", re.I)
-DATE = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
+DATE = pairing.ordinary_date("p")
 
 
 # ---- probes: the example posts --------------------------------------------------------------------------

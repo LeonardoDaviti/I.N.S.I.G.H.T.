@@ -4,6 +4,7 @@ Each test builds its own small Database on the test database and closes it.
 """
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -83,6 +84,105 @@ class DatabaseTests(unittest.TestCase):
 
     def test_one_database_per_url(self):
         self.assertIs(db.database(db_url()), db.database(db_url()))
+
+
+def _show(database: Database, *names: str) -> tuple:
+    with database.connection() as conn, conn.cursor() as cur:
+        out = []
+        for name in names:
+            cur.execute(f"SHOW {name}")
+            out.append(cur.fetchone()[0])
+        return tuple(out)
+
+
+def _hold_lock_and_sleep(url: str, key: int) -> None:
+    """A job's process: an advisory lock in a transaction, then a statement that runs on (killed meanwhile)."""
+    database = Database(url, min_size=1, max_size=1)
+    with database.transaction() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
+        cur.execute("SELECT pg_sleep(120)")
+
+
+@requires_db
+class RoleTimeoutTests(unittest.TestCase):
+    """Issue 0188: the jobs' and the API's timeouts, set where connections are made."""
+
+    def setUp(self):
+        saved = {k: os.environ.get(k) for k in (db.ROLE_ENV, "INSIGHT_DB_CLIENT_CHECK_MS")}
+
+        def restore():
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.addCleanup(restore)
+
+    def make(self, **kwargs) -> Database:
+        database = Database(db_url(), min_size=1, max_size=1, **kwargs)
+        self.addCleanup(database.close)
+        return database
+
+    def test_a_job_s_statements_end_before_its_process_is_killed(self):
+        db.use_role("jobs")
+        timeout, idle, check = _show(self.make(), "statement_timeout", "idle_in_transaction_session_timeout",
+                                     "client_connection_check_interval")
+        self.assertEqual((timeout, idle, check), ("14min", "16min", "10s"))
+        from insight_core.markx import jobs
+        self.assertLess(db.JOBS_STATEMENT_TIMEOUT_MS / 1000, jobs.HARD_LIMIT)
+        self.assertGreater(db.JOBS_IDLE_IN_TRANSACTION_MS / 1000, jobs.HARD_LIMIT)
+
+    def test_the_api_s_idle_transactions_end_and_unset_is_as_before(self):
+        db.use_role("api")
+        self.assertEqual(_show(self.make(), "statement_timeout", "idle_in_transaction_session_timeout"),
+                         ("5min", "2min"))
+        os.environ.pop(db.ROLE_ENV)
+        self.assertEqual(_show(self.make(), "statement_timeout", "idle_in_transaction_session_timeout"),
+                         ("5min", "0"))
+
+    def test_a_request_s_statements_get_30_s_and_its_background_work_the_default(self):
+        import asyncio
+
+        database = self.make()
+        seen = {}
+
+        async def app(scope, receive, send):        # a response, then a background task (as Starlette runs one)
+            seen["request"] = _show(database, "statement_timeout")[0]
+            with db.long_statements():
+                seen["long"] = _show(database, "statement_timeout")[0]
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+            seen["background"] = _show(database, "statement_timeout")[0]
+
+        async def send(message):
+            return None
+        asyncio.run(db.RequestTimeouts(app)({"type": "http"}, None, send))
+        self.assertEqual(seen, {"request": "30s", "long": "5min", "background": "5min"})
+        self.assertEqual(_show(database, "statement_timeout")[0], "5min")      # outside any request
+
+    def test_a_killed_job_s_statement_ends_and_its_locks_are_freed(self):
+        import multiprocessing
+        import time
+
+        db.use_role("jobs")
+        os.environ["INSIGHT_DB_CLIENT_CHECK_MS"] = "500"
+        key = 7_188_000 + os.getpid() % 1000
+        process = multiprocessing.get_context("spawn").Process(target=_hold_lock_and_sleep, args=(db_url(), key))
+        process.start()
+        self.addCleanup(process.join, 5)
+        with psycopg.connect(db_url(), autocommit=True) as watch:
+            def held() -> bool:
+                return bool(watch.execute("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = %s",
+                                          (key,)).fetchone()[0])
+            deadline = time.monotonic() + 20
+            while not held() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertTrue(held(), "the job took its lock")
+            process.kill()                      # as at HARD_LIMIT, or by the kernel's OOM killer
+            deadline = time.monotonic() + 10
+            while held() and time.monotonic() < deadline:
+                time.sleep(0.2)
+            self.assertFalse(held(), "the killed job's statement ended and its lock is free")
 
 
 @requires_test_db

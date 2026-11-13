@@ -42,6 +42,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import back, pairing
+from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +51,9 @@ KINDS = (IX, MX, HAPPENING)
 RANK = {IX: 0, MX: 1, HAPPENING: 2}       # one post's row goes to the first of these that holds its match
 OLD, ENGINE = back.ENGINE, "anchors"
 SHOWN_KEY = "anchors_shown"               # mx_settings: which engine the pages show ('old' by default)
-SHADOW_KEY = "anchors_shadow"             # mx_settings: the anchors engine runs beside the old one (on by default)
+# mx_settings: the anchors engine runs beside the old one. Off by default since v10.17 (0190): 0180 measured it at 20%
+# against an 85% bar, and it cost 0.8-3.9 s a stage call; the owner turns it on with this key (true).
+SHADOW_KEY = "anchors_shadow"
 BACK_SINCE_KEY = "back_anchors_since"
 LATER_SINCE_KEY = "later_anchors_since"
 POL = back.DEVELOPS
@@ -65,7 +68,7 @@ def shown(cur: Any) -> str:
 
 def shadow_on(cur: Any) -> bool:
     from insight_core.markx import repo
-    return bool(repo.get_setting(cur, SHADOW_KEY, default=True))
+    return bool(repo.get_setting(cur, SHADOW_KEY, default=False))
 
 
 # ---- the anchors ---------------------------------------------------------------------------------------------
@@ -98,7 +101,7 @@ class Anchor:
 
     @property
     def voices(self) -> int:
-        return pairing.voices((p.src, "saved" if p.saved else None) for p in self.members)
+        return voice.count((voice.Said(p.src, "saved" if p.saved else None) for p in self.members), voice.Policy.MARKX)
 
 
 def _members(cur: Any, sql: str, params: Sequence[Any] = ()) -> Tuple[Dict[str, List[Any]], Dict[str, Optional[str]]]:

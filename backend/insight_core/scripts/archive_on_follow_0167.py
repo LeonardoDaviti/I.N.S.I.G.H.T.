@@ -25,20 +25,21 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db import database as db  # noqa: E402
 from insight_core.services import follow_archive  # noqa: E402
+from insight_core.markx import pairing  # noqa: E402
 
 
 def candidates(db_url: str, until: str, source_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """The enabled sources with no archive job ever and no post older than `until` (or the one source)."""
     with db.connection(db_url) as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT s.id::text, COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
-                      (SELECT min(COALESCE(p.published_at, p.fetched_at)) FROM posts p WHERE p.source_id = s.id)
+            f"""SELECT s.id::text, COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
+                      (SELECT min({pairing.ix_date('p')}) FROM posts p WHERE p.source_id = s.id)
                  FROM sources s
                 WHERE s.enabled AND (%(one)s::uuid IS NULL OR s.id = %(one)s::uuid)
                   AND (%(one)s::uuid IS NOT NULL OR (
                        NOT EXISTS (SELECT 1 FROM job_runs j WHERE j.job_type = 'archive_source' AND j.source_id = s.id)
                        AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.source_id = s.id
-                                         AND COALESCE(p.published_at, p.fetched_at) < %(until)s::date)))
+                                         AND {pairing.ix_date('p')} < %(until)s::date)))
                 ORDER BY s.created_at DESC, s.id""", {"one": source_id, "until": until})
         return [{"source_id": sid, "name": name, "oldest": oldest.isoformat() if oldest else None}
                 for sid, name, oldest in cur.fetchall()]

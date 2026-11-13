@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
 import type {
@@ -11,6 +11,7 @@ import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
+import { bylineText } from '../../lib/byline';
 
 export const ENTITIES_KEY = ['markx-entities'] as const;
 export const QUEUE_KEY = ['markx-entity-queue'] as const;
@@ -42,7 +43,7 @@ export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Dat
     <li className={`min-w-0 truncate text-[0.8125rem] ${post.read ? 'text-fg-3' : 'text-fg-2'}`} data-read={post.read || undefined}>
       <TextLink to={`/posts/${encodeURIComponent(post.id)}`} muted>{post.title || '(no title)'}</TextLink>
       <span className="text-fg-3">
-        {post.source ? ` · ${post.source}` : ''}{post.at ? ` · ${postBylineTime(post.at, now)}` : ''}
+        {post.source ? ` · ${bylineText(post.byline, post.source)}` : ''}{post.at ? ` · ${postBylineTime(post.at, now)}` : ''}
         {post.roles?.length ? ` · ${post.roles.join(', ')}` : ''}{post.read ? ' · read' : ''}
       </span>
     </li>
@@ -174,7 +175,7 @@ function Side({ side }: { side: MarkxQueueSide }) {
         {side.posts.map((p) => (
           <li key={p.id} className="min-w-0 truncate text-[0.8125rem] text-fg-2">
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`} muted>{p.title || '(no title)'}</TextLink>
-            <span className="text-fg-3"> · {p.source} · “{p.span}”</span>
+            <span className="text-fg-3"> · {bylineText(p.byline, p.source)} · “{p.span}”</span>
           </li>
         ))}
       </ul>
@@ -289,11 +290,19 @@ function Merges({ queue }: { queue: MarkxEntityQueue }) {
   );
 }
 
+/** The open items asked at once (issue 0195: the API pages the queue, 50 by default; it held 12k items). */
+const QUEUE_PAGE = 50;
+/** The items listed at once; Show more lists the next ones, asking the API for more when they run out. */
+const QUEUE_SHOWN = 20;
+
 /** The review queue (0119 A3): every pair the rules leave to you, and the merges' history. */
 export function EntityQueue() {
   const api = useApi();
   const [band, setBand] = useState<string | null>(null);
-  const query = useQuery({ queryKey: [...QUEUE_KEY], queryFn: () => api.getMarkxEntityQueue(), staleTime: 30_000 });
+  const [visible, setVisible] = useState(QUEUE_SHOWN);
+  const [limit, setLimit] = useState(QUEUE_PAGE);
+  const query = useQuery({ queryKey: [...QUEUE_KEY, limit], queryFn: () => api.getMarkxEntityQueue(limit), staleTime: 30_000,
+    placeholderData: keepPreviousData });
   if (query.isPending) return <LoadingState label="Loading" rows={2} />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const q = query.data;
@@ -316,9 +325,20 @@ export function EntityQueue() {
         </div>
       ) : null}
       {shown.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">Nothing to review.</p> : (
-        <ul>{shown.slice(0, 20).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
+        <ul>{shown.slice(0, visible).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
       )}
-      {shown.length > 20 ? <p className="mt-2 text-[0.75rem] text-fg-3">{shown.length - 20} more after these.</p> : null}
+      {shown.length > visible || q.next_offset != null ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-[0.75rem] text-fg-3">
+            {band ? `${Math.max(0, shown.length - visible)} more loaded` : `${Math.max(0, q.counts.open - visible)} more after these`}
+          </span>
+          <Button size="sm" variant="secondary" disabled={query.isFetching} onClick={() => {
+            const next = visible + QUEUE_SHOWN;
+            setVisible(next);
+            if (next > items.length && q.next_offset != null) setLimit(limit + QUEUE_PAGE);
+          }}>Show more</Button>
+        </div>
+      ) : null}
       <Merges queue={q} />
     </section>
   );
