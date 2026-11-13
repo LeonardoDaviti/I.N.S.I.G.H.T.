@@ -9,9 +9,9 @@
          own story, linked "came true"; the decision rules don't split stories by type yet, so it is shown, not split).
        - Across stories (`came_true`): a leak story (its type `leak_rumour`) and a later release story (a news type,
          its release within CAME_TRUE_DAYS of the leak story's first post) are linked when Mark X's judged connection
-         joins them (development, follows up, same event). A shared main subject (identity's roots, or one's subject
-         the other's family) is built but off (SUBJECT_LINKS: 0 of 5 right on the lab's unseen rumours). A one-voice
-         leak story at most JOIN_HOURS before the release joins it; any other stays its own story, linked both ways.
+         joins them (development, follows up, same event); nothing else links them (a shared main subject alone was
+         measured 0 of 5 right on the lab's unseen rumours, 0128, and dropped in v10.18, 0203). A one-voice leak story
+         at most JOIN_HOURS before the release joins it; any other stays its own story, linked both ways.
   3. **The original by code** (0120 "The original by code", the port in perspectives.Story): a member whose own page
      is the page most members link to, else the maker's own post, the maker's page, a link post carrying the maker's
      page; shown as the story's first post. No member is: the source page is shown, the earliest post first.
@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
 from insight_core.markx import event_types, folds, pairing
 from insight_core.utils import voice
@@ -38,13 +38,11 @@ CAME_TRUE_DAYS = 30      # a leak story is linked to a release at most this long
 LEAK = event_types.LEAK
 NEWS_TYPES = event_types.NEWS_TYPES
 CONNECTED = ("development", "follows_up", "same_event")
-# A shared main subject alone as the "came true" evidence. Off (measured 2026-11-07, 0128): on the lab's unseen rumour
-# set it linked 0 of 5 right (run 1; runs 2-3: 0/2, 0/2; dev 0/1, 4/4, 0/0): a later post on the same subject is
-# rarely the leak's confirmation, and the leak flag misses 4 rumours in 10. The lab's pairwise judge (read_v3e: F1
-# 0.80) is the measured way; until then only Mark X's own judged connections link a leak story to its release.
-SUBJECT_LINKS = False
+# Only Mark X's own judged connections link a leak story to its release. A shared main subject alone (SUBJECT_LINKS,
+# off since 0128) linked 0 of 5 right on the lab's unseen rumours (runs 2-3: 0/2, 0/2): a later post on the same
+# subject is rarely the leak's confirmation. Dropped as dead code in v10.18 (0203); the lab's pairwise judge
+# (read_v3e: F1 0.80) is the measured way to add another link.
 ORIGINAL_ORDER = ("links", "maker", "maker-page", "maker-link")
-NOT_FAMILY = ("org", "person")
 CODE = "built-v1"
 
 
@@ -57,7 +55,6 @@ class Post:
     at: datetime                       # published (PUBLISHED)
     event_type: Optional[str]          # None: no read-v3 reading yet
     origin: Optional[str] = None
-    subjects: FrozenSet[str] = frozenset()   # the entity roots the post names as its subject
     kind: Optional[str] = None         # its source's kind (post_links.source_kind): a saved page is no voice (0189)
 
 
@@ -106,21 +103,6 @@ def leaks_inside(posts: Sequence[Post], join_hours: float = JOIN_HOURS) -> List[
              "own_coverage": own and p in early} for p in leaks]
 
 
-def main_subjects(posts: Sequence[Post]) -> Set[str]:
-    """The entity roots named as subject by the most members (all of them on a tie); none named: empty."""
-    c = Counter(r for p in posts for r in p.subjects)
-    if not c:
-        return set()
-    top = max(c.values())
-    return {r for r, n in c.items() if n == top}
-
-
-def _related(a: Set[str], b: Set[str], family: Callable[[str], Iterable[str]]) -> bool:
-    if a & b:
-        return True
-    return any(x in set(family(y)) for x in a for y in b) or any(y in set(family(x)) for x in a for y in b)
-
-
 def voices(posts: Iterable[Post]) -> int:
     """A story's voices by Voice's MARKX rule over each member's source: a saved page is none (0189: v10.16 counted
     every member's source, a saved page's too)."""
@@ -128,14 +110,11 @@ def voices(posts: Iterable[Post]) -> int:
 
 
 def came_true(stories: Mapping[str, Sequence[Post]], *, connected: Iterable[FrozenSet[str]] = (),
-              family: Callable[[str], Iterable[str]] = lambda root: (), join_hours: float = JOIN_HOURS,
-              days: float = CAME_TRUE_DAYS, by_subject: bool = True) -> List[Dict[str, Any]]:
-    """Every leak story linked to a later release story: {leak, release, hours (leak's first post to the release),
-    joins (a one-voice leak hours before), via (connection | subject)}, ordered by release, then leak. `by_subject`:
-    a shared main subject links on its own (the pages pass SUBJECT_LINKS, off: measured)."""
+              join_hours: float = JOIN_HOURS, days: float = CAME_TRUE_DAYS) -> List[Dict[str, Any]]:
+    """Every leak story a judged connection links to a later release story: {leak, release, hours (leak's first post
+    to the release), joins (a one-voice leak hours before), via ("connection")}, ordered by release, then leak."""
     connected = {frozenset(c) for c in connected}
     kinds = {s: event_type(ps) for s, ps in stories.items()}
-    subj = {s: main_subjects(ps) for s, ps in stories.items()}
     firsts = {s: min(p.at for p in ps) for s, ps in stories.items() if ps}
     out = []
     for r in sorted(s for s, k in kinds.items() if k in NEWS_TYPES):
@@ -144,16 +123,11 @@ def came_true(stories: Mapping[str, Sequence[Post]], *, connected: Iterable[Froz
             continue
         for leak in sorted(s for s, k in kinds.items() if k == LEAK and s != r):
             t0 = firsts[leak]
-            if not (t0 < rel <= t0 + timedelta(days=days)):
-                continue
-            via = ("connection" if frozenset((leak, r)) in connected else
-                   "subject" if by_subject and subj[leak] and subj[r] and _related(subj[leak], subj[r], family)
-                   else None)
-            if via is None:
+            if not (t0 < rel <= t0 + timedelta(days=days)) or frozenset((leak, r)) not in connected:
                 continue
             hours = _hours(t0, rel)
             out.append({"leak": leak, "release": r, "hours": hours,
-                        "joins": voices(stories[leak]) == 1 and hours <= join_hours, "via": via})
+                        "joins": voices(stories[leak]) == 1 and hours <= join_hours, "via": "connection"})
     return sorted(out, key=lambda x: (x["release"], x["leak"]))
 
 
@@ -218,7 +192,7 @@ def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]
 def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Optional[Iterable[str]] = None) -> List[str]:
     """The current, unmerged Mark X stories of 2+ members with a member published in [lo, hi] and a read-v3 reading
     of a leak or a news type: the stories a viewed one may be linked "came true" to. `among`: only these stories
-    (v10.17: those a judged connection joins to a viewed one, when only a connection links, SUBJECT_LINKS off)."""
+    (v10.17: those a judged connection joins to a viewed one: only a connection links)."""
     among = None if among is None else sorted(set(among) - have)
     if among is not None and not among:
         return []
@@ -229,39 +203,6 @@ def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Opt
                        AND {event_types.typed_sql("sp.post_id", "%(types)s")}""",   # 0175: through the seam
                 {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES], "among": among})
     return sorted({r[0] for r in cur.fetchall()} - have)
-
-
-def _subjects(cur: Any, posts: Sequence[str], book: Any) -> Dict[str, Set[str]]:
-    if not posts:
-        return {}
-    cur.execute("""SELECT post_id::text, entity_id::text FROM mx_mentions_now
-                    WHERE role = 'subject' AND entity_id IS NOT NULL AND post_id = ANY(%s::uuid[])""",
-                (list(posts),))
-    out: Dict[str, Set[str]] = defaultdict(set)
-    for pid, eid in cur.fetchall():
-        r = book.root(eid)
-        e = book.ents.get(r)
-        if r and (e is None or e.status != "not_entity"):
-            out[pid].add(r)
-    return out
-
-
-def _family(book: Any) -> Callable[[str], List[str]]:
-    """A root's family chain (its parents' roots, not an org or a person: the maker never counts as the family)."""
-    def up(root: str) -> List[str]:
-        out, seen = [], {root}
-        e = book.ents.get(root)
-        while e is not None and e.parent:
-            r = book.root(e.parent)
-            if r in seen:
-                break
-            seen.add(r)
-            e = book.ents.get(r)
-            if e is None or e.type in NOT_FAMILY:
-                break
-            out.append(r)
-        return out
-    return up
 
 
 def _connected(cur: Any, story_ids: Sequence[str]) -> Set[FrozenSet[str]]:
@@ -315,18 +256,17 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         return {}
     book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
     times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
-    # v10.17 (0186): a story is linked "came true" only through a judged connection while SUBJECT_LINKS is off, so
-    # only the stories connected to a viewed one can be linked to it (was: every typed story of the window, ~60 days
-    # of stories, their subjects and every leak x release pair among them, for the same links)
-    among = None if SUBJECT_LINKS else {s for c in _connected(cur, ids) for s in c}
+    # v10.17 (0186): a story is linked "came true" only through a judged connection, so only the stories connected to
+    # a viewed one can be linked to it (was: every typed story of the window, ~60 days of stories, their subjects and
+    # every leak x release pair among them, for the same links)
+    among = {s for c in _connected(cur, ids) for s in c}
     near = _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
                        set(rows), among) if times else []
     rows.update(_load(cur, near))
-    subj = _subjects(cur, sorted({m["id"] for ms in rows.values() for m in ms}), book) if SUBJECT_LINKS else {}
     world = {sid: [Post(id=m["id"], source=m["source"], at=m["at"], event_type=m["event_type"], origin=m["origin"],
-                        subjects=frozenset(subj.get(m["id"], ())), kind=m["kind"]) for m in ms]
+                        kind=m["kind"]) for m in ms]
              for sid, ms in rows.items()}
-    links = came_true(world, connected=_connected(cur, sorted(world)), family=_family(book), by_subject=SUBJECT_LINKS)
+    links = came_true(world, connected=_connected(cur, sorted(world)))
     firsts = {s: min(ps, key=lambda p: (p.at, p.id)).id for s, ps in world.items() if ps}
     titles = _titles(cur, sorted({x[k] for x in links for k in ("leak", "release")}), firsts)
     sts = stories_of(cur, ids, book=book)

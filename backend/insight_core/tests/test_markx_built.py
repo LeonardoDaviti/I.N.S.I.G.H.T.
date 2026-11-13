@@ -15,9 +15,9 @@ T0 = datetime(2100, 4, 1, 12, tzinfo=timezone.utc)
 H, D = timedelta(hours=1), timedelta(days=1)
 
 
-def bp(n, event_type, origin="other", hours=None, source=None, subjects=()):
+def bp(n, event_type, origin="other", hours=None, source=None):
     return B.Post(id=f"p{n}", source=source or f"s{n}", at=T0 + (n if hours is None else hours) * H,
-                  event_type=event_type, origin=origin, subjects=frozenset(subjects))
+                  event_type=event_type, origin=origin)
 
 
 class TheEventType(unittest.TestCase):
@@ -65,46 +65,32 @@ class LeaksInside(unittest.TestCase):
 
 
 class CameTrue(unittest.TestCase):
-    def leak(self, hours, sources=("a", "b"), subjects=("e1",)):
-        return [bp(10 + n, "leak_rumour", hours=hours + n, source=s, subjects=subjects) for n, s in enumerate(sources)]
+    LR = {frozenset(("L", "R"))}
 
-    def release(self, hours, subjects=("e1",)):
-        return [bp(20, "model_release", "maker", hours=hours, subjects=subjects),
-                bp(21, "model_release", hours=hours + 1, subjects=subjects)]
+    def leak(self, hours, sources=("a", "b")):
+        return [bp(10 + n, "leak_rumour", hours=hours + n, source=s) for n, s in enumerate(sources)]
+
+    def release(self, hours):
+        return [bp(20, "model_release", "maker", hours=hours), bp(21, "model_release", hours=hours + 1)]
 
     def test_a_leak_story_days_earlier_with_coverage_of_its_own_is_linked_came_true(self):
-        got = B.came_true({"L": self.leak(0), "R": self.release(96)})
-        self.assertEqual(got, [{"leak": "L", "release": "R", "hours": 96.0, "joins": False, "via": "subject"}])
+        got = B.came_true({"L": self.leak(0), "R": self.release(96)}, connected=self.LR)
+        self.assertEqual(got, [{"leak": "L", "release": "R", "hours": 96.0, "joins": False, "via": "connection"}])
 
     def test_a_one_voice_leak_hours_before_joins_the_release(self):
-        got = B.came_true({"L": self.leak(0, sources=("a", "a")), "R": self.release(8)})
+        got = B.came_true({"L": self.leak(0, sources=("a", "a")), "R": self.release(8)}, connected=self.LR)
         self.assertEqual([(x["leak"], x["joins"]) for x in got], [("L", True)])
         # with coverage of its own (two voices) it stays its own story, linked
-        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(8)})[0]["joins"], False)
+        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(8)}, connected=self.LR)[0]["joins"], False)
 
-    def test_no_link_on_another_subject_too_late_or_before_the_leak(self):
-        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(96, subjects=("e2",))}), [])
-        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(31 * 24)}), [])
-        self.assertEqual(B.came_true({"L": self.leak(100), "R": self.release(50)}), [])
+    def test_no_link_without_a_judged_connection_too_late_or_before_the_leak(self):
+        # 0203: only a judged connection links (the shared-subject link, measured 0 of 5, is gone)
+        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(96)}), [])
+        self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(31 * 24)}, connected=self.LR), [])
+        self.assertEqual(B.came_true({"L": self.leak(100), "R": self.release(50)}, connected=self.LR), [])
         # a release story's type must be news; a leak story's must be a leak
-        notnews = [bp(30, "opinion_analysis", hours=96, subjects=("e1",)), bp(31, "opinion_analysis", hours=97, subjects=("e1",))]
-        self.assertEqual(B.came_true({"L": self.leak(0), "R": notnews}), [])
-
-    def test_the_family_counts_and_a_connection_links_without_a_subject(self):
-        family = {"e1-5": ("e1",)}.get
-        got = B.came_true({"L": self.leak(0, subjects=("e1",)), "R": self.release(96, subjects=("e1-5",))},
-                          family=lambda r: family(r, ()))
-        self.assertEqual([x["via"] for x in got], ["subject"])
-        got = B.came_true({"L": self.leak(0, subjects=()), "R": self.release(96, subjects=())},
-                          connected={frozenset(("L", "R"))})
-        self.assertEqual([x["via"] for x in got], ["connection"])
-
-    def test_the_main_subject_is_what_most_members_name(self):
-        ps = [bp(0, "model_release", subjects=("e1", "e9")), bp(1, "model_release", subjects=("e1",)),
-              bp(2, "model_release", subjects=("e2",))]
-        self.assertEqual(B.main_subjects(ps), {"e1"})
-        self.assertEqual(B.main_subjects([bp(0, "x", subjects=("e1",)), bp(1, "x", subjects=("e2",))]), {"e1", "e2"})
-        self.assertEqual(B.main_subjects([bp(0, "x")]), set())
+        notnews = [bp(30, "opinion_analysis", hours=96), bp(31, "opinion_analysis", hours=97)]
+        self.assertEqual(B.came_true({"L": self.leak(0), "R": notnews}, connected=self.LR), [])
 
 
 def member(i, src, at, title, text="", url=None, links=(), kind="telegram", published=None):
@@ -192,7 +178,7 @@ class Stored(_Api):
         got = B.build(self.cur, [leak, rel])
         self.assertEqual(got[leak]["event_type"], "leak_rumour")
         self.assertEqual(got[rel]["event_type"], "model_release")
-        # a shared subject alone links nothing (SUBJECT_LINKS is off: measured 0 of 5 right on the lab's rumours)
+        # a shared subject alone links nothing (only a judged connection links: 0128 measured the subject 0 of 5)
         self.assertEqual((got[leak]["came_true"], got[rel]["leaked_before"]), ([], []))
         repo.open_connection(self.cur, a_kind="story", a=leak, b_kind="story", b=rel, relation="development",
                              run_id=self.run, p=0.8, rule="test")
