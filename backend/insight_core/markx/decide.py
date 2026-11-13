@@ -1353,7 +1353,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     incremental.release(memo)           # 0183: the texts and readings the stages above read, let go
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage
-    # v10.17.2 (0201): each stage reads the book it needs: the entities stage the whole book (read in the stage), the
+    # v10.17.2 (0204): each stage reads the book it needs: the entities stage the whole book (read in the stage), the
     # surges and perspectives a page's book (identity.lazy_book: the entities their days' and stories' mentions name,
     # as the entities stage left them). Was: a second whole book read after the entities stage for both of those.
     got = guarded("entities", lambda: entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,

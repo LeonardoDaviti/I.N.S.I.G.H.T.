@@ -454,7 +454,7 @@ def current_candidates(cur: Cursor, rows: Sequence[Tuple[Any, Any, str, Optional
     The rows themselves are kept (never deleted). A dropped row whose post already has an answered pair or join
     stays as it was, so no story it made changes silently.
 
-    v10.17.2 (0201): each embedding row's cosine is read by its place among them (not keyed by its two posts), and the
+    v10.17.2 (0204): each embedding row's cosine is read by its place among them (not keyed by its two posts), and the
     rows are given back one at a time, in order: a decision run's ~450k pairs were held three times at once (the
     rows, their cosines by (a, b), the list given back)."""
     emb = [k for k, (_a, _b, src, _s) in enumerate(rows) if src == "embedding"]

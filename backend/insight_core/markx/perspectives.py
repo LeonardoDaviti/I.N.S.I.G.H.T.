@@ -907,7 +907,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
     if not eligible:
         return dict(out)
     waiting = entities_waiting(cur, sorted({p for ms in eligible.values() for p in ms}))
-    # v10.17.2 (0201): a page's book (the entities the stories' members name, not the whole book), read ahead as a
+    # v10.17.2 (0204): a page's book (the entities the stories' members name, not the whole book), read ahead as a
     # News page reads it (Makers.prepare)
     book = identity.lazy_book(cur) if book is None else book
     makers = Makers(book, mentions_of(cur, sorted({p for ms in eligible.values() for p in ms})))

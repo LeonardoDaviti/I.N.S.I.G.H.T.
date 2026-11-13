@@ -1,4 +1,4 @@
-# 0201 — The Mark X decision run's peak memory (Stealth v10.17.2)
+# 0204 — The Mark X decision run's peak memory (Stealth v10.17.2)
 
 Status: **built** (branch `v10172-run-memory` from main = v10.17.1, d57aa11). Not merged, not pushed, not deployed.
 No migration.
@@ -11,7 +11,7 @@ insight-ingestion spikes to ~4.2 GB at every decision run (every ~5 min on v10.1
 ## How it was measured
 
 - **The copy.** A clone of `prep_scale` (main's migrations, 148k posts, 452k candidate pairs, 844k mentions). Its
-  synthetic entity names had to be fixed first (below), on the clone only (`plan/research/run-memory-0201/names.sql`:
+  synthetic entity names had to be fixed first (below), on the clone only (`plan/research/run-memory-0204/names.sql`:
   each "Name N" a pseudo-word, each "Topic T Labs/Model" the topic's pseudo-word and the suffix). Then one first full
   run (main's code) and the fake worker's 1,816 answers: **the measured state S** (103,171 entities, every mention
   linked, 1,816 judge tasks answered, a kept incremental state).
@@ -30,7 +30,7 @@ insight-ingestion spikes to ~4.2 GB at every decision run (every ~5 min on v10.1
   server and the shared server was not restarted for it.
 - The machine was shared (load 5-17): seconds swing; peaks and digests are stable.
 
-Scripts and outputs: `plan/research/run-memory-0201/` (private).
+Scripts and outputs: `plan/research/run-memory-0204/` (private).
 
 ## The 30-35 GB full runs on prep_scale: the copy's names, not the code's class
 

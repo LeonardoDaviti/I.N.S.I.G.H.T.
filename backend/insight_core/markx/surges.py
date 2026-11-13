@@ -66,7 +66,7 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
                        {f"AND {day} = ANY(%s::date[])" if day_list is not None else ""}""",
                 (guide, since, day_list) if day_list is not None else (guide, since))
     rows = cur.fetchall()
-    # v10.17.2 (0201): what the credits ask of the book, read ahead in one go (a page's book, identity.lazy_book,
+    # v10.17.2 (0204): what the credits ask of the book, read ahead in one go (a page's book, identity.lazy_book,
     # reads it now; a whole book holds it already)
     book.prime(ids=[book.pins.get((r[0], r[6], r[5]), r[2]) for r in rows],
                keys=[k for r in rows if r[1] == "subject"

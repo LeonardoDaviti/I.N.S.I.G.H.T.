@@ -253,7 +253,7 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
     tables changed. Then the kept inputs and near-copies (a trusted state only) and the answers of the tasks they
     name, in one query (a full reading: every answer).
 
-    v10.17.2 (0201): each task's calls are counted by its own (mx_calls_task_idx), not by grouping every valid call
+    v10.17.2 (0204): each task's calls are counted by its own (mx_calls_task_idx), not by grouping every valid call
     of every kind (~1M on the server, mostly reads and entities: 0.84 s a run at server scale, now 0.03 s)."""
     cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n
                      FROM mx_tasks t
@@ -361,7 +361,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
     else:
         stamps_of(cur, state, ids)
         stale = [i for i in ids if i in state.stamp]
-    for k in range(0, len(stale), TEXT_PAGE):   # v10.17.2 (0201): a page of texts at a time, none kept (below)
+    for k in range(0, len(stale), TEXT_PAGE):   # v10.17.2 (0204): a page of texts at a time, none kept (below)
         part = stale[k:k + TEXT_PAGE]
         got = tasks.load_posts(cur, part)
         for pid in part:
@@ -377,7 +377,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
                     WHERE guide = %s AND post_id = ANY(%s::uuid[])""", (GUIDE, ids))   # as tasks.readings(ids)
     for pid, stamp, kind, events in cur.fetchall():
         state.read_stamp[pid], state.kinds[pid], state.events[pid] = stamp, kind, events
-    # v10.17.2 (0201): the texts and readings are read when a render shows them (`rendered`: its posts' in one query),
+    # v10.17.2 (0204): the texts and readings are read when a render shows them (`rendered`: its posts' in one query),
     # on a full reading too: it held every post's text and reading for the whole reading (130k posts, ~2.7 GB at
     # server scale, the full run's peak), of which the questions show a few thousand
     return LazyTexts(cur, state), state.rules, LazyReadings(cur, state)

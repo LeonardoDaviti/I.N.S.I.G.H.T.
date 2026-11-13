@@ -153,7 +153,7 @@ def second_agrees(second: Optional[Dict[str, Any]]) -> bool:
 
 # ---- what identity knows: entities, aliases, redirects, pins ------------------------------------------
 
-@dataclass(slots=True)   # v10.17.2 (0201): no __dict__ an entity (below)
+@dataclass(slots=True)   # v10.17.2 (0204): no __dict__ an entity (below)
 class Ent:
     id: str
     type: Optional[str]
@@ -174,7 +174,7 @@ class Ent:
     shown_name: Optional[str] = None     # 0164: the name and type it is shown under (a root's, chosen by evidence;
     shown_type: Optional[str] = None     # entity_repair.shown); None: `name` / `type`. Never decide identity.
     # v10.13.9: worked out once an entity (its name, type, maker and fields never change once made); a pair's rules
-    # read them many times (the decisions spent most of their time parsing the same names again). v10.17.2 (0201):
+    # read them many times (the decisions spent most of their time parsing the same names again). v10.17.2 (0204):
     # kept in slots: a cached_property gave each entity a __dict__ of its own (~730 B: 75 MB of a 103k-entity book)
     _hk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
     _pk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
@@ -798,7 +798,7 @@ def pair(a: str, b: str) -> Tuple[str, str]:
 
 # ---- linking ---------------------------------------------------------------------------------------
 
-@dataclass(slots=True)   # v10.17.2 (0201): no __dict__ a mention (a full pass reads ~840k at the server's size)
+@dataclass(slots=True)   # v10.17.2 (0204): no __dict__ a mention (a full pass reads ~840k at the server's size)
 class Mention:
     post_id: str
     guide: str
@@ -1265,7 +1265,7 @@ def _index(book: Book, name: str, empty: Any, add: Any) -> Any:
 def _string_add(index: Any, e: Ent) -> None:
     by_gram, by_sq = index
     by_sq[e.sq].append(e.id)
-    for g in N.grams(e.sq):   # v10.17.2 (0201): not kept on every live entity (e.grams): only the seeds' and their
+    for g in N.grams(e.sq):   # v10.17.2 (0204): not kept on every live entity (e.grams): only the seeds' and their
         by_gram[g].append(e.id)   # candidates' are (pool_strings), ~1 KB an entity held to the run's end before
 
 
