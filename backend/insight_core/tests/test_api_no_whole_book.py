@@ -68,6 +68,22 @@ def whole_reads():
     return out
 
 
+def forget_voice_suggestions():
+    """GET /api/voices/suggestions computes the suggestions in the background and keeps them, committed, for a day:
+    a later module's suggestions() would read those (its own new sources not in them) instead of computing again.
+    Wait for that run, drop the route's service and the kept suggestions."""
+    import psycopg
+    from insight_core.routers import voices as route
+    from insight_core.services.voices_service import SUGGESTIONS_KEY
+    from insight_core.tests._db import db_url
+    svc = route._service
+    if svc is not None and svc._computing.acquire(timeout=300):
+        svc._computing.release()
+    route.use(None)
+    with psycopg.connect(db_url(), autocommit=True) as conn:
+        conn.execute("DELETE FROM system_settings WHERE key = %s", (SUGGESTIONS_KEY,))
+
+
 class OnlyJobsReadTheWholeBook(unittest.TestCase):
     def test_every_whole_read_is_a_jobs(self):
         found = whole_reads()
@@ -124,6 +140,7 @@ class NoRouteReadsTheWholeBook(Ents, built_tests.Stored):
         from insight_core.services import registry
         from insight_core.tests._db import db_url
         self.addCleanup(registry.use, registry.use(registry.build_services(db_url())))   # every route's services
+        self.addCleanup(forget_voice_suggestions)
         mock.patch.dict("os.environ", {"INSIGHT_DISCOVER_READS": "0"}).start()   # no web reads in the background
         params = self.params()
         asked = []
