@@ -1,7 +1,8 @@
 # 0186 — The News page's speed (v10.17)
 
-Status: **built** (branch `v1017-news-speed` from v1016 4e9da6a). Not merged, not pushed, not deployed. Migration
-**0127**.
+Status: **built** (branch `v1017-news-speed` from v1016 4e9da6a; the News part also as the hotfix v10.16.1, branch
+`v10161-news-speed` from main 2cd62c2). Not merged, not pushed, not deployed. Migrations **0127** (in both) and
+**0128** (v10.17 only).
 
 ## The problem (the server, main 2cd62c2 = v10.16, 2026-11-13)
 
@@ -72,15 +73,67 @@ window is no longer read.
 What is left of the page's time is the rows' own work (the Story code steps over their members' texts), which grows
 with the rows, not with the book or the window.
 
-## Left (the same class, not changed here)
+## The same class elsewhere (v10.17, after the hotfix)
 
-- **The entity page** (`/api/markx/entities/{id}`, ~12 s on the server) reads the whole book and walks it: its
-  members by a scan of every entity (`_members`), the versions under a family (every entity), the maker candidates
-  (every root's squashed key), `person_page.entity_keys` (every alias) and `entity_addresses` (`_names`,
-  `book.members()`). Each has a bounded form now (`cluster`, the parent index, migration 0127's squash index,
-  `name_forms`); converting them needs the entity page's own equivalence check.
-- **Discover's main source** (`/api/discover/main-source`, 17-20 s per stale cache): on the copy 10.5 s, of which
-  the whole book 1.8 s and the names' index 1.3 s, and 5 s building the code steps (`perspectives.Story`) of every
-  announced story of its window. It needs the whole book for the addresses (`entity_addresses.current`). Its cache
-  is dropped whenever a read-v3 answer lands (`_stamp` counts them), so with the worker running it is rebuilt on
-  almost every open.
+**The entity page** (`/api/markx/entities/{id}`, ~12 s on the server) read the whole book (with every mention
+counted) and walked it, and read every current mention once more (`named_now`, 830k rows on the server). Now on a
+page's book, which also answers, for the entities asked, their mention counts (types, subject), whether a version
+names them, their versions and families, the aliases leading to a cluster (`alias_keys`), the entities under a
+cluster (`with_parent_in`) and those of a squashed key (`by_squashed_key`, 0127's index). The walks became those
+questions: the cluster (`_members`, entity_addresses), the versions under a family (the page and the timeline), the
+maker candidates, person_page.entity_keys, components_of. `named_now` on a page's book answers per root (its
+cluster's current mentions and pins, the publishers' names through migration **0128**'s index).
+
+**Discover's main source** (17-20 s per stale cache) reads a page's book; its cache key is now what the list is
+made of (`pick` / `picked_stamp`: the announced stories of its window with their members, types and origins, the
+readings and entity answers of their members, the sources): a read-v3 answer of a post in no announced story (the
+worker's steady stream) no longer drops it.
+
+| route (the copy) | before | after |
+|---|---|---|
+| entity page, 45 entities (real and synthetic, merged ids, versions, persons, a missing id) | median 5.08 s, total 340 s, peak RSS 921 MiB, 45 whole-book reads | median 0.28-0.32 s, total 36-52 s, 404 MiB, none |
+| Discover main source, one scan | 11-18 s (under load), 594 MiB | 7.6-8.0 s, 223 MiB |
+
+Every entity page's JSON and the main source's answer are byte-identical before and after. The slowest entity page
+left is a synthetic entity named in ~25k posts: its own posts' lines, not the book. Main source's remaining time is
+the code steps (perspectives.Story) of the ~2,000 announced stories of its window, now only when they change.
+
+## The class closed: no API request reads the whole book
+
+The rest of the requests that read it: the post page's panel (its subjects' timelines, `timeline.before_post`, and
+`post_entities`), the story page (`built.build`), the entity queue (`entity_views.queue`, with `named_now` asked for
+the open items' roots in one go), the owner's answers (the queue's `entity_answers.answer`, an entity's sources and
+handles), research's first step (`held`: the cluster, the names around the seed's by `keys_around`, an entity of a
+key by `first_with_key`; `channels_view`), and Discover's background build (`rabbit_hole.discover_rows`, the
+originals' `plan_entities` and `plan_works`, whose "never a product's front page" asks the site word by the squash
+index). `entity_addresses` reads clusters, never `book.members()` outside its stage.
+
+**Every GET route on the copy** (the app's OpenAPI paths with real services, the copy read-only), before -> after:
+
+| route | whole-book reads | seconds (a loaded machine) |
+|---|---|---|
+| /api/markx/news | 2 -> 0 | 10.6 -> 1.1 |
+| /api/markx/stories/{id} | 1 -> 0 | 14.1 -> 0.03 |
+| /api/markx/posts/{id} (two posts) | 2 -> 0 | 6.7 / 7.7 -> 0.10 / 0.21 |
+| /api/markx/entities/{id} (three) | 1 -> 0 | 17.1 / 8.4 / 5.5 -> 1.7 / 0.37 / 0.22 |
+| /api/markx/entities/queue | 1 -> 0 | 9.8 -> 0.04 |
+| /api/discover/main-source | 1 -> 0 | 20.6 -> 12.3 (a stale cache; kept until its stories change) |
+
+87 paths; every other answer byte-identical, but those that vary run to run by themselves (logs, uptime,
+/api/markx/entities' tie, 0177). The owner's answers (16 queue answers, same and different, on 8 open items), an
+entity's sources and handles, and research's first step on 9 seeds: identical with the generated ids and times
+masked, the merges written identical. The harness process's peak (all GET routes) is the export's (7.5 GB, the
+owner's export of everything, not the book).
+
+**The guard** (`tests/test_api_no_whole_book.py`): every call of `identity.load_book`, and of `read_ents` without
+ids, is in a job listed in `JOBS` (the decision run and its stages, the command line, 0165's measurement), read from
+the source; and every GET route of the app over a seeded world (an entity with posts, a merge, a version, a News
+row, a story, a queue item, a surge), the owner's entity answers and research's first step run with the whole
+book's reads recorded: none. A new route or path that reads the whole book fails it. A page's book cannot be walked
+(TypeError), so a request that tries fails loudly too.
+
+## Left
+
+- Discover's main source still builds the code steps of every announced story of its window (~2,000 on the copy,
+  7 s) when they change; Discover's own list is built in the background (0172), now without the whole book.
+- /api/markx/entities (the list) answers a tie by fetch order (0177): not changed.

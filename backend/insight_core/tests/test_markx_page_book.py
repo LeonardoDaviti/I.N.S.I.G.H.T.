@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from insight_core.markx import built as B, identity as I, names as N, news, perspectives as P, repo
-from insight_core.tests.test_markx_built import D, H, Stored
+from insight_core.tests import test_markx_built as built_tests
+from insight_core.tests.test_markx_built import D, H
 from insight_core.tests.test_markx_folds import read3
 
 
@@ -41,7 +42,7 @@ class Ents:
                             SELECT key, id, 'rule' FROM mx_entities WHERE key LIKE 'filler %%' ON CONFLICT DO NOTHING""")
 
 
-class APagesBook(Ents, Stored):
+class APagesBook(Ents, built_tests.Stored):
     """identity.lazy_book answers what load_book answers, by id and by key, reading only what it is asked."""
 
     def setUp(self):
@@ -54,6 +55,9 @@ class APagesBook(Ents, Stored):
         self.zeta = self.ent("Zeta Café", "person")
         self.orbit = self.ent("Orbit", "product", maker="Zeta Café")   # makes Zeta Café a maker
         self.lone = self.ent("Lone Widget", "product")
+        v51 = self.ent("Nimbus 5.1", "model", parent=self.nimbus)
+        self.cur.execute("UPDATE mx_entities SET level = 'version', version = '5.1' WHERE id = %s", (v51,))
+        self.ent("Acme Labs Widget", "product", parent=self.acme2)
         self.pad(50)
 
     def test_it_answers_as_the_whole_book(self):
@@ -73,6 +77,18 @@ class APagesBook(Ents, Stored):
         for f in {f for r in ids for f in fw.of(r)} | {"acmeai", "zetacafé", "nobody", ""}:
             self.assertEqual(fp.roots(f), fw.roots(f), f)
         self.assertEqual(fw.roots("acmeai"), {self.acme})     # an alias of a merged entity names the cluster
+        # v10.17: what the entity page, the queue, research and Discover's originals ask of it
+        whole = I.load_book(self.cur)
+        for r in ids:
+            self.assertEqual((page.alias_keys(r), page.with_parent_in(r), page.etype(r), page.subject.get(r, 0),
+                              r in page.version_parents(), page.kids().get(r, [])),
+                             (whole.alias_keys(r), whole.with_parent_in(r), whole.etype(r), whole.subject.get(r, 0),
+                              r in whole.version_parents(), whole.kids().get(r, [])), r)
+        for k in ("acme labs", "acme", "nimbus 5", "zeta café", "zeta", "acme labs widget", "100% acme_", ""):
+            self.assertEqual((page.first_with_key(k), page.keys_around(k), page.families().get(k, [])),
+                             (whole.first_with_key(k), whole.keys_around(k), whole.families().get(k, [])), k)
+        for forms in (["acmelabs"], ["acme", "zetacaf"], ["nobody"]):
+            self.assertEqual(page.by_squashed_key(forms), whole.by_squashed_key(forms), forms)
 
     def test_the_maker_found_by_the_names_is_the_same(self):
         whole, page = P.Makers(I.load_book(self.cur, counts=False), {}), P.Makers(I.lazy_book(self.cur), {})
@@ -101,7 +117,7 @@ class APagesBook(Ents, Stored):
             self.assertIn(N.SQUASH, self.cur.fetchone()[0])
 
 
-class TheNewsPageReadsWhatItShows(Ents, Stored):
+class TheNewsPageReadsWhatItShows(Ents, built_tests.Stored):
     """The News page reads the entities its rows name, never the whole book: its reads don't grow with the book."""
 
     def page_reads(self, now):
@@ -146,7 +162,52 @@ class TheNewsPageReadsWhatItShows(Ents, Stored):
         self.assertEqual([s["name"] for s in small["items"][0]["surging"]], ["Acme"])
 
 
-class CameTrueReadsTheConnectedStories(Stored):
+class TheEntityPageReadsWhatItShows(Ents, built_tests.Stored):
+    """The entity page asks the book for its cluster, versions, components, maker candidates and names: no whole-book
+    read, and its entity reads don't grow with the book."""
+
+    def test_its_reads_dont_grow_with_the_book(self):
+        from insight_core.markx import entity_views as EV
+        now = datetime.now(timezone.utc)
+        acme = self.ent("Acme")
+        posts = [self.post(title=f"Widget 5 news {i}", at=now - i * H, source=(self.source, self.other)[i % 2])
+                 for i in range(1, 4)]
+        for p in posts:
+            self.subject(p, "Widget 5")
+        self.cur.execute("SELECT id::text FROM mx_entities WHERE key = 'widget 5'")
+        widget = self.cur.fetchone()[0]
+        self.cur.execute("UPDATE mx_entities SET maker = 'Acme' WHERE id = %s", (widget,))
+        v51 = self.ent("Widget 5.1", "model", parent=widget)
+        self.cur.execute("UPDATE mx_entities SET level = 'version', version = '5.1' WHERE id = %s", (v51,))
+        dup = self.ent("Widget Five", "model")
+        self.merge(dup, widget)
+
+        def page():
+            got = {"rows": 0}
+            read = I.read_ents
+
+            def counted(cur, b, ids=None):
+                before = len(b.ents)
+                read(cur, b, ids)
+                got["rows"] += len(b.ents) - before
+
+            with mock.patch.object(I, "load_book", side_effect=AssertionError("the whole book")), \
+                    mock.patch.object(I, "read_ents", counted):
+                out = [EV.entity_page(self.cur, e, now=now) for e in (widget, dup, acme)]
+            return out, got["rows"]
+
+        self.pad(20)
+        small, small_reads = page()
+        self.pad(2000)
+        big, big_reads = page()
+        self.assertEqual(big, small)
+        self.assertEqual(big_reads, small_reads)
+        self.assertLess(big_reads, 40)
+        self.assertTrue(small[1]["redirected"])
+        self.assertEqual(small[0]["entity"]["id"], widget)
+
+
+class CameTrueReadsTheConnectedStories(built_tests.Stored):
     """With SUBJECT_LINKS off only a judged connection links a leak story to its release: built.build reads the
     stories connected to the viewed ones, not every typed story of the window."""
 
@@ -182,6 +243,12 @@ class CameTrueReadsTheConnectedStories(Stored):
             with mock.patch.object(B, "_load", recorded):
                 B.build(self.cur, [rel])
             self.assertIn(other, loaded)
+
+
+for _cls in (APagesBook, TheNewsPageReadsWhatItShows, TheEntityPageReadsWhatItShows, CameTrueReadsTheConnectedStories):
+    for _name in [n for n in dir(built_tests.Stored) if n.startswith("test")]:   # the seeding base's tests: its module
+        setattr(_cls, _name, None)
+del _cls, _name
 
 
 if __name__ == "__main__":

@@ -228,7 +228,7 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     item = queue_get(cur, item_id)
     if item is None:
         raise NotFound(item_id)
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the item's entities and their clusters, not the whole book
     a, b = item["a"], item["b"]
     applied: Dict[str, Any] = {"answer": ans}
     if item["kind"] == "handle":    # 0168 C: `same` = yes, this is their handle; any other answer = no

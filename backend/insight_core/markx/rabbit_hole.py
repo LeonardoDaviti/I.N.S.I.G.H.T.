@@ -107,8 +107,11 @@ def discover_rows(cur: Any, *, limit: int = 12) -> List[Dict[str, Any]]:
     if not edges:
         return []
     from insight_core.markx.entity_views import named_now
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the edges' entities, not the whole book
+    book.prime(ids=[x for e in edges for x in e])
     named = named_now(cur, book)
+    if isinstance(named, I._Has):
+        named.want({book.root(x) for e in edges for x in e})
     works: Dict[str, Set[str]] = {}
     for a, b in edges:
         ra, rb = book.root(a), book.root(b)

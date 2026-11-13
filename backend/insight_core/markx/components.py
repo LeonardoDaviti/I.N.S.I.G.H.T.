@@ -194,8 +194,9 @@ def components_of(book: I.Book, root: str) -> List[str]:
     if not product_like(book, root):
         return []
     members = set(book.cluster(root))
-    out = {book.root(x) for x, e in book.ents.items()
-           if e.level == "thing" and e.parent in members and e.status != "not_entity" and book.root(x) != root}
+    out = {book.root(x) for x in book.with_parent_in(root)   # v10.17 (0186): asked of the book, not walked
+           if (e := book.ents[x]).level == "thing" and e.parent in members and e.status != "not_entity"
+           and book.root(x) != root}
     return sorted(r for r in out if r in book.ents)
 
 
