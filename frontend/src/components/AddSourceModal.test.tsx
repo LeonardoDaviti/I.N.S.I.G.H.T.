@@ -186,6 +186,13 @@ describe('new spheres (issue 0135)', () => {
     expect(await within(dialog()).findByText('No feed found: the site refused INSIGHT (blocked)')).toBeInTheDocument();
   });
 
+  it('a bridge that did not answer is not "no bridge" (issue 0185)', async () => {
+    setup({ success: true, status: 'none', feeds: [], homepage: false, pages: [], reason: 'bridge did not answer' });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'shut.example/someone');
+    expect(await within(dialog()).findByText(/^No feed found: the bridge on this server did not answer/)).toBeInTheDocument();
+    expect(within(dialog()).queryByText(/no bridge is set up/)).toBeNull();
+  });
+
   it('says when only a saved search was found (issue 0137)', async () => {
     setup({ success: true, status: 'found', homepage: false, pages: [], note: 'only a saved search was found',
       feeds: [{ url: 'https://journal.example/search/rss?q=x', title: 'Keyword search', saved_search: true }] });
