@@ -165,6 +165,18 @@ class Labels(unittest.TestCase):
         D.run(self.cur, now=self.now)
         return a, b, c, d, e
 
+    def test_the_reading_reads_only_the_window_s_candidate_pairs_and_the_queue_is_the_same(self):
+        """0199: labels' reading (decide.load with no incremental state) reads only the candidate pairs its window
+        keeps; a pair whose first post is older than the window changes neither the reading's posts nor the queue."""
+        import dataclasses
+        self.scene()
+        before = [dataclasses.asdict(i) for i in L.population(self.cur, now=self.now)]
+        old_a, old_b = self.post(-40 * 24, "An old post"), self.post(-40 * 24 + 1, "Another old post")
+        repo.add_candidate(self.cur, kind="post_post", a=old_a, b=old_b, source="embedding", score=0.9)
+        world = D.load(self.cur, self.now, D.Config())
+        self.assertNotIn(old_a, world.posts)
+        self.assertEqual([dataclasses.asdict(i) for i in L.population(self.cur, now=self.now)], before)
+
     def test_the_queue_offers_the_run_s_decisions_blind_and_keeps_every_answer(self):
         a, b, c, d, e = self.scene()
         q = L.queue(self.cur, now=self.now)
