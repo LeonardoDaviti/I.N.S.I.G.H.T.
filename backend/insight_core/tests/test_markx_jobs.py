@@ -84,22 +84,22 @@ class TheLabelsQueue(unittest.TestCase):
     def test_due_when_missing_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
         self.assertIsNone(jobs.due(_states(decide=recent), T0))
-        self.assertEqual(jobs.due(_states(decide=recent), T0, labels_missing=True), "labels")
-        self.assertEqual(jobs.due(_states(), T0, labels_missing=True), "decide")                # a run first
-        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0, labels_missing=True),
+        self.assertEqual(jobs.due(_states(decide=recent), T0, kept_missing={"labels"}), "labels")
+        self.assertEqual(jobs.due(_states(), T0, kept_missing={"labels"}), "decide")                # a run first
+        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}), T0, kept_missing={"labels"}),
                          "labels")
 
     def test_a_failed_build_waits_for_its_backoff(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
         failed = {"started_at": T0 - timedelta(minutes=3), "finished_at": T0 - timedelta(minutes=2),
                   "last": {"ok": False, "error": "boom"}, "failures": 1}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True))
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}))
         failed["finished_at"] = T0 - timedelta(minutes=11)                                    # GAP x 2 after its end
-        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, labels_missing=True), "labels")
+        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}), "labels")
         ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}}                   # a newer run's
-        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, labels_missing=True), "labels")
+        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, kept_missing={"labels"}), "labels")
         running = {"started_at": T0 - timedelta(seconds=40), "stage": "building"}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, labels_missing=True))
+        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, kept_missing={"labels"}))
 
 
 class TheOrderOfRuns(unittest.TestCase):

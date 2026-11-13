@@ -66,7 +66,9 @@ GET /api/markx/on                  200 {"on": true} (404 when off, as every path
 GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `page`): the newest written run's rows,
                                    only the differences unless all=1, each {id, tag, headline {text, from}, first_at,
                                    voices, score, posts [{id, title, source, kind, at, role, why, ix}], removed, ix};
-                                   and `gone`: the Mark IX rows no Mark X row holds.
+                                   and `gone`: the Mark IX rows no Mark X row holds. 0198: the jobs process keeps
+                                   both views after each run (news.keep_pages); sent as kept while their inputs are
+                                   the same, else built here as before; a conditional GET (ETag)
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}; 0131 adds
                                    before [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}]
                                    (the older posts it connects to, oldest first, 10 at most) and before_more
@@ -120,7 +122,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, StrictInt
 
 from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
@@ -599,7 +601,12 @@ def switched_on():
 
 @router.get("/news")
 def mx_news_page(all: int = Query(0, ge=0, le=1)):
+    """0198: the view the jobs process kept for the page's inputs now (news.kept_page), sent as kept; none kept (the
+    first start, an input changed since the last build): built here as before."""
     with transaction() as cur:
+        kept = news.kept_page(cur, only_differences=not all)
+        if kept is not None:
+            return Response(content=kept, media_type="application/json")
         return news.page(cur, only_differences=not all)
 
 
@@ -803,12 +810,12 @@ def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), r
     Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
-    with transaction() as cur:
-        got = entity_views.entity_page(cur, str(found), by_limit=by_limit, offer_sample=True, replies=replies,
-                                       stories_limit=stories_limit, loose_limit=loose_limit) if found else None
+    with transaction() as cur:   # 0198: kept while its inputs are the same, else built as before and kept
+        got = entity_views.kept_entity_page(cur, str(found), by_limit=by_limit, replies=replies,
+                                            stories_limit=stories_limit, loose_limit=loose_limit) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
-    return got
+    return Response(content=got, media_type="application/json")
 
 
 class EntitySourcesIn(BaseModel):   # 0144 B1
