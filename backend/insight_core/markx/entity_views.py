@@ -623,7 +623,7 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50) -> Dict
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
     """{mention n: the entity it shows under (root, through pins)} for the post page's panel."""
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the merges and pins, not the whole book
     cur.execute("SELECT n, entity_id::text, guide FROM mx_mentions_now WHERE post_id = %s", (post_id,))   # 0133
     return {n: book.root(book.pins.get((post_id, g, n), eid)) if eid else None for n, eid, g in cur.fetchall()}
 
@@ -639,7 +639,8 @@ def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str,
     rows = cur.fetchall()
     if not rows:
         return {}
-    book = I.load_book(cur)
+    book = I.lazy_book(cur)   # v10.17 (0186): the surging entities' clusters, not the whole book
+    book.prime(ids=[eid for eid, _d, _v, _p in rows])
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for eid, day, voices, pid in rows:
         root = book.root(eid) or eid
