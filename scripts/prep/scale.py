@@ -16,7 +16,9 @@ Run in a backend image with the ref's code at /app and DATABASE_URL the copy (ne
            calls, the rest open), ~440k post_post candidates, 1,500 older mx_runs; story window 400 days
   tracks   4 topic tracks (5 sources each, probes with vectors, 100 owner labels, ~56k judged items)
   stories  Mark IX's full story job over every post (the real code)
-  rounds   N decision runs (the real decide.run) each followed by a fake worker answering the questions it planned
+  rounds   --rounds N (default 0; SCALE_ARGS="--rounds 3" through prepared-db.sh): N decision runs (the real
+           decide.run; the first over the whole copy took over 1.5 h and 30 GB), each followed by a fake worker answering
+           the questions it planned
            (check/join/pair/merge/connect/card/headline/track/cite, by a hash of the task): entities by identity's own
            linking, Mark X stories, News
 """
@@ -383,13 +385,20 @@ def step_tracks(conn):
 
 
 def step_stories(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM mx_settings WHERE key = 'prep_scale_stories'")
+        if cur.fetchone():
+            say("stories: the full story job ran already")
+            return
+    conn.commit()
     import main
-    from insight_core.services import stories_service
     t = time.monotonic()
     summary = main.services().stories.recompute(full=True)
     say(f"stories: the full story job in {time.monotonic() - t:.0f} s: "
         + json.dumps({k: v for k, v in summary.items() if not isinstance(v, (dict, list))}, default=str)[:400])
-    del stories_service
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO mx_settings (key, value) VALUES ('prep_scale_stories', to_jsonb(now()::text))")
+    conn.commit()
 
 
 # ---- the fake worker: every open question of these kinds answered by a hash of the task, through tasks.record ------
@@ -457,7 +466,9 @@ def step_rounds(conn, rounds: int):
 def main_() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", default=",".join(STEPS))
-    ap.add_argument("--rounds", type=int, default=int(os.environ.get("SCALE_ROUNDS", "3")))
+    # 0 by default: the first decision run over the whole copy (identity's full pass over ~130k read posts) took over
+    # 1.5 h and 30 GB of memory on the scratch server (2026-11-13); an agent measuring decision runs makes its own
+    ap.add_argument("--rounds", type=int, default=int(os.environ.get("SCALE_ROUNDS", "0")))
     args = ap.parse_args()
     sys.path.insert(0, "/app")
     import logging

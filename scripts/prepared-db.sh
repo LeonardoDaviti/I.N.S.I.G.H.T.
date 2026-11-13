@@ -6,8 +6,9 @@
 #   scripts/prepared-db.sh clone <set> <newdb>          a scratch copy of prep_<set> (CREATE DATABASE ... TEMPLATE)
 #   scripts/prepared-db.sh drop <db>                    drop a scratch copy (or a prepared copy: --force)
 #   scripts/prepared-db.sh refresh <set> [--ref REF]    only the NEW migrations and backfills, on a copy then swapped in
-#   scripts/prepared-db.sh build <set> [--ref REF] [--rebuild|--remirror]   build prep_<set> (an existing one is
-#                                                       refreshed unless --rebuild; --remirror copies the original again)
+#   scripts/prepared-db.sh build <set> [--ref REF] [--rebuild|--remirror|--resume]   build prep_<set> (an existing one
+#                                                       is refreshed unless --rebuild; --remirror copies the original
+#                                                       again; --resume goes on with a build that stopped)
 #   scripts/prepared-db.sh stamp <db>                   the stamp a copy (or a clone of one) carries
 #   scripts/prepared-db.sh adopt <set> <db>             make prep_<set> a copy of <db> on insight-db (its stamp kept)
 #
@@ -228,9 +229,10 @@ seal() {   # seal <building db> <prep db>: refuse connections, stamp as the comm
 }
 
 cmd_build() {
-  local set="$1"; shift; local ref="" rebuild=0 remirror=""
+  local set="$1"; shift; local ref="" rebuild=0 remirror="" resume=0
   while [ $# -gt 0 ]; do
     case "$1" in --ref) ref="$2"; shift 2;; --rebuild) rebuild=1; shift;; --remirror) remirror=--remirror; rebuild=1; shift;;
+                 --resume) resume=1; rebuild=1; shift;;
                  *) die "unknown option $1";; esac
   done
   source_of "$set" >/dev/null
@@ -242,9 +244,13 @@ cmd_build() {
   [ "$set" = scale ] || src="$(mirror "$src" $remirror)"
   exists "$src" || die "no source database $src"
   local building="${target}__building" t0; t0=$(date +%s)
-  exists "$building" && admin "DROP DATABASE $building WITH (FORCE)"
-  say "copy $src to $building"
-  create_from "$src" "$building"
+  if [ "$resume" = 1 ] && exists "$building"; then
+    say "resuming $building (the steps done are skipped: the scale builder's markers, the migrations and backfills done)"
+  else
+    exists "$building" && admin "DROP DATABASE $building WITH (FORCE)"
+    say "copy $src to $building"
+    create_from "$src" "$building"
+  fi
   admin "ALTER DATABASE $building ALLOW_CONNECTIONS true" >/dev/null
   local prev='{}'
   # scale's source is a prepared copy: its own stamp is kept as where it came from
