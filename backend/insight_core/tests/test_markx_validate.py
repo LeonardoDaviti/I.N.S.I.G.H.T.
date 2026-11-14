@@ -295,7 +295,8 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "source_judge",                                   # 0173
                                               "news_sections",                                  # 0174
                                               "news_place",                                     # 0197
-                                              "unit_types"})                                    # 0181
+                                              "unit_types",                                     # 0181
+                                              "significance"})                                  # 0208
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
