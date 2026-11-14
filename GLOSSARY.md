@@ -80,3 +80,13 @@ timeline, cards and search read them (`entity_facts.read`, by id), never re-deri
 
 **Sense** *(0184)* — one thing a name stands for. A bare name ("Vexa") may have several senses, each its own entity
 with its own identity facts; a mention is placed in one sense (a pin `by` facts), never joined by the name alone.
+
+**Official channel** *(0196, built v10.18; Shadow by default)* — an actor's own stream of announcements (its blog or newsroom section, its
+releases feed, its X or Telegram account), proven by code: owned by the actor, a dated stream, carrying its
+announcements (`markx/official.py`). Only an official channel is ever followed by INSIGHT itself ("added
+automatically", one-tap undo); an event with none shows "official source not found", and a lawsuit, a regulator's
+action or a scoop "no official source".
+
+**Item filter** *(0196, built v10.18)* — a source's rule for which of its items are shown (a release, not a per-commit
+build), proposed once by the worker from the source's recent items and applied by code at store time
+(`utils/item_filter.py`, `source_filters`, `posts.filtered_by`); a hidden item is stored and kept, never deleted.

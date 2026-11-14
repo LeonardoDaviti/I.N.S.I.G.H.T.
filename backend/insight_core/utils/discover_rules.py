@@ -670,13 +670,19 @@ def follow_url(url: str, platforms: Platforms = {}) -> Optional[str]:
     return f"https://{host}/{first + '/' if first else ''}"
 
 
+# 0196: the worker's judgement of a suggestion (source_judge: follow and fits first, then maybe, the unjudged, a skip,
+# then one that does not fit the reader), ahead of link volume within a section.
+FIT_ORDER = {"follow": 0, "maybe": 1, None: 1, "skip": 2, "not_fit": 3}
+
+
 def order(found: Iterable[Mapping]) -> List[Mapping]:
     """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
     untested suggestion): those tested followable first, then the section of those that can't be followed
     as a feed, then the untested; each by score, ties by key, but one none of your sources links (Mark X's
     originals rows, issue 0172 b4) after every linked one of its section. Each of the section says so
     (`section: "unfollowable"`)."""
-    out = sorted(found, key=lambda s: (section(s), not s.get("voices"), -s["score"], s["key"]))
+    out = sorted(found, key=lambda s: (section(s), FIT_ORDER.get(s.get("fit"), 1), not s.get("voices"), -s["score"],
+                                       s["key"]))
     for s in out:
         if section(s) == 1:
             s["section"] = "unfollowable"   # type: ignore[index]

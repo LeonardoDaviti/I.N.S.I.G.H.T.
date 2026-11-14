@@ -76,7 +76,8 @@ NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts 
                    "WHERE f.post_id = p.id)")
 # A page Collect originals stored (issue 0126) is shown only inside its story: no row of a feed (the Main feed,
 # a track, a source's list) and no unread count. Later, Kept and History list it when you put it there.
-NOT_STORY_ONLY = f"NOT (p.metadata ? '{STORY_ONLY_KEY}')"
+# 0196: so is a post its source's item filter hid (a build of a release feed): stored, counted on its source's page.
+NOT_STORY_ONLY = f"NOT (p.metadata ? '{STORY_ONLY_KEY}') AND p.filtered_by IS NULL"
 # A scope's restriction to some posts (FeedScope.only, v10.12.1), its one parameter the ids.
 ONLY_SQL = "p.id = ANY(%s::uuid[])"
 _YOURS_FILTERS = ("later", "starred", "history")

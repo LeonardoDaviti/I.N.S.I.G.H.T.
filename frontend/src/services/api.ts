@@ -1042,6 +1042,68 @@ export interface MainSourceResponse {
   within_days: number;
 }
 
+/** Issue 0196: an official channel the official-channels job found, and where it stands. */
+export type OfficialKind = 'x' | 'telegram' | 'youtube' | 'section' | 'releases';
+export type OfficialState = 'candidate' | 'proven' | 'would_add' | 'added' | 'undone' | 'refused' | 'covered';
+export type OfficialFrom = 'own_page' | 'code_address' | 'handle' | 'web_search' | 'web_announcement';
+export interface OfficialProof {
+  via: string;
+  address: string;
+  items: number;
+  dated: number;
+  holds: number;
+  linked: number;
+  newest_days: number | null;
+}
+export interface OfficialJudge {
+  verdict: 'follow' | 'maybe' | 'skip' | null;
+  fits: boolean | null;
+  original: string | null;
+  reasons: string[];
+}
+export interface OfficialFilter {
+  kind: string;
+  hide: { field: string; regex: string; why: string }[];
+}
+export interface OfficialRow {
+  id: string;
+  /** `acme.example/blog/`, `x.com/acme`, `github.com/acme/widget`. */
+  key: string;
+  kind: OfficialKind;
+  state: OfficialState;
+  why: string;
+  actor: { id: string | null; name: string | null };
+  /** The address followed. */
+  follow: string | null;
+  from: OfficialFrom | null;
+  /** How it is the actor's. */
+  owned: string | null;
+  proof: OfficialProof | null;
+  judge: OfficialJudge | null;
+  filter: OfficialFilter | null;
+  source_id: string | null;
+  hidden_items: number;
+  events: { story: string; headline: string; voices: number; first_at: string | null }[];
+  decided_at: string | null;
+  created_at: string | null;
+}
+export interface OfficialResponse {
+  success: true;
+  mode: 'off' | 'shadow' | 'on';
+  cap: number;
+  added_today: number;
+  counts: Record<string, number>;
+  events: Record<string, number>;
+  rows: OfficialRow[];
+}
+/** A source's item filter (issue 0196): which of its items are hidden, and by whom. */
+export interface ItemFilterResponse {
+  success: true;
+  rule: OfficialFilter | null;
+  by: string | null;
+  hidden: number;
+}
+
 /** One Pages row (issue 0113): a page your stories start at, savable as one post. */
 export interface DiscoverPage {
   url: string;
@@ -1343,6 +1405,18 @@ export function createApi() {
      *  the shown channels in the background; nothing is followed here. */
     getMainSourceMissing: (signal?: AbortSignal) =>
       request<MainSourceResponse>('/api/discover/main-source', { signal }),
+    /** Official channels (issue 0196): what the official-channels job found, why, from where and how it was checked. */
+    getOfficial: (signal?: AbortSignal) =>
+      request<OfficialResponse>('/api/official', { signal }),
+    /** Undo an official channel added automatically: its source stops and it is not added again. */
+    undoOfficial: (id: string) =>
+      request<{ success: true; id: string; state: 'undone'; source_id: string | null }>(
+        `/api/official/${enc(id)}/undo`, { method: 'POST' }),
+    /** A source's item filter (issue 0196): the rule, who set it, and how many items it hides. */
+    getItemFilter: (sourceId: string, signal?: AbortSignal) =>
+      request<ItemFilterResponse>(`/api/sources/${enc(sourceId)}/item-filter`, { signal }),
+    setItemFilter: (sourceId: string, rule: OfficialFilter | null) =>
+      request<ItemFilterResponse>(`/api/sources/${enc(sourceId)}/item-filter`, { method: 'PUT', body: { rule } }),
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),

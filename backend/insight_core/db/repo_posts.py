@@ -997,6 +997,13 @@ class PostsRepository:
             self._fold_albums(cur, channels)
             for ids in backlog_undated.values():
                 cur.execute(UNDATED_BACKLOG_SQL, {"ids": ids})
+            if result.inserted_ids:   # 0196: a source's item filter hides the new posts it matches (kept, never deleted)
+                from insight_core.utils import item_filter
+                try:
+                    with conn.transaction():
+                        item_filter.mark(cur, result.inserted_ids)
+                except Exception as exc:  # noqa: BLE001 - the posts are stored; shown is the safe side
+                    self.logger.error("Item filter: could not mark the new posts: %s", exc)
         commit()
         return result
 
