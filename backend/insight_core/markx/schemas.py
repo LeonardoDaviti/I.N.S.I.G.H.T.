@@ -334,8 +334,8 @@ STANCE_SCHEMA = {
     },
 }
 
-# 0145 (tracks as topics): the judge's verdict on one post for one track (track-v1), and a track's sub-topics proposed
-# from its items (subtopics-v1). The checks that read the input (one line, the item numbers) are validate's.
+# 0145 (tracks as topics): the judge's verdict on one post for one track (track-v1; 0207: track-v2). The checks that read the input (one
+# line) are validate's. (0145's subtopics-v1 proposals are replaced by 0207's clustering; their rows are kept.)
 TRACK_WHY_CHARS = 300
 TRACK_SCHEMA = {
     "type": "object",
@@ -343,14 +343,37 @@ TRACK_SCHEMA = {
     "properties": {"in": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                    "subtopic": _STR_OR_NULL, "why": {"type": "string", "minLength": 1}},
 }
-SUBTOPICS_MAX = 8             # the guide asks for 3-8 (fewer when the items are few or alike)
-SUBTOPICS_SCHEMA = {
+# 0207: the sub-topics the clustering found, named (subtopics-v2: each group keyed g1..gK in the question, its name and
+# a one-line definition), the posts placed into them (subtopic-place-v1: each post p1..pN into s1..sK or none), and
+# a sub-topic's digest (digest-v1: 2-4 points, each citing the question's posts [n] it
+# rests on). The checks that read the input (the keys, the post numbers) are validate's.
+SUBTOPIC_NAME_CHARS, SUBTOPIC_DEFINITION_CHARS = 60, 200
+SUBTOPIC_NAMES_SCHEMA = {
     "type": "object",
-    "required": ["subtopics"],
-    "properties": {"subtopics": {"type": "array", "minItems": 1, "maxItems": SUBTOPICS_MAX, "items": {
-        "type": "object", "required": ["name", "items"],
-        "properties": {"name": {"type": "string", "minLength": 1}, "definition": _STR_OR_NULL,
-                       "items": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}}},
+    "required": ["names"],
+    "properties": {"names": {"type": "array", "minItems": 1, "items": {
+        "type": "object", "required": ["key", "name"],
+        "properties": {"key": {"type": "string", "pattern": "^g[0-9]{1,2}$"},
+                       "name": {"type": "string", "minLength": 1, "maxLength": SUBTOPIC_NAME_CHARS},
+                       "definition": _STR_OR_NULL}}}},
+}
+SUBTOPIC_PLACE_SCHEMA = {
+    "type": "object",
+    "required": ["placements"],
+    "properties": {"placements": {"type": "array", "minItems": 1, "items": {
+        "type": "object", "required": ["post", "subtopic"],
+        "properties": {"post": {"type": "string", "pattern": "^p[0-9]{1,3}$"},
+                       "subtopic": {"type": "string", "pattern": "^(s[0-9]{1,2}|none)$"}}}}},
+}
+DIGEST_POINTS = (2, 4)
+DIGEST_POINT_CHARS = 260
+DIGEST_SCHEMA = {
+    "type": "object",
+    "required": ["points"],
+    "properties": {"points": {"type": "array", "minItems": DIGEST_POINTS[0], "maxItems": DIGEST_POINTS[1], "items": {
+        "type": "object", "required": ["text", "cites"],
+        "properties": {"text": {"type": "string", "minLength": 1, "maxLength": DIGEST_POINT_CHARS},
+                       "cites": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}}}}}},
 }
 # 0147 (track recall): a track's example posts (probes-v1): 12-20 that belong, up to 4 near-misses that don't.
 PROBES_MIN, PROBES_MAX, NEAR_MAX, PROBE_CHARS = 12, 20, 4, 300
@@ -536,8 +559,11 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
-    Kind("track", "track-v1", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py)
-    Kind("subtopics", "subtopics-v1", "track", SUBTOPICS_SCHEMA),    # 0145: a track's sub-topics, proposed
+    Kind("track", "track-v2", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py); 0207: v2
+    Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),   # 0207: the sub-topics found, named (0145's v1
+                                                                         # proposed them; its rows are kept)
+    Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),             # 0207: a sub-topic's digest with citations
+    Kind("subtopic_place", "subtopic-place-v1", "track", SUBTOPIC_PLACE_SCHEMA),   # 0207: posts into the sub-topics
     Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # 0147: a track's example posts (track recall)
     Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
@@ -614,6 +640,7 @@ def guide_of(cur, kind: str) -> Optional[str]:
 # per-call setting): {guide: (kind, schema)}. A task names its guide; its answers are checked by that guide's schema.
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
+    "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
 }
 
 

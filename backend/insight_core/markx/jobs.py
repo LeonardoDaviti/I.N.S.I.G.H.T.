@@ -556,7 +556,23 @@ class Jobs:
         the track pages and the suggestions not kept for their inputs built and kept (tracks.keep_pages)."""
         from insight_core.markx import tracks as mx_tracks
         self._keep_track_places()
-        return self._keep("tracks", lambda cur: mx_tracks.keep_pages(cur, now=self.clock()))
+        subtopics = self._keep_track_subtopics()
+        out = self._keep("tracks", lambda cur: mx_tracks.keep_pages(cur, now=self.clock()))
+        return None if out is None else {**out, "subtopics": subtopics}
+
+    def _keep_track_subtopics(self) -> Dict[str, Any]:
+        """0207: the topic tracks whose posts in the track changed clustered into their sub-topics again
+        (track_subtopics.refresh), in a transaction of its own, before the pages are kept. A failure is logged and
+        recorded as `failed`, never failing the pages (they show the last sub-topics)."""
+        from insight_core.markx import track_subtopics
+        t = time.monotonic()
+        try:
+            with self._tx() as cur:
+                got = track_subtopics.refresh(cur, now=self.clock())
+        except Exception as exc:  # noqa: BLE001 - derived; the pages show the sub-topics as they were
+            log.exception("Mark X jobs: clustering the track sub-topics failed")
+            return {"failed": str(exc)[:300]}
+        return {"tracks": got, "seconds": round(time.monotonic() - t, 1)}
 
     def unread(self) -> Optional[Dict[str, Any]]:
         """0206: the unread counts counted and kept for their inputs (reader_service.keep_unread_counts)."""

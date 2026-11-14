@@ -1,14 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { tracksApi, type TrackItem, type TrackLabel, type TrackPage } from '../../services/tracks';
+import {
+  tracksApi, type ShadowMeasure, type TrackItem, type TrackLabel, type TrackPage, type TrackSection, type TrackSeen,
+  type TrackTool,
+} from '../../services/tracks';
 import { Button, Input, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import TrackSheet from './TrackSheet';
 import TrackScout from './TrackScout';
-import { foundByLine, joinLine, precisionLine, rankWords, suggestionLine, footerLine, whyLine } from './trackWords';
+import {
+  baseline, foundByLine, isNew, joinLine, newSince, precisionLine, rankWords, shadowLine, stateWords, suggestionLine, footerLine,
+  toolLine, trackNewLine, whyLine,
+} from './trackWords';
 import { bylineText } from '../../lib/byline';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
@@ -43,11 +49,14 @@ function Labels({ folderId, item }: { folderId: string; item: TrackItem }) {
   );
 }
 
-function Row({ folderId, item, discover = false }: { folderId: string; item: TrackItem; discover?: boolean }) {
+function Row({ folderId, item, discover = false, fresh = false }: {
+  folderId: string; item: TrackItem; discover?: boolean; fresh?: boolean;
+}) {
   return (
-    <li className="flex items-start gap-3 border-b border-line py-2.5" data-track-item={item.post_id}>
+    <li className="flex items-start gap-3 border-b border-line py-2.5" data-track-item={item.post_id} data-new={fresh || undefined}>
       <div className="min-w-0 flex-1">
         <p className="text-[0.9375rem] font-semibold leading-[1.35] text-fg [overflow-wrap:anywhere]">
+          {fresh ? <span className="mr-1.5 text-[0.75rem] font-normal text-fg-2" aria-label="new since you looked">new ·</span> : null}
           <TextLink to={`/posts/${encodeURIComponent(item.post_id)}`}>{item.title || '(no title)'}</TextLink>
         </p>
         <p className="mt-0.5 text-[0.8125rem] tabular-nums leading-5 text-fg-3 [overflow-wrap:anywhere]"
@@ -104,6 +113,89 @@ function Suggestions({ page }: { page: TrackPage }) {
   );
 }
 
+/** 0207: a sub-topic's digest: each point with the posts it cites, numbered in the order they are first cited. */
+function Digest({ section, shadow }: { section: TrackSection; shadow?: ShadowMeasure }) {
+  const d = section.digest;
+  if (!d?.points.length) return null;
+  const order: string[] = [];
+  for (const p of d.points) for (const c of p.cites) if (!order.includes(c)) order.push(c);
+  const titles = new Map(section.items.map((it) => [it.post_id, it.title ?? '']));
+  return (
+    <div className="mt-1.5 mb-1 border-l border-line pl-3" aria-label={`Digest of ${section.name}`} data-digest-stale={d.stale || undefined}>
+      <ul className="space-y-0.5">
+        {d.points.map((p, k) => (
+          <li key={k} className="text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+            {p.text}{' '}
+            {p.cites.map((c) => (
+              <TextLink key={c} to={`/posts/${encodeURIComponent(c)}`} muted className="text-[0.75rem] tabular-nums"
+                title={titles.get(c) || undefined}>[{order.indexOf(c) + 1}]</TextLink>
+            ))}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-0.5 text-[0.6875rem] text-fg-3">
+        digest by Haiku{d.stale ? ' · new posts since, a fresh one is on its way' : ''}{shadowLine(shadow) ? ` · ${shadowLine(shadow)}` : ''}
+      </p>
+    </div>
+  );
+}
+
+function Section({ folderId, section, since, onSeen, shadow }: {
+  folderId: string; section: TrackSection; since: string | null; onSeen: (id: string) => void; shadow?: ShadowMeasure;
+}) {
+  const [open, setOpen] = useState(section.state !== 'quiet');
+  const fresh = newSince(section.joined, since);
+  const state = stateWords(section);
+  return (
+    <section aria-label={section.name} className="mb-6" data-subtopic-state={section.state}>
+      <h2 className="flex flex-wrap items-baseline gap-x-2 border-b border-line pb-1 text-[0.8125rem] font-semibold text-fg-2">
+        <button type="button" className="text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {section.name} <span className="font-normal text-fg-3">· {section.count}</span>
+        </button>
+        {state ? <span className="font-normal text-fg-3">· {state}</span> : null}
+        {fresh ? (
+          <>
+            <span className="font-normal text-fg">· {fresh} new since you looked</span>
+            {section.id ? (
+              <Button size="sm" variant="ghost" className="text-[0.75rem] font-normal" onClick={() => onSeen(section.id as string)}>
+                mark seen
+              </Button>
+            ) : null}
+          </>
+        ) : null}
+      </h2>
+      {open ? (
+        <>
+          {section.definition ? <p className="mt-1 text-[0.75rem] text-fg-3">{section.definition}</p> : null}
+          <Digest section={section} shadow={shadow} />
+          <ul>{section.items.map((it) => <Row key={it.post_id} folderId={folderId} item={it} fresh={isNew(it, since)} />)}</ul>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+/** 0207: the tools and products the track's practitioners discuss, by voices, each linked to its entity page. */
+function Tools({ tools, shadow }: { tools: TrackTool[]; shadow?: ShadowMeasure }) {
+  if (!tools.length) return null;
+  return (
+    <section aria-label="Tools in use" className="mb-6">
+      <h2 className="border-b border-line pb-1 text-[0.8125rem] font-semibold text-fg-2">
+        Tools in use <span className="font-normal text-fg-3">· by how many voices here discuss them</span>
+        {shadowLine(shadow) ? <span className="ml-1 font-normal text-fg-3" data-shadow="tools">· {shadowLine(shadow)}</span> : null}
+      </h2>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        {tools.map((t) => (
+          <li key={t.id} className="text-[0.8125rem] leading-6" data-tool={t.id}>
+            <TextLink to={`/markx/entities/${encodeURIComponent(t.id)}`} title={t.what ?? undefined}>{t.name}</TextLink>
+            <span className="ml-1 tabular-nums text-fg-3">{toolLine(t)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /**
  * A track as a topic (issue 0145, Mark X): its posts judged against the owner's description, as sections by
  * sub-topic (newest first within), then Discover (passive sources' matches, ranked by calibrated precision), each
@@ -113,6 +205,20 @@ function Suggestions({ page }: { page: TrackPage }) {
 export default function TrackTopic({ folderId }: { folderId: string }) {
   const [editing, setEditing] = useState(false);
   const query = useQuery({ queryKey: trackKey(folderId), queryFn: () => tracksApi.page(folderId), staleTime: 30_000 });
+  // 0207: the looks before this visit are what "new since you looked" counts from; this open is recorded as a look
+  const [seen, setSeen] = useState<TrackSeen | null>(null);
+  const topic = query.data?.track.topic ?? false;
+  useEffect(() => {
+    if (!topic) return;
+    let live = true;
+    tracksApi.look(folderId).then((got) => { if (live) setSeen(got.before); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [folderId, topic]);
+  const markSeen = (sub: string) => {
+    tracksApi.look(folderId, sub).then((got) => setSeen((was) => ({
+      track: was?.track ?? got.before.track, subtopics: { ...(was?.subtopics ?? {}), [sub]: got.now.subtopics[sub] },
+    }))).catch(() => undefined);
+  };
   if (query.isPending) return <LoadingState label="Loading the topic" rows={6} />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} title="Could not load the topic" />;
   const page = query.data;
@@ -138,18 +244,20 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         <p className="mt-1 text-[0.75rem] leading-5 text-fg-3">
           {precisionLine(page.calibration)} · {joinLine(page.calibration)}
           {counts.waiting ? ` · ${plural(counts.waiting, 'post')} waiting for Haiku` : ''}
+          {trackNewLine(page, seen) ? ` · ${trackNewLine(page, seen)}` : ''}
         </p>
         <Button size="sm" variant="ghost" className="mt-1 text-[0.75rem]" onClick={() => setEditing(true)}>edit the topic</Button>
       </div>
       <Suggestions page={page} />
+      <Tools tools={page.tools ?? []} shadow={page.shadow?.tools} />
+      {page.sections.some((s) => s.id) && shadowLine(page.shadow?.subtopics) ? (
+        <p className="mb-2 text-[0.75rem] text-fg-3" data-shadow="subtopics">
+          Sub-topics found and placed by INSIGHT · {shadowLine(page.shadow?.subtopics)}
+        </p>
+      ) : null}
       {page.sections.length ? page.sections.map((s) => (
-        <section key={s.id ?? 'other'} aria-label={s.name} className="mb-6">
-          <h2 className="border-b border-line pb-1 text-[0.8125rem] font-semibold text-fg-2">
-            {s.name} <span className="font-normal text-fg-3">· {s.count}</span>
-          </h2>
-          {s.definition ? <p className="mt-1 text-[0.75rem] text-fg-3">{s.definition}</p> : null}
-          <ul>{s.items.map((it) => <Row key={it.post_id} folderId={folderId} item={it} />)}</ul>
-        </section>
+        <Section key={s.id ?? 'other'} folderId={folderId} section={s} since={baseline(seen, s.id)} onSeen={markSeen}
+          shadow={page.shadow?.digests} />
       )) : (
         <p className="mb-6 text-[0.8125rem] text-fg-2">Nothing in this track yet. The worker judges its posts at its next run.</p>
       )}

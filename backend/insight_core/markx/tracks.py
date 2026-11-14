@@ -26,7 +26,7 @@ belonged, on the server copy: 0145-built.md); then the highest value that keeps
 PASS_SHARE of the ✓ examples passing, each ✓ scored against the profile made without it (leave-one-out, so the
 examples don't vouch for themselves). Each plan logs passed / scanned per track (mx_tracks.stats).
 
-**The judge** (`track`, guide track-v1, 10 posts a call): per post {in, confidence 0-1, subtopic, why}. Its input is
+**The judge** (`track`, guide track-v2 (0207; track-v1 before), 10 posts a call): per post {in, confidence 0-1, subtopic, why}. Its input is
 the track's header (name, what belongs, what doesn't, the locked sub-topics, the 4 newest ✓ and 2 newest ✗ examples,
 titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds (validate._track: `why` one line).
 
@@ -40,16 +40,16 @@ titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds
     JOIN_LOWER+: those at or above the lowest such band join. When that stops holding they go back to Discover;
   - `out`: kept with its verdict, never shown, counted.
 
-**Sub-topics** (`subtopics`, guide subtopics-v1, one call a track): once a track holds SUBTOPIC_MIN_ITEMS items, and
-then weekly when new items came, INSIGHT proposes 1-8 (the guide asks 3-8) from its items' judge subtopics and titles.
-Each sub-topic collects judge subtopic strings (`keys`, folded); an item goes to the sub-topic holding its string, or
-named like it, else "Other". The owner renames, merges, splits (moves strings to a new one) and locks; an owner edit
-locks it. A new proposal replaces the unlocked ones (closed with valid_to) and keeps the locked; the judge is given the
-locked names. The track page reads as sections by sub-topic (newest first within), then Discover.
+**Sub-topics** (0207: markx/track_subtopics.py owns them): found from the posts in the track (their vectors), each
+keeping its id while it is the same sub-topic, named by the worker, each with a digest; the owner renames, merges,
+splits and locks. The track page reads as sections by sub-topic (newest first within), then Discover, with the tools
+the track's practitioners discuss (markx/track_tools.py).
 
 **The track finds its sources**: a passive source with SUGGEST_MIN+ items judged `in` (and not ✗ by the owner) in
-SUGGEST_DAYS days is suggested on the track page and on Discover; making it active adds it to the folder (no new source
-is added here: a new one comes through the feed finder).
+SUGGEST_DAYS days, that are at least SUGGEST_SHARE of its posts of those days (0207: the Wilson lower bound of that
+share; a large general source with many matches among thousands of posts is not this track's source), is suggested on
+the track page and on Discover, the surest first; making it active adds it to the folder (no new source is added here:
+a new one comes through the feed finder).
 
 Only mx_* tables are written, except the owner's own "make it active" (the folder's source list, as Sources does).
 """
@@ -74,6 +74,8 @@ log = logging.getLogger(__name__)
 
 KIND = "track"
 SUB_KIND = "subtopics"
+DIGEST_KIND = "digest"
+PLACE_KIND = "subtopic_place"
 EMBED_KIND = "embed"
 ITEM_KIND = "track"            # mx_labels.item_kind
 MODEL = "bge-m3"
@@ -100,10 +102,8 @@ RANK_MIN_LABELS = 10
 JOIN_MIN_LABELS = 20
 JOIN_PRECISION = 0.90
 JOIN_LOWER = 0.85
-SUBTOPIC_MIN_ITEMS = 15
-SUBTOPIC_EVERY = timedelta(days=7)
-SUBTOPIC_ITEMS = 120           # the newest items a proposal reads
 SUGGEST_MIN = 3
+SUGGEST_SHARE = 0.10           # 0207: a suggested source's posts in the track's sphere: this share at least (lower bound)
 SUGGEST_DAYS = 30
 LABELS = ("in", "out")
 ANSWERS = LABELS + ("undo",)
@@ -126,8 +126,9 @@ def _sha(text: str) -> str:
 
 
 def fold_key(s: Optional[str]) -> str:
-    """A sub-topic string as it is compared: casefolded, punctuation as spaces, squashed."""
-    return re.sub(r"[\W_]+", " ", (s or "").casefold()).strip()
+    """A sub-topic string as it is compared (track_subtopics.fold_key)."""
+    from insight_core.markx import track_subtopics
+    return track_subtopics.fold_key(s)
 
 
 # ---- the track ---------------------------------------------------------------------------------------
@@ -233,6 +234,28 @@ def plan_vectors(cur: Cursor, **_kw: Any) -> int:
             cur.execute("""UPDATE mx_tracks SET v = e.v, v_hash = %s FROM mx_embeddings e
                             WHERE mx_tracks.folder_id = %s AND e.post_id = %s AND e.model = %s""",
                         (h, t["folder_id"], task["a"], MODEL))
+    return added
+
+
+MEMBER_VECTORS = 500   # 0207: the posts in topic tracks with no vector, embedded at most this many a planner call
+
+
+def plan_member_vectors(cur: Cursor, *, limit: int = MEMBER_VECTORS) -> int:
+    """0207: an `embed` task for each post in a topic track (placed in the track or joined, as kept) with no vector and
+    none asked, whatever the reading window: its sub-topics are found from the vectors (track_subtopics). How many
+    were added."""
+    from insight_core.markx import embed
+    cur.execute("""SELECT DISTINCT k.post_id::text FROM mx_track_places k JOIN posts p ON p.id = k.post_id
+                    WHERE k.place IN ('track', 'joined')
+                      AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = k.post_id AND e.model = %(m)s)
+                      AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'embed' AND t.a = k.post_id
+                                         AND t.status <> 'answered')
+                      AND NOT EXISTS (SELECT 1 FROM mx_embed_skips s WHERE s.post_id = k.post_id
+                                         AND s.text_version = %(v)s)
+                    LIMIT %(limit)s""", {"m": MODEL, "v": embed.TEXT_VERSION, "limit": limit})
+    added = 0
+    for (pid,) in cur.fetchall():
+        added += bool(embed.embed_task(cur, pid, priority=-1)[1])
     return added
 
 
@@ -369,9 +392,8 @@ def _example_line(p: tasks.Post) -> str:
 
 
 def locked_names(cur: Cursor, folder_id: Any) -> List[str]:
-    cur.execute("""SELECT name FROM mx_track_subtopics WHERE track_id = %s AND valid_to IS NULL AND locked
-                    ORDER BY lower(name), name""", (str(folder_id),))
-    return [n for (n,) in cur.fetchall()]
+    from insight_core.markx import track_subtopics
+    return track_subtopics.locked_names(cur, folder_id)
 
 
 def header(cur: Cursor, track: Dict[str, Any], ex: Optional[Dict[str, List[str]]] = None) -> str:
@@ -635,185 +657,27 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
 # ---- answers -----------------------------------------------------------------------------------------
 
 def after_answer(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> None:
-    """tasks.record's part: a track verdict fills its items (every post sharing the task); a sub-topic proposal is
-    applied."""
+    """tasks.record's part: a track verdict fills its items (every post sharing the task); a sub-topics naming answer
+    goes to track_subtopics."""
     if task["kind"] == KIND:
         _fill(cur, "task_id = %s", (task["id"],), call_id, answer)
-    elif task["kind"] == SUB_KIND:
-        apply_proposal(cur, task, answer)
+    elif task["kind"] in (SUB_KIND, DIGEST_KIND, PLACE_KIND):
+        from insight_core.markx import track_subtopics
+        track_subtopics.after_answer(cur, task, call_id, answer)
 
 
-# ---- sub-topics --------------------------------------------------------------------------------------
+# ---- sub-topics: markx/track_subtopics.py (0207) ------------------------------------------------------
 
 def subtopics(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
-    """The track's current sub-topics (oldest first)."""
-    cur.execute("""SELECT id::text, name, definition, keys, locked, made_by, created_at FROM mx_track_subtopics
-                    WHERE track_id = %s AND valid_to IS NULL ORDER BY created_at, lower(name), id""", (str(folder_id),))
-    return [{"id": i, "name": n, "definition": d, "keys": list(k or []), "locked": lk, "made_by": m, "created_at": at}
-            for i, n, d, k, lk, m, at in cur.fetchall()]
+    """The track's current sub-topics (oldest first): track_subtopics.current."""
+    from insight_core.markx import track_subtopics
+    return track_subtopics.current(cur, folder_id)
 
 
-def assign(subs: Sequence[Dict[str, Any]], raw: Optional[str]) -> Optional[str]:
-    """The sub-topic an item's judge subtopic goes to: the one holding its string, else the one named like it."""
-    key = fold_key(raw)
-    if not key:
-        return None
-    for s in subs:
-        if key in s["keys"]:
-            return s["id"]
-    for s in subs:
-        if key == fold_key(s["name"]):
-            return s["id"]
-    return None
-
-
-_ITEM_RE = re.compile(r"^\[(\d+)\] \((.*?)\) ", re.M)
-
-
-def subtopics_input(track: Dict[str, Any], items: Sequence[Dict[str, Any]], locked: Sequence[str]) -> str:
-    lines = [f"TRACK: {track['name']}", f"Belongs: {track['description']}"]
-    if locked:
-        lines.append("Locked: " + "; ".join(locked))
-    lines.append("")
-    lines.append("ITEMS:")
-    for n, it in enumerate(items, 1):
-        title = re.sub(r"\s+", " ", it.get("title") or "").strip()[:EXAMPLE_CHARS]
-        why = re.sub(r"\s+", " ", it.get("why") or "").strip()[:160]
-        lines.append(f"[{n}] ({it.get('subtopic') or '-'}) {title} — {why}")
-    return "\n".join(lines)
-
-
-def numbered(input: str) -> Dict[int, str]:
-    """{item number: its judge subtopic} of a sub-topics question."""
-    return {int(n): raw for n, raw in _ITEM_RE.findall(input)}
-
-
-def plan_subtopics(cur: Cursor, *, now: Optional[datetime] = None, **_kw: Any) -> int:
-    """A `subtopics` task for each track with SUBTOPIC_MIN_ITEMS+ items and no proposal in SUBTOPIC_EVERY (or none
-    yet) and none open: how many were added."""
-    now = now or datetime.now(timezone.utc)
-    schemas.ensure_guides(cur)
-    added = 0
-    for t in described(cur):
-        cur.execute("""SELECT max(created_at) FILTER (WHERE status = 'answered'),
-                              count(*) FILTER (WHERE status IN ('open', 'leased'))
-                         FROM mx_tasks WHERE kind = %s AND a = %s""", (SUB_KIND, t["folder_id"]))
-        last, pending = cur.fetchone()
-        if pending or (last is not None and now - last < SUBTOPIC_EVERY):
-            continue
-        items = [it for it in placed(cur, t)["items"] if it["place"] in ("track", "joined")]
-        if len(items) < SUBTOPIC_MIN_ITEMS:
-            continue
-        if last is not None and not any(it["answered_at"] and it["answered_at"] > last for it in items):
-            continue
-        items = sorted(items, key=lambda it: it["at"] or now, reverse=True)[:SUBTOPIC_ITEMS]
-        text = subtopics_input(t, items, locked_names(cur, t["folder_id"]))
-        if repo.add_task(cur, kind=SUB_KIND, guide=schemas.KINDS[SUB_KIND].guide, subject_kind="track", input=text,
-                         a=t["folder_id"])[1]:
-            added += 1
-    return added
-
-
-def apply_proposal(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> int:
-    """A proposal's sub-topics: the unlocked current ones closed, the proposed ones added (a name a locked one has
-    gives its strings to that one). Each judge subtopic string goes to the proposed sub-topic most of its items went
-    to. How many were added."""
-    folder = str(task["a"])
-    raw = numbered(task["input"])
-    votes: Dict[str, Counter] = defaultdict(Counter)
-    proposed = []
-    for k, s in enumerate(answer.get("subtopics") or []):
-        name = _clean(s.get("name"), 80)
-        if not name:
-            continue
-        proposed.append((k, name, _clean(s.get("definition"), 300)))
-        for n in s.get("items") or []:
-            key = fold_key(raw.get(n))
-            if key and key != "-":
-                votes[key][k] += 1
-    keys: Dict[int, List[str]] = defaultdict(list)
-    for key, c in votes.items():
-        keys[c.most_common(1)[0][0]].append(key)
-    current = subtopics(cur, folder)
-    locked = {fold_key(s["name"]): s for s in current if s["locked"]}
-    cur.execute("UPDATE mx_track_subtopics SET valid_to = now() WHERE track_id = %s AND valid_to IS NULL AND NOT locked",
-                (folder,))
-    added = 0
-    for k, name, definition in proposed:
-        ks = sorted(set(keys.get(k, [])) | {fold_key(name)})
-        same = locked.get(fold_key(name))
-        if same is not None:
-            cur.execute("UPDATE mx_track_subtopics SET keys = %s WHERE id = %s",
-                        (sorted(set(same["keys"]) | set(ks)), same["id"]))
-            continue
-        cur.execute("""INSERT INTO mx_track_subtopics (track_id, name, definition, keys, task_id)
-                       VALUES (%s, %s, %s, %s, %s)""", (folder, name, definition, ks, task["id"]))
-        added += 1
-    return added
-
-
-def _replace(cur: Cursor, sub: Dict[str, Any], **change: Any) -> str:
-    """A sub-topic changed by the owner: the old row closed, the new one (locked, the owner's) added: its id."""
-    row = {**sub, **change}
-    cur.execute("UPDATE mx_track_subtopics SET valid_to = now() WHERE id = %s", (sub["id"],))
-    cur.execute("""INSERT INTO mx_track_subtopics (track_id, name, definition, keys, locked, made_by)
-                   VALUES (%s, %s, %s, %s, true, 'owner') RETURNING id::text""",
-                (row["track_id"], row["name"], row.get("definition"), sorted(set(row["keys"]))))
-    return cur.fetchone()[0]
-
-
-def edit_subtopics(cur: Cursor, folder_id: Any, *, action: str, id: Optional[str] = None, ids: Sequence[str] = (),
-                   name: Optional[str] = None, definition: Optional[str] = None, keys: Sequence[str] = ()) -> List[Dict[str, Any]]:
-    """The owner's edit: rename (id, name[, definition]), merge (ids into id), split (id, name, keys: its strings
-    that go to the new one), lock / unlock (id), add (name[, definition]). An edit locks what it makes. The current
-    sub-topics after it. ValueError: a bad edit; KeyError: no such sub-topic."""
-    folder = str(folder_id)
-    subs = {s["id"]: dict(s, track_id=folder) for s in subtopics(cur, folder)}
-
-    def one(i: Optional[str]) -> Dict[str, Any]:
-        if not i or i not in subs:
-            raise KeyError(i)
-        return subs[i]
-
-    name = _clean(name, 80)
-    if action == "rename":
-        s = one(id)
-        if not name:
-            raise ValueError("name: the new name")
-        _replace(cur, s, name=name, definition=_clean(definition, 300) or s.get("definition"),
-                 keys=set(s["keys"]) | {fold_key(s["name"])})
-    elif action == "merge":
-        target = one(id)
-        others = [one(i) for i in ids if i != id]
-        if not others:
-            raise ValueError("ids: the sub-topics to merge into this one")
-        ks = set(target["keys"])
-        for o in others:
-            ks |= set(o["keys"]) | {fold_key(o["name"])}
-        new_id = _replace(cur, target, keys=ks)
-        for o in others:
-            cur.execute("UPDATE mx_track_subtopics SET valid_to = now(), merged_into = %s WHERE id = %s", (new_id, o["id"]))
-    elif action == "split":
-        s = one(id)
-        moved = {fold_key(k) for k in keys if fold_key(k)}
-        if not name or not moved:
-            raise ValueError("name and keys: the new sub-topic and the strings it takes")
-        if not moved <= set(s["keys"]):
-            raise ValueError("keys: strings of this sub-topic")
-        _replace(cur, s, keys=set(s["keys"]) - moved)
-        cur.execute("""INSERT INTO mx_track_subtopics (track_id, name, definition, keys, locked, made_by)
-                       VALUES (%s, %s, %s, %s, true, 'owner')""", (folder, name, _clean(definition, 300), sorted(moved)))
-    elif action in ("lock", "unlock"):
-        s = one(id)
-        cur.execute("UPDATE mx_track_subtopics SET locked = %s WHERE id = %s", (action == "lock", s["id"]))
-    elif action == "add":
-        if not name:
-            raise ValueError("name: the new sub-topic's name")
-        cur.execute("""INSERT INTO mx_track_subtopics (track_id, name, definition, keys, locked, made_by)
-                       VALUES (%s, %s, %s, %s, true, 'owner')""", (folder, name, _clean(definition, 300), [fold_key(name)]))
-    else:
-        raise ValueError("action: rename, merge, split, lock, unlock or add")
-    return subtopics(cur, folder)
+def edit_subtopics(cur: Cursor, folder_id: Any, **edit: Any) -> List[Dict[str, Any]]:
+    """The owner's edit of the sub-topics (track_subtopics.edit)."""
+    from insight_core.markx import track_subtopics
+    return track_subtopics.edit(cur, folder_id, **edit)
 
 
 # ---- where each item goes: precision, ranking, auto-join -----------------------------------------------
@@ -931,7 +795,8 @@ def _shown(it: Dict[str, Any]) -> Dict[str, Any]:
             "confidence": None if it["confidence"] is None else round(it["confidence"], 3),
             "subtopic": it["subtopic"], "why": it["why"], "origin": "active" if it["active"] else "passive",
             "place": it["place"], "label": it["label"], "rank": round(it["rank"], 4), "calibrated": it["calibrated"],
-            "found_by": list(it.get("found_by") or [])}
+            "found_by": list(it.get("found_by") or []),
+            "joined_at": _iso(it.get("answered_at") or it.get("at"))}   # 0207: when it joined (new since a look)
 
 
 def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -955,10 +820,25 @@ def suggestions(cur: Cursor, folder_id: Optional[Any] = None, *, now: Optional[d
             if it["at"] and it["at"] >= now - timedelta(days=SUGGEST_DAYS):
                 c[it["source_id"]] += 1
                 names[it["source_id"]] = it["source"]
-        for sid, n in c.most_common():
-            if n >= SUGGEST_MIN:
-                out.append({"track": t["folder_id"], "track_name": t["name"], "source_id": sid, "source": names[sid], "n": n})
-    return sorted(out, key=lambda x: -x["n"])
+        cands = [sid for sid, n in c.items() if n >= SUGGEST_MIN]
+        # 0207: the fit is the share of the source's posts of those days that are in the track's sphere, not how many:
+        # a general source posting thousands matched by volume and was suggested first.
+        total = _posts_since(cur, cands, now - timedelta(days=SUGGEST_DAYS))
+        for sid in cands:
+            n, of = c[sid], max(total.get(sid, 0), c[sid])
+            if n / of >= SUGGEST_SHARE - 1e-9:
+                out.append({"track": t["folder_id"], "track_name": t["name"], "source_id": sid, "source": names[sid],
+                            "n": n, "of": of, "share": round(n / of, 3), "lower": round(wilson(n, of), 3)})
+    return sorted(out, key=lambda x: (-x["lower"], -x["n"], x["source_id"]))
+
+
+def _posts_since(cur: Cursor, sources: Sequence[str], since: datetime) -> Dict[str, int]:
+    """{source: its posts since `since`} (the posts' own dates, as the track's items are dated)."""
+    if not sources:
+        return {}
+    cur.execute(f"""SELECT p.source_id::text, count(*) FROM posts p
+                     WHERE p.source_id = ANY(%s::uuid[]) AND {_date()} >= %s GROUP BY 1""", (list(sources), since))
+    return dict(cur.fetchall())
 
 
 def activate(cur: Cursor, folder_id: Any, source_id: Any) -> bool:
@@ -974,11 +854,11 @@ def footer(cur: Cursor, folder_id: Any, items: Sequence[Dict[str, Any]], *, now:
     """What the track costs and brings: {cost_usd (all), cost_per_day and items_per_day (the last 7 days), tasks}."""
     now = now or datetime.now(timezone.utc)
     cur.execute("""WITH t AS (SELECT DISTINCT task_id FROM mx_track_items WHERE track_id = %(f)s
-                              UNION SELECT id FROM mx_tasks WHERE kind = %(sub)s AND a = %(f)s)
+                              UNION SELECT id FROM mx_tasks WHERE kind = ANY(%(sub)s) AND a = %(f)s)
                    SELECT COALESCE(sum(c.cost_usd), 0), COALESCE(sum(c.cost_usd) FILTER (WHERE c.created_at >= %(since)s), 0),
                           (SELECT count(*) FROM t)
                      FROM mx_calls c WHERE c.task_id IN (SELECT task_id FROM t)""",
-                {"f": str(folder_id), "sub": SUB_KIND, "since": now - timedelta(days=7)})
+                {"f": str(folder_id), "sub": [SUB_KIND, DIGEST_KIND, PLACE_KIND], "since": now - timedelta(days=7)})
     total, week, n = cur.fetchone()
     recent = sum(1 for it in items if it["place"] in ("track", "joined") and it["answered_at"]
                  and it["answered_at"] >= now - timedelta(days=7))
@@ -998,17 +878,15 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
             "sources": active_sources(cur, folder_id)}
     if not is_topic(t):
         return {"track": base, "sections": [], "discover": [], "counts": {}, "calibration": None, "suggestions": [],
-                "examples": {"in": [], "out": []}, "subtopics": [], "footer": None, "prefilter": None}
+                "examples": {"in": [], "out": []}, "subtopics": [], "tools": [], "footer": None, "prefilter": None}
     from insight_core.markx import track_kept
     got = track_kept.placed(cur, t)   # issue 0195: the kept placement (its shown items filled below), else live
     kept = got is not None
     got = got if kept else placed(cur, t)
     items, cal = got["items"], got["calibration"]
-    subs = subtopics(cur, folder_id)
-    groups: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
-    for it in items:
-        if it["place"] in ("track", "joined"):
-            groups[assign(subs, it["subtopic"])].append(it)
+    from insight_core.markx import track_subtopics, track_tools
+    now = now or datetime.now(timezone.utc)
+    subs, groups = track_subtopics.sections(cur, t, items, now=now)   # 0207: the sub-topics found from the posts
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     if kept:   # the items the page shows get their title, address, source and why
         track_kept.fill(cur, t, [it for g in groups.values()
@@ -1016,16 +894,27 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
                         + sorted((it for it in items if it["place"] == "discover"),
                                  key=lambda it: (-it["rank"], -(it["confidence"] or 0),
                                                  -(it["at"] or epoch).timestamp()))[:DISCOVER_ITEMS])
+
+    def joined(its: Sequence[Dict[str, Any]]) -> List[int]:
+        """0207: when each member joined the track (epoch seconds, newest first): the reader counts what is new since
+        its look."""
+        return sorted((int(j.timestamp()) for j in (track_subtopics.joined_at(it) for it in its) if j), reverse=True)
+
+    order = {"new": 0, "active": 0, "quiet": 1}
     sections = []
-    for s in sorted(subs, key=lambda s: -len(groups.get(s["id"], []))):
+    for s in sorted(subs, key=lambda s: (order.get(s["state"], 0), -len(groups.get(s["id"], [])))):
         its = sorted(groups.get(s["id"], []), key=lambda it: it["at"] or epoch, reverse=True)
         sections.append({"id": s["id"], "name": s["name"], "definition": s["definition"], "locked": s["locked"],
-                         "made_by": s["made_by"], "keys": s["keys"], "count": len(its),
-                         "items": [_shown(it) for it in its[:SECTION_ITEMS]]})
+                         "made_by": s["made_by"], "named_by": s["named_by"], "keys": s["keys"], "count": len(its),
+                         "state": s["state"], "last_member_at": _iso(s["last_member_at"]),
+                         "digest": None if s["digest"] is None else {**s["digest"], "at": _iso(s["digest"]["at"])},
+                         "joined": joined(its), "items": [_shown(it) for it in its[:SECTION_ITEMS]]})
     other = sorted(groups.get(None, []), key=lambda it: it["at"] or epoch, reverse=True)
     if other:
         sections.append({"id": None, "name": "Other" if subs else "In this track", "definition": None, "locked": False,
-                         "made_by": None, "keys": [], "count": len(other), "items": [_shown(it) for it in other[:SECTION_ITEMS]]})
+                         "made_by": None, "named_by": None, "keys": [], "count": len(other), "state": "active",
+                         "last_member_at": None, "digest": None, "joined": joined(other),
+                         "items": [_shown(it) for it in other[:SECTION_ITEMS]]})
     disc = sorted((it for it in items if it["place"] == "discover"),
                   key=lambda it: (-it["rank"], -(it["confidence"] or 0), -(it["at"] or epoch).timestamp()))
     counts = Counter(it["place"] for it in items)
@@ -1043,7 +932,14 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
             "counts": dict(counts), "calibration": cal, "suggestions": suggestions(cur, folder_id, now=now),
             "examples": {k: [{"post_id": p, "title": shown_ex[p].title or shown_ex[p].text[:EXAMPLE_CHARS]}
                              for p in ex[k][:20] if p in shown_ex] for k in ("in", "out")},
-            "subtopics": [{**s, "created_at": _iso(s["created_at"]), "count": len(groups.get(s["id"], []))} for s in subs],
+            "subtopics": [{**{k: s[k] for k in ("id", "name", "definition", "keys", "locked", "made_by", "named_by",
+                                                "state")},
+                           "created_at": _iso(s["created_at"]), "count": len(groups.get(s["id"], []))} for s in subs],
+            "tools": track_tools.panel(cur, items, now=now),   # 0207: the tools the track's practitioners discuss
+            # 0207: what is Shadow and its measure (each shown labelled until it passes the bar)
+            "shadow": {**{k: {**v, "on": False} for k, v in track_subtopics.MEASURED.items()},
+                       "tools": {**track_tools.MEASURED, "on": False}, "bar": track_subtopics.BAR,
+                       "lower_bar": track_subtopics.LOWER},
             "footer": footer(cur, folder_id, items, now=now),
             "prefilter": {"threshold": prof["threshold"], "ready": prof["vector"] is not None, "pos": prof["pos"],
                           "neg": prof["neg"], "description": prof["description"], "last": stats.get("last"),
@@ -1095,8 +991,14 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                     WHERE (%(f)s::uuid IS NULL OR t.folder_id = %(f)s::uuid)""", {"f": f})
     topic, planner = cur.fetchone()
     cur.execute("""SELECT (SELECT json_build_array(f.name, f.kind) FROM folders f WHERE f.id = %(f)s::uuid),
-                          (SELECT json_build_array(count(*), md5(string_agg(s::text, ',' ORDER BY s.id)))
-                             FROM mx_track_subtopics s WHERE %(f)s::uuid IS NULL OR s.track_id = %(f)s::uuid),
+                          -- 0207: what the owner sets of the sub-topics (the clustering's and the worker's changes are
+                          -- the loose part's)
+                          (SELECT json_build_array(count(*), md5(string_agg(concat_ws(':', s.id, s.locked, s.made_by,
+                                      s.named_by, CASE WHEN s.named_by = 'owner' OR s.locked THEN s.name END,
+                                      CASE WHEN s.locked THEN s.keys::text END, s.valid_to IS NULL),
+                                      ',' ORDER BY s.id)))
+                             FROM mx_track_subtopics s WHERE (%(f)s::uuid IS NULL OR s.track_id = %(f)s::uuid)
+                              AND (s.made_by = 'owner' OR s.named_by = 'owner' OR s.locked)),
                           (SELECT json_build_array(count(*), max(created_at)) FROM mx_labels
                             WHERE item_kind = %(k)s AND (%(f)s::uuid IS NULL OR b = %(f)s::uuid)),
                           (SELECT json_build_array(count(*), count(v), max(created_at)) FROM mx_track_probes
@@ -1112,7 +1014,17 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
     cur.execute("""SELECT (SELECT json_agg(json_build_array(track_id, placed_at) ORDER BY track_id)
                              FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
                           (SELECT json_build_array(count(*), max(id)) FROM mx_track_changes
-                            WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid)""", {"f": f})
+                            WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          -- 0207: the clustering's members and the sub-topics' names and digests (the jobs process's
+                          -- and the worker's: the page may lag them within KEPT_LAG)
+                          (SELECT json_build_array(count(*), max(since), sum(hashtext(post_id::text || subtopic_id::text)))
+                             FROM mx_track_subtopic_members WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          (SELECT md5(string_agg(concat_ws(':', id, name, definition, named_by, members_hash,
+                                                           last_member_at, valid_to), ',' ORDER BY id))
+                             FROM mx_track_subtopics WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_subtopic_asks a
+                             JOIN mx_calls c ON c.task_id = a.task_id
+                            WHERE %(f)s::uuid IS NULL OR a.track_id = %(f)s::uuid)""", {"f": f})
     return strict, json.dumps([planner, *cur.fetchone()], default=str, separators=(",", ":"))
 
 

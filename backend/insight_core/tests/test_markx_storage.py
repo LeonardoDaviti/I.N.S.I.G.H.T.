@@ -94,7 +94,8 @@ class MigrationTests(_Rollback):
                          | {"mx_kept_pages"}                                                 # 0136 (0198)
                          | {"mx_entity_facts"}                                             # 0137 (0184)
                          | {"mx_official_channels", "mx_official_lookups", "mx_official_runs",
-                            "mx_official_events"})                                          # 0138 (0196)
+                            "mx_official_events"}                                          # 0138 (0196)
+                         | {"mx_track_subtopic_members", "mx_track_subtopic_asks", "mx_track_seen"})   # 0140 (0207)
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -118,7 +119,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 85)       # 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
+        self.assertEqual(self.cur.fetchone()[0], 88)       # 0140 three; 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
 
     def test_embeddings_have_an_hnsw_cosine_index(self):
         self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")

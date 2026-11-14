@@ -10,6 +10,8 @@ POST /api/markx/tracks/{id}/subtopics          {action: rename | merge | split |
                                                definition, keys} -> [sub-topics]
 POST /api/markx/tracks/{id}/sources/{source}   make a suggested passive source active -> {added}
 GET  /api/markx/tracks/{id}/why?post=<id or address>   where one post stands and why (markx/track_why, 0185)
+GET  /api/markx/tracks/{id}/seen                 {track, subtopics: {id: ISO}} the last looks (0207)
+POST /api/markx/tracks/{id}/seen                 {subtopic?} the reader looked now -> {before, now} (0207)
 
 Every item a track page shows carries its `byline` (issue 0185: who wrote it, via whom).
 """
@@ -21,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from insight_core.markx import track_why, tracks
+from insight_core.markx import track_subtopics, track_why, tracks
 
 router = APIRouter()
 
@@ -137,6 +139,37 @@ def mx_track_subtopics(track_id: str, body: SubtopicEdit):
             raise HTTPException(status_code=400, detail=str(e))
         except KeyError:
             raise HTTPException(status_code=404, detail="No such sub-topic")
+
+
+class LookIn(BaseModel):
+    subtopic: Optional[str] = None
+
+
+@router.get("/tracks/{track_id}/seen")
+def mx_track_seen(track_id: str):
+    """0207: the reader's last looks at the track and its sub-topics (the page counts what is new since)."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        return track_subtopics.seen(cur, tid)
+
+
+@router.post("/tracks/{track_id}/seen")
+def mx_track_look(track_id: str, body: LookIn):
+    """0207: the reader looked at the track (or one sub-topic) now: {before, now}."""
+    from insight_core.markx.api import _uuid, transaction
+    tid = _id(track_id)
+    sub = None
+    if body.subtopic:
+        u = _uuid(body.subtopic)
+        if u is None:
+            raise HTTPException(status_code=404, detail="No such sub-topic")
+        sub = str(u)
+    with transaction() as cur:
+        try:
+            return track_subtopics.look(cur, tid, sub)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track or sub-topic")
 
 
 @router.post("/tracks/{track_id}/sources/{source_id}")

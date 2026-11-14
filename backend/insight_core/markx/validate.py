@@ -397,24 +397,58 @@ def _track(a: Dict[str, Any], _input: str) -> Optional[str]:
 
 
 def _subtopics(a: Dict[str, Any], input: str) -> Optional[str]:
-    """0145: each item number is one of the question's, in one sub-topic only; names are not repeated."""
-    from insight_core.markx import tracks
-    n = len(tracks.numbered(input))
+    """0207 (subtopics-v2): each key is one of the question's groups, named once; names are not repeated; a definition
+    is one line."""
+    from insight_core.markx import track_subtopics
+    if "names" not in a:   # a 0145 proposal (subtopics-v1) its own schema checked: nothing applies it any more
+        return None
+    keys = set(track_subtopics.keys_of(input))
     seen: set = set()
     names: set = set()
-    for s in a["subtopics"]:
-        key = tracks.fold_key(s["name"])
+    for s in a["names"]:
+        if s["key"] not in keys:
+            return f"names group {s['key']}, not one of the question's"
+        if s["key"] in seen:
+            return f"group {s['key']} named twice"
+        seen.add(s["key"])
+        key = track_subtopics.fold_key(s["name"])
         if not key:
             return "a sub-topic with no name"
         if key in names:
             return f"sub-topic {s['name']!r} twice"
         names.add(key)
-        for k in s["items"]:
-            if not 1 <= k <= n:
-                return f"a sub-topic names item {k}, not one of 1-{n}"
-            if k in seen:
-                return f"item {k} in two sub-topics"
-            seen.add(k)
+        if "\n" in (s.get("definition") or "").strip() or len(s.get("definition") or "") > schemas.SUBTOPIC_DEFINITION_CHARS:
+            return f"definition of {s['key']}: one line, at most {schemas.SUBTOPIC_DEFINITION_CHARS} characters"
+    return None
+
+
+def _subtopic_place(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0207 (subtopic-place-v1): every post of the question once, each in one of its sub-topics or none."""
+    from insight_core.markx import track_subtopics
+    subs, posts = track_subtopics.place_keys(input)
+    seen = set()
+    for p in a["placements"]:
+        if p["post"] not in posts:
+            return f"places {p['post']}, not one of the question's posts"
+        if p["post"] in seen:
+            return f"{p['post']} placed twice"
+        seen.add(p["post"])
+        if p["subtopic"] != "none" and p["subtopic"] not in subs:
+            return f"{p['post']} in {p['subtopic']}, not one of the question's sub-topics"
+    missing = [p for p in posts if p not in seen]
+    return f"{len(missing)} posts not placed ({', '.join(missing[:3])})" if missing else None
+
+
+def _digest(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0207 (digest-v1): each point cites only the question's posts [1..n], each point one line."""
+    from insight_core.markx import track_subtopics
+    n = track_subtopics.numbered(input)
+    for k, p in enumerate(a["points"], 1):
+        if "\n" in p["text"].strip():
+            return f"point {k}: one line"
+        for c in p["cites"]:
+            if not 1 <= c <= n:
+                return f"point {k} cites post {c}, not one of 1-{n}"
     return None
 
 
@@ -649,7 +683,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "relate": _relate,   # 0131
           "back": _back,       # 0136
           "cite": _cite,       # 0133 v4.2
-          "track": _track, "subtopics": _subtopics,   # 0145
+          "track": _track, "subtopics": _subtopics, "digest": _digest, "subtopic_place": _subtopic_place,   # 0145, 0207
           "probes": _probes,                          # 0147
           "scout": _scout,                            # 0148
           "identity": _identity,                      # 0162

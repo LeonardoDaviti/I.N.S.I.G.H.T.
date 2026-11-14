@@ -964,7 +964,7 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
         _note_happening(cur, task)
-    elif task["kind"] in ("track", "subtopics"):   # 0145: a track's verdict, or its sub-topics proposed
+    elif task["kind"] in ("track", "subtopics", "digest", "subtopic_place"):   # 0145: a verdict; 0207: sub-topics
         from insight_core.markx import tracks
         tracks.after_answer(cur, task, call_id, answer)
         if task["kind"] == "track":                 # 0148: a scout's test-read item shares the judge (scratch rows)
@@ -1217,15 +1217,28 @@ def _plan_tracks(cur: Cursor, **kw: Any) -> int:   # 0145: active posts, passive
     return tracks.plan(cur, **kw)
 
 
-def _plan_subtopics(cur: Cursor, **kw: Any) -> int:   # 0145: a track's sub-topics proposed (15+ items, then weekly)
-    from insight_core.markx import tracks
-    return tracks.plan_subtopics(cur, **kw)
+def _plan_subtopics(cur: Cursor, **kw: Any) -> int:   # 0207: the sub-topics the clustering found, named
+    from insight_core.markx import track_subtopics
+    return track_subtopics.plan_names(cur, **kw)
+
+
+def _plan_place(cur: Cursor, **kw: Any) -> int:   # 0207: the track's posts placed into its named sub-topics
+    from insight_core.markx import track_subtopics
+    return track_subtopics.plan_place(cur, **kw)
+
+
+def _plan_digests(cur: Cursor, **kw: Any) -> int:   # 0207: a digest for each sub-topic whose newest members changed
+    from insight_core.markx import track_subtopics
+    return track_subtopics.plan_digests(cur, **kw)
+
+
 
 
 def _with_track_vectors(planner: Any) -> Any:   # 0145: the tracks' descriptions embedded with the posts (embed kind)
     def plan(cur: Cursor, **kw: Any) -> int:      # 0147: and their example posts
         from insight_core.markx import finders, tracks
-        return tracks.plan_vectors(cur) + finders.plan_vectors(cur) + planner(cur, **kw)
+        return (tracks.plan_vectors(cur) + finders.plan_vectors(cur) + tracks.plan_member_vectors(cur)   # 0207: + members
+                + planner(cur, **kw))
     return plan
 
 
@@ -1235,7 +1248,9 @@ def _plan_probes(cur: Cursor, **kw: Any) -> int:   # 0147: a track's example pos
 
 
 PLANNERS["track"] = _plan_tracks                                           # 0145
-PLANNERS["subtopics"] = _plan_subtopics                                    # 0145
+PLANNERS["subtopics"] = _plan_subtopics                                    # 0145; 0207: names
+PLANNERS["digest"] = _plan_digests                                         # 0207
+PLANNERS["subtopic_place"] = _plan_place                                   # 0207
 PLANNERS["probes"] = _plan_probes                                          # 0147
 PLANNERS["embed"] = _with_track_vectors(PLANNERS["embed"])                 # 0145
 
