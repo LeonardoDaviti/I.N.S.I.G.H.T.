@@ -321,22 +321,31 @@ def _said(story: Story, found: Sequence[Surge]) -> Dict[str, Set[str]]:
     return said
 
 
+def _first(story: Story) -> Optional[str]:
+    """A story's first post, by its posts' times (a date alone as that day's earliest timed post), never by the order
+    they were handed in (the incremental job reads a story's posts in no time order: 0205)."""
+    if not story.posts:
+        return None
+    times = story_times(story.posts)
+    return min(story.posts, key=lambda p: (times[p.id], not p.date_only, p.id)).id
+
+
 def core_names(story: Story, found: Sequence[Surge]) -> Set[str]:
-    """The surging names a story is about (0203): those its lead's title says, or at least CORE_SHARE of its posts'
-    titles say, the most specific of them (a name inside another core name is none). A name one roundup or one reply
-    in it says is no name of the story."""
-    ids = [p.id for p in story.posts]
-    if not ids:
+    """The surging names a story is about (0203): those its first post's title says, or at least CORE_SHARE of its
+    posts' titles say, the most specific of them (a name inside another core name is none). A name one roundup or one
+    reply in it says is no name of the story."""
+    first = _first(story)
+    if first is None:
         return set()
     said = _said(story, found)
-    core = {name for name, ps in said.items() if ids[0] in ps or len(ps) >= CORE_SHARE * len(ids)}
+    core = {name for name, ps in said.items() if first in ps or len(ps) >= CORE_SHARE * len(story.posts)}
     # the most specific only: "gemini 4 carbon", never "gemini" inside it (another release of the family says that)
     return {c for c in core if not any(o != c and f" {c} " in f" {o} " for o in core)}
 
 
 def main_name(story: Story, found: Sequence[Surge]) -> Optional[str]:
-    """The core name most of a story's posts say (then the longest): what a release story is about, not its maker's
-    name its lead also says ("Acme releases Vela 5.2": vela 5.2, not acme)."""
+    """The most specific core name most of a story's posts say (then the longest): what a release story is about, not
+    its maker's name its lead also says ("Acme releases Vela 5.2": vela 5.2, not acme), nor its family's."""
     core = core_names(story, found)
     if not core:
         return None
@@ -355,8 +364,12 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     `judged` (Mark X: the story pairs its judge connected, as development, follow-up or the same event) only when the
     judge connected them too; None (Mark IX: no judge), by their main names alone."""
     by_id = {p.id: p for p in posts}
+    # 0205: the rows depend on the inputs only, never on their order or on which stories a pass hands in first (the
+    # incremental job reads its stories by id and their posts in no time order; the full job in its own order)
+    stories = sorted(stories, key=lambda s: s.id)
+    found = sorted(found, key=lambda s: (s.at, s.name, tuple(s.posts)))
     uf = _UnionFind()
-    for p in posts:
+    for p in sorted(posts, key=lambda p: p.id):
         uf.find(p.id)
     story_of: Dict[str, Story] = {}
     large: Dict[str, Set[str]] = {}            # a group's root -> its large stories
@@ -364,11 +377,12 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for story in stories:
         for p in story.posts:
             if p.id in story_of:
-                continue                       # a post in several stories: its first story's (0203)
+                continue                       # a post in several stories: the lowest story id's (0203, 0205)
             uf.union(p.id, story.id)
             story_of[p.id] = story
         if len(story.posts) >= LARGE_POSTS:
-            large[uf.find(story.id)] = {story.id}
+            root = uf.find(story.id)
+            large[root] = large.get(root, set()) | {story.id}
     cores = {story.id: core_names(story, found) for story in stories}
     mains = {story.id: main_name(story, found) for story in stories}
 
@@ -392,6 +406,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         if both:
             large[uf.find(a)] = both
     joined_by: Dict[str, str] = {}
+    held_by: Dict[Tuple[str, datetime], List[str]] = {}
     # A post two surging names say joins the one it says first, with the names inside that one or
     # around it, never another (issue 0070): "Вышел Grok-4.7… как будто чуть лучше Sol" is Grok 4.7's,
     # not GPT-6 Sol's too; a post naming two releases no longer makes them one News row.
@@ -418,8 +433,9 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         return story is None or any(f" {c} " in f" {name} " for c in cores.get(story.id, ()))
 
     for surge in found:
-        members = [pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
-                   and holds(pid, surge.name)]
+        members = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
+                          and holds(pid, surge.name)), key=lambda pid: (by_id[pid].t, pid))
+        held_by[surge.name, surge.at] = members
         # each post tries every group the surge has reached so far, not only its first post's (0205: when the first
         # post's story refuses, a star at it left the stories that agree with each other apart: one IPO in 4 rows)
         reached: List[str] = []
@@ -428,8 +444,15 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
                 join(pid, other, surge.name)
             if uf.find(pid) not in {uf.find(r) for r in reached}:
                 reached.append(pid)
-        for pid in members:
-            joined_by.setdefault(pid, surge.name)
+    # The name each post says (0205), once every join is made: a post saying a surge's name in a row the name reached
+    # is named by it, whether the name joined it or its own story did ("Вышла Kimi K3.1" in the K3.1 Pro story is
+    # k3.1's, as before 0203): main_story reads these names, and a row's lead says the row's own name.
+    for surge in found:
+        reached_rows = {uf.find(pid) for pid in held_by[surge.name, surge.at]}
+        for pid in sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)),
+                          key=lambda pid: (by_id[pid].t, pid)):
+            if uf.find(pid) in reached_rows:
+                joined_by.setdefault(pid, surge.name)
     groups: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in sorted(posts, key=lambda p: (p.t, p.id)):
         groups[uf.find(p.id)].append(p)
