@@ -329,7 +329,9 @@ class DecisionRun(_World):
             with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):
                 old = rounds(OLD_D, old_cfg)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")
-            new = rounds(D, config)
+            from insight_core.markx import significance   # 0208's stage is new (its own questions): the rest is the same
+            with mock.patch.object(significance, "plan", lambda *a, **k: {}):
+                new = rounds(D, config)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")
             for n, (o, w) in enumerate(zip(old, new)):
                 self.assertEqual(w[0], o[0], f"tasks, round {n}")
