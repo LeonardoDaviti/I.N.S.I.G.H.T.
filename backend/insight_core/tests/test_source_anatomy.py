@@ -213,7 +213,8 @@ class AnatomyRouteTests(unittest.TestCase):
         from insight_core.tests._asgi import call
 
         answer = {"success": True, "window_days": 30, "generated_at": NOW.isoformat(), "rows": []}
-        previous = registry.use(SimpleNamespace(anatomy=SimpleNamespace(anatomy=lambda: answer)))
+        from insight_core.markx import kept_pages
+        previous = registry.use(SimpleNamespace(anatomy=SimpleNamespace(anatomy_page=lambda: kept_pages.encode(answer))))
         self.addCleanup(registry.use, previous)
         status, _, body = call(main.app, "GET", "/api/sources/anatomy")
         self.assertEqual((status, body), (200, answer))

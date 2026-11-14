@@ -15,13 +15,13 @@ Every item a track page shows carries its `byline` (issue 0185: who wrote it, vi
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from insight_core.markx import track_why, tracks
-from insight_core.utils.byline import bylines
 
 router = APIRouter()
 
@@ -54,15 +54,6 @@ class SubtopicEdit(BaseModel):
     keys: List[str] = []
 
 
-def _with_bylines(cur: Any, page: Dict[str, Any]) -> Dict[str, Any]:
-    """The page's items, each with its byline (issue 0185), read in one query."""
-    items = [it for s in page.get("sections") or [] for it in s["items"]] + list(page.get("discover") or [])
-    bys = bylines(cur, [it["post_id"] for it in items])
-    for it in items:
-        it["byline"] = bys.get(it["post_id"])
-    return page
-
-
 @router.get("/tracks")
 def mx_tracks():
     from insight_core.markx.api import transaction
@@ -72,18 +63,21 @@ def mx_tracks():
 
 @router.get("/tracks/suggestions")
 def mx_track_suggestions():
+    """Issue 0206: kept (tracks.kept_page), built by the jobs process."""
     from insight_core.markx.api import transaction
     with transaction() as cur:
-        return tracks.suggestions(cur)
+        return Response(tracks.kept_page(cur, None), media_type="application/json")
 
 
 @router.get("/tracks/{track_id}")
 def mx_track_page(track_id: str):
+    """Issue 0206: kept (tracks.kept_page), built by the jobs process; built here only when the owner changed what it
+    shows since (then kept) or nothing is kept yet."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
         try:
-            return _with_bylines(cur, tracks.page(cur, tid))
+            return Response(tracks.kept_page(cur, tid), media_type="application/json")
         except KeyError:
             raise HTTPException(status_code=404, detail="No such track")
 
@@ -110,7 +104,7 @@ def mx_track_topic(track_id: str, body: TopicIn):
     with transaction() as cur:
         try:
             tracks.set_topic(cur, tid, description=body.description, excludes=body.excludes)
-            return _with_bylines(cur, tracks.page(cur, tid))
+            return tracks.shown_page(cur, tid)
         except KeyError:
             raise HTTPException(status_code=404, detail="No such track")
 

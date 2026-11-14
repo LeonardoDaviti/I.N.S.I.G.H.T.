@@ -228,7 +228,9 @@ class TheJobsKeepNews(_World):
         states = {j: {"job": j, "wanted_at": None, "started_at": t0 - timedelta(hours=1), "stage": None,
                       "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
-        self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS], [("news", "always"), ("labels", "wanted")])
+        self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS],
+                         [("news", "always"), ("labels", "wanted"), ("tracks", "always"), ("unread", "always"),
+                          ("main_source", "wanted"), ("discover", "wanted")])   # 0206
         self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])
         states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
         self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])

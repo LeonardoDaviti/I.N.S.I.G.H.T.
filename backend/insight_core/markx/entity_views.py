@@ -775,19 +775,28 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: 
     (None at the end); only the shown items are built."""
     guide = _guide()
     book = book or I.lazy_book(cur)   # v10.17 (0186): what the queue's items ask of the book
-    cur.execute("""SELECT id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at,
-                          created_at FROM mx_entity_queue WHERE closed_at IS NULL
-                    ORDER BY answer IS NOT NULL, answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at""")
-    rows = cur.fetchall()
-    book.prime(ids=[x for r in rows for x in (r[2], r[3]) if x])
+    # Issue 0206: paged in SQL. The open items are read as their ids and sides only (the narrow rows the named test
+    # needs: every open item is counted), the answered ones `history` at most; only the rows shown are read whole
+    # (their reasons and evidence: 28.9 MB for 12,572 open items on the server before 0195, all read on every page).
+    order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at"
+    cur.execute(f"""SELECT id::text, a::text, b::text FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
+                     ORDER BY {order}""")
+    sides = cur.fetchall()
     named = named_now(cur, book)   # 0138: an item about an entity no current reading names waits, unshown
     if isinstance(named, I._Has):
-        named.want({book.root(x) for r in rows if r[8] is None for x in (r[2], r[3]) if x})
-    open_rows = [r for r in rows if r[8] is None and all(book.root(x) in named for x in (r[2], r[3]) if x)]
-    done_rows = [r for r in rows if r[8] is not None][:history]
-    open_total = len(open_rows)
+        named.want({book.root(x) for _q, a, b in sides for x in (a, b) if x})
+    open_ids = [q for q, a, b in sides if all(book.root(x) in named for x in (a, b) if x)]
+    open_total = len(open_ids)
     if limit is not None:
-        open_rows = open_rows[offset:offset + limit]
+        open_ids = open_ids[offset:offset + limit]
+    cols = "id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at, created_at"
+    cur.execute(f"SELECT {cols} FROM mx_entity_queue WHERE id = ANY(%s::uuid[])", (open_ids,))
+    whole = {r[0]: r for r in cur.fetchall()}
+    open_rows = [whole[q] for q in open_ids if q in whole]
+    cur.execute(f"""SELECT {cols} FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NOT NULL
+                     ORDER BY {order} LIMIT %s""", (history,))
+    done_rows = cur.fetchall()
+    book.prime(ids=[x for r in open_rows + done_rows for x in (r[2], r[3]) if x])
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
     joins: Dict[str, Any] = {}
 

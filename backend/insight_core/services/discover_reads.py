@@ -395,38 +395,29 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     return {"follow": len(tested), "titles": len(titled)}
 
 
-_running: Optional[asyncio.Task] = None
+def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = None) -> Dict[str, Any]:
+    """Issue 0206, the jobs process (markx/jobs.py, the view "discover", wanted by an open: services/stories_service.
+    discover_served): Discover's answer made again when it is due (StoriesService.refresh), then what its first page
+    lacks read over the web (`read_first_page`, which makes it again when it read anything; off with
+    INSIGHT_DISCOVER_READS=0). Was: in the API process, in the background of an open (255-300 s on the server, with
+    the API's memory)."""
+    from insight_core.services.stories_service import StoriesService
+    stories = stories or StoriesService(db_url)
+    out: Dict[str, Any] = {"built": [], "follow": 0, "titles": 0}
+    if stories.served_due():
+        stories.refresh()
+        out["built"].append("answer")
+    if enabled():
+        if http is None:
+            from concurrent.futures import ThreadPoolExecutor
+            from insight_core.ingestion.http import KindHttp
+            http = KindHttp(timeout=5, executor=ThreadPoolExecutor(max_workers=8, thread_name_prefix="discover-http"))
+        if registry is None:
+            from insight_core.services.source_fetch_service import archive_service
+            registry = archive_service(db_url).kinds
+        out.update(asyncio.run(read_first_page(stories, http, registry)))
+    return out
 
 
-def running() -> bool:
-    """Whether Discover's background work (a rebuild of the answer served, the first page's reads) runs now."""
-    return _running is not None and not _running.done()
-
-
-def start(stories: Any, http: Any, registry: Any, *, refresh: bool = False, read: bool = True) -> bool:
-    """Start Discover's background work, one run at a time (issue 0172 c1): with `refresh`, build the answer
-    served again first (an open found it due); with `read` (and reads enabled), read what the first page lacks,
-    which builds it again when it read anything. Never raises."""
-    global _running
-    read = read and enabled()
-    if not (refresh or read) or running():
-        return False
-
-    async def run() -> None:
-        if refresh:
-            try:
-                await asyncio.to_thread(stories.refresh)
-            except Exception:  # noqa: BLE001 - derived; the next open tries again
-                logger.exception("Discover: rebuilding the list failed")
-        if read:
-            try:
-                await read_first_page(stories, http, registry)
-            except Exception:  # noqa: BLE001 - derived; the next open tries again
-                logger.exception("Discover: reading the first page failed")
-
-    _running = asyncio.get_running_loop().create_task(run())
-    return True
-
-
-__all__ = ["read_first_page", "start", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
-           "FOLLOW_TEST", "enabled", "running"]
+__all__ = ["read_first_page", "keep", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
+           "FOLLOW_TEST", "enabled"]

@@ -47,7 +47,6 @@ from insight_core.services.operations_service import (
     sources_failing,
 )
 from insight_core.services.registry import services
-from insight_core.services import discover_reads
 from insight_core.services import follow_archive
 from insight_core.services.stories_service import in_own_process
 
@@ -810,7 +809,9 @@ def search_posts(q: str, scope: str | None = None, filter: str = "all", days: in
 @app.get("/api/feed/unread-counts")
 @error_detail("load unread counts")
 def get_feed_unread_counts():
-    return services().reader.unread_counts()
+    """{total, by_source, newest_unread, by_folder, later} (ReaderRepository.unread_counts), kept while nothing it
+    reads was written (issue 0206)."""
+    return Response(services().reader.unread_counts(), media_type="application/json")
 
 
 @app.put("/api/feed/read")
@@ -1163,16 +1164,13 @@ async def get_suggested_sources(offset: int = Query(0, ge=0, le=MAX_SEARCH_OFFSE
     older, origin_stories}]: followed sources whose own pages started stories they don't hold
     (sections of a site you follow too); unnamed [{place, origins}]; references [{key, voices}]: help
     and docs sites your sources link. Opening the first page tests its suggestions and reads its
-    untitled articles' titles in the background, at most once in 30 days (services/discover_reads.py).
+    untitled articles' titles in the jobs process (issue 0206), at most once in 30 days (services/discover_reads.py).
     built_at: when the answer served was built (issue 0172: built in the background, never on the request but the
     first); refreshing: a newer one is being built."""
     # Issue 0172 c1: the last answer built, never made on the request (an open that made it took 255-300 s on the
-    # server); one due again (its inputs changed, or it is old) is rebuilt in the background, `refreshing` says so.
-    page, stale = await asyncio.to_thread(services().stories.discover_served, offset=offset, limit=limit, q=q)
-    first = offset == 0 and not q
-    if stale or first:
-        discover_reads.start(services().stories, FEED_FINDER_HTTP, services().source_fetch.kinds, refresh=stale, read=first)
-    return {**page, "refreshing": discover_reads.running()}
+    # server). Issue 0206: one due again, and the first page's web reads, are the jobs process's (the job "discover",
+    # wanted here); `refreshing` says it is at work.
+    return await asyncio.to_thread(services().stories.discover_served, offset=offset, limit=limit, q=q)
 
 
 @app.post("/api/sources/suggested/hide")
@@ -1572,8 +1570,9 @@ async def get_sources_anatomy():
     full_text (on | off | feed), watch_changes (null: its kind cannot), watched_pages, validators
     (null: its kind fetches unconditionally), status, interval_hours, interval_basis, next_due_at,
     last_attempt_at, last_outcome, last_error, last_error_at, recent and all: {posts, read,
-    stories, first, classics, links}}]}, most posts in the window first. Nothing is fetched."""
-    return await asyncio.to_thread(services().anatomy.anatomy)
+    stories, first, classics, links}}]}, most posts in the window first. Nothing is fetched. Issue 0206: kept at
+    most 10 minutes (generated_at says when it was made) while no source was added or removed."""
+    return Response(await asyncio.to_thread(services().anatomy.anatomy_page), media_type="application/json")
 
 
 @app.put("/api/sources/{source_id}/cadence")

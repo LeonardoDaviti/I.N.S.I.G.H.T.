@@ -90,8 +90,9 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan", "labels", "news")
+JOBS = ("candidates", "decide", "plan", "labels", "news", "tracks", "unread", "main_source", "discover")
 REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
+UNREAD_GAP = 30.0                # 0206: the unread counts whose inputs changed are counted again at most this often
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 MAX_BACKOFF = 6 * 3600.0         # 0188: a failing job is tried at least every 6 hours, never more often than its backoff
 FAILING_AFTER = 3                # 0188: this many failed runs in a row show the job as failing
@@ -107,11 +108,14 @@ class KeptView:
       - `when`: "always" (built after each decision run and whenever missing) or "wanted" (built only when its job is
         wanted since its last build: mx_jobs.wanted_at, set by `want(cur, job)`; the build's start clears it);
       - `between_runs`: None (missing between runs means a new run or a deploy: built at once), or the seconds a view
-        whose inputs change between runs waits from its last build's start before it is built again."""
+        whose inputs change between runs waits from its last build's start before it is built again;
+      - `markx` (0206): a Mark X view, kept only while Mark X is on; False: a reader's view (the unread counts,
+        Discover), kept whether Mark X is on or off (the runner's loop runs for these alone when it is off)."""
     job: str
     missing: Callable[[Any, datetime], bool]
     when: str = "always"
     between_runs: Optional[float] = None
+    markx: bool = True
 
 
 def _news_missing(cur: Any, now: datetime) -> bool:
@@ -124,9 +128,34 @@ def _labels_missing(cur: Any, now: datetime) -> bool:
     return labels.missing(cur)
 
 
+def _tracks_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.markx import tracks
+    return tracks.kept_missing(cur, now)
+
+
+def _unread_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.services.reader_service import unread_missing
+    return unread_missing(cur)
+
+
+def _main_source_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.services.discover_main_source import kept_missing
+    return kept_missing(cur, now)
+
+
+def _wanted(cur: Any, now: datetime) -> bool:
+    """A view whose work is its job's being wanted (Discover's: the API marks it when its answer is due again or its
+    first page asks for the web's reads); the job itself tells what is left to do."""
+    return True
+
+
 # the kept views, built in this order in one process after a decision run (News first: a page the owner waits on)
 KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP),    # 0198
-              KeptView("labels", _labels_missing, when="wanted"))           # 0182; 0199: when a Labels page asked
+              KeptView("labels", _labels_missing, when="wanted"),           # 0182; 0199: when a Labels page asked
+              KeptView("tracks", _tracks_missing, between_runs=120.0),      # 0206: tracks.KEPT_GAP
+              KeptView("unread", _unread_missing, between_runs=UNREAD_GAP, markx=False),   # 0206
+              KeptView("main_source", _main_source_missing, when="wanted", markx=False),    # 0206
+              KeptView("discover", _wanted, when="wanted", markx=False))                    # 0206
 KEPT = tuple(v.job for v in KEPT_VIEWS)
 
 
@@ -455,26 +484,72 @@ class Jobs:
         """0198: Mark X News' views not kept for their inputs, built and kept (news.keep_pages) in one REPEATABLE READ
         transaction of its own; a failure is recorded and the job tried again after its backoff (the API builds the
         page meanwhile, as before). Its seconds and this process's peak memory are recorded with it."""
+        from insight_core.markx import news as mx_news
+        return self._keep("news", lambda cur: mx_news.keep_pages(cur, now=self.clock()))
+
+    def _keep(self, job: str, keep: Callable[[Any], Dict[str, Any]], *, snapshot: bool = True,
+              again: bool = False) -> Optional[Dict[str, Any]]:
+        """0198, 0206: one kept view's build: `keep(cur)` (the owning module's) in one REPEATABLE READ transaction of
+        its own (`snapshot`; else `keep(None)` opens its own); a failure is recorded and the job tried again after its
+        backoff (`again`: wanted again; the API builds or sends the older page meanwhile, as before). Its seconds and
+        this process's peak memory are recorded with it. Then the kept inputs' logged changes folded
+        (kept_pages.compact), in a transaction of their own."""
         import resource
 
-        from insight_core.markx import decide, news as mx_news
+        from insight_core.markx import decide, kept_pages
 
         def peak() -> float:
             return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0      # KiB on Linux
         t0 = time.monotonic()
-        self._begin("news", "building")
+        self._begin(job, "building")
         try:
-            with decide.snapshot(self.db_url) as cur:
-                out = mx_news.keep_pages(cur, now=self.clock())
+            if snapshot:
+                with decide.snapshot(self.db_url) as cur:
+                    out = keep(cur)
+            else:
+                out = keep(None)
         except Exception as exc:
-            log.exception("Mark X News: keeping the page failed; tried again later")
-            self._finish("news", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            log.exception("Kept views: building %s failed; tried again later", job)
+            self._finish(job, {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
+                         again=again)
             return None
         seconds = round(time.monotonic() - t0, 1)
-        log.info("Mark X News: the views %s of run %s kept in %.1f s (peak %.0f MB)", out.get("built"), out.get("run"),
-                 seconds, peak())
-        self._finish("news", {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1), **out})
+        try:
+            with self._tx() as cur:
+                folded = kept_pages.compact(cur)
+            if folded:
+                out = {**out, "inputs_folded": folded}
+        except Exception:  # noqa: BLE001 - the log only grows until the next fold
+            log.exception("Kept views: folding the kept inputs' changes failed")
+        log.info("Kept views: %s built %s in %.1f s (peak %.0f MB)", job, out.get("built"), seconds, peak())
+        self._finish(job, {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1), **out})
         return out
+
+    def tracks(self) -> Optional[Dict[str, Any]]:
+        """0206: the topic tracks whose inputs changed placed again (track_kept.refresh, in its own transaction), then
+        the track pages and the suggestions not kept for their inputs built and kept (tracks.keep_pages)."""
+        from insight_core.markx import tracks as mx_tracks
+        self._keep_track_places()
+        return self._keep("tracks", lambda cur: mx_tracks.keep_pages(cur, now=self.clock()))
+
+    def unread(self) -> Optional[Dict[str, Any]]:
+        """0206: the unread counts counted and kept for their inputs (reader_service.keep_unread_counts)."""
+        from insight_core.services.reader_service import keep_unread_counts
+        return self._keep("unread", keep_unread_counts)
+
+    def main_source(self) -> Optional[Dict[str, Any]]:
+        """0206: Discover's main-source list built and kept, its shown channels tested over the web (at most once in
+        CHECK_DAYS each), and kept again with their tests (services/discover_main_source.keep). In this process, never
+        the API's."""
+        from insight_core.services.discover_main_source import keep
+        return self._keep("main_source", lambda _cur: keep(self.db_url), snapshot=False)
+
+    def discover(self) -> Optional[Dict[str, Any]]:
+        """0206: Discover's answer built again when it is due (its inputs or code changed, or it is REFRESH_AFTER old)
+        and its first page's web reads (the follow tests, the titles), which build it again when they read anything
+        (services/discover_reads.keep). In this process, never the API's."""
+        from insight_core.services.discover_reads import keep
+        return self._keep("discover", lambda _cur: keep(self.db_url), snapshot=False)
 
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
@@ -549,7 +624,7 @@ class Jobs:
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
-        kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP) -> Optional[str]:
+        kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP, markx: bool = True) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
     one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
@@ -558,7 +633,11 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     0182, 0198: then a kept view (`KEPT_VIEWS`) not kept for its inputs (`kept_missing`) that its policy lets start
     (`_kept_may`).
     0188: a job whose last runs failed first waits out its backoff (`held`: GAP x 2^failures after the failed run's
-    end, at most MAX_BACKOFF), whatever else makes it due."""
+    end, at most MAX_BACKOFF), whatever else makes it due.
+    0206: `markx` False (Mark X off): only the kept views that are not Mark X's (KeptView.markx False)."""
+    if not markx:
+        return next((v.job for v in KEPT_VIEWS if not v.markx and v.job in kept_missing
+                     and _kept_may(v, states.get(v.job) or {}, now, gap)), None)
     p = states.get("plan") or {}
     if plan_every is not None and states["candidates"]["stage"] is None and not held(p, now, gap) and (
             p.get("started_at") is None or (now - p["started_at"]).total_seconds() >= plan_every):
@@ -594,11 +673,12 @@ def _kept_may(view: KeptView, s: Dict[str, Any], now: datetime, gap: float, *, a
 
 
 def kept_due(states: Dict[str, Dict[str, Any]], missing: Iterable[str], now: datetime, gap: float = GAP, *,
-             after_run: bool = False) -> List[str]:
-    """The kept views to build now, in KEPT_VIEWS' order: missing and let start by their policy (`_kept_may`)."""
+             after_run: bool = False, markx: bool = True) -> List[str]:
+    """The kept views to build now, in KEPT_VIEWS' order: missing and let start by their policy (`_kept_may`); with
+    Mark X off (`markx` False), only those that are not Mark X's (0206)."""
     missing = set(missing)
-    return [v.job for v in KEPT_VIEWS
-            if v.job in missing and _kept_may(v, states.get(v.job) or {}, now, gap, after_run=after_run)]
+    return [v.job for v in KEPT_VIEWS if (markx or not v.markx)
+            and v.job in missing and _kept_may(v, states.get(v.job) or {}, now, gap, after_run=after_run)]
 
 
 def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HARD_LIMIT + STALE_MARGIN) -> List[str]:
@@ -634,21 +714,23 @@ class Runner:
         self.stop = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
-    def _states(self) -> Dict[str, Dict[str, Any]]:
+    def _states(self, markx: bool = True) -> Dict[str, Dict[str, Any]]:
         from insight_core.db import database
         with database.transaction(self.db_url) as cur:
             cur.execute("SELECT now()")
             self._db_now = cur.fetchone()[0]
-            self._busy = mark_ix_busy(cur)
-            self._kept_missing = self._missing(cur, self._db_now)
+            self._busy = mark_ix_busy(cur) if markx else None
+            self._kept_missing = self._missing(cur, self._db_now, markx)
             return state(cur)
 
     @staticmethod
-    def _missing(cur: Any, now: datetime) -> List[str]:
+    def _missing(cur: Any, now: datetime, markx: bool = True) -> List[str]:
         """0182, 0198: the kept views (`KEPT_VIEWS`) not kept for their inputs now (a view that can't be told is not
-        listed)."""
+        listed); 0206: with Mark X off, of the views that are not Mark X's only."""
         out = []
         for v in KEPT_VIEWS:
+            if v.markx and not markx:
+                continue
             try:
                 with cur.connection.transaction():
                     if v.missing(cur, now):
@@ -688,14 +770,13 @@ class Runner:
 
     def tick(self) -> Optional[str]:
         """One look: the job that ran, or None."""
-        if not self.on():
-            return None
+        markx = self.on()   # 0206: with Mark X off, the reader's kept views only (KeptView.markx False)
         try:
-            states = self._states()
+            states = self._states(markx)
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
-                      plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap)
+                      plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap, markx=markx)
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
@@ -703,7 +784,7 @@ class Runner:
             if job is None:
                 return None
             if job in KEPT:     # 0198: every kept view due now, in one process
-                self._run(*kept_due(states, self._kept_missing, self._db_now, self.gap))
+                self._run(*kept_due(states, self._kept_missing, self._db_now, self.gap, markx=markx))
             else:
                 self._run(job)
             if job == "decide":
@@ -775,19 +856,24 @@ class Runner:
             log.exception("Mark X jobs: could not record the %s run that ended (%s)", job, error)
 
     def start(self, poll: float = POLL) -> bool:
-        """The loop in a daemon thread (run_scheduler.py); False when Mark X is off at the start."""
-        if self.thread is not None or not self.on():
+        """The loop in a daemon thread (run_scheduler.py). 0206: it runs with Mark X off too, for the reader's kept
+        views alone (the unread counts, Discover); the heartbeat "markx" is written only while Mark X is on."""
+        if self.thread is not None:
             return False
         self.recover()
 
         from insight_core.utils import heartbeat
 
+        def beat() -> None:
+            if self.on():
+                heartbeat.beat("markx")         # 0188: the loop is alive (the healthcheck, /api/status)
+
         def loop() -> None:
-            heartbeat.beat("markx")             # 0188: the loop is alive (the healthcheck, /api/status)
+            beat()
             while not self.stop.wait(poll):
                 self.tick()
-                heartbeat.beat("markx")
+                beat()
         self.thread = threading.Thread(target=loop, name="markx-jobs", daemon=True)
         self.thread.start()
-        log.info("Mark X jobs: running here, every %.0f s", poll)
+        log.info("Mark X jobs: running here, every %.0f s (Mark X %s)", poll, "on" if self.on() else "off: kept views only")
         return True

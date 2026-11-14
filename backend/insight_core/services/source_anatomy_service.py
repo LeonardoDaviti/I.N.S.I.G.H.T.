@@ -20,6 +20,7 @@ from insight_core.ingestion import full_text
 from insight_core.services.operations_service import OperationsService, health_row
 
 WINDOW_DAYS = 30
+KEPT_FOR = timedelta(minutes=10)   # issue 0206: the kept anatomy is sent at most this old (its generated_at says when)
 
 # How a source is read, by the name of the kind that reads it. A site adapter (Gwern,
 # LessWrong, ...) is a site reader whatever its name.
@@ -107,6 +108,18 @@ class SourceAnatomyService:
     def __init__(self, db_url: str, operations: OperationsService):
         self.db_url = db_url
         self.operations = operations
+
+    def anatomy_page(self) -> bytes:
+        """GET /api/sources/anatomy's bytes (issue 0206): the anatomy (`anatomy`, the one path) kept at most KEPT_FOR
+        old (its `generated_at` says when it was made) and while no source was added, removed or moved between
+        folders (the kept input "folders"); else made, kept and sent. Its counts and schedules move with every fetch
+        and its window with the clock: a report as of `generated_at` (0.65-0.8 s an open at the server's size before,
+        every open)."""
+        from insight_core.markx import kept_pages
+        now = self.operations.clock()
+        with db.transaction(self.db_url) as cur:
+            return kept_pages.kept_or_build(cur, "anatomy", "all", lambda: kept_pages.changes(cur, ("folders",)),
+                                            self.anatomy, until=now + KEPT_FOR, now=now)
 
     def anatomy(self) -> Dict[str, Any]:
         """{window_days, generated_at, rows}: one row per source (anatomy_row), most posts in the

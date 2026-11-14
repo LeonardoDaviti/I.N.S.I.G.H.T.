@@ -20,6 +20,38 @@ def _read_state_result(ids: List[str]) -> Dict[str, Any]:
     return {"success": True, "updated": len(ids), "ids": ids}
 
 
+# 0206: what the unread counts read, as kept inputs (markx/kept_pages.changes): the posts, the read state (read, Later,
+# starred), the stories' members, the folded parts, the folders and a source added, removed or put in or out of the
+# main digest
+UNREAD_INPUTS = ("posts", "reads", "stories", "parts", "folders")
+
+
+def unread_inputs(cur: Any) -> List[Any]:
+    from insight_core.markx import kept_pages
+    return kept_pages.changes(cur, UNREAD_INPUTS)
+
+
+def unread_missing(cur: Any, repo: ReaderRepository | None = None) -> bool:
+    """0206, the jobs process's look (the view "unread"): whether the counts are not kept for their inputs now."""
+    from insight_core.markx import kept_pages
+    repo = repo or ReaderRepository()
+    st = kept_pages.stamp("unread", "counts", unread_inputs(cur))
+    return repo.unread_window_days is None and not kept_pages.has(cur, "unread", "counts", kept_pages.NO_RUN, st)
+
+
+def keep_unread_counts(cur: Any, repo: ReaderRepository | None = None) -> Dict[str, Any]:
+    """0206, the jobs process: the unread counts counted (ReaderRepository.unread_counts, the one path) and kept for
+    their inputs, unless they are; in the caller's snapshot (the stamp and the counts read one)."""
+    from insight_core.markx import kept_pages
+    repo = repo or ReaderRepository()
+    st = kept_pages.stamp("unread", "counts", unread_inputs(cur))
+    if repo.unread_window_days is not None or kept_pages.has(cur, "unread", "counts", kept_pages.NO_RUN, st):
+        return {"built": []}
+    body = kept_pages.encode(repo.unread_counts(cur))
+    kept_pages.put(cur, "unread", "counts", kept_pages.NO_RUN, st, body)
+    return {"built": ["counts"], "bytes": len(body)}
+
+
 class ReaderService:
     def __init__(self, db_url: str, *, repo: ReaderRepository | None = None,
                  clock: Callable[[], datetime] | None = None):
@@ -80,9 +112,17 @@ class ReaderService:
         from insight_core.markx import search as mx_search
         return db.fill_until_done(self.db_url, mx_search.fill_batch, mx_search.pending)
 
-    def unread_counts(self) -> Dict[str, Any]:
-        with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            return self.repo.unread_counts(cur)
+    def unread_counts(self) -> bytes:
+        """GET /api/feed/unread-counts' bytes (issue 0206): kept while nothing it reads was written since (the kept
+        inputs' counts and the window), else counted as before (ReaderRepository.unread_counts, the one path) and
+        kept. Polled every 60 s by every open tab: unchanged, one indexed read and one row (0.4-1.4 s on the server
+        before); after a read or a fetch, counted once, by whichever request comes first."""
+        from insight_core.markx import kept_pages
+        with db.transaction(self.db_url) as cur:
+            if self.repo.unread_window_days is not None:   # a window reads the clock: counted on every request
+                return kept_pages.encode(self.repo.unread_counts(cur))
+            return kept_pages.kept_or_build(cur, "unread", "counts", lambda: unread_inputs(cur),
+                                            lambda: self.repo.unread_counts(cur))
 
     def set_read(self, post_ids: Sequence[str], read: bool, keep_later: bool = False) -> Dict[str, Any]:
         """Mark these posts read or unread. `ids` are the ones that changed.

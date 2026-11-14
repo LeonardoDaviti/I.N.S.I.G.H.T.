@@ -44,22 +44,24 @@ Measured before it was adopted (2026-11-12, a read-only run on the local census 
 read-v3: every type let through): 141 stories of 2+ voices, 18 events flagged in 17 rows, 16 plausible by E5's rows
 (a reporter as the actor, 1; a model card section, 1); the type gate removes the rest on the server.
 
-**The test.** On opening Discover, at most TESTS_PER_RUN channels shown without a test in CHECK_DAYS are tested in the
-background, as Discover's follow test (services/discover_reads.py): an account through its source kind; a section
+**The test.** When the jobs process makes the list (0206; was: on opening Discover, in the API), at most TESTS_PER_RUN
+channels shown without a test in CHECK_DAYS are tested, as Discover's follow test (services/discover_reads.py): an account through its source kind; a section
 through the feed finder on the section (where_linked.follow, the event's own pages as the linked articles: `holds`
 says how many of them a feed or page keeps), then, when it found neither a feed nor a page to watch, page watching's
 preview of the section with its prefix. Stored in system_settings `discover_main_source` with its date. Off with
 INSIGHT_DISCOVER_READS=0. Nothing is ever added here: Follow opens Add source on the channel (the feed finder, then page
 watching), as every add.
 
-Reads Mark X's tables, never writes them; the list is made per open (cached CACHE_SECONDS while nothing changed).
+Reads Mark X's tables, never writes them. Issue 0206: the list is made by the jobs process (`keep`, the view
+"main_source", when an open found it not kept for its inputs) and kept; the API sends the kept page, or the newest one
+while it is made again, and makes it only before the first build of its code. The tests run there too, never in the
+API.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
-import threading
 import time
 import urllib.parse
 from collections import Counter, defaultdict
@@ -663,48 +665,63 @@ def to_test(answer: Dict[str, Any], tested: Dict[str, Any], now: datetime, *, li
 
 
 class MainSource:
-    """The list per open (cached while nothing it reads changed, at most CACHE_SECONDS) and its background tests."""
+    """The list (`found`: the scan, the one path) and its tests over the web (`run_tests`). Issue 0206: nothing kept in
+    the process (each API process held its own copy, and an open that found it stale made it again: 17-20 s on the
+    server); the page is kept (markx/kept_pages.py), built by the jobs process (`keep`), and the API sends it
+    (`served`)."""
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         self.db_url, self.clock = db_url, clock
-        self._cache: Tuple[Any, float, Optional[Dict[str, Any]]] = (None, 0.0, None)
-        self._lock = threading.Lock()
-        self._running: Optional[asyncio.Task] = None
-
-    def _stamp(self, cur: Any, picked: Picked) -> Tuple:
-        """v10.17 (0186): the picked stories' digest (`picked_stamp`) and the sources'. Was every membership change
-        and every read-v3 answer anywhere: with the worker answering, the list was made again on almost every open
-        (17-20 s on the server)."""
-        digest = picked_stamp(cur, picked)
-        cur.execute("SELECT (SELECT max(updated_at) FROM sources), (SELECT count(*) FROM sources)")
-        return (digest, *cur.fetchone())
 
     def found(self) -> Dict[str, Any]:
         from insight_core.db import database as db
-        with self._lock, db.connection(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             now = self.clock()
-            picked = pick(cur, now)
-            stamp = self._stamp(cur, picked)
-            kept_stamp, kept_at, kept = self._cache
-            if kept is not None and kept_stamp == stamp and time.monotonic() - kept_at < CACHE_SECONDS:
-                return kept
-            got = scan(cur, now, picked=picked)
+            got = scan(cur, now, picked=pick(cur, now))
             conn.rollback()
-            self._cache = (stamp, time.monotonic(), got)
             return got
 
-    def answer(self, *, limit: int = SHOWN) -> Dict[str, Any]:
+    def answer(self, *, limit: int = SHOWN, found: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         from insight_core.db import database as db
         from insight_core.db.repo_stories import StoriesRepository
-        found = self.found()
+        found = found if found is not None else self.found()
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             tested, hidden = tests(cur), StoriesRepository.hidden(cur)
         return page(found, tested, hidden, limit=limit)
 
-    async def run_tests(self, http: Any, registry: Any) -> int:
+    def kept_found(self) -> Dict[str, Any]:
+        """The list as kept (`found`'s JSON, with when it was made: `built_at`): the one kept for its inputs
+        (`page_inputs`) within KEPT_FOR; else the newest kept while the jobs process makes it again (wanted here);
+        else, before the first build of this code, made here as before and kept."""
+        import json
+        from insight_core.db import database as db
+        from insight_core.markx import jobs, kept_pages
+        now = self.clock()
+        key = kept_key()
+        with db.transaction(self.db_url) as cur:
+            got = kept_pages.get(cur, PAGE, key, kept_pages.NO_RUN, kept_pages.stamp(PAGE, key, page_inputs(cur)),
+                                 now=now)
+            if got is None:
+                older = kept_pages.newest(cur, PAGE, key)
+                if older is not None:
+                    jobs.want(cur, "main_source")
+                    got = older[0]
+                else:
+                    got = kept_pages.kept_or_build(cur, PAGE, key, lambda: page_inputs(cur),
+                                                   lambda: {**self.found(), "built_at": now.isoformat()},
+                                                   until=now + KEPT_FOR, now=now)
+        return json.loads(got)
+
+    def served(self, *, limit: int = SHOWN) -> Dict[str, Any]:
+        """GET /api/discover/main-source: the kept list (`kept_found`) with the tests and the hidden rows read now (an
+        owner's Not interested shows at once) and `built_at`."""
+        found = self.kept_found()
+        return {"success": True, **self.answer(limit=limit, found=found), "built_at": found.get("built_at")}
+
+    async def run_tests(self, http: Any, registry: Any, answer: Dict[str, Any]) -> int:
+        """The shown rows' channels due a test (`to_test`) tested over the web and stored with their date."""
         from insight_core.db import database as db
         from insight_core.ingestion.gates import HostLimiter
-        answer = await asyncio.to_thread(self.answer)
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             tested = tests(cur)
         todo = to_test(answer, tested, self.clock())
@@ -723,21 +740,75 @@ class MainSource:
         logger.info("Discover main source: %d channels tested", len(todo))
         return len(todo)
 
-    def start(self, http: Any, registry: Any) -> bool:
-        """Test the shown channels in the background (one run at a time; off with INSIGHT_DISCOVER_READS=0)."""
-        from insight_core.services import discover_reads
-        if not discover_reads.enabled() or (self._running is not None and not self._running.done()):
-            return False
 
-        async def run() -> None:
-            try:
-                await self.run_tests(http, registry)
-            except Exception:  # noqa: BLE001 - derived; the next open tries again
-                logger.exception("Discover main source: the tests failed")
+# ---- the kept page (issue 0206) --------------------------------------------------------------------------------
 
-        self._running = asyncio.get_running_loop().create_task(run())
-        return True
+PAGE = "main_source"
+KEPT_FOR = timedelta(seconds=CACHE_SECONDS)   # what the stamp leaves out (readings between runs, the clock): this old
 
 
-__all__ = ["ANNOUNCED", "Channel", "Event", "MainSource", "OwnPage", "Src", "channel_of", "covers", "due", "events",
+def kept_key() -> str:
+    """The kept list's key: the code (a list another code made is never sent, not even as the newest)."""
+    from insight_core.markx import kept_pages
+    return f"found@{kept_pages.code_stamp()[:16]}"
+
+
+def page_inputs(cur: Any) -> List[Any]:
+    """What the list (the scan) is made from that changes between the jobs' builds, in a few indexed reads: the newest
+    decision run (its stories, memberships and readings) and the sources as the list reads them (address, kind, name,
+    enabled: never their updated_at, which every fetch moves). A worker's readings between runs and the clock are
+    KEPT_FOR's (the list was cached CACHE_SECONDS before, per process). The tests and the hidden rows are read with
+    every answer."""
+    from insight_core.markx import repo
+    last = repo.last_run(cur)
+    cur.execute("""SELECT (SELECT count(*) || ':' || md5(COALESCE(string_agg(
+                                 concat_ws(' ', id::text, platform, handle_or_url,
+                                           NULLIF(btrim(settings->>'display_name'), ''), enabled::text),
+                                 E'\\n' ORDER BY id), '')) FROM sources)""")
+    return [None if last is None else str(last["id"]), *cur.fetchone()]
+
+
+def kept_missing(cur: Any, now: datetime) -> bool:
+    """The jobs process's look: the list not kept for its inputs, or its KEPT_FOR ending within a minute."""
+    from insight_core.markx import kept_pages
+    key = kept_key()
+    return not kept_pages.has(cur, PAGE, key, kept_pages.NO_RUN, kept_pages.stamp(PAGE, key, page_inputs(cur)),
+                              until_after=now + timedelta(minutes=1))
+
+
+def keep(db_url: str, *, http: Any = None, registry: Any = None,
+         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, Any]:
+    """The jobs process (markx/jobs.py, the view "main_source"): the list made (`found`, its inputs read before) and
+    kept; then the shown channels due a test tested over the web (off with INSIGHT_DISCOVER_READS=0), which the next
+    answer reads."""
+    from insight_core.db import database as db
+    from insight_core.markx import kept_pages
+    from insight_core.services import discover_reads
+    ms = MainSource(db_url, clock=clock)
+    key = kept_key()
+    t0 = time.monotonic()
+    with db.connection(db_url) as conn, conn.cursor() as cur:
+        parts = page_inputs(cur)
+    now = clock()
+    found = {**ms.found(), "built_at": now.isoformat()}
+    body = kept_pages.encode(found)
+    seconds = round(time.monotonic() - t0, 2)
+    with db.transaction(db_url) as cur:
+        kept_pages.put(cur, PAGE, key, kept_pages.NO_RUN, kept_pages.stamp(PAGE, key, parts), body, seconds=seconds,
+                       until=now + KEPT_FOR)
+        cur.execute("DELETE FROM mx_kept_pages WHERE page = %s AND key <> %s", (PAGE, key))   # other codes' lists
+    out: Dict[str, Any] = {"built": [key], "bytes": len(body), "scan_seconds": seconds, "tested": 0}
+    if discover_reads.enabled() and found["rows"]:
+        if http is None:
+            from concurrent.futures import ThreadPoolExecutor
+            from insight_core.ingestion.http import KindHttp
+            http = KindHttp(timeout=5, executor=ThreadPoolExecutor(max_workers=4, thread_name_prefix="main-source-http"))
+        if registry is None:
+            from insight_core.services.source_fetch_service import archive_service
+            registry = archive_service(db_url).kinds
+        out["tested"] = asyncio.run(ms.run_tests(http, registry, ms.answer(found=found)))
+    return out
+
+
+__all__ = ["ANNOUNCED", "Channel", "Event", "MainSource", "OwnPage", "keep", "kept_missing", "page_inputs", "Src", "channel_of", "covers", "due", "events",
            "judge", "on_channel", "page", "scan", "section_of", "test_channel", "to_test"]

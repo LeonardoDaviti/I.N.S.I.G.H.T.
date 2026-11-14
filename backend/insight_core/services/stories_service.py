@@ -86,6 +86,7 @@ STOPPED_DAYS = 183            # an archive row's source whose newest post is thi
 # Discover's served answer is rebuilt in the background when an open finds it this old (issue 0172 c1): its list's
 # inputs hold between story runs, but Mark X's originals rows (0138 D) are read off entities that move meanwhile.
 REFRESH_AFTER = timedelta(minutes=30)
+READS_EVERY = timedelta(hours=1)   # issue 0206: a first page asks the jobs process for its web reads at most this often
 
 
 class StoriesService:
@@ -100,7 +101,6 @@ class StoriesService:
         # with a story run, a source or a hidden suggestion: the last list is kept until they do, here and in the
         # database (issue 0080 cold open: a fresh process reads it, the story job makes it).
         self._discovered: tuple = ("", None)
-        self._served: tuple = (None, None)   # ((made_from, built_at), the answer served), issue 0172 c1
         code_stamp()   # read at start, not on an open
 
     # ---- the job ------------------------------------------------------------------------
@@ -742,32 +742,53 @@ class StoriesService:
             return cur.fetchone()[0] != "on"
 
     def discover_served(self, *, offset: int = 0, limit: Optional[int] = None,
-                        q: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+                        q: Optional[str] = None) -> Dict[str, Any]:
         """Discover's page as the API serves it (issue 0172 c1: an open that made the list took 255-300 s on the
         server and the proxy gave up at 300): the last answer built (`refresh`), never made on the request, with
-        `built_at`; and whether it is due again (its inputs or code changed, or it is REFRESH_AFTER old: Mark X's
-        originals rows change between story runs), for the caller to rebuild it in the background. Before the first
-        build (a deploy of this version), the list an older version kept, else an empty one, both due."""
-        with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
-            stamp = DiscoverRepository.served_stamp(cur)
-            if stamp is not None and self._served[0] != stamp:
-                kept = DiscoverRepository.served(cur)
-                self._served = (stamp, kept["answer"] if kept else None)
-            answer = self._served[1]
-            if stamp is None or answer is None:
+        `built_at`, and `refreshing`: the jobs process is making it again or reading the web for it. Before the first
+        build (a deploy of this version), the list an older version kept, else an empty one.
+        Issue 0206: nothing is made in the API process, nor kept in it (each process held its own copy of the
+        answer). An answer due again (its inputs or code changed, or REFRESH_AFTER old: Mark X's originals change
+        between story runs), or a first page whose web reads were last looked for READS_EVERY ago, wants the job
+        "discover" (markx/jobs.py; services/discover_reads.keep), which makes it and reads the web there."""
+        from insight_core.markx import jobs
+        page_one = offset == 0 and not q
+        with db.transaction(self.db_url) as cur:
+            stamp, due = self._served_due(cur)
+            kept = DiscoverRepository.served(cur) if stamp is not None else None
+            answer = kept["answer"] if kept else None
+            if answer is None:
                 answer = DiscoverRepository.any_list(cur) or {}
-        if stamp is None or answer is None or "built_at" not in answer:
+            due = due or "built_at" not in answer
+            state = jobs.state(cur).get("discover") or {}
+            last = state.get("started_at")
+            if due or (page_one and (last is None or self.clock() - last >= READS_EVERY)):
+                jobs.want(cur, "discover")
+                state = jobs.state(cur).get("discover") or {}
+            refreshing = state.get("stage") is not None or state.get("wanted_at") is not None
+        if stamp is None or "built_at" not in answer:
             empty = {"success": True, "suggestions": [], "also": [], "archives": [], "unnamed": [], "pages": [],
                      "references": [], "first_page": FIRST_PAGE}
-            return self._page({**empty, **answer, "built_at": None}, offset=offset, limit=limit, q=q), True
-        else:
-            try:
-                age = self.clock() - datetime.fromisoformat(stamp[1])
-            except ValueError:
-                age = REFRESH_AFTER
-            stale = stamp[0] != inputs or age >= REFRESH_AFTER or age < timedelta(0)
-        return self._page(answer, offset=offset, limit=limit, q=q), stale
+            answer = {**empty, **answer, "built_at": None}
+        return {**self._page(answer, offset=offset, limit=limit, q=q), "refreshing": refreshing}
+
+    def served_due(self) -> bool:
+        """Issue 0206: whether the answer served is due again (the jobs process's "discover" view)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self._served_due(cur)[1]
+
+    def _served_due(self, cur: Any) -> Tuple[Optional[Tuple[str, str]], bool]:
+        """(the served answer's stamp, whether it is due again: none yet, its inputs or code changed, or it is
+        REFRESH_AFTER old or from the future)."""
+        inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
+        stamp = DiscoverRepository.served_stamp(cur)
+        if stamp is None:
+            return None, True
+        try:
+            age = self.clock() - datetime.fromisoformat(stamp[1])
+        except ValueError:
+            age = REFRESH_AFTER
+        return stamp, stamp[0] != inputs or age >= REFRESH_AFTER or age < timedelta(0)
 
     def refresh(self) -> Dict[str, Any]:
         """Build Discover's answer now (the list, Mark X's originals rows) and keep it as the one served, with when
@@ -781,7 +802,6 @@ class StoriesService:
         try:
             with db.transaction(self.db_url) as cur:
                 DiscoverRepository.keep_served(cur, inputs, built_at, answer)
-            self._served = ((inputs, built_at), answer)
         except Exception:  # noqa: BLE001 - derived; the next refresh keeps it
             logger.exception("Discover: the answer was not kept")
         return answer

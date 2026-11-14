@@ -345,12 +345,17 @@ class Scanned(_Api):
             got = [r for r in self.rows() if r["actor"]["id"] == self.acme]
         self.assertEqual([r["key"] for r in got], ["main:acme.example/blog/"])
 
-    def test_the_list_is_kept_until_what_it_is_made_of_changes(self):
-        """v10.17 (0186): a read-v3 answer of a post in no announced story keeps the list (it was made again on every
-        answer anywhere); one of a picked story's member, a new member, or a source changed makes it again."""
-        from insight_core.markx import repo
+    def test_the_list_is_kept_and_made_by_the_jobs_process(self):
+        """0206: the list is kept (markx/kept_pages.py), not per API process. Nothing kept: the first open makes it and
+        keeps it; a later open sends it without a scan, even after an answer elsewhere; a source added (its input)
+        leaves the open with the newest kept list and wants the jobs process's "main_source" job, whose build (`keep`)
+        is then sent; a Not interested shows at once (the hidden rows are read with every answer)."""
+        from insight_core.markx import kept_pages
+        self.cur.execute("DELETE FROM mx_kept_pages WHERE page = 'main_source'")
+        self.cur.execute("DELETE FROM mx_jobs WHERE job = 'main_source'")
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_kept_pages WHERE page = 'main_source'")
         ms = M.MainSource(self.dsn())
-        sid = self.event()
+        self.event()
         scans = []
         real = M.scan
 
@@ -358,22 +363,36 @@ class Scanned(_Api):
             scans.append(1)
             return real(*a, **k)
 
+        def mine(answer):
+            return [r["key"] for r in answer["rows"] if r["actor"]["id"] == self.acme]
+
         with mock.patch.object(M, "scan", counted):
-            first = ms.found()
+            first = ms.served()
+            self.assertEqual((mine(first), len(scans)), (["main:acme.example/blog/"], 1))
             elsewhere = self.post(title="Unrelated", at=datetime.now(timezone.utc) - 3 * D)
             self.read(elsewhere, read3(event_type="research_result"))                  # in no story
-            self.assertEqual((ms.found(), len(scans)), (first, 1))
-            now = datetime.now(timezone.utc)
-            p3 = self.post(title="Widget 5 hands-on", source=self.other, at=now - D / 2)
-            repo.open_membership(self.cur, story_id=sid, post_id=p3, role="member", reason="test", run_id=self.run)
-            ms.found()
-            self.assertEqual(len(scans), 2)                                             # a member joined the story
-            self.read(p3, read3(event_type="model_release"))
-            ms.found()
-            self.assertEqual(len(scans), 3)                                             # its reading
-            self.site_source("https://example.org/feed", name="Another")
-            ms.found()
-            self.assertEqual(len(scans), 4)                                             # a source added
+            self.assertEqual((ms.served(), len(scans)), (first, 1))
+            self.cur.execute("SELECT count(*) FROM mx_jobs WHERE job = 'main_source' AND wanted_at IS NOT NULL")
+            self.assertEqual(self.cur.fetchone()[0], 0, "kept: nothing wanted")
+            self.site_source("https://example.org/feed", name="Another")              # a source added
+            self.assertEqual((mine(ms.served()), len(scans)), (["main:acme.example/blog/"], 1), "the newest kept")
+            self.cur.execute("SELECT count(*) FROM mx_jobs WHERE job = 'main_source' AND wanted_at IS NOT NULL")
+            self.assertEqual(self.cur.fetchone()[0], 1, "the jobs process is asked to make it again")
+            with mock.patch.dict("os.environ", {"INSIGHT_DISCOVER_READS": "0"}):
+                self.assertEqual(M.keep(self.dsn())["tested"], 0)
+            self.assertEqual(len(scans), 2)
+            self.cur.execute("SELECT now()")
+            self.assertFalse(M.kept_missing(self.cur, self.cur.fetchone()[0]))
+            again = ms.served()
+            self.assertEqual((mine(again), len(scans)), (["main:acme.example/blog/"], 2))
+            self.cur.execute("INSERT INTO discover_hidden (key, reason) VALUES ('main:acme.example/blog/', "
+                             "'not_interested') ON CONFLICT DO NOTHING")
+            self.addCleanup(self.cur.execute, "DELETE FROM discover_hidden WHERE key = 'main:acme.example/blog/'")
+            self.assertEqual((mine(ms.served()), len(scans)), ([], 2))
+        self.cur.execute("SELECT count(*) FROM mx_kept_pages WHERE page = 'main_source' AND key = %s",
+                         (M.kept_key(),))
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.assertTrue(kept_pages.code_stamp()[:16] in M.kept_key())
 
     def test_mark_x_tables_are_untouched(self):
         from insight_core.tests.test_markx_decide import checksums
