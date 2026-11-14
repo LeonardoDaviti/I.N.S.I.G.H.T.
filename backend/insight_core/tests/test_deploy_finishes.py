@@ -155,6 +155,20 @@ class RulesVersionTests(unittest.TestCase):
         self.service.recompute()
         self.assertEqual(self._kept()["rules"], rules_stamp(), "other rules: every post again")
 
+    def test_a_rule_changes_rebuild_ends_by_making_news_again_over_its_window(self):
+        """0205: a rebuild's batches row News only around the stories they changed; a News rule change (news_rules)
+        left every other row as the old rules made it. Its names step makes News over the whole window at once (the
+        stories as stored), and its last step again (every story regrouped)."""
+        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": True, "full_at": "2026-10-31T12:44:20+00:00",
+                       "rules": "older rules"})
+        with mock.patch.object(self.service, "_news_window", wraps=self.service._news_window) as window:
+            self.service.recompute()
+        self.assertEqual(window.call_count, 2, "at the names step (News by the new rules at once) and at the end")
+        self.assertNotIn("rebuild", self._kept())
+        with mock.patch.object(self.service, "_news_window", wraps=self.service._news_window) as window:
+            self.service.recompute()
+        window.assert_not_called()                     # the same rules: no rebuild, no window pass
+
 
 if __name__ == "__main__":
     unittest.main()

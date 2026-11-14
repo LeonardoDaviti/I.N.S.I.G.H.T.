@@ -29,6 +29,8 @@ export interface TrackItem {
   calibrated: boolean;
   /** 0147: the finders that put a passive post up for judging (probe, entity, domain, word, source, story, classifier). */
   found_by?: string[];
+  /** 0207: when it joined the track (its verdict's time). */
+  joined_at?: string | null;
 }
 
 export interface TrackSection {
@@ -42,12 +44,43 @@ export interface TrackSection {
   keys: string[];
   count: number;
   items: TrackItem[];
+  /** 0207: who named it (judge: its posts' most common judge words, until the worker names it). */
+  named_by?: SubtopicNamedBy | null;
+  /** 0207: new (found this week), active, or quiet (no new post in 30 days: shown last, folded). */
+  state?: SubtopicState;
+  last_member_at?: string | null;
+  /** 0207: the worker's digest of its newest posts, each point citing the posts it rests on. */
+  digest?: SubtopicDigest | null;
+  /** 0207: when each of its posts joined the track (epoch seconds, newest first): what is new since a look. */
+  joined?: number[];
+}
+
+export type SubtopicNamedBy = 'judge' | 'haiku' | 'owner';
+export type SubtopicState = 'new' | 'active' | 'quiet';
+
+export interface SubtopicDigest {
+  points: Array<{ text: string; cites: string[] }>;
+  at: string | null;
+  /** Its posts changed since it was written (a new one is on its way). */
+  stale: boolean;
 }
 
 export interface TrackSubtopic {
   id: string; name: string; definition: string | null; keys: string[]; locked: boolean; made_by: 'insight' | 'owner';
-  created_at: string | null; count?: number;
+  created_at: string | null; count?: number; named_by?: SubtopicNamedBy | null; state?: SubtopicState;
 }
+
+/** 0207: a tool or product the track's practitioners discuss, counted by voices. */
+export interface TrackTool {
+  id: string; name: string; kind: string; what: string | null; posts: number; voices: number;
+  last_at: string | null; recent: number; in_track: number;
+}
+
+/** 0207: a Shadow feature's blind-labelled measure: `right` of `of` rows, the Wilson lower bound, and whether it is on. */
+export interface ShadowMeasure { what: string; right: number; of: number; lower: number; on: boolean }
+
+/** 0207: the reader's last looks at the track and at each sub-topic (ISO), for "new since you looked". */
+export interface TrackSeen { track: string | null; subtopics: Record<string, string> }
 
 export interface TrackBand { edge: number; labels: number; right: number; precision: number | null; lower: number }
 
@@ -58,7 +91,11 @@ export interface TrackCalibration {
   bar: { precision: number; lower: number; labels: number };
 }
 
-export interface TrackSuggestion { track: string; track_name: string; source_id: string; source: string; n: number }
+export interface TrackSuggestion {
+  track: string; track_name: string; source_id: string; source: string; n: number;
+  /** 0207: the source's posts in those 30 days, the share in the track's sphere and its lower bound. */
+  of?: number; share?: number; lower?: number;
+}
 
 export interface TrackPage {
   track: {
@@ -72,6 +109,10 @@ export interface TrackPage {
   suggestions: TrackSuggestion[];
   examples: { in: Array<{ post_id: string; title: string }>; out: Array<{ post_id: string; title: string }> };
   subtopics: TrackSubtopic[];
+  /** 0207: the tools the track's practitioners use or build. */
+  tools?: TrackTool[];
+  /** 0207: what is Shadow (shown, labelled, not acted on) and its blind-labelled measure. */
+  shadow?: { subtopics?: ShadowMeasure; digests?: ShadowMeasure; tools?: ShadowMeasure; bar?: number; lower_bar?: number };
   footer: { cost_usd: number; cost_per_day: number; items_per_day: number; tasks: number } | null;
   prefilter: {
     threshold: number; ready: boolean; pos: number; neg: number; description: boolean;
@@ -135,4 +176,9 @@ export const tracksApi = {
   suggestions: () => request<TrackSuggestion[]>('/api/markx/tracks/suggestions'),
   /** Issue 0185: a post (its id, its INSIGHT link or its address) in this track, and why. */
   why: (id: string, post: string) => request<TrackWhy>(`${base(id)}/why?post=${encodeURIComponent(post)}`),
+  /** 0207: the last looks at the track and its sub-topics. */
+  seen: (id: string) => request<TrackSeen>(`${base(id)}/seen`),
+  /** 0207: the reader looked at the track (or one sub-topic) now; answers the looks before and now. */
+  look: (id: string, subtopic?: string | null) =>
+    request<{ before: TrackSeen; now: TrackSeen }>(`${base(id)}/seen`, { method: 'POST', body: { subtopic: subtopic ?? null } }),
 };

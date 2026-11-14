@@ -290,6 +290,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "back",                                           # 0136
                                               "cite",                                           # 0133 v4.2
                                               "track", "subtopics", "probes",                   # 0145, 0147
+                                              "digest", "subtopic_place",                       # 0207
                                               "scout", "identity",                              # 0148, 0162
                                               "websearch",                                      # 0171
                                               "source_judge",                                   # 0173

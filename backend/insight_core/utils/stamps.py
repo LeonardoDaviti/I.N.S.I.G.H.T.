@@ -128,6 +128,7 @@ L7 = "https://misc.example/a/b1"
 L8 = "https://ref.example/guides/alpha-migration-guide"
 L9 = "https://bench.example/papers/long-context-retrieval-benchmarks"
 L10 = "https://edge.example/notes/three-days-apart"
+L11 = "https://quill.example/news/quill-six"
 SAME_PLACE = "https://beta.example/one-address-a-month-apart"
 PRESS = "https://press.example/2026/03/press-release-on-models"
 TWEET = "https://x.com/writer_x/status/1900000000000000101"
@@ -380,6 +381,17 @@ def posts() -> List[Dict[str, Any]]:
           author="writer_x", html="<p>Kernel Pack Two is out</p>"),
         p("ow2", "s-wx", _at(421), "Kernel Pack Two, the notes", "https://writerx.example/kernel-pack-two"),
         p("ow3", "s-wx", _at(430), "Kernel Pack Two benchmarks", "https://writerx.example/kernel-pack-two-bench"),
+        # A News row grows only by what holds against its story's core (0203): a story's side post saying another
+        # surging name (a digest line on a CEO) never pulls that name's posts into the story's row
+        p("ck1", "s-alpha", _at(460), "Quill Six ships today", "https://blog.alpha.example/2026/03/quill-six",
+          links=[(L11, None)]),
+        p("ck2", "s-beta", _at(461), "Quill Six, hands on", "https://beta.example/quill-six-hands-on", links=[(L11, None)]),
+        p("ck4", "s-tg1", _at(461, 30), "Quill Six notes", "https://t.me/sample_channel/460", links=[(L11, None)],
+          html="<p>Quill Six notes</p>"),
+        p("ck3", "s-gamma", _at(462), "Also today: Rho Kade steps down", "https://gamma.example/research/also-today",
+          links=[(L11, None)]),
+        p("rk1", "s-two", _at(463), "Rho Kade steps down after a long run", "https://writer-two.github.io/rho-kade"),
+        p("rk2", "s-one", _at(464), "Rho Kade: what comes next", "https://writer-one.github.io/2026/03/rho-kade"),
     ]
 
 

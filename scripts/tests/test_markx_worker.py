@@ -823,16 +823,16 @@ class TestTracks(Base):
 
     def setUp(self):
         super().setUp()
-        for kind, gid in (("track", "track-v1"), ("subtopics", "subtopics-v1")):
+        for kind, gid in (("track", "track-v1"), ("subtopics", "subtopics-v2")):
             KIND_GUIDE[kind] = gid
             self.addCleanup(KIND_GUIDE.pop, kind)
             self.stub.guides[gid] = guide(gid, f"GUIDE {gid}")
 
     def test_track_and_subtopics_are_default_kinds_with_their_call_sizes(self):
         kinds = W.DEFAULT_KINDS.split(",")
-        self.assertEqual(kinds[-2:], ["track", "subtopics"])
+        self.assertEqual(kinds[-4:], ["track", "subtopics", "subtopic_place", "digest"])   # 0207: + placement, digest
         per = W.per_call_arg(W.PER_CALL)
-        self.assertEqual((per["track"], per["subtopics"]), (10, 1))
+        self.assertEqual((per["track"], per["subtopics"], per["subtopic_place"], per["digest"]), (10, 1, 1, 1))
 
     def test_tracks_asked_ten_a_call_subtopics_one(self):
         self.stub.add("track", 25, start=1)

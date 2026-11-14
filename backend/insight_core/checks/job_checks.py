@@ -97,9 +97,13 @@ def _mx_rows(cur: Any) -> int:
 
 
 def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
-    """0086 Safety 1: Mark IX's tables are the same with Mark X on and off. With Mark X off the scheduler runs nothing
-    (no mx_* row is written); then two decision runs with it on (the second must find the first's work done) leave every
-    table but mx_* row for row as it was. After the runs, the read-only Mark X invariants hold on what they wrote."""
+    """0086 Safety 1: Mark IX's tables are the same with Mark X on and off. With Mark X off the scheduler runs no Mark X
+    job and writes no Mark X row; then two decision runs with it on (the second must find the first's work done) leave
+    every table but mx_* row for row as it was. After the runs, the read-only Mark X invariants hold on what they wrote.
+    0206: the jobs process's runner also keeps the reader's pages (the unread counts, Discover: KeptView.markx False),
+    with Mark X on or off, through the kept views' machinery, whose state and pages live in mx_jobs and mx_kept_pages.
+    Those are the reader's, not Mark X's: a reader's view run with Mark X off is not a Mark X run, and its rows
+    (jobs.reader_rows: its mx_jobs row, its pages' rows) are not counted. Any other job, or any other mx_* row, is."""
     import os
     what = "Mark IX's tables (every table but mx_*) two decision runs with Mark X on change, or a run with it off"
     try:
@@ -107,8 +111,12 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     except ImportError:
         return [Found("markx.ix_unchanged", "mark x", what, -1, 0, note="not measured: this version has no decision job")]
     from insight_core.checks import invariants
+    try:   # 0206: the reader's kept views and their rows (a version before has none)
+        from insight_core.markx.jobs import reader_rows, readers
+    except ImportError:
+        reader_rows, readers = (lambda cur: 0), (lambda job: False)
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
-        before, mx_before = table_checksums(cur), _mx_rows(cur)
+        before, mx_before, reader_before = table_checksums(cur), _mx_rows(cur), reader_rows(cur)
     old = os.environ.get("INSIGHT_MARKX")
     started = time.monotonic()
     try:
@@ -119,7 +127,8 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
         except ImportError:
             off = decide.Scheduler(debounce=None, every=None).run_now()
         with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
-            off_rows = _mx_rows(cur) - mx_before
+            reader_written = reader_rows(cur) - reader_before
+            off_rows = _mx_rows(cur) - mx_before - reader_written
         os.environ["INSIGHT_MARKX"] = "on"
         runs = []
         for _ in range(2):
@@ -140,11 +149,13 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     seconds = round(time.monotonic() - started, 1)
     changed = sorted(t for t in set(before) | set(after) if before.get(t) != after.get(t))
     first, second = runs
-    note = {"off": {"ran": off is not None, "mx_rows_written": off_rows},
+    markx_ran = off is not None and not readers(off)
+    note = {"off": {"ran": markx_ran, "mx_rows_written": off_rows, "reader_view": off if readers(off) else None,
+                    "reader_rows_written": reader_written},
             "first_run": {k: first.get(k) for k in ("stories", "posts", "questions", "answered", "changes", "news", "tasks_added")},
             "second_run": {"memberships": second.get("memberships"), "news_written": (second.get("news") or {}).get("written"),
                            "tasks_added": second.get("tasks_added")}}
-    out = [Found("markx.ix_unchanged", "mark x", what, len(changed) + (1 if off_rows else 0) + (1 if off is not None else 0),
+    out = [Found("markx.ix_unchanged", "mark x", what, len(changed) + (1 if off_rows else 0) + (1 if markx_ran else 0),
                  len(before), [f"{t}: {before.get(t)} -> {after.get(t)}" for t in changed][:EXAMPLES],
                  seconds, note=json.dumps(note, default=str))]
     out.append(Found("markx.after_run", "mark x", "the Mark X invariants on what the decision runs wrote (2-5, summed)",

@@ -302,9 +302,29 @@ class StoriesService:
                 batch["rebuild"] = rebuild
             return batch
         if rebuild:   # every post regrouped by the new rules: they are the rows now
-            return {"rebuild": None, "rules": stamp, "full_at": now.isoformat(), "discover": "all",
-                    "counts": Counter(batches=1)}
+            # 0205: and News made again over its whole window once every story is regrouped (the names step made it
+            # over the stories as they were; the batches row News only around the stories they changed)
+            counts = Counter(batches=1)
+            counts.update(self._news_window(cur, sources, now))
+            return {"rebuild": None, "rules": stamp, "full_at": now.isoformat(), "discover": "all", "counts": counts}
         return None
+
+    def _news_window(self, cur: Any, sources: SourceFacts, now: datetime) -> Dict[str, int]:
+        """News over every post of its window, through the incremental job's own News step (`NewsService.update`, every
+        post of the window its seeds): what a full run's News makes of the stories as stored."""
+        from insight_core.utils.news_rules import NEWS_EDGE
+        since = now - self.news.keep
+        seeds = set(self.news.repo.window_posts(cur, since - NEWS_EDGE))
+        posts: Dict[str, StoryPost] = {}
+
+        def load(ids: Iterable[str]) -> None:
+            missing = sorted(set(ids) - posts.keys())
+            if missing:
+                posts.update((row["id"], self._story_post(row, sources))
+                             for row in self.repo.load_posts(cur, sources, missing))
+        load(seeds)
+        return self.news.update(cur, sources=sources, posts=posts, load=load, touched=seeds, titles=[], urls=[],
+                                since=since, before=None)
 
     def _rebuild_step(self, cur: Any, sources: SourceFacts, rebuild: Dict[str, Any], stamp: str) -> Dict[str, Any]:
         """A rule change's steps before its batches: every post's keys (KEYS_BATCH a step), each X
@@ -334,6 +354,9 @@ class StoriesService:
                 rebuild["phase"] = "names"
         elif rebuild["phase"] == "names":
             counts["surges_changed"] = self.news.judge_names(cur, sources, None)
+            # 0205: News by the new rules at once, over the stories as stored: the batches that follow take minutes and
+            # row News only around the stories they change (a News rule change showed old rows until then)
+            counts.update(self._news_window(cur, sources, self.clock()))
             rebuild["queued"] = self.repo.redo_every_post(cur)
             rebuild["phase"] = "stories"
         return {"rebuild": rebuild, "counts": counts}
