@@ -677,6 +677,36 @@ def _news_place(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_SHOWN_POST = re.compile(r"^\[(\d+)\] ", re.M)
+
+
+def _significance(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0208: the breakdowns named are posts the question shows (its "[n] ..." lines), each once."""
+    shown = {int(n) for n in _SHOWN_POST.findall(input or "")}
+    named = list(a.get("breakdowns") or [])
+    wrong = sorted({n for n in named if n not in shown})
+    if wrong:
+        return f"breakdowns name {', '.join(map(str, wrong))}, not a post shown"
+    if len(named) != len(set(named)):
+        return "a breakdown is named twice"
+    return None
+
+
+_SHOWN_POST = re.compile(r"^\[(\d+)\] ", re.M)
+
+
+def _significance(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0208: the breakdowns named are posts the question shows (its "[n] ..." lines), each once."""
+    shown = {int(n) for n in _SHOWN_POST.findall(input or "")}
+    named = list(a.get("breakdowns") or [])
+    wrong = sorted({n for n in named if n not in shown})
+    if wrong:
+        return f"breakdowns name {', '.join(map(str, wrong))}, not a post shown"
+    if len(named) != len(set(named)):
+        return "a breakdown is named twice"
+    return None
+
+
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
@@ -692,6 +722,8 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "news_sections": _news_sections,            # 0174
           "news_place": _news_place,                  # 0197
           "unit_types": _unit_types,                  # 0181
+          "significance": _significance,              # 0208
+          "significance": _significance,              # 0208
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

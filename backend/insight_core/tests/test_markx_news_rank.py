@@ -20,7 +20,7 @@ def member(n, *, source="Source A", kind="telegram", hours=0, title=None, text="
 
 
 ANSWER = {"event": "new_method", "usable": "now", "shipped_in": "in a widely used library",
-          "adoption": ["widely_used_library", "paper_with_code"], "coverage": "expert_breakdown", "effect": 4,
+          "adoption": ["widely_used_library", "paper_with_code"], "coverage": "expert_breakdown", "breakdowns": [], "effect": 4,
           "scope": "field_wide", "why": "Ten times faster than the classic algorithm and shipped in a common library."}
 
 
@@ -88,8 +88,17 @@ class TheAnswer(unittest.TestCase):
 
     def test_wrong_answers_are_refused(self):
         for bad in ({**ANSWER, "effect": 6}, {**ANSWER, "event": "launch"}, {**ANSWER, "adoption": ["famous"]},
-                    {k: v for k, v in ANSWER.items() if k != "why"}):
+                    {k: v for k, v in ANSWER.items() if k != "why"}, {k: v for k, v in ANSWER.items() if k != "breakdowns"}):
             self.assertIsNotNone(validate.check(S.KIND, bad, "STORY: x", S.GUIDE)[1], bad)
+
+    def test_the_breakdowns_name_posts_the_question_shows(self):
+        text = S.question("H", [member(1), member(2, source="B", hours=1, text="x" * 1500)])
+        self.assertIsNone(validate.check(S.KIND, {**ANSWER, "breakdowns": [2]}, text, S.GUIDE)[1])
+        self.assertIn("not a post shown", validate.check(S.KIND, {**ANSWER, "breakdowns": [3]}, text, S.GUIDE)[1])
+        self.assertIn("twice", validate.check(S.KIND, {**ANSWER, "breakdowns": [2, 2]}, text, S.GUIDE)[1])
+        self.assertEqual(S.breakdown_posts({"breakdowns": [2, 9]}, ["p1", "p2"]), ["p2"])
+        self.assertEqual(S.breakdown_posts({"breakdowns": [1]}, None), [])                 # an ask that kept no order
+        self.assertEqual(S.breakdown_posts({}, ["p1"]), [])                                 # a v1 answer
 
     def test_the_score_is_the_effect_first(self):
         self.assertEqual(S.score(ANSWER), 1.0)                                    # .75 + .1 + .1 + .05 + .05 + .05
@@ -277,6 +286,51 @@ class Ranked(_Api):
             again = news.keep_pages(self.cur)
         self.assertEqual(again["rank"]["answered"], 1)
         self.assertEqual(R.read(self.cur, [a])[a]["significance"], 1.0)
+
+
+class Analysis(Ranked):
+    """0208: a row's expert breakdowns: named by its answer, read as commentary, long; kept in the rank, shown on the
+    reader's News only when Analysis is on (a Shadow by default: under its bar)."""
+
+    def reading(self, post, kind):
+        from insight_core.markx import tasks
+        with self.conn.transaction():
+            tid, _ = tasks.read_task(self.cur, post)
+            call_id = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="m", valid=True, answer={})
+            repo.add_reading(self.cur, post_id=post, guide="read-v2", call_id=call_id, kind=kind, events="one",
+                             lang="en", headline=None, reading={})
+
+    def test_named_long_commentary_is_the_rows_analysis(self):
+        lead = self.post(title="A lab releases open weights")
+        deep = self.post(title="How its attention works", text="How its attention works. " + "Layer detail. " * 120)
+        report = self.post(title="A long report", text="A long report. " + "It was released. " * 120)
+        short = self.post(title="A short take", text="A short take. Nice.")
+        self.news_run([([lead, deep, report, short], 9)])
+        self.reading(deep, "commentary")
+        self.reading(report, "report")
+        self.reading(short, "commentary")
+        self.plan()
+        self.cur.execute("SELECT shown::text[] FROM mx_news_significance_asks")
+        shown = self.cur.fetchone()[0]
+        named = [shown.index(p) + 1 for p in (deep, report, short) if p in shown]
+        self.answer_all({lead: {**ANSWER, "breakdowns": named}})
+        with self.conn.transaction():
+            R.keep(self.cur)
+        self.assertEqual(R.read(self.cur, [lead])[lead]["why"]["analysis"], [deep])
+        from insight_core.services.news_service import NewsService
+        item = {"id": lead, "story": {"id": lead, "posts": [
+            {"id": deep, "title": "How its attention works", "source_display_name": "Example Channel", "repost": None}]},
+            "news": {"part": "recent", "score": 9, "first_at": self.now}}
+        got = NewsService.ranked(self.cur, [dict(item, news=dict(item["news"]))])["items"][0]
+        self.assertNotIn("analysis", got["news"])                                     # a Shadow: not on News
+        with self.conn.transaction():
+            R.set_analysis_mode(self.cur, "shown")
+        self.assertEqual(R.mode(self.cur), "ranked")                                  # the order kept
+        got = NewsService.ranked(self.cur, [dict(item, news=dict(item["news"]))])["items"][0]
+        self.assertEqual(got["news"]["analysis"], [{"id": deep, "title": "How its attention works",
+                                                    "source": "Example Channel", "author": "Example Channel"}])
+        page = call("GET", "/api/markx/news", query={"all": 1})[1]
+        self.assertEqual(page["items"][0]["rank"]["why"]["analysis"], [deep])
 
 
 class TheReadersNews(_Api):

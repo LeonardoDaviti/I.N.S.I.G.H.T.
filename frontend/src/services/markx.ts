@@ -105,7 +105,8 @@ export interface MarkxRow {
 export interface MarkxRank {
   significance: number | null; fit: number; coverage: number; score: number; notable: boolean;
   why: { event?: string; effect?: number; usable?: string; shipped_in?: string | null; why?: string;
-         fit?: { source?: number; entity?: number; thing?: string | null; track?: boolean }; coverage_place?: number };
+         fit?: { source?: number; entity?: number; thing?: string | null; track?: boolean }; coverage_place?: number;
+         analysis?: string[] };
 }
 
 export interface MarkxNews {

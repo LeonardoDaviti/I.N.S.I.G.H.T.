@@ -334,6 +334,7 @@ class NewsService:
         coverage alone), the score's order breaking ties; "coverage" leaves the score's order. {items, order}."""
         from insight_core.markx import news_rank
         want = order if order in news_rank.ORDERS else news_rank.mode(cur)
+        shown = news_rank.analysis_mode(cur) == "shown"
         ranks = news_rank.read(cur, [i["story"]["id"] for i in items])
         for i in items:
             r = ranks.get(i["story"]["id"])
@@ -343,6 +344,12 @@ class NewsService:
                                      "score": r["score"], "event": why.get("event"), "effect": why.get("effect"),
                                      "usable": why.get("usable"), "why": why.get("why")}
             i["news"]["notable"] = bool(want == "ranked" and r is not None and r["notable"])
+            if shown and r is not None:   # 0208: its expert breakdowns, apart from its reports (the row's own lines)
+                lines = {p["id"]: p for p in i["story"].get("posts") or []}
+                i["news"]["analysis"] = [
+                    {"id": pid, "title": lines[pid]["title"], "source": lines[pid]["source_display_name"],
+                     "author": ((lines[pid].get("repost") or {}).get("author") or lines[pid]["source_display_name"])}
+                    for pid in ((r["why"] or {}).get("analysis") or []) if pid in lines][:news_rank.ANALYSIS_MAX]
         if want == "ranked":
             def score(i: Dict[str, Any]) -> float:
                 r = i["news"].get("rank")

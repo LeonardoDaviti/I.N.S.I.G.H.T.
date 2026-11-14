@@ -383,6 +383,18 @@ function FeedItem({
         {item.story && (storyLine ?? coveredBy(item.story, item.source_id)) ? (
           <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story, item.source_id) ?? ''} lead={item} now={now} />
         ) : null}
+        {item.news?.analysis?.length ? (
+          // Issue 0208: a News row's expert breakdowns, apart from its reports, each with its author.
+          <ul aria-label="Analysis" className="mt-1 flex flex-col gap-0.5 max-sm:col-start-1 text-[0.8125rem] leading-5">
+            {item.news.analysis.map((post) => (
+              <li key={post.id} className="min-w-0 truncate text-fg-2">
+                <span className="font-semibold text-fg-3">Analysis</span>
+                {' · '}{post.author}{' · '}
+                <Link to={`/posts/${post.id}`} className="underline-offset-2 hover:underline">{post.title}</Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {item.also_on?.length ? <Suspense fallback={null}><AlsoOn lines={item.also_on} now={now} /></Suspense> : null}
       </div>
       {showThumb ? (

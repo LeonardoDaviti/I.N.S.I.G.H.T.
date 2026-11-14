@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-KIND, GUIDE = "significance", "significance-v1"
+KIND, GUIDE = "significance", "significance-v2"   # 0208: v2 also names the breakdowns (v1 rows kept)
 MEMBERS = 6                 # members shown, at most
 EARLIEST = 2                # the first posts always shown (who broke it)
 TEXT_CHARS = 500            # a member's text shown
@@ -209,8 +209,9 @@ def members_of(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Membe
     return out
 
 
-def inputs(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
-    """{row id: its question} for these News rows (rows with no post Mark X can read are left out)."""
+def inputs(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Tuple[str, List[str]]]:
+    """{row id: (its question, the posts it shows in order)} for these News rows (rows with no post Mark X can read
+    are left out)."""
     from insight_core.markx import news, news_sections
     if not rows:
         return {}
@@ -222,8 +223,10 @@ def inputs(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
     for r in rows:
         rid = str(r["id"])
         if members.get(rid):
-            out[rid] = question(heads[rid]["text"], members[rid], event_type=types.get(rid),
-                                subjects=subjects.get(rid) or (), voices=int(r.get("voices") or 0), core=core_of(r))
+            core = core_of(r)
+            out[rid] = (question(heads[rid]["text"], members[rid], event_type=types.get(rid),
+                                 subjects=subjects.get(rid) or (), voices=int(r.get("voices") or 0), core=core),
+                        [m.id for m in chosen(members[rid], core)])
     return out
 
 
@@ -278,10 +281,11 @@ def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> 
         rid = str(r["id"])
         if rid not in texts:
             continue
-        tid, new = tasks.add(cur, KIND, texts[rid], a=rid, priority=PRIORITY)
-        cur.execute("""INSERT INTO mx_news_significance_asks (task_id, row_id, members, asked_at)
-                       VALUES (%s, %s, %s::uuid[], %s) ON CONFLICT (task_id) DO NOTHING""",
-                    (tid, rid, sorted({p["post_id"] for p in r.get("posts") or []}), now))
+        text, shown = texts[rid]
+        tid, new = tasks.add(cur, KIND, text, a=rid, priority=PRIORITY)
+        cur.execute("""INSERT INTO mx_news_significance_asks (task_id, row_id, members, shown, asked_at)
+                       VALUES (%s, %s, %s::uuid[], %s::uuid[], %s) ON CONFLICT (task_id) DO NOTHING""",
+                    (tid, rid, sorted({p["post_id"] for p in r.get("posts") or []}), shown, now))
         out["asked" if new else "again"] += 1
     return out
 
@@ -293,17 +297,29 @@ def answers(cur: Any, row_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     ids = sorted({str(r) for r in row_ids})
     if not ids:
         return {}
-    cur.execute("""SELECT DISTINCT ON (a.row_id) a.row_id::text, a.task_id::text, a.asked_at
+    cur.execute("""SELECT DISTINCT ON (a.row_id) a.row_id::text, a.task_id::text, a.asked_at, a.shown::text[]
                      FROM mx_news_significance_asks a JOIN mx_tasks t ON t.id = a.task_id
                     WHERE a.row_id = ANY(%s::uuid[]) AND t.status = 'answered'
                     ORDER BY a.row_id, a.asked_at DESC, a.task_id""", (ids,))
     asks = cur.fetchall()
-    calls = repo.valid_calls(cur, [t for _, t, _ in asks])
+    calls = repo.valid_calls(cur, [t for _, t, _, _ in asks])
     out = {}
-    for rid, tid, at in asks:
+    for rid, tid, at, shown in asks:
         answer = (calls.get(tid) or {}).get("answer")
         if isinstance(answer, dict):
-            out[rid] = {**answer, "asked_at": at, "task_id": tid, "score": score(answer)}
+            out[rid] = {**answer, "asked_at": at, "task_id": tid, "score": score(answer),
+                        "breakdown_posts": breakdown_posts(answer, shown)}
+    return out
+
+
+def breakdown_posts(answer: Dict[str, Any], shown: Optional[Sequence[str]]) -> List[str]:
+    """0208: the posts an answer names as expert breakdowns (its `breakdowns`: numbers of the posts the question
+    showed), in its order; none under significance-v1, or for an ask that kept no order."""
+    shown = list(shown or [])
+    out: List[str] = []
+    for n in answer.get("breakdowns") or []:
+        if isinstance(n, int) and 1 <= n <= len(shown) and shown[n - 1] not in out:
+            out.append(shown[n - 1])
     return out
 
 

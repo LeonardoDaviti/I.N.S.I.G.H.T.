@@ -669,7 +669,7 @@ def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
     cur.execute("SELECT count(*), max(answered_at) FROM mx_tasks WHERE kind = 'headline' AND status = 'answered'")
     heads = list(cur.fetchone())
     from insight_core.markx import news_rank   # 0208: the rank's inputs (significance answers, the reader's hour), its switch
-    ranked = news_rank.stamp(cur, now) + [news_rank.mode(cur)]
+    ranked = news_rank.stamp(cur, now) + [news_rank.mode(cur), news_rank.analysis_mode(cur)]
     return str(last["id"]), kept_pages.stamp("news", written, rows, ix, sections, heads, kept_pages.owner_marks(cur),
                                              ranked)
 

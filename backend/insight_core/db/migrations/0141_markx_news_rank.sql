@@ -2,7 +2,8 @@
 --
 -- 1. mx_news_significance_asks: one significance question as it was asked about a News row: its task (kind
 --    `significance`, guide significance-v1), the row (`row_id`: its first post, the id mx_news gives it), the row's
---    posts when asked (`members`: a row is asked again only when they change) and when. The answer is the task's
+--    posts when asked (`members`: a row is asked again only when they change), the posts it shows in its order
+--    (`shown`: an answer's breakdowns name them by number) and when. The answer is the task's
 --    valid call (mx_calls); the newest answered ask of a row is its significance.
 -- 2. mx_news_rank: each News row's place as the jobs process last ranked it (markx/news_rank.keep): its significance,
 --    its fit with the reader, its coverage, the score they make, whether it is in the "Notable for you" lane, what
@@ -14,6 +15,7 @@ CREATE TABLE IF NOT EXISTS mx_news_significance_asks (
   task_id   uuid PRIMARY KEY REFERENCES mx_tasks(id),
   row_id    uuid NOT NULL,
   members   uuid[] NOT NULL,
+  shown     uuid[],                          -- the posts the question shows, in its order ([1] is shown[1])
   asked_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS mx_news_significance_asks_row_idx ON mx_news_significance_asks (row_id, asked_at DESC);

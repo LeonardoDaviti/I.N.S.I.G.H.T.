@@ -220,6 +220,47 @@ The exact rows are in `plan/research/rank-1019/notes_rows*.md`.
 - **Link posts.** On the copy's last 72 hours: 22 pages to read (some will come back "no article") and 2 stored
   already. That is about 7 a day, inside the originals credit.
 
+## Analysis: a row's expert breakdowns, apart from its reports
+
+- **The case** (coordinator, 2026-11-14). A practitioner's long technical breakdown of a model's architecture, with
+  numbers, sat as a plain member of the model's weights-release row. A reader never saw it unless they opened the
+  row. Mark X reads that post as commentary.
+- **Built, by deepening significance.**
+  - **The guide.** significance-v2 is v1 plus `breakdowns`: the numbers of the posts shown that are an expert
+    breakdown in their own right.
+  - **The check.** A breakdown must name a post the question shows, and each post once.
+  - **Mapping back.** The ask keeps the posts it showed, in order (`mx_news_significance_asks.shown`), so the numbers
+    map back to posts.
+  - **The rule.** `news_rank.analysis_of` keeps the named posts that Mark X's newest reading calls commentary and that
+    have 1,000+ characters of their own, at most 2 a row, in the rank's `why`.
+  - **What it costs.** Every row is asked once more under the new guide, about $0.20 on the server.
+- **Where it shows.**
+  - **The reader's News** shows them under the row as "Analysis · <author> · <title>", only when the Analysis
+    switch (mx_settings `news_rank.analysis`) says `shown`.
+  - **/markx** always lists them as "Analysis (Shadow)".
+- **Measured blind.**
+  - **What was labelled.** Both windows' rows were asked under significance-v2: $0.08, 1 answer of 173 refused by
+    the check. The posts each rule would show as Analysis were mixed with 19 decoys (long posts no rule picked) and
+    shuffled. Two labellers judged "expert breakdown or not"; they agreed on 76 of 78.
+  - **The results:**
+
+  | rule (up to 2 a row) | shown | real breakdowns | Wilson 95% |
+  |---|---|---|---|
+  | named by the answer | 49 | 26 (53%) | .39-.66 |
+  | named, 1,000+ characters | 46 | 25 (54%) | .40-.68 |
+  | named, read as commentary | 12 | 9 (75%) | .47-.91 |
+  | **named, commentary, 1,000+ characters** (built) | 12 | 9 (75%) | .47-.91 |
+  | not named: commentary, long, answer says "expert breakdown" | 19 | 12 (63%) | .41-.81 |
+
+  - **What went wrong.** Haiku names makers' announcements, aggregators' recaps and long news reports as breakdowns,
+    despite the guide. None of the 19 decoys was a breakdown: the misses are few, the false hits many.
+- **Verdict: Shadow.** The bar is a point of 97% and a Wilson lower bound of 90%; the best rule is 75% (.47-.91).
+  The built rule is the most precise.
+- **Next.**
+  - A rule on who tells it: read-v3's `origin` (maker or relay) could drop the makers' announcements. The server's
+    panels don't expose it, so it was not measured here.
+  - Or a per-post question. Then re-measure on 40+ shown posts.
+
 ## On, Shadow, off
 
 | what | state |
@@ -228,6 +269,7 @@ The exact rows are in `plan/research/rank-1019/notes_rows*.md`.
 | News ordered by rank (Mark X's rows, every scope) | **on** (switch `news_rank.order`; `?order=coverage` for the old) |
 | "Notable for you" lane | **on** (with the ranked order) |
 | fit with the reader | **Shadow**: computed, kept, shown on /markx, weight 0 |
+| Analysis (a row's expert breakdowns) | **Shadow**: kept, shown on /markx; the reader's News shows it when `news_rank.analysis` is `shown` |
 | link post read with its page | on, under Collect originals' switch and credit |
 | Mark IX's News, the old score | unchanged, one click away |
 

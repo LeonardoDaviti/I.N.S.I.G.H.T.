@@ -25,6 +25,13 @@ reads the newest written run's rows of News' window, their significance answers,
 mx_news_rank row a row (a cache of a derived order, replaced when ranked again). The API reads those rows by id
 (`read`), a few hundred small rows, and orders by them (`order`).
 
+**Analysis** (`analysis_of`): a row's expert breakdowns, shown apart from its reports: the posts its significance
+answer names as breakdowns (significance-v2's `breakdowns`) that Mark X reads as commentary, with ANALYSIS_CHARS+
+characters of their own, at most
+ANALYSIS_MAX, kept in the rank's `why`. The reader's News shows them only when `analysis_mode` says "shown" (the bar: a
+point 97% and a Wilson lower bound 90% of them real breakdowns on blind labels, plan/issues/0208); else a Shadow, shown
+on /markx only.
+
 **The switch** (`mode`, mx_settings NEWS_RANK): `order` "ranked" (News in this order, the lane on) or "coverage" (News in
 the old order; the ranks are kept and shown on /markx, a Shadow). `?order=coverage` on /api/news asks for the old order
 whatever the switch says; Mark IX's News (`?mark=ix`) keeps its own order.
@@ -50,7 +57,12 @@ SOURCE_PRIOR = 100.0                     # a source's read share is smoothed tow
 LIFT_FULL = 8.0                          # a source read this many times its share of posts is fit 1
 ENTITY_HALF = 2.0                        # a thing the reader read this many posts about is fit 0.5
 FIT_PARTS = {"entity": 0.45, "source": 0.35, "track": 0.20}
-NEWS_RANK = "news_rank"                  # mx_settings: {"order": "ranked" | "coverage"}
+NEWS_RANK = "news_rank"                  # mx_settings: {"order": "ranked" | "coverage", "analysis": ...}
+ANALYSIS_MAX = 2                         # a row's Analysis posts, at most
+ANALYSIS_CHARS = 1000                    # a breakdown's own words, at least (significance.LONG_POST)
+ANALYSIS_KINDS = ("commentary",)         # the reading kinds a breakdown has (read-v3, else read-v2)
+ANALYSES = ("shown", "shadow")
+DEFAULT_ANALYSIS = "shadow"              # 0208: measured 9 of 12 real (Wilson .47-.91): under the bar, a Shadow
 ORDERS = ("ranked", "coverage")
 DEFAULT_ORDER = "ranked"                 # 0208: passed its bar on a held-out window (P@20 .50 -> .75)
 
@@ -220,12 +232,32 @@ def ranks_of(cur: Any, rows: Sequence[Dict[str, Any]], now: datetime) -> List[Ra
     fits = {str(r["id"]): fit(p, sources=sources.get(str(r["id"]), ()), things=things.get(str(r["id"]), ()),
                               posts=[x["post_id"] for x in r.get("posts") or []]) for r in rows}
     out = rank(rows, sig, fits, now)
+    analysis = analysis_of(cur, answers)
     for x in out:
         a = answers.get(x.row_id)
         if a:
             x.why.update({k: a.get(k) for k in ("event", "usable", "shipped_in", "adoption", "coverage", "effect",
                                                 "scope", "why")})
+            x.why["analysis"] = analysis.get(x.row_id, [])
     return out
+
+
+def analysis_of(cur: Any, answers: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
+    """{row: its Analysis posts}: the posts its answer names as breakdowns that Mark X's newest reading calls
+    commentary (ANALYSIS_KINDS) and that have ANALYSIS_CHARS+ characters of their own (the text beyond the title), in
+    the answer's order, at most ANALYSIS_MAX. Measured blind (0208): the answer's names alone 26 of 49 real breakdowns
+    (reports and makers' announcements named too); with the reading's kind and the length 9 of 12."""
+    named = {rid: a.get("breakdown_posts") or [] for rid, a in answers.items()}
+    ids = sorted({p for ps in named.values() for p in ps})
+    if not ids:
+        return {}
+    cur.execute("""SELECT p.id::text, char_length(btrim(COALESCE(p.content, ''))) - CASE
+                          WHEN COALESCE(p.title, '') <> '' AND btrim(COALESCE(p.content, '')) LIKE p.title || '%%'
+                          THEN char_length(p.title) ELSE 0 END,
+                          (SELECT r.kind FROM mx_readings r WHERE r.post_id = p.id ORDER BY r.guide DESC LIMIT 1)
+                     FROM posts p WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    ok = {pid for pid, own, kind in cur.fetchall() if (own or 0) >= ANALYSIS_CHARS and kind in ANALYSIS_KINDS}
+    return {rid: [p for p in ps if p in ok][:ANALYSIS_MAX] for rid, ps in named.items()}
 
 
 def keep(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -273,8 +305,26 @@ def set_mode(cur: Any, order: str) -> str:
     if order not in ORDERS:
         raise ValueError(f"order must be one of {', '.join(ORDERS)}")
     from insight_core.markx import repo
-    repo.set_setting(cur, NEWS_RANK, {"order": order})
+    value = repo.get_setting(cur, NEWS_RANK, default=None) or {}
+    repo.set_setting(cur, NEWS_RANK, {**(value if isinstance(value, dict) else {}), "order": order})
     return order
+
+
+def analysis_mode(cur: Any) -> str:
+    """Whether the reader's News shows a row's Analysis ("shown") or only /markx does ("shadow")."""
+    from insight_core.markx import repo
+    value = repo.get_setting(cur, NEWS_RANK, default=None) or {}
+    got = value.get("analysis") if isinstance(value, dict) else None
+    return got if got in ANALYSES else DEFAULT_ANALYSIS
+
+
+def set_analysis_mode(cur: Any, how: str) -> str:
+    if how not in ANALYSES:
+        raise ValueError(f"analysis must be one of {', '.join(ANALYSES)}")
+    from insight_core.markx import repo
+    value = repo.get_setting(cur, NEWS_RANK, default=None) or {}
+    repo.set_setting(cur, NEWS_RANK, {**(value if isinstance(value, dict) else {}), "analysis": how})
+    return how
 
 
 def stamp(cur: Any, now: datetime) -> List[Any]:

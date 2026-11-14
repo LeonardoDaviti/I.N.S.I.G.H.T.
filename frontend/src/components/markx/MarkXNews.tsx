@@ -165,6 +165,15 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               <TextLink to={`/markx/stories/${encodeURIComponent(row.story)}`}>Perspectives and the story sheet</TextLink>
             </p>
           ) : null}
+          {row.rank?.why?.analysis?.length ? (   // 0208: its expert breakdowns, a Shadow until measured over its bar
+            <ul aria-label="Analysis (Shadow)" className="mb-2 text-[0.8125rem] leading-5">
+              {row.posts.filter((line) => row.rank?.why?.analysis?.includes(line.id)).map((line) => (
+                <li key={line.id} className="text-fg-2">
+                  <span className="font-semibold text-fg-3">Analysis (Shadow)</span> · {line.source} · {line.title}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <ul aria-label="Posts in this Mark X row">
             <FoldedPosts lines={row.posts} render={(line, extra) => <PostLine key={line.id} line={line} now={now} extra={extra} />} />
           </ul>

@@ -543,6 +543,14 @@ SIGNIFICANCE_SCHEMA = {
         "scope": {"enum": SIGNIFICANCE_SCOPE},
         "why": {"type": "string", "minLength": 1, "maxLength": 400}},
 }
+# 0208 (Analysis): significance-v2 also names the posts shown that are an expert breakdown (their keys [1]..[6] as numbers),
+# which a News row shows apart from its reports (news_rank.analysis). A row is asked again once under the new guide.
+SIGNIFICANCE_V2_SCHEMA = {
+    **SIGNIFICANCE_SCHEMA,
+    "required": SIGNIFICANCE_SCHEMA["required"] + ["breakdowns"],
+    "properties": {**SIGNIFICANCE_SCHEMA["properties"],
+                   "breakdowns": {"type": "array", "maxItems": 6, "items": {"type": "integer", "minimum": 1, "maximum": 6}}},
+}
 
 
 # ---- the kinds -------------------------------------------------------------------------------------
@@ -596,7 +604,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
     Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # 0197: new rows into those sections
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
-    Kind("significance", "significance-v1", "story", SIGNIFICANCE_SCHEMA),   # 0208: a News row's significance
+    Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # 0208: a News row's significance,
+                                                                                # its breakdowns (v2; v1 rows kept)
 )}
 
 

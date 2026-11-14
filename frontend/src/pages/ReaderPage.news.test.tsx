@@ -154,6 +154,19 @@ describe('News (issue 0051)', () => {
     expect(await screen.findByText('Notable for you')).toBeInTheDocument();
   });
 
+  it("a row shows its expert breakdowns as Analysis, each with its author, when the API sends them (issue 0208)", async () => {
+    const analysis = [{ id: ID(5), title: 'How its attention works', source: 'Example Channel', author: 'Example Channel' }];
+    render(base({ getNews: vi.fn().mockResolvedValue({ ...feedPage([
+      story(ID(1), 'A lab releases open weights', { analysis }, ['A', 'B']),
+      story(ID(2), 'Another row', {}, ['A', 'B']),
+    ]), mark: 'x', order: 'ranked' }) }), '/?view=news');
+    const list = await screen.findByRole('list', { name: 'Analysis' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(list).toHaveTextContent('Analysis · Example Channel · How its attention works');
+    expect(within(list).getByRole('link', { name: 'How its attention works' })).toHaveAttribute('href', `/posts/${ID(5)}`);
+    expect(screen.getAllByRole('list', { name: 'Analysis' })).toHaveLength(1);   // a row with none shows none
+  });
+
   it('when Mark X has no rows the API falls back to the older News and the page says so (issue 0205)', async () => {
     const note = 'Mark X has no News yet (a new install, or its worker has not run): this is the older News.';
     render(base({ getNews: vi.fn().mockResolvedValue({ ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]),

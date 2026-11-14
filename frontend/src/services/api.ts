@@ -169,6 +169,8 @@ export interface NewsScore {
   /** Issue 0208 (Mark X's rows): its kept rank, when ranked; and whether it is in the "Notable for you" lane. */
   rank?: NewsRank | null;
   notable?: boolean;
+  /** Issue 0208: its expert breakdowns (at most 2), shown apart from its reports, when Analysis is on. */
+  analysis?: { id: string; title: string; source: string; author: string }[];
 }
 /** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface Classic {
