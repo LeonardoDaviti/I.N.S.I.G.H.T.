@@ -91,3 +91,28 @@ Fetching anything new for the timeline (only stored posts); predictions; a timel
 ## Slices (separate files)
 - A + B: `markx/identity.py`, `markx/rename.py` (new), the queue kind, a migration (`mx_entity_redirects.kind`).
 - C + D: `markx/timeline.py` (new), `entity_views.py`, the post page API, `MarkXEntity.tsx` / the post page.
+
+## Second case for Stalker: one model's events, filed as separate stories (owner 2026-11-14)
+
+Owner, on a practitioner's architecture breakdown of an open model: "we already have this model's news, so such a post
+would be an addition?" It is, and INSIGHT filed it right: a member of the weights-release story, read as commentary
+with its numbers. But the model's history is split across stories that nothing presents as one line. The real rows
+are in `plan/research/0165-case.md` (section 2); the names below are invented.
+
+| When | What | In INSIGHT's view |
+|---|---|---|
+| day 0 | a lab launches "Orbit 2 Small"; an evaluator's results; a forum thread | story A (launch + benchmarks) |
+| day +1 | the daily digest: parameters, training time, tokens | story A |
+| day +3 | an arena ranking | its own post |
+| day +7 | weights released under an open license; an inference engine's day-0 support; a model router | story B (weights) |
+| day +8 | a practitioner's breakdown of its architecture against a rival's (numbers, what is missing) | story B, a plain member |
+
+**The gap for Stalker (a class, not this case):** two stories about one thing at different times are each correct,
+and the timeline should still show them as one line: launch → benchmarks → ranking → weights → analysis. The breakdown
+should hang on that line as analysis of the thing, not only as a member of one event. The entity ("Orbit 2 Small",
+model, 27 posts and 16 voices on the server) already links every post, so the line can be built from the entity and its
+stories by time, with each story's event type (`built`: release, benchmark, ...). This is C + D above, with stories as
+the timeline's stops. Expected check case: the model's timeline lists both stories in order, and the breakdown is shown
+as analysis on it.
+
+Related, Stealth v10.19 (0208): a News row shows its expert breakdowns as "Analysis", apart from its reports.
