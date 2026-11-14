@@ -168,3 +168,20 @@ answer: answer byte-identical; p50 0.061 → 0.054 s, the API process's peak +28
 with each process's copy of the answer, +47 MB in the same run). The 20 ms left are the served answer's stamp and the
 job's state read with every open (both read the stored row); keeping the first page as bytes would remove them once
 its live archive rows are stamped: not done.
+
+## The real-data check with Mark X off (markx.ix_unchanged)
+
+The check on the merged v10.18 failed `markx.ix_unchanged` 0 -> 2: with Mark X off the runner's tick kept the unread
+counts (the reader's view "unread"), which wrote its mx_jobs row and its mx_kept_pages row; the check counted the
+tick (a job ran) and the rows (mx_* rows written). Neither is Mark X's: since this issue the kept views' machinery
+(the runner, mx_jobs, mx_kept_pages) serves the reader as well, and the reader's views run with Mark X off by design.
+
+Decided: the invariant's definition tells them apart, from the code, not by loosening it. `jobs.readers(job)` (a
+KeptView with `markx` False) and `jobs.reader_rows(cur)` (those views' mx_jobs rows and the mx_kept_pages rows of the
+pages they declare: `KeptView.pages`); `markx_unchanged` counts a run with Mark X off only when it is not a reader's
+view, and the mx_* rows it wrote less the reader's (both shown in its note). Any Mark X job, or any other mx_* row,
+still fails it. A version before (the base) has neither and counts as before. Why not move the reader's pages out
+of mx_ now: the pages and the job state are one mechanism shared with Mark X News, the entity pages and the Labels
+queue; splitting the tables would be a second path. Renaming them (`kept_pages`, `jobs`) for the open-source release
+is left as a no-op move of its own.
+Test: `test_kept_pages_wave_2.TheRunnerWithMarkXOff.test_with_mark_x_off_a_tick_writes_the_readers_rows_only`.
