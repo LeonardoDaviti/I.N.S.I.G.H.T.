@@ -19,6 +19,11 @@ finder is one signal; none decides alone (the owner's ensemble rule): each only 
      (posts.search_vector) and Mark X's English layer (mx_post_search, 0139); WORD_MIN_HITS+ fire. The units of the
      ✓ items' numbers (a reading's main.numbers: tok/s, GB, $) in UNIT_MIN_POS+ of them make a post's number with
      one of those units count as a word.
+  4. **tool** (0207): a post naming one of the tools the track's practitioners discuss (track_tools.finder_ids: 2+
+     voices of its judged-in posts, specific to the track). The domain finder also learns from the track's own posts
+     in (`taught`: Haiku's in at TEACH_CONF or more from its sources, or joined), not only the owner's ✓: a track the
+     owner never labelled learned nothing. The words stay the ✓'s alone (taught, they were the sources' language).
+     Measured on held-out tool posts the owner never named: recall 72.5% -> 80% (issue 0207).
 Dropped in v10.18 (0203): the entity finder, the source and story priors and the classifier, never adopted (0147's
 held-out recall on the server copy: entity and story added none, the source prior -2 / +3, the classifier as the order
 -21 points on one track at 30%; the owner's labels, 7, never opened the classifier's gate of 30). mx_track_models keeps
@@ -53,10 +58,12 @@ log = logging.getLogger(__name__)
 KIND = "probes"
 EMBED_SUBJECT = "track_probe"
 MODEL = "bge-m3"
-FINDERS = ("probe", "domain", "word")
+FINDERS = ("probe", "domain", "word", "tool")
 FINDERS_ENV = "INSIGHT_TRACK_FINDERS"
-ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall
-SHOWN = {"probe": "example post", "domain": "domain", "word": "words"}
+ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall; 0207: tool
+SHOWN = {"probe": "example post", "domain": "domain", "word": "words", "tool": "tool in use"}
+TEACH_CONF = 0.8    # 0207: the track's own posts in (Haiku's in at this confidence or more, active or joined) teach ...
+TEACH_MAX = 200     # ... the domain finder, the newest this many, with the owner's ✓ (the words, units and bar: the ✓ only)
 NEAR_PULL = 1.0
 DOMAIN_MIN, DOMAIN_MAX_SHARE = 2, 0.01
 RARE_FLOOR = 10            # "rare" is at most this many posts however few the window holds
@@ -414,13 +421,15 @@ SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
        %(units)s::text IS NOT NULL AND EXISTS (
            SELECT 1 FROM mx_readings r, jsonb_array_elements_text(CASE WHEN jsonb_typeof(r.reading->'main'->'numbers')
                   = 'array' THEN r.reading->'main'->'numbers' ELSE '[]'::jsonb END) n
-            WHERE r.post_id = ps.id AND n ~* %(units)s)
+            WHERE r.post_id = ps.id AND n ~* %(units)s),
+       cardinality(%(tools)s::uuid[]) > 0 AND EXISTS (
+           SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.entity_id = ANY(%(tools)s::uuid[]))
   FROM ps
   CROSS JOIN LATERAL (SELECT max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g IN ('desc', 'probe', 'profile')) AS pos,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'near') AS near,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'desc') AS descr FROM pr) s
 """
-ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit")
+ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit", "tool")
 
 
 def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Optional[datetime] = None,
@@ -439,7 +448,8 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
     params = {"vs": [v for v, _ in prep["vectors"]], "gs": [g for _, g in prep["vectors"]], "model": MODEL,
               "t": str(track["folder_id"]), "since": since, "until": until, "ids": list(ids or []),
               "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
-              "units": units_regex(learned["units"]), "passive": passive}
+              "units": units_regex(learned["units"]), "passive": passive,
+              "tools": list(learned.get("tools") or []) if "tool" in set(prep.get("on") or FINDERS) else []}
     from insight_core.db.repo_stories import suggestable_sql
     # issue 0200: a passive post of a source switched off is never asked (it could only become a suggestion)
     cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
@@ -468,6 +478,8 @@ def fire(d: Dict[str, Any], prep: Dict[str, Any]) -> List[str]:
         fired.append("domain")
     if (d.get("words") or 0) >= WORD_MIN_HITS and "word" in on:
         fired.append("word")
+    if d.get("tool") and "tool" in on:
+        fired.append("tool")
     d["fired"] = fired
     return fired
 
@@ -497,7 +509,7 @@ def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> floa
 
 def _other_hit(d: Dict[str, Any]) -> bool:
     """A finder other than the probes fired."""
-    return any(f in (d.get("fired") or []) for f in ("domain", "word"))
+    return any(f in (d.get("fired") or []) for f in ("domain", "word", "tool"))
 
 
 # ---- preparing a track ---------------------------------------------------------------------------------
@@ -527,6 +539,26 @@ def example_scores(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], pos
     return out
 
 
+def _placed(cur: Cursor, track: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The track's judged posts with their places (the kept placement, else placed live; none for a track not saved)."""
+    from insight_core.markx import track_kept, tracks
+    if not track.get("folder_id") or not track.get("version"):
+        return []
+    got = track_kept.placed(cur, track)
+    return (got if got is not None else tracks.placed(cur, track, shown=False))["items"]
+
+
+def taught(placed: Sequence[Dict[str, Any]], neg: Sequence[str] = ()) -> List[str]:
+    """0207: the track's own posts that teach the domain finder: in the track (its sources' or joined) with
+    Haiku's in at TEACH_CONF or more, or the owner's ✓; never an owner ✗. The newest TEACH_MAX."""
+    no = set(neg)
+    got = [it for it in placed if it.get("place") in ("track", "joined") and it["post_id"] not in no
+           and (it.get("label") == "in" or (it.get("verdict") and (it.get("confidence") or 0) >= TEACH_CONF - 1e-9))]
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    got.sort(key=lambda it: (it.get("at") or epoch, it["post_id"]), reverse=True)
+    return [it["post_id"] for it in got[:TEACH_MAX]]
+
+
 def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now: Optional[datetime] = None,
             share: Optional[float] = None, cap: Optional[float] = None,
             on: Optional[Sequence[str]] = None, cache: Optional[Dict[Any, int]] = None) -> Dict[str, Any]:
@@ -541,9 +573,21 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     prof = tracks.profile(cur, track, ex) if (pos or neg) else None
     vectors = probe_vectors(cur, track, profile=prof["vector"] if prof and (pos or neg) else None)
     cache = {} if cache is None else cache   # v10.16: a plan pass's tracks share it (the window's counts, `prefetch`)
-    learned = learn(cur, track, pos, now=now, cache=cache) if pos else {"pos": [], "domains": [], "words": [], "units": []}
-    if not pos:   # the description's domain classes need no ✓ item
+    # 0207: the domain finder learns from the track's own posts in too, not only the owner's ✓ (a track the
+    # owner never labelled learned nothing: its passive posts were found by the example posts alone); the tool finder
+    # reads the tools the track's practitioners discuss (track_tools). The probe bar stays the ✓'s alone.
+    placed = _placed(cur, track)
+    teach = list(dict.fromkeys(pos + taught(placed, neg)))
+    learned = learn(cur, track, teach, now=now, cache=cache) if teach else {"pos": [], "domains": [], "words": [], "units": []}
+    if len(teach) > len(pos):   # the words and units stay the owner's ✓'s alone: taught by the track's own posts they
+        own = learn(cur, track, pos, now=now, cache=cache) if pos else {"words": [], "units": []}   # were the language
+        learned["words"], learned["units"] = own["words"], own["units"]   # of its sources (measured: issue 0207)
+    learned["pos"] = pos
+    learned["taught"] = len(teach) - len(pos)
+    if not teach:   # the description's domain classes need no ✓ item
         learned["domains"] = domain_set([], {}, 1, (track.get("name") or "") + " " + (track.get("description") or ""))
+    from insight_core.markx import track_tools
+    learned["tools"] = track_tools.finder_ids(cur, placed, now=now) if placed else []
     prep: Dict[str, Any] = {"vectors": vectors, "learned": learned, "bar": cap, "neg": neg, "now": now,
                             "cache": cache, "on": tuple(on) if on is not None else active(),
                             "ready": any(g in ("desc", "probe", "profile") for _, g in vectors)}

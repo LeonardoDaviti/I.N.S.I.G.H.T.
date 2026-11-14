@@ -1,5 +1,7 @@
 // The track page's lines in words (issue 0145): pure, so they are tested apart.
-import type { TrackCalibration, TrackItem, TrackPage, TrackSuggestion, TrackWhy } from '../../services/tracks';
+import type {
+  ShadowMeasure, TrackCalibration, TrackItem, TrackPage, TrackSection, TrackSeen, TrackSuggestion, TrackTool, TrackWhy,
+} from '../../services/tracks';
 import { plural } from '../../lib/format';
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -35,7 +37,56 @@ export function foundByLine(item: Pick<TrackItem, 'found_by'>): string | null {
 }
 
 export function suggestionLine(s: TrackSuggestion): string {
+  if (s.of) return `${s.source}: ${s.n} of its ${s.of} posts in 30 days are your ${s.track_name} — make it active?`;
   return `${s.source}: ${s.n} of your ${s.track_name} in 30 days — make it active?`;
+}
+
+/** 0207: the moment a section's "new" counts from: its own last look, else the track's look before this visit. */
+export function baseline(seen: TrackSeen | null | undefined, sectionId: string | null): string | null {
+  if (!seen) return null;
+  return (sectionId && seen.subtopics[sectionId]) || seen.track;
+}
+
+/** 0207: how many posts joined after the look (none before any look: the first look sets the baseline). */
+export function newSince(joined: number[] | undefined, since: string | null): number {
+  if (!since || !joined?.length) return 0;
+  const t = Date.parse(since) / 1000;
+  if (Number.isNaN(t)) return 0;
+  let n = 0;
+  for (const j of joined) if (j > t) n += 1;
+  return n;
+}
+
+/** 0207: whether one post joined after the look. */
+export function isNew(item: Pick<TrackItem, 'joined_at'>, since: string | null): boolean {
+  if (!since || !item.joined_at) return false;
+  return Date.parse(item.joined_at) > Date.parse(since);
+}
+
+/** 0207: "12 new since you looked" for the whole track (its sections' counts added). */
+export function trackNewLine(page: Pick<TrackPage, 'sections'>, seen: TrackSeen | null | undefined): string | null {
+  if (!seen?.track) return null;
+  const n = page.sections.reduce((acc, s) => acc + newSince(s.joined, seen.track), 0);
+  return n ? `${plural(n, 'post')} new since you looked` : 'nothing new since you looked';
+}
+
+/** 0207: a sub-topic's state in words: found this week, or quiet (nothing new in 30 days). */
+export function stateWords(s: Pick<TrackSection, 'state'>): string | null {
+  if (s.state === 'new') return 'new this week';
+  if (s.state === 'quiet') return 'quiet';
+  return null;
+}
+
+/** 0207: a Shadow feature's label: "Shadow: 79% of posts in the right sub-topic (157 of 200 checked)". */
+export function shadowLine(m: ShadowMeasure | undefined): string | null {
+  if (!m || m.on) return null;
+  return `Shadow: ${pct(m.right / m.of)} of ${m.what} (${m.right} of ${m.of} checked)`;
+}
+
+/** 0207: one tool's line: who discusses it and how recently. */
+export function toolLine(t: TrackTool): string {
+  return [plural(t.voices, 'voice'), plural(t.posts, 'post'), t.recent ? `${t.recent} in 30 days` : null]
+    .filter(Boolean).join(' · ');
 }
 
 export function footerLine(f: NonNullable<TrackPage['footer']>, counts: TrackPage['counts']): string {

@@ -1,7 +1,7 @@
 """0145 (Stealth v10.11): tracks as topics. A track without a description stays a folder; the profile and its
 threshold; the prefilter; the `track` and `subtopics` kinds (schema, validation, an empty answer a failed try); the
 routing (active -> the track, passive -> Discover); calibrated ranking; auto-join only at 90% with 20+ labels, and back
-off when it drops; sub-topics proposed, renamed, merged, split, locked; source suggestions at 3+ in 30 days; the per-run
+off when it drops; source suggestions at 3+ in 30 days; the per-run
 cap; labels as examples; the description embedded by the worker's embedder. Synthetic data only; the DB tests run on a
 database whose name ends in _test."""
 from __future__ import annotations
@@ -42,9 +42,9 @@ def verdict(inside=True, conf=0.9, sub="storage and organisers", why="A wall sto
 
 class Pure(unittest.TestCase):
     def test_the_kinds_and_their_guides(self):
-        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v1", "post_track"))
-        self.assertEqual((schemas.KINDS["subtopics"].guide, schemas.KINDS["subtopics"].subject), ("subtopics-v1", "track"))
-        self.assertIn("in", schemas.guide_body("track-v1"))
+        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v2", "post_track"))
+        self.assertEqual((schemas.KINDS["subtopics"].guide, schemas.KINDS["subtopics"].subject), ("subtopics-v2", "track"))
+        self.assertIn("in", schemas.guide_body("track-v2"))
         for k in ("track", "subtopics"):
             self.assertIn(k, tasks.PLANNERS)
 
@@ -56,19 +56,6 @@ class Pure(unittest.TestCase):
         self.assertIn("one line", validate.check("track", dict(verdict(), why="a\nb"), "q")[1])
         self.assertIn("at most", validate.check("track", dict(verdict(), why="w " * 200), "q")[1])
         self.assertIsNotNone(validate.check("track", {}, "q")[1])          # a refused post's empty answer: a failed try
-
-    def test_the_subtopics_answer_is_checked(self):
-        q = "TRACK: T\nBelongs: b\n\nITEMS:\n[1] (shelves) A — x\n[2] (toys) B — y\n[3] (-) C — z"
-        self.assertEqual(tracks.numbered(q), {1: "shelves", 2: "toys", 3: "-"})
-        ok = {"subtopics": [{"name": "Storage", "definition": "d", "items": [1, 3]}, {"name": "Toys", "items": [2]}]}
-        self.assertIsNone(validate.check("subtopics", ok, q)[1])
-        self.assertIn("item 4", validate.check("subtopics", {"subtopics": [{"name": "S", "items": [4]}]}, q)[1])
-        self.assertIn("two sub-topics", validate.check("subtopics", {"subtopics": [{"name": "S", "items": [1]},
-                                                                                  {"name": "T", "items": [1]}]}, q)[1])
-        self.assertIn("twice", validate.check("subtopics", {"subtopics": [{"name": "S", "items": [1]},
-                                                                         {"name": "s", "items": [2]}]}, q)[1])
-        nine = {"subtopics": [{"name": f"S{k}", "items": []} for k in range(9)]}
-        self.assertIsNotNone(validate.check("subtopics", nine, q)[1])
 
     def test_the_profile(self):
         d = unit((0, 1))
@@ -582,69 +569,7 @@ class SwitchedOff(_Tracks):
         self.assertEqual(set(scout.in_posts(self.cur, self.folder)), {mine, farm}, "the owner's ✓ is the owner's")
 
 
-class Subtopics(_Tracks):
-    def setUp(self):
-        super().setUp()
-        self.describe()
-        self.posts = [self.post(title=f"print {k}") for k in range(16)]
-        self.plan()
-        for k, p in enumerate(self.posts):
-            self.judge(p, verdict(sub="Wall storage" if k % 2 else "desk organisers"))
-
-    def test_proposed_after_fifteen_items_then_renamed_merged_split_locked(self):
-        with self.conn.transaction():
-            self.assertEqual(tracks.plan_subtopics(self.cur), 1)
-        status, body = self.lease("subtopics")
-        task = body["tasks"][0]
-        self.assertTrue(task["input"].startswith("TRACK: Prints"))
-        raw = tracks.numbered(task["input"])
-        self.assertEqual(len(raw), 16)
-        answer = {"subtopics": [{"name": "Storage", "definition": "walls and shelves",
-                                 "items": [n for n, s in raw.items() if s == "Wall storage"]},
-                                {"name": "Desk", "items": [n for n, s in raw.items() if s == "desk organisers"]}]}
-        status, got = self.answer((task["id"], answer))
-        self.assertEqual(got["valid"], 1, got)
-        body = self.page()
-        names = {s["name"]: s["count"] for s in body["sections"]}
-        self.assertEqual(names, {"Storage": 8, "Desk": 8})
-        with self.conn.transaction():
-            self.assertEqual(tracks.plan_subtopics(self.cur), 0)              # weekly, not again now
-        ids = {s["name"]: s["id"] for s in body["subtopics"]}
-        status, subs = call("POST", f"/api/markx/tracks/{self.folder}/subtopics",
-                            body={"action": "rename", "id": ids["Storage"], "name": "Wall storage systems"})
-        self.assertEqual(status, 200, subs)
-        renamed = next(s for s in subs if s["name"] == "Wall storage systems")
-        self.assertTrue(renamed["locked"])
-        self.assertEqual(self.page()["sections"][0]["count"], 8)
-        _, subs = call("POST", f"/api/markx/tracks/{self.folder}/subtopics",
-                       body={"action": "merge", "id": renamed["id"], "ids": [ids["Desk"]]})
-        self.assertEqual([s["name"] for s in subs], ["Wall storage systems"])
-        self.assertEqual(self.page()["sections"][0]["count"], 16)
-        merged = subs[0]
-        _, subs = call("POST", f"/api/markx/tracks/{self.folder}/subtopics",
-                       body={"action": "split", "id": merged["id"], "name": "Desk things", "keys": ["desk organisers"]})
-        self.assertEqual(sorted(s["name"] for s in subs), ["Desk things", "Wall storage systems"])
-        self.assertEqual({s["name"]: s["count"] for s in self.page()["sections"]},
-                         {"Desk things": 8, "Wall storage systems": 8})
-        self.cur.execute("SELECT count(*) FROM mx_track_subtopics WHERE track_id = %s AND valid_to IS NOT NULL", (self.folder,))
-        self.assertGreaterEqual(self.cur.fetchone()[0], 3)                  # kept, closed
-        t = tracks.get(self.cur, self.folder)
-        self.assertIn("Sub-topics: Desk things; Wall storage systems", tracks.header(self.cur, t))
-        self.assertEqual(call("POST", f"/api/markx/tracks/{self.folder}/subtopics", body={"action": "explode"})[0], 400)
-        # a new proposal keeps the locked set
-        self.cur.execute("UPDATE mx_tasks SET answered_at = now() - interval '8 days', created_at = now() - interval '8 days' "
-                         "WHERE kind = 'subtopics'")
-        self.cur.execute("UPDATE mx_track_items SET answered_at = now()")
-        with self.conn.transaction():
-            self.assertEqual(tracks.plan_subtopics(self.cur), 1)
-        self.cur.execute("SELECT input FROM mx_tasks WHERE kind = 'subtopics' AND status = 'open'")
-        self.assertIn("Locked: Desk things; Wall storage systems", self.cur.fetchone()[0])
-
-    def test_no_proposal_under_fifteen(self):
-        self.label(self.posts[0], "out")
-        self.label(self.posts[1], "out")
-        with self.conn.transaction():
-            self.assertEqual(tracks.plan_subtopics(self.cur), 0)
+# The sub-topics (0207: found from the posts, named, digested, the owner's edits): test_track_subtopics_0207.
 
 
 if __name__ == "__main__":
