@@ -313,10 +313,18 @@ function discoverOrigins(): FixtureRoute[] {
       }],
       unnamed: [{ place: 'youtube.com/watch', origins: 9 }],
     }),
-  }, mainSourceMissing()];
+  }, mainSourceMissing(), officialNone()];
 }
 
 /** Discover's "main source missing" (issue 0170): a section to follow, with its event and what its test found. */
+/** Issue 0196: Discover's official channels section, in Shadow with nothing found yet. */
+function officialNone(): FixtureRoute {
+  return {
+    path: '/api/official',
+    respond: () => ({ success: true, mode: 'shadow', cap: 5, added_today: 0, counts: {}, events: {}, rows: [] }),
+  };
+}
+
 function mainSourceMissing(rows = true): FixtureRoute {
   const event = {
     story: 'story-widget-5', headline: 'Acme ships Widget 5 with a longer context', event_type: 'model_release', voices: 4,
@@ -349,6 +357,7 @@ function followWhereLinked(now: Date): FixtureRoute[] {
   const page = (path: string, found: number) => ({ url: `${site}${path.replace(/\/$/, '')}`, prefix: path, found, sitemap: true, items: items(path), holds: 21 });
   return [
     mainSourceMissing(false),
+    officialNone(),
     {
       path: '/api/sources/suggested',
       respond: () => ({
