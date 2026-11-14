@@ -20,16 +20,24 @@ from typing import Any, Iterable, List, Optional, Tuple
 
 SAME_INPUT, NOT_CUE, ONE_WINDOW = "same_input", "not_cue", "one_window"   # 0176: one_window (the windows planner)
 
+# 0208: the stored page a link post shares (the originals step's story_originals kind `linked`), over a post id
+# expression: tasks.load_posts reads a link post with no words of its own with that page's text.
+LINKED_PAGE = """SELECT o.post_id FROM post_parts lp JOIN story_originals o
+                   ON o.kind = 'linked' AND o.url = lp.link_target AND o.post_id IS NOT NULL
+                WHERE lp.post_id = {post} AND lp.link_kind = 'page' LIMIT 1"""
+
 # The post's text stamp, over alias `p` (posts): what load_posts reads. Row versions (xmin || ctid, as
 # incremental.post_stamps) for the post, its parts and its links; the source's values themselves (its row is
-# rewritten by the cadence job, which changes nothing a render shows).
+# rewritten by the cadence job, which changes nothing a render shows); 0208: the page a link post is read with, once
+# stored (nothing is added for any other post, so their stamps are as they were).
 STAMP = """(p.xmin::text || p.ctid::text
             || '|' || COALESCE((SELECT pp.xmin::text || pp.ctid::text FROM post_parts pp WHERE pp.post_id = p.id), '')
             || '|' || COALESCE((SELECT md5(concat_ws(chr(31), s.platform, s.handle_or_url, s.settings->>'display_name',
                                                      s.settings->>'name'))
                                   FROM sources s WHERE s.id = p.source_id), '')
             || '|' || COALESCE((SELECT string_agg(l.xmin::text || l.ctid::text, ',' ORDER BY l.position, l.target_url)
-                                  FROM post_links l WHERE l.post_id = p.id), ''))"""
+                                  FROM post_links l WHERE l.post_id = p.id), '')
+            || COALESCE('|' || (""" + LINKED_PAGE.format(post="p.id") + """)::text, ''))"""
 
 
 def unmarked(kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> str:

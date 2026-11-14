@@ -49,6 +49,12 @@ LINK_RECENT = timedelta(hours=72)        # 0114 decided 2
 PAGE_OLD = timedelta(days=7)             # 0114's measure: older pages are never in a feed (8 of 8)
 COLLECT_WITHIN = timedelta(days=7)       # a News story's original is collected in its first week; not measured
 WALLED_MIN_READS = 2                     # a site read this often, never titled, is walled (0113's measure: 13-15 reads)
+# 0208: a link post with no words of its own (a Reddit link post: its title and the page it shares) has the page read
+# (story_originals kind `linked`) so Mark X reads the post with the page's text (markx/tasks.load_posts) and can join
+# it to its story. Its own words beyond its title: at most LINK_POST_OWN_CHARS; posted within LINK_POSTS_WITHIN.
+LINK_POST_OWN_CHARS = 200
+LINK_POSTS_WITHIN = timedelta(hours=72)
+LINKED_PAGE_CHARS = 3000                 # the page's text Mark X reads with the post, at most
 
 # A query key naming an access or gift token, or a value shaped as a signed token (a JWT): a page that needs one
 # to be read is walled, and the token is never stored (0123). The vocabulary is url_normalization's (0126: every

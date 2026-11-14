@@ -160,8 +160,14 @@ def _squash(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
-def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
-    """{id: Post} for the posts that exist (markx text v1: post_parts' title and text, kept links in order)."""
+def load_posts(cur: Cursor, ids: Iterable[Any], *, linked: bool = True) -> Dict[str, Post]:
+    """{id: Post} for the posts that exist (markx text v1: post_parts' title and text, kept links in order).
+
+    0208: a link post with no words of its own (originals_rules.LINK_POST_OWN_CHARS beyond its title: a Reddit link
+    post is its title and the page it shares) is read with that page's text, once the originals step has the page
+    (story_originals kind `linked`): "[The page it links: <title>]" and its first LINKED_PAGE_CHARS. Every question
+    reads it so (its reading, its entities, its vector, the judge's join): a post that said nothing but its title can
+    join its story. `linked` False: the posts' own text only (the pages themselves)."""
     ids = [str(i) for i in ids]
     if not ids:
         return {}
@@ -195,7 +201,29 @@ def load_posts(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Post]:
     for pid, url, anchor in cur.fetchall():
         if str(pid) in out:
             out[str(pid)].links.append((url, anchor))
+    if linked and out:
+        _with_linked_pages(cur, out)
     return out
+
+
+def _with_linked_pages(cur: Cursor, out: Dict[str, Post]) -> None:
+    """0208: each link post of `out` with no words of its own, read with its page's text (load_posts)."""
+    from insight_core.utils import originals_rules as rules
+    cur.execute(f"""SELECT p.id::text, ({plan_marks.LINKED_PAGE.format(post='p.id')})::text FROM posts p
+                     WHERE p.id = ANY(%s::uuid[])""", (sorted(out),))
+    pages = {pid: page for pid, page in cur.fetchall() if page and page != pid}
+    if not pages:
+        return
+    got = load_posts(cur, set(pages.values()), linked=False)
+    for pid, page in pages.items():
+        p, g = out[pid], got.get(page)
+        if g is None or not g.text:
+            continue
+        own = p.text[len(p.title):] if p.title and p.text.startswith(p.title) else p.text
+        if len(own.strip()) > rules.LINK_POST_OWN_CHARS:
+            continue
+        head = f"[The page it links: {g.title}]" if g.title else "[The page it links]"
+        p.text = (p.text + "\n\n" if p.text else "") + head + "\n" + g.text[:rules.LINKED_PAGE_CHARS]
 
 
 def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:

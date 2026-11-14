@@ -131,6 +131,29 @@ describe('News (issue 0051)', () => {
     expect(await screen.findByRole('link', { name: 'The Mark X row' })).toBeInTheDocument();
   });
 
+  it('ranked News shows the Notable lane first and the order by coverage one click away (issue 0208)', async () => {
+    const user = userEvent.setup();
+    const rank = { significance: 0.95, coverage: 0.3, fit: 0, score: 0.66, event: 'new_method', effect: 4, usable: 'now' };
+    const getNews = vi.fn().mockImplementation(({ order }: { order?: string }) => Promise.resolve(order === 'coverage'
+      ? { ...feedPage([story(ID(1), 'The loud launch', { score: 20 }, ['A', 'B']),
+          story(ID(2), 'The quiet method', { score: 3 }, ['A', 'B'])]), mark: 'x', order: 'coverage' }
+      : { ...feedPage([story(ID(2), 'The quiet method', { score: 3, notable: true, rank }, ['A', 'B']),
+          story(ID(1), 'The loud launch', { score: 20 }, ['A', 'B'])]), mark: 'x', order: 'ranked' }));
+    render(base({ getNews }), '/?view=news');
+    const feed = await screen.findByRole('feed', { name: 'News' });
+    expect(within(feed).getAllByRole('article').map((row) => within(row).getByRole('heading').textContent))
+      .toEqual(['The quiet method', 'The loud launch']);
+    expect(screen.getByText('Notable for you')).toBeInTheDocument();
+    expect(screen.getByText(/New method · usable now · 2 sources/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'By coverage' }));
+    await waitFor(() => expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ order: 'coverage' })));
+    await waitFor(() => expect(screen.queryByText('Notable for you')).not.toBeInTheDocument());
+    expect(within(screen.getByRole('feed', { name: 'News' })).getAllByRole('article')
+      .map((row) => within(row).getByRole('heading').textContent)).toEqual(['The loud launch', 'The quiet method']);
+    await user.click(screen.getByRole('button', { name: 'Ranked for you' }));
+    expect(await screen.findByText('Notable for you')).toBeInTheDocument();
+  });
+
   it('when Mark X has no rows the API falls back to the older News and the page says so (issue 0205)', async () => {
     const note = 'Mark X has no News yet (a new install, or its worker has not run): this is the older News.';
     render(base({ getNews: vi.fn().mockResolvedValue({ ...feedPage([story(ID(2), 'The older row', {}, ['A', 'B'])]),

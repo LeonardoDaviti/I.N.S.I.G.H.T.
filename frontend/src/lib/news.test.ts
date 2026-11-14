@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { inNewsParts, newsLine, newsPart, newsWords, scopeRoleWords } from './news.ts';
+import { inNewsParts, newsLine, newsPart, newsWords, NOTABLE, notableWords, scopeRoleWords } from './news.ts';
 import { coveredBy } from './story.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
@@ -19,6 +19,18 @@ test('News, the feed row and the post page say one number (issue 0069)', () => {
   const news = { part: 'earlier' as const, first_at: '2026-10-28T17:00:00Z', reports: 4, shares: 1, mentions: 0, score: 4 };
   assert.equal(newsLine(news, gemini), '4 sources (1 share) · News from Google, Google DeepMind News, +2');
   assert.equal(coveredBy(gemini), 'covered by 4 · News from Google, Google DeepMind News, +2');
+});
+
+test('a Notable row is its own part, first, and its line says why in a few words (issue 0208)', () => {
+  const rank = { significance: 0.95, coverage: 0.3, fit: 0, score: 0.66, event: 'new_method', effect: 4, usable: 'now' };
+  const news = { part: 'earlier' as const, first_at: '2026-11-11T10:00:00Z', reports: 3, shares: 0, mentions: 0, score: 3 };
+  assert.deepEqual(newsPart({ ...news, notable: true }), { label: NOTABLE, rank: -1 });
+  assert.equal(notableWords({ notable: true, rank }), 'New method · usable now');
+  assert.equal(notableWords({ notable: false, rank }), null);                 // ranked, not in the lane: nothing said
+  assert.equal(notableWords({ notable: true, rank: { ...rank, event: 'other', usable: 'no' } }), null);
+  assert.equal(newsLine({ ...news, notable: true, rank }, story(['A', 'B'])), 'New method · usable now · 2 sources · A, B');
+  const rows = inNewsParts([{ id: 1, news: { ...news, part: 'recent' as const } }, { id: 2, news: { ...news, notable: true } }]);
+  assert.deepEqual(rows.map((r) => r.id), [2, 1]);
 });
 
 test('newsLine adds who covered it, the first reporter first', () => {

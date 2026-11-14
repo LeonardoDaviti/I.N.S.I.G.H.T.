@@ -25,6 +25,11 @@ Run by ingestion after each story job (ingestion.default_runner), never by the A
    channels' exclusions (markx/official.pages_wanted: front pages, references, docs, apps, pricing, help, README, media
    hosts, code and model hub pages, tweets); read as 0123 reads a page, recorded once (kind `cited`). After 0138's
    entity originals, under the same credit; a followed source's page stays 0114's and F2's.
+8. **0208, a link post's page** (`plan_link_posts`, under Collect originals' switch): the page a link post of the last
+   72 hours shares (a Reddit link post: its title and the page), when the post has no words of its own: read as 0123
+   reads a page (a page stored already: recorded, no request), recorded once (kind `linked`). Mark X reads the post
+   with the page's text (markx/tasks.load_posts), so a post that said nothing but its title can join its story.
+   After 0138's entity originals and before 0196's cited pages, under the same credit.
 
 All spend one credit (originals_rules.credit_after: 1% of the schedule's fetches, at most 3 at once, 6 while an
 entity's original has waited over 72 hours); 0114's asks go first.
@@ -178,7 +183,10 @@ class OriginalsService:
             spend(cur, len(asked))
             collects = self.plan_collect(cur, now) if on else []
             cited = self.plan_cited(cur, now) if on else []
+            linked_pages = self.plan_link_posts(cur, now) if on else []   # 0208: a link post's page, before cited's
             taken_now = {c["url"] for c in collects + entities}
+            entities = entities + [c for c in linked_pages if c["url"] not in taken_now]
+            taken_now |= {c["url"] for c in linked_pages}
             entities = entities + [c for c in cited if c["url"] not in taken_now]
             looking = lookup_on(cur)
             storing = classics_on(cur)
@@ -214,7 +222,8 @@ class OriginalsService:
         clock.step("suppliers")
         summary = {"settled": settled, "credit": round(credit, 2), "fetch_linked": len(asked),
                    "linked_wanted": len(linked), "collect_on": on, "collect": collected,
-                   "entity_wanted": len(entities), "lookup_on": looking, "lookup": looked, "cap": self.cap,
+                   "entity_wanted": len(entities), "linked_pages": len(linked_pages), "lookup_on": looking,
+                   "lookup": looked, "cap": self.cap,
                    "entity_wait_hours": round(max(waits).total_seconds() / 3600, 1) if waits else None,
                    "suppliers": supplying, "classics_on": storing, "backfill": stored, "seconds": clock.seconds}
         if asked or collected or looked or stored:
@@ -582,6 +591,46 @@ class OriginalsService:
         return [{"url": rules.strip_access_tokens(w["url"]), "story_id": None, "voices": w["voices"], "first_at": now,
                  "kind": w["kind"], "title": None, "quoted": None, "record": "cited", "collected_as": "cited"}
                 for w in wanted if w["kind"] == rules.PAGE]
+
+    # ---- 0208: the page a link post with no words of its own shares (the `linked` planner) ------------
+
+    def plan_link_posts(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
+        """The pages the link posts of the last LINK_POSTS_WITHIN share (post_parts' link target, a page: not a picture
+        or a video) when the post has no words of its own (LINK_POST_OWN_CHARS beyond its title) and the page is not
+        asked yet (story_originals kind `linked`, by address). A page stored already is recorded at once (no request);
+        a followed source's page is left to 0114; any other is read as 0123 reads a page (or recorded with its reason:
+        walled, no article). Mark X then reads the post with the page's text (markx/tasks.load_posts)."""
+        from insight_core.utils.addresses import is_tweet
+        cur.execute(f"""SELECT DISTINCT ON (pp.link_target) pp.link_target, p.id::text, COALESCE(pp.title, p.title)
+                          FROM post_parts pp JOIN posts p ON p.id = pp.post_id
+                         WHERE pp.link_kind = 'page' AND pp.link_target IS NOT NULL
+                           AND {pairing.ix_date('p')} >= %(since)s
+                           AND char_length(btrim(COALESCE(p.content, ''))) <= char_length(COALESCE(p.title, '')) + %(own)s
+                           AND NOT EXISTS (SELECT 1 FROM story_originals o WHERE o.kind = 'linked' AND o.url = pp.link_target)
+                         ORDER BY pp.link_target, p.published_at DESC NULLS LAST, p.id""",
+                    {"since": now - rules.LINK_POSTS_WITHIN, "own": rules.LINK_POST_OWN_CHARS})
+        rows = [(url, pid, title) for url, pid, title in cur.fetchall() if url and not is_tweet(url)]
+        if not rows:
+            return []
+        normalized = {url: normalize_url(url) or url for url, _, _ in rows}
+        cur.execute("""SELECT DISTINCT ON (normalized_url) normalized_url, id FROM posts WHERE normalized_url = ANY(%s)
+                        ORDER BY normalized_url, fetched_at, created_at, id""", (sorted(set(normalized.values())),))
+        stored = dict(cur.fetchall())
+        kind_of = self._classifier(cur)
+        out = []
+        for url, pid, title in rows:
+            if normalized[url] in stored:
+                cur.execute("""INSERT INTO story_originals (kind, url, post_id, asked_at, requests, outcome, settled_at,
+                                                            from_post_id)
+                               VALUES ('linked', %s, %s, %s, 0, 'already', %s, %s) ON CONFLICT (kind, url) DO NOTHING""",
+                            (url, stored[normalized[url]], now, now, pid))
+                continue
+            kind = kind_of(url)
+            if kind == rules.FOLLOWED:
+                continue   # its source is fetched when a story links it (0114)
+            out.append({"url": url, "story_id": None, "voices": 1, "first_at": now, "kind": kind, "title": title,
+                        "quoted": None, "record": "linked", "collected_as": "linked", "from_post_id": pid})
+        return out
 
     # ---- 0138 E: the backfill (Classics stored, work sites) ----------------------------------
 
