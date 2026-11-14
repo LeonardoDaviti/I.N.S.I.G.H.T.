@@ -434,6 +434,24 @@ class DiscoverRepository:
         return row[0] if row and isinstance(row[0], dict) and row[0].get("answer") else None
 
     @staticmethod
+    def served_window(cur: Cursor, offset: int, limit: int) -> Optional[Tuple[Dict[str, Any], int]]:
+        """Issue 0206: (the answer served with only its suggestions offset..offset+limit, how many suggestions it
+        holds), sliced in Postgres: an open reads its page, not the whole 2 MB answer. None before the first build."""
+        if limit <= 0:
+            return None
+        window = f"$[{int(offset)} to {int(offset) + int(limit) - 1}]"   # lax: the elements in range, [] past the end
+        # the stored value read (detoasted) once, not once an operator
+        cur.execute("""WITH v AS MATERIALIZED (SELECT value->'answer' AS a FROM system_settings
+                                                WHERE key = %(k)s AND value ? 'answer')
+                       SELECT a - 'suggestions'::text
+                              || jsonb_build_object('suggestions', COALESCE(
+                                     jsonb_path_query_array(a->'suggestions', %(w)s::jsonpath), '[]')),
+                              jsonb_array_length(COALESCE(a->'suggestions', '[]'::jsonb))
+                         FROM v""", {"w": window, "k": SERVED_KEY})
+        row = cur.fetchone()
+        return (row[0], int(row[1])) if row and isinstance(row[0], dict) else None
+
+    @staticmethod
     def keep_served(cur: Cursor, made_from: str, built_at: str, answer: Dict[str, Any]) -> None:
         SystemSettingsRepository.upsert(cur, SERVED_KEY, {"made_from": made_from, "built_at": built_at, "answer": answer})
 

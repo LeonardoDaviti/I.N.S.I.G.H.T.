@@ -213,6 +213,31 @@ class EntityQueue(_Api):
         self.assertEqual(len(whole["open"]), 6)
 
 
+class DiscoverWindow(_Registry):
+    def test_a_page_read_as_its_window_equals_the_whole_answer_paged(self):
+        """0206: an open reads its page's suggestions sliced in Postgres; the same page as paging the whole answer."""
+        from insight_core.db.repo_discover import DiscoverRepository
+        from insight_core.services.stories_service import StoriesService, code_stamp
+        self.cur.execute("SELECT value FROM system_settings WHERE key = 'discover_served'")
+        kept = self.cur.fetchone()
+        self.addCleanup(self.cur.execute, "DELETE FROM system_settings WHERE key = 'discover_served'")
+        if kept:
+            self.addCleanup(self.cur.execute, "INSERT INTO system_settings (key, value) VALUES ('discover_served', %s)",
+                            (json.dumps(kept[0]),))
+        svc = StoriesService(db_url())
+        answer = {"success": True, "suggestions": [{"key": f"s{i}.example", "score": 1.0 - i / 10, "voices": 3}
+                                                   for i in range(7)],
+                  "also": [{"key": "also.example"}], "archives": [], "unnamed": [], "pages": [], "references": [],
+                  "first_page": 30, "built_at": datetime.now(timezone.utc).isoformat()}
+        with self.conn.transaction():
+            inputs = svc.repo.discover_inputs(self.cur) + "|" + code_stamp()
+            DiscoverRepository.keep_served(self.cur, inputs, answer["built_at"], answer)
+        for offset, limit in ((0, 3), (2, 3), (5, 3), (9, 3)):
+            got = svc.discover_served(offset=offset, limit=limit)
+            whole = svc._page(answer, offset=offset, limit=limit)
+            self.assertEqual({k: v for k, v in got.items() if k != "refreshing"}, whole, (offset, limit))
+
+
 class TheRunnerWithMarkXOff(_Registry):
     def test_only_the_readers_views(self):
         states = {j: {"job": j, "wanted_at": None, "started_at": None, "stage": None, "stage_at": None,

@@ -755,9 +755,15 @@ class StoriesService:
         page_one = offset == 0 and not q
         with db.transaction(self.db_url) as cur:
             stamp, due = self._served_due(cur)
-            kept = DiscoverRepository.served(cur) if stamp is not None else None
-            answer = kept["answer"] if kept else None
+            answer, total = None, None
+            if stamp is not None and not q and limit is not None:   # 0206: only the page's suggestions are read
+                got = DiscoverRepository.served_window(cur, offset, limit)
+                answer, total = got if got is not None else (None, None)
+            elif stamp is not None:
+                kept = DiscoverRepository.served(cur)
+                answer = kept["answer"] if kept else None
             if answer is None:
+                total = None
                 answer = DiscoverRepository.any_list(cur) or {}
             due = due or "built_at" not in answer
             state = jobs.state(cur).get("discover") or {}
@@ -770,7 +776,7 @@ class StoriesService:
             empty = {"success": True, "suggestions": [], "also": [], "archives": [], "unnamed": [], "pages": [],
                      "references": [], "first_page": FIRST_PAGE}
             answer = {**empty, **answer, "built_at": None}
-        return {**self._page(answer, offset=offset, limit=limit, q=q), "refreshing": refreshing}
+        return {**self._page(answer, offset=offset, limit=limit, q=q, total=total), "refreshing": refreshing}
 
     def served_due(self) -> bool:
         """Issue 0206: whether the answer served is due again (the jobs process's "discover" view)."""
@@ -813,7 +819,14 @@ class StoriesService:
         return self._from_originals(result)   # 0138 D: never kept with the list
 
     def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
-              q: Optional[str] = None) -> Dict[str, Any]:
+              q: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
+        """One page of the answer. `total` (0206): `result`'s suggestions are already the page's (sliced in Postgres,
+        DiscoverRepository.served_window) out of `total`."""
+        if total is not None:
+            got = self._page({**result, "suggestions": [None] * offset + result["suggestions"]}, offset=offset,
+                             limit=limit)
+            end = offset + max(0, limit or 0)
+            return {**got, "total": total, "more": end < total}
         if result["archives"]:   # each archive row follows its source's archive, read now (it runs on its own)
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
