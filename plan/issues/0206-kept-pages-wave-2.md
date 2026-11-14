@@ -117,6 +117,10 @@ the API's. Nothing changed.
 
 ## Tests
 
+The whole suite (`JOBS=6 scripts/test-backend.sh`): 6 shards, 179 modules, 3,491 tests, OK. A first run caught the
+export round trip: a restore truncated its tables before turning their triggers off, so 0139's truncate triggers added
+kept-input rows the export did not hold; `db/import_export.restore` now turns the triggers off first.
+
 New `test_kept_pages_wave_2` (11): the kept inputs (each writing transaction moves its input, a scroll or a title
 does not, one transaction is one change, folding keeps every count); the unread counts (kept bytes = counted, sent
 kept with the counting patched to fail, counted again after a read and a post, built by the job, a window never
