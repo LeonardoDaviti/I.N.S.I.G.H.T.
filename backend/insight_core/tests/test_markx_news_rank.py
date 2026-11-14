@@ -27,13 +27,13 @@ ANSWER = {"event": "new_method", "usable": "now", "shipped_in": "in a widely use
 class TheQuestion(unittest.TestCase):
     def test_it_shows_the_existing_signals_first(self):
         ms = [member(1, text="Title 1 short note", links=["https://arxiv.org/abs/2611.01234"]),
-              member(2, source="Source B", hours=1, text="x" * 1200, links=["https://github.com/acme/emeans"])]
+              member(2, source="Source B", hours=1, text="x" * 1200, links=["https://github.com/acme/qmeans"])]
         text = S.question("A new clustering method", ms, event_type="research_result",
-                          subjects=[("e-means", "software"), ("Acme", "org"), ("Lab", "org"), ("Extra", "org")], voices=2)
+                          subjects=[("q-means", "software"), ("Acme", "org"), ("Lab", "org"), ("Extra", "org")], voices=2)
         lines = text.splitlines()
         self.assertEqual(lines[0], "STORY: A new clustering method")
         self.assertEqual(lines[1], "KIND OF HAPPENING (measured): research result")
-        self.assertEqual(lines[2], "MAIN SUBJECTS: e-means (software), Acme (org), Lab (org)")     # at most 3
+        self.assertEqual(lines[2], "MAIN SUBJECTS: q-means (software), Acme (org), Lab (org)")     # at most 3
         self.assertEqual(lines[3], "COVERAGE: 2 posts from 2 sources; 1 long posts (1,000+ characters of their own)")
         self.assertEqual(lines[4], "LINKED PAGES: paper, code")
         self.assertIn("[2] telegram · Source B · 2026-11-11 · 1,200 characters", text)
@@ -150,7 +150,7 @@ class TheRank(unittest.TestCase):
 
 class TheFit(unittest.TestCase):
     PROFILE = R.Profile(reads=40, posts=4000, sources={"fav": (20, 200), "busy": (2, 2000), "new": (1, 2)},
-                        entities={"e-means": 6, "acme": 1}, tracked={"p9"})
+                        entities={"q-means": 6, "acme": 1}, tracked={"p9"})
 
     def test_a_source_read_more_than_its_share(self):
         self.assertGreater(R.source_fit(self.PROFILE, "fav"), 0.9)               # read 10x its share
@@ -159,8 +159,8 @@ class TheFit(unittest.TestCase):
         self.assertEqual(R.source_fit(R.Profile(), "fav"), 0.0)                  # nothing read: no fit
 
     def test_the_thing_read_most_and_the_tracks(self):
-        value, why = R.fit(self.PROFILE, sources=["busy"], things=["acme", "e-means"], posts=["p9"])
-        self.assertEqual(why, {"source": 0.0, "entity": 0.75, "thing": "e-means", "track": True})
+        value, why = R.fit(self.PROFILE, sources=["busy"], things=["acme", "q-means"], posts=["p9"])
+        self.assertEqual(why, {"source": 0.0, "entity": 0.75, "thing": "q-means", "track": True})
         self.assertAlmostEqual(value, R.FIT_PARTS["entity"] * 0.75 + R.FIT_PARTS["track"])
 
     def test_fit_weighs_nothing_in_the_order_it_is_a_shadow(self):
