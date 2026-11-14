@@ -143,3 +143,28 @@ Mark X off), `test_markx_kept_pages` (the views), `test_discover_main_source` (t
 - The voices suggestions are still computed in an API thread (`voices_service`), and the research page advances in
   the request's background: not in 0202's list.
 - No change to the frontend (`built_at` on the main source is a new field it ignores).
+
+## The write cost of 0139's kept inputs (asked before the release)
+
+Two clones of `prep_scale`: v1018 before this merge (26c959b, migrations to 0137) and with 0139; the same writes on
+each, the database backend's own CPU read from /proc (5 rounds each, alternating), and each trigger's own time from
+`EXPLAIN ANALYZE` (the direct cost; the scratch server is shared, so the whole-run numbers carry its noise).
+
+| write | before: DB CPU (median) | with 0139 | the kept-input triggers' own time | log rows |
+|---|---|---|---|---|
+| ingestion-like: 50 tx x 100 single-row post inserts, then 50 x 100 single-row updates of dates, metadata, text | 9,140 ms | 9,180 ms (+0.4%) | 5,000-row insert: 0.13 ms (one statement trigger); 5,000-row update: 32 ms of ~2,500 ms (1.3%, the row trigger) | 150 (one per transaction and input) |
+| 1,000 posts marked read, one statement (the app's `set_read`), and back | 20 ms | 20 ms | 0.18 ms of ~19 ms (~1%) | 1 |
+| 1,000 posts marked read, one statement each, one transaction | 840 ms | 855 ms (+1.8%) | — | 1 |
+| a full story job (4,962 stories) | 70.0 s / 55.9 s (two runs) | 72.8 s / 60.8 s | its 80 log rows (first run), 0 (second: nothing it rewrote was watched) | 80 / 0 |
+
+The story job's spread is the shared server's (its second pair differs by 5 s with not one kept-input row written).
+The direct cost stays under ~1.5% everywhere, below the 5% bar: nothing changed. The posts update trigger stays
+row-level with its WHEN list (a statement-level one would fire on every UPDATE naming metadata or content, the
+repairs' too, and stamp the unread counts stale for nothing); its rows dedupe to one per transaction.
+
+**Discover's suggested sources, p50.** An open now reads its page's suggestions sliced in Postgres
+(`DiscoverRepository.served_window`: the stored answer detoasted once, `jsonb_path_query_array`), not the whole 2.1 MB
+answer: answer byte-identical; p50 0.061 → 0.054 s, the API process's peak +28 → +7 MB (before this issue: 0.033 s
+with each process's copy of the answer, +47 MB in the same run). The 20 ms left are the served answer's stamp and the
+job's state read with every open (both read the stored row); keeping the first page as bytes would remove them once
+its live archive rows are stamped: not done.
