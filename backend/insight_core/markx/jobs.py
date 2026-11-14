@@ -82,7 +82,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -120,12 +120,14 @@ class KeptView:
       - `between_runs`: None (missing between runs means a new run or a deploy: built at once), or the seconds a view
         whose inputs change between runs waits from its last build's start before it is built again;
       - `markx` (0206): a Mark X view, kept only while Mark X is on; False: a reader's view (the unread counts,
-        Discover), kept whether Mark X is on or off (the runner's loop runs for these alone when it is off)."""
+        Discover), kept whether Mark X is on or off (the runner's loop runs for these alone when it is off);
+      - `pages`: the kept pages (mx_kept_pages.page) its builds write."""
     job: str
     missing: Callable[[Any, datetime], bool]
     when: str = "always"
     between_runs: Optional[float] = None
     markx: bool = True
+    pages: Tuple[str, ...] = ()   # 0206: the mx_kept_pages pages its builds write (a reader's view: the reader's rows)
 
 
 def _news_missing(cur: Any, now: datetime) -> bool:
@@ -163,10 +165,26 @@ def _wanted(cur: Any, now: datetime) -> bool:
 KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP),    # 0198
               KeptView("labels", _labels_missing, when="wanted"),           # 0182; 0199: when a Labels page asked
               KeptView("tracks", _tracks_missing, between_runs=120.0),      # 0206: tracks.KEPT_GAP
-              KeptView("unread", _unread_missing, between_runs=UNREAD_GAP, markx=False),   # 0206
-              KeptView("main_source", _main_source_missing, when="wanted", markx=False),    # 0206
-              KeptView("discover", _wanted, when="wanted", markx=False))                    # 0206
+              KeptView("unread", _unread_missing, between_runs=UNREAD_GAP, markx=False, pages=("unread",)),
+              KeptView("main_source", _main_source_missing, when="wanted", markx=False, pages=("main_source",)),
+              KeptView("discover", _wanted, when="wanted", markx=False))   # 0206: the reader's views
 KEPT = tuple(v.job for v in KEPT_VIEWS)
+
+
+def reader_rows(cur: Any) -> int:
+    """0206: the rows the reader's kept views (KeptView.markx False) hold in the jobs process's tables: their mx_jobs
+    rows and their pages' mx_kept_pages rows. The kept views' machinery is shared by Mark X and the reader, so these
+    live under mx_ although they are not Mark X's (the real-data check's `markx.ix_unchanged` tells them apart)."""
+    jobs = [v.job for v in KEPT_VIEWS if not v.markx]
+    pages = [p for v in KEPT_VIEWS if not v.markx for p in v.pages]
+    cur.execute("""SELECT (SELECT count(*) FROM mx_jobs WHERE job = ANY(%s))
+                          + (SELECT count(*) FROM mx_kept_pages WHERE page = ANY(%s))""", (jobs, pages))
+    return int(cur.fetchone()[0])
+
+
+def readers(job: Optional[str]) -> bool:
+    """0206: whether `job` is a reader's kept view (KeptView.markx False), not Mark X's."""
+    return any(v.job == job and not v.markx for v in KEPT_VIEWS)
 
 
 class TooLong(Exception):
