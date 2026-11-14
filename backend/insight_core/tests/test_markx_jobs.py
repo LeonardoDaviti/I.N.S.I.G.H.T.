@@ -189,13 +189,24 @@ class TheApiOnlyMarks(_Api):
 class TheRunner(_Api):
     """insight-ingestion's side, inline (spawn=False): the job due runs, its state is recorded, a failure retries."""
 
+    def setUp(self):
+        super().setUp()
+        # 0206: the reader's kept views (the unread counts, Discover) have tests of their own (test_kept_pages_wave_2);
+        # these are about the decision run, the finder and Mark X's own views
+        patcher = mock.patch.object(jobs, "KEPT_VIEWS", tuple(v for v in jobs.KEPT_VIEWS if v.markx))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def runner(self, **kw):
         return jobs.Runner(db_url(), spawn=False, **{"plan_every": None, **kw})   # v10.13.4: the plan job apart
 
     def test_off_nothing_runs(self):
+        """Mark X off: no Mark X job; 0206: the loop starts all the same, for the reader's kept views alone."""
         os.environ["INSIGHT_MARKX"] = "off"
         self.assertIsNone(self.runner().tick())
-        self.assertFalse(self.runner().start())
+        runner = self.runner()
+        self.assertTrue(runner.start(poll=3600))
+        runner.stop.set()
         self.cur.execute("SELECT count(*) FROM mx_runs")
         self.assertEqual(self.cur.fetchone()[0], 0)
 

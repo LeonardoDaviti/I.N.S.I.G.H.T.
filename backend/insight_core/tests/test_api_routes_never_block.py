@@ -80,6 +80,38 @@ def blocking_routes() -> List[str]:
     return out
 
 
+# Issue 0206: a page's open starts no work in the API process (Discover's list and its web reads, the main source's
+# scan and tests ran in its background: 17-300 s with the API's memory); the jobs process does it, the API marks it
+# wanted. The GET routes that still do, each with why (not this wave's).
+ALLOWED_GET_STARTS = {("insight_core/markx/research_api.py", "mx_research_page")}   # a research run's next step
+
+
+def get_routes_starting_work() -> List[str]:
+    """["file name: call"] of every GET route that starts background work (a `.start(`, `create_task`, `add_task`)."""
+    out = []
+    for path in route_files():
+        rel = path.relative_to(BACKEND).as_posix()
+        for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or (rel, fn.name) in ALLOWED_GET_STARTS:
+                continue
+            if not any(ast.unparse(d).startswith(("app.get", "router.get")) for d in fn.decorator_list):
+                continue
+            out += [f"{rel} {fn.name}: {ast.unparse(c.func)}" for c in ast.walk(fn)
+                    if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr in ("start", "create_task", "add_task")]
+    return out
+
+
+class NoPageStartsWork(unittest.TestCase):
+    def test_no_get_route_starts_background_work(self):
+        self.assertEqual(get_routes_starting_work(), [])
+
+    def test_discover_has_no_api_side_starter(self):
+        from insight_core.services import discover_main_source, discover_reads
+        self.assertFalse(hasattr(discover_reads, "start") or hasattr(discover_reads, "running"))
+        self.assertFalse(hasattr(discover_main_source.MainSource, "start"))
+
+
 class RoutesNeverBlock(unittest.TestCase):
     def test_no_async_route_runs_sync_work_on_the_loop(self):
         self.assertEqual(blocking_routes(), [])

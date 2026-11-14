@@ -19,7 +19,8 @@ Two clocks:
   Watchdog, in a thread of its own, asks the API every 30 s and asks its container to restart after 2 minutes of
   no answer, 3 times an hour at most.
 - Mark X's jobs (issue 0112 Decided 10), when INSIGHT_MARKX is on: markx/jobs.py's Runner, in a thread of its own,
-  looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process.
+  looks every 30 s for the work the API marked and runs the candidate finder or a decision run in a child process;
+  and the kept views (issues 0198, 0206: pages built here, sent kept by the API), the reader's ones with Mark X off.
 - Channel profiles (issue 0132 C2), after each tick: a few sources' profile pages a tick, monthly, on the same
   gates (services/profiles_service.py; its switch is on by default).
 - The source stats job (issue 0132 B), when INSIGHT_MARKX is on: markx/source_stats.py's Runner, in a thread of its
@@ -297,7 +298,8 @@ async def main() -> None:
         state = SchedulerState()
 
     # Mark X's jobs (0112 Decided 10): the candidate finder and the decision run, here and never in the API, each
-    # in a process of its own; the API only marks that work arrived. Nothing when INSIGHT_MARKX is off.
+    # in a process of its own; the API only marks that work arrived. 0206: the kept views too (the pages the API sends
+    # kept); with INSIGHT_MARKX off, the reader's kept views only (the unread counts, Discover).
     from insight_core.markx.jobs import Runner as MarkxJobs
     from insight_core.utils import heartbeat
     heartbeat.clear("markx")   # issue 0188: written again only while its loop runs (none when Mark X is off)

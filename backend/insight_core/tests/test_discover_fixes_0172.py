@@ -175,17 +175,20 @@ class FollowTestTests(unittest.TestCase):
 
 
 class BackgroundTests(unittest.TestCase):
-    def test_a_due_answer_is_rebuilt_in_the_background_even_with_reads_off(self):
+    def test_a_due_answer_is_rebuilt_by_the_jobs_process_even_with_reads_off(self):
+        """0206: Discover's answer is made again by the job "discover" (discover_reads.keep), never in the API."""
         built = []
-        stories = SimpleNamespace(refresh=lambda: built.append(1))
-
-        async def run():
-            with mock.patch.dict("os.environ", {"INSIGHT_DISCOVER_READS": "0"}):
-                self.assertTrue(discover_reads.start(stories, None, None, refresh=True, read=True))
-                self.assertFalse(discover_reads.start(stories, None, None, refresh=True), "one run at a time")
-                await discover_reads._running
-        asyncio.run(run())
+        due = [True]
+        stories = SimpleNamespace(refresh=lambda: built.append(1), served_due=lambda: due[0])
+        with mock.patch.dict("os.environ", {"INSIGHT_DISCOVER_READS": "0"}):
+            self.assertEqual(discover_reads.keep("unused", stories=stories)["built"], ["answer"])
+            due[0] = False
+            self.assertEqual(discover_reads.keep("unused", stories=stories)["built"], [])
         self.assertEqual(built, [1])
+
+    def test_the_api_starts_no_discover_work(self):
+        """0206: the module has no background start for the API any more (it ran in the API process)."""
+        self.assertFalse(hasattr(discover_reads, "start") or hasattr(discover_reads, "running"))
 
 
 @requires_test_db
@@ -203,6 +206,7 @@ class ServedTests(unittest.TestCase):
         self.conn.rollback()
         delete_scratch_sources(self.cur)
         self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_served'")
+        self.cur.execute("DELETE FROM mx_jobs WHERE job = 'discover'")
         self.conn.commit()
         self.conn.close()
 
@@ -283,7 +287,7 @@ class ServedTests(unittest.TestCase):
             self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_list'")
             self.conn.commit()
             try:
-                page, stale = service.discover_served()
+                page, stale = service.discover_served(), service.served_due()
             finally:
                 if kept:
                     self.cur.execute("INSERT INTO system_settings (key, value) VALUES ('discover_list', %s)",
@@ -292,20 +296,22 @@ class ServedTests(unittest.TestCase):
             self.assertEqual((len(built), stale, page["built_at"], page["suggestions"]), (0, True, None, []),
                              "none built yet: never built on the request, due")
             service.refresh()
-            page, stale = StoriesService(db_url(), clock=lambda: clock[0]).discover_served()
+            fresh_process = StoriesService(db_url(), clock=lambda: clock[0])
+            page, stale = fresh_process.discover_served(), fresh_process.served_due()
             self.assertEqual((len(built), stale, page["suggestions"][0]["key"]), (1, False, "k1.example"),
                              "a fresh process serves the kept answer")
             insert_source(self.cur, f"New {self.mark}")
             self.conn.commit()
-            page, stale = service.discover_served()
+            page, stale = service.discover_served(), service.served_due()
             self.assertEqual((len(built), stale, page["suggestions"][0]["key"]), (1, True, "k1.example"),
                              "a source added: the last answer, due again")
+            self.assertTrue(page["refreshing"], "0206: the open wanted the jobs process's discover job")
+            self.cur.execute("SELECT wanted_at IS NOT NULL FROM mx_jobs WHERE job = 'discover'")
+            self.assertTrue(self.cur.fetchone()[0])
             service.refresh()
-            _, stale = service.discover_served()
-            self.assertEqual((len(built), stale), (2, False))
+            self.assertEqual((len(built), service.served_due()), (2, False))
             clock[0] = NOW + REFRESH_AFTER
-            _, stale = service.discover_served()
-            self.assertTrue(stale, "old: Mark X's rows move between story runs")
+            self.assertTrue(service.served_due(), "old: Mark X's rows move between story runs")
 
 
 if __name__ == "__main__":

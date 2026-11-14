@@ -42,8 +42,9 @@ class FakeReader:
         return {"success": True, "items": [], "next_cursor": None}
 
     def unread_counts(self):
-        self._record("unread_counts")
-        return {"total": 3, "by_source": {SOURCE_ID: 3}, "by_folder": {}}
+        self._record("unread_counts")   # issue 0206: the kept bytes the route sends
+        from insight_core.markx import kept_pages
+        return kept_pages.encode({"total": 3, "by_source": {SOURCE_ID: 3}, "by_folder": {}})
 
     def mark_read_through(self, scope, through, newest):
         self._record("mark_read_through", scope, through, newest)

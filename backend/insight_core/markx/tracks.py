@@ -1054,6 +1054,133 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
                           "found_by": dict(Counter(f for it in items for f in (it.get("found_by") or [])))}}
 
 
+def shown_page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The track page as the routes answer it: `page`, each item with its byline (issue 0185), read in one query.
+    KeyError: no such folder."""
+    from insight_core.utils.byline import bylines
+    got = page(cur, folder_id, now=now)
+    items = [it for s in got.get("sections") or [] for it in s["items"]] + list(got.get("discover") or [])
+    bys = bylines(cur, [it["post_id"] for it in items])
+    for it in items:
+        it["byline"] = bys.get(it["post_id"])
+    return got
+
+
+# ---- the kept pages (issue 0206) ---------------------------------------------------------------------------------
+# A track page grouped a topic track's ~25k kept placements by sub-topic in Python on every open: +95-105 MB in the API
+# while it ran, 0.6 s a page at the server's size (2.0-2.4 s for the four pages and the suggestions). The pages and
+# the suggestions are kept (markx/kept_pages.py), built by the jobs process (jobs.KEPT_VIEWS "tracks").
+#   - Sent while what the owner set is the same (the strict stamp, `page_inputs`): the track's topic and version, its
+#     folder and sources (their names, switched on or off), its sub-topics, its labels, its examples; any change of
+#     these is shown at once (the next open builds the page, as before, and keeps it).
+#   - Within KEPT_LAG it may lag behind the worker and the planner (the loose part): the verdicts placed since, the
+#     planner's statistics and history pass; and behind the clock (the footer's last-7-days rates, the suggestions'
+#     SUGGEST_DAYS). The jobs process builds a page again at most every KEPT_GAP once its loose part moved, and before
+#     its KEPT_LAG ends: the page lags the worker by about a look and a build, at most KEPT_LAG.
+
+KEPT_LAG = timedelta(minutes=15)   # a kept track page or the suggestions are sent at most this old
+KEPT_GAP = 120.0                   # the jobs process builds the pages whose loose part moved at most this often
+_SUGGESTIONS = "suggestions"
+
+
+def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
+    """(the strict stamp parts, the loose part) of a track page (or of the suggestions, `folder_id` None: every topic
+    track's), a few indexed reads."""
+    f = None if folder_id is None else str(folder_id)
+    cur.execute("""SELECT json_agg(json_build_array(t.folder_id, fo.name, fo.kind, t.description, t.excludes, t.version,
+                                                    t.version_at, t.v_hash, t.v IS NOT NULL) ORDER BY t.folder_id),
+                          json_agg(json_build_array(t.folder_id, md5(t.stats::text), t.history_at, t.history_id,
+                                                    t.history_done_at) ORDER BY t.folder_id)
+                     FROM mx_tracks t JOIN folders fo ON fo.id = t.folder_id
+                    WHERE (%(f)s::uuid IS NULL OR t.folder_id = %(f)s::uuid)""", {"f": f})
+    topic, planner = cur.fetchone()
+    cur.execute("""SELECT (SELECT json_build_array(f.name, f.kind) FROM folders f WHERE f.id = %(f)s::uuid),
+                          (SELECT json_build_array(count(*), md5(string_agg(s::text, ',' ORDER BY s.id)))
+                             FROM mx_track_subtopics s WHERE %(f)s::uuid IS NULL OR s.track_id = %(f)s::uuid),
+                          (SELECT json_build_array(count(*), max(created_at)) FROM mx_labels
+                            WHERE item_kind = %(k)s AND (%(f)s::uuid IS NULL OR b = %(f)s::uuid)),
+                          (SELECT json_build_array(count(*), count(v), max(created_at)) FROM mx_track_probes
+                            WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          (SELECT md5(string_agg(concat_ws(':', sf.folder_id, s.id, s.enabled, s.handle_or_url,
+                                                           s.settings->>'display_name', s.settings->>'name'),
+                                                 ',' ORDER BY sf.folder_id, s.id))
+                             FROM source_folders sf JOIN sources s ON s.id = sf.source_id
+                            WHERE %(f)s::uuid IS NULL OR sf.folder_id = %(f)s::uuid),
+                          (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM sources WHERE NOT enabled)""",
+                {"f": f, "k": ITEM_KIND})
+    strict = [f, topic, *cur.fetchone()]
+    cur.execute("""SELECT (SELECT json_agg(json_build_array(track_id, placed_at) ORDER BY track_id)
+                             FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          (SELECT json_build_array(count(*), max(id)) FROM mx_track_changes
+                            WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid)""", {"f": f})
+    return strict, json.dumps([planner, *cur.fetchone()], default=str, separators=(",", ":"))
+
+
+def _kept_key(folder_id: Optional[Any]) -> str:
+    return _SUGGESTIONS if folder_id is None else str(folder_id)
+
+
+def _build(cur: Cursor, folder_id: Optional[Any], now: datetime) -> Any:
+    return suggestions(cur, now=now) if folder_id is None else shown_page(cur, folder_id, now=now)
+
+
+def kept_page(cur: Cursor, folder_id: Optional[Any], *, now: Optional[datetime] = None) -> bytes:
+    """GET /api/markx/tracks/{id} (`folder_id`) or /tracks/suggestions (None): the bytes kept, else built (as before,
+    `shown_page` or `suggestions`) and kept. KeyError: no such folder."""
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    return kept_pages.kept_or_build(cur, "track", _kept_key(folder_id),
+                                    lambda: kept_pages.Inputs(*page_inputs(cur, folder_id)),
+                                    lambda: _build(cur, folder_id, now), until=now + KEPT_LAG, now=now)
+
+
+def kept_keys(cur: Cursor) -> List[Optional[str]]:
+    """The kept track views: every topic track's page and the suggestions (None); none without a topic track."""
+    topics = [t["folder_id"] for t in described(cur)]
+    return topics + [None] if topics else []
+
+
+def kept_missing(cur: Cursor, now: Optional[datetime] = None) -> bool:
+    """The jobs process's look: whether a track view is not kept for what the owner set now, lags behind the worker
+    (its loose part moved), or ends its KEPT_LAG before the next looks."""
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    for f in kept_keys(cur):
+        strict, lag = page_inputs(cur, f)
+        key = _kept_key(f)
+        if not kept_pages.has(cur, "track", key, kept_pages.NO_RUN, kept_pages.stamp("track", key, strict), loose=lag,
+                              until_after=now + timedelta(seconds=2 * KEPT_GAP)):
+            return True
+    return False
+
+
+def keep_pages(cur: Cursor, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """In the jobs process (jobs.Jobs.tracks), in one snapshot: each track view missing (`kept_missing`'s test) built
+    by the routes' own path and kept; the views of tracks no longer topics pruned."""
+    import time
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, Any] = {"built": [], "bytes": {}, "build_seconds": {}}
+    keys = kept_keys(cur)
+    for f in keys:
+        strict, lag = page_inputs(cur, f)
+        key = _kept_key(f)
+        st = kept_pages.stamp("track", key, strict)
+        if kept_pages.has(cur, "track", key, kept_pages.NO_RUN, st, loose=lag,
+                          until_after=now + timedelta(seconds=2 * KEPT_GAP)):
+            continue
+        t0 = time.monotonic()
+        body = kept_pages.encode(_build(cur, f, now))
+        seconds = round(time.monotonic() - t0, 2)
+        kept_pages.put(cur, "track", key, kept_pages.NO_RUN, st, body, seconds=seconds, until=now + KEPT_LAG,
+                       loose=lag)
+        out["built"].append(key)
+        out["bytes"][key], out["build_seconds"][key] = len(body), seconds
+    cur.execute("DELETE FROM mx_kept_pages WHERE page = 'track' AND NOT (key = ANY(%s))", ([_kept_key(f) for f in keys],))
+    out["pruned"] = cur.rowcount
+    return out
+
+
 def label(cur: Cursor, folder_id: Any, *, post: Any, answer: str, note: Optional[str] = None) -> Dict[str, Any]:
     """The owner's ✓ / ✗ on a post for the track (in, out or undo). ValueError: another answer; KeyError: no such
     track or post."""
