@@ -248,3 +248,20 @@ class TheRunnerWithMarkXOff(_Registry):
         self.assertIsNone(jobs.due(states, now, kept_missing=["tracks", "news"], markx=False))
         self.assertEqual(jobs.kept_due(states, ["news", "tracks", "unread"], now, markx=False), ["unread"])
         self.assertEqual(jobs.due(states, now, kept_missing=["unread"]), "decide")
+
+    def test_with_mark_x_off_a_tick_writes_the_readers_rows_only(self):
+        """The real-data check's markx.ix_unchanged: with Mark X off the runner keeps the unread counts; every mx_* row
+        it writes is the reader's (jobs.reader_rows), and the job is a reader's view (jobs.readers)."""
+        import os
+        from insight_core.checks.job_checks import _mx_rows
+        self.post(title="Unread with Mark X off")
+        self.cur.execute("DELETE FROM mx_kept_pages WHERE page = 'unread'")
+        self.cur.execute("DELETE FROM mx_jobs WHERE job = ANY(%s)", ([v.job for v in jobs.KEPT_VIEWS if not v.markx],))
+        mx, reader = _mx_rows(self.cur), jobs.reader_rows(self.cur)
+        with mock.patch.dict(os.environ, {"INSIGHT_MARKX": "off"}):
+            ran = jobs.Runner(db_url(), spawn=False, plan_every=None).tick()
+        self.assertTrue(jobs.readers(ran), ran)
+        self.assertFalse(jobs.readers("decide") or jobs.readers("news") or jobs.readers(None))
+        written = jobs.reader_rows(self.cur) - reader
+        self.assertGreater(written, 0)
+        self.assertEqual(_mx_rows(self.cur) - mx, written)
