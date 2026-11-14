@@ -806,6 +806,8 @@ class TestParts(unittest.TestCase):
     def test_classify(self):
         self.assertEqual(W.classify("Claude AI usage limit reached|1762300000"), "usage")
         self.assertEqual(W.classify("You've hit your limit · resets 3pm"), "usage")
+        self.assertEqual(W.classify("success: You've hit your weekly limit · resets Nov 15, 3pm (Asia/Tbilisi)"), "usage")
+        self.assertIsNone(W.classify("success: API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)"))
         self.assertEqual(W.classify("Invalid API key · Please run /login"), "auth")
         self.assertEqual(W.classify("OAuth token has expired"), "auth")
         self.assertIsNone(W.classify("API Error: 500 Internal server error"))

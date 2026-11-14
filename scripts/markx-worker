@@ -187,8 +187,8 @@ EMBED_KINDS = (EMBED_KIND, "embed_name")   # 0119 A1: a name's vector is embedde
 # guide's 5 searches, one answer, slack). Every other kind keeps --tools "".
 WEB_KINDS, WEB_TOOL, WEB_MAX_TURNS = ("websearch",), "WebSearch", 8
 
-USAGE_RE = re.compile(r"usage limit|limit reached|hit your limit|rate.?limit|out of extra usage|credit balance|"
-                      r"quota|limit will reset|resets? at|resets \d", re.I)
+USAGE_RE = re.compile(r"usage limit|limit reached|hit your (?:\w+ )?limit|(?:weekly|daily|session|monthly) limit|"
+                      r"rate.?limit|out of extra usage|credit balance|quota|limit will reset|resets? at|resets \w", re.I)
 AUTH_RE = re.compile(r"/login|invalid api key|not logged in|authentication|oauth token|unauthori[sz]ed|"
                      r"token has expired|expired token|invalid x-api-key|\b401\b|\b403\b", re.I)
 
