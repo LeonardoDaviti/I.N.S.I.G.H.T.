@@ -63,6 +63,21 @@ class SampleCoversTheRulesTests(unittest.TestCase):
                                           "reddit:sample_channel": "source:s-tg1", "reddit:other_channel": "source:s-tg2",
                                           "reddit:author_y": "source:s-x2", "reddit:fan_z": "source:s-x3"})
 
+    def test_a_side_posts_name_never_grows_its_storys_news_row(self):
+        # Issue 0203: the story (a link join of three posts) is about Quill Six; one member's title names Rho Kade,
+        # which surges with two other posts: they are a row of their own, not the story's
+        from insight_core.utils.news_rules import news, surges
+        sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
+        posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
+        stories = group(posts)
+        story = next(s for s in stories if "ck1" in {p.id for p in s.posts})
+        self.assertEqual({p.id for p in story.posts}, {"ck1", "ck2", "ck3", "ck4"})
+        found = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
+        self.assertTrue({"quill six", "rho kade"} <= {x.name for x in found}, [x.name for x in found])
+        rows = news(posts, stories, found)
+        row = next(r for r in rows if "ck1" in {p.id for p in r.posts})
+        self.assertFalse({"rk1", "rk2"} & {p.id for p in row.posts}, "the CEO's posts are not the release's row")
+
     def test_a_papers_abstract_and_pdf_are_one_page(self):
         # Issue 0106: a paper id names one page on its host, whatever its path.
         [story] = [s for s in sample_stories() if s.origin_url == stamps.PAPER]

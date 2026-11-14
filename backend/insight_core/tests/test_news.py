@@ -282,11 +282,14 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual(sum(len(r) for r in got), len(posts), "a post in two stories is in one row")
         self.assertEqual(core_names(stories[2], found), {"orin kade"})
         self.assertEqual(core_names(stories[0], found), {"vela 5.2"}, "one side post makes no core name")
-        tips = post("l2", "tips", hours=11, title="Vela tips and tricks")
+        # a family's name both releases' stories say never joins the two large stories (their main names differ)
+        six = [post(f"w{k}", f"ws{k}", hours=30 + k, title=f"Vela 6 is out {k}") for k in range(6)]
         v = stories[0].posts
-        short = found + [Surge("vela", v[0].t, [p.id for p in v[:6]] + ["l2"], 0)]
-        [a_row] = [r for r in news(posts + [tips], stories, short, judged=set()) if "v0" in {p.id for p in r.posts}]
-        self.assertNotIn("l2", {p.id for p in a_row.posts}, "a shorter name inside a core name holds for nothing")
+        fam = found + [Surge("vela 6", six[0].t, [p.id for p in six], 0),
+                       Surge("vela", v[0].t, [p.id for p in v[:6] + six], 0)]
+        both = stories + [Story(id="D", first_at=six[0].t, posts=six, voices=0, roles={}, reasons={}, mentions=set())]
+        [a_row] = [r for r in news(posts + six, both, fam, judged=set()) if "v0" in {p.id for p in r.posts}]
+        self.assertFalse({"w0"} & {p.id for p in a_row.posts}, "two releases of one family: two rows")
 
     def test_two_large_stories_with_one_core_name_join_only_when_the_judge_connected_them(self):
         a = [post(f"a{k}", f"as{k}", hours=k, title=f"Nimbus 4 ships {k}") for k in range(5)]
@@ -302,6 +305,53 @@ class NewsStoriesTests(unittest.TestCase):
         small = stories[:1] + [Story(id="B", first_at=b[0].t, posts=b[:2], voices=0, roles={}, reasons={},
                                      mentions=set())]
         self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
+
+    def test_the_rows_depend_on_the_inputs_never_on_their_order(self):
+        """0205: the incremental job hands its stories in by id and their posts in no time order (array_agg DISTINCT),
+        the full job in its own order; the rows must be the same. Every order of stories, their posts, the surges and
+        the posts gives one answer, and a pass handed only one component's stories (the incremental pass) rows that
+        component as the full pass does."""
+        import random
+        posts, stories, found = self.runaway()
+
+        def rows(ps, st, fs):
+            return sorted((sorted(p.id for p in r.posts), sorted(r.names.items()), r.voices)
+                          for r in news(ps, st, fs, judged=set()))
+        want = rows(posts, stories, found)
+        rng = random.Random(205)
+        for _ in range(40):
+            st = [Story(id=s.id, first_at=s.first_at, posts=rng.sample(s.posts, len(s.posts)), voices=0, roles={},
+                        reasons={}, mentions=set()) for s in rng.sample(stories, len(stories))]
+            self.assertEqual(rows(rng.sample(posts, len(posts)), st, rng.sample(found, len(found))), want)
+        # the incremental pass's group (NewsService.update): from a seed, closed under stories and surges
+        group, frontier = set(), {"k0"}
+        while frontier:
+            group |= frontier
+            more = {p.id for s in stories if {p.id for p in s.posts} & frontier for p in s.posts}
+            more |= {pid for f in frontier for x in found if f in x.posts for pid in x.posts}
+            frontier = more - group
+        part = [s for s in stories if {p.id for p in s.posts} & group]
+        got = rows([p for p in posts if p.id in group], part, found)
+        self.assertEqual(got, [r for r in want if set(r[0]) <= group], "the incremental pass rows its group as the full")
+
+    def test_a_storys_posts_saying_the_familys_name_are_named_by_it(self):
+        """0205 (a lead that lost the row's name): in a row the name "k3.1" reached, the release story's posts that
+        say only "K3.1" are named k3.1 as before 0203, though the name did not join them (their story did): main_story
+        reads these names, so the row's lead comes from the posts saying the row's own name."""
+        rel = [post(f"k{k}", f"ks{k}", hours=k, title=t) for k, t in enumerate(
+            ("Kimi K3.1 Pro is live", "Introducing Kimi K3.1 Pro", "Вышла Kimi K3.1", "K3.1 is out"))]
+        loose = [post("l1", "loose", hours=5, title="Kimi K3.1 Pro on my laptop"),
+                 post("l2", "loose2", hours=6, title="K3.1 tested")]
+        story = Story(id="K", first_at=rel[0].t, posts=rel, voices=0, roles={}, reasons={}, mentions=set())
+        found = [Surge("kimi k3.1 pro", rel[0].t, ["k0", "k1", "l1"], 0),
+                 Surge("k3.1", rel[0].t, [p.id for p in rel + loose], 0)]
+        [row] = news(rel + loose, [story], found, judged=set())
+        self.assertEqual({p.id for p in row.posts}, {"k0", "k1", "k2", "k3", "l1", "l2"})
+        self.assertEqual({row.names.get(p) for p in ("k2", "k3", "l2")}, {"k3.1"}, "named by the name they say")
+        apart = news(rel + loose[1:], [story], found[:1] + [Surge("k3.1", rel[0].t, [p.id for p in rel] + ["l2"], 0)],
+                     judged=set())
+        [k_row] = [r for r in apart if "k0" in {p.id for p in r.posts}]
+        self.assertIsNone(k_row.names.get("k2"), "a name names a post only in a row it reached")
 
     def test_stories_that_agree_join_even_when_the_surges_first_story_refuses(self):
         """0205: one IPO in 4 rows. The surge's first post was a release story's (its main name another), which the
