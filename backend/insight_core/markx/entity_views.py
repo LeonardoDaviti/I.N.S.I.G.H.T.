@@ -778,7 +778,7 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: 
     # Issue 0206: paged in SQL. The open items are read as their ids and sides only (the narrow rows the named test
     # needs: every open item is counted), the answered ones `history` at most; only the rows shown are read whole
     # (their reasons and evidence: 28.9 MB for 12,572 open items on the server before 0195, all read on every page).
-    order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at"
+    order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at, id"   # ties by id (were unordered)
     cur.execute(f"""SELECT id::text, a::text, b::text FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
                      ORDER BY {order}""")
     sides = cur.fetchall()

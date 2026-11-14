@@ -51,6 +51,12 @@ at 101% CPU and every /api/* request timed out.
     runner tells it is missing, `when` it is built: "always" or only when "wanted", and how often `between_runs`);
     `due` and the after-run step (`Runner._after_run`) both ask `kept_due`, and the views due are built one after the
     other in one process.
+  - **Wave 2 of the kept views** (0206): "tracks" (the topic tracks' pages and suggestions, after placing the changed
+    tracks again; at most every 120 s once the worker's verdicts moved them), "unread" (the unread counts, at most
+    every UNREAD_GAP once a read, a post or a story moved them), "main_source" (Discover's main-source list and its
+    web tests, when an open found it behind) and "discover" (Discover's answer and its first page's web reads, when
+    an open found it due): built here, never in the API. The reader's views (KeptView.markx False: unread,
+    main_source, discover) are kept with Mark X off too: the loop then runs for them alone.
   - **A job that keeps failing backs off** (0188): mx_jobs.failures counts its failed runs in a row (a run that
     raised, stopped over LIMIT, was killed at HARD_LIMIT, crashed, or was found dead); the next try waits
     GAP x 2^failures seconds after the failed run's end, at most MAX_BACKOFF (6 hours), and goes on at that pace;
