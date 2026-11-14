@@ -214,16 +214,58 @@ class EntityQueue(_Api):
 
 
 class DiscoverWindow(_Registry):
+    def restore_served(self):
+        """The served answer an earlier module left is put back as it was (one cleanup: an upsert, never a second
+        insert of the key; the two cleanups before ran in reverse and inserted it over this test's own row)."""
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        self.cur.execute("SELECT value FROM system_settings WHERE key = 'discover_served'")
+        kept = self.cur.fetchone()
+
+        def restore():
+            if kept:
+                SystemSettingsRepository.upsert(self.cur, "discover_served", kept[0])
+            else:
+                self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_served'")
+        self.addCleanup(restore)
+
+    def test_two_writers_at_once_keep_one_row(self):
+        """Two builders keeping the same answer and the same kept page at the same moment (two processes, two
+        connections): both succeed, one row each (the writes are upserts on the row's key)."""
+        import threading
+        import psycopg
+        from insight_core.db.repo_discover import DiscoverRepository
+        self.restore_served()
+        self.cur.execute("DELETE FROM mx_kept_pages WHERE page = 'race'")
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_kept_pages WHERE page = 'race'")
+        self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_served'")
+        start, errors = threading.Barrier(2), []
+
+        def writer(n):
+            try:
+                with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+                    start.wait(5)
+                    DiscoverRepository.keep_served(cur, "inputs", f"2026-11-14T00:00:0{n}+00:00",
+                                                   {"suggestions": [], "built_at": n})
+                    kept_pages.put(cur, "race", "k", kept_pages.NO_RUN, "stamp", f"body {n}".encode())
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001 - reported below
+                errors.append(exc)
+        threads = [threading.Thread(target=writer, args=(n,)) for n in (1, 2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(errors, [])
+        self.cur.execute("SELECT count(*) FROM system_settings WHERE key = 'discover_served'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.cur.execute("SELECT count(*) FROM mx_kept_pages WHERE page = 'race'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+
     def test_a_page_read_as_its_window_equals_the_whole_answer_paged(self):
         """0206: an open reads its page's suggestions sliced in Postgres; the same page as paging the whole answer."""
         from insight_core.db.repo_discover import DiscoverRepository
         from insight_core.services.stories_service import StoriesService, code_stamp
-        self.cur.execute("SELECT value FROM system_settings WHERE key = 'discover_served'")
-        kept = self.cur.fetchone()
-        self.addCleanup(self.cur.execute, "DELETE FROM system_settings WHERE key = 'discover_served'")
-        if kept:
-            self.addCleanup(self.cur.execute, "INSERT INTO system_settings (key, value) VALUES ('discover_served', %s)",
-                            (json.dumps(kept[0]),))
+        self.restore_served()
         svc = StoriesService(db_url())
         answer = {"success": True, "suggestions": [{"key": f"s{i}.example", "score": 1.0 - i / 10, "voices": 3}
                                                    for i in range(7)],
