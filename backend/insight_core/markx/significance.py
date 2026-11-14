@@ -12,7 +12,8 @@ then what INSIGHT already measured about it (the existing signals first):
     (`bucket`) so that a row gaining one more repeat does not make a new question;
   - the kinds of pages its posts link (a paper, code, a demo, a package, a model hub page: entity_originals'
     address kinds, no list of sites here);
-then its members, up to MEMBERS: the EARLIEST first posts, then the longest of the others (one a source first: a
+then its members, up to MEMBERS, from its main story's posts (`core_of`: a stray post another story brought into the
+row never speaks for it): the EARLIEST first posts, then the longest of the others (one a source first: a
 breakdown is long), each with its platform, source, date, length, title and the start of its text (the longest one
 LONG_CHARS, the others TEXT_CHARS). `question` is pure (the measurement builds the same text from the server's page).
 
@@ -79,9 +80,15 @@ def own_chars(m: Member) -> int:
     return len(text.strip())
 
 
-def chosen(members: Sequence[Member]) -> List[Member]:
+def chosen(members: Sequence[Member], core: Optional[Iterable[str]] = None) -> List[Member]:
     """The members a question shows, earliest first: the EARLIEST first posts, then the longest of the others, one a
-    source before a second of the same source, up to MEMBERS."""
+    source before a second of the same source, up to MEMBERS. With `core` (the row's main story's posts, `core_of`),
+    from those: a stray long post another story brought into the row never speaks for it (the measure's wrong row: a
+    launch judged by the scandal its row had swallowed)."""
+    if core is not None:
+        inside = [m for m in members if m.id in set(core)]
+        if len(inside) >= 2:
+            members = inside
     order = sorted(members, key=lambda m: (m.at, m.id))
     picked = order[:EARLIEST]
     rest = sorted(order[EARLIEST:], key=lambda m: (-own_chars(m), m.at, m.id))
@@ -124,10 +131,22 @@ def _squash(s: Optional[str], n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
+def core_of(row: Dict[str, Any]) -> Optional[set]:
+    """The posts of a row's main story (news.main_story: the Mark X story holding most of its voices), or None when
+    none of its posts is in a story."""
+    from insight_core.markx import news
+    main = news.main_story(row)
+    if main is None:
+        return None
+    return {p["post_id"] for p in row.get("posts") or [] if str(p.get("story") or "") == main}
+
+
 def question(headline: str, members: Sequence[Member], *, event_type: Optional[str] = None,
-             subjects: Sequence[Tuple[str, Optional[str]]] = (), voices: int = 0) -> str:
-    """The input of one row's question (above). Pure: the same row reads the same text."""
-    shown = chosen(members)
+             subjects: Sequence[Tuple[str, Optional[str]]] = (), voices: int = 0,
+             core: Optional[Iterable[str]] = None) -> str:
+    """The input of one row's question (above). Pure: the same row reads the same text. `core`: its main story's
+    posts, the members shown are taken from (`chosen`); the coverage line counts every post of the row."""
+    shown = chosen(members, core)
     longest = max(shown, key=lambda m: (own_chars(m), m.id)) if shown else None
     long_posts = sum(1 for m in members if own_chars(m) >= LONG_POST)
     lines = [f"STORY: {_squash(headline, TITLE_CHARS) or '(no headline)'}"]
@@ -204,7 +223,7 @@ def inputs(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
         rid = str(r["id"])
         if members.get(rid):
             out[rid] = question(heads[rid]["text"], members[rid], event_type=types.get(rid),
-                                subjects=subjects.get(rid) or (), voices=int(r.get("voices") or 0))
+                                subjects=subjects.get(rid) or (), voices=int(r.get("voices") or 0), core=core_of(r))
     return out
 
 

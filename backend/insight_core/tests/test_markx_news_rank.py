@@ -56,6 +56,19 @@ class TheQuestion(unittest.TestCase):
         self.assertEqual(len(got), S.MEMBERS)
         self.assertIn("p4", [m.id for m in got])                                 # another source before a 2nd of A
 
+    def test_a_stray_post_another_story_brought_in_never_speaks_for_the_row(self):
+        """The measure's wrong row: a launch judged by the long scandal posts its row had swallowed."""
+        launch = [member(1), member(2, source="B", hours=1, text="x" * 300)]
+        stray = [member(n, source=f"S{n}", hours=n, text="scandal " * 400) for n in range(3, 9)]
+        row = {"posts": [{"post_id": m.id, "story": "launch" if m in launch else "scandal", "voice": m.source}
+                         for m in launch + stray[:1]]}
+        self.assertIsNone(S.core_of({"posts": [{"post_id": "x", "story": None}]}))
+        core = S.core_of({"posts": row["posts"] + [{"post_id": "p9", "story": "launch", "voice": "C"}]})
+        self.assertEqual(core, {"p1", "p2", "p9"})                               # the story with most voices
+        self.assertEqual([m.id for m in S.chosen(launch + stray, core)], ["p1", "p2"])
+        self.assertIn("COVERAGE: 6-9 posts", S.question("H", launch + stray, core=core))   # every post counted
+        self.assertEqual(len(S.chosen(launch[:1] + stray, {"p1"})), S.MEMBERS)  # a core of one post: every member
+
     def test_the_longest_shown_is_read_further(self):
         ms = [member(1, text="q" * 3000), member(2, source="B", text="r" * 3000 + "s")]
         text = S.question("H", ms)
