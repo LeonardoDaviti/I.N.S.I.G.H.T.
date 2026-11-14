@@ -20,6 +20,11 @@ Run by ingestion after each story job (ingestion.default_runner), never by the A
 5. **0138 C, Look up unlinked originals** (its own switch `lookup_originals`, default off): a document entity of 2+
    voices with no address: one title lookup (the arXiv API, else Crossref), recorded once (kind `lookup`).
 6. **0138 D2**: the sites that were the address of 3+ originals in 30 days, kept for Discover (`originals_suppliers`).
+7. **0196, pages 2+ voices link** (`plan_cited`, under Collect originals' switch): a page of a site you don't follow
+   that 2+ voices linked in 7 days (a publication's feeds one voice), not stored and not asked, passing the official
+   channels' exclusions (markx/official.pages_wanted: front pages, references, docs, apps, pricing, help, README, media
+   hosts, code and model hub pages, tweets); read as 0123 reads a page, recorded once (kind `cited`). After 0138's
+   entity originals, under the same credit; a followed source's page stays 0114's and F2's.
 
 All spend one credit (originals_rules.credit_after: 1% of the schedule's fetches, at most 3 at once, 6 while an
 entity's original has waited over 72 hours); 0114's asks go first.
@@ -172,6 +177,9 @@ class OriginalsService:
                 left -= 1
             spend(cur, len(asked))
             collects = self.plan_collect(cur, now) if on else []
+            cited = self.plan_cited(cur, now) if on else []
+            taken_now = {c["url"] for c in collects + entities}
+            entities = entities + [c for c in cited if c["url"] not in taken_now]
             looking = lookup_on(cur)
             storing = classics_on(cur)
             allowance = self.backfill_left(cur, now) if storing else 0
@@ -562,6 +570,18 @@ class OriginalsService:
 
         async with self.gates.slot(PolitenessProfile(concurrency_pool="host-lock"), host_of(c["url"])):
             return await read()
+
+    # ---- 0196: pages 2+ voices link (the `cited` planner) ------------------------------------
+
+    def plan_cited(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
+        """The pages 2+ voices linked in the last week that no source of yours holds or owns, not asked before
+        (markx/official.pages_wanted's rule), each read through the save path's reader and recorded as `cited`."""
+        from insight_core.markx import official
+        kind_of = self._classifier(cur)
+        wanted = official.pages_wanted(cur, now, kind_of=kind_of)
+        return [{"url": rules.strip_access_tokens(w["url"]), "story_id": None, "voices": w["voices"], "first_at": now,
+                 "kind": w["kind"], "title": None, "quoted": None, "record": "cited", "collected_as": "cited"}
+                for w in wanted if w["kind"] == rules.PAGE]
 
     # ---- 0138 E: the backfill (Classics stored, work sites) ----------------------------------
 

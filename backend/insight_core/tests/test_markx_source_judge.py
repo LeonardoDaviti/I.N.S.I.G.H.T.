@@ -58,8 +58,8 @@ def good(examples=("i1", "i2")):
 class Pure(unittest.TestCase):
     def test_the_kind_its_guide_and_schema(self):
         k = schemas.KINDS["source_judge"]
-        self.assertEqual((k.guide, k.subject), ("source-judge-v1", "source_candidate"))
-        body = schemas.guide_body("source-judge-v1")
+        self.assertEqual((k.guide, k.subject), ("source-judge-v2", "source_candidate"))
+        body = schemas.guide_body("source-judge-v2")
         for word in ("verdict", "reasons", "examples", "fits", "original", "Reads:"):
             self.assertIn(word, body)
         q = "MEASURED:\n- x\nITEMS (newest first):\n[i1] 2026-11-01 · A\n[i2] 2026-11-02 · B"
@@ -210,7 +210,7 @@ class Asking(_Judge):
         self.assertEqual(row["resolved"]["via"], "feed")
         t = self.task_of(row)
         self.assertEqual((t["kind"], t["guide"], t["subject_kind"], str(t["a"])),
-                         ("source_judge", "source-judge-v1", "source_candidate", row["id"]))
+                         ("source_judge", "source-judge-v2", "source_candidate", row["id"]))
         self.assertLess(t["priority"], 0)
         self.assertIn("[i10] ", t["input"])
         self.assertIn("MEASURED:", t["input"])

@@ -506,6 +506,52 @@ def _source_judge(a: Dict[str, Any], input: str) -> Optional[str]:
         if e in named:
             return "an example named twice"
         named.add(e)
+    return _item_filter(a.get("filter"), input)
+
+
+_ITEM_LINE = re.compile(r"^\[(i\d{1,2})\] [^\n]*?· (.*?)(?: tag=(\S+))?$", re.M)
+
+
+def _item_filter(rule: Any, input: str) -> Optional[str]:
+    """0196: a proposed item filter (source-judge-v2's `filter`) checked against the items the question shows
+    (utils/item_filter.check: compiles, a shape not one version, never a plain release, hides one item read and none
+    of those it keeps); its `keep` names items the question shows."""
+    if rule is None:
+        return None
+    from insight_core.utils import item_filter
+    items = [{"id": i, "title": t.strip(), "url": f"https://example.invalid/o/r/releases/tag/{tag}" if tag else None}
+             for i, t, tag in _ITEM_LINE.findall(input or "")]
+    shown = {i["id"] for i in items}
+    for k in rule.get("keep") or []:
+        if k not in shown:
+            return f"the filter keeps an item the question does not show: {k}"
+    if not (rule.get("hide") or []):
+        return None
+    err = item_filter.check(rule, items, keep=rule.get("keep") or [])
+    return f"the filter: {err}" if err else None
+
+
+def _websearch_official(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0196 (websearch-official-v1): every address one http(s) address, no spaces, named once; each why one line."""
+    seen: set = set()
+    urls = [c.get("url") for c in a.get("channels") or []]
+    if a.get("announcement"):
+        urls.append(a["announcement"].get("url"))
+    if (a.get("actor") or {}).get("site"):
+        urls.append(a["actor"]["site"])
+    for url in urls:
+        url = (url or "").strip()
+        if not url.lower().startswith(("http://", "https://")) or any(ch.isspace() for ch in url):
+            return "an address: one http(s) address, no spaces"
+    for c in a.get("channels") or []:
+        key = c["url"].lower().split("://", 1)[-1].removeprefix("www.").rstrip("/")
+        if key in seen:
+            return "a channel named twice"
+        seen.add(key)
+        if "\n" in (c.get("why") or ""):
+            return "a channel's why: one line"
+    if a.get("official") and not a.get("actor"):
+        return "official without an actor"
     return None
 
 
@@ -615,6 +661,10 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 
+# 0196: a guide variant's own checks (schemas.GUIDE_VARIANTS), in place of its kind's.
+GUIDE_CHECKS = {"websearch-official-v1": _websearch_official}
+
+
 def unwrap(kind: str, answer: Any) -> Any:
     if isinstance(answer, dict) and len(answer) == 1:
         (key, inner), = answer.items()
@@ -635,5 +685,5 @@ def check(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Tu
     err = schema_error(schemas.schema_for(kind, guide), answer)
     if err:
         return answer, err
-    extra = CHECKS.get(kind)
+    extra = GUIDE_CHECKS.get(guide or "") or CHECKS.get(kind)
     return answer, extra(answer, input) if extra else None

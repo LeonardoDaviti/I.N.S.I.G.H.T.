@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 GUIDES_DIR = Path(__file__).resolve().parent / "guides"
 
@@ -415,6 +415,47 @@ SOURCE_JUDGE_SCHEMA = {
         "fits": {"type": "boolean"},
         "original": {"enum": SOURCE_ORIGINAL}},
 }
+# 0196 (official channels): source-judge-v2 is v1 with, for a feed whose items mix releases and automatic builds (a
+# code host's releases, a nightly channel), an item filter it proposes: `filter` {kind, hide [{field, regex, why}],
+# keep [item ids of real releases]}, checked by validate._source_judge (utils/item_filter.check) and applied by
+# code to every new item when the channel is added. Optional: absent or null for any other source.
+SOURCE_FILTER_SCHEMA = {
+    "anyOf": [{"type": "null"}, {
+        "type": "object", "required": ["kind", "hide", "keep"],
+        "properties": {"kind": {"enum": ["releases", "builds", "mixed"]},
+                       "hide": {"type": "array", "maxItems": 4, "items": {
+                           "type": "object", "required": ["field", "regex", "why"],
+                           "properties": {"field": {"enum": ["tag", "title"]},
+                                          "regex": {"type": "string", "minLength": 1, "maxLength": 120},
+                                          "why": {"type": "string", "minLength": 1, "maxLength": 200}}}},
+                       "keep": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^i[0-9]{1,2}$"}}}}]}
+SOURCE_JUDGE_V2_SCHEMA = {**SOURCE_JUDGE_SCHEMA,
+                          "properties": {**SOURCE_JUDGE_SCHEMA["properties"], "filter": SOURCE_FILTER_SCHEMA}}
+# 0196 (official channels): who announces an event and where (websearch-official-v1, the `websearch` kind's second
+# guide: Claude's web search tool on the owner's device). Candidates only: the maker is written through identity's facts
+# and each channel is proven by code (owned, a dated stream, announcements) before anything is followed.
+OFFICIAL_CHANNEL_KINDS = ["x", "telegram", "youtube", "site_section", "releases", "repository", "site", "page", "other"]
+OFFICIAL_SCHEMA = {
+    "type": "object",
+    "required": ["actor", "channels", "official", "queries"],
+    "properties": {
+        "actor": {"anyOf": [{"type": "null"}, {
+            "type": "object", "required": ["name"],
+            "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 120}, "site": _STR_OR_NULL,
+                           "kind": {"enum": ["org", "person", "project"]}}}]},
+        "thing_maker": _STR_OR_NULL,
+        "announcement": {"anyOf": [{"type": "null"}, {
+            "type": "object", "required": ["url"],
+            "properties": {"url": {"type": "string", "minLength": 8, "maxLength": 500}, "why": _STR_OR_NULL}}]},
+        "channels": {"type": "array", "maxItems": 4, "items": {
+            "type": "object", "required": ["url", "kind", "why"],
+            "properties": {"url": {"type": "string", "minLength": 8, "maxLength": 500},
+                           "kind": {"enum": OFFICIAL_CHANNEL_KINDS},
+                           "why": {"type": "string", "minLength": 1, "maxLength": 300}}}},
+        "official": {"type": "boolean"},
+        "why_not": _STR_OR_NULL,
+        "queries": {"type": "array", "maxItems": WEBSEARCH_QUERIES, "items": {"type": "string", "minLength": 1}}},
+}
 # 0174 (news sections): Mark X News divided into 3-8 sections Haiku titles (news-sections-v1), every row (keyed r1..rN in
 # the question) in exactly one. Sphere-agnostic: no fixed list of sections in code, the titles are the answer's.
 NEWS_SECTIONS = (3, 8)
@@ -501,7 +542,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
     Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
-    Kind("source_judge", "source-judge-v1", "source_candidate", SOURCE_JUDGE_SCHEMA),   # 0173: a candidate worth it?
+    Kind("source_judge", "source-judge-v2", "source_candidate", SOURCE_JUDGE_V2_SCHEMA),   # 0173; 0196: + item filter
     Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
     Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # 0197: new rows into those sections
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
@@ -569,20 +610,32 @@ def guide_of(cur, kind: str) -> Optional[str]:
     return entities_arm(cur).guide if kind == "entities" else KINDS[kind].guide
 
 
+# 0196: a kind's second guide with a schema of its own (the same kind, so the worker asks it with that kind's tools and
+# per-call setting): {guide: (kind, schema)}. A task names its guide; its answers are checked by that guide's schema.
+GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
+    "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
+}
+
+
 def schema_for(kind: str, guide: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """The answer schema of `kind` under `guide` (an entities arm's own; else the kind's)."""
+    """The answer schema of `kind` under `guide` (an entities arm's own, a guide variant's own; else the kind's)."""
     if kind == "entities" and guide in ENTITY_ARMS:
         return ENTITY_ARMS[guide].schema
+    if guide in GUIDE_VARIANTS and GUIDE_VARIANTS[guide][0] == kind:
+        return GUIDE_VARIANTS[guide][1]
     spec = KINDS.get(kind)
     return spec.schema if spec else None
 
 
 def guide_ids() -> Dict[str, str]:
-    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v1, takes the first)."""
+    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v1, takes the first), and each
+    kind's second guide (GUIDE_VARIANTS, 0196)."""
     out: Dict[str, str] = {}
     for kind in KINDS.values():
         if kind.guide:
             out.setdefault(kind.guide, kind.name)
+    for guide_id, (kind_name, _schema) in GUIDE_VARIANTS.items():
+        out.setdefault(guide_id, kind_name)
     return out
 
 
@@ -596,7 +649,7 @@ def load_guides(cur) -> Dict[str, str]:
     from insight_core.markx import repo
     out = {}
     for guide_id, kind in guide_ids().items():
-        schema = next(k.schema for k in KINDS.values() if k.guide == guide_id)
+        schema = schema_for(kind, guide_id)   # 0196: a guide variant's own schema, else its kind's
         out[guide_id] = repo.put_guide(cur, guide_id, kind, guide_body(guide_id), schema)
     arm = entities_arm(cur)          # 0133: the switched-to entities guide (only that one: a placeholder never loads)
     if arm.guide not in out:

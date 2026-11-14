@@ -430,3 +430,28 @@ def makers(cur: Any, book: I.Book, roots: Iterable[str], guide: Sequence[str], *
                      evidence={"votes": dict(c)}, run_id=run_id):
                 n += 1
     return n
+
+
+# ---- a maker found on the web (0196) ---------------------------------------------------------------------
+
+def set_maker(cur: Any, book: Any, thing: str, maker: str, *, by: str = "web",
+              evidence: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Issue 0196: the maker of a thing the official channels' web search found, written once through identity's one
+    owner: a facts row `by` (web) only when the thing has no maker yet (its entity's stated maker, a current facts
+    maker of any `by`); the maker's entity when its name names one. Returns the new row's id, or None (it had one, or
+    the name names the thing itself). Never on mx_entities.maker, never another table."""
+    root = book.root(thing) if thing else None
+    if not root or root not in book.ents or not (maker or "").strip():
+        return None
+    if book.ents[root].maker:
+        return None
+    cur.execute("SELECT maker_id, maker_name FROM mx_entity_facts WHERE entity_id = %s AND superseded_at IS NULL",
+                (root,))
+    row = cur.fetchone()
+    if row and (row[0] or row[1]):
+        return None
+    mid = I.maker_root(book, maker)
+    if mid == root:
+        return None
+    return write(cur, root, by=by, maker_id=mid, maker_name=(book.label(mid) if mid else maker.strip()[:120]),
+                 evidence=evidence or {})

@@ -9,6 +9,7 @@ import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResp
 import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import DiscoverPages from './DiscoverPages';
 import MainSourceMissing from './MainSourceMissing';
+import OfficialChannels from './OfficialChannels';
 import SilentSources from './SilentSources';
 import SourceJudge from './SourceJudge';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
@@ -303,6 +304,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
               className="h-8 w-full min-w-0 rounded-md border border-line bg-transparent pl-8 pr-2 text-[0.8125rem] text-fg placeholder:text-fg-3 hover:border-line-strong focus:border-line-strong focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fg coarse:h-11"
             />
           </label>
+          {words.length ? null : <OfficialChannels />}
           {words.length ? null : <MainSourceMissing onFollow={onFollow} />}
           {words.length ? null : <SilentSources />}
           {archives.length ? (

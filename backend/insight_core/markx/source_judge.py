@@ -28,8 +28,12 @@ never in a feed, nothing followed). Nothing is written but mx_source_judgements 
 **The reader** (`interests`): the described tracks, the sources read most in 90 days (opens), what those reads are
 about (Mark X's subjects), the folders; ordered by what is read most.
 
-**The question**: kind `source_judge`, guide source-judge-v1, one candidate a call; the answer {verdict, reasons,
-examples, fits, original} checked by the schema and validate._source_judge (each example an item the question shows).
+**The question**: kind `source_judge`, guide source-judge-v2, one candidate a call; the answer {verdict, reasons,
+examples, fits, original, filter} checked by the schema and validate._source_judge (each example an item the question
+shows). 0196: v2 adds the item filter (utils/item_filter.py): for a feed whose items mix releases and automatic builds,
+the rule that hides the builds (a release's tag is shown after its title; a releases feed is read up to FILTER_ITEMS
+items, the ones after ITEMS listed as OLDER TITLES for the filter only). Official channels (markx/official.py) ask it
+from the jobs process (`ask`, `read_and_ask`) and read the answer's `fits`, `verdict` and `filter`.
 
 **The cache**: an answered judgement is shown again for CACHE_DAYS (asking is free); one that could not be read, or
 whose question failed, is read again on the next tap (requests, no question). "Ask again" reads again; when the items
@@ -56,6 +60,7 @@ log = logging.getLogger(__name__)
 KIND = "source_judge"
 SUBJECT = "source_candidate"
 ITEMS = 10                    # the newest items a judgement reads and shows
+FILTER_ITEMS = 30             # 0196: a releases feed's items read for its item filter (the rest as OLDER TITLES)
 ITEM_CHARS = 500              # an item's text the question shows
 TITLE_CHARS = 200             # an item's title the question shows (a post's title may be its whole text)
 CACHE_DAYS = 30
@@ -545,35 +550,44 @@ def question(address: str, resolved: Dict[str, Any], items: Sequence[Dict[str, A
     lines.append("THE READER:")
     lines += [f"- {r}" for r in reader]
     lines.append("ITEMS (newest first):")
-    for i in items:
+    from insight_core.utils.item_filter import tag_of
+    for n, i in enumerate(items):
         when = (i.get("published_at") or "")[:10] or "undated"
         t = re.sub(r"\s+", " ", i.get("title") or "").strip()[:TITLE_CHARS] or "(no title)"
+        tag = tag_of(i.get("url"))
+        if n == ITEMS:
+            lines.append("OLDER TITLES (for the filter only):")
+        lines.append(f"[{i['id']}] {when} · {t}" + (f" tag={tag}" if tag else ""))
         text = re.sub(r"\s+", " ", i.get("text") or "").strip()[:ITEM_CHARS]
-        lines.append(f"[{i['id']}] {when} · {t}")
-        if text and text != t:
+        if n < ITEMS and text and text != t:
             lines.append(text)
     return "\n".join(lines)
 
 
-def scratch_items(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def read_limit(address: str) -> int:
+    """How many items a judgement reads: ITEMS, a releases feed FILTER_ITEMS (its item filter, 0196)."""
+    return FILTER_ITEMS if re.search(r"/releases(\.atom)?/?$", (address or "").split("?")[0]) else ITEMS
+
+
+def scratch_items(items: Sequence[Dict[str, Any]], limit: int = ITEMS) -> List[Dict[str, Any]]:
     """The test read's items as the judgement keeps them: newest first, ids i1.., JSON-ready."""
     def at(i: Dict[str, Any]) -> float:
         d = i.get("published_at")
         return d.timestamp() if isinstance(d, datetime) else float("-inf")
     out = []
-    for n, i in enumerate(sorted(items, key=at, reverse=True)[:ITEMS], start=1):
+    for n, i in enumerate(sorted(items, key=at, reverse=True)[:limit], start=1):
         out.append({"id": f"i{n}", "url": i["url"], "title": i.get("title") or "", "text": (i.get("text") or "")[:1500],
                     "chars": int(i.get("chars") or 0), "published_at": _iso(i.get("published_at")),
                     "lang": i.get("lang") or "und", "transcript": i.get("transcript")})
     return out
 
 
-def _put_task(cur: Cursor, judgement_id: str, q: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+def _put_task(cur: Cursor, judgement_id: str, q: str, priority: int = PRIORITY) -> Tuple[str, Optional[Dict[str, Any]]]:
     """The question (one task per question): its id and its answer when it was answered before."""
     from insight_core.markx import tracks
     schemas.ensure_guides(cur)
     task_id, new = repo.add_task(cur, kind=KIND, guide=schemas.KINDS[KIND].guide, subject_kind=SUBJECT, input=q,
-                                 a=judgement_id, priority=PRIORITY)
+                                 a=judgement_id, priority=priority)
     got = None if new else tracks._answered_verdict(cur, task_id)
     return str(task_id), (got[1] if got else None)
 
@@ -585,7 +599,7 @@ def _answered(cur: Cursor, judgement_id: str, answer: Dict[str, Any], now: datet
 
 
 def store_read(cur: Cursor, judgement_id: str, got: scout_reads.ReadResult, items: List[Dict[str, Any]],
-               sig: Dict[str, Any], requests: int, now: datetime) -> Dict[str, Any]:
+               sig: Dict[str, Any], requests: int, now: datetime, *, priority: int = PRIORITY) -> Dict[str, Any]:
     """The test read and its signals on the judgement; the question asked, or an earlier answer kept (the same items),
     or unreadable."""
     row = get(cur, judgement_id)
@@ -611,7 +625,7 @@ def store_read(cur: Cursor, judgement_id: str, got: scout_reads.ReadResult, item
                         (before["task_id"], json.dumps(before["answer"]), before["verdict"], now, judgement_id))
             return get(cur, judgement_id)
     q = question(row["address"], got.resolved, s_items, sig, interests(cur, now))
-    task_id, answer = _put_task(cur, judgement_id, q)
+    task_id, answer = _put_task(cur, judgement_id, q, priority)
     cur.execute("UPDATE mx_source_judgements SET status = 'asked', task_id = %s, busy_until = NULL WHERE id = %s",
                 (task_id, judgement_id))
     if answer is not None:
@@ -625,9 +639,10 @@ def reads_allowed() -> bool:
 
 
 async def read_and_ask(db_url: str, judgement_id: str, *, reader: Optional[Any] = None, http: Any = None,
-                       now: Optional[Callable[[], datetime]] = None) -> Dict[str, Any]:
-    """The judgement's test read, its signals and its question (the API's background task). Claimed first; never
-    raises for a site's failure; nothing written but the judgement and the question."""
+                       now: Optional[Callable[[], datetime]] = None, priority: int = PRIORITY) -> Dict[str, Any]:
+    """The judgement's test read, its signals and its question (the API's background task; 0196: the official
+    channels' job, at its own `priority`). Claimed first; never raises for a site's failure; nothing written but the
+    judgement and the question."""
     from insight_core.db import database
     clock = now or _now
     with database.transaction(db_url) as cur:
@@ -639,9 +654,9 @@ async def read_and_ask(db_url: str, judgement_id: str, *, reader: Optional[Any] 
     else:
         from insight_core.markx import scout
         reader = reader or scout.default_reader()
-        got = await reader.read(address, limit=ITEMS)
+        got = await reader.read(address, limit=read_limit(address))
     try:
-        items = scratch_items(got.items)
+        items = scratch_items(got.items, read_limit(address))
         base = http if http is not None else getattr(reader, "http", None)
         client = scout_reads.Counting(base, getattr(reader, "limiter", None)) if base is not None else None
         sig: Dict[str, Any] = {}
@@ -650,7 +665,7 @@ async def read_and_ask(db_url: str, judgement_id: str, *, reader: Optional[Any] 
                 sig = await signals(cur, client, address, items, got.resolved, clock())
         spent = got.requests + (client.requests if client is not None else 0)
         with database.transaction(db_url) as cur:
-            row = store_read(cur, judgement_id, got, items, sig, spent, clock())
+            row = store_read(cur, judgement_id, got, items, sig, spent, clock(), priority=priority)
     except Exception:  # noqa: BLE001 - the judgement says it failed; the next ask reads again
         log.exception("Source judge %s: the read failed", judgement_id)
         with database.transaction(db_url) as cur:
@@ -685,6 +700,7 @@ def view(row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Optio
     return {"id": row["id"], "address": row["address"], "key": row["key"], "status": row["status"],
             "reason": row.get("reason"), "verdict": row.get("verdict"), "reasons": answer.get("reasons") or [],
             "fits": answer.get("fits"), "original": answer.get("original"), "examples": examples,
+            "filter": answer.get("filter"),
             "items": len(items), "follows_as": resolved.get("via"), "follow_address": resolved.get("handle_or_url"),
             "measured": measured_lines(s) if s else [],
             "reads": (s.get("reads") or {}).get("mode"), "cadence": (s.get("rate") or {}).get("cadence"),

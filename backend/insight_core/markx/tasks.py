@@ -637,6 +637,7 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
                   AND (%(fresh)s::timestamptz IS NULL OR {fresh_sql()})
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
+                  AND p.filtered_by IS NULL   -- 0196: a post its source's item filter hid is never read
                   AND (%(at)s::timestamptz IS NULL
                        OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC

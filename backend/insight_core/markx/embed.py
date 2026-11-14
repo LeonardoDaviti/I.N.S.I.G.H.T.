@@ -273,6 +273,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
                                      AND t.status <> 'answered')   -- answered with no vector: set aside
                   AND NOT EXISTS (SELECT 1 FROM mx_embed_skips k WHERE k.post_id = p.id AND k.text_version = %(version)s)
                   AND NOT (p.id = ANY(%(seen)s::uuid[]))
+                  AND p.filtered_by IS NULL   -- 0196: a post its source's item filter hid gets no vector
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id
                 LIMIT %(limit)s""",
             {"now": now, "days": days, "model": model, "kind": KIND, "guide": spec.guide, "seen": list(seen),

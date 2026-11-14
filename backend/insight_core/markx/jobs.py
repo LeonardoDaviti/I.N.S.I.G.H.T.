@@ -57,6 +57,9 @@ at 101% CPU and every /api/* request timed out.
     from FAILING_AFTER failures on the job shows as failing (`view`, /api/status's health). One decision makes it:
     `held`, asked by `due` for every job. Before, a failed run was wanted again and ran at the next look (30 s after
     a crash or a kill) or after GAP: the same run over and over.
+  - **Official channels** (0196, the job "official"): markx/official.run, every OFFICIAL_EVERY seconds while
+    INSIGHT_OFFICIAL is not off, in a process of its own (its reads of the web, its judgements' questions, its adds);
+    bounded by its own budgets (events, test reads, web searches a pass) and resumable (its state in Postgres).
   - **A decision run over LIMIT twice in a row in the same stage skips it once** (0188): when that stage can be
     deferred (SKIPPABLE: a stage after the run's own decisions), the next run defers it (logged, in the run's
     `deferred` counts and the job's `skipped_stages`) instead of repeating the identical run; the run after it
@@ -90,7 +93,8 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan", "labels", "news")
+JOBS = ("candidates", "decide", "plan", "labels", "news", "official")
+OFFICIAL_EVERY = 1800.0          # 0196: the official channels' pass at most every 30 minutes
 REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 MAX_BACKOFF = 6 * 3600.0         # 0188: a failing job is tried at least every 6 hours, never more often than its backoff
@@ -424,6 +428,22 @@ class Jobs:
             return {"failed": str(exc)[:300]}
         return {"placed": placed, "seconds": round(time.monotonic() - t, 1)}
 
+    def official(self) -> Optional[Dict[str, Any]]:
+        """0196: one pass of official channels (markx/official.run), its counts and this process's peak memory
+        recorded; a failed pass is tried again after its backoff."""
+        from insight_core.markx import official as mx_official
+        t0 = time.monotonic()
+        self._begin("official", "running")
+        try:
+            out = mx_official.run(self.db_url, now=self.clock())
+        except Exception as exc:
+            log.exception("Mark X official channels: the pass failed")
+            self._finish("official", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            return None
+        ok = "error" not in out
+        self._finish("official", {"ok": ok, "seconds": round(time.monotonic() - t0, 1), **out})
+        return out
+
     def labels(self) -> Optional[Dict[str, Any]]:
         """0182: the newest decision run's Labels queue, built and kept (labels.keep) in one REPEATABLE READ
         transaction of its own; a failure is recorded and the job tried again after GAP. Its seconds and this
@@ -549,7 +569,8 @@ class Jobs:
 
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
-        kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP) -> Optional[str]:
+        kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP,
+        official_every: Optional[float] = None) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
     one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX is `busy` (why, from
     `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
@@ -577,6 +598,10 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
                 return v.job
     if states["candidates"]["wanted_at"] is not None and not held(states["candidates"], now, gap):
         return "candidates"
+    o = states.get("official") or {}
+    if official_every is not None and o.get("stage") is None and not held(o, now, gap) and (
+            o.get("started_at") is None or (now - o["started_at"]).total_seconds() >= official_every):
+        return "official"     # 0196: after everything else that is due
     return None
 
 
@@ -695,7 +720,8 @@ class Runner:
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
-                      plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap)
+                      plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap,
+                      official_every=self.official_every())
             if self._busy != getattr(self, "_told", None):
                 if self._busy:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
@@ -712,6 +738,11 @@ class Runner:
         except Exception:
             log.exception("Mark X jobs: the tick failed")
             return None
+
+    def official_every(self) -> Optional[float]:
+        """0196: the official channels' pass's period, None while INSIGHT_OFFICIAL is off."""
+        from insight_core.markx import official
+        return None if official.mode() == "off" else OFFICIAL_EVERY
 
     def _run(self, *names: str) -> None:
         if not names:

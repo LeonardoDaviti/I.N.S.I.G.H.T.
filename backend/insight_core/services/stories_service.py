@@ -799,6 +799,7 @@ class StoriesService:
                 states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
             result = {**result, "archives": _archive_rows(result["archives"], states, self.clock())}
         ranked, also = result["suggestions"], result.get("also", [])
+        ranked = self._by_fit(ranked)   # 0196: the worker's judgement of the reader's fit first, then link volume
         if q:
             words = q.casefold().split()
             ranked = [s for s in ranked if all(w in _words(s) for w in words)]
@@ -807,6 +808,30 @@ class StoriesService:
         # A followed source's other channels are one folded group, with the first page (issue 0109).
         return {**result, "suggestions": ranked[offset:end], "also": also if offset == 0 else [], "total": len(ranked),
                 "offset": offset, "more": end < len(ranked)}
+
+    def _by_fit(self, ranked: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Issue 0196: Discover ranked by fit with the reader, not link volume: each suggestion the worker judged
+        (markx/source_judge, the owner's tap or the official channels' pass) carries its judgement (`fit`: follow,
+        maybe, skip, not_fit), and discover_rules.order puts those that fit first within their section, those that
+        don't last. One query by the shown keys; a failure leaves the order as it was."""
+        if not ranked:
+            return ranked
+        from insight_core.markx import source_judge
+        from insight_core.utils.discover_rules import order
+        try:
+            keys = sorted({source_judge.cache_key(s["key"]) for s in ranked})
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                cur.execute("""SELECT DISTINCT ON (key) key, verdict, (answer->>'fits')::boolean FROM mx_source_judgements
+                                WHERE key = ANY(%s) AND status = 'answered' ORDER BY key, asked_at DESC""", (keys,))
+                fits = {k: ("not_fit" if f is False else v) for k, v, f in cur.fetchall()}
+        except Exception:  # noqa: BLE001 - Discover's own order stands
+            logger.exception("Discover: the judgements could not be read")
+            return ranked
+        if not fits:
+            return ranked
+        out = [dict(s, fit=fits[source_judge.cache_key(s["key"])]) if source_judge.cache_key(s["key"]) in fits else s
+               for s in ranked]
+        return order(out)
 
     def _from_originals(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Issue 0138 D, read on each open (Mark X's entities and the originals asked change between story runs):

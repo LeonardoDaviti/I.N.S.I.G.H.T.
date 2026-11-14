@@ -120,13 +120,25 @@ def segments(url: str) -> List[str]:
     return [s for s in urllib.parse.urlparse(url).path.split("/") if s]
 
 
+# 0196: a first segment that only groups (a forum's /c/<category>/, a site's /category/<name>/): the section is the
+# group's, one segment deeper (measured: a forum's whole /c/ was proposed for its announcements category).
+CONTAINER_SEGMENTS = frozenset({"c", "category", "categories", "tag", "tags"})
+# A first segment that is one thread or one item, never a section (a forum topic /t/<slug>/<id>).
+THREAD_SEGMENTS = frozenset({"t", "topic", "topics", "thread", "threads", "d", "discussion", "discussions"})
+# Hosts that are help, docs, status or file servers: never a channel (0196: help., docs. and cdn. pages were proposed).
+NOT_CHANNEL_HOSTS = re.compile(r"^(help|support|docs|doc|developer-docs|cdn|static|assets|status|download|downloads|"
+                               r"files|media|img|images|api|console|app|platform|dashboard|login|accounts|store|shop)\.")
+
+
 def section_of(url: str) -> str:
     """A page's section prefix: "/<first segment>/" of a page two or more segments deep whose first segment is no date
     or number (/blog/<slug>, /newsroom/2026/10/<slug>), a language's with it (/en/blog/), else "/" (a page at the
-    site's root, a site by date)."""
+    site's root, a site by date). 0196: a grouping segment's group with it (/c/announcements/)."""
     segs = [s.lower() for s in segments(url)]
     lang = segs[:1] if segs and LANGUAGE.match(segs[0]) and len(segs) >= 3 else []
     rest = segs[len(lang):]
+    if rest and rest[0] in CONTAINER_SEGMENTS:   # its group (/c/announcements/), never the container alone
+        return "/" + "/".join([*lang, rest[0], rest[1]]) + "/" if len(rest) >= 2 and not NUMBERISH.match(rest[1]) else "/"
     if len(rest) >= 2 and not NUMBERISH.match(rest[0]):
         return "/" + "/".join([*lang, rest[0]]) + "/"
     return "/"
@@ -149,8 +161,10 @@ def channel_of(url: str) -> Optional[Channel]:
             return Channel(f"t.me/{segs[0].lower()}", "account", "telegram", f"https://t.me/{segs[0]}", site="t.me")
         return None
     if (not segs or site in _PLATFORM_SITES or site in CODE_SITES or site in MODEL_HUBS or host.endswith(".hf.space")
-            or any(test(full) for _, test in PLACE_TESTS) or REFERENCE.search(_path(full)) or LEGAL.search(_path(full))):
-        return None   # no source (Discover's places: references, papers, records, apps, files; a product, pricing or legal page)
+            or any(test(full) for _, test in PLACE_TESTS) or REFERENCE.search(_path(full)) or LEGAL.search(_path(full))
+            or NOT_CHANNEL_HOSTS.match(host.removeprefix("www.")) or segs[0].lower() in THREAD_SEGMENTS):
+        return None   # no source (Discover's places: references, papers, records, apps, files; a product, pricing or
+        # legal page; 0196: a help, docs or file host's page, one forum thread)
     prefix = section_of(full)
     pub = publication_of(host)
     parsed = urllib.parse.urlparse(full)
@@ -225,6 +239,9 @@ class Event:
     member_sources: Set[str]
     actor_sources: Set[str]           # the sources whose name is the actor's
     posts: List[Dict[str, Any]]
+    things: List[str] = field(default_factory=list)   # 0196: the products its members name as subject (most first)
+    addresses: Dict[str, List[str]] = field(default_factory=dict)   # 0196: {thing or actor: its code addresses (0138)}
+    mk: Any = field(default=None, repr=False, compare=False)          # 0196: the story's Makers (owned_by asks it)
 
 
 def _verdict(ch: Channel, pages: Sequence[str], sources: Sequence[Src]) -> Tuple[Optional[str], Optional[Src]]:
@@ -480,9 +497,10 @@ def _named(cur: Any, mk: Any) -> Dict[str, Tuple[Set[str], Set[str]]]:
 Picked = Tuple[Dict[str, Tuple[Dict[str, Any], str, int]], int]
 
 
-def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Picked:
-    """The window's stories of 2+ voices whose event type is announced ({story: (story, type, voices)}) and how many
-    stories of 2+ voices were checked: all `events` reads of the stories besides their texts and mentions."""
+def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, min_voices: int = MIN_VOICES) -> Picked:
+    """The window's stories of `min_voices`+ voices whose event type is announced ({story: (story, type, voices)}) and
+    how many stories of that many voices were checked: all `events` reads of the stories besides their texts and
+    mentions. 0196: official channels take one voice (the trigger was a single forum post)."""
     from insight_core.markx import built
     stories = _stories(cur, now - timedelta(days=within))
     picked: Dict[str, Tuple[Dict[str, Any], str, int]] = {}
@@ -490,7 +508,7 @@ def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS) -> Picked:
     for sid, s in stories.items():
         posts = list(s["posts"].values())
         voices = built.voices(posts)
-        if voices < MIN_VOICES:
+        if voices < min_voices:
             continue
         checked += 1
         et = built.event_type(posts)
@@ -519,9 +537,30 @@ def picked_stamp(cur: Any, got: Picked) -> str:
     return h.hexdigest()
 
 
-def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Optional[Picked] = None) -> Tuple[List[Event], int]:
+PRODUCT_TYPES = ("model", "product", "software", "dataset", "project")
+
+
+def _things(st: Any, book: Any) -> List[str]:
+    """0196: the products (entity_facts.PRODUCTS' types) the members name as subject or actor, the most named first."""
+    from insight_core.markx import schemas
+    c: Counter = Counter()
+    for i in st.ids:
+        roots = set()
+        for m in st.mk.mentions.get(i, ()):
+            r = book.root(m.get("entity_id")) if m.get("entity_id") and m.get("role") in ACTOR_ROLES else None
+            e = book.ents.get(r) if r else None
+            if e is not None and e.status != "not_entity" and schemas.entity_type(e.type) in PRODUCT_TYPES:
+                roots.add(r)
+        c.update(roots)
+    return [r for r, _ in sorted(c.items(), key=lambda x: (-x[1], x[0]))]
+
+
+def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Optional[Picked] = None,
+           bare: bool = False) -> Tuple[List[Event], int]:
     """The events to judge (the module's rule) and how many stories of 2+ voices were checked. `picked`: `pick`'s
-    answer, when the caller has it."""
+    answer, when the caller has it. 0196 (`bare`, official channels): also the events with no actor the readings name,
+    or with no own page and no source of the actor's (their actor is the web search's to find), each with its things
+    and their code addresses."""
     from insight_core.markx import built, identity, schemas
     from insight_core.markx import entity_addresses as EA
     from insight_core.markx import perspectives as P
@@ -549,7 +588,7 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Option
             mains = [((read[i].get("main") or {}).get("actors") or []) for i in st.ids if i in read]
             if not named_actor([[x for x in xs if isinstance(x, str)] for xs in mains], is_actor):
                 del actors[sid]
-    if not actors:
+    if not actors and not bare:
         return [], checked
     # the actor's and its things' own addresses (0138), read through the merges
     things: Dict[str, Set[str]] = defaultdict(set)
@@ -560,27 +599,36 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Option
                 r = book.root(m.get("entity_id")) if m.get("entity_id") and m.get("role") in ACTOR_ROLES else None
                 if r and r != a and a in st.mk.ancestors(r):
                     things[sid].add(r)
-    roots = set(actors.values()) | {r for rs in things.values() for r in rs}
+    named_things = {sid: _things(st, book) for sid, st in sts.items()} if bare else {}
+    roots = set(actors.values()) | {r for rs in things.values() for r in rs} | {r for rs in named_things.values()
+                                                                                for r in rs}
     found = EA.current(cur, book, roots)
     addr = {r: {P.nurl(u) for k, u, *_ in rows if k in ADDRESS_KINDS} for r, rows in found.items()}
+    code = {r: sorted({u for k, u, *_ in rows if k == "code"}) for r, rows in found.items()} if bare else {}
+    if not sts:
+        return [], checked
     mk = next(iter(sts.values())).mk
     named = _named(cur, mk)
     out: List[Event] = []
-    for sid, a in actors.items():
+    for sid in (sts if bare else actors):
+        a = actors.get(sid, "")
         st = sts[sid]
         s, et, voices = picked[sid]
-        addresses = set(addr.get(a, ())) | {u for r in things[sid] for u in addr.get(r, ())}
-        pages = _own_pages(st, a, addresses)
-        forms = mk.forms(a)
-        mine = {src for src, (roots, fs) in named.items() if a in roots or fs & forms}
-        if not pages and not mine:
+        addresses = set(addr.get(a, ())) | {u for r in things.get(sid, ()) for u in addr.get(r, ())}
+        pages = _own_pages(st, a, addresses) if a else []
+        forms = mk.forms(a) if a else set()
+        mine = {src for src, (roots, fs) in named.items() if a in roots or fs & forms} if a else set()
+        if not pages and not mine and not bare:
             continue
         posts = [{"id": i, "title": st.by[i].title, "source": st.by[i].src_name, "source_id": st.by[i].src,
                   "url": st.by[i].url, "at": P.pub(st.by[i]).isoformat()} for i in st.ids[:POSTS_SHOWN]]
+        ts = sorted(set(things.get(sid, ())), key=lambda r: (r not in named_things.get(sid, ()), r))
+        ts += [r for r in named_things.get(sid, ()) if r not in ts]
         out.append(Event(story=sid, headline=s["headline"] or (posts[0]["title"] if posts else ""), event_type=et,
-                         voices=voices, first_at=s["first_at"], actor=a, actor_name=book.label(a) or "",
+                         voices=voices, first_at=s["first_at"], actor=a, actor_name=(book.label(a) or "") if a else "",
                          pages=pages, member_sources={p.source for p in s["posts"].values()}, actor_sources=mine,
-                         posts=posts))
+                         posts=posts, things=ts,
+                         addresses={r: code[r] for r in ([a] if a else []) + ts if code.get(r)}, mk=st.mk))
     return out, checked
 
 

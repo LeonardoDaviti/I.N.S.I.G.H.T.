@@ -485,12 +485,13 @@ def server_rules():
     return _RULES[0]
 
 
-def rule_error(kind, answer, input):
+def rule_error(kind, answer, input, guide=None):
     """The server's input checks on an answer the schema passed (validate.CHECKS[kind]: spans and versions in the post,
     numbered items that exist ...), or None. A check that needs more than the standard library (back, subtopics) or
     that cannot read the answer is no opinion: the server still checks it."""
     rules = server_rules()
-    check = getattr(rules, "CHECKS", {}).get(kind) if rules else None
+    check = ((getattr(rules, "GUIDE_CHECKS", {}).get(guide or "") or getattr(rules, "CHECKS", {}).get(kind))
+             if rules else None)   # 0196: a guide variant's own checks first
     if check is None or kind in EMBED_KINDS:
         return None
     try:
@@ -874,7 +875,7 @@ class Worker:
                     continue
                 err = check_answer(batch.guide.get("schema"), a)
                 if err is None and not self.a.no_server_rules:
-                    err = rule_error(batch.kind, a, t.get("input"))   # 0191: what the server would refuse
+                    err = rule_error(batch.kind, a, t.get("input"), batch.guide_id)   # 0191: what the server would refuse
                     ruled += err is not None
                 (invalid.append((t, a, err)) if err else ok.append((t, a)))
             with self.lock:
