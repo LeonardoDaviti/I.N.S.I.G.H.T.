@@ -224,7 +224,7 @@ class NewsService:
     # ---- News ---------------------------------------------------------------------------
 
     def news(self, scope: str | None = None, *, limit: Optional[int] = None,
-             cursor: Optional[str] = None, mark: str = "main") -> Dict[str, Any]:
+             cursor: Optional[str] = None, mark: str = "main", order: Optional[str] = None) -> Dict[str, Any]:
         """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
         begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
         source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
@@ -236,10 +236,13 @@ class NewsService:
 
         Issue 0205: whose rows (`mark`): "main" reads Mark X's stored rows (`rows_of`: its newest written run, mx_news)
         when Mark X is on and has rows in the window, else Mark IX's, with `fallback` and a `note` saying so; "ix" is
-        the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix")."""
+        the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix").
+
+        Issue 0208: Mark X's rows in the order the switch says (`order`: "ranked", News ranked for the reader with the
+        Notable lane first, or "coverage", the score's order), or as `order` asks; Mark IX's keep the score's."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             run, note = self.rows_of(cur, mark)
-            answer = {**self.news_on(cur, scope, mx_run=run), "mark": "x" if run else "ix",
+            answer = {**self.news_on(cur, scope, mx_run=run, order=order), "mark": "x" if run else "ix",
                       "fallback": note is not None, "note": note}
         if limit is None:
             return answer
@@ -266,8 +269,9 @@ class NewsService:
         return None, self.MARKX_EMPTY
 
     def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None,
-                mx_run: Optional[str] = None) -> Dict[str, Any]:
-        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0205)."""
+                mx_run: Optional[str] = None, order: Optional[str] = None) -> Dict[str, Any]:
+        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0205), in the
+        order `order` names or the switch says (0208: `ranked`)."""
         feed_scope = FeedScope.parse(scope)
         one_source = feed_scope.kind in ("source", "voice")   # a voice's page reads as a source's (issue 0132 A)
         now = self.clock()
@@ -318,7 +322,34 @@ class NewsService:
             items.append(item)
         items.sort(key=lambda i: (PARTS.index(i["news"]["part"]), -i["news"]["score"],
                                   -i["news"]["first_at"].timestamp(), i["id"]))
-        return {"success": True, "items": items, "next_cursor": None}
+        if mx_run is None:
+            return {"success": True, "items": items, "next_cursor": None}
+        return {"success": True, **self.ranked(cur, items, order), "next_cursor": None}
+
+    @staticmethod
+    def ranked(cur: Any, items: List[Dict[str, Any]], order: Optional[str] = None) -> Dict[str, Any]:
+        """0208: Mark X's News rows (in the score's order) with their kept rank (markx/news_rank: computed in the jobs
+        process; a row not ranked yet has none) as `news.rank`, in the order `order` or the switch names: "ranked"
+        puts the Notable lane first (`news.notable`), then each part by its rank score (a row not ranked yet by its
+        coverage alone), the score's order breaking ties; "coverage" leaves the score's order. {items, order}."""
+        from insight_core.markx import news_rank
+        want = order if order in news_rank.ORDERS else news_rank.mode(cur)
+        ranks = news_rank.read(cur, [i["story"]["id"] for i in items])
+        for i in items:
+            r = ranks.get(i["story"]["id"])
+            if r is not None:
+                why = r["why"] or {}
+                i["news"]["rank"] = {"significance": r["significance"], "coverage": r["coverage"], "fit": r["fit"],
+                                     "score": r["score"], "event": why.get("event"), "effect": why.get("effect"),
+                                     "usable": why.get("usable"), "why": why.get("why")}
+            i["news"]["notable"] = bool(want == "ranked" and r is not None and r["notable"])
+        if want == "ranked":
+            def score(i: Dict[str, Any]) -> float:
+                r = i["news"].get("rank")
+                return r["score"] if r else news_rank.combine(None, news_rank.coverage(i["news"]["score"]), 0.0)
+            # stable: the score's order breaks ties
+            items.sort(key=lambda i: (not i["news"]["notable"], PARTS.index(i["news"]["part"]), -score(i)))
+        return {"items": items, "order": want}
 
     def row_of(self, cur: Any, post_id: str, source_id: str) -> Optional[Dict[str, Any]]:
         """The News row a post is in (issue 0083: its page says it), as the Main feed's News shows it,

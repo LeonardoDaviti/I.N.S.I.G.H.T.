@@ -140,6 +140,14 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               {row.removed.length ? ` · −${row.removed.length}` : ''}
               {row.folded ? ` · ${row.folded} retold` : ''}
               {row.headline.from === 'haiku' ? ' · headline by Haiku' : ''}
+              {row.rank ? (
+                <span data-rank title={row.rank.why?.why ?? undefined}>
+                  {row.rank.notable ? ' · notable' : ''}
+                  {` · significance ${row.rank.significance === null ? 'not asked yet' : row.rank.significance.toFixed(2)}`}
+                  {row.rank.why?.effect ? ` (effect ${row.rank.why.effect}/5)` : ''}
+                  {` · fit ${row.rank.fit.toFixed(2)} (Shadow)`}
+                </span>
+              ) : null}
               {row.surging?.length ? (
                 <span data-surging> · surging: {row.surging.map((s) => s.name).join(', ')}</span>
               ) : null}

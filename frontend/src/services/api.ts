@@ -166,6 +166,9 @@ export interface NewsScore {
   first_at: string;
   reports: number; shares: number; mentions: number;
   score: number;
+  /** Issue 0208 (Mark X's rows): its kept rank, when ranked; and whether it is in the "Notable for you" lane. */
+  rank?: NewsRank | null;
+  notable?: boolean;
 }
 /** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface Classic {
@@ -253,8 +256,18 @@ export interface PageUpdate {
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
 /** GET /api/news (issue 0205): whose rows (`mark`: Mark X's, the main News, or Mark IX's, the older News), and when
  *  the main News fell back to the older one (`fallback`, with the `note` the page shows). */
-export interface NewsPage extends FeedPage { mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null; }
+export interface NewsPage extends FeedPage {
+  mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null;
+  /** Issue 0208: the order of Mark X's rows: ranked for the reader (the Notable lane first) or by coverage (the score). */
+  order?: NewsOrder;
+}
 export type NewsMark = 'main' | 'ix';
+export type NewsOrder = 'ranked' | 'coverage';
+/** Issue 0208: a Mark X News row's kept rank: its significance (the worker's answer), coverage and fit, each 0..1. */
+export interface NewsRank {
+  significance: number | null; coverage: number; fit: number; score: number;
+  event?: string | null; effect?: number | null; usable?: string | null; why?: string | null;
+}
 /** An entity the search's words name (issue 0139, Mark X on, a first page): it opens /markx/entities/:id. */
 export interface SearchEntity {
   id: string; name: string; type: string | null; maker: string | null; posts: number; voices: number;
@@ -1422,8 +1435,8 @@ export function createApi() {
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
     /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0205: Mark X's rows
      *  (`mark` main, falling back to Mark IX's when it has none) or the older News (`mark` ix). */
-    getNews: ({ scope, cursor, signal, mark = 'main' }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark }) =>
-      request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}`, { signal }),
+    getNews: ({ scope, cursor, signal, mark = 'main', order }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark; order?: NewsOrder }) =>
+      request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}${order ? `&order=${order}` : ''}`, { signal }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
     getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
       request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),

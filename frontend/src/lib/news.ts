@@ -29,7 +29,7 @@ export function scopeRoleWords(row: { scope_role?: string | null }): string | nu
 /** A News row's line: on a source's page its part first, then its score in words, then who covered it,
  *  the first reporter first. */
 export function newsLine(news: ScopedNews, story: FeedStory): string {
-  return [scopeRoleWords(news), newsWords(news, story.voices), coveredNames(story)].filter(Boolean).join(' · ');
+  return [notableWords(news), scopeRoleWords(news), newsWords(news, story.voices), coveredNames(story)].filter(Boolean).join(' · ');
 }
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -48,7 +48,9 @@ function weekStart(date: Date): Date {
  * `part === 'recent'`), "This week" (since Monday), then "Week of 12 Oct" for each earlier week.
  * `rank` orders the parts, newest first.
  */
-export function newsPart(news: Pick<NewsScore, 'part' | 'first_at'>, now: Date = new Date()): { label: string; rank: number } {
+export function newsPart(news: Pick<NewsScore, 'part' | 'first_at'> & { notable?: boolean }, now: Date = new Date()): { label: string; rank: number } {
+  // Issue 0208: the significant rows coverage alone would bury, above every part.
+  if (news.notable) return { label: NOTABLE, rank: -1 };
   if (news.part === 'recent') return { label: 'Last 48 hours', rank: 0 };
   const thisWeek = weekStart(now);
   const began = new Date(news.first_at);
@@ -59,8 +61,20 @@ export function newsPart(news: Pick<NewsScore, 'part' | 'first_at'>, now: Date =
   return { label: `Week of ${format.format(start)}`, rank: 1 + Math.round((thisWeek.getTime() - start.getTime()) / WEEK) };
 }
 
-/** News rows in their parts, the newest part first, each part in the API's order (by score). */
-export function inNewsParts<T extends { news?: Pick<NewsScore, 'part' | 'first_at'> | null }>(items: T[], now: Date = new Date()): T[] {
+export const NOTABLE = 'Notable for you';
+
+/** Issue 0208: why a Notable row is there, in a few words: "New method · usable now". */
+export function notableWords(news: Pick<NewsScore, 'rank' | 'notable'>): string | null {
+  const rank = news.rank;
+  if (!news.notable || !rank) return null;
+  const event = rank.event && rank.event !== 'other' ? rank.event.replace(/_/g, ' ') : null;
+  const usable = rank.usable === 'now' ? 'usable now' : rank.usable === 'soon' ? 'usable soon' : null;
+  const words = [event ? event[0].toUpperCase() + event.slice(1) : null, usable].filter(Boolean).join(' · ');
+  return words || null;
+}
+
+/** News rows in their parts, the newest part first, each part in the API's order (ranked, or by score). */
+export function inNewsParts<T extends { news?: (Pick<NewsScore, 'part' | 'first_at'> & { notable?: boolean }) | null }>(items: T[], now: Date = new Date()): T[] {
   const rank = (item: T) => (item.news ? newsPart(item.news, now).rank : 0);
   // Array sort is stable: within a part the API's order stays.
   return [...items].sort((a, b) => rank(a) - rank(b));

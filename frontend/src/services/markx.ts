@@ -97,6 +97,15 @@ export interface MarkxRow {
   /** 0119 A2: the entities its posts make surge (3+ voices that day). */
   surging?: { id: string; name: string; day: string; voices: number }[];
   ix: { id: string; title: string | null; voices?: number; first_at?: string }[];
+  /** 0208: its kept rank (significance, fit, coverage, score in 0..1; the lane; what decided them); null: not ranked yet. */
+  rank?: MarkxRank | null;
+}
+
+/** 0208: a row's rank as the jobs process kept it. `why`: the significance answer's fields and the fit's parts. */
+export interface MarkxRank {
+  significance: number | null; fit: number; coverage: number; score: number; notable: boolean;
+  why: { event?: string; effect?: number; usable?: string; shipped_in?: string | null; why?: string;
+         fit?: { source?: number; entity?: number; thing?: string | null; track?: boolean }; coverage_place?: number };
 }
 
 export interface MarkxNews {
@@ -108,6 +117,9 @@ export interface MarkxNews {
   folds?: MarkxFoldScore;
   /** 0174: Haiku's titled sections over the rows shown (null: no run yet). */
   sections?: MarkxNewsSections | null;
+  /** 0208: the order the rows are in (ranked for the reader, or by coverage) and the Notable lane's rows. */
+  order?: 'ranked' | 'coverage';
+  notable?: string[];
 }
 
 /** 0174: the newest valid sectioning over the page's rows: groups in the page's order, `new` the rows added since. */

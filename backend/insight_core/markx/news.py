@@ -512,9 +512,19 @@ def _checks(cur: Any, post_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def rank_key(row: Dict[str, Any], now: datetime) -> Tuple[Any, ...]:
-    """News' own order (the page's): the last 48 hours first, then the highest score, the newest, the id."""
+    """News' order by coverage (the page's before 0208, and still `order=coverage`): the last 48 hours first, then the
+    highest score, the newest, the id."""
     return (row["first_at"] < now - timedelta(hours=48), -float(row["score"]), -row["first_at"].timestamp(),
             str(row["id"]))
+
+
+def ranked_key(row: Dict[str, Any], rank: Optional[Dict[str, Any]], now: datetime) -> Tuple[Any, ...]:
+    """0208: News ranked for the reader: the Notable lane first, then the last 48 hours, each by its kept rank score
+    (news_rank.keep; a row not ranked yet by its coverage), then `rank_key`'s order."""
+    from insight_core.markx import news_rank
+    score = rank["score"] if rank else news_rank.combine(None, news_rank.coverage(row["score"]), 0.0)
+    return (not (rank or {}).get("notable"), row["first_at"] < now - timedelta(hours=48), -float(score),
+            *rank_key(row, now)[1:])
 
 
 def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -584,7 +594,12 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                       "removed": removed,
                       "surging": list({s["id"]: s for p in mine for s in surging.get(p, [])}.values()),
                       "ix": [{"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {})} for nid in ix_hit]})
-    items.sort(key=lambda i: rank_key(i, now))
+    from insight_core.markx import news_rank   # 0208: each row's kept rank (significance, fit, coverage, the lane)
+    ranks = news_rank.read(cur, [i["id"] for i in items])
+    order = news_rank.mode(cur)
+    for i in items:
+        i["rank"] = ranks.get(i["id"])
+    items.sort(key=lambda i: ranked_key(i, i["rank"], now) if order == "ranked" else rank_key(i, now))
     from insight_core.markx import folds   # 0127: each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
     from insight_core.markx import built   # 0128: how each row's story is built, its original first, published order
@@ -602,7 +617,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     untitled = sum(1 for i in items if i["headline"]["from"] != "haiku")
     return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
             "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
-            "items": items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, items)}
+            "items": items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, items),
+            "order": order, "notable": [i["id"] for i in items if (i["rank"] or {}).get("notable")]}
 
 
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
@@ -652,7 +668,10 @@ def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
     sections.append(bool(cur.fetchone()[0]))
     cur.execute("SELECT count(*), max(answered_at) FROM mx_tasks WHERE kind = 'headline' AND status = 'answered'")
     heads = list(cur.fetchone())
-    return str(last["id"]), kept_pages.stamp("news", written, rows, ix, sections, heads, kept_pages.owner_marks(cur))
+    from insight_core.markx import news_rank   # 0208: the rank's inputs (significance answers, the reader's hour), its switch
+    ranked = news_rank.stamp(cur, now) + [news_rank.mode(cur)]
+    return str(last["id"]), kept_pages.stamp("news", written, rows, ix, sections, heads, kept_pages.owner_marks(cur),
+                                             ranked)
 
 
 def _view_key(only_differences: bool) -> str:
@@ -684,9 +703,15 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     if run is None:
         return {"run": None, "built": []}
     out: Dict[str, Any] = {"run": run, "built": [], "bytes": {}, "build_seconds": {}}
+    ranked = False
     for key, only in VIEWS.items():
         if kept_pages.has(cur, "news", key, run, st):
             continue
+        if not ranked:   # 0208: the rows ranked and kept first (their inputs are in the stamp), once a build
+            from insight_core.markx import news_rank
+            t0 = time.monotonic()
+            out["rank"] = {**news_rank.keep(cur, now=now), "seconds": round(time.monotonic() - t0, 2)}
+            ranked = True
         t0 = time.monotonic()
         body = kept_pages.encode(page(cur, only_differences=only, now=now))
         seconds = round(time.monotonic() - t0, 2)

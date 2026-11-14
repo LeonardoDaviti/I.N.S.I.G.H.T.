@@ -47,7 +47,8 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_label_queue_items", "mx_label_queues",   # 0182
              "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",   # 0181
              "mx_unit_types", "mx_unit_type_asks",   # 0181 round 2 (0125)
-             "mx_kept_pages")   # 0198 (0136)
+             "mx_kept_pages",   # 0198 (0136)
+             "mx_news_significance_asks", "mx_news_rank")   # 0208 (0141)
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,

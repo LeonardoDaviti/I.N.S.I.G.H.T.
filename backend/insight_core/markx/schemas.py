@@ -497,6 +497,30 @@ UNIT_TYPES_SCHEMA = {
                        "continues": {"type": "boolean"}}}}},
 }
 
+# 0208 (News ranked for the reader): how significant a News row's event is for people in its field, whatever its
+# loudness (significance-v1, one row a question, asked again only when the row's members change: markx/significance).
+SIGNIFICANCE_EVENTS = ["new_method", "new_model", "new_tool", "release_update", "research_result", "benchmark",
+                       "product_launch", "deal_funding", "policy_legal", "security_incident", "outage", "people",
+                       "opinion_analysis", "tutorial", "other"]
+SIGNIFICANCE_USABLE = ["now", "soon", "no"]
+SIGNIFICANCE_ADOPTION = ["widely_used_library", "open_code", "open_weights", "api", "paper", "paper_with_code",
+                         "official", "benchmark_result"]
+SIGNIFICANCE_COVERAGE = ["expert_breakdown", "reports", "passing_mentions"]
+SIGNIFICANCE_SCOPE = ["field_wide", "subfield", "niche"]
+SIGNIFICANCE_SCHEMA = {
+    "type": "object",
+    "required": ["event", "usable", "adoption", "coverage", "effect", "scope", "why"],
+    "properties": {
+        "event": {"enum": SIGNIFICANCE_EVENTS},
+        "usable": {"enum": SIGNIFICANCE_USABLE},
+        "shipped_in": _STR_OR_NULL,
+        "adoption": {"type": "array", "maxItems": len(SIGNIFICANCE_ADOPTION), "items": {"enum": SIGNIFICANCE_ADOPTION}},
+        "coverage": {"enum": SIGNIFICANCE_COVERAGE},
+        "effect": {"type": "integer", "minimum": 1, "maximum": 5},
+        "scope": {"enum": SIGNIFICANCE_SCOPE},
+        "why": {"type": "string", "minLength": 1, "maxLength": 400}},
+}
+
 
 # ---- the kinds -------------------------------------------------------------------------------------
 
@@ -546,6 +570,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
     Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # 0197: new rows into those sections
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
+    Kind("significance", "significance-v1", "story", SIGNIFICANCE_SCHEMA),   # 0208: a News row's significance
 )}
 
 

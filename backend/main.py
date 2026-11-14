@@ -1114,7 +1114,8 @@ NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top row
 @app.get("/api/news")
 @error_detail("load News")
 async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None,
-                   mark: str = Query("main", pattern="^(main|ix)$")):
+                   mark: str = Query("main", pattern="^(main|ix)$"),
+                   order: str | None = Query(None, pattern="^(ranked|coverage)$")):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
     counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
@@ -1123,8 +1124,10 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     stories its roundups mention, and `news.scope_role`: origin | report | share | mention.
     Issue 0195: `limit` rows a page (50) from `cursor`; `next_cursor` names the next page, null at the end.
     Issue 0205: Mark X's rows are the main News (`mark` "x"), Mark IX's when Mark X has none (`fallback`, `note`);
-    `mark=ix` asks for the older News (Mark IX's rows)."""
-    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark)
+    `mark=ix` asks for the older News (Mark IX's rows).
+    Issue 0208: Mark X's rows are ranked for the reader (significance, coverage) with a "Notable for you" lane first
+    (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score."""
+    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark, order=order)
 
 
 @app.get("/api/classics")

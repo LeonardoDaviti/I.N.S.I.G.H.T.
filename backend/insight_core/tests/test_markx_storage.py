@@ -94,7 +94,8 @@ class MigrationTests(_Rollback):
                          | {"mx_kept_pages"}                                                 # 0136 (0198)
                          | {"mx_entity_facts"}                                             # 0137 (0184)
                          | {"mx_official_channels", "mx_official_lookups", "mx_official_runs",
-                            "mx_official_events"})                                          # 0138 (0196)
+                            "mx_official_events"}                                           # 0138 (0196)
+                         | {"mx_news_significance_asks", "mx_news_rank"})                  # 0141 (0208)
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
