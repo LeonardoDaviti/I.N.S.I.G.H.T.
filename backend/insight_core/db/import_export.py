@@ -150,10 +150,12 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
             unknown = sorted(set(expected) - set(order))
             if unknown:
                 raise ValueError(f"the export has tables its migrations don't make: {', '.join(unknown)}")
-            if order:
-                cur.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(map(sql.Identifier, order))))
+            # Triggers off first: a TRUNCATE trigger (0139's kept inputs log one change) must not add rows the
+            # export doesn't hold.
             for table in order:
                 cur.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(sql.Identifier(table)))
+            if order:
+                cur.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(map(sql.Identifier, order))))
             # Indexes no constraint owns are built once after the load, as pg_restore does: the
             # lab's posts load in 53 s with the search index kept up row by row.
             cur.execute("""SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i
