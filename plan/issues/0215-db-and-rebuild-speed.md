@@ -88,6 +88,24 @@ wanted, during the rebuild too. `/api/markx/overview` → `worker.jobs.decide.la
 
 ## v10.21 (branch `v1021-db`)
 
+### Before and after, in short
+
+| what | main (85948b7a) | v10.21 | where |
+|---|---|---|---|
+| rule-change rebuild, s per 1,000 posts (scale copy) | 27.8 | 6.2 | 1 |
+| rebuild's statement s / Python CPU s per 1,000 posts | 9.3 / 20 | 2.0 / 4.4 | 1 |
+| peak RSS of a rebuild batch / slice | 481-503 / 491 MB | 476-506 / 494 MB | 1, 4 |
+| the whole rebuild, rows written | | identical (12 tables, digests) | 1 |
+| progress counter with a post saved mid-rebuild | -1 (server: -1,132) | done = posts - waiting, never < 0 | 2 |
+| first run after a deploy (full) at the server's size | stops at 120 s for ever | finishes (600 s limit), then incremental | v10.20.1 |
+| decision run held by a rebuild | 1 h after the last start | not held (the lock's seconds only) | v10.20.1 |
+| a job's recorded peak (parent at 1,300 MB) | 1,337-1,341 MB, every job | its own: 59-494 MB | 4 |
+| statement time of a replayed day (12 rounds) | 347.6 s, 661k statements | 209.0 s (-40%), 244k (-63%) | 5 |
+| a re-fetched unchanged post | 6.9 ms upsert + links, refs, parts | one read | 5 |
+| Discover's address fill, generic vs custom plan | up to 4,224 ms | 47 ms | 5 |
+| deploy of News-side code: questions and decisions | full (3.5 s mxreal; 92-93 s server) | incremental (0.4 s), News full | 6 |
+| /api/sources, /api/news, /api/markx/news raw bytes | 257 / 212 / 310 KB (mxreal) | 124 / 154 / 249 KB | 7 |
+
 How it was measured: scratch clones of `prep_scale` (148,152 posts, 744k post refs, 4,962 stories) migrated to main's
 migrations and backfilled with main's code. Its stored rows are of older rules, so a rule change's rebuild is due:
 the keys, threads and names steps were run once (80 s; `db0215_mid`, 148,152 `redo:` keys queued), and every
@@ -324,3 +342,18 @@ Measured, and none adopted:
   server's churn is; with no measurement of it, nothing was tuned. To read on the server first:
   `SELECT relname, n_live_tup, n_dead_tup, last_autovacuum FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT 15`
   (mx_tasks: 3.6 GB for 1.7M rows on the server's /api/status).
+
+### Tests and checks (v10.21, once at the end)
+
+- Module tests while working (test_stories, test_markx_jobs, test_system_health, test_peak, test_db_statements,
+  test_repo_posts_save_batch and the ingestion modules, test_markx_incremental, test_markx_kept_pages, test_news,
+  test_conditional_get...). New: `test_a_rebuilds_progress_counts_what_is_regrouped_with_posts_saved_meanwhile`,
+  `APeak` (a spawned job counts its own peak, not its parent's; reset; no /proc), `TopStatements` and the route on any
+  Postgres, every connection planning for its values, `test_a_refetched_post_as_stored_is_not_written_again`, the
+  two stamp tests (6).
+- The full suite once: `JOBS=6 scripts/test-backend.sh`: 6 shards, 187 modules, 3,613 tests, OK.
+- `scripts/realdata-check.sh --base 85948b7a --head HEAD insight_lab`: **PASS**, 711 s (the base from the cache):
+  `story.identity` 0, `story.rebuild_identity` 0, `markx.ix_unchanged` 0, `story.deploy_identity` **0** (the base:
+  406), 0 News lead changes.
+
+Scratch clones and the pg_stat_statements container dropped. Not merged, not pushed.
