@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
 import type {
-  MarkxEntitiesGuide, MarkxEntityInvariants, MarkxJob, MarkxOverview, MarkxSettings, MarkxStoryWindow,
+  MarkxEntitiesGuide, MarkxEntityInvariants, MarkxHolds, MarkxHoldState, MarkxJob, MarkxOverview, MarkxSettings,
+  MarkxStoryWindow,
 } from '../../services/markx';
 import { request } from '../../lib/request';   // 0133
 import { Button, TextLink } from '../ui';
@@ -328,6 +329,58 @@ export function EntityInvariants({ state }: { state: MarkxEntityInvariants | nul
   );
 }
 
+type SetHold = (key: string, state: MarkxHoldState) => Promise<{ holds: MarkxHolds }>;
+/** The hold's call, here (in this tab's chunk) and not in api.ts; a test's fake api may provide it. */
+function holdsApi(api: object): { setMarkxHold: SetHold } {
+  const got = (api as { setMarkxHold?: unknown }).setMarkxHold;
+  return { setMarkxHold: typeof got === 'function' ? (got as SetHold)
+    : (key, state) => request('/api/markx/holds', { method: 'POST', body: { key, state } }) };
+}
+
+const HOLD_STATE: Record<MarkxHoldState, string> = {
+  low: 'asked after everything else', stopped: 'stopped: not asked', released: 'released: asked in its turn',
+};
+
+/** 0210, the re-ask guard: what a planner added past the day's allowance, its price at the API, and your word on it. */
+export function Holds({ state }: { state: MarkxHolds | undefined }) {
+  const api = holdsApi(useApi());
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: ({ key, to }: { key: string; to: MarkxHoldState }) => api.setMarkxHold(key, to),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] }); },
+  });
+  if (!state) return null;
+  return (
+    <section aria-label="Held tasks">
+      <h2 className={H2}>Held tasks</h2>
+      <p className="mt-3 text-[0.8125rem] text-fg-2">
+        {state.per_day === null
+          ? 'No guard: every planned task is asked in its turn.'
+          : `Past ${formatCount(state.per_day)} tasks of a kind in a day (new posts' never count), the rest is held and asked after everything else.`}
+      </p>
+      {state.holds.length === 0 ? <p className="mt-2 text-[0.8125rem] text-fg-3">Nothing held.</p> : (
+        <ul className="mt-2 text-[0.8125rem] tabular-nums text-fg-2">
+          {state.holds.map((h) => (
+            <li key={h.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line py-1.5">
+              <span className="text-fg [overflow-wrap:anywhere]">{h.reason}</span>
+              <span>{h.day} · {HOLD_STATE[h.state]}</span>
+              <span className="ml-auto flex gap-2">
+                {(['released', 'stopped', 'low'] as const).filter((s) => s !== h.state).map((s) => (
+                  <Button key={s} size="sm" variant="secondary" disabled={save.isPending}
+                          onClick={() => save.mutate({ key: h.key, to: s })}>
+                    {s === 'released' ? 'release' : s === 'stopped' ? 'stop' : 'ask last'}
+                  </Button>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {save.isError ? <p className="mt-2 text-[0.8125rem] text-fg">× {errorMessage(save.error)}</p> : null}
+    </section>
+  );
+}
+
 /** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
 export function MarkXWorker() {
   const api = useApi();
@@ -342,7 +395,7 @@ export function MarkXWorker() {
   return (
     <Loaded>
       {({ worker, reading_window: readingWindow, story_window: storyWindow, entities_guide: entitiesGuide,
-         entity_invariants: entityInvariants }) => {
+         entity_invariants: entityInvariants, holds }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
@@ -370,6 +423,7 @@ export function MarkXWorker() {
                 </div>
               )}
             </section>
+            <Holds state={holds} />
             <section aria-label="Answers">
               <h2 className={H2}>Answers and tokens</h2>
               <p className="mt-3 text-[0.8125rem] tabular-nums text-fg-2">

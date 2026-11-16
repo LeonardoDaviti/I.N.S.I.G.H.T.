@@ -247,6 +247,18 @@ export interface MarkxOverview {
   entities_guide?: MarkxEntitiesGuide;
   /** 0164 C: the last run's entity invariants (absent from an older API; null before a run counted them). */
   entity_invariants?: MarkxEntityInvariants | null;
+  /** 0210: the re-ask guard's holds (absent from an older API). */
+  holds?: MarkxHolds;
+}
+
+/** 0210: a kind's tasks planned in a day past `per_day` (null: no guard) that are not new posts' are held: asked after
+ *  every other task (`low`), never (`stopped`), or as any task (`released`). */
+export type MarkxHoldState = 'low' | 'stopped' | 'released';
+export interface MarkxHolds {
+  per_day: number | null;
+  default: number;
+  holds: { key: string; kind: string; day: string; state: MarkxHoldState; open: number; leased: number;
+    est_usd: number | null; reason: string }[];
 }
 
 /** 0164 C: what must hold after every entities run. `family_org`: the groups holding a product family and an org

@@ -406,6 +406,19 @@ def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
     return {(x, y): float(c) for x, y, c in cur.fetchall()}
 
 
+def post_cosines(cur: Any, pairs: Iterable[Tuple[str, str]], model: str = MODEL) -> Dict[Tuple[str, str], float]:
+    """{(a, b): the cosine of the two posts' stored vectors} for the pairs both of whose posts have one (0210)."""
+    pairs = sorted({(str(a), str(b)) for a, b in pairs})
+    if not pairs:
+        return {}
+    cur.execute("""SELECT x.a::text, x.b::text, 1 - (ea.v <=> eb.v)
+                     FROM unnest(%(a)s::uuid[], %(b)s::uuid[]) AS x(a, b)
+                     JOIN mx_embeddings ea ON ea.post_id = x.a AND ea.model = %(m)s
+                     JOIN mx_embeddings eb ON eb.post_id = x.b AND eb.model = %(m)s""",
+                {"a": [a for a, _ in pairs], "b": [b for _, b in pairs], "m": model})
+    return {(a, b): float(c) for a, b, c in cur.fetchall()}
+
+
 def story_pairs(cur: Any, pol: Policy, groups: Dict[str, Sequence[str]], posts: Mapping[str, Any]
                 ) -> Dict[Tuple[str, str], float]:
     """{(x, y): centroid cosine} (x < y) of the stories `groups` (key: its posts, earliest first) of `min_voices`+

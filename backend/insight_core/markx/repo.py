@@ -93,14 +93,18 @@ def guides(cur: Cursor, ids: Optional[Sequence[str]] = None) -> Dict[str, Dict[s
 def add_task(cur: Cursor, *, kind: str, guide: str, subject_kind: str, input: str, a: Id = None, b: Id = None,
              day: Optional[date] = None, priority: int = 0) -> Tuple[UUID, bool]:
     """A question: (its id, whether it is new). The same (kind, guide, input) is one task, whatever
-    `a`, `b` and `priority` say: the existing one is returned unchanged."""
+    `a`, `b` and `priority` say: the existing one is returned unchanged. 0210: a new task past its kind's daily
+    allowance is born held (markx/holds.py decides)."""
+    from insight_core.markx import holds   # holds reads this module
     input_hash = sha256_hex(input)
-    cur.execute("""INSERT INTO mx_tasks (kind, guide, subject_kind, a, b, day, input, input_hash, priority)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    hold = holds.hold_for(cur, kind, a, b)
+    cur.execute("""INSERT INTO mx_tasks (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (kind, guide, input_hash) DO NOTHING RETURNING id""",
-                (kind, guide, subject_kind, a, b, day, input, input_hash, priority))
+                (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold))
     row = cur.fetchone()
     if row:
+        holds.note_added(kind, hold)
         return row[0], True
     cur.execute("SELECT id FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = %s", (kind, guide, input_hash))
     return cur.fetchone()[0], False
@@ -139,6 +143,7 @@ def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
     embed) is ranked by its post's age today, not the age it had when planned (a priority below 0 is a
     caller's urgency and stays), and those of posts older than `days`
     (None: no post is) come after every other (0121 Decided 4: a narrowed reading window leases inside it first).
+    0210: a held task (markx/holds.py) comes after every task that is not, and none of a stopped hold is leased.
 
     0176 A, the fresh lane (`fresh`: its kinds; `fresh_hours`: None, no lane): a task of those kinds whose post (`a`)
     was fetched or surfaced in the last `fresh_hours` and is dated in the last `fresh_dated_days` (an archive import is
@@ -179,19 +184,22 @@ def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minute
                                  < now() - make_interval(days => %(days)s)) AS outside,
                             CASE WHEN p.id IS NULL OR t.priority < 0 THEN t.priority
                                  ELSE GREATEST(0, floor(extract(epoch FROM (now() - {pairing.ordinary_date('p')}))
-                                                  / 86400))::int END AS rank
+                                                  / 86400))::int END AS rank,
+                            (t.hold IS NOT NULL AND COALESCE(h.state, 'low') = 'low') AS held
                        FROM mx_tasks t
                        LEFT JOIN posts p ON t.kind = ANY(%(windowed)s) AND p.id = t.a
+                       LEFT JOIN mx_holds h ON t.hold IS NOT NULL AND h.key = t.hold
                        {join}
                       WHERE t.kind = ANY(%(kinds)s) AND (t.status = 'open' OR (t.status = 'leased' AND t.lease_until < now()))
+                        AND (t.hold IS NULL OR COALESCE(h.state, 'low') <> 'stopped')
                         {where}
-                      ORDER BY 2, 3, t.created_at, t.id
+                      ORDER BY 4, 2, 3, t.created_at, t.id
                       LIMIT %(limit)s FOR UPDATE OF t SKIP LOCKED)
                    UPDATE mx_tasks t SET status = 'leased', leased_by = %(worker)s,
                           lease_until = now() + make_interval(mins => %(minutes)s)
                      FROM picked WHERE t.id = picked.id
                    RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, t.a, picked.outside, picked.rank,
-                             t.created_at""",
+                             t.created_at, picked.held""",
                 {"kinds": list(kinds), "limit": limit, "worker": worker, "minutes": minutes,
                  "windowed": list(windowed), "days": days, "fresh": list(fresh), "hours": fresh_hours,
                  "dated": fresh_dated_days})
@@ -203,7 +211,7 @@ LEASED = ("id", "kind", "guide", "input", "lease_until", "a")
 
 
 def _lease_order(r: Dict[str, Any]) -> Tuple:
-    return r["outside"], r["rank"], r["created_at"], str(r["id"])
+    return r["held"], r["outside"], r["rank"], r["created_at"], str(r["id"])
 
 
 def release_tasks(cur: Cursor, worker: str) -> int:
