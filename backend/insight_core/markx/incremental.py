@@ -62,6 +62,7 @@ HUB, HUB_MIN = 0.25, 40                                            # a closure o
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
 TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
+STALE_PAGE = 500     # v10.22: a render's text load also reads this many of the reading's stale posts not read yet
 # The modules whose code makes what the state keeps, by the part of it they make (0215; before, one stamp of all of
 # them: any change made the next run full, a full reading of the window: 92-93 s on the server after each deploy):
 #   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
@@ -224,6 +225,7 @@ class State:
     kinds: Dict[str, Any] = field(default_factory=dict)            # post -> its reading's kind (read posts only)
     events: Dict[str, Any] = field(default_factory=dict)           # post -> its reading's events
     texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post, as read this run
+    stale: List[str] = field(default_factory=list)                 # v10.22: the posts read again this run (their texts next)
     readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading, as read this run
     # the kept results, by the content they were made from
     inputs_kept: Dict[str, str] = field(default_factory=dict)      # render key -> input hash (the last run's)
@@ -412,6 +414,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
             state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
         state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
+    state.stale = [pid for pid in stale if pid in rules]
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
     from insight_core.markx import reading5
     order = reading5.guides(cur, GUIDE)   # 0212: as tasks.readings(ids): ent-v5's first while its switch is on
@@ -440,11 +443,21 @@ class LazyTexts(Mapping):
         self.cur, self.state = cur, state
 
     def load(self, ids: Iterable[str]) -> Dict[str, Any]:
+        """The texts of `ids`, read when first used. v10.22: a read also takes the next STALE_PAGE posts the reading
+        read again (`State.stale`: changed or new, so their questions' inputs are rendered again) whose texts are not
+        read yet, in the same query: a run's renders read their texts a page at a time, not a render at a time (the
+        server: ~62k loads of ~8 posts in 104 minutes, each its own planned statements). The same texts."""
         from insight_core.markx import tasks
         s = self.state
+        ids = list(ids)
         missing = sorted({i for i in ids if i not in s.texts})
         if missing:
-            got = tasks.load_posts(self.cur, missing)
+            want = set(missing)
+            while s.stale and len(want) < len(missing) + STALE_PAGE:
+                pid = s.stale.pop()
+                if pid not in s.texts:
+                    want.add(pid)
+            got = tasks.load_posts(self.cur, sorted(want))
             s.texts.update(got)
             s.report["texts_loaded"] = s.report.get("texts_loaded", 0) + len(got)
         return {i: s.texts[i] for i in ids if i in s.texts}

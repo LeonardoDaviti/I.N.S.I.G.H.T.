@@ -674,7 +674,7 @@ def text_chars_sql(text: str) -> str:
     octet_length, which reads a stored text's header and never fetches or decompresses it; length() decompressed every
     post's text the story job loaded (85% of its post load's time, its TOAST reads on the server)."""
     n = SAME_TEXT_MIN_CHARS
-    return f"(CASE WHEN octet_length({text}) >= {4 * n} THEN {n} ELSE LEAST(length({text}), {n}) END)"
+    return f"(CASE WHEN octet_length({text}) >= {4 * n} THEN {n} WHEN length({text}) > {n} THEN {n} ELSE length({text}) END)"
 
 
 def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:

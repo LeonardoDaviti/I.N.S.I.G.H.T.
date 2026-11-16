@@ -123,10 +123,13 @@ class MigrationTests(_Rollback):
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
         self.assertEqual(self.cur.fetchone()[0], 91)       # 0143 one; 0141 two; 0140 three; 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
 
-    def test_embeddings_have_an_hnsw_cosine_index(self):
-        self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'mx_embeddings'::regclass")
-        defs = " ".join(r[0] for r in self.cur.fetchall())
-        self.assertIn("USING hnsw (v halfvec_cosine_ops)", defs)
+    def test_only_the_names_vectors_have_an_hnsw_cosine_index(self):
+        """0149 (v10.22): the posts' vectors lost theirs (nothing ordered by it); the names' keep theirs
+        (identity.vector_neighbours)."""
+        for table, has in (("mx_embeddings", False), ("mx_entity_vectors", True)):
+            self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = %s::regclass", (table,))
+            defs = " ".join(r[0] for r in self.cur.fetchall())
+            self.assertEqual("USING hnsw (v halfvec_cosine_ops)" in defs, has, table)
 
     def test_it_only_adds(self):
         """Additive: the migration's statements create mx_* things only (no ALTER, DROP, UPDATE or DELETE of
@@ -238,7 +241,7 @@ class AnswerTablesTests(_Rollback):
         self.assertEqual(repo.add_mentions(self.cur, post_id=post, guide=eg, call_id=good, mentions=[
             {"span": "x", "name": "x", "name_key": "x"}]), 0)    # a post's mentions under a guide are written once
 
-    def test_embeddings_halfvec_and_nearest(self):
+    def test_embeddings_halfvec(self):
         a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         self.assertTrue(repo.put_embedding(self.cur, post_id=a, model="test-m", text_hash="h1", vector=vec(1.0, 0.0)))
         repo.put_embedding(self.cur, post_id=b, model="test-m", text_hash="h1", vector=vec(0.9, 0.1))
@@ -249,9 +252,13 @@ class AnswerTablesTests(_Rollback):
         self.assertTrue(repo.put_embedding(self.cur, post_id=b, model="test-m", text_hash="h1", vector=vec(0.9, 0.1),
                                            model_sha256="build-1"))   # the build recorded
         self.assertEqual(repo.embedding_builds(self.cur, "test-m"), {None: 2, "build-1": 1})
-        near = repo.nearest(self.cur, vec(1.0, 0.0), model="test-m", limit=3, exclude=[a])
+        self.cur.execute("SELECT post_id, v <=> %s::halfvec FROM mx_embeddings WHERE model = 'test-m' AND post_id <> %s "
+                         "ORDER BY 2", (repo.vector_text(vec(1.0, 0.0)), a))   # cosine distance on float16, no index
+        near = [(p, float(d)) for p, d in self.cur.fetchall()]
         self.assertEqual([p for p, _ in near if p in (b, c)], [b, c])
         self.assertAlmostEqual(dict(near)[c], 1.0, places=3)
+        self.cur.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'mx_embeddings' AND indexdef ILIKE '%hnsw%'")
+        self.assertEqual(self.cur.fetchall(), [], "0149: the posts' vectors have no HNSW index (nothing orders by it)")
         self.savepoint_raises(errors.DataException,
                               "INSERT INTO mx_embeddings (post_id, model, text_hash, v) VALUES (%s, 'test-m', 'h', '[1,2]')",
                               (uuid.uuid4(),))

@@ -424,23 +424,16 @@ class StoriesRepository:
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
-        # The stored post each link is: the first stored at its address. v10.22: looked up once an address (a hash join
-        # with the links), not once a link (a lateral probe for each of ~32k links a load on the server, 246 ms).
-        cur.execute(
-            """
-            WITH l AS MATERIALIZED (SELECT post_id, target_url, link_text, position FROM post_links
-                                     WHERE NOT boilerplate AND post_id = ANY(%s::uuid[])),
-                 t AS (SELECT DISTINCT ON (tp.normalized_url) tp.normalized_url, tp.id FROM posts tp
-                        WHERE tp.normalized_url IN (SELECT target_url FROM l)
-                        ORDER BY tp.normalized_url, tp.fetched_at, tp.created_at, tp.id)
-            SELECT l.post_id, l.target_url, t.id, l.link_text
-            FROM l LEFT JOIN t ON t.normalized_url = l.target_url
-            ORDER BY l.post_id, l.position
-            """,
-            (list(by_id),),
-        )
-        for post_id, target, stored, text in cur.fetchall():
-            by_id[str(post_id)]["links"].append((target, str(stored) if stored else None))
+        cur.execute("""SELECT post_id, target_url, link_text FROM post_links
+                        WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (list(by_id),))
+        links = cur.fetchall()
+        # The stored post each link is: the first stored at its address. v10.22: looked up once an address (was a
+        # lateral probe for each of ~32k links a load on the server, 246 ms a call).
+        cur.execute("""SELECT DISTINCT ON (normalized_url) normalized_url, id FROM posts WHERE normalized_url = ANY(%s)
+                        ORDER BY normalized_url, fetched_at, created_at, id""", (sorted({t for _, t, _ in links}),))
+        stored_at = {url: str(pid) for url, pid in cur.fetchall()}
+        for post_id, target, text in links:
+            by_id[str(post_id)]["links"].append((target, stored_at.get(target)))
             if text:
                 by_id[str(post_id)]["link_texts"][target] = text
         return posts

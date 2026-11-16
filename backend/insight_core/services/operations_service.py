@@ -1073,8 +1073,12 @@ class OperationsService:
         Postgres normalized it (every constant a $n: no value of a post, a source or a label is shown), cut at
         STATEMENT_CHARS, with its calls, total and mean milliseconds, rows, and blocks hit and read; `share`: of the
         database's whole statement time. Read only. {"enabled": False, "reason"} while the library isn't loaded
-        (docker-compose.yml's `command`; DEPLOYMENT.md) or its view not created (migration 0146)."""
+        (docker-compose.yml's `command`; DEPLOYMENT.md) or its view not created (migration 0146).
+        v10.22 (0216): either way, `indexes` (every index of INDEX_MB_SHOWN MB or more, largest first, with the scans
+        that used it since the statistics' reset: an index no statement uses shows 0) and `memory` (shared_buffers,
+        effective_cache_size, work_mem as the server runs, and the share of block reads found in shared buffers)."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            seen = self._indexes_and_memory(cur)
             cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
                                   'pg_stat_statements' = ANY(string_to_array(
                                       replace(current_setting('shared_preload_libraries'), ' ', ''), ','))""")
@@ -1082,7 +1086,7 @@ class OperationsService:
             if not (installed and loaded):
                 why = ("its library is not loaded at the server's start (shared_preload_libraries)" if not loaded
                        else "its view is not created in this database (migration 0146)")
-                return {"enabled": False, "reason": f"pg_stat_statements is off: {why}", "statements": []}
+                return {"enabled": False, "reason": f"pg_stat_statements is off: {why}", "statements": [], **seen}
             cur.execute("""SELECT sum(total_exec_time), sum(calls) FROM pg_stat_statements
                             WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())""")
             total_ms, calls = cur.fetchone()
@@ -1100,7 +1104,28 @@ class OperationsService:
                                 "total_ms": round(float(t), 1), "mean_ms": round(float(m), 2), "rows": int(r),
                                 "blocks_hit": int(hit), "blocks_read": int(read), "temp_blocks_written": int(temp),
                                 "share": round(float(t) / total_ms, 4) if total_ms else None}
-                               for qid, text, n, t, m, r, hit, read, temp in rows]}
+                               for qid, text, n, t, m, r, hit, read, temp in rows], **seen}
+
+    INDEX_MB_SHOWN = 1
+
+    def _indexes_and_memory(self, cur: Any) -> Dict[str, Any]:
+        """top_statements' `indexes` and `memory` (v10.22: read by a GET, so whether an index earns its keep and the
+        server's buffer settings are checked without the owner's psql)."""
+        cur.execute("""SELECT i.relname, i.indexrelname, i.idx_scan, pg_relation_size(i.indexrelid)
+                         FROM pg_stat_user_indexes i
+                        WHERE pg_relation_size(i.indexrelid) >= %s
+                        ORDER BY pg_relation_size(i.indexrelid) DESC, i.indexrelname""", (self.INDEX_MB_SHOWN * 2 ** 20,))
+        indexes = [{"table": t, "index": name, "scans": int(n or 0), "mb": round(size / 2 ** 20, 1)}
+                   for t, name, n, size in cur.fetchall()]
+        cur.execute("""SELECT current_setting('shared_buffers'), current_setting('effective_cache_size'),
+                              current_setting('work_mem'), blks_hit, blks_read, stats_reset
+                         FROM pg_stat_database WHERE datname = current_database()""")
+        sb, ecs, wm, hit, read, reset = cur.fetchone()
+        hit, read = int(hit or 0), int(read or 0)
+        return {"indexes": indexes,
+                "memory": {"shared_buffers": sb, "effective_cache_size": ecs, "work_mem": wm,
+                           "hit_ratio": round(hit / (hit + read), 4) if hit + read else None,
+                           "blocks_hit": hit, "blocks_read": read, "since": iso(reset)}}
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
         """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
