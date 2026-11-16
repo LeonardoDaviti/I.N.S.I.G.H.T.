@@ -883,8 +883,14 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     0206: `markx` False (Mark X off): only the rebuild's slice and the kept views that are not Mark X's
     (KeptView.markx False).
     0209: the candidate finder or the official channels' pass due for `starve_after` seconds goes before the kept
-    views, which can be due at every look: before, they ran only when nothing else was due."""
-    slice_due = stories_due(states.get("stories") or {}, now, rebuild=rebuild, gap=gap)
+    views, which can be due at every look: before, they ran only when nothing else was due.
+    v10.23 (0218): a story run that is wanted (posts saved: `want_stories`) goes before the decision run, so the new
+    posts are grouped before they are decided (before, a decision run due at the same look went first and decided the
+    posts on the stories as they were, the next run deciding them again). A rebuild's slice alone still follows the
+    decision run (0215: a rebuild holds no run); a wanted run that yielded or stepped aside rests first
+    (`stories_due`), so the decision run is never held for long (the story job steps aside for a run that waited)."""
+    s = states.get("stories") or {}
+    slice_due = stories_due(s, now, rebuild=rebuild, gap=gap)
     if not markx:
         if slice_due:
             return "stories"
@@ -894,6 +900,8 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     if plan_every is not None and states["candidates"]["stage"] is None and not held(p, now, gap) and (
             p.get("started_at") is None or (now - p["started_at"]).total_seconds() >= plan_every):
         return "plan"
+    if slice_due and s.get("wanted_at") is not None:
+        return "stories"
     d = states["decide"]
     since = None if d["started_at"] is None else (now - d["started_at"]).total_seconds()
     if busy is None and states["candidates"]["stage"] is None and (since is None or since >= run_gap) \
