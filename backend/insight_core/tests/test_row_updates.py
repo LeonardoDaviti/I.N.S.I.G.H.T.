@@ -48,6 +48,7 @@ class Updates(unittest.TestCase):
 
     def test_numbers_leave_dates_out(self):
         self.assertEqual(numbers(["November 8", "2026", "$1.50/M input", "+9 points", "1,5x"]), {"1.5", "9"})
+        self.assertEqual(numbers([75, None]), {"75"})   # a reading may write a number bare
         self.assertFalse(update(preview(), [Line("d0", "x", None, None, ("November 10", "2027"))]).meaningful)
 
     def test_nothing_new(self):

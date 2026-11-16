@@ -54,7 +54,7 @@ def numbers(said: Iterable[str]) -> FrozenSet[str]:
     """The numbers a reading says, each as digits ("$1.50/M" -> "1.50"), dates and years left out."""
     out = set()
     for s in said:
-        s = (s or "").strip()
+        s = str(s if s is not None else "").strip()   # a reading may write a number bare
         if not s or _DATE.match(s):
             continue
         for n in _NUM.findall(s):
