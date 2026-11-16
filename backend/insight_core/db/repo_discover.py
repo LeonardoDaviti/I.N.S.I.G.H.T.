@@ -569,12 +569,10 @@ class DiscoverRepository:
         ids = sorted(post_ids)
         if not ids:
             return set()
-        cur.execute("""SELECT DISTINCT d.key FROM discover_addresses d
-                        WHERE d.rules = %(rules)s AND d.key IS NOT NULL AND d.url IN (
-                              SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND NOT boilerplate
-                              UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE id = ANY(%(ids)s::uuid[]))""",
-                    {"rules": address_stamp(platforms), "ids": ids})
-        return {r[0] for r in cur.fetchall()}
+        cur.execute("""SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND NOT boilerplate
+                       UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE id = ANY(%(ids)s::uuid[])""",
+                    {"ids": ids})
+        return DiscoverRepository.keys_of(cur, [r[0] for r in cur.fetchall() if r[0]], platforms)
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
