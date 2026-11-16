@@ -53,7 +53,7 @@ class TheTextFormat(unittest.TestCase):
         page("insight_job_runs_total").add(3, job="decide", result="ok")
         page("insight_job_runs_total").add(1, job='say "hi"\\\n', result="failed")
         page("insight_metrics_seconds").add(0.0123)
-        page("insight_job_last_ok").add(None, job="labels")          # no value: no sample
+        page("insight_job_last_ok").add(None, job="tracks")          # no value: no sample
         page("insight_job_last_duration_seconds").add("n/a", job="x")  # not a number: no sample
         text = metrics.render(page)
         self.assertEqual(text.count("# TYPE insight_job_runs_total counter"), 1)
@@ -171,18 +171,18 @@ class RunsAreCounted(_Db):
     def test_ok_failed_skipped_and_the_ring(self):
         from insight_core.markx import jobs
         j = jobs.Jobs(db_url())
-        j._finish("labels", {"ok": True, "seconds": 2.5, "peak_mb": 210.0})
-        j._finish("labels", {"ok": False, "error": "boom", "seconds": 1.0})
-        j._finish("labels", {"ok": False, "skipped": "another run holds the lock"})   # neither
-        n_ok, n_failed, ok_at, recent, last = self.row("labels")
+        j._finish("tracks", {"ok": True, "seconds": 2.5, "peak_mb": 210.0})
+        j._finish("tracks", {"ok": False, "error": "boom", "seconds": 1.0})
+        j._finish("tracks", {"ok": False, "skipped": "another run holds the lock"})   # neither
+        n_ok, n_failed, ok_at, recent, last = self.row("tracks")
         self.assertEqual((n_ok, n_failed), (1, 1))
         self.assertIsNotNone(ok_at)
         self.assertEqual([r.get("ok") for r in recent], [False, False, True], "newest first")
         self.assertEqual({k: recent[2][k] for k in ("seconds", "peak_mb")}, {"seconds": 2.5, "peak_mb": 210.0})
         self.assertNotIn("cpu_s", last, "measured only in a job's own process")
         for _ in range(jobs.RECENT + 5):
-            j._finish("labels", {"ok": True, "seconds": 0.1})
-        n_ok, n_failed, _, recent, _ = self.row("labels")
+            j._finish("tracks", {"ok": True, "seconds": 0.1})
+        n_ok, n_failed, _, recent, _ = self.row("tracks")
         self.assertEqual((n_ok, n_failed, len(recent)), (jobs.RECENT + 6, 1, jobs.RECENT))
 
     def test_a_job_process_records_its_own_peak_and_cpu(self):
@@ -217,7 +217,7 @@ class ThePage(_Db):
                          (json.dumps({"ok": True, "seconds": 95.5, "peak_mb": 640.0, "cpu_s": 80.25,
                                       "stages": [["candidates", 3.0], ["load", 20.5]]}),))
         self.cur.execute("""INSERT INTO mx_jobs (job, started_at, stage, stage_at, last, failures)
-                            VALUES ('labels', now() - interval '30 seconds', 'building', now() - interval '10 seconds',
+                            VALUES ('tracks', now() - interval '30 seconds', 'building', now() - interval '10 seconds',
                                     %s::jsonb, 3)""", (json.dumps({"ok": False, "error": "boom"}),))
         self.cur.execute("""INSERT INTO mx_kept_pages (page, key, run_id, stamp, body, bytes, built_at)
                             VALUES ('news', 'all', %s, 's', '\\x00', 1000, now() - interval '5 minutes')""", (run_id,))
@@ -247,12 +247,12 @@ class ThePage(_Db):
         self.assertAlmostEqual(value(samples, "insight_job_wanted_seconds", insight_job="decide"), 20 * 60, delta=30)
         self.assertEqual(value(samples, "insight_job_running", insight_job="decide"), 0)
         self.assertEqual(value(samples, "insight_decision_last_stage_seconds", stage="load"), 20.5)
-        self.assertEqual(value(samples, "insight_job_running", insight_job="labels"), 1)
-        self.assertEqual(value(samples, "insight_job_current_stage", insight_job="labels", stage="building"), 1)
-        self.assertAlmostEqual(value(samples, "insight_job_stage_seconds", insight_job="labels"), 10, delta=30)
-        self.assertEqual(value(samples, "insight_job_failures_in_a_row", insight_job="labels"), 3)
-        self.assertEqual(value(samples, "insight_job_last_ok", insight_job="labels"), 0)
-        self.assertIsNone(value(samples, "insight_job_since_success_seconds", insight_job="labels"), "never ended well")
+        self.assertEqual(value(samples, "insight_job_running", insight_job="tracks"), 1)
+        self.assertEqual(value(samples, "insight_job_current_stage", insight_job="tracks", stage="building"), 1)
+        self.assertAlmostEqual(value(samples, "insight_job_stage_seconds", insight_job="tracks"), 10, delta=30)
+        self.assertEqual(value(samples, "insight_job_failures_in_a_row", insight_job="tracks"), 3)
+        self.assertEqual(value(samples, "insight_job_last_ok", insight_job="tracks"), 0)
+        self.assertIsNone(value(samples, "insight_job_since_success_seconds", insight_job="tracks"), "never ended well")
         self.assertEqual(value(samples, "insight_decision_held"), 0)
         self.assertIn(value(samples, "insight_rebuild_in_progress"), (0, 0.5, 1))
         self.assertEqual(value(samples, "insight_kept_page_bytes", page="news"), 1000)
