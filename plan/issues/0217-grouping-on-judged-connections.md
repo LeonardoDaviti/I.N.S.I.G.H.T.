@@ -542,3 +542,19 @@ explanation idea, as a debugging view over A0 (cheap and useful on its own).
 - no server writes, no migration, nothing deployed.
 
 H1's results can be reported after ~3 days. The decision waits for H2.
+
+## Case added 2026-11-16: one release, six rows (production)
+
+A lab's flagship model ("Orbit-Max") over six days, as the reader's News showed it (names invented; real ids in
+plan/research/0217-cases.md):
+- day 0: a preview opens on the API → **two rows**: the lab's own "it is coming" post with two forum shares, and a
+  6-voice preview row (forum, three channels, an aggregator).
+- day 5: the official launch → **four rows**: the lab's announcement thread with 9 voices; an evaluator's
+  benchmark thread ("+9 points", 2 voices: the evaluator and the lab quoting it); a model router's "live, $1.50/M"
+  thread (2 voices: the router and the lab); a channel's "official and independent benchmarks" (2 voices).
+Each small row is its own rule story (a thread or a judged pair) and no judged connection joins it to the launch row,
+so v10.18's rule (a join needs a judged connection) keeps them apart. Rows sharing the exact main thing (the same
+model version) and a release-family event type (preview, launch, availability, benchmark of it) within a few days
+are what the reader calls "the same news". The core check must decide: one row with sub-lines (availability,
+benchmarks, breakdowns) and the preview as an earlier stage, or separate rows linked as developments. Expected
+check case: the launch day shows ONE row for the model, with the router and the benchmark as lines in it.
