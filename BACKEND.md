@@ -75,8 +75,10 @@ checked by `scripts/story_identity.py` (`check(db_url)`; on a scratch copy only)
   of those addresses (`DiscoverRepository.counts(keys=...)`), the rest of its kept counts kept.
 - **A rule change** (another `rules_stamp`) regroups every post in steps, each its own transaction:
   every post's keys, each X source's threads, every name's surges, then every post queued (`redo:`)
-  and worked off in batches. The rows of the old rules are served until each batch replaces them;
-  Background work shows how far it is (`rebuild`).
+  and worked off in batches of `REBUILD_BATCH` (2,000) queued posts. A rebuild batch judges no name
+  again (it changes no title; the names step judged them all). The rows of the old rules are served
+  until each batch replaces them; Background work shows how far it is (`rebuild`: done of total,
+  counted from the rows: posts with no regroup waiting, of every post now; issue 0215).
 - **Every field the job reads of a post** comes from `StoriesService._story_post` (the row
   `load_posts` reads, and its source's facts).
 
