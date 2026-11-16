@@ -181,6 +181,43 @@ case needs the component rule (an earlier name inside its parent's name) that 02
 
 **Resources:** on the 11-05 server copy (entities built once): the stop planner's first pass (344 stories, 306 pairs)
 0.21 s, peak RSS 111 MB (110 at start); the 20 biggest things' entity pages 0.07–0.38 s each (2.1 s in all), peak 110
-MB. The page is the kept entity page (0198): built on demand or by the jobs process, never in a decision run. The
-planner reads the story members joined since its last pass (`mx_story_posts.valid_from`, not indexed: one scan of the
-table a plan pass). Haiku spent measuring: about $0.19.
+MB. The page is the kept entity page (0198): built on demand or by the jobs process, never in a decision run. Haiku spent
+measuring: about $0.19.
+
+## Second night (v10.23, after the merge into v1023)
+
+**The whole-line bar, confirmed on a frozen set.** 15 more random products of the last 30 days, chosen and hashed
+(`plan/research/0165-timeline/frozen3.sha`, with the scripts and the guide) before any page was read; the rules
+unchanged; three new blind judges. Served line 2/15 = 13% [4–38] pass → new **8/15 = 53% [30–75]**; judges prefer the
+new 11, the served 2, same 2. With the first held-out 15: served 6/30 = 20% [10–37] → new **18/30 = 60% [42–75]**.
+The bar holds (preferred, more pass); the pass rate itself is modest, and the failures are again identity (one name,
+several things: a constant, a social network, a mythological name) and digests that name everything.
+
+**The post page's before** shows the thing's stops before the post (its stored stop answers saying about; the post's
+own stories left out; the last 3; nothing asked on a page): `timeline._stops_before`, tested on the second case (the
+breakdown's page shows the launch stop, not the weights story it is in).
+
+**Migration 0152**: a partial index `mx_story_posts (valid_from) WHERE valid_to IS NULL` for the stop planner's pass:
+on a scratch copy inflated to 509k rows (64k current) 9–13 ms → 0.15 ms a pass (776 kB).
+
+**The stop's word: still off.** Why it fails, measured:
+- Not the vocabulary: grouped into 7 coarse words (before / release / results / adoption / explained / incident / deal)
+  the held-out answers are still 76.6–78.1% right (dev 82.9–86.6%); errors cross groups (a launch with its scores read
+  as `benchmark`, security research done with the thing read as `incident`).
+- Not missing input: stop-v2 (`plan/research/0165-timeline/stop-v2-draft.md`) showed each post's own reading (its
+  English headline: 381 lines across the 130 test items had one) and ordered the questions; on the dev sets it scored
+  77.6% and 70.3% (v1: 85.9% and 69.3%) and its about-precision fell on one set (87.6% against 93.2%). Not shipped.
+- Haiku's own noise is the size of the gap: two runs of the same guide agree on 75–81% of the words, while the
+  labellers agree with each other on 95–97%. A story holds several happenings; Haiku picks one inconsistently.
+- ent-v5's event type and origin are not readable through the server's API (the post panel serves read-v2/v3 fields),
+  and its 14 types (model_release, research_result...) cannot tell launch from weights from availability; not tried.
+Next, if wanted: one word per post (the stop as its first post's happening) or several words a stop, measured the same way.
+
+**Components (A): still off.** Question `component-v1` (`plan/research/0165-timeline/component-v1-draft.md`: is the
+longer name a component, the product itself, a version, other) on every name filed under one of the 79 products whose
+written name had words after the product's (52, from 1,788 post panels): the labellers find **3 components in 52**
+(most are "X app", "X models", "X GPUs"). Haiku said `component` 6 times, **2 right (33%)**; overall 33/52 agree.
+Far under the bar and too rare a class to measure at 97/90 from the server's posts (a Wilson lower bound of 90% needs
+~36 right answers in a row). Not built into the pipeline; the first case stays unjoined.
+
+Haiku spent the second night: about $0.09.

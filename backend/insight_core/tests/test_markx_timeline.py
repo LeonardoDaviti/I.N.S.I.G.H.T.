@@ -425,6 +425,22 @@ class OneModelsLine(_Db):
         tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
         self.assertFalse([i for i in tl["items"] if i["kind"] == "analysis"])
 
+    def test_the_post_pages_before_shows_the_stops_before_it(self):
+        """D, the second case: the breakdown's page shows the launch stop before it (not the weights story it is in);
+        unasked stories are not stops there (nothing asked on a page)."""
+        from insight_core.markx import stops as ST
+        x = self.line()
+        self.assertFalse([i for g in TL.before_post(self.cur, x["breakdown"]) for i in g["items"] if i["kind"] == "story"])
+        ST.plan(self.cur, now=T0 + 12 * D)
+        self.answer_task("stop", {"evidence": "launch", "about": True, "stop": "launch"}, a=x["a"])
+        self.answer_task("stop", {"evidence": "weights", "about": True, "stop": "weights"}, a=x["b"])
+        got = TL.before_post(self.cur, x["breakdown"])
+        stops = [(i["story"], i["stop"]) for g in got for i in g["items"] if i["kind"] == "story"]
+        self.assertEqual(stops, [(x["a"], "launch")])
+        self.switches["stop_types"] = False
+        got = TL.before_post(self.cur, x["breakdown"])
+        self.assertEqual([i["stop"] for g in got for i in g["items"] if i["kind"] == "story"], [None])
+
     def test_an_answer_saying_not_about_it_makes_a_named_story(self):
         x = self.line()
         from insight_core.markx import stops as ST

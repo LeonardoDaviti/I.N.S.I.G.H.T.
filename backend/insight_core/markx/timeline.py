@@ -427,7 +427,8 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
                 skip: Iterable[str] = ()) -> List[Dict[str, Any]]:
     """The post page's "before" from its subjects' timelines: for each thing the post is about (its subject mentions'
     entities, not an org or person), up to `limit` previous events (the birth, the last release before it, the
-    first outside mention before it), oldest first: [{entity: {id, name}, items}]. `skip`: posts already listed."""
+    first outside mention before it) and its last STOPS_BEFORE stops before it (v10.23: the stories about it, as the
+    entity page's line has them), oldest first: [{entity: {id, name}, items}]. `skip`: posts already listed."""
     from insight_core.markx import schemas
     cur.execute(f"""SELECT m.guide, m.n, m.entity_id::text, {pairing.post_date('p')}
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
@@ -446,7 +447,8 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
             continue
         seen.add(root)
         evs = [e for e in events(cur, book, root, light=True) if e["at"] < at and e.get("post") not in skip]
-        if not evs:
+        stops_before = _stops_before(cur, book, root, post_id, at)
+        if not evs and not stops_before:
             continue
         pick: List[Dict[str, Any]] = []
         for kind in ("birth", "earlier_name", "renamed"):
@@ -463,11 +465,37 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
             got.append(e)
             if len(got) >= limit:
                 break
+        got += stops_before
         got.sort(key=lambda e: (e["at"], e["rank"]))
         out.append({"entity": {"id": root, "name": book.label(root)}, "items": _shown(cur, got)})
         if len(out) >= 2:
             break
     return out
+
+
+STOPS_BEFORE = 3
+
+
+def _stops_before(cur: Any, book: I.Book, root: str, post_id: str, at: datetime,
+                  limit: int = STOPS_BEFORE) -> List[Dict[str, Any]]:
+    """D, the second case: the thing's stops before a post (its stored stop answers saying about; the stories the post
+    is in left out), the newest `limit`, as `story` events at their first member's date. Nothing is asked here."""
+    from insight_core.markx import stops as ST
+    on = ST.config()
+    if not on["stops"]:
+        return []
+    got = {s: x for s, x in ST.of(cur, book, root, None).items() if x.about}
+    if not got:
+        return []
+    cur.execute(f"""SELECT sp.story_id::text, min({pairing.post_date('p')}), s.headline,
+                           bool_or(sp.post_id = %s::uuid)
+                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id JOIN mx_stories s ON s.id = sp.story_id
+                     WHERE sp.valid_to IS NULL AND sp.role = 'member' AND sp.story_id = ANY(%s::uuid[])
+                     GROUP BY sp.story_id, s.headline""", (post_id, sorted(got)))
+    rows = [(sid, first, head) for sid, first, head, mine in cur.fetchall() if first is not None and first < at and not mine]
+    rows.sort(key=lambda r: (r[1], r[0]))
+    return [_event("story", first, None, story=sid, mark="x", headline=head,
+                   stop=got[sid].stop if on["stop_types"] else None, stop_by="asked") for sid, first, head in rows[-limit:]]
 
 
 __all__ = ["before_post", "events", "of_entity"]
