@@ -220,7 +220,9 @@ def _cite(a: Dict[str, Any], input: str) -> Optional[str]:   # 0133 v4.2: the se
 # again, as before): an empty set from a non-empty answer is a wrong reading, not a post that names nothing.
 # {kind: {list key: the entry's own check against the post (None: its schema alone)}}; the first list is the entities.
 SALVAGE = {"entities": {"entities": _entity_error, "relations": None},
-           "cite": {"entities": _cite_error}}
+           "cite": {"entities": _cite_error},
+           "reading": {"entities": _entity_error}}   # 0212: ent-v5's entities section, entry by entry as 0213's
+SUBJECT_KINDS = ("entities", "reading")              # kinds whose answer must keep a subject it named
 DROPPED = "dropped"
 
 
@@ -230,6 +232,8 @@ def salvage(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> 
     lists = SALVAGE.get(kind)
     if not lists or not isinstance(answer, dict):
         return answer
+    if kind == "reading":   # 0212: a later window's reading is the first window's job (kept under "dropped")
+        answer = reading_window(answer, input)
     props = (schemas.schema_for(kind, guide) or {}).get("properties") or {}
     before = list(answer.get(DROPPED) or [])
     out, dropped = dict(answer), list(before)
@@ -274,7 +278,7 @@ def salvage_refused(kind: str, answer: Dict[str, Any]) -> Optional[str]:
     if not kept:
         return "every entity was dropped: " + "; ".join(str(d.get("why")) for d in gone[:3])
     subjects = [d for d in gone if isinstance(d.get("item"), dict) and d["item"].get("role") == "subject"]
-    if kind == "entities" and subjects and not any(isinstance(e, dict) and e.get("role") == "subject" for e in kept):
+    if kind in SUBJECT_KINDS and subjects and not any(isinstance(e, dict) and e.get("role") == "subject" for e in kept):
         return "every subject was dropped: " + "; ".join(str(d.get("why")) for d in subjects[:3])
     return None
 
@@ -791,6 +795,42 @@ def _significance(a: Dict[str, Any], input: str) -> Optional[str]:
 
 
 _EMBEDDED ="an embed task is answered at POST /api/markx/embeddings, not here"
+# ---- 0212 (v10.21): ent-v5, one reading of a post (kind `reading`) --------------------------------------------------
+# Its entities are checked entry by entry (SALVAGE, 0213); its reading as read-v2's and read-v3's are (`_read`: `event`
+# null iff `events` is none, the headline's length). A long post's later window (0176's input line "Window: k of n")
+# carries entities only: its `reading` and `event` are set null here (what the model wrote there is kept under
+# "dropped"), and a first window without a reading is refused (asked again, as `read` is).
+_WINDOW_HEAD = re.compile(r"^Window: (\d+) of (\d+) ", re.M)
+
+
+def later_window(input: Optional[str]) -> bool:
+    """The input is a long post's window 2 or later (tasks.window_input's head line)."""
+    m = _WINDOW_HEAD.search((input or "").split("\nText: ", 1)[0])
+    return bool(m) and int(m.group(1)) > 1
+
+
+def reading_window(answer: Dict[str, Any], input: Optional[str]) -> Dict[str, Any]:
+    """A later window's answer with `reading` and `event` null (anything written there kept under "dropped"); any
+    other answer unchanged."""
+    if not later_window(input):
+        return answer
+    out = dict(answer, reading=None, event=None)
+    for key in ("reading", "event"):
+        if answer.get(key) is not None:
+            out[DROPPED] = list(out.get(DROPPED) or []) + [{"list": key, "item": answer[key],
+                                                            "why": f"{key} on a later window: the first window's job"}]
+    return out
+
+
+def _reading5(a: Dict[str, Any], input: str) -> Optional[str]:
+    if later_window(input):
+        return None
+    r = a.get("reading")
+    if r is None:
+        return "reading is null on the post's first window"
+    return _read({"events": r.get("events"), "main": a.get("event")}, input)
+
+
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
@@ -806,7 +846,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "news_place": _news_place,                  # 0197
           "unit_types": _unit_types,                  # 0181
           "significance": _significance,              # 0208
-          "significance": _significance,              # 0208
+          "reading": _reading5,                       # 0212
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

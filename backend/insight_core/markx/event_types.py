@@ -44,6 +44,18 @@ from insight_core.markx import pairing, schemas
 
 TYPE_GUIDES: Tuple[str, ...] = ("read-v3",)   # readings with a closed event type, preferred first
 GROUP_GUIDE = "read-v2"                       # the reading whose main action names the happening group
+V5 = "ent-v5"                                 # 0212: ent-v5's reading carries both (read-v3's type, read-v2's main)
+
+
+def type_guides(cur: Any) -> List[str]:
+    """0212: TYPE_GUIDES through reading5's one preference list (ent-v5 first while its switch is on)."""
+    from insight_core.markx import reading5
+    return reading5.guides(cur, *TYPE_GUIDES)
+
+
+def group_guides(cur: Any) -> List[str]:
+    from insight_core.markx import reading5
+    return reading5.guides(cur, GROUP_GUIDE)
 GROUPS = ("release", "deal", "funding", "legal", "people", "pricing", "research", "announcement")
 
 # read-v2's ACTIONS -> (group, stage).
@@ -130,10 +142,10 @@ def from_reading(reading: Optional[Mapping[str, Any]], guide: str) -> EventType:
     if not reading:
         return NONE
     typ = origin = None
-    if guide in TYPE_GUIDES:
+    if guide in TYPE_GUIDES or guide == V5:
         typ, origin = reading.get("event_type"), reading.get("origin")
     group, stage = TYPE_GROUPS.get(typ or "", (None, None))
-    if group is None and guide == GROUP_GUIDE:
+    if group is None and guide in (GROUP_GUIDE, V5):
         group, stage = action_group((reading.get("main") or {}).get("action"))
     return EventType(typ, origin, group, stage)
 
@@ -143,7 +155,8 @@ def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
     ids = sorted({str(p) for p in post_ids if p})
     if not ids:
         return {}
-    guides = list(TYPE_GUIDES) + [GROUP_GUIDE]
+    types, groups = type_guides(cur), group_guides(cur)
+    guides = sorted(set(types) | set(groups))
     cur.execute("""SELECT post_id::text, guide, reading->>'event_type', reading->>'origin', reading->'main'->>'action'
                      FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""", (ids, guides))
     got: Dict[str, Dict[str, Tuple]] = {}
@@ -152,13 +165,15 @@ def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
     out = {}
     for pid, by in got.items():
         typ = origin = None
-        for g in TYPE_GUIDES:
+        for g in types:
             if g in by:
                 typ, origin = by[g][0], by[g][1]
                 break
         group, stage = TYPE_GROUPS.get(typ or "", (None, None))
-        if group is None and GROUP_GUIDE in by:
-            group, stage = action_group(by[GROUP_GUIDE][2])
+        for g in groups:
+            if group is None and g in by:
+                group, stage = action_group(by[g][2])
+                break
         out[pid] = EventType(typ, origin, group, stage)
     return out
 
@@ -187,14 +202,14 @@ def of_stories(cur: Any, stories: Mapping[str, Sequence[str]]) -> Dict[str, Opti
     return {s: folds.story_type([got[p] for p in ps if p in got]) for s, ps in stories.items()}
 
 
-def typed_sql(post: str, types: str) -> str:
+def typed_sql(post: str, types: str, guides: Sequence[str] = TYPE_GUIDES) -> str:
     """A SQL condition: the post (the column `post`) has one of the event types the parameter `types` names (a
     text[] placeholder, e.g. "%(types)s"), by the same guide order as `of_posts`. For a query over many posts (a
     window of stories) that can't fetch every post's type first."""
     conds = []
-    for n, g in enumerate(TYPE_GUIDES):
+    for n, g in enumerate(guides):   # 0212: `guides` = type_guides(cur) at the caller (ent-v5 first when on)
         earlier = "".join(f" AND NOT EXISTS (SELECT 1 FROM mx_readings e WHERE e.post_id = {post} AND e.guide = '{h}')"
-                          for h in TYPE_GUIDES[:n])
+                          for h in guides[:n])
         conds.append(f"EXISTS (SELECT 1 FROM mx_readings t WHERE t.post_id = {post} AND t.guide = '{g}'"
                      f" AND t.reading->>'event_type' = ANY({types})){earlier}")
     return "(" + " OR ".join(conds) + ")"
@@ -205,8 +220,10 @@ def main_objects(cur: Any, post_ids: Iterable[str]) -> Dict[str, str]:
     ids = sorted({str(p) for p in post_ids if p})
     if not ids:
         return {}
-    cur.execute("""SELECT post_id::text, reading->'main'->>'object' FROM mx_readings
-                    WHERE post_id = ANY(%s::uuid[]) AND guide = %s""", (ids, GROUP_GUIDE))
+    order = group_guides(cur)
+    cur.execute("""SELECT DISTINCT ON (post_id) post_id::text, reading->'main'->>'object' FROM mx_readings
+                    WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)
+                    ORDER BY post_id, array_position(%s::text[], guide)""", (ids, order, order))
     return {pid: o for pid, o in cur.fetchall() if o}
 
 

@@ -35,6 +35,8 @@ import os
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from insight_core.markx import reading5   # 0212
+
 from psycopg import Cursor
 
 from insight_core.utils import voice
@@ -74,8 +76,8 @@ SELECT ids.id,
                         CASE WHEN jsonb_typeof(x.reading->'main'->'numbers') = 'array'
                              THEN (SELECT string_agg(n #>> '{}', ' ')
                                      FROM jsonb_array_elements(x.reading->'main'->'numbers') n) END) AS rest
-         FROM mx_readings x WHERE x.post_id = ids.id
-        ORDER BY x.guide DESC LIMIT 1) r ON TRUE
+         FROM mx_readings x WHERE x.post_id = ids.id AND {RANK} IS NOT NULL
+        ORDER BY {RANK} LIMIT 1) r ON TRUE
   LEFT JOIN LATERAL (
        SELECT string_agg(concat_ws(' ', mm.name, e.name), ' ') AS names,
               string_agg(concat_ws(' ', mm.maker, e.maker,
@@ -89,6 +91,8 @@ ON CONFLICT (post_id) DO UPDATE
 """
 
 # The posts whose row is missing, of an older rule, or older than their newest reading or entity set.
+_WRITE = _WRITE.replace("{RANK}", reading5.rank_sql("x.guide"))   # 0212: the preferred reading
+
 _STALE = """
 SELECT a.post_id FROM (
        SELECT x.post_id, max(c.created_at) AS at FROM mx_readings x JOIN mx_calls c ON c.id = x.call_id GROUP BY x.post_id

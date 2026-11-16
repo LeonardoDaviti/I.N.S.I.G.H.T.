@@ -77,7 +77,7 @@ SETTING = object()                         # a planner's `days` when the caller 
 # and a lease gives those tasks up to FRESH_SHARE of its slots before the rest (backfill pages, older posts): a big
 # backfill never holds a new post back, and the rest always keeps at least one slot of a lease of two or more.
 FRESH_HOURS = 24
-FRESH_KINDS = ("read", "entities", "read3", "headline")   # leased in the lane (a headline by its story's first post)
+FRESH_KINDS = ("read", "entities", "read3", "headline", "reading")   # 0212: + ent-v5   # leased in the lane (a headline by its story's first post)
 FRESH_SHARE = 0.75                                         # of a lease's slots, at most (the rest keep the others)
 FRESH_DATED_DAYS = 7                                       # ... and dated in the last week: an archive import of
                                                            # old posts (fetched today, dated months back) is not new
@@ -226,8 +226,12 @@ def _with_linked_pages(cur: Cursor, out: Dict[str, Post]) -> None:
         p.text = (p.text + "\n\n" if p.text else "") + head + "\n" + g.text[:rules.LINKED_PAGE_CHARS]
 
 
-def readings(cur: Cursor, ids: Iterable[Any], guide: str = "read-v2") -> Dict[str, dict]:
-    """{post id: reading} of the posts Mark X has read under `guide`."""
+def readings(cur: Cursor, ids: Iterable[Any], guide: Optional[str] = None) -> Dict[str, dict]:
+    """{post id: reading} of the posts Mark X has read under `guide`; None (0212): the preferred reading, read-v2's
+    (ent-v5's first while its switch is on: reading5.guides)."""
+    if guide is None:
+        from insight_core.markx import reading5
+        return {k: v["reading"] for k, v in reading5.pick(cur, ids, ("read-v2",)).items()}
     return {str(k): v["reading"] for k, v in repo.readings(cur, list(ids), guide).items()}
 
 
@@ -648,6 +652,8 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
     elif days is SETTING:
         days = reading_window(cur)
     render = _render(cur, kind)
+    from insight_core.markx import reading5
+    old_kinds = reading5.old_kinds_sql(cur, "p.id")
     chars, cap = (schemas.entities_arm(cur).chars, max_windows(cur)) if kind == "entities" else (0, 1)
     added, after = 0, None
     # v10.4.1: a post whose input repeats an asked one (a media-only post, a repost) gets no task of its own (the
@@ -666,6 +672,7 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND p.filtered_by IS NULL   -- 0196: a post its source's item filter hid is never read
+                  AND {old_kinds}             -- 0212: not a post ent-v5 reads, while its switch is on
                   AND (%(at)s::timestamptz IS NULL
                        OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
@@ -729,10 +736,14 @@ def check_questions(cur: Cursor, *, days: Optional[int] = PLAN_DAYS, now: Option
 CHECK_CHUNK = 500   # stories a check planner reads at once (0183)
 
 
-def reading_kinds(cur: Cursor, ids: Sequence[str], guide: str = "read-v2") -> Dict[str, Any]:
-    """{post id: its reading's kind} of the posts read under `guide` (the reading's own value, as `readings` gives it)."""
-    cur.execute("SELECT post_id::text, reading->'kind' FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = %s",
-                (list(ids), guide))
+def reading_kinds(cur: Cursor, ids: Sequence[str], guide: Optional[str] = None) -> Dict[str, Any]:
+    """{post id: its reading's kind} of the posts read under `guide` (the reading's own value, as `readings` gives it);
+    None (0212): the preferred reading's (reading5.guides over read-v2)."""
+    from insight_core.markx import reading5
+    order = [guide] if guide else reading5.guides(cur, "read-v2")
+    cur.execute("""SELECT DISTINCT ON (post_id) post_id::text, reading->'kind' FROM mx_readings
+                    WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)
+                    ORDER BY post_id, array_position(%s::text[], guide)""", (list(ids), order, order))
     return dict(cur.fetchall())
 
 
@@ -934,7 +945,7 @@ def _note_happening(cur: Cursor, task: Dict[str, Any]) -> None:
     """0175: a read-v2 reading, a mention set or a cite answer's mentions landed: the post's happening key stored
     now (happening.note)."""
     from insight_core.markx import happening
-    if task["kind"] in ("entities", "cite") or task["guide"] == happening.READING_GUIDE:
+    if task["kind"] in ("entities", "cite") or task["guide"] in happening.reading_guides(cur):
         happening.note(cur, [str(task["a"])])
 
 
@@ -942,7 +953,7 @@ def _note_units(cur: Cursor, task: Dict[str, Any]) -> None:
     """0181: a read-v2 reading landed: the post split again now (a reading may make it a round-up: units.note), in a
     savepoint: a failure is logged and the reading stands (the candidates job's step splits it later)."""
     from insight_core.markx import units
-    if task["guide"] != units.READING_GUIDE:
+    if task["guide"] not in units.reading_guides(cur):   # 0212: ent-v5's too, while its switch is on
         return
     try:
         with cur.connection.transaction():
@@ -988,6 +999,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
                         else ent42.window_mentions(cur, task["a"], entities))   # 0176: the cite answer is window 0's
         repo.add_mentions(cur, post_id=task["a"], guide=task["guide"], call_id=call_id, mentions=mentions, win=win)
         _note_happening(cur, task)
+    elif task["kind"] == "reading":        # 0212: ent-v5, one reading (reading5's adapter: Shadow or current)
+        from insight_core.markx import reading5
+        reading5.record(cur, task, call_id, answer)
     elif task["kind"] == "cite":           # 0133 v4.2: the second question's new entities, after the main answer
         from insight_core.markx import ent42
         ent42.after_cite(cur, task, call_id, answer)
@@ -1162,6 +1176,7 @@ def plan_windows(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, n
     cap), newest first, over the owner's reading window (or `days`; None: every post): how many tasks were added. A
     post whose text needs one window, or whose windows are another post's tasks (a repost), is marked and not read
     again until its text changes. Cheap to call: only posts stored longer than one window are read."""
+    from insight_core.markx import reading5   # 0212
     cap = max_windows(cur)
     if cap <= 1:
         return 0
@@ -1177,6 +1192,7 @@ def plan_windows(cur: Cursor, *, days: Any = SETTING, limit: int = PLAN_LIMIT, n
             WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND octet_length(p.content) > %(chars)s   -- bytes: a toasted text is not decompressed
+              AND {reading5.old_kinds_sql(cur, "p.id")}   -- 0212
               AND (SELECT count(*) FROM mx_tasks t                -- its first window's task only (no input read)
                     WHERE t.a = p.id AND t.kind = 'entities' AND t.guide = %(guide)s) = 1
               AND {plan_marks.unmarked()}
@@ -1228,6 +1244,15 @@ def plan_fresh(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional
 
 
 FRESH_PLANNERS = {k: (lambda kind: lambda cur, **kw: plan_fresh(cur, kind, **kw))(k) for k in ("read", "entities", "read3")}
+
+
+def _plan_reading(cur: Cursor, **kw: Any) -> int:   # 0212: ent-v5, new posts only, while its switch is shadow or on
+    from insight_core.markx import reading5   # reading5 imports this module
+    return reading5.plan(cur, **kw)
+
+
+PLANNERS["reading"] = _plan_reading
+FRESH_PLANNERS["reading"] = _plan_reading
 
 
 def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second question, cue posts only (ent42.plan)

@@ -70,8 +70,33 @@ from previously refused answers mixed with 60 from valid answers of the same run
 | kept from refused answers | **55/60 = 92% [82–96]** | 50/60 = 83% [72–91] |
 | from valid answers | 44/60 = 73% [61–83] | 42/60 = 70% [57–80] |
 
-Not lower (the valid side holds more cited documents, the hardest entries). One "wrong" on the kept side is the
-labeller's own slip (a span differing only in case, which the server's folded match takes).
+**That first comparison was confounded** (found on the coordinator's check, 2026-11-16): both samples had the same
+labeller prompt, labellers and post context, mixed in one blind set, but they were drawn from different posts. 36
+of the 60 kept entities came from the server copy's ent-v3 answers (ordinary posts: 35 right). The valid side had
+none of those: 49 of its 60 came from the ent-v4.2 lab test set, whose posts were chosen because they relay documents
+(35 right). So 92% against 73% compared two populations, not kept against valid.
+
+**Re-drawn, matched** (`matched.py`, one setup again: the same prompt, two labellers, sides hidden). For each kept
+entity there is one entity from a valid answer of the same stratum. On the lab posts it comes from the same post (another
+run). 30 pairs are from the lab's ent-v4.2 answers and 30 from the server copy's ent-v3 answers:
+
+| | kept from refused answers | from valid answers |
+|---|---|---|
+| all | **49/60 = 82% [70–89]** | **50/60 = 83% [72–91]** |
+| lab ent-v4.2 (same posts) | 21/30 = 70% [52–83] | 24/30 = 80% [63–90] |
+| server copy ent-v3 | 28/30 = 93% [79–98] | 26/30 = 87% [70–95] |
+
+The kept entities are as precise as the valid ones (82% against 83%). The lab stratum leans the other way (−10
+points on 30 a side, inside both intervals), so it is worth a look in the Shadow labels. The remaining gap to
+ent-v4.2's published 94% "all entities" is a different setup, not this fix:
+- those numbers came from the lab's own labellers on ordinary posts;
+- the lab test set here is document-dense relay posts, judged strictly against the guide's every rule;
+- this count is taken before ent-v4.2's code step, which drops the post's own title. Of the 21 "wrong" over both
+  sides, 6 are the post's own title as a document, which that step removes, and 6 are methods or techniques listed as
+  entities.
+
+One "wrong" on the kept side of the first sample was the labeller's own slip (a span differing only in case, which the
+server's folded match takes).
 
 **The cost of not asking again:** on the lab posts asked seven times, 14 of the 26 entries dropped from salvaged
 answers were named validly by another run: a re-ask would have found about 0.8 more entities per salvaged answer, for

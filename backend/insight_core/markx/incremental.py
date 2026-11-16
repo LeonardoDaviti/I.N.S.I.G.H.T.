@@ -373,8 +373,12 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
         state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
-    cur.execute("""SELECT post_id::text, xmin::text || ctid::text, reading->'kind', reading->'events' FROM mx_readings
-                    WHERE guide = %s AND post_id = ANY(%s::uuid[])""", (GUIDE, ids))   # as tasks.readings(ids)
+    from insight_core.markx import reading5
+    order = reading5.guides(cur, GUIDE)   # 0212: as tasks.readings(ids): ent-v5's first while its switch is on
+    cur.execute("""SELECT DISTINCT ON (post_id) post_id::text, guide || xmin::text || ctid::text, reading->'kind',
+                          reading->'events' FROM mx_readings
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
+                    ORDER BY post_id, array_position(%s::text[], guide)""", (order, ids, order))
     for pid, stamp, kind, events in cur.fetchall():
         state.read_stamp[pid], state.kinds[pid], state.events[pid] = stamp, kind, events
     # v10.17.2 (0204): the texts and readings are read when a render shows them (`rendered`: its posts' in one query),
@@ -445,7 +449,7 @@ class LazyReadings(Mapping):
         s = self.state
         missing = sorted({i for i in ids if i in s.kinds and i not in s.readings})
         if missing:
-            s.readings.update(tasks.readings(self.cur, missing, GUIDE))
+            s.readings.update(tasks.readings(self.cur, missing))   # 0212: the preferred reading
 
     def __getitem__(self, pid: str) -> dict:
         if pid not in self.state.kinds:

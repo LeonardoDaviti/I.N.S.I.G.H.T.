@@ -26,6 +26,7 @@ from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
+V5_GUIDE = "ent-v5"                         # 0212: ent-v5 keeps cite as its own question; its answer merges into both sets
 CITE_CHARS, CITE_LINKS = 6000, 12
 CITE_MAX = 30
 Q2 = "q2"                                  # mx_mentions.rule of an entity the second question added
@@ -296,14 +297,15 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                  FROM posts p
                 WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
-                  AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s AND t.a = p.id)
+                  AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.a = p.id AND ((t.kind = 'entities' AND t.guide = %(main)s)
+                                                               OR (t.kind = 'reading' AND t.guide = %(v5)s)))   -- 0212
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND (%(at)s::timestamptz IS NULL
                        OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
-            {"now": now, "days": days, "main": GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
+            {"now": now, "days": days, "main": GUIDE, "v5": V5_GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
         todo = [r for r in rows if str(r[0]) not in _not_cue]
         posts = tasks.load_posts(cur, [r[0] for r in todo])
@@ -371,22 +373,28 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     answer before it waits: the main answer merges it). How many were added."""
     pid = task["a"]
     _lock(cur, pid)
-    cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = 'entities' AND guide = %s AND a = %s AND status = 'answered'
-                      AND input !~ %s LIMIT 1""", (GUIDE, pid, r"\nWindow: \d+ of \d+ "))   # 0176: the first window's
-    if cur.fetchone() is None:
-        return 0
-    have = repo.mentions(cur, pid, GUIDE)
     title = _title(cur, pid)
     cite = [e for e in answer.get("entities") or [] if not own_title(e, title)]
-    new = [e for e in merge_cite(have, cite)[len(have):]]
-    if not new:
-        return 0
-    start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # 0176: in the first window's numbers
-    fields = repo.MENTION_FIELDS + repo.MENTION_FIELDS_0133
-    cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
-                    f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING",
-                    [(pid, GUIDE, start + k, call_id, *(_mention(e).get(f) for f in fields)) for k, e in enumerate(new)])
-    return len(new)
+    added = 0
+    # 0212: the cite answer is merged into each set whose first window is answered: ent-v4.2's (kind entities) and
+    # ent-v5's (kind reading, which keeps `cite` as its own question)
+    for kind, guide in (("entities", GUIDE), ("reading", V5_GUIDE)):
+        cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = %s AND guide = %s AND a = %s AND status = 'answered'
+                          AND input !~ %s LIMIT 1""", (kind, guide, pid, r"\nWindow: \d+ of \d+ "))   # 0176: window 1
+        if cur.fetchone() is None:
+            continue
+        have = repo.mentions(cur, pid, guide)
+        new = [e for e in merge_cite(have, cite)[len(have):]]
+        if not new:
+            continue
+        start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # 0176: window 1's numbers
+        fields = repo.MENTION_FIELDS + repo.MENTION_FIELDS_0133
+        cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
+                        f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING",
+                        [(pid, guide, start + k, call_id, *(_mention(e).get(f) for f in fields))
+                         for k, e in enumerate(new)])
+        added += len(new)
+    return added
 
 
 # ---- the owner's labels on the new entities ----------------------------------------------------------------------

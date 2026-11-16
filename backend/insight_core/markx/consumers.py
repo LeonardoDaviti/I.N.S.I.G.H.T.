@@ -56,6 +56,7 @@ CONSUMER: Dict[str, str] = {
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
     "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news",
+    "reading": "news",   # 0212: ent-v5 (planned only while its own switch is shadow or on)
 }
 
 _LOCK = threading.Lock()

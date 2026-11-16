@@ -67,6 +67,12 @@ log = logging.getLogger(__name__)
 
 UNITS_VERSION = "units-v1"     # bump with a change to what a split is made of outside this module
 READING_GUIDE = "read-v2"
+
+
+def reading_guides(cur: Any) -> List[str]:
+    """0212: the readings a split reads, preferred first: read-v2's, with ent-v5's first while its switch is on."""
+    from insight_core.markx import reading5
+    return reading5.guides(cur, READING_GUIDE)
 MIN_ITEMS = 2                  # a split of fewer items is no split (a reading's round-up of one item is a post)
 STRUCTURE_ITEMS = 5            # a round-up by its structure: this many linked items ...
 STRUCTURE_PAGES = 4            # ... linking this many distinct pages ...
@@ -635,8 +641,10 @@ def _inputs(cur: Any, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     cur.execute("""SELECT p.id::text, p.source_id::text, p.content_html, p.content, p.url, r.call_id::text, r.reading,
                           ARRAY(SELECT l.target_url FROM post_links l WHERE l.post_id = p.id AND l.boilerplate
                                  ORDER BY l.target_url)
-                     FROM posts p LEFT JOIN mx_readings r ON r.post_id = p.id AND r.guide = %s
-                    WHERE p.id = ANY(%s::uuid[])""", (READING_GUIDE, list(ids)))
+                     FROM posts p LEFT JOIN LATERAL (
+                          SELECT x.call_id, x.reading FROM mx_readings x WHERE x.post_id = p.id AND x.guide = ANY(%s)
+                           ORDER BY array_position(%s::text[], x.guide) LIMIT 1) r ON TRUE
+                    WHERE p.id = ANY(%s::uuid[])""", (reading_guides(cur), reading_guides(cur), list(ids)))
     out = {}
     for pid, sid, h, t, url, call, reading, skip in cur.fetchall():
         if isinstance(reading, str):

@@ -266,7 +266,7 @@ PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
 FRESH = "fresh:"                    # 0176 A: _PLAN_REST's key prefix for a kind's fresh-lane planner
 FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
-POST_KINDS = ("entities",)          # 0176 B: kinds whose leased tasks carry their post (a long post's windows)
+POST_KINDS = ("entities", "reading")   # 0176 B: kinds whose leased tasks carry their post (a long post's windows); 0212: + reading
 
 
 def _plan_resting(kind: str) -> bool:
@@ -566,6 +566,31 @@ def mx_set_entities_guide(body: EntitiesGuideIn):
         except ValueError as e:
             raise HTTPException(status_code=409 if "placeholder" in str(e) else 400, detail=str(e))
         return _window(cur)
+
+
+class ReadingGuideIn(BaseModel):   # 0212
+    mode: str
+
+
+@router.get("/reading5")
+def mx_reading5(limit: int = Query(40, ge=1, le=200)):
+    """0212: ent-v5's switch and its Shadow comparison: the newest posts it read, each beside the post's current
+    reading (kind, events, event type, origin, headline) and entity set, with the agreement over them."""
+    from insight_core.markx import reading5
+    with transaction() as cur:
+        return reading5.compare(cur, limit=limit)
+
+
+@router.post("/settings/reading-guide")
+def mx_set_reading_guide(body: ReadingGuideIn):
+    """0212: ent-v5's switch: `off` (nothing asked), `shadow` (new posts read by ent-v5 beside the old kinds, nothing
+    reads it but /markx's comparison), `on` (ent-v5 first wherever a reading is picked; its mention sets current)."""
+    from insight_core.markx import reading5
+    with transaction() as cur:
+        try:
+            return reading5.set_mode(cur, body.mode)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/settings")

@@ -350,6 +350,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "websearch",                                      # 0171
                                               "source_judge",                                   # 0173
                                               "news_sections",                                  # 0174
+                                              "reading",                                        # 0212
                                               "news_place",                                     # 0197
                                               "unit_types",                                     # 0181
                                               "significance"})                                  # 0208

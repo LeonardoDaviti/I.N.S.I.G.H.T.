@@ -228,6 +228,13 @@ def same(a: Happening, b: Happening, window: timedelta) -> bool:
 READING_GUIDE = "read-v2"
 
 
+def reading_guides(cur: Any) -> List[str]:
+    """0212: the readings a key is read from, preferred first: read-v2's, with ent-v5's first while its switch is on
+    (reading5's one preference list)."""
+    from insight_core.markx import reading5
+    return reading5.guides(cur, READING_GUIDE)
+
+
 # ---- stored keys (0175) -----------------------------------------------------------------------------------------
 #
 # mx_happenings (migration 0118) keeps each read post's key with the `basis` it was computed from: the code's version,
@@ -283,8 +290,10 @@ def _inputs(cur: Any, ids: Sequence[str]) -> Tuple[Dict[str, str], Dict[str, Lis
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     if not ids:
         return {}, out
-    cur.execute("SELECT post_id::text, call_id::text FROM mx_readings WHERE guide = %s AND post_id = ANY(%s::uuid[])",
-                (READING_GUIDE, list(ids)))
+    order = reading_guides(cur)
+    cur.execute("""SELECT DISTINCT ON (post_id) post_id::text, call_id::text FROM mx_readings
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
+                    ORDER BY post_id, array_position(%s::text[], guide)""", (order, list(ids), order))
     read = dict(cur.fetchall())
     if not read:
         return read, out
@@ -325,16 +334,16 @@ def _newest(cur: Any, ids: Sequence[str]) -> Dict[str, Tuple]:
 
 
 def _write(cur: Any, pid: str, call: str, basis: str, read_group: Optional[str], k: Optional[Happening],
-           was: Optional[Tuple]) -> None:
+           was: Optional[Tuple], guide: str = READING_GUIDE) -> None:
     """A changed key (or a post's first): a new row. The same key from a new basis: that row's basis, in place."""
-    if was is not None and was[1] == READING_GUIDE and was[4] == read_group and was[5] == k:
+    if was is not None and was[1] == guide and was[4] == read_group and was[5] == k:
         cur.execute("""UPDATE mx_happenings SET basis = %s, version = %s, reading_call = %s, checked_at = clock_timestamp()
                         WHERE id = %s""", (basis, version(), call, was[0]))
         return
     cur.execute("""INSERT INTO mx_happenings (post_id, guide, reading_call, version, basis, read_group, grp, parties,
                                               stage, at, money)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (pid, READING_GUIDE, call, version(), basis, read_group, k.group if k else None,
+                (pid, guide, call, version(), basis, read_group, k.group if k else None,
                  sorted(k.parties) if k else [], k.stage if k else None, k.date if k else None,
                  list(k.numbers) if k else []))
 
@@ -356,11 +365,12 @@ def keys(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
         else:
             stale[pid] = basis
     if stale:
-        readings = {str(k): v["reading"] for k, v in repo.readings(cur, sorted(stale), READING_GUIDE).items()}
+        from insight_core.markx import reading5
+        rows = reading5.pick(cur, sorted(stale), (READING_GUIDE,))
         for pid, basis in stale.items():
-            r = readings[pid]
+            r, g = rows[pid]["reading"], rows[pid]["guide"]
             k = key(r, ments.get(pid, []))
-            _write(cur, pid, read[pid], basis, event_types.from_reading(r, READING_GUIDE).group, k, have.get(pid))
+            _write(cur, pid, read[pid], basis, event_types.from_reading(r, g).group, k, have.get(pid), g)
             if k is not None:
                 out[pid] = k
     return out
@@ -375,7 +385,8 @@ def compute(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
     """{post: its happening} computed from the readings and the mentions now, nothing read from or written to
     mx_happenings (0166's `keys`; what `keys` equals)."""
     from insight_core.markx import repo
-    readings = {str(k): v["reading"] for k, v in repo.readings(cur, list(ids), READING_GUIDE).items()}
+    from insight_core.markx import reading5
+    readings = {k: v["reading"] for k, v in reading5.pick(cur, ids, (READING_GUIDE,)).items()}
     _calls, ments = _inputs(cur, sorted(readings))
     out = {}
     for pid, r in readings.items():
@@ -399,8 +410,8 @@ def backfill(cur: Any, *, limit: int = BACKFILL_PAGE, sweep: int = SWEEP_PAGE) -
     missing = """FROM mx_readings r JOIN posts p ON p.id = r.post_id
                  LEFT JOIN LATERAL (SELECT h.version FROM mx_happenings h WHERE h.post_id = r.post_id
                                      ORDER BY h.id DESC LIMIT 1) h ON true
-                WHERE r.guide = %(g)s AND h.version IS DISTINCT FROM %(v)s"""
-    params = {"g": READING_GUIDE, "v": version()}
+                WHERE r.guide = ANY(%(g)s) AND h.version IS DISTINCT FROM %(v)s"""
+    params = {"g": reading_guides(cur), "v": version()}
     todo: List[str] = []
     if limit:
         cur.execute(f"SELECT r.post_id::text {missing} ORDER BY {pairing.post_date()} DESC, r.post_id LIMIT %(n)s",
@@ -447,10 +458,10 @@ def pairs(cur: Any, posts: Any, new: Iterable[str]) -> int:
     cur.execute(f"""SELECT r.post_id::text FROM mx_readings r JOIN posts p ON p.id = r.post_id
                       LEFT JOIN LATERAL (SELECT h.version, h.read_group FROM mx_happenings h WHERE h.post_id = r.post_id
                                           ORDER BY h.id DESC LIMIT 1) h ON true
-                     WHERE r.guide = %s AND COALESCE(r.kind, '') <> 'roundup'
+                     WHERE r.guide = ANY(%s) AND COALESCE(r.kind, '') <> 'roundup'
                        AND (h.version IS DISTINCT FROM %s OR h.read_group = ANY(%s))
                        AND {pairing.post_date_within('p', '%s::timestamptz', '%s::timestamptz')}""",
-                (READING_GUIDE, version(), _pool_groups({k.group for k in mine.values()}), lo, lo, hi, hi))
+                (reading_guides(cur), version(), _pool_groups({k.group for k in mine.values()}), lo, lo, hi, hi))
     pool = keys(cur, [r[0] for r in cur.fetchall()])
     posts.load(pool)
     index: Dict[Tuple[str, FrozenSet[str]], List[str]] = defaultdict(list)

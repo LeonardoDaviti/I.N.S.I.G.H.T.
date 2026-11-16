@@ -101,9 +101,10 @@ def run(cur: Cursor, post_ids: Iterable[str] = (), *, since: Optional[datetime] 
 
 
 def read_since(cur: Cursor, since: datetime) -> List[str]:
-    """Posts whose read-v2 reading was written since (their call's time)."""
+    """Posts whose read-v2 reading (0212: or ent-v5's, while its switch is on) was written since (their call's time)."""
+    from insight_core.markx import reading5
     cur.execute("""SELECT DISTINCT r.post_id::text FROM mx_readings r JOIN mx_calls c ON c.id = r.call_id
-                    WHERE r.guide = 'read-v2' AND c.created_at >= %s""", (since,))
+                    WHERE r.guide = ANY(%s) AND c.created_at >= %s""", (reading5.guides(cur, "read-v2"), since))
     return [r[0] for r in cur.fetchall()]
 
 

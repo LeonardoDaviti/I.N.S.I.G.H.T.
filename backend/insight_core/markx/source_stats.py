@@ -372,11 +372,13 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
     read_reposts: Set[str] = set()
     mentions: Dict[str, List[R.Mention]] = defaultdict(list)
     if _exists(cur, "mx_readings"):
+        from insight_core.markx import reading5
+        RANK = reading5.rank_sql("r.guide", ("read-v2", "read-v3"))   # 0212: read-v2 first, as before
         cur.execute(f"""SELECT DISTINCT ON (r.post_id) r.post_id::text, r.kind, p.source_id::text, p.title, p.author,
                               p.reposted_by, {byline.forwarded_sql("p")}
                          FROM mx_readings r JOIN posts p ON p.id = r.post_id
-                        WHERE p.source_id = ANY(%s::uuid[]) AND r.guide IN ('read-v2', 'read-v3')
-                        ORDER BY r.post_id, r.guide""", (ids,))
+                        WHERE p.source_id = ANY(%s::uuid[]) AND {RANK} IS NOT NULL   -- 0212: the preferred reading
+                        ORDER BY r.post_id, {RANK}""", (ids,))
         for pid, kind, sid, title, author, reposted_by, fwd in cur.fetchall():
             s = srcs[sid]
             read_kinds[pid] = kind

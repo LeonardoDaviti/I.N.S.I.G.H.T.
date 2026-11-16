@@ -338,7 +338,8 @@ MENTION_FIELDS_0133 = ("rule", "by_name", "ref")   # 0133: 'citation' for the ru
 WINDOW_N = 1000   # 0176: window w's mentions are numbered from w * WINDOW_N (tasks.WINDOW_N)
 
 
-def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict], win: int = 0) -> int:
+def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict], win: int = 0,
+                 current: bool = True) -> int:
     """A post's entities under `guide`, numbered in their order (n from 0): how many were written. A
     post's mentions under one guide are written once: a later call adds none. 0176: a long post's are written once a
     window (`win`), window w's numbered from w * WINDOW_N, so (post, guide, n) stays a mention's key and n its order
@@ -352,6 +353,8 @@ def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions:
     if rows:
         cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, win, call_id, {', '.join(fields)}) "
                         f"VALUES ({', '.join(['%s'] * (5 + len(fields)))}) ON CONFLICT DO NOTHING", rows)
+    if not current:   # 0212: ent-v5 in Shadow: stored beside the current set, never made current here
+        return len(rows)
     # 0133: the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too.
     # 0176: a later window that adds mentions to the same set marks it changed (`at`: the readers of new sets read it
     # again); the set's call stays its first answer's
