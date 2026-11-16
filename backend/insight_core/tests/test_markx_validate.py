@@ -125,8 +125,9 @@ class Entities(unittest.TestCase):
         self.assertEqual(len(answer["entities"]), 2)
 
     def test_a_span_not_in_the_post_is_refused(self):
+        # v10.20: the only entity dropped, so nothing is left: refused (asked again), saying why
         error = check("entities", {"entities": [entity(span="Widget 5 Pro")]}, POST)[1]
-        self.assertEqual(error, "entities[0].span 'Widget 5 Pro' does not occur in the post")
+        self.assertEqual(error, "every entity was dropped: entities[0].span 'Widget 5 Pro' does not occur in the post")
 
     def test_spans_compare_folded_case_dashes_and_yo(self):
         # the post writes "Widget‑4.1" with a non-breaking hyphen, "ёлка" with ё, "выпустила" in lower case
@@ -136,22 +137,76 @@ class Entities(unittest.TestCase):
 
     def test_a_version_not_in_the_post_is_refused(self):
         error = check("entities", {"entities": [entity(version="4.2")]}, POST)[1]
-        self.assertEqual(error, "entities[0].version '4.2' does not occur in the post")
+        self.assertEqual(error, "every entity was dropped: entities[0].version '4.2' does not occur in the post")
         self.assertTrue(version_occurs("4.1", POST))
         self.assertTrue(version_occurs("Widget 4.1", "the Widget-4.1 notes"))
 
     def test_type_and_role_come_from_their_sets(self):
         self.assertIn("type", check("entities", {"entities": [entity(type="company")]}, POST)[1])
         self.assertIn("role", check("entities", {"entities": [entity(role="main")]}, POST)[1])
-        self.assertIn("rel", check("entities", {"entities": [], "relations": [{"a": "A", "rel": "likes", "b": "B"}]}, POST)[1])
+        # v10.20: a relation outside the set is dropped (relations have no reader), the answer stands
+        answer, error = check("entities", {"entities": [], "relations": [{"a": "A", "rel": "likes", "b": "B"}]}, POST)
+        self.assertIsNone(error)
+        self.assertEqual(answer["relations"], [])
+        self.assertIn("rel", answer["dropped"][0]["why"])
 
     def test_at_most_twenty_entities(self):
         self.assertIsNone(check("entities", {"entities": [entity()] * 20}, POST)[1])
-        self.assertEqual(check("entities", {"entities": [entity()] * 21}, POST)[1],
-                         "answer.entities: 21 items, more than 20")
+        # v10.20: the first 20 stored (the guide puts subjects, actors and versions first), the 21st dropped
+        answer, error = check("entities", {"entities": [entity()] * 20 + [entity(name="Gadget")]}, POST)
+        self.assertIsNone(error)
+        self.assertEqual(len(answer["entities"]), 20)
+        self.assertEqual(answer["dropped"], [{"list": "entities", "item": entity(name="Gadget"),
+                                              "why": "entities[20]: past entry 20"}])
 
     def test_no_entities_is_fine(self):
         self.assertIsNone(check("entities", {"entities": [], "relations": []}, POST)[1])
+
+
+class Salvage(unittest.TestCase):
+    """v10.20: an entity list's bad entries are dropped (kept under "dropped" with why), the rest stored."""
+    ACME = entity(span="Acme", name="Acme", type="org", role="actor", maker=None, family=None, version=None,
+                  variant=None)
+
+    def test_one_bad_entity_among_good_ones_is_dropped_the_answer_stored(self):
+        bad = entity(span="Gizmo 9", name="Gizmo 9", role="mention", version=None)
+        answer, error = check("entities", {"entities": [entity(), bad, self.ACME], "relations": []}, POST, "ent-v4.2")
+        self.assertIsNone(error)
+        self.assertEqual([e["name"] for e in answer["entities"]], ["Widget 4.1 Pro", "Acme"])
+        self.assertEqual(answer["dropped"], [{"list": "entities", "item": bad,
+                                              "why": "entities[1].span 'Gizmo 9' does not occur in the post"}])
+
+    def test_each_kind_of_bad_entry_is_dropped(self):
+        cases = {"version": entity(role="mention", version="4.2"),
+                 "type": entity(role="mention", type="company"),
+                 "recommended": entity(role="recommended"),
+                 "span": dict(entity(role="mention"), span="")}
+        for what, bad in cases.items():
+            with self.subTest(what=what):
+                answer, error = check("entities", {"entities": [entity(), bad]}, POST, "ent-v4.2")
+                self.assertIsNone(error)
+                self.assertEqual(len(answer["entities"]), 1)
+                self.assertEqual(len(answer["dropped"]), 1)
+
+    def test_an_answer_that_loses_every_subject_is_still_asked_again(self):
+        error = check("entities", {"entities": [entity(span="Widget 5 Pro", version=None), self.ACME]}, POST)[1]
+        self.assertEqual(error, "every subject was dropped: entities[0].span 'Widget 5 Pro' does not occur in the post")
+        # another subject kept: stored
+        answer, error = check("entities", {"entities": [entity(span="Widget 5 Pro", version=None),
+                                                        dict(self.ACME, role="subject")]}, POST)
+        self.assertIsNone(error)
+
+    def test_salvage_is_idempotent_and_keeps_what_was_dropped_before(self):
+        once, _ = check("entities", {"entities": [entity(), entity(span="Gizmo 9", role="mention", version=None)]}, POST)
+        twice, error = check("entities", once, POST)
+        self.assertIsNone(error)
+        self.assertEqual(twice, once)
+
+    def test_other_kinds_and_shapes_are_left_alone(self):
+        from insight_core.markx.validate import salvage
+        self.assertEqual(salvage("read", {"kind": "x"}, POST), {"kind": "x"})
+        self.assertEqual(check("entities", {"entities": "bogus"}, POST)[1], "answer.entities: not array")
+        self.assertIn("not object", check("entities", {"entities": ["x"]}, POST)[1])
 
 
 class StoryAnswers(unittest.TestCase):

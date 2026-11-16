@@ -485,6 +485,32 @@ def server_rules():
     return _RULES[0]
 
 
+def salvage(kind, answer, input, guide=None):
+    """v10.20: the server's own salvage (validate.salvage: an entity list's bad entries dropped, each kept under
+    "dropped"), so the worker neither asks again nor refuses an answer the server stores. (answer, entries dropped
+    now); the answer unchanged without the server's checks."""
+    rules = server_rules()
+    fn = getattr(rules, "salvage", None) if rules else None
+    if fn is None or not isinstance(answer, dict):
+        return answer, 0
+    try:
+        out = fn(kind, rules.unwrap(kind, answer), input or "", guide)
+    except Exception:
+        return answer, 0
+    return out, len(out.get("dropped") or []) - len(answer.get("dropped") or []) if isinstance(out, dict) else 0
+
+
+def salvage_refused(kind, answer):
+    """v10.20: the server's rule for a salvaged answer that is still asked again (validate.salvage_refused: every
+    entity or every subject dropped), or None."""
+    rules = server_rules()
+    fn = getattr(rules, "salvage_refused", None) if rules else None
+    try:
+        return fn(kind, answer) if fn and isinstance(answer, dict) else None
+    except Exception:
+        return None
+
+
 def rule_error(kind, answer, input, guide=None):
     """The server's input checks on an answer the schema passed (validate.CHECKS[kind]: spans and versions in the post,
     numbered items that exist ...), or None. A check that needs more than the standard library (back, subtopics) or
@@ -858,7 +884,7 @@ class Worker:
                    env=PROMPT_CACHE[self.cache_mode(batch.kind)])
         late = datetime.now(timezone.utc) > batch.lease_until
         ok, invalid, missing = [], [], []
-        ruled = 0
+        ruled = dropped = 0
         if "text" in res:
             got = parse_lines(res["text"])
             n = len(tasks)
@@ -873,7 +899,13 @@ class Worker:
                 if a is None:
                     missing.append(t)
                     continue
+                if not self.a.no_server_rules:   # v10.20: bad entries dropped (kept under "dropped"), the rest kept
+                    a, n_dropped = salvage(batch.kind, a, t.get("input"), batch.guide_id)
+                    dropped += n_dropped
                 err = check_answer(batch.guide.get("schema"), a)
+                if err is None and not self.a.no_server_rules:
+                    err = salvage_refused(batch.kind, a)
+                    ruled += err is not None
                 if err is None and not self.a.no_server_rules:
                     err = rule_error(batch.kind, a, t.get("input"), batch.guide_id)   # 0191: what the server would refuse
                     ruled += err is not None
@@ -894,7 +926,8 @@ class Worker:
                  invalid=len(invalid), missing=len(missing), ms=res.get("ms"), cost_usd=res.get("cost"),
                  tokens_in=res.get("tin"), tokens_out=res.get("tout"), model=res.get("model"),
                  cache_read=res.get("cread"), cache_write=res.get("cwrite"), thinking=res.get("think"),
-                 effort=self.effort(batch.kind), rule_invalid=ruled or None, refused=refused or None,
+                 effort=self.effort(batch.kind), rule_invalid=ruled or None, dropped=dropped or None,
+                 refused=refused or None,
                  late=late or None, error=res.get("error"),
                  invalid_errors=[e for _, _, e in invalid][:5] or None)
         if res.get("fatal"):

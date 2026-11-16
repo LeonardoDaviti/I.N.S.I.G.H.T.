@@ -326,7 +326,12 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     until = max((t["lease_until"] for t in leased), default=datetime.now(timezone.utc)
                 + timedelta(minutes=repo.LEASE_MINUTES))
     return {"lease_until": _iso(until),
-            "guides": {gid: {"sha256": g["sha256"], "body": g["body"], "schema": g["schema"]} for gid, g in guides.items()},
+            # v10.20: the schema the server checks with (schemas.schema_for), not the one stored with the guide's first
+            # load: mx_guides keeps a guide's first schema (a guide is never edited), so a set widened later (ent-v4.2's
+            # `published` relation, v10.10.1) reached the worker without it and 2,311 answers were refused and asked
+            # again for a value the server takes (worker logs since v10.17).
+            "guides": {gid: {"sha256": g["sha256"], "body": g["body"],
+                             "schema": schemas.schema_for(g["kind"], gid) or g["schema"]} for gid, g in guides.items()},
             "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
                            **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}),
                            **_model(t["kind"]))
