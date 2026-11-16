@@ -2035,9 +2035,12 @@ def vector_neighbours(cur: Any, book: Book, seeds: Sequence[str], model: str = "
     """A name's EMB_TOPK nearest names at cosine >= EMB_BAR (mx_entity_vectors, the embed_name kind)."""
     if not seeds:
         return []
-    cur.execute("""SELECT s.entity_id::text, n.entity_id::text, 1 - (n.v <=> s.v)
+    # v10.23 (0218): the HNSW index walks each seed's nearest names (EXPLAIN on the server-sized copy: ~1,800 buffers a
+    # seed, the graph's 1024-dim tuples); the distance is the scan's own, not computed again from each neighbour's
+    # vector read back (its heap and TOAST pages: ~80 buffers a seed, 20% of the query's time warm). The same rows.
+    cur.execute("""SELECT s.entity_id::text, n.entity_id::text, 1 - n.d
                      FROM mx_entity_vectors s
-                     CROSS JOIN LATERAL (SELECT entity_id, v FROM mx_entity_vectors o
+                     CROSS JOIN LATERAL (SELECT o.entity_id, o.v <=> s.v AS d FROM mx_entity_vectors o
                                           WHERE o.model = s.model AND o.entity_id <> s.entity_id
                                           ORDER BY o.v <=> s.v LIMIT %s) n
                     WHERE s.model = %s AND s.entity_id = ANY(%s::uuid[])""", (EMB_TOPK, model, list(seeds)))
