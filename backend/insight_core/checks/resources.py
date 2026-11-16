@@ -72,7 +72,10 @@ def _child(db_url: str, job: str, now_iso: Optional[str], out: Any) -> None:
             J.Jobs.after_stories = lambda self: {"ok": True, "skipped": "the real-data check reads no web"}
             run = runner.stories
         else:
-            run = getattr(runner, job)
+            run = getattr(runner, job, None)
+            if run is None:
+                out.put({"not_measured": f"this version has no {job} job"})
+                return
         peak.reset()
         t0, c0 = time.monotonic(), time.process_time()
         result = run() or {}
@@ -82,7 +85,7 @@ def _child(db_url: str, job: str, now_iso: Optional[str], out: Any) -> None:
             r = result.get("run") if isinstance(result.get("run"), dict) else {}
             got["kind"] = r.get("kind")
             got["skipped"] = result.get("skipped")
-    except AttributeError as error:   # a version without the job
+    except ImportError as error:   # a version without the jobs module
         got = {"not_measured": f"this version has no {job} job ({error})"}
     except Exception as error:  # noqa: BLE001 - recorded, the report says it
         got = {"error": f"{type(error).__name__}: {str(error)[:300]}"}
