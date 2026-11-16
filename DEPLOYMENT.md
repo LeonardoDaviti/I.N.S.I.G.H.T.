@@ -472,7 +472,10 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
 - **A Mark X job that fails backs off** (`mx_jobs.failures`, migration 0129): 10 minutes after the first failure,
   doubling, at most 6 hours apart, and keeps trying; from 3 in a row it is "failing" (/markx, `/api/status`).
   A decision run over its limit twice in a row in the same late stage (graph, back, later, entities, surges,
-  perspectives) skips that stage once and is logged so; the run after tries it again.
+  perspectives) skips that stage once and is logged so; the run after tries it again. A decision run's limit is
+  120 s; a full run (the first after a deploy that changed decide's code, the nightly one) and the run after one that
+  stopped over its limit have 600 s (issue 0215: before, the full run after the v10.20 deploy stopped at 120 s every
+  time, and each stop kept the next run a full one). Rule-change rebuilds of Mark IX hold no decision run.
 - **Database timeouts** (`db/database.py`, by role): in insight-ingestion a statement ends after 14 minutes (under a
   job's 15-minute kill) and a transaction idle for 16 minutes is ended; in the API a request's statements end after
   30 s (`INSIGHT_DB_REQUEST_TIMEOUT_MS`, 0 turns it off; deleting a source is allowed the default 5 minutes), its

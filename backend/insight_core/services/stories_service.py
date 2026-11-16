@@ -16,7 +16,7 @@ once when the backend starts (main.py, in the background), each time in a proces
    batches, in the background: the posts' keys and the threads first, then every post queued
    (`redo:`). The rows of the old rules are served until each batch replaces them. 0209: its slices run after
    fetches and also from insight-ingestion's jobs loop (markx/jobs.py, the job "stories", STORIES_GAP apart while a
-   rebuild is due or in progress); it holds a decision run at most jobs.REBUILD_HOLD (`jobs.decision_hold`).
+   rebuild is due or in progress); 0215: it holds no decision run (`jobs.decision_hold`).
 `recompute(full=True)` regroups every post at once (`regroup`): the oracle the incremental job is
 measured against, row by row (the same stories, News, Classics and Discover). Deterministic and
 idempotent. One job at a time (an advisory lock); a job that finds one running skips. No AI, no fetch.
@@ -75,7 +75,7 @@ REST_AFTER_YIELD_S = 90.0
 YIELD_KEY = "stories_yield"   # system_settings: {"at": ISO} of the last run that yielded
 # v10.13.8: runs that each end within the budget still follow each other at once (one after every fetch that saves),
 # so a decision run (it waits while this job holds its lock) waited all day. When one has waited DECISION_WAIT_S, a
-# run steps aside (skips) until it has started. 0209: unless this job's rebuild holds that run (jobs.decision_waits).
+# run steps aside (skips) until it has started (jobs.decision_waits).
 DECISION_WAIT_S = 600.0
 STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewer; a rule change's are all)
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
@@ -171,8 +171,8 @@ class StoriesService:
 
     def _decision_waiting(self) -> bool:
         """v10.13.8: Mark X's decision run is wanted, not running, and has waited (wanted, and not started since)
-        DECISION_WAIT_S or more; 0209: and this job's rebuild doesn't hold it (markx/jobs.decision_waits owns the
-        decision): stepping aside for a run the rebuild holds stopped both for 45 hours on 2026-11-14. False when Mark X
+        DECISION_WAIT_S or more (markx/jobs.decision_waits owns the decision; 0215: no rebuild holds that run, so it
+        can start: on 2026-11-14 stepping aside for a run the rebuild held stopped both for 45 hours). False when Mark X
         has no jobs table or no such row."""
         from insight_core.markx import jobs
         try:
