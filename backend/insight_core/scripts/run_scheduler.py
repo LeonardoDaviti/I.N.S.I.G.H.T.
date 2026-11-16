@@ -227,10 +227,11 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
 async def _heartbeat() -> None:
     """Issue 0188: the scheduler's event loop answers: a heartbeat every BEAT_SECONDS (utils/heartbeat.py), read by
     the container's healthcheck and /api/status. A task of its own, so a long ingestion tick doesn't read as a dead
-    loop; a loop blocked by a stuck call does."""
-    from insight_core.utils import heartbeat
+    loop; a loop blocked by a stuck call does. 0216: with this process's own memory and CPU (utils/peak.own: VmRSS,
+    VmHWM, CPU seconds; its job children's are theirs, in mx_jobs), so its high-water is told apart from theirs."""
+    from insight_core.utils import heartbeat, peak
     while True:
-        heartbeat.beat("scheduler")
+        heartbeat.beat("scheduler", stats=peak.own())
         await asyncio.sleep(heartbeat.BEAT_SECONDS)
 
 

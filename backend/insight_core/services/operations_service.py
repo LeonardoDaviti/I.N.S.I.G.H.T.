@@ -1005,6 +1005,9 @@ class OperationsService:
             reasons.append(f"could not read the ingestion state ({type(exc).__name__})")
         ages = heartbeat.ages(now.timestamp())
         checks["heartbeats"] = {k: None if v is None else round(v) for k, v in ages.items()}
+        # 0216: each process's own memory and CPU, as its beat carries them (the scheduler's parent; each API process)
+        checks["processes"] = {name: {k: (round(v) if k == "age" else v) for k, v in p.items()}
+                               for name, p in heartbeat.processes(now.timestamp()).items() if len(p) > 1}
         reasons.extend(heartbeat.stale(now.timestamp(), required=()))
         try:
             self._markx_health(now, reasons, warnings, checks)
@@ -1068,39 +1071,9 @@ class OperationsService:
     STATEMENT_CHARS = 2000
 
     def top_statements(self, limit: int = STATEMENTS_SHOWN) -> Dict[str, Any]:
-        """Issue 0215: what insight-db spends its time on: pg_stat_statements' statements of this database by total
-        execution time, since its counts were last reset (a server restart keeps them; `since`). Each statement as
-        Postgres normalized it (every constant a $n: no value of a post, a source or a label is shown), cut at
-        STATEMENT_CHARS, with its calls, total and mean milliseconds, rows, and blocks hit and read; `share`: of the
-        database's whole statement time. Read only. {"enabled": False, "reason"} while the library isn't loaded
-        (docker-compose.yml's `command`; DEPLOYMENT.md) or its view not created (migration 0146)."""
+        """Issue 0215: what insight-db spends its time on (`top_statements` below). Read only."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
-                                  'pg_stat_statements' = ANY(string_to_array(
-                                      replace(current_setting('shared_preload_libraries'), ' ', ''), ','))""")
-            installed, loaded = cur.fetchone()
-            if not (installed and loaded):
-                why = ("its library is not loaded at the server's start (shared_preload_libraries)" if not loaded
-                       else "its view is not created in this database (migration 0146)")
-                return {"enabled": False, "reason": f"pg_stat_statements is off: {why}", "statements": []}
-            cur.execute("""SELECT sum(total_exec_time), sum(calls) FROM pg_stat_statements
-                            WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())""")
-            total_ms, calls = cur.fetchone()
-            cur.execute("SELECT stats_reset FROM pg_stat_statements_info")
-            since = cur.fetchone()[0]
-            cur.execute("""SELECT queryid, left(query, %s), calls, total_exec_time, mean_exec_time, rows,
-                                  shared_blks_hit, shared_blks_read, temp_blks_written
-                             FROM pg_stat_statements
-                            WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-                            ORDER BY total_exec_time DESC LIMIT %s""", (self.STATEMENT_CHARS, limit))
-            rows = cur.fetchall()
-        total_ms = float(total_ms or 0)
-        return {"enabled": True, "since": iso(since), "total_ms": round(total_ms, 1), "calls": int(calls or 0),
-                "statements": [{"id": str(qid), "statement": " ".join(text.split()), "calls": int(n),
-                                "total_ms": round(float(t), 1), "mean_ms": round(float(m), 2), "rows": int(r),
-                                "blocks_hit": int(hit), "blocks_read": int(read), "temp_blocks_written": int(temp),
-                                "share": round(float(t) / total_ms, 4) if total_ms else None}
-                               for qid, text, n, t, m, r, hit, read, temp in rows]}
+            return top_statements(cur, limit, chars=self.STATEMENT_CHARS)
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
         """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
@@ -1317,3 +1290,38 @@ class OperationsService:
             return value
 
         return value
+
+
+def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATEMENT_CHARS) -> Dict[str, Any]:
+    """Issue 0215: what insight-db spends its time on: pg_stat_statements' statements of this database by total
+    execution time, since its counts were last reset (a server restart keeps them; `since`). Each statement as
+    Postgres normalized it (every constant a $n: no value of a post, a source or a label is shown), cut at `chars`
+    (0216, GET /metrics: 0, none), with its calls, total and mean milliseconds, rows, and blocks hit and read; `share`:
+    of the database's whole statement time. Read only. {"enabled": False, "reason"} while the library isn't loaded
+    (docker-compose.yml's `command`; DEPLOYMENT.md) or its view not created (migration 0146)."""
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
+                          'pg_stat_statements' = ANY(string_to_array(
+                              replace(current_setting('shared_preload_libraries'), ' ', ''), ','))""")
+    installed, loaded = cur.fetchone()
+    if not (installed and loaded):
+        why = ("its library is not loaded at the server's start (shared_preload_libraries)" if not loaded
+               else "its view is not created in this database (migration 0146)")
+        return {"enabled": False, "reason": f"pg_stat_statements is off: {why}", "statements": []}
+    cur.execute("""SELECT sum(total_exec_time), sum(calls) FROM pg_stat_statements
+                    WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())""")
+    total_ms, calls = cur.fetchone()
+    cur.execute("SELECT stats_reset FROM pg_stat_statements_info")
+    since = cur.fetchone()[0]
+    cur.execute("""SELECT queryid, left(query, %s), calls, total_exec_time, mean_exec_time, rows,
+                          shared_blks_hit, shared_blks_read, temp_blks_written
+                     FROM pg_stat_statements
+                    WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    ORDER BY total_exec_time DESC LIMIT %s""", (chars, limit))
+    rows = cur.fetchall()
+    total_ms = float(total_ms or 0)
+    return {"enabled": True, "since": iso(since), "total_ms": round(total_ms, 1), "calls": int(calls or 0),
+            "statements": [{"id": str(qid), "statement": " ".join(text.split()), "calls": int(n),
+                            "total_ms": round(float(t), 1), "mean_ms": round(float(m), 2), "rows": int(r),
+                            "blocks_hit": int(hit), "blocks_read": int(read), "temp_blocks_written": int(temp),
+                            "share": round(float(t) / total_ms, 4) if total_ms else None}
+                           for qid, text, n, t, m, r, hit, read, temp in rows]}

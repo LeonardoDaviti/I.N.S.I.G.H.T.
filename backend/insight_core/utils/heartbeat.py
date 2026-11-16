@@ -9,19 +9,28 @@ a process name (which a hung loop keeps).
 
     python -I insight_core/utils/heartbeat.py   # the healthcheck: exit 1 when a heartbeat is stale
 
+0216: a beat may carry its process's own numbers (`stats`: utils/peak.own, {rss_mb, hwm_mb, cpu_s}) on a second line,
+so the scheduler parent's memory and CPU are read by a GET (/api/status, GET /metrics) without touching the process.
+Each API process has a beat too, "api-<pid>", written by the API's supervisor (scripts/api_supervisor.py) for its
+numbers only: no healthcheck reads those.
+`processes()` reads every beat with its numbers; an API process's beat older than API_GONE is a process that ended
+(the reader removes its file).
+
 Standard library only, and no import of insight_core: the healthcheck starts a Python each minute.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 BEAT_SECONDS = 30.0
 # a heartbeat older than this is a loop that stopped: the scheduler's beats every 30 s; Mark X's after each look,
 # which waits at most for a decision run and the Labels build after it, each up to HARD_LIMIT (900 s) and its kill
 LIMITS = {"scheduler": 180.0, "markx": 2000.0}
+API_GONE = 3600.0   # 0216: an API process's beat this old is a process that ended: listed no more, its file removed
 
 
 def folder() -> str:
@@ -33,16 +42,38 @@ def _path(name: str) -> str:
     return os.path.join(folder(), f"heartbeat-{name}")
 
 
-def beat(name: str, now: Optional[float] = None) -> None:
-    """`name` is alive now. Never raises (a full disk never stops a loop)."""
+def beat(name: str, now: Optional[float] = None, stats: Optional[Dict[str, Any]] = None) -> None:
+    """`name` is alive now; 0216: with its process's own numbers (`stats`, one JSON line). Never raises (a full disk
+    never stops a loop)."""
     try:
         os.makedirs(folder(), exist_ok=True)
         path = _path(name)
+        body = f"{time.time() if now is None else now:.0f}\n"
+        if stats:
+            body += json.dumps(stats, separators=(",", ":")) + "\n"
         with open(path + ".tmp", "w", encoding="utf-8") as fh:
-            fh.write(f"{time.time() if now is None else now:.0f}\n")
+            fh.write(body)
         os.replace(path + ".tmp", path)
-    except OSError:
+    except (OSError, TypeError, ValueError):
         pass
+
+
+def _read(path: str) -> Optional[Dict[str, Any]]:
+    """{at, and the numbers the beat carries}, or None (no file, or not a beat)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        out: Dict[str, Any] = {"at": float(lines[0].strip())}
+    except (OSError, ValueError, IndexError):
+        return None
+    if len(lines) > 1:
+        try:
+            extra = json.loads(lines[1])
+        except ValueError:
+            extra = None
+        if isinstance(extra, dict):
+            out.update({k: v for k, v in extra.items() if k != "at"})
+    return out
 
 
 def clear(name: str) -> None:
@@ -58,11 +89,37 @@ def ages(now: Optional[float] = None) -> Dict[str, Optional[float]]:
     now = time.time() if now is None else now
     out: Dict[str, Optional[float]] = {}
     for name in LIMITS:
-        try:
-            with open(_path(name), encoding="utf-8") as fh:
-                out[name] = max(0.0, now - float(fh.read().strip()))
-        except (OSError, ValueError):
-            out[name] = None
+        got = _read(_path(name))
+        out[name] = None if got is None else max(0.0, now - got["at"])
+    return out
+
+
+def processes(now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+    """0216: every beat in the folder, {name: {age, rss_mb, hwm_mb, cpu_s}} (the numbers its process wrote; only `age`
+    for a beat without): the loops' and each API process's ("api-<pid>"). An API process's beat older than API_GONE
+    is removed, not listed."""
+    now = time.time() if now is None else now
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        files = sorted(os.listdir(folder()))
+    except OSError:
+        return out
+    for file in files:
+        if not file.startswith("heartbeat-") or file.endswith(".tmp"):
+            continue
+        name = file[len("heartbeat-"):]
+        path = os.path.join(folder(), file)
+        got = _read(path)
+        if got is None:
+            continue
+        age = max(0.0, now - got.pop("at"))
+        if name.startswith("api-") and age > API_GONE:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            continue
+        out[name] = {"age": age, **got}
     return out
 
 

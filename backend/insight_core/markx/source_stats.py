@@ -1035,6 +1035,7 @@ def run_job(db_url: str) -> Dict[str, Any]:
         out = {"ok": False, "error": str(exc)[:500]}
     out["seconds"] = round(time.monotonic() - t0, 2)
     out["peak_mb"] = peak.mb()   # 0215: its own (ru_maxrss carried the scheduler's across the spawn)
+    out["cpu_s"] = peak.cpu_s()  # 0216: its CPU seconds (its own process; GET /metrics)
     with database.transaction(db_url) as cur:
         prev = job_state(cur)
         state = dict(prev, last=out)

@@ -440,14 +440,34 @@ def _json(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
+# 0216 (migration 0151): every run's end counted where it is recorded (Jobs._finish, Runner._reap): runs that ended
+# well and failed runs (as `failures` counts them), the last success's time, and the last RECENT runs in brief
+# (newest first). GET /metrics reads them; nothing else is kept.
+_COUNTED = """runs_ok = runs_ok + CASE WHEN %(ok)s THEN 1 ELSE 0 END,
+              runs_failed = runs_failed + CASE WHEN %(failed)s THEN 1 ELSE 0 END,
+              ok_at = CASE WHEN %(ok)s THEN now() ELSE ok_at END,
+              recent = jsonb_path_query_array(jsonb_build_array(jsonb_build_object('at', now()) || %(entry)s::jsonb)
+                                              || recent, %(ring)s::jsonpath)"""
+RECENT = 10
+BRIEF = ("ok", "seconds", "peak_mb", "cpu_s", "stage")
+
+
+def _counted(last: Dict[str, Any], failed: bool) -> Dict[str, Any]:
+    """`_COUNTED`'s parameters for a run that ended with `last`."""
+    return {"ok": last.get("ok") is True, "failed": failed, "ring": f"$[0 to {RECENT - 1}]",
+            "entry": _json({k: last[k] for k in BRIEF if last.get(k) is not None})}
+
+
 class Jobs:
     """The two jobs on one database, each run in the calling process (the runner calls them in a child process).
     Every state write is a short transaction of its own."""
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT,
-                 entity_budget: Optional[float] = ENTITY_BUDGET, catch_up: float = CATCH_UP_LIMIT) -> None:
+                 entity_budget: Optional[float] = ENTITY_BUDGET, catch_up: float = CATCH_UP_LIMIT,
+                 measure: bool = False) -> None:
         self.db_url, self.clock, self.limit, self.entity_budget = db_url, clock, limit, entity_budget
         self.catch_up = catch_up
+        self.measure = measure   # 0216: a job's own process (`_job_main`): its peak and CPU go with each run's end
 
     def _tx(self):
         from insight_core.db import database
@@ -467,14 +487,18 @@ class Jobs:
     def _finish(self, job: str, last: Dict[str, Any], *, again: bool = False) -> None:
         """The run ended: no stage, the outcome in `last`; `again` wants the job once more (a failed run is retried,
         after its backoff). 0188: a failed run (`ok` false, not skipped for another run's lock) counts one more
-        failure in a row; a run that ended well clears the count."""
+        failure in a row; a run that ended well clears the count. 0216: in a job's own process (`measure`), its peak
+        memory and CPU seconds are recorded with it; and the run is counted (`_COUNTED`)."""
         failed = last.get("ok") is False and not last.get("skipped")
+        if self.measure:
+            last = {**last, "peak_mb": last.get("peak_mb", peak.mb()), "cpu_s": peak.cpu_s()}
         with self._tx() as cur:
             cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
-            cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
-                                  wanted_at = CASE WHEN %s THEN COALESCE(wanted_at, now()) ELSE wanted_at END,
-                                  failures = CASE WHEN %s THEN failures + 1 WHEN %s THEN 0 ELSE failures END
-                            WHERE job = %s""", (_json(last), again, failed, last.get("ok") is True, job))
+            cur.execute(f"""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %(last)s::jsonb,
+                                  wanted_at = CASE WHEN %(again)s THEN COALESCE(wanted_at, now()) ELSE wanted_at END,
+                                  failures = CASE WHEN %(failed)s THEN failures + 1 WHEN %(ok)s THEN 0 ELSE failures END,
+                                  {_COUNTED}
+                            WHERE job = %(job)s""", {"last": _json(last), "again": again, **_counted(last, failed), "job": job})
 
     def last(self, job: str) -> Dict[str, Any]:
         with self._tx() as cur:
@@ -925,7 +949,7 @@ def _job_main(db_url: str, *names: str) -> None:
     setup_logging(debug_mode=False)
     for job in names:
         peak.reset()
-        getattr(Jobs(db_url), job)()
+        getattr(Jobs(db_url, measure=True), job)()
 
 
 class Runner:
@@ -1008,12 +1032,14 @@ class Runner:
                 s.update(wanted_at=row[0], finished_at=row[1], failures=row[2])
             return
         error = f"no word from the run for over {self.hard_limit + STALE_MARGIN:.0f} s"
+        dead = {"ok": False, "error": error, "stage": s["stage"]}
         with database.transaction(self.db_url) as cur:
-            cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
-                                  wanted_at = COALESCE(wanted_at, now()), failures = failures + 1
-                            WHERE job = %s AND stage = %s AND stage_at = %s
+            cur.execute(f"""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %(last)s::jsonb,
+                                  wanted_at = COALESCE(wanted_at, now()), failures = failures + 1, {_COUNTED}
+                            WHERE job = %(job)s AND stage = %(stage)s AND stage_at = %(stage_at)s
                         RETURNING wanted_at, finished_at, failures""",
-                        (_json({"ok": False, "error": error, "stage": s["stage"]}), job, s["stage"], s["stage_at"]))
+                        {"last": _json(dead), **_counted(dead, True), "job": job, "stage": s["stage"],
+                         "stage_at": s["stage_at"]})
             row = cur.fetchone()
         if row:
             log.error("Mark X jobs: the %s run shown in stage %s since %s is dead (%s); wanted again",

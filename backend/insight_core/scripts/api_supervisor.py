@@ -19,6 +19,9 @@ must happen once per container start, not once per API process (issue 0112 Decid
 - **Open files (0124):** it raises its soft open-files limit (65,536, as compose sets) before uvicorn starts, so
   every API process inherits it; and every 5 s it counts each API process's open files: one held at 90% of its limit
   at 3 looks in a row is ended (SIGKILL), and uvicorn starts another in its place.
+- **Each API process's numbers (0216):** every 30 s it writes each API process's resident memory, high-water and CPU
+  seconds (utils/peak.of: /proc/<pid>/status and /stat) as that process's heartbeat ("api-<pid>", utils/heartbeat.py),
+  which GET /metrics and /api/status read. No thread or work in the API processes themselves.
 """
 from __future__ import annotations
 
@@ -47,6 +50,23 @@ OPEN_FILES = 65536         # the soft open-files limit asked for (compose sets t
 GUARD_SHARE = 0.9          # an API process holding this share of its limit ...
 GUARD_LOOKS = 3            # ... at this many looks in a row (GUARD_EVERY apart) is ended: uvicorn starts another
 GUARD_EVERY = 5.0
+BEAT_EVERY = 30.0          # 0216: each API process's numbers written this often (utils/heartbeat.BEAT_SECONDS)
+
+
+def beat_api_processes(pids: Sequence[int]) -> int:
+    """0216: each API process's {rss_mb, hwm_mb, cpu_s} as its heartbeat "api-<pid>". The beats written. Never
+    raises."""
+    from insight_core.utils import heartbeat, peak
+    n = 0
+    for pid in pids:
+        try:
+            stats = peak.of(pid)
+            if stats["rss_mb"] is not None:
+                heartbeat.beat(f"api-{pid}", stats=stats)
+                n += 1
+        except Exception:  # noqa: BLE001 - never stops the API
+            logger.exception("Could not write API process %s's numbers", pid)
+    return n
 
 
 def raise_open_files(get: Optional[Callable[[], tuple]] = None, set_: Optional[Callable[[int, int], None]] = None,
@@ -292,6 +312,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             os.kill(pid, signal.SIGKILL)
     guard = OpenFilesGuard(processes=lambda: api_processes(child.pid), end=end)
     next_guard = [time.monotonic() + GUARD_EVERY]
+    next_beat = [time.monotonic() + GUARD_EVERY]   # 0216: the first once uvicorn's processes are up
 
     def tick() -> None:
         if not supervisor.restart_asked and door.honour() is not None:
@@ -300,6 +321,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not supervisor.restart_asked and time.monotonic() >= next_guard[0]:
             next_guard[0] = time.monotonic() + GUARD_EVERY
             guard.tick()
+        if time.monotonic() >= next_beat[0]:
+            next_beat[0] = time.monotonic() + BEAT_EVERY
+            beat_api_processes(api_processes(child.pid))
     return supervisor.wait(on_tick=tick)
 
 
