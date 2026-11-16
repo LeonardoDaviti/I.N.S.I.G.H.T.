@@ -1517,22 +1517,34 @@ def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> 
     if not post_ids:
         return {}
     from insight_core.markx import tasks
-    posts = tasks.load_posts(cur, post_ids)
     cur.execute("""SELECT post_id::text, span, type, entity_id::text FROM mx_mentions_now
                     WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (guide, list(post_ids)))
     by: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for pid, span, type_, eid in cur.fetchall():
         by[pid].append((fold(span), type_, eid))
+
+    def pairs(es: List[Tuple[str, str, str]]) -> List[Tuple[Tuple[str, str, str], Tuple[str, str, str]]]:
+        return [(x, y) for x, y in itertools.permutations(es, 2)
+                if x[2] != y[2] and x[0] and y[0] and x[1] == y[1] and x[1] not in ("place", "person")]
+    # v10.23 (0218): only the posts with a pair the rule could name have their text read (a full pass's chunk read every
+    # text of every post naming one of its 1,000 seeds: 18.5 s of a server run), and a pair is looked for only when its
+    # Y is the whole of some "(...)" in the text (a span folds to words and spaces, never a bracket)
+    want = {pid: got for pid, es in by.items() if (got := pairs(es))}
+    posts = tasks.load_posts(cur, sorted(want)) if want else {}
     out: Dict[str, Set[Tuple[str, str]]] = {pid: set() for pid in post_ids}
-    for pid, es in by.items():
+    for pid, got in want.items():
         p = posts.get(pid)
         if p is None:
             continue
         text = bracket_fold(p.title + "\n" + p.text)
-        for (sa, ta, ea), (sb, tb, eb) in itertools.permutations(es, 2):
-            if ea != eb and sa and sb and ta == tb and ta not in ("place", "person") and f"{sa} ({sb})" in text:
+        inner = set(_INNER.findall(text)) if "(" in text else ()
+        for (sa, _ta, ea), (sb, _tb, eb) in got:
+            if sb in inner and f"{sa} ({sb})" in text:
                 out[pid].add(pair(ea, eb))
     return out
+
+
+_INNER = re.compile(r"\(([^()]*)\)")   # what a "(...)" holds, no bracket inside
 
 
 def bracket_fold(s: str) -> str:
