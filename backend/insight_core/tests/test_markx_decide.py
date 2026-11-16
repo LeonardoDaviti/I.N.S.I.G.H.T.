@@ -758,6 +758,21 @@ class Job(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect'")
         self.assertEqual(self.cur.fetchone()[0], 2)
 
+    def test_a_connect_pair_whose_first_posts_are_far_apart_is_settled_when_on_counted_in_shadow(self):
+        def put(pid, k, w):
+            v = [0.0] * 1024
+            v[0], v[k] = 1.0, w
+            repo.put_embedding(self.cur, post_id=pid, model=D.MODEL, text_hash="h-" + pid, vector=v, model_sha256="a" * 64)
+        for n in range(2):          # two stories alike as a whole (centroids 0.74) whose first posts are not (0.41)
+            a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
+            put(a, 1 + n, 1.2)
+            put(b, 5, 0.0)
+            self.ix_story(a, b)
+        out = D.run(self.cur, config=D.Config(connect_settle_below=0.55), now=self.now)
+        self.assertEqual((out["tasks_added"].get("connect"), out["tasks_settled"].get("connect")), (None, 1))
+        out = D.run(self.cur, config=D.Config(), now=self.now)   # the default: Shadow, counted and asked
+        self.assertEqual((out["tasks_added"].get("connect"), out["tasks_shadow_settled"].get("connect")), (1, 1))
+
     def test_no_new_connect_question_while_the_backlog_is_full(self):
         for n in range(3):                                   # three alike 2-voice stories: three pairs
             a, b = self.post(24 * n - 60, f"Story {n} first"), self.post(24 * n - 59, f"Story {n} second")
@@ -801,6 +816,9 @@ class Snapshot(unittest.TestCase):
         clear_tables(self.cur, f"{tables}")
         self.addCleanup(clear_tables, self.cur, f"{tables}")
         schemas.load_guides(self.cur)
+        from insight_core.markx import consumers   # 0210: Back in the news is off; these tests use its stage
+        consumers.set_on(self.cur, "back", True)
+        self.addCleanup(consumers.forget)
         self.now = T + 30 * H
         self.posts, self.sources = [], []
         self.addCleanup(self._clean)

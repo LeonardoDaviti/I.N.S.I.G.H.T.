@@ -5,7 +5,7 @@ Runs on the owner's device. It leases Mark X tasks from INSIGHT, asks Haiku thro
 (`claude -p`), and posts the answers back. Standard library only; one file.
 
     markx-worker cycle  --server http://<server>:5173 --token-file ~/.config/insight/markx-token \\
-                        --kinds read,entities --batch 20 --batches 5 --parallel 3
+                        --kinds read,entities --batch 20 --batches 5 --parallel 20
     markx-worker status --server ... --token-file ...
     markx-worker release --server ... --token-file ...      (hands back this worker's leases)
 
@@ -1298,8 +1298,8 @@ def main(argv=None):
     c.add_argument("--lease", type=int, default=None,
                    help="tasks per lease, at most 100 (default --batch); a call still asks --batch / --per-call of them")
     c.add_argument("--batches", type=int, default=5, help="leases per cycle (default 5)")
-    c.add_argument("--parallel", type=int, default=3, help="calls at once (default 3; start at 10 at most and raise "
-                   "it in steps: about 100 at once broke the device's DNS)")
+    c.add_argument("--parallel", type=int, default=20, help="calls at once (default 20, 0210: the owner's runs used 20-40; "
+                   "about 100 at once broke the device's DNS)")
     c.add_argument("--days", type=days_arg, default=None,
                    help="read, entities and embed: the server plans this window first (a number of days, or 'all'), "
                         "whatever the page's reading window (default: the page's)")

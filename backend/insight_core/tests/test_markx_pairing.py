@@ -47,7 +47,9 @@ class Table(unittest.TestCase):
         self.assertEqual((same.story_cosine, same.story_window, same.types), (OLD_C.STORY_MIN, OLD_C.STORY_DAYS,
                                                                             OLD_C.SPECIFIC_TYPES))
         old = OLD_D.Config()
-        self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k != "roundup_first"}, asdict(old))   # 0205: new
+        self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k not in ("roundup_first", "connect_settle_below",
+                                                                         "connect_shadow_below")},
+                         asdict(old))   # 0205, 0210: new
         self.assertEqual((same.min_words, same.document_window), (old.min_words, timedelta(days=old.document_days)))
         self.assertEqual((conn.story_cosine, conn.story_window, conn.min_voices),
                          (old.connect_lo, timedelta(days=old.connect_days), old.connect_voices))
@@ -104,7 +106,8 @@ CONFIGS = (D.Config(), D.Config.prototype(), D.Config(cand_lo=0.7, min_words=15,
 
 
 def _old(config: D.Config) -> OLD_D.Config:
-    return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k != "roundup_first"})   # 0205's rule: new
+    new = ("roundup_first", "connect_settle_below", "connect_shadow_below")   # 0205's rule, 0210's connect gate: new
+    return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k not in new})
 
 
 class Planning(unittest.TestCase):
@@ -323,7 +326,7 @@ class DecisionRun(_World):
             return out
         for config in (D.Config(), D.Config(document_merges=True, connect_lo=0.5, story_days=5)):
             old_cfg = _old(config)
-            config = replace(config, roundup_first=False)   # 0205's rule is new: the rest is the same
+            config = replace(config, roundup_first=False, connect_settle_below=None)   # 0205, 0210: new; the rest same
             self.cur.execute("SAVEPOINT pairing_run")
             # 0203 dropped Later developments: the legacy copy's later stage is a no-op here
             with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):
