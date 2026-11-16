@@ -1854,6 +1854,23 @@ async def get_db_statements():
     return await asyncio.to_thread(services().operations.top_statements)
 
 
+def _metrics_page() -> str:
+    from insight_core.services import metrics
+    from insight_core.utils import peak
+    return metrics.exposition(services().db_url, own=(os.getpid(), peak.own()))
+
+
+@app.get("/metrics", include_in_schema=False)
+async def get_metrics():
+    """Issue 0216: Prometheus' scrape (text format, services/metrics.py): each process's own memory and CPU, each job's
+    runs, the decision run, the rebuild, the worker's queue, Postgres' statement time, the newest ingestion run. Read
+    from the heartbeats and the database only. Outside /api: the frontend's nginx never proxies it, so only the compose
+    network and this host reach it (DEPLOYMENT.md, "Monitoring")."""
+    from insight_core.services.metrics import CONTENT_TYPE
+    body = await asyncio.to_thread(_metrics_page)
+    return Response(content=body, media_type=CONTENT_TYPE)
+
+
 @app.get("/api/operations/jobs/{job_id}")
 @error_detail("load the job")
 def get_operation_job(job_id: str):

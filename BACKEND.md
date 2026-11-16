@@ -633,6 +633,7 @@ the result when the job finishes.
 | GET | `/api/operations/overview` | Recent jobs, source health, alerts | |
 | GET | `/api/operations/jobs/{job_id}` | One job with its result | |
 | GET | `/api/operations/background` | What runs on its own (issue 0062): stories, the search index, link reading, each with its progress. Read only | |
+| GET | `/metrics` | Prometheus' scrape (issue 0216, `services/metrics.py`, text format 0.0.4): each process's own memory and CPU (the scheduler's parent and each API process, from their heartbeats), each job's runs (`mx_jobs`: last duration, own peak and CPU, ok/failed counters, seconds since its last success, running stage, work waiting), the decision run's stages and hold, Mark IX's rebuild progress, the worker's queue and answers, held tasks, kept pages' age, Postgres' statement time (top 5 by id), the newest ingestion run. Outside `/api`: nginx never proxies it (DEPLOYMENT.md, "Monitoring"). A few ms | |
 | GET | `/api/operations/scheduler` | Scheduler settings and state | |
 | PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, ingestTickMinutes?}` (tick >= 15) |
 | GET | `/api/credentials` | Every connection, without its values | |

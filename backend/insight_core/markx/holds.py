@@ -197,15 +197,24 @@ def price_per_task(cur: Cursor, kinds: Sequence[str]) -> Dict[str, Optional[floa
     return out
 
 
+def held(cur: Cursor) -> List[Dict[str, Any]]:
+    """The holds with tasks still to answer: [{key, kind, state, open, leased}] (the partial index of held tasks; no
+    price). `view` and GET /metrics (0216) read them."""
+    cur.execute("""SELECT t.hold, t.kind, COALESCE(h.state, 'low'), t.n_open, t.n_leased
+                     FROM (SELECT hold, kind, count(*) FILTER (WHERE status = 'open') AS n_open,
+                                  count(*) FILTER (WHERE status = 'leased') AS n_leased
+                             FROM mx_tasks WHERE hold IS NOT NULL AND status IN ('open', 'leased') GROUP BY 1, 2) t
+                     LEFT JOIN mx_holds h ON h.key = t.hold""")
+    return [{"key": key, "kind": kind, "state": state, "open": int(n_open), "leased": int(n_leased)}
+            for key, kind, state, n_open, n_leased in cur.fetchall()]
+
+
 def view(cur: Cursor) -> Dict[str, Any]:
     """/markx's holds: {per_day, holds: [{key, kind, day, state, open, leased, est_usd, reason}]}: the holds with tasks
     still to answer, newest day first."""
-    cur.execute("""SELECT hold, kind, count(*) FILTER (WHERE status = 'open'), count(*) FILTER (WHERE status = 'leased')
-                     FROM mx_tasks WHERE hold IS NOT NULL AND status IN ('open', 'leased') GROUP BY 1, 2""")
-    rows = cur.fetchall()
-    keys = [r[0] for r in rows]
-    cur.execute("SELECT key, state FROM mx_holds WHERE key = ANY(%s)", (keys,))
-    states = dict(cur.fetchall())
+    held_now = held(cur)
+    rows = [(h["key"], h["kind"], h["open"], h["leased"]) for h in held_now]
+    states = {h["key"]: h["state"] for h in held_now}
     price = price_per_task(cur, sorted({r[1] for r in rows}))
     limit = per_day(cur)
     holds: List[Dict[str, Any]] = []
