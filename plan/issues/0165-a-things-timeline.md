@@ -205,7 +205,7 @@ on a scratch copy inflated to 509k rows (64k current) 9–13 ms → 0.15 ms a pa
   the held-out answers are still 76.6–78.1% right (dev 82.9–86.6%); errors cross groups (a launch with its scores read
   as `benchmark`, security research done with the thing read as `incident`).
 - Not missing input: stop-v2 (`plan/research/0165-timeline/stop-v2-draft.md`) showed each post's own reading (its
-  English headline, 381 of the 130 test items' lines had one) and ordered the questions; on the dev sets it scored
+  English headline: 381 lines across the 130 test items had one) and ordered the questions; on the dev sets it scored
   77.6% and 70.3% (v1: 85.9% and 69.3%) and its about-precision fell on one set (87.6% against 93.2%). Not shipped.
 - Haiku's own noise is the size of the gap: two runs of the same guide agree on 75–81% of the words, while the
   labellers agree with each other on 95–97%. A story holds several happenings; Haiku picks one inconsistently.
