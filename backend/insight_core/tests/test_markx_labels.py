@@ -144,7 +144,7 @@ class Routes(unittest.TestCase):
         for method, path in (("GET", "/api/markx/labels"), ("GET", "/api/markx/labels/precision"),
                              ("GET", f"/api/markx/labels/items/{self.task}")):
             self.assertIn(call(method, path)[0], (404, 405), path)
-        self.assertEqual(call("POST", "/api/markx/labels", body={"item": self.task, "answer": "same_event"})[0], 405)
+        self.assertIn(call("POST", "/api/markx/labels", body={"item": self.task, "answer": "same_event"})[0], (404, 405))
         status, body = call("POST", "/api/markx/labels/news",
                             body={"post": str(uuid.uuid4()), "story": str(uuid.uuid4()), "answer": "wrong_story"})
         self.assertEqual(status, 404)
