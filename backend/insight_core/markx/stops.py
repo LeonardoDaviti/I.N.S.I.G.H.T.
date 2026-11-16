@@ -118,16 +118,22 @@ def parse(answer: Optional[Mapping[str, Any]], task: str) -> Optional[Stop]:
 
 # ---- the stored answers, the planner ---------------------------------------------------------------------------
 
-def of(cur: Any, book: Any, root: str, story_ids: Iterable[str]) -> Dict[str, Stop]:
-    """{story: the newest valid answer about this thing (any name of its cluster) in it}."""
+def of(cur: Any, book: Any, root: str, story_ids: Optional[Iterable[str]]) -> Dict[str, Stop]:
+    """{story: the newest valid answer about this thing (any name of its cluster) in it}; `story_ids` None: every
+    story it was asked of (the b index)."""
     from insight_core.markx import repo
-    sids = sorted({str(s) for s in story_ids if s})
-    if not sids:
-        return {}
     members = sorted(book.cluster(root))
-    cur.execute("""SELECT id::text, a::text FROM mx_tasks
-                    WHERE kind = %s AND status = 'answered' AND a = ANY(%s::uuid[]) AND b = ANY(%s::uuid[])
-                    ORDER BY created_at""", (KIND, sids, members))
+    if story_ids is None:
+        cur.execute("""SELECT id::text, a::text FROM mx_tasks
+                        WHERE kind = %s AND status = 'answered' AND b = ANY(%s::uuid[]) ORDER BY created_at""",
+                    (KIND, members))
+    else:
+        sids = sorted({str(s) for s in story_ids if s})
+        if not sids:
+            return {}
+        cur.execute("""SELECT id::text, a::text FROM mx_tasks
+                        WHERE kind = %s AND status = 'answered' AND a = ANY(%s::uuid[]) AND b = ANY(%s::uuid[])
+                        ORDER BY created_at""", (KIND, sids, members))
     rows = cur.fetchall()
     calls = repo.valid_calls(cur, [t for t, _ in rows])
     out: Dict[str, Stop] = {}
