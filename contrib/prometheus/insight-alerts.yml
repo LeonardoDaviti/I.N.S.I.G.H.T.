@@ -1,0 +1,54 @@
+# INSIGHT's alert rules (issue 0216), on the numbers of its GET /metrics (backend/insight_core/services/metrics.py).
+# Load them in Prometheus (prometheus.yml: rule_files: ["insight-alerts.yml"]); they show in Prometheus' Alerts page and
+# in Grafana's alert list (data-source-managed rules), and go to an Alertmanager if you run one. DEPLOYMENT.md,
+# "Monitoring".
+groups:
+  - name: insight
+    rules:
+      - alert: InsightMetricsDown
+        expr: up{job="insight"} == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "INSIGHT's /metrics has not answered Prometheus for 5 minutes (the API down, or the network)."
+
+      - alert: InsightDecisionRunOld
+        # the newest decision run that ended well is over 45 minutes old (runs come every 15 minutes while work
+        # arrives, hourly at least); or none ever ended well while work has waited 45 minutes. 2026-11-14: held 47 h.
+        expr: |
+          insight_job_since_success_seconds{insight_job="decide"} > 2700
+          or (insight_job_runs_total{insight_job="decide", result="ok"} == 0
+              and on(insight_job) insight_job_wanted_seconds{insight_job="decide"} > 2700)
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "No Mark X decision run has ended well for {{ $value | humanizeDuration }}."
+          description: "See insight_decision_held (Mark IX holds it), insight_job_failures_in_a_row{insight_job=\"decide\"} and the /markx page."
+
+      - alert: InsightJobFailing
+        expr: insight_job_failures_in_a_row >= 3
+        labels: {severity: warning}
+        annotations:
+          summary: "INSIGHT's {{ $labels.insight_job }} job has failed {{ $value }} times in a row."
+          description: "Its last error: GET /api/status (health.checks.markx.jobs) or the /markx page. It is retried after its backoff (up to 6 h)."
+
+      - alert: InsightRebuildLong
+        expr: insight_rebuild_running_seconds > 7200
+        labels: {severity: warning}
+        annotations:
+          summary: "Mark IX's rule-change rebuild has run for {{ $value | humanizeDuration }} (over 2 h)."
+
+      - alert: InsightProcessMemoryHigh
+        # the threshold is INSIGHT_ALERT_RSS_MB in INSIGHT's .env (default 3072), sent with the page
+        expr: insight_process_resident_bytes > on() group_left() insight_alert_process_resident_bytes
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "INSIGHT's {{ $labels.process }}{{ with $labels.pid }} {{ . }}{{ end }} holds {{ $value | humanize1024 }}B resident."
+
+      - alert: InsightSchedulerStopped
+        expr: insight_heartbeat_age_seconds{loop="scheduler"} > 180
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "insight-ingestion's scheduler has not beaten for {{ $value | humanizeDuration }}."

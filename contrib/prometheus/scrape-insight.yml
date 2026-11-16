@@ -1,0 +1,10 @@
+# INSIGHT's scrape (issue 0216): add this job under `scrape_configs:` in prometheus.yml. Prometheus' container must be
+# on INSIGHT's compose network (DEPLOYMENT.md, "Monitoring"): insight-api answers there on port 8000. /metrics is not
+# proxied by the frontend, so it is not reachable from outside the machine.
+scrape_configs:
+  - job_name: insight
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["insight-api:8000"]

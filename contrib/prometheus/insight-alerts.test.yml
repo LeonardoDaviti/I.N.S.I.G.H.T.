@@ -1,0 +1,59 @@
+# promtool's unit tests of insight-alerts.yml (issue 0216):
+#   docker run --rm --entrypoint promtool -v "$PWD/contrib/prometheus:/r:ro" prom/prometheus test rules /r/insight-alerts.test.yml
+rule_files: [insight-alerts.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'insight_job_since_success_seconds{insight_job="decide"}'
+        values: '600+60x60'          # 10 min, then older by a minute a minute (held)
+      - series: 'insight_job_failures_in_a_row{insight_job="labels"}'
+        values: '0 1 2 3 3 3'
+      - series: 'insight_job_failures_in_a_row{insight_job="news"}'
+        values: '0 0 0 0 0 0'
+      - series: 'insight_rebuild_running_seconds'
+        values: '7000 7100 7200 7300'
+      - series: 'insight_process_resident_bytes{process="scheduler"}'
+        values: '1e9x5 4e9x20'
+      - series: 'insight_process_resident_bytes{process="api",pid="7"}'
+        values: '2e8x25'
+      - series: 'insight_alert_process_resident_bytes'
+        values: '3221225472x25'
+      - series: 'insight_heartbeat_age_seconds{loop="scheduler"}'
+        values: '30x10'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: InsightDecisionRunOld
+        exp_alerts: []                 # 40 min: not yet
+      - eval_time: 45m
+        alertname: InsightDecisionRunOld
+        exp_alerts:
+          - exp_labels: {severity: warning, insight_job: decide}
+            exp_annotations:
+              summary: "No Mark X decision run has ended well for 55m 0s."
+              description: "See insight_decision_held (Mark IX holds it), insight_job_failures_in_a_row{insight_job=\"decide\"} and the /markx page."
+      - eval_time: 3m
+        alertname: InsightJobFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, insight_job: labels}
+            exp_annotations:
+              summary: "INSIGHT's labels job has failed 3 times in a row."
+              description: "Its last error: GET /api/status (health.checks.markx.jobs) or the /markx page. It is retried after its backoff (up to 6 h)."
+      - eval_time: 1m
+        alertname: InsightRebuildLong
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: InsightRebuildLong
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Mark IX's rule-change rebuild has run for 2h 1m 40s (over 2 h)."
+      - eval_time: 20m
+        alertname: InsightProcessMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, process: scheduler}
+            exp_annotations:
+              summary: "INSIGHT's scheduler holds 3.725GiB resident."
+      - eval_time: 5m
+        alertname: InsightSchedulerStopped
+        exp_alerts: []

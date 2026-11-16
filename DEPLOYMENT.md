@@ -521,6 +521,79 @@ and read, and its share of the database's statement time. Read only.
   pg_stat_statements_reset()"`.
 - Its cost: a few % of statement time at most, ~10 MB of shared memory.
 
+### Monitoring: Prometheus and Grafana (issue 0216)
+
+cAdvisor shows each container's total only: insight-ingestion's is the scheduler, every job's child process and their
+page cache together. `GET /metrics` on the API tells them apart, in Prometheus' text format:
+
+- **each process's own memory and CPU**: `insight_process_resident_bytes`, `..._peak_resident_bytes` (VmHWM) and
+  `insight_process_cpu_seconds_total`, for the scheduler's parent (`process="scheduler"`, from its heartbeat, written
+  every 30 s) and each API process (`process="api", pid`, written by the API's supervisor every 30 s);
+- **each job** (`insight_job` label: decide, candidates, labels, news, tracks, unread, stories, official, source_stats,
+  ...): its last run's duration, own peak memory and CPU seconds, ok/failed run counters, failures in a row, seconds
+  since its last success, whether it runs now and in which stage, how long work has waited for it; the last decision
+  run's seconds per stage; whether Mark IX holds the decision run; the rebuild's progress (done/total) and age;
+- **the worker**: open and leased tasks by kind, calls recorded (a counter), answers in the last hour, tasks held by
+  the re-ask guard; the kept pages' age; Postgres' statement time (all, and the top 5 statement ids: their text is in
+  `GET /api/operations/db-statements`); the newest ingestion run's seconds, posts fetched and saved.
+
+It reads the heartbeat files and the database only (a few indexed statements; measured on the server-sized copy:
+~6 ms a scrape, 7 ms over HTTP; the API process +3 MB at its first scrape, then flat over 200 scrapes), never the
+ingestion processes. It is **not under `/api`**, so the frontend's nginx never proxies it: only this machine
+(`curl -s localhost:8000/metrics`) and containers on INSIGHT's compose network reach it, as for every other route
+of the API (it has no login).
+
+The files are in `contrib/`: `contrib/prometheus/scrape-insight.yml` (the scrape job), `insight-alerts.yml` (the
+alert rules) with its tests (`insight-alerts.test.yml`), and `contrib/grafana/insight.json` (the dashboard).
+
+**On the server, once** (the monitoring containers `monitoring_prometheus` and `monitoring_grafana` run beside
+INSIGHT):
+
+1. **Put Prometheus on INSIGHT's network.** Its name is the compose project's (the folder's) plus `_insight-network`:
+   `docker network ls | grep insight-network`. Then
+   `docker network connect <that network> monitoring_prometheus`. That lasts until the Prometheus container is
+   created again; to keep it, add the network to the monitoring stack's compose file:
+   ```yaml
+   services:
+     prometheus:
+       networks: [default, insight]
+   networks:
+     insight:
+       external: true
+       name: <that network>          # e.g. insight_insight-network
+   ```
+   Check: `docker exec monitoring_prometheus wget -qO- http://insight-api:8000/metrics | head`.
+2. **Add the scrape job** to the monitoring stack's `prometheus.yml`, under `scrape_configs:` (as in
+   `contrib/prometheus/scrape-insight.yml`):
+   ```yaml
+     - job_name: insight
+       scrape_interval: 30s
+       metrics_path: /metrics
+       static_configs:
+         - targets: ["insight-api:8000"]
+   ```
+3. **Add the alert rules**: copy `contrib/prometheus/insight-alerts.yml` next to `prometheus.yml` (in the folder
+   Prometheus' container mounts) and list it: `rule_files: ["insight-alerts.yml"]` (the path as Prometheus' container
+   sees it). Check them first:
+   `docker run --rm --entrypoint promtool -v "$PWD/contrib/prometheus:/r:ro" prom/prometheus test rules /r/insight-alerts.test.yml`.
+4. **Reload Prometheus**: `docker restart monitoring_prometheus` (or `curl -X POST localhost:9090/-/reload` when it
+   runs with `--web.enable-lifecycle`). Status → Targets shows `insight` up; Alerts lists the six INSIGHT rules.
+5. **Import the dashboard** in Grafana: Dashboards → New → Import → upload `contrib/grafana/insight.json`, pick the
+   Prometheus data source when asked → Import. (Its containers panel reads cAdvisor's
+   `container_memory_working_set_bytes{name=~"insight-.*"}` from the same Prometheus.)
+
+The alerts (`contrib/prometheus/insight-alerts.yml`): no decision run ended well for 45 minutes; a job failing 3
+times in a row; Mark IX's rebuild running over 2 hours; a process's resident memory over `INSIGHT_ALERT_RSS_MB`
+(INSIGHT's `.env`, default 3072, sent with the page as `insight_alert_process_resident_bytes`; `./update` applies a
+change) for 10 minutes; the scheduler's heartbeat over 3 minutes old; the scrape failing for 5 minutes. They show in
+Prometheus' Alerts page and in Grafana's alert list; they notify only through an Alertmanager, if the monitoring stack
+runs one.
+
+**The counters start at the update that brings them** (migration 0151: `mx_jobs.runs_ok`, `runs_failed`, `ok_at`,
+`recent`): `insight_job_runs_total` counts from then, and `insight_job_since_success_seconds` starts from each job's
+last run if it ended well. The last 10 runs of each job (time, ok, seconds, peak, CPU) are also in `mx_jobs.recent`.
+`GET /api/status` shows the same per-process numbers in `health.checks.processes`.
+
 ## When the API stops answering (issue 0117)
 Docker restarts nothing for being unhealthy: `restart: unless-stopped` acts only when the process exits. On 5 Nov the API answered nothing for over 20 minutes until the owner looked.
 
