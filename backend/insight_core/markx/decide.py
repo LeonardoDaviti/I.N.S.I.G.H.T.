@@ -1361,6 +1361,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
     world, ask, out, counts = _reading(cur, memo, now, config)
+    world.candidates = []   # v10.23 (0218): the first pass's input only (~450k pairs at the server's size), let go
     counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     mark("write")
     ids, written = persist(cur, run_id, out, world, now)
@@ -1416,6 +1417,14 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
     incremental.release(memo)           # 0183: the texts and readings the stages above read, let go
+    # v10.23 (0218): what the run's end reads of the reading, taken now; the reading itself (the world's Mark IX
+    # stories, the outcome, its connections) let go before the entity stages (it was held to the run's end, under the
+    # entity book). The kept state (memo) stays: its save is the run's last write.
+    want = wanted(out, world.posts)
+    closure = (incremental.closure(memo, want, world.stories) if kind == "incremental" else
+               {"closure": len(want), "stories": len(want)})
+    read = {"stories": len(ids), "window_since": world.since.isoformat(), "posts": len(world.posts)}
+    del world, out, conns, ids, news_keys
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage
     # v10.17.2 (0204): each stage reads the book it needs: the entities stage the whole book (read in the stage), the
@@ -1453,23 +1462,21 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             cur, now, waiting_old=sum(ask.waiting_old.values()),
             candidates_left=mx_candidates.unfound_count(cur, since_next) if since_next else 0, held=held),
             "old_added": dict(ask.old_added), "old_waiting": dict(ask.waiting_old)}
-    want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
                      **({"why_full": why_full} if why_full else {}), **({"forced": True} if full else {}),
                      "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
                      "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
                      "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),
                      **{k: memo.report.get(k) for k in ("texts_loaded", "inputs_rendered", "inputs_kept")},
-                     **(incremental.closure(memo, want, world.stories) if kind == "incremental" else
-                        {"closure": len(want), "stories": len(want)})}
+                     **closure}
     counts["run"]["state"] = incremental.save(cur, memo, run_id, want)   # 0169: what the next run starts from
     counts["run"]["seconds"] = round(_time.monotonic() - started, 3)
-    counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
+    counts.update({"stories": read["stories"], "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "tasks_settled": dict(ask.settled),   # 0210: settled by a cheap signal, never asked
                    "tasks_shadow_settled": dict(ask.shadow_settled),   # 0210: a Shadow gate would settle them
                    "isolation": isolation,
-                   "window_since": world.since.isoformat(), "posts": len(world.posts)})
+                   "window_since": read["window_since"], "posts": read["posts"]})
     repo.finish_run(cur, run_id, counts=counts)
     return {"run": str(run_id), **counts}
 
