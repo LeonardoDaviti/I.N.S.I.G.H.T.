@@ -758,7 +758,7 @@ class Job(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'connect'")
         self.assertEqual(self.cur.fetchone()[0], 2)
 
-    def test_a_connect_pair_whose_first_posts_are_far_apart_is_settled_never_asked(self):
+    def test_a_connect_pair_whose_first_posts_are_far_apart_is_settled_when_on_counted_in_shadow(self):
         def put(pid, k, w):
             v = [0.0] * 1024
             v[0], v[k] = 1.0, w
@@ -768,10 +768,10 @@ class Job(unittest.TestCase):
             put(a, 1 + n, 1.2)
             put(b, 5, 0.0)
             self.ix_story(a, b)
-        out = D.run(self.cur, config=D.Config(), now=self.now)
+        out = D.run(self.cur, config=D.Config(connect_settle_below=0.55), now=self.now)
         self.assertEqual((out["tasks_added"].get("connect"), out["tasks_settled"].get("connect")), (None, 1))
-        out = D.run(self.cur, config=D.Config(connect_settle_below=None), now=self.now)   # off: asked
-        self.assertEqual(out["tasks_added"].get("connect"), 1)
+        out = D.run(self.cur, config=D.Config(), now=self.now)   # the default: Shadow, counted and asked
+        self.assertEqual((out["tasks_added"].get("connect"), out["tasks_shadow_settled"].get("connect")), (1, 1))
 
     def test_no_new_connect_question_while_the_backlog_is_full(self):
         for n in range(3):                                   # three alike 2-voice stories: three pairs

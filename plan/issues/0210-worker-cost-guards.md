@@ -27,7 +27,7 @@ The week 7-14 Nov by kind (the worker's logs, every call line once; answers and 
 | pair | 5,057 | 1.13 | 27,156 | news | kept (gate measured: fails) |
 | perspective | 249 | 0.97 | 582 | perspectives (Shadow) | kept (the owner: used later) |
 | read3 | 1,333 | 0.90 | 5,644 | news | kept |
-| connect | 2,946 | 0.86 | 6,480 | news | kept; **gated** (-78%) |
+| connect | 2,946 | 0.86 | 6,480 | news | kept; gate in Shadow (would settle ~29%) |
 | join | 2,190 | 0.56 | 8,800 | news | kept |
 | merge | 1,198 | 0.54 | 3,438 | news | kept |
 | rename | 1,874 | 0.43 | 7,755 | entities (the review queue) | kept; guarded |
@@ -78,7 +78,7 @@ The guard costs ~0.15 ms a task past the allowance (one key lookup of the post's
 
 With the default the guard saves nothing by itself: the held tasks are still asked, after everything else. What it
 changes is that a re-read of the archive never runs ahead of new work, and that it shows on /markx with its price
-before it is spent, where the owner can stop it. The second row's saving is the connect gate and back.
+before it is spent, where the owner can stop it. The second row's saving was the connect gate at 0.55 and back; with the gate in Shadow only back's $1.14 a day remains.
 
 ## 2. Confidence gates, measured blind
 
@@ -88,16 +88,28 @@ the held-out half. Only gates that pass ship.
 
 | kind | cheap decision | rows (real answers) | settles (test) | agrees (test) | Wilson low | ships |
 |---|---|---|---|---|---|---|
-| **connect** | `different` when the two first posts' stored vectors are below cosine 0.55 | 600 (prep_mxreal, the server's 11-05) | 237/303 = **78.2%** | 235/237 = **99.2%** (dev 236/239) | **97.0%** | **yes** |
+| connect | `different` when the two first posts' stored vectors are below cosine 0.55 | 600 (prep_mxreal, the server's 11-05) | 237/303 = 78.2% | 235/237 = 99.2% (dev 236/239) | 97.0% | no: loses 5/31 real connections; 0.45 in Shadow (below) |
 | pair | `different` below cosine 0.50 (dev's best) | 1,275 (prep_mxreal) | 55/622 = 8.8% | 48/55 = 87.3% | 76.0% | no |
 | entities, later windows | no new entity when every name-like word of the window's new text was already in the text before | 1,606 windows of 531 long posts (the server's answers, read-only GETs of the post panel) | 23/756 = 3.0% | 20/23 = 87.0% | 67.9% | no |
 
-- **connect** (`decide.connections`, `Config.connect_settle_below = 0.55`; `pairing.post_cosines`): a pair below the
-  bar is never asked (`Ask.answer(add=False)`); an answer already stored is read as before; the run's counts say how
-  many were settled (`tasks_settled`). Of the 31 held-out and dev connect answers that were not `different`, 5 were
-  below the bar (lost connections); the rows it settles are 98.7-99.2% right. Saving on the week's volume: **~2,300
-  connect questions and ~$0.67 a day** (78% of connect's $0.86); the server's connect backlog (39,804 pairs waiting a
-  run, capped 100 a run) shrinks by the same share.
+- **connect: in Shadow, not acting** (the coordinator, 2026-11-16: a gate is judged on both sides; a lost real
+  connection is a lost Stalker edge, so at most ~3% of real connections lost, on 60+ of them). On the 600 rows (31
+  real connections, every local one: prep_lab has none):
+
+  | cosine below | + no shared entity or link | settles | agrees | real connections lost |
+  |---|---|---|---|---|
+  | 0.55 | | 476 (79%) | 471 | 5/31 (16%) |
+  | 0.55 | yes | 444 (74%) | 440 | 4/31 |
+  | 0.50 | | 342 (57%) | 339 | 3/31 |
+  | 0.50 | yes | 326 (54%) | 324 | 2/31 |
+  | **0.45** | | **173 (29%)** | **173** | **0/31** |
+  | 0.40 | | 59 (10%) | 59 | 0/31 |
+
+  0.45 loses none of 31, but 31 positives cannot show <= 3% (0/31's Wilson upper bound is ~11%). So it ships in
+  Shadow: `Config.connect_shadow_below = 0.45` counts the pairs it would settle (`tasks_shadow_settled` in the run's
+  counts) and asks them anyway; `connect_settle_below` (the acting bar) is None. Switch it on once 60+ server
+  connections below 0.45 are counted (each run's stored answers and vectors give them). Saving if switched on: ~29% of
+  connect, ~850 questions and ~$0.25 a day on the week's volume.
 - **pair** fails at every bar (agreement 66-92%): Haiku often says `mention` or `reaction` on posts the vectors call
   far apart.
 - **entities' later windows** fail: Haiku names things in a window that the text before already wrote but its earlier
@@ -166,7 +178,7 @@ cap change re-reads the archive by design; it is now held past 2,000 a day and s
 `test_markx_holds` (8), `test_markx_consumers` (5), `test_markx_decide` (+1: a far connect pair settled, asked with the
 gate off), `test_markx_pairing` (the legacy comparison runs with the gate off), `test_markx_back`, `test_markx_jobs`
 (the features each test turns on), `scripts/tests/test_markx_worker.py` (89, OK), the frontend `markx.test.tsx` (17,
-OK; typecheck and lint clean). The full backend suite (`JOBS=6`, 6 shards, 3,579 tests): 2 failures, both tests that
-expected the back planner to run on a lease (`test_markx_api` PlannersRest, `test_markx_scale` LeaseDuringARun); the
-first now uses another kind, the second turns back on; those modules and `test_markx_consumers` (+1: a lease never
-runs an off kind's planner) re-run: 74 tests, OK.
+OK; typecheck and lint clean). The full backend suite (`JOBS=6`): the first run failed `test_markx_api` PlannersRest and `test_markx_scale`
+LeaseDuringARun (they expected back's planner to run; one now uses another kind, the other turns back on) and
+`test_markx_storage` (it counts the mx_ tables: + mx_holds); after those fixes and the connect gate's move to Shadow:
+**6 shards, 185 modules, 3,580 tests: OK**.

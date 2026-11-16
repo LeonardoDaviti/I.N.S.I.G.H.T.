@@ -83,9 +83,11 @@ class Config:
     connect_new: int = 100          # ... and at most this many new connect tasks a run, the newest pairs first ...
     connect_open: int = 100         # ... and none while this many connect tasks wait (open or leased)
     # 0210: a connect pair whose two first posts' stored vectors are below this cosine is settled as unconnected, never
-    # asked (Haiku said `different` on 235 of 237 such held-out server pairs, Wilson 97.0%; it settles ~78% of them).
-    # An answer already stored is read as before. None: every pair is asked.
-    connect_settle_below: Optional[float] = 0.55
+    # asked; an answer already stored is read as before. None (the default): every pair is asked. In Shadow until it is
+    # measured on both sides: at 0.55 it was right on 235/237 held-out pairs but lost 5 of 31 real connections; at
+    # `connect_shadow_below` (0.45) it lost 0 of 31 and settles ~29%, too few positives to show <= 3% lost (60+ needed).
+    connect_settle_below: Optional[float] = None
+    connect_shadow_below: Optional[float] = 0.45    # counted (tasks_shadow_settled), asked anyway
     relate_open: int = 100          # 0131: no new relate question while this many wait (open or leased)
     back_open: int = 50             # 0136: no new back question while this many wait (open or leased)
     check_threads: bool = True      # F1 also checks a member Mark IX joined by `thread` (the S5 review's W1)
@@ -637,6 +639,7 @@ class Ask:
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
         self.settled: Counter = Counter()     # 0210: questions a cheap signal settled, never asked
+        self.shadow_settled: Counter = Counter()   # 0210: questions a Shadow gate would settle (asked anyway)
         self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind (0112 D8)
 
     def answer(self, kind: str, text: Any, *, a: Any = None, b: Any = None, day: Any = None,
@@ -1180,16 +1183,21 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
         pairs.append((x0, y0, cos))
     pairs.sort(key=lambda t: (-first[t[1]].timestamp(), -first[t[0]].timestamp(), -t[2], t[0], t[1]))
     # 0210: the pairs whose first posts' vectors are far apart are settled as unconnected (read, never asked)
-    far = set()
-    if config.connect_settle_below is not None and pairs:
+    far, shadow = set(), set()
+    if (config.connect_settle_below is not None or config.connect_shadow_below is not None) and pairs:
         cos = pairing.post_cosines(cur, [(groups[x0][0], groups[y0][0]) for x0, y0, _ in pairs])
-        far = {k for k, c in cos.items() if c < config.connect_settle_below}
+        if config.connect_settle_below is not None:
+            far = {k for k, c in cos.items() if c < config.connect_settle_below}
+        if config.connect_shadow_below is not None:
+            shadow = {k for k, c in cos.items() if c < config.connect_shadow_below}
     for x0, y0, _cos in pairs:
         text = incremental.rendered(world.memo, "connect", (*groups[x0], "|", *groups[y0]), lambda: tasks.connect_input(
             tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])),
             texts=world.text if world.memo is not None else None)
-        v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0],
-                        add=(str(groups[x0][0]), str(groups[y0][0])) not in far)
+        key = (str(groups[x0][0]), str(groups[y0][0]))
+        if key in shadow:
+            ask.shadow_settled["connect"] += 1   # 0210 Shadow: what the gate would settle (asked anyway)
+        v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0], add=key not in far)
         if v is None or v.relation not in CONNECT_RELATIONS:
             continue
         if v.p < config.tau_connect:
@@ -1452,6 +1460,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "tasks_settled": dict(ask.settled),   # 0210: settled by a cheap signal, never asked
+                   "tasks_shadow_settled": dict(ask.shadow_settled),   # 0210: a Shadow gate would settle them
                    "isolation": isolation,
                    "window_since": world.since.isoformat(), "posts": len(world.posts)})
     repo.finish_run(cur, run_id, counts=counts)
