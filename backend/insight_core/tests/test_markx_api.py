@@ -44,7 +44,6 @@ MX_TABLES = ("mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_per
              "mx_plan_marks", "mx_embed_skips",   # v10.14; 0110
              "mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans",   # 0168
              "mx_happenings",   # 0175
-             "mx_label_queue_items", "mx_label_queues",   # 0182
              "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",   # 0181
              "mx_unit_types", "mx_unit_type_asks",   # 0181 round 2 (0125)
              "mx_kept_pages",   # 0198 (0136)
@@ -696,26 +695,26 @@ class PlannersRest(_Api):
 
     def test_a_planner_that_added_nothing_rests_then_runs_again(self):
         planner = mock.Mock(return_value=0)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
-            self.lease("relate")
-            self.lease("relate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": planner}):
+            self.lease("embed_name")
+            self.lease("embed_name")
             self.assertEqual(planner.call_count, 1)               # resting
-            api._PLAN_REST["relate"] = 0.0                         # its minute is over
-            self.lease("relate")
+            api._PLAN_REST["embed_name"] = 0.0                         # its minute is over
+            self.lease("embed_name")
             self.assertEqual(planner.call_count, 2)
 
     def test_a_planner_that_added_work_never_rests(self):
         planner = mock.Mock(return_value=3)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
-            self.lease("relate")
-            self.lease("relate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": planner}):
+            self.lease("embed_name")
+            self.lease("embed_name")
         self.assertEqual(planner.call_count, 2)
 
     def test_one_kinds_rest_leaves_the_others_planned_in_the_same_lease(self):
         idle, busy = mock.Mock(return_value=0), mock.Mock(return_value=2)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": idle, "translate": busy}):
-            self.lease("relate,translate")                         # relate added nothing: it rests
-            self.lease("relate,translate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": idle, "translate": busy}):
+            self.lease("embed_name,translate")                         # embed_name added nothing: it rests
+            self.lease("embed_name,translate")
         self.assertEqual((idle.call_count, busy.call_count), (1, 2))
 
 

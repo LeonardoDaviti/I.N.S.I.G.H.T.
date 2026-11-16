@@ -17,8 +17,13 @@ from insight_core.tests._db import db_url, requires_db
 SINCE = datetime(2026, 11, 16, 9, tzinfo=timezone.utc)
 
 
+INDEXES = [("mx_embeddings", "mx_embeddings_pkey", 812, 3 * 2 ** 20)]
+MEMORY = ("1536MB", "4GB", "16MB", 970, 30, SINCE)
+SEEN = [INDEXES, MEMORY]   # v10.22: the indexes and the buffer settings, read first
+
+
 class FakeCursor:
-    """Answers top_statements' four reads in order."""
+    """Answers top_statements' reads in order."""
 
     def __init__(self, answers):
         self.answers, self.seen = list(answers), []
@@ -55,7 +60,7 @@ class TopStatements(unittest.TestCase):
     def test_the_top_statements_with_their_share(self):
         rows = [(11, "SELECT p.id FROM posts p\n   WHERE p.title LIKE ANY($1)", 120, 30000.0, 250.0, 9000, 5, 7, 0),
                 (-12, "UPDATE mx_tasks SET answered_at = $1 WHERE id = $2", 4000, 10000.0, 2.5, 4000, 9, 0, 3)]
-        cur = FakeCursor([(True, True), (50000.0, 9000), (SINCE,), rows])
+        cur = FakeCursor(SEEN + [(True, True), (50000.0, 9000), (SINCE,), rows])
         svc, patched = service(cur)
         with patched:
             out = svc.top_statements(limit=2)
@@ -72,11 +77,24 @@ class TopStatements(unittest.TestCase):
 
     def test_off_says_why(self):
         for answer, why in (((False, False), "not loaded"), ((True, False), "not loaded"), ((False, True), "0146")):
-            svc, patched = service(FakeCursor([answer]))
+            svc, patched = service(FakeCursor(SEEN + [answer]))
             with patched:
                 out = svc.top_statements()
             self.assertEqual((out["enabled"], out["statements"]), (False, []))
             self.assertIn(why, out["reason"])
+            self.assertEqual(out["indexes"][0]["index"], "mx_embeddings_pkey", "the indexes either way")
+
+    def test_each_index_with_its_scans_and_the_buffer_settings(self):
+        """v10.22: whether an index earns its keep (0216 F) and the server's buffers, by a GET."""
+        cur = FakeCursor(SEEN + [(False, False)])
+        svc, patched = service(cur)
+        with patched:
+            out = svc.top_statements()
+        self.assertEqual(out["indexes"], [{"table": "mx_embeddings", "index": "mx_embeddings_pkey", "scans": 812, "mb": 3.0}])
+        self.assertEqual(out["memory"], {"shared_buffers": "1536MB", "effective_cache_size": "4GB", "work_mem": "16MB",
+                                         "hit_ratio": 0.97, "blocks_hit": 970, "blocks_read": 30,
+                                         "since": SINCE.isoformat()})
+        self.assertEqual(cur.seen[0][1], (OperationsService.INDEX_MB_SHOWN * 2 ** 20,))
 
 
 @requires_db
@@ -94,6 +112,8 @@ class OnTheDatabase(unittest.TestCase):
         with mock.patch.dict("os.environ", {"DATABASE_URL": db_url()}):
             status, _, body = call(main.app, "GET", "/api/operations/db-statements")
         self.assertEqual(status, 200, body)
+        self.assertIn("shared_buffers", body["memory"])
+        self.assertTrue(all({"table", "index", "scans", "mb"} <= set(i) for i in body["indexes"]))
         if body["enabled"]:
             self.assertLessEqual(len(body["statements"]), OperationsService.STATEMENTS_SHOWN)
         else:

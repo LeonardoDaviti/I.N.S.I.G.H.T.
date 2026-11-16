@@ -20,8 +20,14 @@ services:
     # Issue 0215: pg_stat_statements counts each normalized statement's calls and time (GET
     # /api/operations/db-statements lists the top 20 by total time). Its library loads only at the server's start;
     # DML only (utility statements such as SET are not counted). DEPLOYMENT.md, "The database's top statements".
+    # Issue 0216 (v10.22): the buffers for the container's limit (Postgres' defaults are 128 MB of shared buffers and a
+    # 4 GB cache estimate, whatever the machine): a quarter of the 6g limit for shared buffers, the rest the page cache
+    # the planner may count on, 16 MB a sort or hash. DEPLOYMENT.md, "Memory"; set with INSIGHT_DB_MEM_LIMIT.
     command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.max=5000",
-              "-c", "pg_stat_statements.track=top", "-c", "pg_stat_statements.track_utility=off"]
+              "-c", "pg_stat_statements.track=top", "-c", "pg_stat_statements.track_utility=off",
+              "-c", "shared_buffers=${INSIGHT_DB_SHARED_BUFFERS:-1536MB}",
+              "-c", "effective_cache_size=${INSIGHT_DB_CACHE_SIZE:-4GB}",
+              "-c", "work_mem=${INSIGHT_DB_WORK_MEM:-16MB}"]
     environment:
       POSTGRES_USER: ${DB_USER:-insight}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-insight}

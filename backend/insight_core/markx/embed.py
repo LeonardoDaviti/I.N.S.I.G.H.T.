@@ -379,6 +379,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
     stored = repeated = 0
     invalid: List[Dict[str, Any]] = []
     posts: List[str] = []
+    names: Dict[str, Tuple[str, str]] = {}   # v10.22: entity -> (its name's text hash, its vector), stored at the end
     for item in vectors:
         raw_id = item.get("task_id") if isinstance(item, dict) else None
         try:
@@ -412,9 +413,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
             stored += 1
             continue
         if task["kind"] == NAME_KIND:      # 0119 A1: a name's vector, for the alias candidates
-            cur.execute("""INSERT INTO mx_entity_vectors (entity_id, model, model_sha256, text_hash, v)
-                           VALUES (%s, %s, %s, %s, %s::halfvec) ON CONFLICT (entity_id, model) DO NOTHING""",
-                        (task["a"], model, model_sha256, task["input_hash"], repo.vector_text(v)))
+            names.setdefault(str(task["a"]), (task["input_hash"], repo.vector_text(v)))   # the first one, as before
             repo.answer_task(cur, task_id)
             stored += 1
             continue
@@ -426,6 +425,13 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
             posts.append(str(task["a"]))
         repo.answer_task(cur, task_id)
         stored += 1
+    if names:   # v10.22: the names' vectors in one statement, in the order answered (was one statement a vector)
+        cur.execute("""INSERT INTO mx_entity_vectors (entity_id, model, model_sha256, text_hash, v)
+                       SELECT x.e, %s, %s, x.h, x.v::halfvec
+                         FROM unnest(%s::uuid[], %s::text[], %s::text[]) WITH ORDINALITY AS x(e, h, v, n)
+                        ORDER BY x.n
+                       ON CONFLICT (entity_id, model) DO NOTHING""",
+                    (model, model_sha256, list(names), [h for h, _ in names.values()], [t for _, t in names.values()]))
     return {"stored": stored, "invalid": invalid, "repeated": repeated, "posts": posts}
 
 

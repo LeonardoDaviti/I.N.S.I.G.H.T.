@@ -668,6 +668,15 @@ def text_key(content_hash: Optional[str], chars: int) -> Optional[str]:
     return content_hash if content_hash and chars >= SAME_TEXT_MIN_CHARS else None
 
 
+def text_chars_sql(text: str) -> str:
+    """SQL over a text column: its length in characters, counted up to SAME_TEXT_MIN_CHARS (all text_key reads of it).
+    v10.22: a text of 4 x that many bytes or more has that many characters (a character is 1-4 bytes in UTF-8), told by
+    octet_length, which reads a stored text's header and never fetches or decompresses it; length() decompressed every
+    post's text the story job loaded (85% of its post load's time, its TOAST reads on the server)."""
+    n = SAME_TEXT_MIN_CHARS
+    return f"(CASE WHEN octet_length({text}) >= {4 * n} THEN {n} WHEN length({text}) > {n} THEN {n} ELSE length({text}) END)"
+
+
 def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """A story's voices as you know them (issue 0082), the ones voice.count counts, one item each, so
     a count reads as its names and "+N". `posts` in the order to name them, each {source_id, name (its

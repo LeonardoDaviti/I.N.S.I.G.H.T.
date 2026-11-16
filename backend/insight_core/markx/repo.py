@@ -437,17 +437,6 @@ def embedding(cur: Cursor, post_id: Id, model: str) -> Optional[List[float]]:
     return json.loads(row[0]) if row else None
 
 
-def nearest(cur: Cursor, vector: Sequence[float], *, model: str, limit: int = 10,
-            exclude: Iterable[Id] = ()) -> List[Tuple[UUID, float]]:
-    """The `limit` posts nearest `vector` under `model`, by cosine distance (1 - cosine), nearest first,
-    through the HNSW index."""
-    cur.execute("""SELECT post_id, v <=> %s::halfvec AS distance FROM mx_embeddings
-                    WHERE model = %s AND NOT (post_id = ANY(%s::uuid[]))
-                    ORDER BY v <=> %s::halfvec LIMIT %s""",
-                (vector_text(vector), model, [str(p) for p in exclude], vector_text(vector), limit))
-    return [(post_id, float(distance)) for post_id, distance in cur.fetchall()]
-
-
 def add_candidate(cur: Cursor, *, kind: str, a: Id, b: Id, source: str, score: Optional[float]) -> bool:
     """A pair worth a question, written once per source: False when this source already has it."""
     cur.execute("INSERT INTO mx_candidates (kind, a, b, source, score) VALUES (%s, %s, %s, %s, %s) "

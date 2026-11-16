@@ -67,6 +67,21 @@ class PaperIdTests(unittest.TestCase):
                     "https://a.example/one/two/three/2401.12345", "https://store.example/v1.2345", "https://preprints.example"):
             self.assertIsNone(paper_id(url), url)
 
+    def test_every_paper_address_has_the_shape_the_classics_query_reads(self):
+        """v10.22: NewsRepository.paper_paths reads only links of PAPER_SHAPE (Postgres's regex; the same in Python's
+        for these classes): every address paper_id names a paper in has it."""
+        import re
+        from insight_core.utils.addresses import PAPER_SHAPE
+        papers = [u for u in ("https://preprints.example/abs/2005.14165", "https://preprints.example/pdf/2005.14165v2",
+                              "https://preprints.example/pdf/2005.14165.pdf", "https://mirror.example/overview/2005.14165",
+                              "https://preprints.example/abs/2005.14165?_hsenc=tracking", "https://hub.example/papers/2501.12948",
+                              "https://publisher.example/doi/pdf/10.1145/3604915.3608827",
+                              "https://resolver.example/10.48550/ARXIV.2604.07729",
+                              "https://bio.example/content/10.1101/2025.02.18.638918v2.full.pdf")]
+        for url in papers:
+            self.assertTrue(paper_id(url) and re.search(PAPER_SHAPE, url), url)
+        self.assertIsNone(re.search(PAPER_SHAPE, "https://news.example/2026/10/a-story"))
+
     def test_the_page_names_the_paper_before_its_file(self):
         urls = ["https://preprints.example/pdf/2005.14165", "https://preprints.example/abs/2005.14165?_hsenc=x",
                 "https://preprints.example/html/2005.14165v1", "https://preprints.example/abs/2005.14165"]

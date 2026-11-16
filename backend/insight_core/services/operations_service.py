@@ -1071,9 +1071,33 @@ class OperationsService:
     STATEMENT_CHARS = 2000
 
     def top_statements(self, limit: int = STATEMENTS_SHOWN) -> Dict[str, Any]:
-        """Issue 0215: what insight-db spends its time on (`top_statements` below). Read only."""
+        """Issue 0215: what insight-db spends its time on (`top_statements` below). Read only.
+        v10.22 (0216): with `indexes` (every index of INDEX_MB_SHOWN MB or more, with its scans since the statistics'
+        reset) and `memory` (shared_buffers, effective_cache_size, work_mem and the hit ratio), read by a GET."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            return top_statements(cur, limit, chars=self.STATEMENT_CHARS)
+            seen = self._indexes_and_memory(cur)
+            return {**top_statements(cur, limit, chars=self.STATEMENT_CHARS), **seen}
+
+    INDEX_MB_SHOWN = 1
+
+    def _indexes_and_memory(self, cur: Any) -> Dict[str, Any]:
+        """top_statements' `indexes` and `memory` (v10.22: read by a GET, so whether an index earns its keep and the
+        server's buffer settings are checked without the owner's psql)."""
+        cur.execute("""SELECT i.relname, i.indexrelname, i.idx_scan, pg_relation_size(i.indexrelid)
+                         FROM pg_stat_user_indexes i
+                        WHERE pg_relation_size(i.indexrelid) >= %s
+                        ORDER BY pg_relation_size(i.indexrelid) DESC, i.indexrelname""", (self.INDEX_MB_SHOWN * 2 ** 20,))
+        indexes = [{"table": t, "index": name, "scans": int(n or 0), "mb": round(size / 2 ** 20, 1)}
+                   for t, name, n, size in cur.fetchall()]
+        cur.execute("""SELECT current_setting('shared_buffers'), current_setting('effective_cache_size'),
+                              current_setting('work_mem'), blks_hit, blks_read, stats_reset
+                         FROM pg_stat_database WHERE datname = current_database()""")
+        sb, ecs, wm, hit, read, reset = cur.fetchone()
+        hit, read = int(hit or 0), int(read or 0)
+        return {"indexes": indexes,
+                "memory": {"shared_buffers": sb, "effective_cache_size": ecs, "work_mem": wm,
+                           "hit_ratio": round(hit / (hit + read), 4) if hit + read else None,
+                           "blocks_hit": hit, "blocks_read": read, "since": iso(reset)}}
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
         """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),

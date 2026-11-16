@@ -32,7 +32,7 @@ that matches can only give what a render would.
 
 **When a run is full** (nothing kept is trusted, everything is read and the state written again): no state, or not
 the last finished run's (a run that failed rolls its state back with it, so the state stays the last finished run's
-and the next run is incremental), the code (`code_stamp`: the modules whose code makes what is kept), config or a
+and the next run is incremental), the code (`reading_stamp`: the modules whose code makes what is kept), config or a
 guide changed, nightly (the first run after NIGHTLY_HOUR), and with `run(full=True)`. A full run with a state first
 reads the snapshot as an incremental run would (writing nothing), then in full; any difference is logged as an
 incremental-run bug (`counts.check`). The first run after deploying 0169 is full: it writes the state.
@@ -62,6 +62,7 @@ HUB, HUB_MIN = 0.25, 40                                            # a closure o
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
 TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
+STALE_PAGE = 500     # v10.22: a render's text load also reads this many of the reading's stale posts not read yet
 # The modules whose code makes what the state keeps, by the part of it they make (0215; before, one stamp of all of
 # them: any change made the next run full, a full reading of the window: 92-93 s on the server after each deploy):
 #   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
@@ -73,22 +74,11 @@ READING_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental"
 NEWS_MODULES = ("insight_core.markx.news", "insight_core.utils.news_rules", "insight_core.utils.story_rules",
                 "insight_core.services.news_service", "insight_core.services.stories_service",
                 "insight_core.db.repo_stories", "insight_core.db.repo_news")
-CODE_MODULES = READING_MODULES + NEWS_MODULES
 NOT_KEPT = {"insight_core.markx.decide": ("run", "snapshot")}   # the reading's code that makes nothing kept
 
-# The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
+# The state's own version, in the key with reading_stamp: v2 keeps each post's voice (a followed author's repost counts
 # as that author), so the first run after it is full and writes every post again.
 STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (voice.counted_source, then pairing's)
-
-_code: Optional[str] = None
-
-
-def code_stamp() -> str:
-    """The sha256 of CODE_MODULES' source files: all of the state's code (the Labels queue's stamp reads it)."""
-    global _code
-    if _code is None:
-        _code = _stamp(CODE_MODULES, skip={})
-    return _code
 
 
 def reading_stamp() -> str:
@@ -224,6 +214,7 @@ class State:
     kinds: Dict[str, Any] = field(default_factory=dict)            # post -> its reading's kind (read posts only)
     events: Dict[str, Any] = field(default_factory=dict)           # post -> its reading's events
     texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post, as read this run
+    stale: List[str] = field(default_factory=list)                 # v10.22: the posts read again this run (their texts next)
     readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading, as read this run
     # the kept results, by the content they were made from
     inputs_kept: Dict[str, str] = field(default_factory=dict)      # render key -> input hash (the last run's)
@@ -412,6 +403,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
             state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
         state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
+    state.stale = [pid for pid in stale if pid in rules]
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
     from insight_core.markx import reading5
     order = reading5.guides(cur, GUIDE)   # 0212: as tasks.readings(ids): ent-v5's first while its switch is on
@@ -440,11 +432,21 @@ class LazyTexts(Mapping):
         self.cur, self.state = cur, state
 
     def load(self, ids: Iterable[str]) -> Dict[str, Any]:
+        """The texts of `ids`, read when first used. v10.22: a read also takes the next STALE_PAGE posts the reading
+        read again (`State.stale`: changed or new, so their questions' inputs are rendered again) whose texts are not
+        read yet, in the same query: a run's renders read their texts a page at a time, not a render at a time (the
+        server: ~62k loads of ~8 posts in 104 minutes, each its own planned statements). The same texts."""
         from insight_core.markx import tasks
         s = self.state
+        ids = list(ids)
         missing = sorted({i for i in ids if i not in s.texts})
         if missing:
-            got = tasks.load_posts(self.cur, missing)
+            want = set(missing)
+            while s.stale and len(want) < len(missing) + STALE_PAGE:
+                pid = s.stale.pop()
+                if pid not in s.texts:
+                    want.add(pid)
+            got = tasks.load_posts(self.cur, sorted(want))
             s.texts.update(got)
             s.report["texts_loaded"] = s.report.get("texts_loaded", 0) + len(got)
         return {i: s.texts[i] for i in ids if i in s.texts}
@@ -550,6 +552,14 @@ def _fingerprint(state: State, ids: Sequence[str], reads: bool) -> str:
             p += f":{state.read_stamp.get(i)}"
         parts.append(p)
     return "\n".join(parts)
+
+
+def ahead(state: State, ids: Iterable[str]) -> None:
+    """v10.22: of the posts read again (State.stale), only those a question can show (`ids`: decide.load's) are read
+    ahead with a render's miss; a post no question shows is read only if something asks for it (no text more is kept
+    than before: a full run on the mxreal copy 164 MB either way)."""
+    keep = set(ids)
+    state.stale = [pid for pid in state.stale if pid in keep]
 
 
 def rendered(state: Optional[State], kind: str, ids: Sequence[str], render: Callable[[], str], *, reads: bool = False,

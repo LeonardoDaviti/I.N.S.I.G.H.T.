@@ -8,9 +8,10 @@ Before, those were loaded, rendered and tried again on every call: with the wind
 read ~110k posts a run (84 s on the server for nothing added), the read and entities leases ~2 s each.
 
 A mark is (kind, guide, post) with why it was passed over (`same_input`, `not_cue`) and the post's text **stamp**: the
-row versions of what tasks.load_posts reads (the post's row, its parts, its kept links) and the source's shown name and
-kind, as the planner's query saw them. The planners skip a post whose mark's stamp is its stamp now; when any of those
-rows changes the stamp differs and the post is read again exactly as before (and marked again if passed over again).
+version of what tasks.load_posts reads (the post's row, its parts, its kept links, the source's shown name and kind and
+its linked page: mx_post_stamps since v10.22), as the planner's query saw them. The planners skip a post whose mark's
+stamp is its stamp now; when any of those rows changes the stamp differs and the post is read again exactly as before
+(and marked again if passed over again).
 So a planner adds the same tasks as before, only without re-reading what cannot have changed. Marks are derived rows:
 kept (keep everything), overwritten when a post is passed over again.
 """
@@ -26,18 +27,12 @@ LINKED_PAGE = """SELECT o.post_id FROM post_parts lp JOIN story_originals o
                    ON o.kind = 'linked' AND o.url = lp.link_target AND o.post_id IS NOT NULL
                 WHERE lp.post_id = {post} AND lp.link_kind = 'page' LIMIT 1"""
 
-# The post's text stamp, over alias `p` (posts): what load_posts reads. Row versions (xmin || ctid, as
-# incremental.post_stamps) for the post, its parts and its links; the source's values themselves (its row is
-# rewritten by the cadence job, which changes nothing a render shows); 0208: the page a link post is read with, once
-# stored (nothing is added for any other post, so their stamps are as they were).
-STAMP = """(p.xmin::text || p.ctid::text
-            || '|' || COALESCE((SELECT pp.xmin::text || pp.ctid::text FROM post_parts pp WHERE pp.post_id = p.id), '')
-            || '|' || COALESCE((SELECT md5(concat_ws(chr(31), s.platform, s.handle_or_url, s.settings->>'display_name',
-                                                     s.settings->>'name'))
-                                  FROM sources s WHERE s.id = p.source_id), '')
-            || '|' || COALESCE((SELECT string_agg(l.xmin::text || l.ctid::text, ',' ORDER BY l.position, l.target_url)
-                                  FROM post_links l WHERE l.post_id = p.id), '')
-            || COALESCE('|' || (""" + LINKED_PAGE.format(post="p.id") + """)::text, ''))"""
+# The post's text stamp, over alias `p` (posts): what load_posts reads, as one version (v10.22, migration 0147:
+# mx_post_stamps.n, moved by triggers on every write of the post's row, its parts, its kept links, its source's shown
+# name and kind, and the `linked` original its page is (0208)). Was: the post's row version and those four read again
+# as subqueries for every post of the window on every planner run (on the server 12% of the database's time); now one
+# primary-key probe of a narrow table. NULL for a post with no row (never marked, always read).
+STAMP = "(SELECT ps.n::text FROM mx_post_stamps ps WHERE ps.post_id = p.id)"
 
 
 def unmarked(kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> str:
@@ -46,6 +41,20 @@ def unmarked(kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> st
     anti-join, a planner that thought the table empty compared every mark with every post: 56 s on the scale copy)."""
     return f"""NOT COALESCE((SELECT mk.stamp = {STAMP} FROM mx_plan_marks mk
                               WHERE mk.kind = {kind_param} AND mk.guide = {guide_param} AND mk.post_id = p.id), false)"""
+
+
+def unread(asks: str, kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> str:
+    """A WHERE condition over alias `p` that narrows a planner's posts before any is read: the post is one `asks` holds
+    for (a condition over `q.id`: the planner's own "no task of mine yet", from the tasks' (a, kind, guide) index) and
+    no mark of this kind and guide holds for it (`unmarked`'s, by a join of mx_plan_marks and mx_post_stamps). Both are
+    the planner's own conditions over narrow tables and indexes, so a window whose posts all have their task, or are
+    passed over for their current text, is found without reading a post row (v10.22: every planner run read every
+    post of the window, ~3 page reads a post for the post, ~3 for its mark, ~3 for its task)."""
+    return f"""p.id IN (SELECT q.id FROM posts q
+                        WHERE {asks}
+                          AND NOT EXISTS (SELECT 1 FROM mx_plan_marks mk JOIN mx_post_stamps ps ON ps.post_id = mk.post_id
+                                           WHERE mk.kind = {kind_param} AND mk.guide = {guide_param}
+                                             AND mk.post_id = q.id AND mk.stamp = ps.n::text))"""
 
 
 def execute(cur: Any, sql: str, params: Any) -> List[Tuple]:

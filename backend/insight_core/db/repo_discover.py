@@ -64,6 +64,7 @@ LOCK_KEY = "insight.discover_addresses"
 _SEGMENTS = ("array_remove(string_to_array(lower(regexp_replace(regexp_replace({url}, '^[a-z]+://[^/]*/?', ''), "
              "'[?#].*$', '') COLLATE \"und-x-icu\"), '/'), '')")
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
+TAGGED_KEY = "discover_tagged"   # the round-up tagged posts the kept counts were made with (v10.22: `retagged`)
 LIST_KEY = "discover_list"     # Discover's last list, by what it was made from (system_settings, issue 0080 cold open)
 SERVED_KEY = "discover_served"   # the answer Discover's page serves, built in the background (issue 0172 c1)
 # When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
@@ -189,22 +190,25 @@ _PLATFORMS = """
 WITH src AS (
     SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[], %(selves)s::text[]) AS s(id, kind, own_site, selves)
 ),
-link AS (
+link AS MATERIALIZED (            -- each kept link once a voice (v10.22: before any address is parsed)
     SELECT DISTINCT pl.target_url AS url, s.selves,
            """ + voice_keys.source_key_sql("s.kind", "s.own_site", "p.source_id") + """ AS voice
     FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN src s ON s.id = p.source_id
-    WHERE NOT pl.boilerplate AND s.kind <> 'saved' AND pl.target_url !~ %(tweet)s
+    WHERE NOT pl.boilerplate AND s.kind <> 'saved'
+      AND NOT (strpos(pl.target_url, '/status/') > 0 AND pl.target_url ~ %(tweet)s)   -- the shape needs it (v10.22)
 ),
-parsed AS (
-    SELECT url, voice, selves, regexp_replace(lower(split_part(regexp_replace(url, '^[a-z]+://', ''), '/', 1)), '^www[.]', '') AS host,
-           """ + _SEGMENTS.format(url="url") + """ AS segs
-    FROM link
+parsed AS MATERIALIZED (          -- each address parsed once (v10.22: was once a link and voice), not a listed platform's
+    SELECT url, host, segs[1:%(depth)s] AS head, cardinality(segs) > %(depth)s AS deeper FROM (
+        SELECT url, regexp_replace(lower(split_part(regexp_replace(url, '^[a-z]+://', ''), '/', 1)), '^www[.]', '') AS host,
+               """ + _SEGMENTS.format(url="url") + """ AS segs
+        FROM (SELECT DISTINCT url FROM link) u
+    ) x
+    WHERE NOT (host = ANY(%(listed)s) OR host LIKE ANY(%(under)s))   -- v10.22: a pattern each (was a subquery an address)
 )
-SELECT host, segs[1:%(depth)s] || CASE WHEN cardinality(segs) > %(depth)s THEN ARRAY['*'] ELSE '{}'::text[] END,
-       count(DISTINCT url), array_agg(DISTINCT voice)
-FROM parsed
-WHERE NOT (host = ANY(%(listed)s) OR EXISTS (SELECT 1 FROM unnest(%(listed)s::text[]) l WHERE host LIKE '%%.' || l))
-  AND NOT (selves <> '' AND EXISTS (SELECT 1 FROM unnest(segs[1:%(depth)s]) g WHERE ltrim(g, '@~') = ANY(string_to_array(selves, ' '))))
+SELECT a.host COLLATE "C", (a.head || CASE WHEN a.deeper THEN ARRAY['*'] ELSE '{}'::text[] END) COLLATE "C",
+       count(DISTINCT l.url), array_agg(DISTINCT l.voice)   -- grouped byte for byte: the same groups, a cheaper sort
+FROM link l JOIN parsed a USING (url)
+WHERE NOT (l.selves <> '' AND EXISTS (SELECT 1 FROM unnest(a.head) g WHERE ltrim(g, '@~') = ANY(string_to_array(l.selves, ' '))))
 GROUP BY 1, 2
 """
 
@@ -289,10 +293,13 @@ class DiscoverRepository:
 
     @staticmethod
     def _drop_unlinked(cur: Cursor, urls: Optional[Sequence[str]]) -> None:
-        """Drop the addresses (of `urls`, when given) no kept link and no post points to."""
+        """Drop the addresses (of `urls`, when given) no kept link and no post points to. A post is at its normalized
+        address, else at its address (COALESCE(normalized_url, url)), asked as the two indexed lookups (v10.22: the
+        COALESCE has no index, so every call read every post: 2.3 s a story batch on the server, deleting none)."""
         cur.execute("DELETE FROM discover_addresses d WHERE (%(only)s::text[] IS NULL OR d.url = ANY(%(only)s)) "
                     "AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
-                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE COALESCE(p.normalized_url, p.url) = d.url)",
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = d.url) "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = d.url AND p.normalized_url IS NULL)",
                     {"only": None if urls is None else list(urls)})
 
     @staticmethod
@@ -362,7 +369,8 @@ class DiscoverRepository:
         cur.execute("SET LOCAL work_mem = '%s'" % WORK_MEM)
         cur.execute(_PLATFORMS, {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
                                  "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "tweet": shape,
-                                 "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS)})
+                                 "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS),
+                                 "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)]})
         return find_platforms((host, tuple(segs), n, voices) for host, segs, n, voices in cur.fetchall())
 
     @staticmethod
@@ -519,10 +527,52 @@ class DiscoverRepository:
     def base(cur: Cursor) -> str:
         """What the counts are counted by, a story run aside: the rules (issue 0072: while they hold, a story
         run counts again only the keys its posts link; a source whose facts change has its posts queued, so
-        the keys they link are among those) and the round-up tags (units.tags_stamp, 0190: a post tagged since
-        moves the voices that link only in round-ups, whatever keys a run's posts link)."""
-        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES, units.tags_stamp(cur)]
+        the keys they link are among those). The round-up tags are apart (v10.22, `retagged`): a post tagged or
+        untagged since moves only the voices of the keys it links."""
+        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES]
         return hashlib.sha1(json.dumps(what).encode()).hexdigest()[:16]
+
+    @staticmethod
+    def tags(cur: Cursor) -> str:
+        """The round-up tags the counts read (units.tags_stamp), kept with them."""
+        return units.tags_stamp(cur)
+
+    @staticmethod
+    def retagged(cur: Cursor, kept: Optional[Dict[str, Any]], tags: str) -> Optional[Set[str]]:
+        """The posts whose round-up tag (units.py owns it) moved since the kept counts were made: none when the
+        tags' stamp (`tags`, units.tags_stamp) is the kept one's, else those tagged then or now but not both, from
+        the tagged posts kept with them (TAGGED_KEY); None when that is not known (counts kept before v10.22).
+        v10.22: a tag change counted every key again (Discover's full count, its platforms with it: 26 s on the
+        server, every decision run that tagged a post); only the keys these posts link can move (`keys_linked_by`)."""
+        if not kept or "tags" not in kept:
+            return None
+        if kept["tags"] == tags:
+            return set()
+        row = SystemSettingsRepository.get(cur, TAGGED_KEY)
+        was = row[0] if row else None
+        if not was or was.get("stamp") != kept["tags"]:
+            return None
+        return set(was["posts"]) ^ set(units.tagged(cur))
+
+    @staticmethod
+    def keep_tagged(cur: Cursor, tags: str) -> None:
+        """The tagged posts the kept counts were made with (`retagged` reads them), written when they moved."""
+        cur.execute("SELECT value->>'stamp' FROM system_settings WHERE key = %s", (TAGGED_KEY,))
+        row = cur.fetchone()
+        if not row or row[0] != tags:
+            SystemSettingsRepository.upsert(cur, TAGGED_KEY, {"stamp": tags, "posts": units.tagged(cur)})
+
+    @staticmethod
+    def keys_linked_by(cur: Cursor, post_ids: Iterable[str], platforms: Platforms = {}) -> Set[str]:
+        """The Discover keys these posts link (their kept links) or are at (a platform account's repost counts as a
+        link to its address): every key a post's round-up tag counts in (_COUNTS' `linked`)."""
+        ids = sorted(post_ids)
+        if not ids:
+            return set()
+        cur.execute("""SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND NOT boilerplate
+                       UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE id = ANY(%(ids)s::uuid[])""",
+                    {"ids": ids})
+        return DiscoverRepository.keys_of(cur, [r[0] for r in cur.fetchall() if r[0]], platforms)
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:

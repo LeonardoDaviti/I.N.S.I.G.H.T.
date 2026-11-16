@@ -288,7 +288,7 @@ class LeaseDuringARun(_Api):
             with self.conn.transaction():
                 self.assertFalse(jobs.decision_running(self.cur))
             self.lease("relate,back,read")
-        self.assertEqual((relate.call_count, back.call_count), (1, 1))
+        self.assertEqual((relate.call_count, back.call_count), (0, 1))   # v10.22: relate is planned in the background
 
     def test_the_lease_no_longer_waits_on_the_runs_uncommitted_task(self):
         """The shape of the wait: the run inserted a relate question and holds it uncommitted; a lease planning

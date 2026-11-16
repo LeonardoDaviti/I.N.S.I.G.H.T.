@@ -7,7 +7,8 @@ track each time (container peaks of 6.6 GiB every 5 minutes, CPU at 100%), to pl
 **One rule for every such pass** (`run`): a pass is declared by a name, the tables it reads and a key (the values it
 depends on besides those tables: its settings, its code, the window it computes from the clock). Its inputs' stamp is
 the key plus each table's stamp (`table_stamps`: rows, newest row version and a sum of the row versions' hashes, one
-aggregate a table in Postgres: any insert, update or delete since changes it; nothing is held in Python).
+aggregate a table in Postgres; mx_tasks by its change log since v10.22: any insert, update or delete since changes it;
+nothing is held in Python).
 
   - The stamp is taken before the pass and again after it, in the pass's own transaction. When they are equal the pass
     wrote nothing it reads and no other transaction changed any of it meanwhile: the pass was a **no-op on those
@@ -33,16 +34,38 @@ T = TypeVar("T")
 PREFIX = "unchanged:"            # mx_inc_state's rows of the passes (the decision run's own row is 'decide')
 
 
+# v10.22 (0216, migration 0147): mx_tasks is stamped by its change log (mx_table_changes: one row a kind a statement
+# that wrote it, appended by triggers), not by summing its row versions (a full scan of the 3.8 GB table: ~600 ms a call
+# on the server). Its count and sum move with any insert, update or delete of the kinds, a commit landing late too (its
+# row is counted whatever its n). Pruned once a day (`_prune`): a pass after it runs once more.
+LOGGED = ("mx_tasks",)
+PRUNE_AFTER = "1 day"     # the log is pruned when its oldest row is older than this
+PRUNE_KEEP = "1 hour"     # ... of everything older than this
+
+
 def table_stamps(cur: Any, tables: Iterable[str]) -> Dict[str, Tuple]:
-    """Each table's rows, newest row version and a sum of its row versions' hashes (transaction and place): any insert,
-    update or delete since changes it (a new version has a newer xmin, or, in the same transaction, another ctid)."""
+    """Each table's stamp: any insert, update or delete since changes it. A table: its rows, newest row version and a
+    sum of its row versions' hashes (a new version has a newer xmin, or, in the same transaction, another ctid). A
+    LOGGED table: the count, newest and sum of its change log's rows of those kinds (and of a TRUNCATE's '*')."""
     out = {}
     for t in tables:
         name, kinds = of_kinds(t)
-        cur.execute(f"""SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint)
-                          FROM {name}{' WHERE kind = ANY(%s)' if kinds else ''}""", (list(kinds),) if kinds else None)
+        if name in LOGGED:
+            cur.execute("""SELECT count(*), max(n), sum(n) FROM mx_table_changes
+                            WHERE tbl = %s AND (%s::text[] IS NULL OR kind = ANY(%s::text[]) OR kind = '*')""",
+                        (name, list(kinds) or None, list(kinds) or None))
+        else:
+            cur.execute(f"""SELECT count(*), max(xmin::text::bigint), sum(hashtext(xmin::text || ctid::text)::bigint)
+                              FROM {name}{' WHERE kind = ANY(%s)' if kinds else ''}""", (list(kinds),) if kinds else None)
         out[t] = tuple(None if x is None else int(x) for x in cur.fetchone())
     return out
+
+
+def _prune(cur: Any) -> None:
+    """The change log kept small: once its oldest row is PRUNE_AFTER old, every row older than PRUNE_KEEP goes (each
+    pass whose kinds lost rows runs once more: a stamp may move for nothing, never stay for a change)."""
+    cur.execute(f"""DELETE FROM mx_table_changes WHERE at < now() - interval '{PRUNE_KEEP}'
+                     AND (SELECT min(at) FROM mx_table_changes) < now() - interval '{PRUNE_AFTER}'""")
 
 
 def of_kinds(table: str) -> Tuple[str, Tuple[str, ...]]:
@@ -94,6 +117,8 @@ def run(cur: Any, name: str, tables: Sequence[str], key: Any, work: Callable[[],
     None: the pass depends on more than it can name (the clock itself) and always runs, unstamped."""
     if key is None:
         return work()
+    if any(of_kinds(t)[0] in LOGGED for t in tables):
+        _prune(cur)
     before = stamp(cur, tables, key)
     if kept(cur, name) == before:
         return None

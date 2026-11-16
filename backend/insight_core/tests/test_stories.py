@@ -56,6 +56,20 @@ def ids(stories):
 # ---- the links of a post -------------------------------------------------------------------
 
 
+@requires_db
+class TextCharsInSql(unittest.TestCase):
+    def test_the_length_text_key_reads_without_decompressing(self):
+        """v10.22: story_rules.text_chars_sql is min(len(text), SAME_TEXT_MIN_CHARS) for any text (1-4 bytes a
+        character), what text_key reads, by octet_length where the bytes alone tell."""
+        from insight_core.utils.story_rules import SAME_TEXT_MIN_CHARS as N, text_chars_sql
+        texts = ["", "a" * (N - 1), "a" * N, "é" * (N - 1), "é" * N, "😀" * (N - 1), "😀" * N, "a" * (4 * N),
+                 "é" * (2 * N - 1), "x" * 10000 + "é", None]
+        with psycopg.connect(db_url()) as conn:
+            got = [conn.execute(f"SELECT {text_chars_sql('t')} FROM (SELECT %s::text AS t) x", (t,)).fetchone()[0]
+                   for t in texts]
+        self.assertEqual(got, [None if t is None else min(len(t), N) for t in texts])
+
+
 class PostLinksTests(unittest.TestCase):
     def test_outside_links_in_order_normalized_with_their_text(self):
         html = ('<p><a href="https://Other.example/a/?utm_source=x">The <b>first</b></a> '

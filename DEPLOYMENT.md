@@ -499,6 +499,20 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
   request in flight, 1 s of quiet and 8 MB of growth, a GC collection then glibc's `malloc_trim`; a few ms).
   `INSIGHT_API_TRIM=off` in `.env` switches it off.
 
+- **insight-db's buffers** (issue 0216, v10.22; compose's `command`, each from `.env`): `shared_buffers`
+  `INSIGHT_DB_SHARED_BUFFERS` (1536MB, a quarter of the 6g limit), `effective_cache_size` `INSIGHT_DB_CACHE_SIZE`
+  (4GB: the shared buffers and the page cache the limit leaves; only the planner reads it) and `work_mem`
+  `INSIGHT_DB_WORK_MEM` (16MB a sort or hash; Discover's counts set their own 48MB). Postgres' defaults were 128MB,
+  4GB and 4MB whatever the machine: on the server 77% of block reads were found in shared buffers, ~599 GB of buffer
+  reads in 104 minutes. Measured on a 6g Postgres holding the scale copy (the story job's post loads, the
+  planners, Discover's platforms, the track words' counts; 3 rounds after a warm-up, 25,941 statements): blocks read
+  from outside shared buffers 1,260,303 -> 2,345 (hit ratio 64% -> 99.9%), temp blocks 25.3k -> 21.9k; the default's
+  reads came from the host's page cache there, so the time saved is the server's disk reads, not measurable on that
+  shared machine (statement seconds 47 / 58 / 31 for default, tuned, default again). Raise the three with
+  `INSIGHT_DB_MEM_LIMIT` (a quarter, two thirds, and 16-32MB). They apply when insight-db starts again: `./update`
+  recreates it because its command changed. `GET /api/operations/db-statements` → `memory` shows the settings the
+  server runs and its hit ratio since the statistics' reset.
+
   If the server's corpus grows and a container is ended at its limit (`docker inspect insight-ingestion` shows
   `OOMKilled`, or a Mark X run "exited with code -9"), raise its limit in `.env` and `./update`.
 - **Minimum host**, from those numbers: 16 GB of RAM for a server-sized corpus (ingestion's peak ~8 GB, the API ~3 GB,

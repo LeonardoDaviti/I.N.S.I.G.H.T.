@@ -714,6 +714,13 @@ def tags_stamp(cur: Any) -> str:
     return cur.fetchone()[0][:16]
 
 
+def tagged(cur: Any) -> List[str]:
+    """The posts tagged round-ups now, in order (what `tags_stamp` hashes): a reader that keeps counts made with
+    `roundup_sql` counts again those whose tag moved (Discover's kept counts, v10.22)."""
+    cur.execute("SELECT post_id::text FROM mx_roundups WHERE roundup ORDER BY post_id")
+    return [r[0] for r in cur.fetchall()]
+
+
 def digest_sources(cur: Any, source_ids: Iterable[str]) -> Set[str]:
     """The sources whose posts are mostly shaped as round-ups: more than DIGEST_SHARE of their split posts of
     DIGEST_WORDS+ words, DIGEST_POSTS+ of them (a daily digest; an essayist's post with a list of links is not)."""
