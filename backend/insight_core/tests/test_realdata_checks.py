@@ -385,6 +385,9 @@ class DiffTests(unittest.TestCase):
                 self.assertEqual(len(found), len(want), (want, found))
                 for w in want:
                     self.assertTrue(any(w in p for p in found), (w, found))
+        stopped = {"decide": {"peak_mb": 100.0, "seconds": 10.0, "cpu_s": 1.0, "not_finished": "over 120 s: stopped"}}
+        self.assertEqual([p for r in resources.compare({}, stopped) for p in r["problems"]],
+                         ["decide: not finished (over 120 s: stopped)"])   # a run that did not finish fails too
         with mock.patch.dict(os.environ, {"RESOURCE_BUDGETS": '{"stories": {"peak_mb": 150}}'}):
             rows = resources.compare(side(400)["jobs"], side(400)["jobs"])
         self.assertEqual([p for r in rows for p in r["problems"]], ["stories: peak_mb 200 over its budget 150"])

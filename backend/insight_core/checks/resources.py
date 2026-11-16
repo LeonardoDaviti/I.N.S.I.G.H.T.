@@ -85,6 +85,9 @@ def _child(db_url: str, job: str, now_iso: Optional[str], out: Any) -> None:
             r = result.get("run") if isinstance(result.get("run"), dict) else {}
             got["kind"] = r.get("kind")
             got["skipped"] = result.get("skipped")
+            last = runner.last("decide").get("last") or {}
+            if not last.get("ok"):   # stopped over its limit, or failed: what its record says
+                got["not_finished"] = str(last.get("error") or "no record")[:300]
     except ImportError as error:   # a version without the jobs module
         got = {"not_measured": f"this version has no {job} job ({error})"}
     except Exception as error:  # noqa: BLE001 - recorded, the report says it
@@ -127,6 +130,8 @@ def compare(base: Optional[Dict[str, Any]], head: Optional[Dict[str, Any]],
         budget = limits.get(job, {})
         if h.get("error"):
             problems.append(f"{job}: {h['error']}")
+        if h.get("not_finished"):
+            problems.append(f"{job}: not finished ({h['not_finished']})")
         for k, lim in budget.items():
             v = h.get(k)
             if isinstance(v, (int, float)) and v > lim:
@@ -149,7 +154,8 @@ def lines(rows: List[Dict[str, Any]], labels=("main", "branch")) -> List[str]:
         if x.get("error"):
             return "error"
         kind = f" ({x['kind']})" if x.get("kind") else ""
-        return f"{x.get('peak_mb', '-')} MB, {x.get('seconds', '-')} s, CPU {x.get('cpu_s', '-')} s{kind}"
+        stopped = f", not finished: {x['not_finished']}" if x.get("not_finished") else ""
+        return f"{x.get('peak_mb', '-')} MB, {x.get('seconds', '-')} s, CPU {x.get('cpu_s', '-')} s{kind}{stopped}"
     out = [f"| job | {labels[0]} | {labels[1]} | budget | verdict |", "|---|---|---|---|---|"]
     for r in rows:
         budget = ", ".join(f"{k} {v:g}" for k, v in r["budget"].items()) or "-"
