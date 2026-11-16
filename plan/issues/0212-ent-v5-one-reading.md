@@ -74,6 +74,50 @@ entities as precise as ent-v4.2, citations unchanged because `cite` stays), **ex
 Next: an origin fix (its rules moved next to `event`, or the hard cases trimmed to the origin ones that the misses
 show) measured on the same 464, before the Shadow build. Haiku spent on d3: about $1.62.
 
+## Update: the origin fix, d4–d7 (2026-11-16)
+**Target (the owner's):** origin within 1 point of read-v3 on the same 464 posts, without losing event type, entities
+or cost. All runs: low effort, 20 a call, no cache, first windows; read-v3's three stored runs answer the same posts.
+
+**What d3c got wrong** (`origin_conf.py`, gold → answer, against read-v3's run 1):
+- a maker's own post shared by another account, called `relay`: 15 (read-v3: 1);
+- a bare link or title share of the maker's page, called `other`: 19 (read-v3: 10).
+
+| draft | what changed | $ / window | thinking / window | event type | origin | read-v3 singles (event type / origin, same posts) |
+|---|---|---|---|---|---|---|
+| d3c | — | 0.00054 | 453 | 74.0% | 80.9% | 71.8–73.3 / 85.2–86.8 |
+| d4 | origin decided by an ordered check (who wrote it first; a repost of the maker is `maker`; a near-bare share is `relay`) | 0.00064 | 656 | 74.4% | 81.7% | 71.8–73.3 / 85.1–86.4 |
+| d5 | `relay` only for a share of the MAKER's own page (a news outlet's link is `other`) | 0.00050 | 370 | 71.9% | 83.2% | 71.7–73.2 / 85.1–86.4 |
+| d6 | `type_why` also says who wrote the post relative to the happening (≤ 25 words) | 0.00051 | 384 | 74.7% | 83.3% | 72.2–73.8 / 85.1–86.5 |
+| **d7** | step 2 says what is NOT the author's own happening (a journalist, commentator or user on someone else's news; an own essay or tutorial) | **0.00041 / 0.00047** | 172 / 293 | **70.9% / 72.0%** | **84.8% / 86.6%** | 71.8–73.3 / 85.0–86.3 |
+
+(d7 was run twice; its two runs give the noise of a v5 run: 1.1 points on event type, 1.8 on origin.)
+
+- **d4** fixed both measured misses: maker → relay went from 15 to 5, and maker recall from 78 to 93, read-v3's level.
+  But its step 3 made third parties' link posts `relay` (other → relay 21, against read-v3's 5). d5 and d6 closed
+  that.
+- **d7 meets the origin target.** Over its two runs it averages 85.7%, read-v3's own average (85.6%); one run is 0.2
+  under read-v3's lowest single run, the other above its highest. Its errors look like read-v3's: maker → other 38
+  against 34, other → maker 12 against 16, maker → relay 4 against 1.
+- **Event type is where the guides trade.** d7's two runs give 70.9% and 72.0%: inside read-v3's single runs (71.8–73.3)
+  at the low end, under its three-run majority (74.0%), and 2–4 points under the d3c / d6 single runs (74.0%, 74.7%).
+  The lever is again how much Haiku thinks: d7 thought 172–293 tokens a window, d6 384, d4 656. Every one of these
+  wording changes moved the thinking more than the effort setting ever did.
+- **On the 60 sample posts** (126 windows, `cite` kept as its own question): one run against the fresh old answers.
+  - entities: name Jaccard 0.597 against ent-v4.2 (two ent-v4.2 runs: 0.582); subjects the same 43% (ent-v4.2 runs:
+    52%);
+  - gold citation recall 71.0% (old 74.2%: the same cite answers, the entities differ);
+  - reading against the fresh old answers: kind 77%, events 92%, event type 87%, origin 85%;
+  - 122 of 126 windows valid.
+- **Cost:** d7's sample windows cost $0.00072 (d3c's estimated $0.00074). Per 1,000 new posts: 1.42 × $0.72 + cite
+  $0.25 = **$1.27 (−12% against today's $1.44)**, with an event type and origin for every post.
+
+**Verdict:** **d7** (`plan/issues/0212-ent-v5-guide-d7.md`) is the candidate. It holds origin (read-v3's level) and
+entities, costs 12% less than today, and gives every post an event type. Its event type sits at read-v3's single-run
+level (70.9–72.0% against 71.8–73.3%), not the 74% that d3c and d6 reached with more thinking. Choosing between d6
+(event type +3.2, origin −2.4 against d7's average) and d7 (the reverse) is the owner's call. The bars of 6 ask for both "not below
+read-v3 on the same posts", and only d7 is within read-v3's own run-to-run spread on both. Haiku spent on the origin
+round: about $1.27.
+
 ## The answer in one paragraph (d2, before the decisions above)
 One call reads one post (or one window of a long post) and returns `reading` (read-v3's fields), `event` (read-v2's
 `main`), `citations` (cite-v1's list) and `entities` (ent-v4.2's list), with a reserved `claims` slot. One adapter,
