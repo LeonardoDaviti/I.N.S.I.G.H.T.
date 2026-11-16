@@ -1,7 +1,8 @@
 # 0212 — ent-v5: one reading of a post (read, read3, entities and cite in one call)
 
 Status: **spec + feasibility measurement** (2026-11-16, branch `v1021-ent-v5-spec` from v1020 = v10.19). Nothing is
-built into the pipeline. The draft guide is `plan/issues/0212-ent-v5-guide-draft.md` (draft d2, the measured one).
+built into the pipeline. Draft guides: `plan/issues/0212-ent-v5-guide-draft.md` (d2) and `0212-ent-v5-guide-d3c.md` (d3c,
+after the owner's decisions: see "Update: draft d3").
 Private notes, scripts, inputs and every answer: `plan/research/ent-v5/` (gitignored: real posts).
 
 **The owner (2026-11-16):** merge `read` (read-v2), `read3` (read-v3), `entities` (ent-v4.2, windows of 0176) and
@@ -12,7 +13,68 @@ Read first: 0090 (mentions, identity), 0127 (read-v3), 0133 and 0133-v42-built (
 (windows, re-asked items), 0152 (claims), 0176 (windows, fresh lane), 0191 (effort, prompt cache), 0201, 0210 (the
 re-ask guard, v10.20).
 
-## The answer in one paragraph
+## Update: draft d3 (2026-11-16, after the owner's decisions)
+**The owner's decisions on d2:** aim the next draft at output and thinking tokens; `type_why` out unless it measurably
+helps; effort low; more windows a call; target **v5 at or below today's cost per post, with an event type for every
+post**. `cite` stays its own question for cue posts until v5's citations pass a bigger gold set. No claims in v5 yet.
+No archive re-read: old rows stay (rollout step 4 is dropped).
+
+**d3** (`plan/issues/0212-ent-v5-guide-d3c.md` is the one measured best, d3c): d1's text without the citations
+section (27.7k characters; d2 was 34.4k), no null fields, no relations, one closing line asking for the JSON only.
+Three variants measured: d3 (no `type_why`, `span` left out when it equals the name), d3b (no `type_why`, `span`
+always), d3c (`type_why` back, `span` always). The schema's `citations` section is gone; `reading`, `event`,
+`entities` and the `claims` slot stay as in 2.1.
+
+### Measured (all Haiku 5.5 at low effort; read-v3's whole held-out test set, 464 posts, first windows)
+| draft, call | $ / window | out / window (thinking) | event type | origin |
+|---|---|---|---|---|
+| read-v3 (frozen), its three stored runs | — | — | 71.5–73.4% (majority 73.7–74.0%) | 85.0–86.8% |
+| d2 (with citations), 10 a call, 5m cache | 0.00087 | 1,475 (1,080) | 74.5% | 84.9% |
+| d3, 20 a call, no cache | 0.00061 | 937 (642) | 74.7% | 83.1% |
+| d3 + `type_why`, 20 a call | 0.00066 | 1,028 (719) | 75.2% | 84.6% |
+| d3b, 10 a call, 5m cache | 0.00043 | 615 (278) | **69.0%** | **78.1%** |
+| d3b, 20 a call, no cache | 0.00044 | 591 (274) | **70.4%** | **79.0%** |
+| **d3c** (`type_why`, `span` always), 20 a call, no cache | **0.00054** | 797 (453) | **74.0%** | **80.9%** |
+
+- **Thinking decides the reading's accuracy, and the guide's wording moves it.** d3b differs from d3 only in that the
+  span is always written, yet Haiku thought 270–280 tokens a window instead of 640, and event type fell 4–6 points,
+  origin 4–5. `type_why` costs 7% more and adds nothing when Haiku thinks enough (d3 vs d3 + type_why: 74.7 vs 75.2%),
+  but **restores the event type when it thinks less** (d3b 69.0–70.4% → d3c 74.0%). It stays.
+- **`span` left out when it equals the name** (d3): left out on 80–88% of entities, and then 3–6% of those names are
+  not in the post, so the entry is refused (0213 would drop it): about 4% of the entities lost to save about 2% of the
+  output. Dropped: `span` is always written.
+- **Origin is 4–5 points under read-v3** in every d3 variant but the costliest (d3c 80.9% against 85.2–86.8%; d2 and
+  d3 + type_why 84.6–84.9%). It is the one field d3c does not hold.
+- **Cache and batch:** at 10 a call with the 5-minute cache the price per window is the lowest, but the thinking (and
+  the accuracy) fell with it in both d3b runs; the no-cache 20-a-call runs are the measured ones above.
+
+### The 60 sample posts (126 windows; cite kept as its own question: the old cite answer)
+| run | $ / window | valid windows (first pass) | name Jaccard with ent-v4.2 (two ent-v4.2 runs: 0.58) | subjects the same (ent-v4.2 runs: 52%) | gold citations (25 posts) |
+|---|---|---|---|---|---|
+| d3, 10 a call, 5m | 0.00064 | 101/126 (span left out) | — | — | — |
+| d3, 20 a call, off | 0.00083 | 110/126 (span left out) | — | — | — |
+| d3b, 10 a call, 5m | 0.00046 | 116/126 | 0.591 | 48% | 75.8% (old 74.2%) |
+| d3b, 10 a call, off | 0.00074 | 120/126 | 0.575 | 47% | 71.0% |
+
+Blind labels on the names d3b and ent-v4.2 disagree on (three labellers, sides hidden, 70 a side): **v5 right 47/70 =
+67% [56–77], ent-v4.2 right 39/70 = 56% [44–67]**: the entities hold with d3b's little thinking too (d2's: 71% / 49%).
+The invalid windows are single spans or versions not in the post: under 0213 (v10.20) those entries are dropped and
+the rest stored.
+
+### Cost per 1,000 new posts (the sample's prices; 1.42 windows a post; `cite` on cue posts: 0.29 × $0.00086 = $0.25)
+| | $ per 1,000 new posts | event type for |
+|---|---|---|
+| today: read + read3 (7% of posts) + entities + cite | **1.44** | 7% of posts |
+| v5 d2 (citations inside) | 1.54–1.69 | every post |
+| **v5 d3c + cite** (d3c's window priced at d3's sample price × 542/612, as its 464-post price is to d3's) | **≈ 1.29 (−10%)** | **every post** |
+| v5 d3b + cite (10 a call, 5m) | 0.90 (−37%) | every post, 4–6 points less accurate |
+
+**Verdict on d3:** the target is met by d3c (−10% per post, event type for every post at read-v3's accuracy,
+entities as precise as ent-v4.2, citations unchanged because `cite` stays), **except origin** (−4 to −5 points).
+Next: an origin fix (its rules moved next to `event`, or the hard cases trimmed to the origin ones that the misses
+show) measured on the same 464, before the Shadow build. Haiku spent on d3: about $1.62.
+
+## The answer in one paragraph (d2, before the decisions above)
 One call reads one post (or one window of a long post) and returns `reading` (read-v3's fields), `event` (read-v2's
 `main`), `citations` (cite-v1's list) and `entities` (ent-v4.2's list), with a reserved `claims` slot. One adapter,
 in the module that writes readings and mentions today (`tasks.record`), turns it into exactly the rows the four kinds
