@@ -127,9 +127,20 @@ def bands() -> Dict[str, Any]:
 
 def model_for(kind: str) -> Optional[str]:
     """v10.18: the model a kind's tasks are asked with when it is not the worker's own (entity_bands.json `models`,
-    measured per kind); the worker's --model otherwise."""
+    measured per kind); the worker's --model otherwise. Owner 2026-11-16 (v10.19.1): the worker only ever uses Haiku:
+    a configured model that is not a Haiku is refused (logged; the task goes with the worker's own Haiku)."""
     m = (bands().get("models") or {}).get(kind)
-    return m if isinstance(m, str) else None
+    if not isinstance(m, str):
+        return None
+    if not haiku(m):
+        log.warning("Mark X: entity_bands.json names %r for %s; only Haiku is ever asked: refused", m, kind)
+        return None
+    return m
+
+
+def haiku(model: str) -> bool:
+    """Whether `model` names a Haiku ("haiku", "claude-haiku-4-5", ...): the only models the server names for a task."""
+    return "haiku" in model.strip().lower()
 
 
 def band_of(conf: Optional[float]) -> Optional[str]:
