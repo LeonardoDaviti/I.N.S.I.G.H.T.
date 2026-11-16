@@ -588,6 +588,23 @@ class StoryJobTests(unittest.TestCase):
         self.assertEqual(self._rows(), before)
         self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
 
+    def test_rows_of_a_listed_single_stamp_differing_in_news_redo_news_alone(self):
+        # 0216: the scale copy's case (v10.17's rows, no rebuild begun): the names and News, the connections relabelled
+        from insight_core.services.stories_service import LEGACY_RULES
+        self._launch()
+        before = self._rows()
+        now = rules_stamp()
+        self.cur.execute("UPDATE post_edges SET made_by = 'v10.17'")
+        self._set(rules="v10.17")
+        with mock.patch.dict(LEGACY_RULES, {"v10.17": {"keys": now["keys"], "grouping": now["grouping"]}}), \
+                mock.patch.object(StoriesRepository, "redo_every_post") as redo:
+            steps, _, phases = self._to_the_end()
+        redo.assert_not_called()
+        self.assertEqual((steps, phases), (2, ["names", None]))
+        self.assertEqual(self._setting()["rules"], now)
+        self.assertEqual(self._made_by(), {now["grouping"]}, "as a full run labels them")
+        self.assertEqual(self._rows(), before)
+
     def test_a_rebuild_from_before_the_split_of_unknown_rows_goes_on_the_newest_first(self):
         from insight_core.services.stories_service import whole_stamp
         self._launch()

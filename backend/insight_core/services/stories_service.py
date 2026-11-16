@@ -321,11 +321,14 @@ class StoriesService:
             rebuild = None   # a rebuild by other rules than these: begin again from the rows' own
         if not rebuild:
             stored = stored_rules(previous.get("rules"))
+            legacy = previous.get("rules") != stamp and not isinstance(previous.get("rules"), dict)
+            if legacy and stored.get("grouping") == stamp["grouping"]:
+                # a single stamp from before 0216 whose grouping is these rules': its connections are the grouping's
+                self.repo.relabel_edges(cur, stamp["grouping"])
             redo = redo_for(stored, stamp)
             if redo is not None:
                 return self._begin_redo(cur, sources, stored, redo, stamp, now)
-            if previous.get("rules") != stamp:   # a single stamp of these rules, from before 0216: kept as parts
-                self.repo.relabel_edges(cur, stamp["grouping"])
+            if legacy:   # these rules' own single stamp: kept as parts
                 return {"rules": dict(stamp), "counts": Counter(batches=1)}
         if rebuild and rebuild["phase"] != "stories":
             return self._rebuild_step(cur, sources, rebuild, stamp)
