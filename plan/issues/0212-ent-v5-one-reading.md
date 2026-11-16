@@ -369,3 +369,55 @@ post −4% with the cache, 20 calls instead of 33, 126 answers instead of 272).
 5. **The archive:** re-read ~60k posts (≈ $95–105) after the switch, or keep the old rows for older posts?
 6. **`type_why`** is read by nobody: keep it (it is written before the type and the lab measured it helping), or drop
    it to save ~20 output tokens a post?
+
+## Built: ent-v5 (d7) in Shadow (v10.21, branch `v1021-ent-v5`)
+**The owner's decision (2026-11-16): d7.** Built as 2.3–2.4 and 5 say, with the decisions above: `cite` stays its own
+question, no claims, no archive re-read.
+- **Kind `reading`, guide `ent-v5`** (`guides/ent-v5.md`: d7, the one handle placeholder written `@<author>`, as the
+  guides' scrub rule wants), schema `schemas.READING_V5_SCHEMA` (`reading` | null, `event` = read-v2's `main`,
+  ent-v4.2's entities with null fields left out allowed, the `claims` slot). Worker: in `DEFAULT_KINDS`, 20 a call,
+  effort low, cache off (its default), a long post's windows never in one call (`POST_KINDS`).
+- **Checks** (`validate`): the entities entry by entry (0213's `SALVAGE`, the subject rule included); the reading as
+  read-v2's (`event` null iff `events` none, the headline's length); a first window without a reading refused (asked
+  again, as `read` is); a later window's `reading` and `event` set null, what the model wrote there kept under
+  `dropped` (`reading_window`, inside `salvage`, so the worker checks the same).
+- **The planner** (`reading5.plan`, the general and the fresh planner of the kind): new posts only (the fresh lane),
+  newest first, a window each (0176), only while the switch is `shadow` or `on`; reposts with another post's input
+  marked as the other planners do.
+- **The one adapter** (`reading5.record`, from `tasks.record`): the first window's reading as an mx_readings row under
+  `ent-v5` in read-v3's shape; each window's entities through ent42's merge (own title dropped, the cite answer merged)
+  into mx_mentions under `ent-v5`, **not made current in Shadow** (`repo.add_mentions(current=False)`). The cite answer
+  merges into the ent-v5 set as into ent-v4.2's (`ent42.after_cite`), and cite is planned for posts ent-v5 reads.
+- **The one preference list** (`reading5.guides(cur, *base)`, `rank_sql`, `pick`): every reading picker asks it.
+  - `tasks.readings` and `reading_kinds` (default: read-v2's);
+  - `event_types` (`type_guides`, `group_guides`; `typed_sql` takes them; built passes them);
+  - `happening` (`reading_guides`; a key row keeps the guide it was read from) and `units`;
+  - `incremental`, `candidates`, `anchors`, `source_stats`, `discover_main_source`;
+  - the four `ORDER BY guide DESC` queries (`news.post_panel`, `news_rank`, `translate.LANG_SQL`, `search`), now by
+    rank, with readings the list does not name left out.
+  Each keeps its own guides as before, with ent-v5 first only while the switch is `on`, so Shadow changes nothing.
+- **The switch** (mx_settings `reading_guide`, `POST /api/markx/settings/reading-guide`): `off` (the default),
+  `shadow`, `on`.
+  - `on` moves the posts ent-v5 read to its mention set, puts it first in every picker, and stops `read`, `read3` and
+    `entities` (`plan_posts`, the windows planner, `folds.plan`) for the posts it reads.
+  - Back to `shadow` or `off` gives those posts the newest other guide's set again (a post only ent-v5 read has no
+    current set); no row is rewritten.
+- **The /markx comparison** (Worker tab, "One reading (ent-v5)"; `GET /api/markx/reading5`): the switch, and the
+  newest posts ent-v5 read beside what they have now (kind, events, event type, origin, entity names in common), with
+  the agreement over them.
+- **Not done:** `plan_last_posts` (0132 C1, behind its own flag) still plans `read` / `entities` for a source's last
+  posts when `on`.
+
+**Measured (the 11-05 server copy, migrated; the planner at the copy's newest hour, the switch on Shadow):** 221 new
+posts planned as 309 tasks in 0.22 s; asked again, 0 in 0.01 s. **Peak RSS of the process: 52 MB** (41 MB before the
+planner).
+
+**Tests:**
+- `insight_core.tests.test_markx_reading5`: 10 tests covering the kind and guide, the checks (sections, entries,
+  windows), off / shadow planning (new posts only, windows), Shadow storing without changing any picker, the switch on
+  and back, and the comparison.
+- With `test_markx_validate` (the kinds list) and every module touched: 595 tests, OK; then the whole backend suite
+  (`JOBS=6 scripts/test-backend.sh`): 186 modules, 3,610 tests, OK.
+- Worker: `TestReading0212` (its settings; a later window's answer passes the worker's own checks): 114 worker tests
+  OK.
+- Frontend: `tsc`, and the Mark X component tests (91).

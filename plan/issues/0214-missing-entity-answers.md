@@ -1,6 +1,6 @@
 # 0214 — Entity answers missing from the worker's calls: causes and fixes (spec)
 
-Status: **spec** (2026-11-16). Follows 0213 (refused answers). Nothing built. Private: `plan/research/entity-waste/`
+Status: **built** (v10.21, branch `v1021-ent-v5`, merged from `v1021-worker-0214`; see "Built" at the end). Follows 0213 (refused answers). Private: `plan/research/entity-waste/`
 (`missing.py`, `per_run.py`).
 
 ## Measured (the worker's logs since 0191's settings, 14 Nov 01:45 – 16 Nov; entities calls, retries included)
@@ -28,8 +28,10 @@ answer is a task whose line is not in the call's output. It is asked again in th
 - **The weekly limit and the unreachable API did not stop the cycles they hit.**
   - Five cycles on 14 Nov (01:45–05:41, `per_run.py`; every kind, not entities alone) logged 246–521 weekly-limit
     failures and 195–482 unreachable failures each, over 20–40 minutes, each ending `done`.
-  - The worker classifies the weekly-limit text as `usage`, which should be fatal (exit 4) and stop new calls. That it
-    did not is the first thing to explain.
+  - **Explained (the coordinator, 2026-11-16):** those cycles ran a worker from before commit 6e4f23e (v10.18), whose
+    `USAGE_RE` did not match "You've hit your weekly limit · resets Nov 15, 3pm", so the text was an ordinary error
+    and each call failed on its own. 6e4f23e fixed the pattern and tested it; v10.21 only adds a fake-claude test of
+    that exact text (below).
 
 ## Fixes, one per cause (the worker, `scripts/markx-worker`; tested with the fake claude)
 1. **Some lines missing → ask the missing ones alone, at once** (0150 A's rule for invalid items, applied to missing
@@ -61,3 +63,22 @@ answer is a task whose line is not in the call's output. It is asked again in th
 Fake-claude tests for each fix (partial output → only the missing re-asked, halving; an array-shaped answer parsed;
 three unreachable → exit 3 with leases released; the weekly-limit text → the cycle ends within one round; the loop
 waits for a stated reset). Then one hand cycle on the owner's device, and its log counted as above.
+
+## Built (v10.21)
+All in `scripts/markx-worker`, tested with the fake claude (`scripts/tests/test_markx_worker.py`, class `Test0214`,
+11 tests; all 114 worker tests pass):
+1. **Missing lines:** a call that answered keeps its answers; the tasks it skipped are asked again at once in calls of
+   at most ceil(n/2), halving down to one, never with the answered ones (`Worker.halve`, the refusals' halving: one
+   mechanism, `isolate` calls it too). A task still missing alone is released as before. A call that failed outright
+   (an API error, a timeout) is still retried once at its size.
+2. **Other shapes:** `parse_lines` also reads a JSON array of answers, one object keyed by task id, and an answer over
+   several lines, with or without a fence (a one-line answer wins over another reading of the same id). Nothing
+   readable: all missing, through 1.
+3. **API unreachable:** the same call again after 30, 60 and 120 s (`--unreachable-wait`), same attempt, not halved.
+   Three unreachable results in a row across calls (`--unreachable-stop`) stop the cycle: no new call, leases
+   released, exit 3 (logged `stopped: "api"`).
+4. **`missing_text`:** a call with missing lines or none readable logs its output's first 4,000 characters on its
+   `call` line (kept off the terminal).
+5. **The weekly limit:** a test only. `classify()` maps the exact text to `usage`, and 800 tasks asked 20 calls at a
+   time end with exit 4 after at most 20 calls, leases released.
+

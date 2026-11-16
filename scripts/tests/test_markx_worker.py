@@ -1268,6 +1268,29 @@ class TestCost0191(Base):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
 
+class TestReading0212(unittest.TestCase):
+    """0212: ent-v5's kind `reading`, asked with the settings it was measured at (d7), checked by the server's rules."""
+    WINDOW = ("Platform: site | Source: Example\nTitle: T\nWindow: 2 of 3 of the post's text (characters 5,801-11,800 "
+              "of 15,000)\nText: […] Later the Kestrel Lab answered.")
+
+    def test_the_reading_kind_is_asked_with_the_measured_settings(self):
+        self.assertIn("reading", W.DEFAULT_KINDS.split(","))
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["reading"], 20)
+        self.assertEqual(W.effort_arg(W.EFFORT)["reading"], "low")
+
+    def test_a_later_windows_answer_without_a_reading_passes_the_workers_checks(self):
+        rules = W.server_rules()
+        schema = rules.schemas.READING_V5_SCHEMA
+        answer = {"entities": [{"span": "Kestrel Lab", "name": "Kestrel Lab", "type": "org", "role": "mention"}]}
+        out, dropped = W.salvage("reading", answer, self.WINDOW, "ent-v5")
+        self.assertEqual((out["reading"], out["event"], dropped), (None, None, 0))
+        self.assertIsNone(W.check_answer(schema, out))
+        self.assertIsNone(W.salvage_refused("reading", out))
+        self.assertIsNone(W.rule_error("reading", out, self.WINDOW, "ent-v5"))
+        first = "Platform: site | Source: Example\nTitle: Kestrel Lab answered"
+        self.assertIn("reading is null", W.rule_error("reading", dict(out, reading=None), first, "ent-v5"))
+
+
 class TestLogRotation(unittest.TestCase):
     """v10.17: the JSON-lines log rotates by size and keeps a few old files; every line lands in one of them."""
 
