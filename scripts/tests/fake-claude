@@ -128,6 +128,10 @@ def main():
         if "spanbad" in feats:   # 0191: a cite answer; the first N name a span the post does not have
             span = "a span not in the post" if k < int(feats["spanbad"] or 0) else "something happened"
             ans = {"entities": [{"span": span, "name": "A report", "type": "document", "role": "source"}]}
+        if "spanhalf" in feats:   # v10.20: a cite answer of two entries; in the first N the second's span is not in the post
+            span = "a span not in the post" if k < int(feats["spanhalf"] or 0) else "something happened"
+            ans = {"entities": [{"span": "something happened", "name": "A study", "type": "document", "role": "source"},
+                                {"span": span, "name": "A report", "type": "document", "role": "source"}]}
         if argv[4] == "WebSearch":   # 0171: a websearch call answers as websearch-v1 (candidates, the queries run)
             ans = {"candidates": [{"url": f"https://example.org/maker-{i}", "title": f"Maker {i}",
                                    "why": "the result names the product"}],

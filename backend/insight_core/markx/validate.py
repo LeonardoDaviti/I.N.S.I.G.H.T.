@@ -175,24 +175,107 @@ def _read(a: Dict[str, Any], _input: str) -> Optional[str]:
     return None
 
 
+def _entity_error(e: Dict[str, Any], input: str) -> Optional[str]:
+    """What is wrong with one entities entry against its post (the server's rule: `_entities` and `salvage` use it)."""
+    if e.get("role") == "recommended" and e.get("type") != "document":   # 0133: a recommended work is a document
+        return f"role recommended on a {e.get('type')}: only a document is recommended"
+    if not occurs(e["span"], input):
+        return f"span {e['span']!r} does not occur in the post"
+    version = e.get("version")
+    if version not in (None, "") and not version_occurs(str(version), input):
+        return f"version {version!r} does not occur in the post"
+    return None
+
+
+def _cite_error(e: Dict[str, Any], input: str) -> Optional[str]:
+    """What is wrong with one cite entry against its post."""
+    if e["type"] != "document" and e["role"] != "source":
+        return f"role {e['role']} on a {e['type']}: an org or a person is a source only"
+    if not occurs(e["span"], input):
+        return f"span {e['span']!r} does not occur in the post"
+    return None
+
+
 def _entities(a: Dict[str, Any], input: str) -> Optional[str]:
     for n, e in enumerate(a["entities"]):
-        if e.get("role") == "recommended" and e.get("type") != "document":   # 0133: a recommended work is a document
-            return f"entities[{n}].role recommended on a {e.get('type')}: only a document is recommended"
-        if not occurs(e["span"], input):
-            return f"entities[{n}].span {e['span']!r} does not occur in the post"
-        version = e.get("version")
-        if version not in (None, "") and not version_occurs(str(version), input):
-            return f"entities[{n}].version {version!r} does not occur in the post"
+        err = _entity_error(e, input)
+        if err:
+            return f"entities[{n}].{err}"
     return None
 
 
 def _cite(a: Dict[str, Any], input: str) -> Optional[str]:   # 0133 v4.2: the second question
     for n, e in enumerate(a["entities"]):
-        if e["type"] != "document" and e["role"] != "source":
-            return f"entities[{n}].role {e['role']} on a {e['type']}: an org or a person is a source only"
-        if not occurs(e["span"], input):
-            return f"entities[{n}].span {e['span']!r} does not occur in the post"
+        err = _cite_error(e, input)
+        if err:
+            return f"entities[{n}].{err}"
+    return None
+
+
+# ---- v10.20 (entity waste): a list's bad entries dropped, the rest kept -------------------------------------------
+# One entry with a span or a version not in the post, a value outside a set, or past the 20th refused the whole
+# answer, which was asked again (up to three tries). Now each entry of an entity list is checked alone and only the
+# bad ones are dropped; each dropped entry is kept in the stored answer under "dropped" ({list, item, why}), so
+# nothing the model said is lost (keep everything). An answer whose every entity was dropped stays invalid (asked
+# again, as before): an empty set from a non-empty answer is a wrong reading, not a post that names nothing.
+# {kind: {list key: the entry's own check against the post (None: its schema alone)}}; the first list is the entities.
+SALVAGE = {"entities": {"entities": _entity_error, "relations": None},
+           "cite": {"entities": _cite_error}}
+DROPPED = "dropped"
+
+
+def salvage(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Any:
+    """The answer with its bad list entries dropped (each kept under "dropped" with why), for a kind in SALVAGE. Any
+    other answer, or a list that is not a list of objects, is left as it is (`check` refuses it as before)."""
+    lists = SALVAGE.get(kind)
+    if not lists or not isinstance(answer, dict):
+        return answer
+    props = (schemas.schema_for(kind, guide) or {}).get("properties") or {}
+    before = list(answer.get(DROPPED) or [])
+    out, dropped = dict(answer), list(before)
+    for key, rule in lists.items():
+        items = answer.get(key)
+        spec = props.get(key) or {}
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
+            continue
+        kept = []
+        for n, item in enumerate(items):
+            why = schema_error(spec.get("items"), item, f"{key}[{n}]")
+            if why is None and rule is not None:
+                try:
+                    why = rule(item, input or "")
+                except (KeyError, TypeError, AttributeError) as e:
+                    why = f"unreadable ({e})"
+                why = why and f"{key}[{n}].{why}"
+            if why is None and "maxItems" in spec and len(kept) >= spec["maxItems"]:
+                why = f"{key}[{n}]: past entry {spec['maxItems']}"
+            if why is None:
+                kept.append(item)
+            else:
+                dropped.append({"list": key, "item": item, "why": why})
+        out[key] = kept
+    if len(dropped) > len(before):
+        out[DROPPED] = dropped
+    return out
+
+
+def salvage_refused(kind: str, answer: Dict[str, Any]) -> Optional[str]:
+    """Why a salvaged answer is still asked again, or None: it kept none of the entities it gave (SALVAGE[kind]'s
+    first list), or (entities) every subject it named was dropped: a post whose subject is a named thing never ends
+    without it (ent-v4.2's rule), and on the lab's posts asked seven times a re-ask named a dropped entity validly 16
+    times in 28."""
+    key = next(iter(SALVAGE.get(kind) or {}), None)
+    if key is None:
+        return None
+    gone = [d for d in answer.get(DROPPED) or [] if isinstance(d, dict) and d.get("list") == key]
+    if not gone:
+        return None
+    kept = answer.get(key) or []
+    if not kept:
+        return "every entity was dropped: " + "; ".join(str(d.get("why")) for d in gone[:3])
+    subjects = [d for d in gone if isinstance(d.get("item"), dict) and d["item"].get("role") == "subject"]
+    if kind == "entities" and subjects and not any(isinstance(e, dict) and e.get("role") == "subject" for e in kept):
+        return "every subject was dropped: " + "; ".join(str(d.get("why")) for d in subjects[:3])
     return None
 
 
@@ -748,6 +831,10 @@ def check(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Tu
     answer = unwrap(kind, answer)
     if not isinstance(answer, dict):
         return answer, "answer: not an object"
+    answer = salvage(kind, answer, input, guide)   # v10.20: an entity list's bad entries dropped, kept as "dropped"
+    refused = salvage_refused(kind, answer)
+    if refused:
+        return answer, refused
     err = schema_error(schemas.schema_for(kind, guide), answer)
     if err:
         return answer, err

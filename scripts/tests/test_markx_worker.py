@@ -1224,6 +1224,31 @@ class TestCost0191(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.fake_calls()), 1)
 
+    def test_v1020_one_bad_entry_is_dropped_and_the_answer_posted_once(self):
+        self.stub.add("cite", 5)
+        p = self.run_worker("--kinds", "cite", plan="spanhalf:2")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        calls = self.events("call")
+        self.assertEqual([(e["attempt"], e["size"], e["ok"], e["dropped"]) for e in calls], [(1, 5, 5, 2)])
+        posted = [a for payload in self.stub.posts for a in payload["answers"]]
+        self.assertEqual(len(posted), 5)
+        salvaged = [a["answer"] for a in posted if a["answer"].get("dropped")]
+        self.assertEqual(len(salvaged), 2)
+        for a in salvaged:   # the good entry stored, the bad one kept under "dropped" with why
+            self.assertEqual([e["name"] for e in a["entities"]], ["A study"])
+            self.assertEqual(a["dropped"][0]["item"]["name"], "A report")
+            self.assertIn("does not occur in the post", a["dropped"][0]["why"])
+
+    def test_v1020_salvage_is_the_servers(self):
+        answer = {"entities": [{"span": "Acme", "name": "Acme", "type": "org", "role": "subject"},
+                               {"span": "Nowhere Inc", "name": "Nowhere", "type": "org", "role": "mention"}]}
+        out, n = W.salvage("entities", answer, "Title: Acme ships")
+        self.assertEqual((n, [e["name"] for e in out["entities"]]), (1, ["Acme"]))
+        self.assertIsNone(W.salvage_refused("entities", out))
+        lost, _ = W.salvage("entities", {"entities": [dict(answer["entities"][1], role="subject")]}, "Title: Acme")
+        self.assertIn("every entity was dropped", W.salvage_refused("entities", lost))
+        self.assertEqual(W.salvage("read", {"kind": "news"}, "x"), ({"kind": "news"}, 0))
+
     def test_rule_error_is_the_servers_check_or_no_opinion(self):
         bad = {"entities": [{"span": "Nowhere Inc", "name": "Nowhere", "type": "org", "role": "subject"}]}
         good = {"entities": [{"span": "Acme", "name": "Acme", "type": "org", "role": "subject"}]}

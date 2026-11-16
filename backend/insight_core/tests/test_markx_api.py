@@ -230,6 +230,19 @@ class Leases(_Api):
         self.assertEqual(self.row(urgent)["leased_by"], "device-1")
         _, rest = self.lease(limit=20, worker="device-2")
         self.assertEqual(len(rest["tasks"]), 1)     # the third; the two leased are not leased again
+
+    def test_v1020_a_lease_sends_the_schema_the_server_checks_with_not_a_stale_stored_one(self):
+        # mx_guides keeps a guide's first schema; a set widened later (ent-v4.2's `published`) must reach the worker
+        # (mx_guides rows are never edited: the stored schema stays, and a widened code schema stands in for the change)
+        self.task()
+        widened = {**schemas.READ_SCHEMA, "x-widened": True}
+        real = schemas.schema_for
+        schemas.schema_for = lambda kind, guide=None: widened if guide == "read-v2" else real(kind, guide)
+        try:
+            _, body = self.lease(limit=1)
+        finally:
+            schemas.schema_for = real
+        self.assertEqual(body["guides"]["read-v2"]["schema"], widened)
         _, none = self.lease(limit=20, worker="device-2")
         self.assertEqual((none["tasks"], none["guides"]), ([], {}))
 
@@ -879,7 +892,7 @@ class EveryKindRoundTrips(_Api):
     INVALID = {
         "read": ({**reading(), "events": "none"}, "main must be null when events is none"),
         "entities": ({"entities": [{"span": "Widget 5", "name": "Widget 5", "type": "product", "role": "subject"}]},
-                     "entities[0].span 'Widget 5' does not occur in the post"),
+                     "every entity was dropped: entities[0].span 'Widget 5' does not occur in the post"),
         "check": ({"relation": "related", "confidence": 50}, "answer.relation: 'related' is not one of"),
         "join": ({"relation": "same_event", "confidence": 150}, "answer.confidence: above 100"),
         "pair": ({"relation": "same_event"}, "answer: confidence missing"),
@@ -920,10 +933,18 @@ class EveryKindRoundTrips(_Api):
     def test_too_many_entities_and_a_version_not_in_the_post(self):
         t = self.build()["entities"]
         one = {"span": "Acme", "name": "Acme", "type": "org", "role": "actor"}
-        _, got = self.answer((t, {"entities": [one] * 21}))
-        self.assertEqual(got["invalid"][0]["error"], "answer.entities: 21 items, more than 20")
         _, got = self.answer((t, {"entities": [dict(one, span="Widget 4.1 Pro", version="4.2")]}))
-        self.assertEqual(got["invalid"][0]["error"], "entities[0].version '4.2' does not occur in the post")
+        self.assertEqual(got["invalid"][0]["error"],
+                         "every entity was dropped: entities[0].version '4.2' does not occur in the post")
+        # v10.20: past the 20th dropped, the first 20 stored; the call keeps the dropped entry with why
+        _, got = self.answer((t, {"entities": [one] * 21}))
+        self.assertEqual((got["valid"], got["invalid"]), (1, []))
+        self.cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid", (t,))
+        stored = self.cur.fetchone()[0]
+        self.assertEqual(len(stored["entities"]), 20)
+        self.assertEqual(stored["dropped"][0]["why"], "entities[20]: past entry 20")
+        self.cur.execute("SELECT count(*) FROM mx_mentions WHERE post_id = (SELECT a FROM mx_tasks WHERE id = %s)", (t,))
+        self.assertEqual(self.cur.fetchone()[0], 20)
 
 
 if __name__ == "__main__":

@@ -64,8 +64,20 @@ class TheCiteSchema(unittest.TestCase):
         self.assertIsNotNone(self.check(ent("Ivo Lind", "Ivo Lind", "person", "subject")))
         self.assertIsNotNone(self.check(ent("Acme Corp", "Acme Corp", "model", "source")))      # three types only
         self.assertIsNotNone(self.check(ent("Nowhere Paper", "Nowhere Paper", "document", "source")))  # not in the post
-        self.assertIsNotNone(self.check(*[ent("Acme Corp", "Acme Corp", "org", "source")] * 31))       # at most 30
         self.assertIsNone(self.check(*[ent("Acme Corp", "Acme Corp", "org", "source")] * 30))
+        # v10.20: past the 30th, the rest is dropped (kept under "dropped"), the first 30 stored
+        answer, error = validate.check("cite", {"entities": [ent("Acme Corp", "Acme Corp", "org", "source")] * 31},
+                                       self.INPUT, "cite-v1")
+        self.assertIsNone(error)
+        self.assertEqual((len(answer["entities"]), len(answer["dropped"])), (30, 1))
+
+    def test_v1020_one_bad_entry_is_dropped_the_rest_stored(self):
+        answer, error = validate.check("cite", {"entities": [ent("Acme Corp", "Acme Corp", "org", "source"),
+                                                             ent("Nowhere Paper", "Nowhere Paper", "document", "source")]},
+                                       self.INPUT, "cite-v1")
+        self.assertIsNone(error)
+        self.assertEqual([e["name"] for e in answer["entities"]], ["Acme Corp"])
+        self.assertIn("does not occur in the post", answer["dropped"][0]["why"])
 
 
 class TheCue(unittest.TestCase):
