@@ -440,7 +440,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         return story is None or any(f" {c} " in f" {name} " for c in cores.get(story.id, ()))
 
     if grouped is not None:
-        root = _grouped(posts, stories, found, story_of, cores, grouped, first_said, nested)
+        root = _grouped(posts, stories, found, story_of, cores, mains, grouped, first_said, nested)
         find = root.__getitem__
     else:
         find = uf.find
@@ -500,8 +500,8 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
 
 
 def _grouped(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-             story_of: Dict[str, Story], cores: Dict[str, Set[str]], evidence: Any, first_said: Any,
-             nested: Any) -> Dict[str, str]:
+             story_of: Dict[str, Story], cores: Dict[str, Set[str]], mains: Dict[str, Optional[str]], evidence: Any,
+             first_said: Any, nested: Any) -> Dict[str, str]:
     """{post: its row's key} by utils/grouping.py (0217): the stories (sorted by id) and each post of no story as an
     item; each surge's name an edge between every two items whose posts say it first; a post in two stories a rule
     edge (an attachment, never a bridge); the judge's story verdicts as given. A post in several stories is in its
@@ -517,7 +517,7 @@ def _grouped(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequen
     ids = {s.id for s in stories}
     for s in stories:
         items.append(grouping.Item(s.id, tuple(fact(p) for p in s.posts), voice.count(s.posts, voice.Policy.NEWS_IX),
-                                   frozenset(cores.get(s.id, ())), evidence.stories.get(s.id)))
+                                   frozenset(cores.get(s.id, ())), evidence.stories.get(s.id), mains.get(s.id)))
     names_of: Dict[str, Set[str]] = defaultdict(set)
     for surge in found:
         for pid in surge.posts:

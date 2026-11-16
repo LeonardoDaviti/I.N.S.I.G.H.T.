@@ -167,6 +167,25 @@ class Shapes(unittest.TestCase):
                 g = G.group(items, edges, policy=Policy(algo=algo))
                 self.assertEqual(partition(g), [["ipo1", "ipo2", "ipo3"], ["vela"]])
 
+    def test_two_releases_of_two_things_never_join(self):
+        """A bare version's release and its variant's are two models; a release of an exact thing and a release of
+        an unversioned product are two releases, whatever the judge said (a stale verdict, 0205)."""
+        items = [story("base", T0, 4, things=(QBARE,), event="model_release"),
+                 story("flash", T0 + 2 * D, 4, things=(Thing("orbitmax4", "flash"),), event="model_release"),
+                 story("feature", T0 + H, 3, things=(), event="product_release")]
+        edges = [same("base", "feature", 0.95), same("flash", "feature", 0.95)]
+        for algo in ALGOS:
+            self.assertEqual(len(G.group(items, edges, policy=Policy(algo=algo)).groups), 3, algo)
+
+    def test_the_chosen_setting_keeps_the_release_and_the_runaway_apart(self):
+        items, edges = self.release_world()
+        g = G.group(items, edges, policy=G.CHOSEN)
+        self.assertEqual(sorted(next(x for x in g.groups if "launch" in x.members).members),
+                         ["bench", "launch", "preview", "router", "teaser"])
+        items, edges = self.runaway_world()
+        g = G.group(items, edges, policy=G.CHOSEN)
+        self.assertNotEqual(g.group_of["vela"], g.group_of["ceo"])
+
     def test_a_confident_different_blocks_the_join(self):
         items = [story("a", T0, 3, things=(QMAX,), event="model_release"),
                  story("b", T0 + H, 3, things=(QMAX,), event="model_release")]

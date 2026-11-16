@@ -56,12 +56,17 @@ from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence,
 # ---- the facts --------------------------------------------------------------------------------------------------
 
 RELEASES = frozenset({"model_release", "product_release"})
+CONNECTED = ("development", "follows_up", "same_event")   # the judge's verdicts that connect two stories
 LEAK = "leak_rumour"
 # Types that are their own happening: two items of two of these (or one of these and a release) are never one row.
 OWN_HAPPENINGS = frozenset({"model_release", "product_release", "business_event", "policy_legal", "incident",
-                            "public_statement"})
-# The release family: what can be a line of one release's row (a stage, availability, a benchmark, a breakdown).
-NOT_RELEASE_FAMILY = frozenset({"business_event", "policy_legal", "incident", "public_statement"})
+                            "public_statement", "research_result"})
+# Two kinds of happening one row may hold: a release and its results (a benchmark, an evaluation, a paper on it).
+KIN = frozenset({frozenset({"model_release", "product_release"}), frozenset({"model_release", "research_result"}),
+                 frozenset({"product_release", "research_result"})})
+# The release family: what can be a line of one release's row (a stage, availability, a benchmark, a breakdown). A
+# round-up is none: it lists the release among others.
+NOT_RELEASE_FAMILY = frozenset({"business_event", "policy_legal", "incident", "public_statement", "digest"})
 
 
 _WORD = re.compile(r"[^\W_]+(?:[.][^\W_]+)*", re.UNICODE)
@@ -126,6 +131,7 @@ class Item:
     names: FrozenSet[str] = frozenset()    # its core surging names (news_rules.core_names)
     event: Optional[str] = None            # its kind of happening when the caller knows it (Mark X: the story's type
                                            # by the event-type seam); None: its lead posts' most common type
+    main: Optional[str] = None             # its main surging name (news_rules.main_name)
 
 
 @dataclass(frozen=True)
@@ -157,7 +163,10 @@ class Policy:
     w_name: float = 1.0
     w_core: float = 2.0
     tau_same: float = 0.5            # a same_event below this p builds nothing
+    w_dev: float = 0.0               # a development / follow-up between two cores of one kind of happening (a stage
+                                     # of one IPO, one lawsuit): its weight; 0, a typed connection only (the spec's)
     ls_rounds: int = 2               # cc: rounds of single-item moves
+    large_posts: int = 5             # two items this large join by a name only by both main names (and the judge)
 
 
 @dataclass(frozen=True)
@@ -200,12 +209,13 @@ def core_of(item: Item, policy: Policy = Policy()) -> Core:
     posts = sorted(item.posts, key=lambda p: (p.at, p.id))
     if not posts:
         return Core(None, item.names, None, datetime.min, ())
-    leads = [p for p in posts if p.report][:policy.k_lead] or posts[:1]
+    reports = [p for p in posts if p.report]
+    leads = reports[:policy.k_lead] or posts[:1]
     said: Dict[Thing, int] = defaultdict(int)
-    for p in leads:
+    for p in (leads if reports else ()):   # replies and round-ups alone are about no exact thing
         for t in set(p.things):
             said[t] += 1
-    first = set(leads[0].things)
+    first = set(leads[0].things) if reports else set()
     held = [t for t, n in said.items() if t in first or n >= policy.core_share * len(leads)]
     # the most specific: a variant over its bare version, then the most said, then the name
     held = [t for t in held if not (not t.variant and any(o.name == t.name and o.variant for o in held))]
@@ -220,11 +230,18 @@ def core_of(item: Item, policy: Policy = Policy()) -> Core:
 
 
 def _conflict(a: Core, b: Core) -> bool:
-    """Two cores that cannot be one row: two different exact things, or two happenings of different kinds."""
+    """Two cores that cannot be one row: two different exact things, two happenings of different kinds, or two
+    releases that are not of one thing (one of an exact thing, the other of none; a bare version's release and its
+    variant's: "Orbit 4" and "Orbit 4 Flash" are two models)."""
     if a.thing and b.thing and not a.thing.fits(b.thing):
         return True
+    if a.event in RELEASES and b.event in RELEASES:
+        if bool(a.thing) != bool(b.thing):
+            return True
+        if a.thing and b.thing and a.thing.variant != b.thing.variant:
+            return True
     if a.event in OWN_HAPPENINGS and b.event in OWN_HAPPENINGS and a.event != b.event \
-            and not (a.event in RELEASES and b.event in RELEASES):
+            and frozenset({a.event, b.event}) not in KIN:
         return True
     return False
 
@@ -237,6 +254,11 @@ def _release_pair(a: Core, b: Core, policy: Policy) -> bool:
     if not ({a.event, b.event} & (RELEASES | {LEAK})):
         return False
     return abs((a.at - b.at).total_seconds()) <= policy.span_days * 86400
+
+
+# The setting chosen on the dev window (0217: 2026-11-07..12, labelled pairs; average linkage over admitted edges,
+# a mean weight above 1, a release's stages within 14 days, one release's edges weighing 3). Mark X's News reads it.
+CHOSEN = Policy(algo="agg", theta=1.0, span_days=14.0, w_core=3.0)
 
 
 def _says(name: str, names: Iterable[str]) -> bool:
@@ -278,6 +300,9 @@ def group(items: Sequence[Item], edges: Sequence[Edge], *, policy: Policy = Poli
     weights: Dict[Tuple[str, str], float] = defaultdict(float)
     via: Dict[Tuple[str, str], List[Edge]] = defaultdict(list)
     cannot: Set[Tuple[str, str]] = set()
+    judged = any(e.source == "judge" for e in given)
+    connected = {(e.a, e.b) for e in given if e.source == "judge" and e.relation in CONNECTED
+                 and not (e.shown and not e.shown <= (posts_of[e.a] | posts_of[e.b]))} if judged else None
     for e in given:
         pair = (e.a, e.b)
         if e.source == "rule":
@@ -294,11 +319,13 @@ def group(items: Sequence[Item], edges: Sequence[Edge], *, policy: Policy = Poli
             rejected.append((e, "cannot"))
             continue
         w = _weight(e, policy)
+        if e.source == "judge" and e.relation in ("development", "follows_up") and policy.w_dev \
+                and cores[e.a].event in OWN_HAPPENINGS and cores[e.a].event == cores[e.b].event:
+            w = policy.w_dev * _logit(e.p if e.p is not None else 0.0)
         if w <= 0:
             rejected.append((e, "weak"))
             continue
-        if e.source == "name" and policy.admit and not (_says(e.name or "", cores[e.a].names)
-                                                         and _says(e.name or "", cores[e.b].names)):
+        if e.source == "name" and not _name_holds(e, by_id, cores, connected, policy):
             rejected.append((e, "name"))
             continue
         if policy.admit and _conflict(cores[e.a], cores[e.b]):
@@ -317,6 +344,23 @@ def group(items: Sequence[Item], edges: Sequence[Edge], *, policy: Policy = Poli
     else:
         raise ValueError(f"grouping: no algorithm {policy.algo!r}")
     return state.result(rejected)
+
+
+def _name_holds(e: Edge, by_id: Mapping[str, Item], cores: Mapping[str, Core],
+                connected: Optional[Set[Tuple[str, str]]], policy: Policy) -> bool:
+    """A surging name joins two items only when it says a core name of each (0203's core names); two large items
+    (`large_posts`+ posts each) only by each one's main name and, with a judge, only when the judge connected them
+    (0203's large-story rule, which every arm keeps)."""
+    name = e.name or ""
+    if not (_says(name, cores[e.a].names) and _says(name, cores[e.b].names)):
+        return False
+    a, b = by_id[e.a], by_id[e.b]
+    if len(a.posts) >= policy.large_posts and len(b.posts) >= policy.large_posts:
+        if not (a.main and b.main and _says(name, [a.main]) and _says(name, [b.main])):
+            return False
+        if connected is not None and (e.a, e.b) not in connected:
+            return False
+    return True
 
 
 def _weight(e: Edge, policy: Policy) -> float:
