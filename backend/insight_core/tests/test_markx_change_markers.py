@@ -54,8 +54,9 @@ class APostsStamp(Window):
         self.cur.execute("DELETE FROM post_links WHERE post_id = %s", (a,))
         self.moved(a, b, sa, sb, "a link removed")
 
-    def test_its_row_moves_it(self):
+    def test_a_new_post_has_one_and_its_row_moves_it(self):
         a, b, sa, sb = self.two()
+        self.assertTrue(sa.isdigit() and sb.isdigit() and sa != sb, "each post saved has its own version")
         self.cur.execute("UPDATE posts SET title = 'Acme released Widget 5' WHERE id = %s", (a,))
         self.moved(a, b, sa, sb, "its row written")
 

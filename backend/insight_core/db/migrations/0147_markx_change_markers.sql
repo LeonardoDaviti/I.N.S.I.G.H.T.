@@ -1,21 +1,24 @@
 -- 0147_markx_change_markers.sql (Stealth v10.22, issue 0216: the planners' fingerprints and the passes' stamps)
 -- no transaction
 --
--- 1. mx_post_stamps: a post's dependents' version (markx/plan_marks.py STAMP). A post's text stamp was its row's
---    version plus four subqueries a post (its parts' row version, its source's shown name, every kept link's row
---    version, the page a link post is read with), computed for every post of the window on every planner run (on the
---    server: 12% of the database's time, ~120M buffer reads in 104 min, for 242 rows). Now the stamp is the post's row
---    version and one primary-key probe of this table, whose `n` (a sequence) moves on every write of those dependents:
---    post_parts and post_links (statement triggers), the source's shown name and kind fields, and story_originals'
---    `linked` rows a post's page points to. A post none of them was written for since has no row (its stamp is its
---    row's version alone), so nothing is backfilled: the stamps kept before (mx_plan_marks, mx_inc_posts) differ once,
---    and the posts are read again once, as after any change of the stamp's definition.
+-- 1. mx_post_stamps: a post's text version (markx/plan_marks.py STAMP). A post's text stamp was its row's version plus
+--    four subqueries a post (its parts' row version, its source's shown name, every kept link's row version, the page
+--    a link post is read with), computed for every post of the window on every planner run (on the server: 12% of the
+--    database's time, ~120M buffer reads in 104 min, for 242 rows). Now the stamp is this table's `n` (a sequence),
+--    moved by triggers on every write of the post's row and of those dependents: post_parts and post_links (statement
+--    triggers), the source's shown name and kind fields, and story_originals' `linked` rows a post's page points to.
+--    A narrow table, so the planners find the posts whose mark no longer holds by a join of two narrow tables, not a
+--    read of every post (plan_marks.unread). Every post gets a row (backfilled); the stamps kept before (mx_plan_marks,
+--    mx_inc_posts) differ once, and the posts are read again once, as after any change of the stamp's definition.
 -- 2. mx_table_changes: what markx/unchanged.py stamps mx_tasks by (a pass's declared `mx_tasks[kind,...]`). It summed
 --    every row version of those kinds (a full scan of mx_tasks: ~600 ms a call on the server). Now each statement that
 --    writes mx_tasks appends one row per kind it touched (n from a sequence); a kind's stamp is the count and sum of
 --    its rows (a late commit adds a row, so the stamp moves whatever its n). unchanged.py prunes it.
--- 3. mx_tasks (a, kind, guide) in place of (a): the planners' probe "has the post a task of this kind and guide" is
---    answered from the index alone (it fetched every task row of the post from the 3.8 GB table to check two columns).
+-- 3. mx_tasks (kind, guide, a): the planners' "has the post a task of this kind and guide" from the index alone, per
+--    post (it fetched every task row of the post from the 3.8 GB table to check two columns) or for every post at once
+--    (plan_marks.unread: the kind's posts in order, against the posts' ids). (a) stays: with it replaced by (a, kind,
+--    guide), a query reading tasks by `a` alone took the new index and its rows in another order, and one decision run
+--    of the mxreal copy asked one rename question more (an order-dependent step; measured: base code, index swapped).
 --
 -- Every statement runs on its own (no transaction: the index is built CONCURRENTLY) and is safe to run again.
 
@@ -102,7 +105,16 @@ DROP TRIGGER IF EXISTS story_originals_stamp ON story_originals;
 CREATE TRIGGER story_originals_stamp AFTER INSERT OR UPDATE OR DELETE ON story_originals FOR EACH ROW
   EXECUTE FUNCTION mx_post_stamps_linked();
 
--- A deleted post's row goes with it (posts' own row version is in the stamp: no posts trigger otherwise).
+-- The post's own row: every insert and update (its row version was the stamp's first part), and a deleted post's row
+-- goes with it.
+CREATE OR REPLACE FUNCTION mx_post_stamps_post() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO mx_post_stamps (post_id, n) VALUES (NEW.id, nextval('mx_post_stamps_seq'))
+  ON CONFLICT (post_id) DO UPDATE SET n = EXCLUDED.n;
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS posts_stamp ON posts;
+CREATE TRIGGER posts_stamp AFTER INSERT OR UPDATE ON posts FOR EACH ROW EXECUTE FUNCTION mx_post_stamps_post();
 CREATE OR REPLACE FUNCTION mx_post_stamps_gone() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM mx_post_stamps WHERE post_id IN (SELECT id FROM old_rows);
@@ -111,6 +123,10 @@ END $$;
 DROP TRIGGER IF EXISTS posts_stamp_del ON posts;
 CREATE TRIGGER posts_stamp_del AFTER DELETE ON posts REFERENCING OLD TABLE AS old_rows
   FOR EACH STATEMENT EXECUTE FUNCTION mx_post_stamps_gone();
+
+-- Every post stored before: a row (after the triggers, so a post saved meanwhile is not missed).
+INSERT INTO mx_post_stamps (post_id, n) SELECT id, nextval('mx_post_stamps_seq') FROM posts ON CONFLICT (post_id) DO NOTHING;
+ANALYZE mx_post_stamps;
 
 -- 2. The kinds of mx_tasks a statement wrote (markx/unchanged.py).
 CREATE SEQUENCE IF NOT EXISTS mx_table_changes_seq;
@@ -150,7 +166,6 @@ DROP TRIGGER IF EXISTS mx_tasks_changes_trunc ON mx_tasks;
 CREATE TRIGGER mx_tasks_changes_trunc AFTER TRUNCATE ON mx_tasks
   FOR EACH STATEMENT EXECUTE FUNCTION mx_tasks_changed();
 
--- 3. The planners' probe from the index alone; (a) alone is its prefix.
-DROP INDEX CONCURRENTLY IF EXISTS mx_tasks_a_kind_guide_idx;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS mx_tasks_a_kind_guide_idx ON mx_tasks (a, kind, guide) WHERE a IS NOT NULL;
-DROP INDEX CONCURRENTLY IF EXISTS mx_tasks_a_idx;
+-- 3. The planners' probe from the index alone.
+DROP INDEX CONCURRENTLY IF EXISTS mx_tasks_kind_guide_a_idx;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS mx_tasks_kind_guide_a_idx ON mx_tasks (kind, guide, a) WHERE a IS NOT NULL;

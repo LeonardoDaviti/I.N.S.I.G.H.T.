@@ -102,7 +102,6 @@ class LinkPosts(OriginalsCase):
     def test_any_other_post_keeps_its_stamp(self):
         pid = self._post(self.a, OTHER, "A post with words", self.now - timedelta(hours=1))
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            cur.execute(f"SELECT {plan_marks.STAMP}, p.xmin::text || p.ctid::text FROM posts p WHERE p.id = %s", (pid,))
-            stamp, row = cur.fetchone()
-        self.assertTrue(stamp.startswith(row))
-        self.assertEqual(stamp.count("|"), 1)        # its row, then its dependents' version (0216: no page: nothing added)
+            cur.execute(f"SELECT {plan_marks.STAMP} FROM posts p WHERE p.id = %s", (pid,))
+            stamp = cur.fetchone()[0]
+        self.assertTrue(stamp.isdigit())   # 0216: its version alone (mx_post_stamps); no page: nothing else read

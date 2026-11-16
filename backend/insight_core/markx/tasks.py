@@ -671,6 +671,8 @@ def plan_posts(cur: Cursor, kind: str, *, days: Any = SETTING, limit: int = PLAN
                   AND (%(fresh)s::timestamptz IS NULL OR {fresh_sql()})
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
+                  AND (%(fresh)s::timestamptz IS NOT NULL   -- v10.22: the window's posts narrowed first (the fresh lane's are few)
+                       OR {plan_marks.unread("NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = q.id)")})
                   AND p.filtered_by IS NULL   -- 0196: a post its source's item filter hid is never read
                   AND {old_kinds}             -- 0212: not a post ent-v5 reads, while its switch is on
                   AND (%(at)s::timestamptz IS NULL
