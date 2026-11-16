@@ -693,6 +693,62 @@ def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
     return any(not kept_pages.has(cur, "news", key, run, st) for key in VIEWS)
 
 
+# 0215: what the News page doesn't read of `page` (components/markx/MarkXNews.tsx, MarkXFolds.tsx, MarkXBuilt.tsx,
+# lib/markx.ts, lib/byline.ts), left out of the answer the route sends; `page` itself is unchanged (its tests, the
+# sections). On the server's page (2.27 MB): each line's address, kind and role, the Mark IX row's index, the fold's
+# rule, the rank's coverage and score, the surges' and Mark IX rows' ids, the build's internals.
+_ITEM_DROPPED = ("reports", "score")
+_RANK_KEPT = ("notable", "significance", "fit", "why")
+_RANK_WHY_KEPT = ("why", "effect", "analysis")
+_BUILT_DROPPED = ("code", "read", "original", "source_page", "release_at", "leaks")
+_LINE_DROPPED = ("url", "kind", "role")
+
+
+def _line(p: Dict[str, Any]) -> Dict[str, Any]:
+    """A line of a row (or a removed or gone post) as the page reads it."""
+    out = {k: v for k, v in p.items() if k not in _LINE_DROPPED}
+    if isinstance(out.get("ix"), dict):
+        out["ix"] = {k: v for k, v in out["ix"].items() if k != "row"}
+    if isinstance(out.get("fold"), dict):
+        out["fold"] = {k: v for k, v in out["fold"].items() if k not in ("rule", "by", "count")}
+    if isinstance(out.get("built"), dict):
+        out["built"] = {k: v for k, v in out["built"].items() if k != "joins"}
+    if isinstance(out.get("mention"), dict):
+        out["mention"] = {"role": out["mention"].get("role")}
+    return out
+
+
+def reader_view(view: Dict[str, Any]) -> Dict[str, Any]:
+    """`page` as GET /api/markx/news sends it (kept by `keep_pages`, or built by the route): without what no page
+    reads (above)."""
+    items = []
+    for item in view.get("items") or []:
+        item = {k: v for k, v in item.items() if k not in _ITEM_DROPPED}
+        item["posts"] = [_line(p) for p in item.get("posts") or []]
+        item["removed"] = [_line(p) for p in item.get("removed") or []]
+        if isinstance(item.get("surging"), list):
+            item["surging"] = [{"name": s.get("name")} if isinstance(s, dict) else s for s in item["surging"]]
+        if isinstance(item.get("ix"), list):
+            item["ix"] = [{"title": r.get("title")} if isinstance(r, dict) else r for r in item["ix"]]
+        rank = item.get("rank")
+        if isinstance(rank, dict):
+            item["rank"] = {k: v for k, v in rank.items() if k in _RANK_KEPT}
+            if isinstance(rank.get("why"), dict):
+                item["rank"]["why"] = {k: v for k, v in rank["why"].items() if k in _RANK_WHY_KEPT}
+        built = item.get("built")
+        if isinstance(built, dict):
+            built = {k: v for k, v in built.items() if k not in _BUILT_DROPPED}
+            for key in ("came_true", "leaked_before"):
+                if isinstance(built.get(key), list):
+                    built[key] = [{k: v for k, v in e.items() if k not in ("via", "posts")} if isinstance(e, dict)
+                                  else e for e in built[key]]
+            item["built"] = built
+        items.append(item)
+    gone = [{**g, "posts": [_line(p) for p in g.get("posts") or []]} if isinstance(g, dict) else g
+            for g in view.get("gone") or []]
+    return {**view, "items": items, "gone": gone}
+
+
 def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     """In the jobs process (jobs.Jobs.news), in one snapshot: each view not kept for its inputs built by `page` and
     kept (kept_pages.encode: the bytes the route answers); the views of all but the newest KEEP_RUNS runs pruned."""
@@ -713,7 +769,7 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
             out["rank"] = {**news_rank.keep(cur, now=now), "seconds": round(time.monotonic() - t0, 2)}
             ranked = True
         t0 = time.monotonic()
-        body = kept_pages.encode(page(cur, only_differences=only, now=now))
+        body = kept_pages.encode(reader_view(page(cur, only_differences=only, now=now)))
         seconds = round(time.monotonic() - t0, 2)
         kept_pages.put(cur, "news", key, run, st, body, seconds=seconds)
         out["built"].append(key)

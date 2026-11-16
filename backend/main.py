@@ -883,10 +883,13 @@ async def get_media(post: str, url: str):
 @error_detail("load the sources")
 def list_sources():
     """Every source with its settings (platform defaults merged), post_count and in_main_digest; the
-    archive's history left out (issue 0105: 98.7% of the answer; GET /api/archive/{id}/status has it)."""
+    archive's history left out (issue 0105: 98.7% of the answer; GET /api/archive/{id}/status has it), and since
+    0215 the archive's whole state (settings.archive: 61% of the answer on the server; no page reads it here)."""
     sources = services().sources.list_sources()
-    return {"success": True, "sources": sources, "total": len(sources),
-            "total_posts": sum(int(s.get("post_count") or 0) for s in sources)}
+    total_posts = sum(int(s.get("post_count") or 0) for s in sources)
+    sources = [{**s, "settings": {k: v for k, v in s["settings"].items() if k != "archive"}}
+               if isinstance(s.get("settings"), dict) else s for s in sources]
+    return {"success": True, "sources": sources, "total": len(sources), "total_posts": total_posts}
 
 
 OPML_NS = "https://insight.local/opml"
@@ -1127,7 +1130,9 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     `mark=ix` asks for the older News (Mark IX's rows).
     Issue 0208: Mark X's rows are ranked for the reader (significance, coverage) with a "Notable for you" lane first
     (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score."""
-    return await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark, order=order)
+    from insight_core.services.news_service import reader_view   # 0215: the fields the page reads
+    return reader_view(await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark,
+                                               order=order))
 
 
 @app.get("/api/classics")

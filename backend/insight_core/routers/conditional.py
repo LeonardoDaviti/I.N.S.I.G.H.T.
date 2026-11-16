@@ -15,7 +15,8 @@ Scope = Dict[str, Any]
 Message = Dict[str, Any]
 
 POLLED = ("/api/feed/unread-counts", "/api/operations/running", "/api/operations/overview", "/api/sources/health",
-          "/api/markx/news")   # 0198: a kept page (1.7 MB): an unchanged one is a 304
+          "/api/markx/news",   # 0198: a kept page (1.7 MB): an unchanged one is a 304
+          "/api/news", "/api/sources")   # 0215: the next large answers (86 KB each gzipped on the server), opened often
 
 
 def etag_of(body: bytes) -> str:
