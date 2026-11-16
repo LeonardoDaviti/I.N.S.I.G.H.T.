@@ -1,8 +1,8 @@
 """One story, many sources (issue 0050): the story job and Discover.
 
-The story job runs after each fetch run that saved posts (IngestionRunner's `stories` port) and
-once when the backend starts (main.py, in the background), each time in a process of its own
-(in_own_process, issue 0072). It is incremental (issue 0072 A):
+The story job runs in insight-ingestion's jobs runner (markx/jobs.py, the job "stories", in a process of its own,
+issue 0072), wanted by each fetch run that saved posts (IngestionRunner's `stories` port), by the backend's start and
+by a voice change (0216: before, the fetch run and the start ran it themselves). It is incremental (issue 0072 A):
 1. it reads the links of every post never read (the posts stored before 0050), 500 a transaction, and the refs
    (issue 0125, post_refs: Connected's) of every post stored before them, the same way;
 2. it takes the posts saved, changed or removed since the last run (`story_queue`, written by
@@ -14,9 +14,11 @@ once when the backend starts (main.py, in the background), each time in a proces
    linked, Discover's counts for the keys linked. A new story keeps its id when an earlier post joins.
 3. a rule change (another `rules_stamp`, issue 0071) regroups every post the same way, in bounded
    batches, in the background: the posts' keys and the threads first, then every post queued
-   (`redo:`). The rows of the old rules are served until each batch replaces them. 0209: its slices run after
-   fetches and also from insight-ingestion's jobs loop (markx/jobs.py, the job "stories", STORIES_GAP apart while a
-   rebuild is due or in progress); 0215: it holds no decision run (`jobs.decision_hold`).
+   (`redo:`). The rows of the old rules are served until each batch replaces them. 0209: its slices run from
+   insight-ingestion's jobs loop (markx/jobs.py, the job "stories", STORIES_GAP apart while a rebuild is due or in
+   progress); 0215: it holds no decision run (`jobs.decision_hold`). 0216: the stamp has three parts and a change
+   redoes only what its parts need (`redo_for`): News alone, the posts whose keys moved, or every post, the newest
+   first.
 `recompute(full=True)` regroups every post at once (`regroup`): the oracle the incremental job is
 measured against, row by row (the same stories, News, Classics and Discover). Deterministic and
 idempotent. One job at a time (an advisory lock); a job that finds one running skips. No AI, no fetch.
@@ -107,6 +109,7 @@ class StoriesService:
         # with a story run, a source or a hidden suggestion: the last list is kept until they do, here and in the
         # database (issue 0080 cold open: a fresh process reads it, the story job makes it).
         self._discovered: tuple = ("", None)
+        self._unsettled: Optional[tuple] = None   # 0216: the last quiet batches' progress, kept at the slice's end
         code_stamp()   # read at start, not on an open
 
     # ---- the job ------------------------------------------------------------------------
@@ -163,9 +166,11 @@ class StoriesService:
                 if not self._lock(cur):
                     return {**totals, "links_filled": filled} if totals else {"skipped": True, "links_filled": filled}
                 if not self.advance(cur, totals, links_filled=filled, started=started):
+                    self.settle_slice(cur)
                     return {"computed_at": self.clock().isoformat(), "full": False, **totals, "links_filled": filled,
                             "batches": totals["batches"], "seconds": round(time.monotonic() - started, 2)}
                 if time.monotonic() - started >= STEP_BUDGET_S:
+                    self.settle_slice(cur)
                     SystemSettingsRepository.upsert(cur, YIELD_KEY, {"at": self.clock().isoformat()})
                     logger.info("Stories: yielded after %.0f s with work left (%d batches)",
                                 time.monotonic() - started, totals["batches"])
@@ -221,9 +226,23 @@ class StoriesService:
             step["links_changed"] = True
         summary = {"computed_at": now.isoformat(), "full": False, "links_filled": links_filled, **totals,
                    "batches": totals["batches"], "seconds": round(time.monotonic() - (started or time.monotonic()), 2)}
+        if step.pop("quiet", False):   # 0216: kept with the next step that changed something, or at the slice's end
+            self._unsettled = (sources, summary, now, step)
+            return True
+        self._unsettled = None
         self._settle(cur, sources, summary, now, step)
         self._discover_step(cur, sources, step.get("discover"))
         return True
+
+    def settle_slice(self, cur: Any) -> None:
+        """0216: at a slice's end, the progress its last quiet batches left unkept (`advance`), counted now."""
+        pending, self._unsettled = self._unsettled, None
+        if pending is None:
+            return
+        sources, summary, now, step = pending
+        if step.get("rebuild"):
+            step = {**step, "rebuild": {**step["rebuild"], **self.repo.regrouped(cur)}}
+        self._settle(cur, sources, summary, now, step)
 
     def update(self, cur: Any) -> Dict[str, Any]:
         """The incremental job on the caller's transaction, every step until none is left (recompute
@@ -231,6 +250,7 @@ class StoriesService:
         totals: Counter = Counter()
         while self.advance(cur, totals):
             pass
+        self.settle_slice(cur)
         return dict(totals)
 
     @staticmethod
@@ -271,11 +291,11 @@ class StoriesService:
         boilerplate = len(self.repo.mark_boilerplate(cur, sources))
         posts = [self._story_post(row, sources) for row in self.repo.load_posts(cur, sources)]
         found = grouping(posts)
-        stamp = rules_stamp()
+        made_by = rules_stamp()["grouping"]   # 0216: the connections are the grouping's
         changed = self.repo.write_stories(cur, found.stories)
-        edges = (self.repo.write_edges(cur, found.edges, made_by=stamp)
-                 + self.repo.write_edges(cur, found.edges, made_by=stamp, threads=True))
-        keys_changed = self.repo.write_keys(cur, {p.id: self._keys(p) for p in posts})
+        edges = (self.repo.write_edges(cur, found.edges, made_by=made_by)
+                 + self.repo.write_edges(cur, found.edges, made_by=made_by, threads=True))
+        keys_changed = self.repo.write_keys(cur, {p.id: self.stored_keys(p) for p in posts})
         news_counts = self.news.refresh(cur, posts=posts, stories=found.stories, sources=sources)
         self.repo.clear_queue(cur)
         return {"posts": len(posts), "stories": len(found.stories), "changed": changed, "edges_changed": edges,
@@ -287,21 +307,34 @@ class StoriesService:
              window: bool = True) -> Optional[Dict[str, Any]]:
         """One bounded step on the caller's transaction: a rule change's next step, else a batch of the
         queue, else (with `window`) News's window edge. None when nothing is left. Returns the state
-        to keep and `counts`."""
+        to keep and `counts`.
+        0216: a rule change redoes only what the parts of the stamp that changed need (`redo_for`, the one decision):
+        "news" the names and News over the window (one step), "keys" the posts whose keys moved (regrouped as saved
+        posts are), "grouping" every post (the keys, the threads, the names, then every post queued, the newest
+        first)."""
         stamp = rules_stamp()
         rebuild = previous.get("rebuild")
-        if previous.get("rules") != stamp and (rebuild or {}).get("rules") != stamp:
-            rebuild = {"rules": stamp, "phase": "keys", "after": None, "started_at": now.isoformat(),
-                       "total": self.repo.count_posts(cur), "done": 0}
-            boilerplate = len(self.repo.mark_boilerplate(cur, sources))   # by the new rules, once
-            return {"rebuild": rebuild, "counts": Counter(boilerplate_changed=boilerplate, batches=1)}
+        if rebuild and rebuild.get("rules") != stamp:
+            adopted = self._adopt(cur, sources, previous, rebuild, stamp, now)
+            if adopted is not None:
+                return adopted
+            rebuild = None   # a rebuild by other rules than these: begin again from the rows' own
+        if not rebuild:
+            stored = stored_rules(previous.get("rules"))
+            redo = redo_for(stored, stamp)
+            if redo is not None:
+                return self._begin_redo(cur, sources, stored, redo, stamp, now)
+            if previous.get("rules") != stamp:   # a single stamp of these rules, from before 0216: kept as parts
+                self.repo.relabel_edges(cur, stamp["grouping"])
+                return {"rules": dict(stamp), "counts": Counter(batches=1)}
         if rebuild and rebuild["phase"] != "stories":
             return self._rebuild_step(cur, sources, rebuild, stamp)
         self._facts_changed(cur, sources, previous.get("facts"))
-        batch = self._batch(cur, sources, previous, now, stamp, redo=bool(rebuild), window=window)
+        batch = self._batch(cur, sources, previous, now, stamp["grouping"], redo=bool(rebuild), window=window)
         if batch is not None:
-            if rebuild:   # 0215: what is regrouped now, of every post now (`regrouped`)
+            if rebuild and not batch.get("quiet"):   # 0215: what is regrouped now, of every post now (`regrouped`)
                 rebuild = {**rebuild, **self.repo.regrouped(cur)}
+            if rebuild:
                 batch["rebuild"] = rebuild
             return batch
         if rebuild:   # every post regrouped by the new rules: they are the rows now
@@ -309,8 +342,49 @@ class StoriesService:
             # over the stories as they were; the batches row News only around the stories they changed)
             counts = Counter(batches=1)
             counts.update(self._news_window(cur, sources, now))
-            return {"rebuild": None, "rules": stamp, "full_at": now.isoformat(), "discover": "all", "counts": counts}
+            done: Dict[str, Any] = {"rebuild": None, "rules": dict(stamp), "counts": counts}
+            if rebuild.get("redo", "grouping") == "grouping":   # 0216: a keys redo regrouped its posts as saved ones
+                done.update(full_at=now.isoformat(), discover="all")
+            return done
         return None
+
+    def _begin_redo(self, cur: Any, sources: SourceFacts, stored: Dict[str, str], redo: str, stamp: Dict[str, str],
+                    now: datetime) -> Dict[str, Any]:
+        """0216: a rule change's redo begins (`redo_for` said which): its first step."""
+        rebuild: Dict[str, Any] = {"rules": dict(stamp), "redo": redo, "phase": "names" if redo == "news" else "keys",
+                                   "after": None, "started_at": now.isoformat(), "total": self.repo.count_posts(cur),
+                                   "done": 0}
+        counts = Counter(batches=1)
+        if redo != "news":   # which links are boilerplate, by the new rules, once (the keys read them)
+            counts["boilerplate_changed"] = len(self.repo.mark_boilerplate(cur, sources))
+        if redo == "grouping":   # every connection is regrouped by these rules: they are its maker from now on
+            self.repo.relabel_edges(cur, stamp["grouping"])
+        logger.info("Stories: a rule change (%s) begins: %s", redo, {p: (stored.get(p), stamp[p]) for p in PARTS})
+        return {"rebuild": rebuild, "counts": counts}
+
+    def _adopt(self, cur: Any, sources: SourceFacts, previous: Dict[str, Any], rebuild: Dict[str, Any],
+               stamp: Dict[str, str], now: datetime) -> Optional[Dict[str, Any]]:
+        """0216: a rebuild in progress whose rules are not these as kept (a single stamp from before the split), or
+        None: it is another rule change's, and the redo begins again from the rows' own rules. One these rules began
+        goes on as a regroup of every post, its posts left the newest first; or, when the rows it began from differ
+        from these rules in News alone (`stored_rules`: the server's rebuild of 2026-11-14, v10.17's rows and 0203's
+        News rule), it ends: past its names step (the names and News by these rules), its posts left are no longer
+        queued and News is made over the window once; before it, its names step runs and ends it."""
+        if stored_rules(rebuild.get("rules")) != stamp:
+            return None
+        self.repo.relabel_edges(cur, stamp["grouping"])
+        rest = {k: v for k, v in rebuild.items() if k not in ("after", "left")}
+        if redo_for(stored_rules(previous.get("rules")), stamp) in (None, "news"):
+            if rebuild.get("phase") != "stories":
+                return {"rebuild": {**rest, "rules": dict(stamp), "redo": "news", "phase": "names"},
+                        "counts": Counter(batches=1)}
+            counts = Counter(batches=1, redo_dropped=self.repo.drop_redo(cur))
+            counts.update(self._news_window(cur, sources, now))
+            logger.info("Stories: the rebuild in progress differed in News only; ended (%s posts no longer queued)",
+                        counts["redo_dropped"])
+            return {"rebuild": None, "rules": dict(stamp), "discover": "all", "counts": counts}
+        counts = Counter(batches=1, redo_reordered=self.repo.newest_first(cur))
+        return {"rebuild": {**rebuild, "rules": dict(stamp), "redo": "grouping"}, "counts": counts}
 
     def _news_window(self, cur: Any, sources: SourceFacts, now: datetime) -> Dict[str, int]:
         """News over every post of its window, through the incremental job's own News step (`NewsService.update`, every
@@ -329,18 +403,35 @@ class StoriesService:
         return self.news.update(cur, sources=sources, posts=posts, load=load, touched=seeds, titles=[], urls=[],
                                 since=since, before=None)
 
-    def _rebuild_step(self, cur: Any, sources: SourceFacts, rebuild: Dict[str, Any], stamp: str) -> Dict[str, Any]:
+    def _rebuild_step(self, cur: Any, sources: SourceFacts, rebuild: Dict[str, Any],
+                      stamp: Dict[str, str]) -> Dict[str, Any]:
         """A rule change's steps before its batches: every post's keys (KEYS_BATCH a step), each X
-        source's thread edges (one source a step), every name's surges, then every post queued."""
+        source's thread edges (one source a step), every name's surges, then every post queued.
+        0216, by its redo: "grouping" all of them (a rebuild from before 0216 is one); "keys" the keys compared with
+        the stored ones, a post whose joins, page or links moved queued as a saved post is (its batch writes them;
+        one whose title's names alone moved has them written here), then the names (News reads the keys' names),
+        then those posts' batches; "news" the names step alone, which ends it."""
         rebuild = dict(rebuild)
+        redo = rebuild.get("redo", "grouping")
         counts: Counter = Counter(batches=1)
         if rebuild["phase"] == "keys":
             ids = self.repo.post_ids(cur, rebuild["after"], KEYS_BATCH)
             posts = [self._story_post(row, sources) for row in self.repo.load_posts(cur, sources, ids)]
-            counts["keys_changed"] = self.repo.write_keys(cur, {p.id: self._keys(p) for p in posts})
+            if redo == "grouping":
+                counts["keys_changed"] = self.repo.write_keys(cur, {p.id: self.stored_keys(p) for p in posts})
+            else:
+                moved = self.repo.keys_moved(cur, {p.id: self.stored_keys(p) for p in posts})
+                regroup = {pid for pid, (was, now) in moved.items() if _joins(was) != _joins(now)}
+                self.repo.queue_regroup(cur, sorted(regroup))
+                counts["keys_changed"] = self.repo.write_keys(
+                    cur, {pid: now for pid, (_, now) in moved.items() if pid not in regroup})
+                counts["keys_queued"] = len(regroup)
             rebuild["after"] = ids[-1] if ids else None
             if len(ids) < KEYS_BATCH:
-                rebuild.update(phase="threads", left=sorted(sources.of_kind("x")))
+                if redo == "grouping":
+                    rebuild.update(phase="threads", left=sorted(sources.of_kind("x")))
+                else:   # the names its titles say may have moved too: judged again, News over the window
+                    rebuild["phase"] = "names"
         elif rebuild["phase"] == "threads":
             left = list(rebuild["left"])
             if left:
@@ -349,8 +440,8 @@ class StoriesService:
                                          datetime.max.replace(tzinfo=timezone.utc))
                 posts = [self._story_post(row, sources) for row in self.repo.load_posts(cur, sources, ids)]
                 counts["edges_changed"] = self.repo.write_edges(
-                    cur, [Edge(c, p, "thread") for c, p in threads(posts).items()], made_by=stamp, post_ids=ids,
-                    threads=True)
+                    cur, [Edge(c, p, "thread") for c, p in threads(posts).items()], made_by=stamp["grouping"],
+                    post_ids=ids, threads=True)
             rebuild["left"] = left
             if not left:
                 rebuild.pop("left")
@@ -360,7 +451,10 @@ class StoriesService:
             # 0205: News by the new rules at once, over the stories as stored: the batches that follow take minutes and
             # row News only around the stories they change (a News rule change showed old rows until then)
             counts.update(self._news_window(cur, sources, self.clock()))
-            rebuild["queued"] = self.repo.redo_every_post(cur)
+            if redo == "news":   # 0216: the names and News were all a News rule makes
+                return {"rebuild": None, "rules": dict(stamp), "counts": counts}
+            if redo == "grouping":
+                rebuild["queued"] = self.repo.redo_every_post(cur)
             rebuild.update(phase="stories", **self.repo.regrouped(cur))
         return {"rebuild": rebuild, "counts": counts}
 
@@ -391,7 +485,7 @@ class StoriesService:
                             for s in sorted(sources.kind)},
                 "accounts": sorted(a for a in sources.of_account)}
 
-    def _batch(self, cur: Any, sources: SourceFacts, previous: Dict[str, Any], now: datetime, stamp: str, *,
+    def _batch(self, cur: Any, sources: SourceFacts, previous: Dict[str, Any], now: datetime, made_by: str, *,
                redo: bool, window: bool) -> Optional[Dict[str, Any]]:
         """A batch of the queue: the posts saved, changed or removed (else, in a rebuild, a rule
         change's), and what they touch, regrouped; then News, Classics and Discover for them. None
@@ -436,7 +530,8 @@ class StoriesService:
                 posts.pop(pid, None)
             load(seeds)
         points += [(posts[s].source_id, posts[s].t) for s in seeds if s in posts]
-        seeds |= self._threads(cur, sources, points, stamp)
+        threaded = self._threads(cur, sources, points, made_by)
+        seeds |= threaded
         load(seeds)
         seeds = {s for s in seeds if s in posts}   # a removed post is no seed: its keys are (`gone`)
         # The names a title says are judged again when it is saved, changed or removed. 0215: a rule change's batch
@@ -445,7 +540,7 @@ class StoriesService:
         if not rebuilding:
             titles += [posts[s].title for s in seeds if s in posts]
         before = self.repo.stored_keys(cur, sorted(seeds))
-        touched = gone | {k for s in seeds for k in before.get(s, set()) | self._keys(posts[s])}
+        touched = gone | {k for s in seeds for k in before.get(s, set()) | self.stored_keys(posts[s])}
         # Where a seed is or was: the posts linking there read their links again (an own page moved).
         moved = gone | {k for s in seeds for url in (posts[s].url, was_at.get(s)) if url
                         for k in ("u:" + url, page_key(url)) if k}
@@ -470,10 +565,16 @@ class StoriesService:
         counts["edges_changed"] = self.repo.write_edges(
             cur, [e for e in found.edges if e.dst in nodes and (e.src in scope or e.kind == "mention")
                   or e.src in scope and e.kind != "mention"] + mentions,
-            made_by=stamp, post_ids=sorted(scope), mentioned=sorted(nodes))
-        counts["keys_changed"] = self.repo.write_keys(cur, {pid: self._keys(posts[pid]) for pid in scope})
+            made_by=made_by, post_ids=sorted(scope), mentioned=sorted(nodes))
+        counts["keys_changed"] = self.repo.write_keys(cur, {pid: self.stored_keys(posts[pid]) for pid in scope})
         if rebuilding:
             self.repo.done(cur, scope)
+            # 0216: a rule change's batch that changed no story, connection, key or thread writes nothing more: News,
+            # Classics and Discover count from those, and no title or link of its posts changed (`quiet`: Discover's
+            # inputs stay as they were; the progress is kept once a slice). Was: every batch rowed News and Classics
+            # around its stories and moved Discover's inputs (its answer built again) though nothing had changed.
+            if not (edge or threaded or counts["changed"] or counts["edges_changed"] or counts["keys_changed"]):
+                return {"counts": counts, "discover": None, "quiet": True}
         urls = {k[2:] for k in touched if k.startswith(("u:", "l:"))}
         # A post stored at an address another links can make that one a roundup or not: its pages too.
         own = {posts[s].url for s in seeds if posts[s].url}
@@ -487,7 +588,7 @@ class StoriesService:
                                        if previous.get("news_since") else None))
         return {"counts": counts, "discover": sorted(urls)}
 
-    def _threads(self, cur: Any, sources: SourceFacts, points: List[Tuple[str, datetime]], stamp: str) -> Set[str]:
+    def _threads(self, cur: Any, sources: SourceFacts, points: List[Tuple[str, datetime]], made_by: str) -> Set[str]:
         """The thread edges around these points of X timelines (a post saved, changed or removed at
         that time): each post within THREAD_WITHIN of one is the post its predecessor continues, or
         none, read from its source's posts within twice that (story_rules.threads). Returns the posts
@@ -508,7 +609,7 @@ class StoriesService:
             for child in children:
                 if have.get(child) != found.get(child):
                     changed |= {child, have.get(child), found.get(child)} - {None}
-            self.repo.write_edges(cur, [Edge(c, found[c], "thread") for c in children if c in found], made_by=stamp,
+            self.repo.write_edges(cur, [Edge(c, found[c], "thread") for c in children if c in found], made_by=made_by,
                                   post_ids=children, threads=True)
         return changed
 
@@ -535,7 +636,7 @@ class StoriesService:
         while True:
             load(scope)
             stored = self.repo.stored_keys(cur, sorted(scope - keyed))
-            new = {k for pid in scope - keyed for k in self._keys(posts[pid]) | stored.get(pid, set())
+            new = {k for pid in scope - keyed for k in self.stored_keys(posts[pid]) | stored.get(pid, set())
                    if k.startswith(CLOSURE_KEYS)} - held
             keyed |= scope
             held |= new
@@ -582,15 +683,16 @@ class StoriesService:
         grows |= self.repo.linking(cur, sorted(pages))
         return self.repo.story_mates(cur, grows) - scope
 
-    def _keys(self, post: StoryPost) -> Set[str]:
+    @staticmethod
+    def stored_keys(post: StoryPost) -> Set[str]:
         """A post's stored keys: what it joins by (story_rules.keys), its address's page key ("a:": the
         posts at another path of it), the names in its title (News: "n:"), and the home pages it links
-        ("l:": no join, but Classics and Discover count them)."""
+        ("l:": no join, but Classics and Discover count them). The rules stamp's `keys` part (0216)."""
         out = keys(post)
         if post.url and page_key(post.url):
             out.add("a:" + page_key(post.url)[2:])
         out |= {"l:" + target for target, _ in post.links if "u:" + target not in out}
-        return out | {"n:" + name for name in self.news.names_of(post)}
+        return out | {"n:" + name for name in NewsService.names_of(post)}
 
     @staticmethod
     def _story_post(row: Dict[str, Any], sources: SourceFacts) -> StoryPost:
@@ -1261,19 +1363,74 @@ class StoriesService:
         return {"success": True, "key": key}
 
 
-@lru_cache(maxsize=1)
-def rules_stamp() -> str:
-    """The rules stories are grouped by (issue 0071): a fingerprint of the stories, trees and News the
-    job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post).
-    Any rule change that changes them (story_rules, tree_rules, news_rules, post_links, how a voice
-    is told) changes it; a rename or a move doesn't."""
+PARTS = ("keys", "grouping", "news")   # 0216: the rules stamp's parts, each a fingerprint of its own outputs
+# 0216: the single stamps kept before the split, as the parts they are on this sample (each part of a release's code
+# measured on 0216's sample: plan/issues/0216, "Built"). 7269997ccd26 is v10.18 (2f9878f1) to v10.21's; 084d186130fb is
+# v10.17 to v10.18's (290e7037): the same keys and grouping, other News (0203's News rule, which that sample did not
+# show). A single stamp not listed reads as every part changed. A part listed here that a later sample or rule makes
+# differ simply differs (a rebuild), so the table never needs updating.
+LEGACY_RULES: Dict[str, Dict[str, str]] = {
+    "7269997ccd26": {"keys": "981f771dc640", "grouping": "377c7f2fc789", "news": "408df32be571"},
+    "084d186130fb": {"keys": "981f771dc640", "grouping": "377c7f2fc789"},
+}
+
+
+def _sample_stamps() -> Tuple[Dict[str, str], str]:
+    """What the job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post),
+    fingerprinted by part, and the single stamp kept before 0216 (`LEGACY_RULES`)."""
     sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
     posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
     found = grouping(posts)
     stories = found.stories
     names = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
-    return stamps.fingerprint([stories, found.edges, {p.id: sorted(keys(p)) for p in posts}, names,
-                               news(posts, stories, names)])
+    made = news(posts, stories, names)
+    parts = {"keys": stamps.fingerprint({p.id: sorted(StoriesService.stored_keys(p)) for p in posts}),
+             "grouping": stamps.fingerprint([stories, found.edges]),
+             "news": stamps.fingerprint([names, made])}
+    whole = stamps.fingerprint([stories, found.edges, {p.id: sorted(keys(p)) for p in posts}, names, made])
+    return parts, whole
+
+
+@lru_cache(maxsize=1)
+def rules_stamp() -> Dict[str, str]:
+    """The rules stories are grouped by (issue 0071), in three parts (0216), each a fingerprint of its own outputs of
+    the sample: `keys` (every post's stored keys: what it joins by, its page, its links, its title's names), `grouping`
+    (the stories and their connections) and `news` (the name surges and News). Any rule change that changes them
+    (story_rules, tree_rules, news_rules, post_links, how a voice is told) changes the parts it shows in; a rename or a
+    move changes none. StoriesService.step redoes only what the changed parts need (`redo_for`). Never mutate it."""
+    return _sample_stamps()[0]
+
+
+@lru_cache(maxsize=1)
+def whole_stamp() -> str:
+    """The single stamp kept before 0216 for these rules (the five outputs in one fingerprint): a setting or a rebuild
+    that holds it was made by these rules."""
+    return _sample_stamps()[1]
+
+
+def stored_rules(value: Any) -> Dict[str, str]:
+    """The rules the stored rows were made by (the story job's setting's `rules`), as parts: a dict as kept (0216); a
+    single stamp from before 0216 as this code's parts when it is this code's (`whole_stamp`), else as `LEGACY_RULES`
+    lists it; else no part known (every part changed)."""
+    if isinstance(value, dict):
+        return {p: value[p] for p in PARTS if isinstance(value.get(p), str)}
+    if isinstance(value, str):
+        return dict(rules_stamp()) if value == whole_stamp() else dict(LEGACY_RULES.get(value, {}))
+    return {}
+
+
+def redo_for(stored: Dict[str, str], now: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """0216, the smallest redo that brings rows made by `stored` rules to `now`'s (rules_stamp()): "grouping" (every
+    post regrouped: today's rebuild), "keys" (only the posts whose keys moved), "news" (the names and News over the
+    window), or None (nothing)."""
+    now = now or rules_stamp()
+    return next((p for p in ("grouping", "keys", "news") if stored.get(p) != now[p]), None)
+
+
+def rebuild_due(setting: Dict[str, Any]) -> Optional[str]:
+    """The redo the story job's setting (no rebuild in progress) says is due (`redo_for`), or None. A setting with no
+    rules (a database the job never ran on) needs every part."""
+    return redo_for(stored_rules(setting.get("rules")))
 
 
 @lru_cache(maxsize=1)
@@ -1312,6 +1469,12 @@ def recompute_job(db_url: str, full: bool = False) -> None:
     once (a hand-run rebuild: `python -m insight_core.services.stories_service full`)."""
     logging.basicConfig(level=logging.INFO)
     StoriesService(db_url).recompute_safely(full=full)
+
+
+def _joins(keys: Set[str]) -> Set[str]:
+    """0216: the keys a post is regrouped by when they move: all but its title's names ("n:": News reads them; they join
+    nothing, so a post whose names alone moved has them written, not regrouped)."""
+    return {k for k in keys if not k.startswith("n:")}
 
 
 def _first(stories: List[Origin], *, pages: bool = False) -> List[Origin]:

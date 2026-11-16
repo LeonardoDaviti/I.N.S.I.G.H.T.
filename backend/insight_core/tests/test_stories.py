@@ -31,6 +31,7 @@ from insight_core.db.repo_posts import PostDraft, PostsRepository
 from insight_core.db.repo_reader import FeedQuery, FeedScope, ReaderRepository, FeedCursor
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository, source_account
+from insight_core.markx.pairing import ix_date
 from insight_core.services.stories_service import (LOCK_KEY, SETTINGS_KEY, StoriesService, in_own_process,
                                                      recompute_job, rules_stamp)
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
@@ -444,6 +445,7 @@ class StoryJobTests(unittest.TestCase):
         late, _ = self._post(self.simon, site="late", title="Saved while the rebuild runs")
         seen = []
         while self.service.advance(self.cur, Counter()):
+            self.service.settle_slice(self.cur)   # 0216: a quiet batch's progress is kept at its slice's end
             rebuild = self._rebuild()
             if rebuild and rebuild["phase"] == "stories":
                 self.cur.execute("SELECT count(*) FROM posts")
@@ -460,6 +462,162 @@ class StoryJobTests(unittest.TestCase):
         self.assertIsNotNone(self._story_of(self.lab))
         self.cur.execute("SELECT count(*) FROM story_queue WHERE key IN (%s, %s)", ("post:" + late, "redo:" + late))
         self.assertEqual(self.cur.fetchone()[0], 0, "the post saved meanwhile is regrouped too")
+
+    # ---- 0216: a rule change redoes what its parts need ------------------------------------------
+
+    def _set(self, **value):
+        kept = SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
+        SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, {**kept, **value})
+
+    def _rows(self):
+        """Every row the job writes for the launch's posts, and their connections' makers."""
+        self.cur.execute("SELECT post_id::text, story_id::text, role, reasons FROM story_posts "
+                         "WHERE post_id = ANY(%s::uuid[]) ORDER BY 1", ([self.lab, self.copy, self.take],))
+        stories = self.cur.fetchall()
+        self.cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[]) ORDER BY 1, 2",
+                         ([self.lab, self.copy, self.take],))
+        return stories, self.cur.fetchall()
+
+    def _to_the_end(self):
+        """The job's steps until none is left, each slice settled: (steps, their counts, the phases seen)."""
+        totals, steps, phases = Counter(), 0, []
+        while self.service.advance(self.cur, totals):
+            self.service.settle_slice(self.cur)
+            steps += 1
+            phases.append((self._rebuild() or {}).get("phase"))
+        return steps, totals, phases
+
+    def _made_by(self):
+        self.cur.execute("SELECT DISTINCT made_by FROM post_edges WHERE src_post = ANY(%s::uuid[])",
+                         ([self.lab, self.copy, self.take],))
+        return {r[0] for r in self.cur.fetchall()}
+
+    def test_a_news_rule_change_redoes_the_names_and_news_alone(self):
+        from insight_core.services.stories_service import rebuild_due
+        self._launch()
+        before = self._rows()
+        self._set(rules={**rules_stamp(), "news": "other News rules"})
+        self.assertEqual(rebuild_due(self._setting()), "news")
+        with mock.patch.object(StoriesRepository, "redo_every_post") as redo, \
+                mock.patch.object(StoriesRepository, "write_keys") as keys:
+            steps, totals, phases = self._to_the_end()
+        self.assertEqual(steps, 2, "the redo begins, and its names step ends it")
+        self.assertEqual(phases, ["names", None])
+        redo.assert_not_called()
+        keys.assert_not_called()
+        self.assertNotIn("posts", totals, "no post regrouped")
+        self.assertEqual(self._setting()["rules"], rules_stamp())
+        self.assertEqual(self._rows(), before)
+        self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
+
+    def test_a_key_rule_change_regroups_only_the_posts_whose_keys_moved(self):
+        self._launch()
+        before = self._rows()
+        # As the old rules kept them: one of the take's keys in another form, a name the lab's title no longer says
+        self.cur.execute("UPDATE story_keys SET key = 'u:https://old-form.test/' || %(mark)s WHERE post_id = %(id)s "
+                         "AND key = (SELECT min(key) FROM story_keys WHERE post_id = %(id)s AND key NOT LIKE 'n:%%')",
+                         {"mark": self.mark, "id": self.take})
+        self.assertEqual(self.cur.rowcount, 1)
+        self.cur.execute("INSERT INTO story_keys (post_id, key) VALUES (%s, 'n:an old name')", (self.lab,))
+        self._set(rules={**rules_stamp(), "keys": "other key rules"})
+        queued = []
+        real = StoriesRepository.queue_regroup
+        with mock.patch.object(StoriesRepository, "queue_regroup",
+                               side_effect=lambda cur, ids: (queued.extend(ids), real(cur, ids))), \
+                mock.patch.object(StoriesRepository, "redo_every_post") as redo:
+            steps, totals, phases = self._to_the_end()
+        redo.assert_not_called()
+        self.assertEqual(queued, [self.take], "the lab's names alone moved: written, not regrouped")
+        self.assertEqual(totals["keys_queued"], 1)
+        self.assertIn("names", phases, "the names the keys say judged again")
+        self.assertIsNone(self._rebuild())
+        self.assertEqual(self._setting()["rules"], rules_stamp())
+        self.assertEqual(self._rows(), before, "the keys as the rules make them")
+        self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
+
+    def test_a_grouping_change_regroups_every_post_the_newest_first_and_quiet_batches_write_nothing(self):
+        self._launch()
+        before = self._rows()
+        self._set(rules={**rules_stamp(), "grouping": "other grouping rules"})
+        while (self._rebuild() or {}).get("phase") != "stories":
+            self.assertTrue(self.service.advance(self.cur, Counter()))
+        self.cur.execute(f"SELECT bool_and(q.queued_at = {ix_date('p')}) FROM story_queue q "
+                         "JOIN posts p ON q.key = 'redo:' || p.id")
+        self.assertTrue(self.cur.fetchone()[0], "each post queued at its date")
+        self.cur.execute(f"SELECT id::text FROM posts ORDER BY {ix_date('posts')} DESC, id LIMIT 1")
+        newest = self.cur.fetchone()[0]
+        self.cur.execute("SAVEPOINT taken")
+        self.assertEqual(StoriesRepository.take_queue(self.cur, 1, redo=True)[0][0], "redo:" + newest)
+        self.cur.execute("ROLLBACK TO SAVEPOINT taken")
+        with mock.patch.object(self.service, "_discover_step", wraps=self.service._discover_step) as discover, \
+                mock.patch.object(self.service.news, "update", wraps=self.service.news.update) as news:
+            totals = Counter()
+            while (self._rebuild() or {}).get("phase") == "stories" and self.service.advance(self.cur, totals):
+                pass
+            self.service.settle_slice(self.cur)
+        self.assertIsNone(self._rebuild(), "done")
+        self.assertEqual(totals["changed"] + totals["edges_changed"] + totals["keys_changed"], 0, "nothing moved")
+        self.assertEqual([c.args[2] for c in discover.call_args_list], ["all"], "only the end counts Discover again")
+        self.assertEqual(news.call_count, 1, "only the end makes News again (over its window)")
+        self.assertEqual(self._rows(), before)
+        self.assertEqual(self._made_by(), {rules_stamp()["grouping"]})
+
+    def test_the_servers_rebuild_from_before_the_split_ends_by_one_news_pass(self):
+        # 0216: on the server since 2026-11-14: v10.17's rows (a single stamp), a rebuild by these rules begun for a
+        # News rule, past its names step, ~64% regrouped. Deploying 0216 must not regroup the rest.
+        from insight_core.services.stories_service import LEGACY_RULES, whole_stamp
+        self._launch()
+        before = self._rows()
+        now = rules_stamp()
+        StoriesRepository.redo_every_post(self.cur)
+        self.cur.execute("UPDATE story_queue SET queued_at = now() WHERE key LIKE 'redo:%%'")   # as v10.21 queued them
+        self.cur.execute("UPDATE post_edges SET made_by = %s", (whole_stamp(),))
+        self._set(rules="v10.17", rebuild={"rules": whole_stamp(), "phase": "stories", "started_at": self.now.isoformat(),
+                                           "done": 1, "total": 3, "queued": 3})
+        with mock.patch.dict(LEGACY_RULES, {"v10.17": {"keys": now["keys"], "grouping": now["grouping"]}}), \
+                mock.patch.object(self.service, "_batch", wraps=self.service._batch) as batch:
+            steps, totals, _ = self._to_the_end()
+        self.assertFalse([c for c in batch.call_args_list if c.kwargs["redo"]], "no post regrouped again")
+        self.assertEqual(steps, 1, "one step: News over the window, the rebuild ended")
+        self.assertGreater(totals["redo_dropped"], 0)
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key LIKE 'redo:%%'")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.assertIsNone(self._rebuild())
+        self.assertEqual(self._setting()["rules"], now)
+        self.assertEqual(self._made_by(), {now["grouping"]})
+        self.assertEqual(self._rows(), before)
+        self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
+
+    def test_a_rebuild_from_before_the_split_of_unknown_rows_goes_on_the_newest_first(self):
+        from insight_core.services.stories_service import whole_stamp
+        self._launch()
+        StoriesRepository.redo_every_post(self.cur)
+        self.cur.execute("UPDATE story_queue SET queued_at = now() WHERE key LIKE 'redo:%%'")
+        rebuild = {"rules": whole_stamp(), "phase": "stories", "started_at": self.now.isoformat(), "done": 0, "total": 3}
+        self._set(rules="rules of a version never listed", rebuild=rebuild)
+        self.assertTrue(self.service.advance(self.cur, Counter()))
+        self.assertEqual(self._rebuild(), {**rebuild, "rules": rules_stamp(), "redo": "grouping"}, "it goes on")
+        self.cur.execute(f"SELECT bool_and(q.queued_at = {ix_date('p')}) FROM story_queue q "
+                         "JOIN posts p ON q.key = 'redo:' || p.id")
+        self.assertTrue(self.cur.fetchone()[0], "its posts left the newest first")
+        self._to_the_end()
+        self.assertIsNone(self._rebuild())
+        self.assertEqual(self._setting()["rules"], rules_stamp())
+
+    def test_a_setting_of_these_rules_from_before_the_split_is_kept_as_parts(self):
+        from insight_core.services.stories_service import whole_stamp
+        self._launch()
+        self.cur.execute("UPDATE post_edges SET made_by = %s", (whole_stamp(),))
+        self._set(rules=whole_stamp())
+        with mock.patch.object(self.service, "_begin_redo") as begin:
+            steps, _, _ = self._to_the_end()
+        begin.assert_not_called()
+        self.assertEqual(steps, 1)
+        self.assertEqual(self._setting()["rules"], rules_stamp())
+        self.assertEqual(self._made_by(), {rules_stamp()["grouping"]})
+
+    def _setting(self):
+        return SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
 
     # ---- the feed ---------------------------------------------------------------------------
 
@@ -701,15 +859,18 @@ class OwnProcessTests(unittest.TestCase):
             in_own_process(_killed)
         self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
 
-    def test_the_story_job_after_a_fetch_run_runs_in_its_own_process(self):
+    def test_a_fetch_run_only_wants_the_story_job(self):
+        # 0216: the jobs runner runs it (markx/jobs.py, in a process of its own); the fetch run's time is its fetch
         from insight_core.ingestion import default_runner
+        from insight_core.markx.jobs import want_stories
 
         async def build():   # the runner's gates belong to a running loop
             return default_runner(url)
 
         url = "postgresql://insight:insight@nowhere.invalid:5432/none"
-        port = asyncio.run(build()).stories
-        self.assertEqual((port.func, port.args), (in_own_process, (recompute_job, url)))
+        runner = asyncio.run(build())
+        self.assertEqual((runner.stories.func, runner.stories.args), (want_stories, (url,)))
+        self.assertFalse(hasattr(runner, "originals"), "the originals follow the story job in the jobs runner")
 
 
 @requires_test_db

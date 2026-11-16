@@ -3,7 +3,7 @@ utils/originals_rules.py; this file reads what they need, asks, and records ever
 
     summary = await OriginalsService(db_url, saved=saved_service).run(http)
 
-Run by ingestion after each story job (ingestion.default_runner), never by the API:
+Run after each wanted story job by insight-ingestion's jobs runner (0216: markx/jobs.Jobs.after_stories), never by the API:
 1. **Settle** the early fetches asked before: a page stored since is `found`, else, once its source was
    fetched after the ask, `missing` (its feed doesn't hold it: Discover's archive row shows it, 0114 decided 1).
 2. **0114, a followed source's page a story links** (always on: the owner's decision, 2026-11-05): the

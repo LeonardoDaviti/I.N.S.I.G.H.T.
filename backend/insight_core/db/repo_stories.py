@@ -658,6 +658,24 @@ class StoriesRepository:
         return len(gone) + len(new)
 
     @staticmethod
+    def keys_moved(cur: Cursor, keys: Dict[str, Set[str]]) -> Dict[str, Tuple[Set[str], Set[str]]]:
+        """0216: of these posts, those whose stored keys are not `keys`: {post: (stored, `keys`)}, each kept to
+        KEY_CHARS as stored. Nothing is written."""
+        cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[])", (list(keys),))
+        have: Dict[str, Set[str]] = defaultdict(set)
+        for pid, key in cur.fetchall():
+            have[pid].add(key)
+        want = {pid: {key[:KEY_CHARS] for key in ks} for pid, ks in keys.items()}
+        return {pid: (have.get(pid, set()), ks) for pid, ks in want.items() if have.get(pid, set()) != ks}
+
+    @staticmethod
+    def relabel_edges(cur: Cursor, made_by: str) -> int:
+        """0216: every connection made by the rules `made_by` (the grouping's stamp): at a grouping change's start (its
+        batches regroup every one) and when a setting from before the split is kept as parts. Returns rows changed."""
+        cur.execute("UPDATE post_edges SET made_by = %s WHERE made_by <> %s", (made_by, made_by))
+        return cur.rowcount
+
+    @staticmethod
     def stored_keys(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, Set[str]]:
         cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[])", (list(post_ids),))
         out: Dict[str, Set[str]] = defaultdict(set)
@@ -709,12 +727,14 @@ class StoriesRepository:
 
     @staticmethod
     def take_queue(cur: Cursor, limit: int, *, redo: bool = False) -> List[Tuple[str, Any]]:
-        """Up to `limit` queued changes, removed from the queue: (key, what it was). With `redo`, a
-        rule change's posts (redo:<id>) once no saved or changed post is waiting."""
+        """Up to `limit` queued changes, removed from the queue: (key, what it was), the first queued first. With
+        `redo`, a rule change's posts (redo:<id>) once no saved or changed post is waiting, the newest posts first
+        (0216: `redo_every_post` queues each at its date, so the window the pages show is regrouped first)."""
+        order = "queued_at DESC, key" if redo else "queued_at, key"
         cur.execute(
-            """
+            f"""
             DELETE FROM story_queue WHERE key IN (
-                SELECT key FROM story_queue WHERE (key LIKE 'redo:%%') = %s ORDER BY queued_at, key LIMIT %s
+                SELECT key FROM story_queue WHERE (key LIKE 'redo:%%') = %s ORDER BY {order} LIMIT %s
                 FOR UPDATE SKIP LOCKED)
             RETURNING key, was
             """,
@@ -764,10 +784,33 @@ class StoriesRepository:
 
     @staticmethod
     def redo_every_post(cur: Cursor) -> int:
-        """Queue every post for a rule change (redo:<id>), the changes already queued staying."""
+        """Queue every post for a rule change (redo:<id>), the changes already queued staying. 0216: each at its date
+        (Mark IX's time), which `take_queue` takes the newest first."""
         cur.execute("DELETE FROM story_queue WHERE key LIKE 'redo:%%'")
-        cur.execute("INSERT INTO story_queue (key) SELECT 'redo:' || id FROM posts ON CONFLICT DO NOTHING")
+        cur.execute(f"INSERT INTO story_queue (key, queued_at) SELECT 'redo:' || id, {ix_date('posts')} FROM posts "
+                    "ON CONFLICT DO NOTHING")
         return cur.rowcount
+
+    @staticmethod
+    def newest_first(cur: Cursor) -> int:
+        """0216: the rule change's posts still queued (a rebuild from before 0216 queued them all at one time), each at
+        its date, so the newest are regrouped first. Returns how many."""
+        cur.execute(f"UPDATE story_queue q SET queued_at = {ix_date('p')} FROM posts p "
+                    "WHERE q.key LIKE 'redo:%%' AND q.key = 'redo:' || p.id")
+        return cur.rowcount
+
+    @staticmethod
+    def drop_redo(cur: Cursor) -> int:
+        """0216: a rule change's posts no longer queued (the rows they hold are already by the rules now). Returns
+        how many."""
+        cur.execute("DELETE FROM story_queue WHERE key LIKE 'redo:%%'")
+        return cur.rowcount
+
+    @staticmethod
+    def queue_regroup(cur: Cursor, post_ids: Sequence[str]) -> None:
+        """0216: these posts regrouped as a saved post is (post:<id>; their keys moved by a rule change)."""
+        cur.execute("INSERT INTO story_queue (key) SELECT 'post:' || unnest(%s::uuid[])::text ON CONFLICT DO NOTHING",
+                    (list(post_ids),))
 
     @staticmethod
     def clear_queue(cur: Cursor) -> None:

@@ -37,7 +37,7 @@ return; the repositories hold the SQL. One job each:
 **Stamps (issue 0071).** Derived data says which rules made it by a stamp computed at start, never
 a number bumped by hand: a fingerprint of what the rules make of the sample in `utils/stamps.py`.
 A rule change that changes the output there makes the data again by itself; a rename or a move
-doesn't. `StoriesService.rules_stamp` (stories, trees, News, their edges and keys: every post regrouped, in batches), `post_parser.parse_stamp` (the stored parts, issue 0076: every post parsed again), `ADDRESS_RULES`
+doesn't. `StoriesService.rules_stamp` (three parts, 0216: `keys`, `grouping` and `news`, each the fingerprint of its own outputs; a change redoes what its parts need, below), `post_parser.parse_stamp` (the stored parts, issue 0076: every post parsed again), `ADDRESS_RULES`
 (Discover's `discover_addresses` rows), `stored_bodies_stamp` (the stored-body repair), and in SQL
 `search_vector_version()` (migration 0055: the search vectors). Discover's kept counts are stamped by
 their query's text. **A new rule adds its case to the sample**, and a tuned value has a case at its
@@ -73,12 +73,28 @@ checked by `scripts/story_identity.py` (`check(db_url)`; on a scratch copy only)
   surges that changed, and of what crossed the window since the last run.
 - **Classics** are recounted for the pages the batch's posts link or are at; **Discover** for the keys
   of those addresses (`DiscoverRepository.counts(keys=...)`), the rest of its kept counts kept.
-- **A rule change** (another `rules_stamp`) regroups every post in steps, each its own transaction:
-  every post's keys, each X source's threads, every name's surges, then every post queued (`redo:`)
-  and worked off in batches of `REBUILD_BATCH` (2,000) queued posts. A rebuild batch judges no name
-  again (it changes no title; the names step judged them all). The rows of the old rules are served
-  until each batch replaces them; Background work shows how far it is (`rebuild`: done of total,
-  counted from the rows: posts with no regroup waiting, of every post now; issue 0215).
+- **A rule change** redoes what the parts of `rules_stamp` that changed need (`redo_for`, issue 0216),
+  in steps, each its own transaction:
+  - `news` alone: every name's surges and News over its window, one step (~20 s at the server's size);
+  - `keys` (grouping the same): every post's keys compared with the stored ones; a post whose joins,
+    page or links moved is queued as a saved post is (`post:`) and regrouped by the incremental
+    batches; one whose title's names alone moved has them written; then the names step;
+  - `grouping` (or no stamp known): every post regrouped: every post's keys, each X source's threads,
+    every name's surges, then every post queued (`redo:`, at its date: the newest first, so the window
+    the pages read is regrouped first) and worked off in batches of `REBUILD_BATCH` (2,000) queued
+    posts. A rebuild batch judges no name again (it changes no title; the names step judged them
+    all); one that changed no story, connection, key or thread writes nothing more (no News, Classics
+    or Discover step; its progress is kept at the slice's end). Every connection is relabelled with
+    the grouping's stamp (`post_edges.made_by`) when it begins.
+  The rows of the old rules are served until each batch replaces them; Background work shows how far
+  it is (`rebuild`: done of total, counted from the rows: posts with no regroup waiting, of every post
+  now; issue 0215). A setting from before 0216 holds one stamp: this code's reads as its parts, a
+  listed one (`LEGACY_RULES`) as what it was measured to be, any other as every part changed.
+- **Who runs it** (issue 0216): insight-ingestion's jobs runner only (`markx/jobs.py`, the job
+  `stories`, a process of its own). A fetch run that saved posts, the API's start and a voice change
+  only want it (`jobs.want_stories`); the runner runs it within a look (30 s), then the originals the
+  new stories lack and Mark X's scouts and research runs (`Jobs.after_stories`, at most every 30
+  minutes). A rule change's slices run STORIES_GAP apart.
 - **Every field the job reads of a post** comes from `StoriesService._story_post` (the row
   `load_posts` reads, and its source's facts).
 

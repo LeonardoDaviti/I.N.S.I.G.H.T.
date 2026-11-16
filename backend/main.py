@@ -99,21 +99,23 @@ def fill_search_vectors() -> None:
 
 
 def recompute_stories() -> None:
-    """The posts stored before stories (issue 0050) get their links and stories, in the background,
-    in a process of its own (issue 0072: the API keeps none of what they read). First the stored
-    bodies catch up with the reader's rules (issue 0068), so the job reads their links."""
+    """The start's story job, wanted (0216: insight-ingestion's jobs runner runs it, markx/jobs.py; before, it ran here,
+    in a process of its own), after the stored bodies catch up with the reader's rules (issue 0068), so the job reads
+    their links. In a process of its own (issue 0072: the API keeps none of what the catch-up read)."""
     try:
         changed = services().posts.catch_up_stored_bodies()
         if changed:
             logger.info("Stored bodies: %s posts brought up to the reader's rules", changed)
     except Exception:
         logger.exception("Stored bodies: could not bring the stored bodies up to the reader's rules")
-    services().stories.recompute_safely()
+    from insight_core.markx.jobs import want_stories
+    want_stories(services().db_url)
 
 
 def start_stories() -> None:
-    """The start's story job in its own process, then Mark X's first decisions over its stories are asked for (issue
-    0112 A; insight-ingestion runs them, 0112 Decided 10); the second is nothing when INSIGHT_MARKX is off."""
+    """The start's story job wanted (`recompute_stories`), then Mark X's first decisions are asked for (issue 0112 A;
+    insight-ingestion runs both, 0112 Decided 10; a decision run reads the stories as stored); the second is nothing
+    when INSIGHT_MARKX is off."""
     in_own_process(recompute_stories)
     markx_router_module.after_start_stories()
 
