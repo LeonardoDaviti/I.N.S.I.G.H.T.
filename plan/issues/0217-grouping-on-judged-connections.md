@@ -757,3 +757,166 @@ any arm. Bar 1's +4 points looks out of reach for any row-level grouping, becaus
     row by its first post (`newsPart`), so a launch merged into a preview row from five days earlier leaves "Last 48
     hours". Part 2's "Updated" return is what fixes that, and it has to ship with any release merge.
 - **Part 2 was not started.** It was to follow Part 1's wiring.
+
+---
+
+## Round 2 (2026-11-17, overnight): the narrow arm and Part 2, bars written before measuring
+
+The coordinator's follow-up: the root cause of bar 1, refused verdicts stored, Part 2's placement, then a narrow arm
+(release edges only, on top of the v10.18 guards, with Part 2's placement). The bars below are written before any
+held-out row of the narrow arm or any Part 2 update is labelled. They are not changed afterwards.
+
+### The narrow arm R (frozen on dev before the held-out read)
+
+- **What it is.** `news_rules.news(..., releases=grouping.Evidence)` keeps the v10.18 guards (A0) as they are. On
+  top, it joins the stories and posts of no story that are about one release of one exact thing
+  (`grouping.releases`). The policy is `span_days` 14 for the stages (rumour, teaser, preview, launch) and
+  `line_days` 3: a line that is no stage (a benchmark, availability, a breakdown) joins a stage only within 3 days of
+  it. Two releases of two things never join, and a bare version reaches a variant only as a pre-release stage.
+- **The dev grid** (span 7/10/14 × line none/1/3/7, scored on the labelled dev pairs).
+  - Chosen, span 14 with line 3: 28 joins right, 1 wrong, 1 pair unlabelled; the release case holds.
+  - Line none: 29 right, 20 wrong. Later research pulled in, the class D's held-out breakage showed.
+
+**Bars for R** (H1 ∪ H3, against A0, same labels where rows are identical; new rows labelled blind as before):
+
+1. Single-story share no lower than A0's (point estimate).
+2. Not-a-duplicate share higher than A0's.
+3. Major events missed no more than A0's, and clean major rows no fewer than A0's.
+4. The release case is one row (the preview and the launch day's launch, router and benchmark threads).
+5. Order independence 20/20. Joins lost ≤ 3%.
+6. Time and memory: the decision run's News stage and peak RSS no more than A0's plus the noise of A0's own runs
+   (the spread of three runs each, alternated, on the same scratch clone). No Haiku question added.
+
+### Part 2 (an updated row comes back), on the replay
+
+- **The rule** (`utils/row_updates.update(seen, new)`, pure). A row the reader saw comes back as "Updated: <what> · +N
+  sources" when a new post brings one of these:
+  - a new stage (rumoured < announced < released);
+  - a new kind of release line (availability or a price; benchmarks);
+  - a number no seen post said (dates and years are not numbers);
+  - a correction or a denial;
+  - 2 or more new independent voices (a report, not a repost, a copy, a share or a reply).
+  A row never seen is "New". Its place is the time of its latest meaningful update, not its first post.
+- **The simulated reader** opens News twice a day (09:00 and 21:00 UTC) on the held-out days and sees every row
+  shown. For returns per day, it also opens it every hour.
+- **Bars** (the spec's):
+  1. Precision of "Updated" ≥ 90% (Wilson lower bound). Each Updated event is labelled blind (up to 150): the
+     labeller sees what the row held and what it gained, and is asked whether something meaningful happened.
+  2. Returns per row per day ≤ 2 with hourly looks, for every row.
+  3. No meaningful update missed on the labelled set: up to 100 events where a seen row gained posts but was not
+     flagged, labelled the same way; none may be called meaningful.
+  4. The case: a preview seen on day 0 brings the row back at the launch on day 5. 20 reposts do not bring it back
+     (a unit test).
+
+### Round 2 results (measured after the bars above were committed)
+
+**Nothing is switched on.** The narrow arm fails its bars 1 and 3. Part 2's rule fails all three of its labelled bars.
+Two fixes are built and on, because they sit in their owning modules and need no switch: a narrow class of the
+judge's reasons, and the stored refusals.
+
+#### 1. The root cause of bar 1: where the off-story posts come from
+
+The 26 mixed held-out rows of A0 and D hold 53 posts labelled off-story. For each, the post panel says how it joined
+its story:
+
+| how the stray got in | posts | why the check kept it |
+|---|---|---|
+| a rule join inside the story: `rule:thread` | 8 | Under 20 words: rule A never judges them. Each is an aggregator's short reply about another model, in a thread under one model's results. |
+| a rule join inside the story: `rule:citation` | 8 | Long posts that cite one hub page (listing pages of one SEO site, an "AI news this month" page). The check may only demote a link member, never remove it (`link_keeps`, 0121 D1). |
+| the judge's join as a reaction or development | 10 | Commentary whose own reason says the story's event is background, or a follow-up that is its own event (a resignation joined to "weighing a return"). |
+| a merge of two stories | 5 | The merge's "same event" covered the two releases, and the stray rode in with its story. |
+| a judge pair | 3 | |
+| not inside the story: a News join (names) or a story of its own | 19 | Row-level joins: the guards' residue, and D's release joins. |
+
+- **Fixed (on), in decide's reason rule** (`NOT_THIS_STORY` family 4). An "about" answer whose own reason says the
+  story's event is "one of several points", "a related theme" or "only in background" does not count. It is asked
+  again; the bar is two agreeing answers.
+  - Measured: 3 joins in the window. All 3 posts were labelled off; no post of a one-story row says it.
+  - Replayed without them, A0's single-story on the held-out rows goes from 121 to 122 of 141, with 0 of 1,842 joins
+    lost.
+  - Narrower than it looks: "as background" and "is only background" stay out. They are said of side subjects too
+    (one window case: "Amodei is only background" of a story that is about its post).
+- **Not fixed: the two larger classes.** They need the check's own answers, which the GETs do not carry; Path A, a
+  read-only dump, does.
+  - Thread replies under 20 words: rule A, a measured rule; changing it re-asks about short posts.
+  - Citation members the check can only demote (`link_keeps`).
+  - A tried fix that failed: removing rule members whose exact thing differs from the story's core thing. Only 2 of
+    9 flagged posts were labelled off. The thing names do not agree across a story's posts ("Kimi K3.1" against
+    "Kimi 3.1", "MiniMax-M3.1" against "MiniMax M3.1"): exact things need entity identity, not names.
+
+#### 2. Refused verdicts are stored (on)
+
+- **Where they go.** `mx_refusals` (migration 0153; 0152 is v1023-timeline's). Merges and connect pairs answered
+  "different" at p ≥ 0.6 are kept with the members each question showed.
+- **How they live.** Current rows touching a run's stories open and close like connections; a refusal whose shown
+  members moved is not written (stale). The connections table and its readers never see them.
+- **What reads them: nothing yet.** A grouping arm that wants cannot-links reads them; the next replay should use a
+  read-only dump (Path A) to have them.
+- **Cost:** one query and a few inserts a run.
+
+#### 3. The narrow arm R (A0's guards + the release rule)
+
+| bar | A0 | R |
+|---|---|---|
+| 1 single-story no lower than A0 | 85.8% (121/141) | 84.3% (107/127) ✗ |
+| 2 not a duplicate higher than A0 | 84.4% | 90.6% ✓ |
+| 3 missed ≤ A0 / clean major ≥ A0 | 0 / 45 | 2 ✗ / 42 ✗ |
+| 4 the release case one row | 7 rows | one row (rumour to launch, the teaser apart) ✓ |
+| 5 joins lost | — | 0 of 1,842 ✓ |
+| 6 time and memory | — | not measured: it failed the label bars first |
+
+- **Built right:** the release case, and a small model's release with its availability.
+- **Built wrong (4 rows):**
+  - **2 through a mixed story.** A release-typed story about another product named the model as its subject, and
+    that pulled two later research results about the model into one row.
+  - **1 a third party's quantisation of a model joined to the model's release.** The labellers call it another story.
+  - **1 a defect in the frozen code.** A base model's benchmark joined its flash variant's launch. The docstring said
+    a bare version reaches a variant only as a teaser or a rumour; the code did not check it.
+- **Missed (2):** a model's safety finding, and a flash variant's launch. Both are now inside the wrong rows above.
+- **The defect is fixed after the read.** It changes R's held-out numbers, so R would need fresh days to be measured
+  again.
+
+#### 4. Part 2 on the replay (R's rows, the twice-daily reader)
+
+- **Events.** 145 events: 76 flagged "Updated", 44 not. Two labellers agreed on 120 of 145.
+
+| bar | value | |
+|---|---|---|
+| 1 precision of "Updated" ≥ 90% (lower bound) | 50% (39–61), 38/76 | ✗ |
+| 2 returns per row per day ≤ 2 (hourly reader) | max 4; 15 row-days over 2 | ✗ |
+| 3 no meaningful update missed | 9 of 44 missed | ✗ |
+| 4 the case (unit test) | the launch brings the seen preview back; 20 reposts do not | ✓ |
+
+- **What fails.**
+  - "New numbers" makes 64 of the 76 flags and is right on 29. A reading's numbers change with every retelling (a
+    different rounding, another detail), so a number nobody said before is not news.
+  - The stage and line reasons are right on 9 of 11 (benchmarks 5/5, launch 2/4). They are too few to carry the rule.
+- **Not built:** the reader's placement, "New"/"Updated" and the seen-per-row state. They were to follow a rule that
+  passes.
+- **The next measured step.** Drop numbers as a reason by themselves, and ask the worker only on the uncertain events
+  (the spec's "the worker only where unsure"). Measure on fresh days: H1 and H3 are now read.
+
+#### Resources of what is on
+
+- **How it was measured.** A full decision run on a migrated `prep_mxreal` clone. The v1023 code before round 2
+  alternated with the head, 3 runs each, rolled back after each run. The machine was shared and loaded: load average
+  37–77 during the runs.
+- **Totals.** Medians 60.9 s before and 58.9 s after. One head run took 109.8 s, all of it in the entities stage,
+  which round 2 does not touch.
+- **The stages round 2 touches.** "Questions and decisions" ran 2.6–3.1 s on both sides. The connections stage,
+  which now also writes the refusals, stayed under 0.5 s in every run.
+- **Peak RSS.** 165.5–167.1 MB before, 159.8–165.1 MB after. No added time or memory beyond the noise.
+
+#### What the overnight work leaves
+
+- **On:**
+  - the reason class above (decide);
+  - `mx_refusals`, written each run.
+- **Built and off:** `news_rules.news(..., releases=)`, `grouping.releases`, `utils/row_updates.py`, and their tests.
+  Unused by production.
+- **Next, in order:**
+  1. A read-only dump (Path A), so the check's answers can be read. Then the two big story-level classes (short
+     thread replies, citation members) can be measured.
+  2. Exact things by entity identity, not by names.
+  3. Part 2's rule without bare numbers, with the worker deciding the uncertain events.
+  4. Fresh held-out days (2026-11-17..23) for any of these.

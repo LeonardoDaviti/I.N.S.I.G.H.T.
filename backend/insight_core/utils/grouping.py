@@ -167,6 +167,7 @@ class Policy:
                                      # of one IPO, one lawsuit): its weight; 0, a typed connection only (the spec's)
     ls_rounds: int = 2               # cc: rounds of single-item moves
     large_posts: int = 5             # two items this large join by a name only by both main names (and the judge)
+    line_days: Optional[float] = None   # a release line that is no stage joins a stage only this near; None: span_days
 
 
 @dataclass(frozen=True)
@@ -253,7 +254,23 @@ def _release_pair(a: Core, b: Core, policy: Policy) -> bool:
         return False
     if not ({a.event, b.event} & (RELEASES | {LEAK})):
         return False
-    return abs((a.at - b.at).total_seconds()) <= policy.span_days * 86400
+    if _conflict(a, b):
+        return False
+    apart = abs((a.at - b.at).total_seconds())
+    if policy.line_days is not None and not (a.event in RELEASES | {LEAK} and b.event in RELEASES | {LEAK}):
+        # a line that is no stage (a benchmark, a breakdown) joins a stage only near it: research weeks after a launch
+        # is its own story (0217's held-out breakage)
+        return apart <= policy.line_days * 86400
+    return apart <= policy.span_days * 86400
+
+
+def releases(items: Sequence[Item], policy: Policy) -> List[Tuple[str, str]]:
+    """The owner's release rule alone (0217's narrow arm): the pairs of items about one release of one exact thing,
+    as `group` makes its `core` edges (order-independent: the pairs sorted)."""
+    by_id = {i.id: i for i in items}
+    ids = sorted(by_id)
+    cores = {i: core_of(by_id[i], policy) for i in ids}
+    return sorted((e.a, e.b) for e in _release_edges(ids, cores, policy))
 
 
 # The setting chosen on the dev window (0217: 2026-11-07..12, labelled pairs; average linkage over admitted edges,
@@ -392,6 +409,8 @@ def _release_edges(ids: Sequence[str], cores: Mapping[str, Core], policy: Policy
                 ta, tb = cores[a].thing, cores[b].thing
                 if (not ta.variant) != (not tb.variant):
                     bare = a if not ta.variant else b
+                    if cores[bare].event not in (LEAK, None):
+                        continue   # a bare version reaches a variant only as a stage before it (a teaser, a rumour)
                     variants = {cores[o].thing.variant for o in xs if o != bare and cores[o].thing.variant
                                 and _release_pair(cores[bare], cores[o], policy)}
                     if len(variants) != 1:
