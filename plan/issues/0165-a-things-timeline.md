@@ -1,4 +1,4 @@
-# 0165 — A thing's timeline: earlier names, outside mentions, the launch (spec, not built)
+# 0165 — A thing's timeline: earlier names, outside mentions, the launch (built: v10.14 and v10.23, see the end)
 
 Owner 2026-11-11, on a launch read in INSIGHT: "how the whole story and timeline looks like for it?" INSIGHT had
 every post needed and could show none of the timeline. The real case (names, posts, dates) is in
@@ -116,3 +116,71 @@ the timeline's stops. Expected check case: the model's timeline lists both stori
 as analysis on it.
 
 Related, Stealth v10.19 (0208): a News row shows its expert breakdowns as "Analysis", apart from its reports.
+
+## Built and measured: the second case (Stealth v10.23, branch `v1023-timeline`)
+
+v10.14 built A-D (`0165-built.md`); v10.18 dropped A's rule (0203: 26 of 60 right). v10.23 builds C + D's second case
+and measures the line. Names below are invented; the real rows and every answer are in `plan/research/0165-timeline/`.
+
+### Built
+- **Stops** (`markx/stops.py`, kind `stop`, guide `stop-v1`): a story is a *candidate* stop when the thing is subject
+  or actor of a quarter of its members or of its first post. The jobs process's plan job (`tasks.BACKGROUND_PLANNED`;
+  never a decision run, never a lease) asks each candidate (thing, story) of the stories that gained members in the
+  last 30 days once: is the story about the thing, and what happened to it (teaser, preview, launch, availability,
+  update, weights, benchmark, ranking, adoption, research, incident, deal, analysis, other). Worker: 10 a call, effort
+  low; no table (the answer is the task's call, read by `stops.of`).
+- **The line** (`markx/timeline.py`): `story` = a stop (the stored answer says about; unasked, by its share), `in_story`
+  = a story that only names it (in "All events", never among the top). Every post event inside a stop's story, and an
+  analysis after one, carries the stop as `on`; the entity page nests them under their stop ("In this story").
+- **Posts that only name it** (found by the measure below): the birth is the oldest post *about* it (subject or actor;
+  `named_since` keeps the older mention's date), the first outside mention is the first outside post about it or
+  linking back, and a month of outside posts that only name it is `named_only` (never among the top).
+- **Analysis** on the line (`analysis`: an outside post about it read as commentary, 1000+ own characters, origin not
+  the maker: News' Analysis rule) is built and **off**.
+- **Switches** (`entity_bands.json` → `timeline`): `stops` **on**, `stop_types` **off** (answers kept, the word not
+  shown), `analysis` **off**.
+- Tests: `test_markx_timeline` (21: both cases as fixtures, the second as one model's two stories with a rival's story
+  that names it once and a breakdown; the planner asks once; the switches), `test_markx_jobs` / `test_markx_validate`
+  (the kind), the worker's 104, `timeline.test.tsx` (7: stops with their posts and the breakdown nested).
+
+### Measured (read-only GETs of the server, 2026-11-17; Haiku 5.5 as the worker asks it; blind labellers as subagents)
+Bars: a word shown to the reader about a story or a post (the stop's word, Analysis) needs News Analysis' bar (point
+97%, Wilson lower 90%); the line's composition (which stories are stops, which posts mark its birth) replaces the line
+served today, so it needs the blind judges to prefer it on held-out entities and pass more of them.
+
+| what | set | result | bar | |
+|---|---|---|---|---|
+| stop: about the thing (precision of the stops shown) | dev: 169 (thing, story) pairs, 50 entities | 79/84 = 94.0% [86.8–97.4] (rule alone 68.3%) | 97 / 90 | guide revised after |
+| stop: about the thing | **held out**: 123 new pairs, final guide, two runs | 95/98 and 97/100 = **97.0% [93.5–98.6]** pooled; recall 93–95% | 97 / 90 | **pass: on** |
+| stop: the word (what happened) | held out, the same two runs | 67/94 = 71.3%, 70/96 = 72.9% (labellers with each other 95–97%; run to run 81%) | 97 / 90 | **fail: off** |
+| analysis (commentary, 1000+ own chars, not by the maker) | 60 rule positives, 40 negatives, 3 labellers | 40/60 = 66.7% [54.1–77.3]; 5/40 negatives are analysis | 97 / 90 | **fail: off** (News Analysis is a Shadow too: 9/12) |
+| the line, per entity (0165's measure: pass = it tells the thing's history, under 2 lines off-topic) | the 30 biggest products of the last 30 days | served 9/30 = 30% [17–48] → new **22/30 = 73% [56–86]**; new better 22, same 6, worse 2 | judges prefer, more pass | **pass: on** |
+| | 20 random (19 with a timeline) | 6/19 = 32% → **14/19 = 74% [51–88]**; better 15, same 4 | | |
+| | **held out**: 15 more random products | 4/15 = 27% [11–52] → **10/15 = 67% [42–85]**; better 10, same 5, worse 0 | | |
+
+(The line was judged twice: the stop split alone, 29/49 = 59%, then with the post rules; the 30 + 20 are in-sample for
+the post rules, the 15 are not.)
+
+**The two cases:** the second case's model: launch, benchmark, weights and the training report are stops in order
+(Haiku: launch, benchmark, weights, research; three labellers the same), the engine's release that names it is
+`in_story`; the breakdown is read as commentary with 1,803 own characters, so it hangs on the weights stop once
+`analysis` is on. The first case is unchanged: its earlier name has no entity of its own (A was dropped), so no rename
+can be asked.
+
+**What still fails** (18 of the 64 lines, the exact rows in `plan/research/0165-timeline/eval2_*.jsonl`):
+- the extractor's role: a post whose subject is another thing marks it `subject` (an engine's day-0 support for
+  another model as a model's own post; a newsletter);
+- identity: one name, several things (a language and unrelated posts; a messaging app and a capture card; a
+  benchmark and a model's launch post): 0184's facts and splits, not the timeline;
+- releases by a maker's site that are about something else (a maker's news on another product).
+
+**Renames and components (A + B):** not changed. On the server, 15,383 rename questions are answered and one
+`renamed` waits in the queue: too few to measure a precision, so renames stay questions (never automatic). The first
+case needs the component rule (an earlier name inside its parent's name) that 0203 dropped; a Haiku question for it
+(as stop-v1) is the next step, measured the same way.
+
+**Resources:** on the 11-05 server copy (entities built once): the stop planner's first pass (344 stories, 306 pairs)
+0.21 s, peak RSS 111 MB (110 at start); the 20 biggest things' entity pages 0.07–0.38 s each (2.1 s in all), peak 110
+MB. The page is the kept entity page (0198): built on demand or by the jobs process, never in a decision run. The
+planner reads the story members joined since its last pass (`mx_story_posts.valid_from`, not indexed: one scan of the
+table a plan pass). Haiku spent measuring: about $0.19.
