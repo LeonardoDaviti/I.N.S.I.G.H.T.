@@ -310,25 +310,108 @@ def _pos_domains(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
 # v10.16: each document count reads the window's posts first (the posts' date index), then their rows; a count of a
 # frequent site read every link and probed its post, 1.4 s a track on the scale copy. The words' counts are Postgres'
 # own document counts (ts_stat) of each post's terms, its index and English layer together: the same count as the
-# distinct posts holding the term, without a row per term.
+# distinct posts holding the term, without a row per term (v10.22: kept by day, `word_counts`).
 _DF_DOM = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
               SELECT l.target_site, count(DISTINCT l.post_id) FROM w JOIN post_links l ON l.post_id = w.id
                WHERE NOT l.boilerplate AND l.target_site IN (SELECT unnest(%s::text[])) GROUP BY 1"""
 
 
+# v10.22 (0216): the words' counts by day (migration 0148, mx_word_days). A window's count is the sum of its whole days'
+# kept counts (a post is in one day) and of its two partial days, counted from their posts: the same count as ts_stat
+# over the window (it was ts_stat over the window's ~30k posts on every plan pass: 3 s and ~100k buffers a call on the
+# server). A whole day is built (ts_stat over its posts, every term) when it has no row or one of its posts' terms or
+# dates changed since it was built (mx_word_days_dirty's count, raised by 0148's triggers in the writing transaction);
+# a read-only transaction counts such a day from its posts and keeps nothing. Days before the window asked are deleted.
+_DOCS = """SELECT COALESCE(p.search_vector, ''::tsvector) || COALESCE(s.vector, ''::tsvector)
+             FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id WHERE {where}"""
+KEEP_DAYS_BEFORE = 1   # built days kept before the window's first whole day (a pass whose clock is a little behind)
+
+
+def _ts_stat(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
+    """ts_stat's ndoc over the posts matching `where` (literal SQL), for the words `cand`."""
+    from psycopg import sql
+    cur.execute(sql.SQL("SELECT word, ndoc FROM ts_stat({docs}) WHERE word IN (SELECT unnest(%s::text[]))").format(
+        docs=sql.Literal(_DOCS.format(where=where))), (list(cand),))
+    return dict(cur.fetchall())
+
+
+def _between(cur: Cursor, since: datetime, until: datetime, *, open_end: bool = False) -> str:
+    """`since` <= the post's date <= `until` (< with `open_end`), as literal SQL."""
+    from psycopg import sql
+    return sql.SQL("{date} >= {since} AND {date} {op} {until}").format(
+        date=sql.SQL(DATE), since=sql.Literal(since), op=sql.SQL("<" if open_end else "<="),
+        until=sql.Literal(until)).as_string(cur)
+
+
+def _day_start(d: Any) -> datetime:
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
+def _day(cur: Cursor, d: Any) -> str:
+    return _between(cur, _day_start(d), _day_start(d + timedelta(days=1)), open_end=True)
+
+
+def _whole_days(cur: Cursor, first: Any, last: Any, cand: Sequence[str]) -> Dict[str, int]:
+    """The counts of `cand` over the whole UTC days first..last: the kept days', each missing or stale day built first."""
+    from psycopg import sql
+    out: Dict[str, int] = {}
+    if last < first:
+        return out
+    cur.execute("SHOW transaction_read_only")
+    keep = cur.fetchone()[0] != "on"
+    cur.execute("""SELECT d::date, COALESCE(x.gen, 0), w.built_gen
+                     FROM generate_series(%s::date, %s::date, interval '1 day') d
+                     LEFT JOIN mx_word_days_dirty x ON x.day = d::date LEFT JOIN mx_word_days w ON w.day = d::date
+                    ORDER BY 1""", (first, last))
+    stale = [(d, gen) for d, gen, built in cur.fetchall() if built is None or built != gen]
+    counted = []
+    for d, gen in stale:
+        if not keep:   # counted from its posts, not kept
+            for w, n in _ts_stat(cur, _day(cur, d), cand).items():
+                out[w] = out.get(w, 0) + n
+            counted.append(d)
+            continue
+        # the day's count read before its posts (this statement's snapshot; ts_stat reads them in its own, as new or
+        # newer): a post changed meanwhile has a higher count, so the day is built again at the next read
+        cur.execute(sql.SQL("""INSERT INTO mx_word_days (day, built_gen, words, ndocs)
+                               SELECT %s, %s, COALESCE(array_agg(word ORDER BY word), '{{}}'),
+                                      COALESCE(array_agg(ndoc ORDER BY word), '{{}}') FROM ts_stat({docs})
+                               ON CONFLICT (day) DO UPDATE SET built_gen = EXCLUDED.built_gen, words = EXCLUDED.words,
+                                                               ndocs = EXCLUDED.ndocs, built_at = now()""").format(
+            docs=sql.Literal(_DOCS.format(where=_day(cur, d)))), (d, gen))
+    if keep:
+        cur.execute("DELETE FROM mx_word_days WHERE day < %s", (first - timedelta(days=KEEP_DAYS_BEFORE),))
+    # a filter, not a join: Postgres hashes the words asked once (a join's estimates could hash every kept term instead)
+    cur.execute("""SELECT x.w, sum(x.n)::int FROM mx_word_days d CROSS JOIN LATERAL unnest(d.words, d.ndocs) AS x(w, n)
+                    WHERE x.w = ANY(%s::text[]) AND d.day BETWEEN %s AND %s AND NOT d.day = ANY(%s::date[]) GROUP BY 1""",
+                (list(cand), first, last, counted))
+    for w, n in cur.fetchall():
+        out[w] = out.get(w, 0) + n
+    return out
+
+
+def word_counts(cur: Cursor, win: Tuple[datetime, datetime], cand: Sequence[str]) -> Dict[str, int]:
+    """{word: in how many posts of the window [since, until] (both included) it is, the post's index and Mark X's
+    English layer together} for the words `cand` (a word in none is left out): ts_stat's ndoc over the window's posts."""
+    since, until = win
+    if not cand or until < since:
+        return {}
+    d0, d1 = since.astimezone(timezone.utc).date(), until.astimezone(timezone.utc).date()
+    if d0 == d1:
+        return _ts_stat(cur, _between(cur, since, until), cand)
+    out = _whole_days(cur, d0 + timedelta(days=1), d1 - timedelta(days=1), cand)
+    for part in (_between(cur, since, _day_start(d0 + timedelta(days=1)), open_end=True),
+                 _between(cur, _day_start(d1), until)):
+        for w, n in _ts_stat(cur, part, cand).items():
+            out[w] = out.get(w, 0) + n
+    return out
+
+
 def _df_words(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime], cand: Sequence[str]
               ) -> Dict[str, int]:
-    from psycopg import sql
-    docs = sql.SQL("""SELECT COALESCE(p.search_vector, ''::tsvector) || COALESCE(s.vector, ''::tsvector)
-                        FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id
-                       WHERE {date} >= {since} AND {date} <= {until}""").format(
-        date=sql.SQL(DATE), since=sql.Literal(win[0]), until=sql.Literal(win[1])).as_string(cur)
-    query = sql.SQL("SELECT word, ndoc FROM ts_stat({docs}) WHERE word IN (SELECT unnest(%s::text[]))").format(
-        docs=sql.Literal(docs))
     missing = [c for c in cand if ("word", win, c) not in cache]
     if missing:
-        cur.execute(query, (missing,))
-        got = dict(cur.fetchall())
+        got = word_counts(cur, win, missing)
         for c in missing:
             cache[("word", win, c)] = int(got.get(c, 0))
     return {c: cache[("word", win, c)] for c in cand}
@@ -402,13 +485,19 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
     return pos - NEAR_PULL * max(0.0, (near if near is not None else -1.0) - pos)
 
 
+# v10.22 (0216): each post's vector read once. A stored vector (halfvec, 2 kB) is out of line (TOAST), and every
+# `ps.v <=> pr.v` below fetched it again: 3 cosines x every probe (~60 fetches, ~88 buffers a post; the scoring of a
+# plan pass was ~2.3M of its 3.7M buffers on the scale clone). The post's row now carries the vector itself: the cast to
+# vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is exact), in a subquery the
+# planner keeps (OFFSET 0), so it is made once a post.
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
-ps AS (SELECT p.id, {DATE} AS at, p.source_id, e.v, p.search_vector
+ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector
          FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
         WHERE {{where}}
           AND (NOT %(passive)s OR (p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
-                                   AND {{suggestable}})))
+                                   AND {{suggestable}}))
+        OFFSET 0)
 SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
        cardinality(%(doms)s::text[]) > 0 AND EXISTS (
            SELECT 1 FROM post_links l WHERE l.post_id = ps.id AND NOT l.boilerplate AND l.target_site = ANY(%(doms)s)

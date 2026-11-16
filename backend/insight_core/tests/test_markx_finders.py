@@ -179,6 +179,68 @@ class Probes(_Finders):
         self.assertGreater(score, 0.9)
 
 
+class WordDays(_Finders):
+    """v10.22 (0216, migration 0148): the words' window counts from the days kept (mx_word_days) and the two partial
+    days are ts_stat's over the window, before and after any change to a kept day's posts."""
+    NOW = datetime(2031, 3, 10, 13, 30, tzinfo=timezone.utc)   # a window no other test's posts are in
+
+    def setUp(self):
+        super().setUp()
+        clear_tables(self.cur, ("mx_word_days", "mx_word_days_dirty"))
+        self.addCleanup(clear_tables, self.cur, ("mx_word_days", "mx_word_days_dirty"))
+        self.win = (self.NOW - timedelta(days=6), self.NOW)
+        self.ids = []
+        for k in range(14):   # two a day across the window and its edges, at hours both sides of the edges' times
+            at = self.NOW - timedelta(days=6.5) + timedelta(hours=12 * k + (k % 3) * 5)
+            self.ids.append(self.post(title=f"Printer note {k % 4}", text=f"filament spool {k % 3} nozzle w{k}", at=at))
+        self.words = ["filament", "spool", "nozzl", "printer", "note", "w3", "w7", "w12", "absent"]
+
+    def reference(self, win=None):
+        since, until = win or self.win
+        return {w: n for w, n in finders._ts_stat(self.cur, finders._between(self.cur, since, until), self.words).items()}
+
+    def counts(self):
+        return finders.word_counts(self.cur, self.win, self.words)
+
+    def test_the_kept_days_and_the_edges_count_as_ts_stat_over_the_window(self):
+        want = self.reference()
+        self.assertTrue(want and want.get("filament"), want)
+        self.assertEqual(self.counts(), want)
+        self.cur.execute("SELECT count(*) FROM mx_word_days")
+        self.assertEqual(self.cur.fetchone()[0], 5)                       # the whole days between the edges
+        self.assertEqual(self.counts(), want)                              # read from the kept days
+        for later in (timedelta(hours=7), timedelta(days=1, hours=2)):    # windows ending later
+            win = (self.win[0] + later, self.win[1] + later)
+            self.assertEqual(finders.word_counts(self.cur, win, self.words), self.reference(win))
+
+    def test_a_change_to_a_kept_days_posts_is_counted(self):
+        self.counts()
+        middle = self.NOW - timedelta(days=3)
+        changes = [
+            lambda: self.post(title="Printer bed", text="a new spool w3", at=middle),                       # inserted
+            lambda: self.cur.execute("UPDATE posts SET title = 'Absent words' WHERE id = %s", (self.ids[5],)),
+            lambda: self.cur.execute("UPDATE posts SET published_at = published_at - interval '2 days' WHERE id = %s",
+                                     (self.ids[8],)),                                                     # moved a day
+            lambda: self.cur.execute("""INSERT INTO mx_post_search (post_id, vector, version)
+                                        VALUES (%s, to_tsvector('english', 'absent printer'), 1)""", (self.ids[7],)),
+            lambda: self.cur.execute("UPDATE mx_post_search SET vector = to_tsvector('english', 'w12') WHERE post_id = %s",
+                                     (self.ids[7],)),
+            lambda: self.cur.execute("DELETE FROM mx_post_search WHERE post_id = %s", (self.ids[7],)),
+            lambda: self.cur.execute("DELETE FROM posts WHERE id = %s", (self.ids[6],)),
+        ]
+        for change in changes:
+            change()
+            self.assertEqual(self.counts(), self.reference())
+
+    def test_a_read_only_transaction_counts_and_keeps_nothing(self):
+        want = self.reference()
+        with self.conn.transaction():
+            self.cur.execute("SET TRANSACTION READ ONLY")
+            self.assertEqual(self.counts(), want)
+        self.cur.execute("SELECT count(*) FROM mx_word_days")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
+
 class Learned(_Finders):
     def setUp(self):
         super().setUp()
