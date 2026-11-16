@@ -20,6 +20,14 @@ Environment:
                        error          a non-fatal API error result (is_error, exit 1)
                        refuse:WORD    the usage-policy refusal (is_error, exit 1) when any item's text has WORD
                        garbage        output that is not JSON, exit 0
+                       skip:WORD      (0214) no line for the items whose text has WORD
+                       array          (0214) the answers as one JSON array of {"id", ..} objects over many lines
+                       keyed          (0214) the answers as one JSON object {"<id>": {answer}, ..} over many lines
+                       prose          (0214) a reply with no answer in it at all (exit 0)
+                       unreachable    (0214) the API-unreachable result (is_error, exit 1): "API Error: Can't reach
+                                      the API server ..."
+                       weekly         (0214) the weekly-limit result (is_error, exit 1): "You've hit your weekly limit
+                                      · resets Nov 15, 3pm (Asia/Tbilisi)"
                        spanbad:N      (0191) cite-shaped answers {"entities": [..]}; the first N name a span the
                                       item's text does not have (the server's validate.py refuses them)
                      A call with the web search tool (0171) answers as websearch-v1 does ({"id", "candidates": [..],
@@ -103,6 +111,16 @@ def main():
     if "usage" in feats:
         print(json.dumps(result("Claude AI usage limit reached|1762300000", 0, True)))
         sys.exit(1)
+    if "weekly" in feats:
+        print(json.dumps(result("You've hit your weekly limit · resets Nov 15, 3pm (Asia/Tbilisi)", 0, True)))
+        sys.exit(1)
+    if "unreachable" in feats:
+        print(json.dumps(result("API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)",
+                                0, True)))
+        sys.exit(1)
+    if "prose" in feats:
+        print(json.dumps(result("I read the items. They are all news about things that happened.", len(ids))))
+        return
     if "auth" in feats:
         print(json.dumps(result("Not logged in · Please run /login", 0, True)))
         sys.exit(1)
@@ -120,9 +138,12 @@ def main():
     bad = int(feats.get("invalid") or 0)
     sbad = int(feats.get("serverbad") or 0)
     miss = int(feats.get("missing") or 0)
-    lines = []
+    texts = dict(re.findall(r"^### ITEM id: ([^\n]+)\n(.*?)(?=^### ITEM id: |\Z)", stdin, re.M | re.S))
+    lines, objs = [], []
     for k, i in enumerate(ids):
         if k >= len(ids) - miss:
+            continue
+        if "skip" in feats and feats["skip"] in texts.get(i, ""):   # 0214: the model leaves this item out
             continue
         ans = {"kind": "bogus" if k < bad else "news", "headline": "SERVER-BAD" if k < sbad else f"Item {i}"}
         if "spanbad" in feats:   # 0191: a cite answer; the first N name a span the post does not have
@@ -137,8 +158,13 @@ def main():
                                    "why": "the result names the product"}],
                    "queries": [f"maker {i}"]} if k >= bad else {"candidates": "bogus", "queries": []}
         raw_id = int(i) if i.isdigit() else i
+        objs.append((raw_id, ans))
         lines.append(json.dumps({"task_id": raw_id, "answer": ans} if "nested" in feats else {"id": raw_id, **ans}))
     text = "\n".join(lines)
+    if "array" in feats:      # 0214: one JSON array, pretty-printed (no answer on a line of its own)
+        text = json.dumps([{"id": i, **a} for i, a in objs], indent=2)
+    if "keyed" in feats:      # 0214: one object keyed by id, pretty-printed
+        text = json.dumps({str(i): a for i, a in objs}, indent=2)
     if "fence" in feats:
         text = "Here are the answers:\n```json\n" + text + "\n```"
     print(json.dumps(result(text, len(ids))))
