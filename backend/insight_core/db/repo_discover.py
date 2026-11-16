@@ -204,12 +204,17 @@ parsed AS MATERIALIZED (          -- each address parsed once (v10.22: was once 
         FROM (SELECT DISTINCT url FROM link) u
     ) x
     WHERE NOT (host = ANY(%(listed)s) OR host LIKE ANY(%(under)s))   -- v10.22: a pattern each (was a subquery an address)
-)
-SELECT a.host COLLATE "C", (a.head || CASE WHEN a.deeper THEN ARRAY['*'] ELSE '{}'::text[] END) COLLATE "C",
-       count(DISTINCT l.url), array_agg(DISTINCT l.voice)   -- grouped byte for byte: the same groups, a cheaper sort
+),
+grouped AS MATERIALIZED (
+SELECT a.host COLLATE "C" AS host, (a.head || CASE WHEN a.deeper THEN ARRAY['*'] ELSE '{}'::text[] END) COLLATE "C" AS segs,
+       count(DISTINCT l.url) AS urls, array_agg(DISTINCT l.voice) AS voices   -- grouped byte for byte: the same groups, a cheaper sort
 FROM link l JOIN parsed a USING (url)
 WHERE NOT (l.selves <> '' AND EXISTS (SELECT 1 FROM unnest(a.head) g WHERE ltrim(g, '@~') = ANY(string_to_array(l.selves, ' '))))
 GROUP BY 1, 2
+)
+SELECT host, segs, urls, voices FROM grouped   -- v10.22.2: only the hosts with find_platforms' voices (a NULL voice one)
+WHERE host IN (SELECT host FROM grouped, unnest(voices) v GROUP BY host
+                HAVING count(DISTINCT v) + bool_or(v IS NULL)::int >= %(min_voices)s)
 """
 
 # Each suggestion's activity (issue 0080: Discover's order): when your sources last linked it, and how many
@@ -370,7 +375,8 @@ class DiscoverRepository:
         cur.execute(_PLATFORMS, {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
                                  "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "tweet": shape,
                                  "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS),
-                                 "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)]})
+                                 "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)],
+                                 "min_voices": DISCOVER_MIN_VOICES})
         return find_platforms((host, tuple(segs), n, voices) for host, segs, n, voices in cur.fetchall())
 
     @staticmethod

@@ -771,9 +771,9 @@ class StoriesService:
         try:
             with db.transaction(self.db_url) as cur:
                 sources = SourceFacts(cur)
-                filled = DiscoverRepository.fill_addresses(cur, sources.platform_accounts(),
-                                                           platforms=_platforms(DiscoverRepository.kept(cur)))
-                self._counted(cur, sources)
+                kept = DiscoverRepository.kept(cur)   # v10.22.2: read once
+                filled = DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), platforms=_platforms(kept))
+                self._counted(cur, sources, kept=kept)
                 return filled
         except Exception:  # noqa: BLE001 - derived; Discover fills what is missing
             logger.exception("Stories: Discover's addresses were not filled")
@@ -787,14 +787,16 @@ class StoriesService:
             return
         try:
             with cur.connection.transaction():
+                kept = DiscoverRepository.kept(cur)   # v10.22.2: read once (was twice: ~700 MB peaks for 223 posts)
                 DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), urls=None if urls == "all" else urls,
-                                                  platforms=_platforms(DiscoverRepository.kept(cur)))
-                self._counted(cur, sources, urls=None if urls == "all" else urls)
+                                                  platforms=_platforms(kept))
+                self._counted(cur, sources, urls=None if urls == "all" else urls, kept=kept)
         except Exception:  # noqa: BLE001 - derived; Discover fills what is missing
             logger.exception("Stories: Discover's counts were not updated")
 
     @staticmethod
-    def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None, *, keep: bool = True) -> Dict[str, Any]:
+    def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None, *, keep: bool = True,
+                 kept: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Discover's counts by links (issue 0062), grouped and counted in the database: the kept ones
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules, the
@@ -805,7 +807,7 @@ class StoriesService:
         {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}.
         Without `keep` (a read of Discover, v10.16: the checks read it in a read-only transaction) nothing is
         written: counts made now are not kept, and addresses no story run has worked out are not filled (counted
-        as the job left them; the next story run fills them)."""
+        as the job left them; the next story run fills them). `kept`: the kept counts as the caller read them."""
         accounts = sources.platform_accounts()
         own_sites = {i: sources.publication(i) for i in sources.kind}
         selves = {i: sorted(sources.selves(i)) for i in sources.kind}
@@ -814,7 +816,7 @@ class StoriesService:
                        for i in sources.site)
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
         tags = DiscoverRepository.tags(cur)
-        kept = DiscoverRepository.kept(cur)
+        kept = DiscoverRepository.kept(cur) if kept is None else kept   # v10.22.2: the caller's, read once
         if kept and kept["stamp"] == stamp and kept.get("tags") == tags:
             return kept
         # v10.22: the posts whose round-up tag moved (a decision run's) count again only the keys they link
@@ -876,6 +878,16 @@ class StoriesService:
         it failed keeping its counts: "cannot execute INSERT"); the API's GET never calls it (`discover_served`
         reads the kept answer, `refresh` builds and keeps it in the background)."""
         return self._page(self._fresh(persist=self._writable()), offset=offset, limit=limit, q=q)
+
+    def discover_kept(self) -> Dict[str, Any]:
+        """v10.22.2: the whole answer served (`refresh`'s), paged as `discover` pages it (the fit order, the archive rows
+        read now), for the first page's reads (discover_reads.read_first_page): the job built it twice (peak 539 MB on
+        the server). Before the first build, `discover`."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            kept = DiscoverRepository.served(cur)
+        if kept is None or "built_at" not in kept["answer"]:
+            return self.discover()
+        return self._page(kept["answer"])
 
     def _writable(self) -> bool:
         """Whether this service's connections may write (the checks open every one read-only)."""

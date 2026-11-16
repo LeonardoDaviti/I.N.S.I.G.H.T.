@@ -361,7 +361,7 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     """Read what the first page lacks (`work`), and Classics' untitled pages (issue 0106), and store each
     answer with its date; then make and keep Discover's list once (issue 0080 cold open: the answers change
     its inputs, so the next open, in any process, reads it instead of making it). Returns how many."""
-    answer = await asyncio.to_thread(stories.discover)
+    answer = await asyncio.to_thread(stories.discover_kept)   # v10.22.2: the answer served, not built again
     classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
         todo = work(to_read(answer), DiscoverRepository.reads(cur), clock(),

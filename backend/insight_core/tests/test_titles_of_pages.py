@@ -163,7 +163,7 @@ class ReadBatchTests(unittest.TestCase):
             opened.append(limit)
             return {"suggestions": first, "archives": [{"origin_stories": [{"url": old, "title": None}]}]}
 
-        stories = SimpleNamespace(db_url=db_url(), discover=discover, refresh=lambda: opened.append("refresh"),
+        stories = SimpleNamespace(db_url=db_url(), discover_kept=discover, refresh=lambda: opened.append("refresh"),
                                   linked_articles=lambda address: [],
                                   untitled_classics=lambda: [essay])
         responses = {f"https://{key}/": page('<link rel="alternate" type="application/rss+xml" href="/feed.xml">'),
