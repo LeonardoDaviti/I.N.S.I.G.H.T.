@@ -558,3 +558,8 @@ model version) and a release-family event type (preview, launch, availability, b
 are what the reader calls "the same news". The core check must decide: one row with sub-lines (availability,
 benchmarks, breakdowns) and the preview as an earlier stage, or separate rows linked as developments. Expected
 check case: the launch day shows ONE row for the model, with the router and the benchmark as lines in it.
+
+**Owner's decision (2026-11-16):** a preview is the same launch. Everything about one release of one exact thing
+(rumour/teaser, preview, official launch, availability on platforms, benchmarks, breakdowns) is ONE row, with the
+stages and the smaller stories as lines inside it, across the days it spans. Expected check case for the case above:
+one row for the model from day 0 to day 5. The core check still keeps out stories that only mention the thing.
