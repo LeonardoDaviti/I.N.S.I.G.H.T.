@@ -38,6 +38,7 @@ LOCK_KEY = "insight.series"
 MARGIN = timedelta(hours=1)
 HEAD = 600                       # the text's start the rule reads for a post with no title (the lab's)
 PARTS_SHOWN = 50                 # a series' parts on the line
+NAV_PAGE = 50                    # posts whose HTML the pass reads for navigation links at once (v10.22.3)
 POST_DATE = pairing.ix_date("p")
 
 
@@ -115,15 +116,25 @@ class SeriesRepository:
             got = by_address.get(address)
             return got if got and got != post else None
 
-        # the links whose words may be navigation (NAV_PREFILTER, a superset), read from their text
-        cur.execute("""SELECT id::text, url, content_html, content FROM posts
-                        WHERE source_id = %s AND content_html ~* %s""", (source_id, rule.NAV_PREFILTER))
+        # the links whose words may be navigation (NAV_PREFILTER, a superset), read from their text. v10.22.3: the
+        # posts found first, their texts read NAV_PAGE at a time (was every one's HTML at once: a source of 678 such
+        # posts held 133 MB of text, the story job's process peaked at 691 MB on the scale copy, 1.3 GB on the server)
+        cur.execute("SELECT id::text FROM posts WHERE source_id = %s AND content_html ~* %s", (source_id, rule.NAV_PREFILTER))
+        found = [r[0] for r in cur.fetchall()]
         words: Dict[Tuple[str, str], str] = {}
         nav: List[rule.NavLink] = []
-        for pid, url, content_html, content in cur.fetchall():
-            for address, absolute, w in rule.navigation_links(content_html, content, url):
-                words[(pid, address)] = w
-                nav.append(rule.NavLink(pid, address, w, resolve(pid, absolute, address)))
+        for start in range(0, len(found), NAV_PAGE):
+            page = found[start:start + NAV_PAGE]
+            cur.execute("SELECT id::text, url, content_html, content FROM posts WHERE id = ANY(%s::uuid[])", (page,))
+            texts = {pid: (url, content_html, content) for pid, url, content_html, content in cur.fetchall()}
+            for pid in page:   # in the order found, as before
+                if pid not in texts:
+                    continue
+                url, content_html, content = texts.pop(pid)
+                for address, absolute, w in rule.navigation_links(content_html, content, url):
+                    words[(pid, address)] = w
+                    nav.append(rule.NavLink(pid, address, w, resolve(pid, absolute, address)))
+            del texts
         groups = rule.build(posts, nav)
         counts = cls.write_groups(cur, source_id, groups, now)
         # navigation: the open refs of the groups' posts and of the navigation links
