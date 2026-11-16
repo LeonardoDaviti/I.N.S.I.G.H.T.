@@ -757,3 +757,53 @@ any arm. Bar 1's +4 points looks out of reach for any row-level grouping, becaus
     row by its first post (`newsPart`), so a launch merged into a preview row from five days earlier leaves "Last 48
     hours". Part 2's "Updated" return is what fixes that, and it has to ship with any release merge.
 - **Part 2 was not started.** It was to follow Part 1's wiring.
+
+---
+
+## Round 2 (2026-11-17, overnight): the narrow arm and Part 2, bars written before measuring
+
+The coordinator's follow-up: the root cause of bar 1, refused verdicts stored, Part 2's placement, then a narrow arm
+(release edges only, on top of the v10.18 guards, with Part 2's placement). The bars below are written before any
+held-out row of the narrow arm or any Part 2 update is labelled. They are not changed afterwards.
+
+### The narrow arm R (frozen on dev before the held-out read)
+
+- **What it is.** `news_rules.news(..., releases=grouping.Evidence)` keeps the v10.18 guards (A0) as they are. On
+  top, it joins the stories and posts of no story that are about one release of one exact thing
+  (`grouping.releases`). The policy is `span_days` 14 for the stages (rumour, teaser, preview, launch) and
+  `line_days` 3: a line that is no stage (a benchmark, availability, a breakdown) joins a stage only within 3 days of
+  it. Two releases of two things never join, and a bare version reaches a variant only as a pre-release stage.
+- **The dev grid** (span 7/10/14 × line none/1/3/7, scored on the labelled dev pairs).
+  - Chosen, span 14 with line 3: 28 joins right, 1 wrong, 1 pair unlabelled; the release case holds.
+  - Line none: 29 right, 20 wrong. Later research pulled in, the class D's held-out breakage showed.
+
+**Bars for R** (H1 ∪ H3, against A0, same labels where rows are identical; new rows labelled blind as before):
+
+1. Single-story share no lower than A0's (point estimate).
+2. Not-a-duplicate share higher than A0's.
+3. Major events missed no more than A0's, and clean major rows no fewer than A0's.
+4. The release case is one row (the preview and the launch day's launch, router and benchmark threads).
+5. Order independence 20/20. Joins lost ≤ 3%.
+6. Time and memory: the decision run's News stage and peak RSS no more than A0's plus the noise of A0's own runs
+   (the spread of three runs each, alternated, on the same scratch clone). No Haiku question added.
+
+### Part 2 (an updated row comes back), on the replay
+
+- **The rule** (`utils/row_updates.update(seen, new)`, pure). A row the reader saw comes back as "Updated: <what> · +N
+  sources" when a new post brings one of these:
+  - a new stage (rumoured < announced < released);
+  - a new kind of release line (availability or a price; benchmarks);
+  - a number no seen post said (dates and years are not numbers);
+  - a correction or a denial;
+  - 2 or more new independent voices (a report, not a repost, a copy, a share or a reply).
+  A row never seen is "New". Its place is the time of its latest meaningful update, not its first post.
+- **The simulated reader** opens News twice a day (09:00 and 21:00 UTC) on the held-out days and sees every row
+  shown. For returns per day, it also opens it every hour.
+- **Bars** (the spec's):
+  1. Precision of "Updated" ≥ 90% (Wilson lower bound). Each Updated event is labelled blind (up to 150): the
+     labeller sees what the row held and what it gained, and is asked whether something meaningful happened.
+  2. Returns per row per day ≤ 2 with hourly looks, for every row.
+  3. No meaningful update missed on the labelled set: up to 100 events where a seen row gained posts but was not
+     flagged, labelled the same way; none may be called meaningful.
+  4. The case: a preview seen on day 0 brings the row back at the launch on day 5. 20 reposts do not bring it back
+     (a unit test).

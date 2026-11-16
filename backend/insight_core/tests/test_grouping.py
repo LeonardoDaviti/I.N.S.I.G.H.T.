@@ -306,6 +306,14 @@ class ThroughNews(unittest.TestCase):
         rows = N.news(posts, stories, [], grouped=G.Evidence(posts=facts))
         self.assertEqual(sorted(sorted(p.id for p in r.posts) for r in rows),
                          [sorted(p.id for p in launch + router + bench + preview), ["m0", "m1"]])
+        # the narrow arm: the v10.18 guards and the release rule on top, the same row; research 10 days after the
+        # launch is its own story (a line joins a stage only within line_days)
+        late = [sp("z0", "lab3", T0 + 15 * D, "Orbit Max 4 under the microscope"), sp("z1", "lab4", T0 + 15 * D + H, "x")]
+        facts.update({p.id: Post(p.id, p.t, (QMAX,), "research_result") for p in late})
+        narrow = G.Evidence(posts=facts, policy=Policy(span_days=14.0, line_days=3.0))
+        rows = N.news(posts + late, stories + [st("s-late", late)], [], judged=set(), releases=narrow)
+        self.assertEqual(sorted(sorted(p.id for p in r.posts) for r in rows),
+                         [sorted(p.id for p in launch + router + bench + preview), ["m0", "m1"], ["z0", "z1"]])
 
 
 class ThingStages(unittest.TestCase):
