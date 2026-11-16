@@ -458,3 +458,33 @@ class NewsService:
 
     def classic_urls(self, cur: Any) -> List[str]:
         return self.repo.classic_urls(cur)
+
+
+# ---- the answer the reader's News page reads (issue 0215) ------------------------------------------------------
+
+# What GET /api/news sends of each row's story and News: the fields the page reads (components/reader/FeedItem.tsx,
+# lib/news.ts, lib/story.ts). The rest of what the service builds (its tests and other readers use it) was ~20% of the
+# answer: each story post's address, source id, date, platform and repost, the sources' `with`, the rank's parts.
+STORY_POST_DROPPED = ("url", "source_id", "published_at", "platform", "repost")
+RANK_KEPT = ("event", "usable")
+
+
+def reader_view(answer: Dict[str, Any]) -> Dict[str, Any]:
+    """`news()`'s answer as the route sends it (issue 0215): each item's story posts and sources and its News rank
+    without the fields no page reads. The service's own answer is unchanged (its readers and tests)."""
+    items = []
+    for item in answer.get("items") or []:
+        item = dict(item)
+        story = item.get("story")
+        if isinstance(story, dict):
+            story = dict(story)
+            story["posts"] = [{k: v for k, v in p.items() if k not in STORY_POST_DROPPED}
+                              for p in story.get("posts") or []]
+            story["sources"] = [{k: v for k, v in s.items() if k != "with"} for s in story.get("sources") or []]
+            item["story"] = story
+        news = item.get("news")
+        if isinstance(news, dict) and isinstance(news.get("rank"), dict):
+            item["news"] = {**{k: v for k, v in news.items() if k not in ("reports", "score")},
+                            "rank": {k: v for k, v in news["rank"].items() if k in RANK_KEPT}}
+        items.append(item)
+    return {**answer, "items": items}

@@ -15,6 +15,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
@@ -429,6 +430,36 @@ class StoryJobTests(unittest.TestCase):
         self.assertGreater(self._job(full=False)["changed"], 0)
         self.assertIsNone(self._story_of(b))
         self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
+
+    def _rebuild(self):
+        return (SystemSettingsRepository.get(self.cur, SETTINGS_KEY) or ({}, None))[0].get("rebuild")
+
+    def test_a_rebuilds_progress_counts_what_is_regrouped_with_posts_saved_meanwhile(self):
+        # 0215: the server showed done -1,132 of 157,752 (the posts at the rebuild's start less the redo: keys left,
+        # and every post saved since was queued with the rest). Now: what is regrouped of every post now.
+        self._launch()
+        value = SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
+        SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, {**value, "rules": "older rules"})
+        self.assertTrue(self.service.advance(self.cur, Counter()))   # the rebuild begins: its keys first
+        late, _ = self._post(self.simon, site="late", title="Saved while the rebuild runs")
+        seen = []
+        while self.service.advance(self.cur, Counter()):
+            rebuild = self._rebuild()
+            if rebuild and rebuild["phase"] == "stories":
+                self.cur.execute("SELECT count(*) FROM posts")
+                every = self.cur.fetchone()[0]
+                self.cur.execute("SELECT count(DISTINCT substr(key, 6)) FROM story_queue "
+                                 "WHERE key LIKE 'redo:%%' OR key LIKE 'post:%%'")
+                waiting = self.cur.fetchone()[0]
+                self.assertEqual((rebuild["done"], rebuild["total"]), (every - waiting, every))
+                seen.append(rebuild["done"])
+        self.assertTrue(seen, "batches ran")
+        self.assertGreaterEqual(min(seen), 0)
+        self.assertEqual(seen, sorted(seen), "it only moves forward")
+        self.assertIsNone(self._rebuild(), "done")
+        self.assertIsNotNone(self._story_of(self.lab))
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key IN (%s, %s)", ("post:" + late, "redo:" + late))
+        self.assertEqual(self.cur.fetchone()[0], 0, "the post saved meanwhile is regrouped too")
 
     # ---- the feed ---------------------------------------------------------------------------
 

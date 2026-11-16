@@ -80,7 +80,7 @@ class _World(Ents, _Api):
         return news.kept_page(self.cur, only_differences=only, now=now or self.now)
 
     def built(self, only=True, now=None):
-        return kept_pages.encode(news.page(self.cur, only_differences=only, now=now or self.now))
+        return kept_pages.encode(news.reader_view(news.page(self.cur, only_differences=only, now=now or self.now)))
 
 
 class TheNewsPageKept(_World):
@@ -206,7 +206,7 @@ class TheJobsKeepNews(_World):
             self.assertIsNone(self.runner().tick())                                   # within REBUILD_GAP
             self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '61 seconds' WHERE job = 'news'")
             self.assertEqual(self.runner().tick(), "news")
-            self.assertEqual(news.kept_page(self.cur), kept_pages.encode(news.page(self.cur)))
+            self.assertEqual(news.kept_page(self.cur), kept_pages.encode(news.reader_view(news.page(self.cur))))
 
     def test_due_after_the_decision_run_and_its_gap_between_runs(self):
         t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)

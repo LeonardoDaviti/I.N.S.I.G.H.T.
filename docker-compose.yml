@@ -17,6 +17,11 @@ services:
     # v10.15.1: parallel queries keep their hash tables in /dev/shm; Docker's default 64 MB made a decision run fail
     # with 'could not resize shared memory segment ... to 16777216 bytes' (server, 2026-11-12). Used only on demand.
     shm_size: "1gb"
+    # Issue 0215: pg_stat_statements counts each normalized statement's calls and time (GET
+    # /api/operations/db-statements lists the top 20 by total time). Its library loads only at the server's start;
+    # DML only (utility statements such as SET are not counted). DEPLOYMENT.md, "The database's top statements".
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.max=5000",
+              "-c", "pg_stat_statements.track=top", "-c", "pg_stat_statements.track_utility=off"]
     environment:
       POSTGRES_USER: ${DB_USER:-insight}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-insight}

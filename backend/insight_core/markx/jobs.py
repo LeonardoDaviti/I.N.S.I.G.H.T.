@@ -102,6 +102,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from insight_core.utils import peak
+
 log = logging.getLogger(__name__)
 
 POLL = 30.0                      # seconds between the runner's looks (work is picked up within this)
@@ -596,17 +598,12 @@ class Jobs:
         """0182: the newest decision run's Labels queue, built and kept (labels.keep) in one REPEATABLE READ
         transaction of its own; a failure is recorded and the job tried again after GAP. Its seconds and this
         process's peak memory are recorded with it (mx_label_queues, mx_jobs.last)."""
-        import resource
-
         from insight_core.markx import decide, labels as mx_labels
-
-        def peak() -> float:
-            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0      # KiB on Linux
         t0 = time.monotonic()
         self._begin("labels", "building")
         try:
             with decide.snapshot(self.db_url) as cur:
-                out = mx_labels.keep(cur, now=self.clock(), peak=peak)
+                out = mx_labels.keep(cur, now=self.clock(), peak=peak.mb)
         except Exception as exc:
             log.exception("Mark X labels: building the queue failed; tried again later")
             self._finish("labels", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
@@ -614,8 +611,8 @@ class Jobs:
             return None
         seconds = round(time.monotonic() - t0, 1)
         log.info("Mark X labels: the queue of run %s kept in %.1f s (%s items, peak %.0f MB)", out.get("run"), seconds,
-                 out.get("items", "already"), peak())
-        self._finish("labels", {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1),
+                 out.get("items", "already"), peak.mb())
+        self._finish("labels", {"ok": True, "seconds": seconds, "peak_mb": peak.mb(),
                                 **{k: v for k, v in out.items() if k != "seconds"}})
         return out
 
@@ -633,12 +630,7 @@ class Jobs:
         backoff (`again`: wanted again; the API builds or sends the older page meanwhile, as before). Its seconds and
         this process's peak memory are recorded with it. Then the kept inputs' logged changes folded
         (kept_pages.compact), in a transaction of their own."""
-        import resource
-
         from insight_core.markx import decide, kept_pages
-
-        def peak() -> float:
-            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0      # KiB on Linux
         t0 = time.monotonic()
         self._begin(job, "building")
         try:
@@ -660,8 +652,8 @@ class Jobs:
                 out = {**out, "inputs_folded": folded}
         except Exception:  # noqa: BLE001 - the log only grows until the next fold
             log.exception("Kept views: folding the kept inputs' changes failed")
-        log.info("Kept views: %s built %s in %.1f s (peak %.0f MB)", job, out.get("built"), seconds, peak())
-        self._finish(job, {"ok": True, "seconds": seconds, "peak_mb": round(peak(), 1), **out})
+        log.info("Kept views: %s built %s in %.1f s (peak %.0f MB)", job, out.get("built"), seconds, peak.mb())
+        self._finish(job, {"ok": True, "seconds": seconds, "peak_mb": peak.mb(), **out})
         return out
 
     def tracks(self) -> Optional[Dict[str, Any]]:
@@ -710,8 +702,6 @@ class Jobs:
         """0209: the next slice of a rule change's rebuild: Mark IX's story job (stories_service.recompute_safely: its
         bounded steps for STEP_BUDGET_S, then it yields and rests, or steps aside for a waiting decision run), in this
         process. Its summary, the rebuild's progress and this process's peak memory are recorded with it."""
-        import resource
-
         from insight_core.services.stories_service import StoriesService
         t0 = time.monotonic()
         self._begin("stories", "rebuilding")
@@ -725,7 +715,7 @@ class Jobs:
             return None
         failed = not out   # recompute_safely logged the failure
         last = {"ok": not failed, "seconds": round(time.monotonic() - t0, 1),
-                "peak_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
+                "peak_mb": peak.mb(),
                 **{k: out[k] for k in ("skipped", "batches", "yielded", "posts", "changed") if k in out},
                 "rebuild": {k: ix.get(k) for k in ("rebuild", "phase", "done", "total")}}
         if failed:
@@ -798,7 +788,7 @@ class Jobs:
                                     "over_in": over_in, **({"skip_next": skip_next} if skip_next else {}),
                                     **({"skipped_stages": skip} if skip else {}),
                                     "stages": stages, "seconds": round(time.monotonic() - t0, 1),
-                                    "limit": limit[0]}, again=True)
+                                    "limit": limit[0], "peak_mb": peak.mb()}, again=True)
             return None
         except Exception as exc:
             log.exception("Mark X decisions: the run failed")
@@ -814,6 +804,7 @@ class Jobs:
                  {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
                                 "skipped": out.get("skipped"), "stages": stages, "limit": limit[0],
+                                "peak_mb": peak.mb(),
                                 **({"skipped_stages": skip} if skip else {}),
                                 **({"mark_ix": ahead} if ahead else {}),
                                 "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
@@ -928,10 +919,12 @@ def unended(s: Dict[str, Any]) -> bool:
 
 
 def _job_main(db_url: str, *names: str) -> None:
-    """A child process: its jobs, one after the other, then exit (what they read goes back to the OS)."""
+    """A child process: its jobs, one after the other, then exit (what they read goes back to the OS). 0215: each job's
+    peak memory counted from its own start (utils/peak: the kept views due together share this process)."""
     from insight_core.logs.core.logger_config import setup_logging
     setup_logging(debug_mode=False)
     for job in names:
+        peak.reset()
         getattr(Jobs(db_url), job)()
 
 

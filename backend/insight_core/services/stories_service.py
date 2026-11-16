@@ -78,6 +78,10 @@ YIELD_KEY = "stories_yield"   # system_settings: {"at": ISO} of the last run tha
 # run steps aside (skips) until it has started (jobs.decision_waits).
 DECISION_WAIT_S = 600.0
 STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewer; a rule change's are all)
+# 0215: a rule change's batch starts from twice as many: the context a batch reads around its posts (~7x their number
+# at server scale) is shared by more of them. Measured on the scale copy: 6.2 s per 1,000 posts regrouped against 8.3
+# at 1,000, the batch's peak 476-494 MB (3,000: 5.3 s but 531-568 MB). The same rows either way.
+REBUILD_BATCH = 2000
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
 CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (story_rules.keys)
 KEYED_EDGES = ("text", "title", "address", "link", "quote")   # the connections a key makes (story_rules.Edge.via)
@@ -296,8 +300,8 @@ class StoriesService:
         self._facts_changed(cur, sources, previous.get("facts"))
         batch = self._batch(cur, sources, previous, now, stamp, redo=bool(rebuild), window=window)
         if batch is not None:
-            if rebuild:
-                rebuild = {**rebuild, "done": rebuild["total"] - self.repo.queued(cur)["redo"]}
+            if rebuild:   # 0215: what is regrouped now, of every post now (`regrouped`)
+                rebuild = {**rebuild, **self.repo.regrouped(cur)}
                 batch["rebuild"] = rebuild
             return batch
         if rebuild:   # every post regrouped by the new rules: they are the rows now
@@ -357,7 +361,7 @@ class StoriesService:
             # row News only around the stories they change (a News rule change showed old rows until then)
             counts.update(self._news_window(cur, sources, self.clock()))
             rebuild["queued"] = self.repo.redo_every_post(cur)
-            rebuild["phase"] = "stories"
+            rebuild.update(phase="stories", **self.repo.regrouped(cur))
         return {"rebuild": rebuild, "counts": counts}
 
     def _facts_changed(self, cur: Any, sources: SourceFacts, before: Optional[Dict[str, Any]]) -> None:
@@ -395,7 +399,7 @@ class StoriesService:
         taken = self.repo.take_queue(cur, STORY_BATCH)
         rebuilding = not taken and redo
         if rebuilding:
-            taken = self.repo.take_queue(cur, STORY_BATCH, redo=True)
+            taken = self.repo.take_queue(cur, REBUILD_BATCH, redo=True)
         since = now - self.news.keep
         edge = window and previous.get("news_since") != since.isoformat()
         if not taken and not edge:
@@ -435,7 +439,11 @@ class StoriesService:
         seeds |= self._threads(cur, sources, points, stamp)
         load(seeds)
         seeds = {s for s in seeds if s in posts}   # a removed post is no seed: its keys are (`gone`)
-        titles += [posts[s].title for s in seeds if s in posts]
+        # The names a title says are judged again when it is saved, changed or removed. 0215: a rule change's batch
+        # changes no title (its names step judged every name by the new rules; a post saved meanwhile is a batch of
+        # its own): judging its seeds' names again was ~75% of a rebuild batch and never changed a surge.
+        if not rebuilding:
+            titles += [posts[s].title for s in seeds if s in posts]
         before = self.repo.stored_keys(cur, sorted(seeds))
         touched = gone | {k for s in seeds for k in before.get(s, set()) | self._keys(posts[s])}
         # Where a seed is or was: the posts linking there read their links again (an own page moved).

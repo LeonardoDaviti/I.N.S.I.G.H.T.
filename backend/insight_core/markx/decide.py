@@ -1337,7 +1337,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("load")
     schemas.ensure_guides(cur)
     guides = {k.name: k.guide for k in schemas.KINDS.values()}
-    key = _json.dumps([CODE_VERSION, incremental.code_stamp(), incremental.accounts_stamp(cur), config.as_dict(),
+    key = _json.dumps([CODE_VERSION, incremental.reading_stamp(), incremental.accounts_stamp(cur), config.as_dict(),
                        guides], sort_keys=True, default=str)
     memo, warm = incremental.open_state(cur, key)
     nightly = warm and full is None and incremental.nightly_due(cur, now)

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 import unittest
 import unittest.mock
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg
 
@@ -237,6 +239,43 @@ class Incremental(unittest.TestCase):
         self.assertEqual(out["news"]["made"], "full")
         self.full_writes_nothing()
 
+    def test_a_deploy_of_news_code_makes_news_full_and_the_reading_stays_incremental(self):
+        """0215: News' rows are kept with the code that made them (news_stamp); other code makes News in full, the
+        reading incremental (was: any of the 16 modules made the whole run full: 92-93 s on the server). A full run of
+        the snapshot then writes nothing more."""
+        self.scene()
+        self.go()
+        self.assertEqual(self.go()["run"]["kind"], "incremental")
+        with unittest.mock.patch.object(I, "news_stamp", return_value="other news code"):
+            out = self.go()
+        self.assertEqual((out["run"]["kind"], out["news"]["made"], out["run"]["texts_read"]), ("incremental", "full", 0))
+        self.full_writes_nothing()
+        out = self.go()                                                   # kept by "other news code": in full again
+        self.assertEqual((out["run"]["kind"], out["news"]["made"]), ("incremental", "full"))
+        self.assertEqual(self.go()["news"]["made"], "incremental")
+
+    def test_the_readings_stamp_leaves_out_what_runs_the_stages(self):
+        """0215: decide.run and decide.snapshot make nothing kept: a change to them moves no stamp; one to any other
+        function of the reading's modules does."""
+        import importlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "stamp_probe_0215.py"
+            sys.path.insert(0, folder)
+            self.addCleanup(sys.path.remove, folder)
+
+            def stamp(source):
+                path.write_text(source)
+                importlib.invalidate_caches()
+                sys.modules.pop("stamp_probe_0215", None)
+                return I._stamp(["stamp_probe_0215"], skip={"stamp_probe_0215": ("run",)})
+            base = stamp("def rule(x):\n    return x\n\n\n@staticmethod\ndef run(x):\n    return rule(x)\n")
+            self.assertEqual(stamp("def rule(x):\n    return x\n\n\n@staticmethod\ndef run(x):\n    return rule(x) + 0\n"),
+                             base)
+            self.assertNotEqual(stamp("def rule(x):\n    return x + 0\n\n\n@staticmethod\ndef run(x):\n    return rule(x)\n"),
+                                base)
+        self.assertNotEqual(I.reading_stamp(), I.news_stamp())
+
     def test_the_check_finds_a_state_gone_wrong_with_its_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()
@@ -259,7 +298,7 @@ class Incremental(unittest.TestCase):
         self.assertEqual(self.go()["run"]["kind"], "full")
         self.assertEqual(self.go()["run"]["kind"], "incremental")
         self.assertEqual(D.run(self.cur, now=self.now, config=D.Config(tau_join=0.7))["run"]["kind"], "full")  # a rule
-        with unittest.mock.patch.object(I, "code_stamp", return_value="other code"):                         # the code
+        with unittest.mock.patch.object(I, "reading_stamp", return_value="other code"):                      # the code
             self.assertEqual(D.run(self.cur, now=self.now, config=D.Config(tau_join=0.7))["run"]["kind"], "full")
         self.assertEqual(D.run(self.cur, now=self.now, config=D.Config(tau_join=0.7))["run"]["kind"], "full")  # back
         self.assertEqual(D.run(self.cur, now=self.now, config=D.Config(tau_join=0.7))["run"]["kind"], "incremental")

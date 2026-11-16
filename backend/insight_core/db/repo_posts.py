@@ -136,6 +136,17 @@ class PostDraft:
     surface: bool = False
 
 
+class Saved(tuple):
+    """0215: upsert_post's (post_id, was_inserted), unpacked as before, and `changed`: False when the post was stored
+    as it is (a feed's re-fetched item): nothing was written, so its parts, links and refs need no reading again."""
+    changed: bool = True
+
+    def __new__(cls, pair: Tuple[str, bool], *, changed: bool = True) -> "Saved":
+        saved = super().__new__(cls, pair)
+        saved.changed = changed
+        return saved
+
+
 @dataclass(frozen=True)
 class PostSaveFailure:
     url: Optional[str]
@@ -413,8 +424,9 @@ class PostsRepository:
             )
             ON CONFLICT (url) DO UPDATE SET
                 {assignments}
+            WHERE {changes}
             RETURNING id, (xmax = 0) AS inserted
-        """.format(assignments=self._post_update_assignments(row_prefix="posts."))
+        """.format(assignments=self._post_update_assignments(row_prefix="posts."), changes=self._post_update_changes())
 
         for attempt in range(self._CONFLICT_MAX_ATTEMPTS):
             other_form = False
@@ -430,8 +442,18 @@ class PostsRepository:
                     other_form = row is None and self._other_form(cur, params)
                     row = row if row is not None or other_form else self._same_post_elsewhere(cur, params)
                     if not other_form and row is None:
+                        # 0215: stored as it is: nothing written, its parts, links and refs stand. Read first: an
+                        # INSERT ... ON CONFLICT that updates nothing still locks (writes) the stored row.
+                        cur.execute(f"SELECT id FROM posts WHERE url = %(url)s AND NOT ({self._post_update_changes()})",
+                                    params)
+                        same = cur.fetchone()
+                        if same is not None:
+                            return Saved((str(same[0]), False), changed=False)
                         cur.execute(query, params)
                         row = cur.fetchone()
+                        if row is None:   # it became as stored meanwhile (another writer): the same as above
+                            cur.execute("SELECT id FROM posts WHERE url = %s", (url,))
+                            return Saved((str(cur.fetchone()[0]), False), changed=False)
                     if row is not None:
                         PostPartsRepository.write(cur, [str(row[0])])   # read once, when it is saved (issue 0076)
             except psycopg.errors.UniqueViolation as exc:
@@ -794,15 +816,30 @@ class PostsRepository:
         "'detected_at', now()))"
     )
 
-    def _post_update_assignments(
+    def _post_update_assignments(self, **kwargs: Any) -> str:
+        """The SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs (`_post_update_pairs`)."""
+        return ",\n                ".join(f"{column} = {value}" for column, value in self._post_update_pairs(**kwargs))
+
+    def _post_update_changes(self) -> str:
+        """0215: ON CONFLICT DO UPDATE's condition: the update would change the stored row (its updated_at aside),
+        from the same pairs as its SET list. A feed brings its last items at every fetch, nearly all as stored; writing
+        them again rewrote each row (a new row version: its TOAST, its indexes, its row triggers) and read its links
+        and refs again: on the scale copy's replayed day, 44% of the database's statement time (7 ms a post) and 224k
+        post_refs upserts."""
+        pairs = [(column, value) for column, value in self._post_update_pairs(row_prefix="posts.")
+                 if column != "updated_at"]
+        return (f"({', '.join('posts.' + column for column, _ in pairs)}) IS DISTINCT FROM "
+                f"({', '.join(value for _, value in pairs)})")
+
+    def _post_update_pairs(
         self,
         *,
         row_prefix: str = "",
         set_url: bool = False,
         set_external_id: bool = True,
         metadata_expr: Optional[str] = None,
-    ) -> str:
-        """Build the SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs.
+    ) -> List[Tuple[str, str]]:
+        """The (column, value) pairs of the SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs.
 
         One builder rather than four copies, because a post repaired through the collision
         resolver must end up with exactly the columns it would have got on the fast path.
@@ -852,7 +889,7 @@ class PostsRepository:
             f"lang = COALESCE(%(lang)s, {row}lang)",
             f"content_hash = CASE WHEN {keep} THEN {row}content_hash ELSE COALESCE(%(content_hash)s, {row}content_hash) END",
             "language_code = %(language_code)s",
-            "language_confidence = %(language_confidence)s",
+            "language_confidence = %(language_confidence)s::real",   # the column's type: compared as stored (0215)
             "normalized_url = %(normalized_url)s",
             f"canonical_url = CASE WHEN {moved} THEN {row}canonical_url ELSE %(canonical_url)s END",
             "url_host = %(url_host)s",
@@ -871,7 +908,7 @@ class PostsRepository:
             # same old posts jump to the top of the reader as new (chadnauseam.com).
             "updated_at = now()",
         ])
-        return ",\n                ".join(assignments)
+        return [(column, value) for column, value in (a.split(" = ", 1) for a in assignments)]
 
     @contextmanager
     def _savepoint(self, cur: Cursor, name: str) -> Iterator[None]:
@@ -959,7 +996,8 @@ class PostsRepository:
                 backlog = bool(post.pop(BACKLOG_KEY, False))
                 try:
                     old = self._stored_text(cur, post["url"]) if draft.watch else None
-                    post_id, was_inserted = self.upsert_post(cur, post, draft.source_id)
+                    saved = self.upsert_post(cur, post, draft.source_id)
+                    post_id, was_inserted = saved
                 except Exception as exc:
                     result.failures.append(PostSaveFailure(post.get("url"), draft.source_id, "upsert", str(exc)))
                     result._count(draft.source_id, "failed")
@@ -976,6 +1014,7 @@ class PostsRepository:
                     post_id = str(post_id)
                     window.append((draft, post_id, was_inserted))
                     if self._after_save(cur, draft, post, post_id, was_inserted, old,
+                                        changed=getattr(saved, "changed", True),
                                         surface=draft.surface and not backlog,
                                         read_before=None if backlog else read_before.get(str(draft.source_id))):
                         result.resurfaced_ids.append(post_id)
@@ -1026,7 +1065,7 @@ class PostsRepository:
 
     def _after_save(self, cur: Cursor, draft: PostDraft, post: Dict[str, Any], post_id: str,
                     was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool,
-                    read_before: Optional[Any] = None) -> bool:
+                    read_before: Optional[Any] = None, changed: bool = True) -> bool:
         """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
         date (surface), or dated more than ADDED_LATE_SLACK before its source's previous successful
         read (read_before: its feed added it after that read), sorts at when it was first seen,
@@ -1036,10 +1075,11 @@ class PostsRepository:
         comes back when it changed meaningfully. Issue 0050: its outside links are read from what
         was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
         failure here is logged and costs neither the post nor the batch. Returns whether the post
-        came back."""
+        came back. 0215: a post stored as it was (`changed` False) has its links and refs as they were."""
         try:
             with self._savepoint(cur, "insight_after_save"):
-                self.stories.save_post_links(cur, post_id)
+                if changed:
+                    self.stories.save_post_links(cur, post_id)
                 if was_inserted and (surface or read_before is not None):
                     cur.execute(
                         f"""UPDATE posts p SET surfaced_at = p.fetched_at

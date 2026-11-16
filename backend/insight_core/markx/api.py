@@ -646,7 +646,7 @@ def mx_news_page(all: int = Query(0, ge=0, le=1)):
         kept = news.kept_page(cur, only_differences=not all)
         if kept is not None:
             return Response(content=kept, media_type="application/json")
-        return news.page(cur, only_differences=not all)
+        return news.reader_view(news.page(cur, only_differences=not all))   # 0215: what the page reads
 
 
 @router.get("/posts/{post_id}")
