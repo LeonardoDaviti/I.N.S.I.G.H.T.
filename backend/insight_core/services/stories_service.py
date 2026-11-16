@@ -1369,9 +1369,9 @@ class StoriesService:
 PARTS = ("keys", "grouping", "news")   # 0216: the rules stamp's parts, each a fingerprint of its own outputs
 # 0216: the single stamps kept before the split, as the parts they are on this sample (each part of a release's code
 # measured on 0216's sample: plan/issues/0216, "Built"). 7269997ccd26 is v10.18 (2f9878f1) to v10.21's; 084d186130fb is
-# v10.17 to v10.18's (290e7037): the same keys and grouping, other News (0203's News rule, which that sample did not
-# show). A single stamp not listed reads as every part changed. A part listed here that a later sample or rule makes
-# differ simply differs (a rebuild), so the table never needs updating.
+# v10.17.1 to v10.18's (290e7037): the same keys and grouping, News of v10.17's rule or of 0203's (which that sample
+# did not show), so no News part. A single stamp not listed reads as every part changed. A part listed here that a
+# later sample or rule makes differ simply differs (a rebuild), so the table never needs updating.
 LEGACY_RULES: Dict[str, Dict[str, str]] = {
     "7269997ccd26": {"keys": "981f771dc640", "grouping": "377c7f2fc789", "news": "408df32be571"},
     "084d186130fb": {"keys": "981f771dc640", "grouping": "377c7f2fc789"},
