@@ -1286,7 +1286,8 @@ def _digest(out: Outcome, ids: Dict[str, str], world: World, conns: Sequence[Dic
 def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         stage: Optional[Callable[[str], None]] = None, full: Optional[bool] = None,
         entity_budget: Optional[float] = None, limit: Optional[float] = None,
-        began: Optional[float] = None, skip: Iterable[str] = ()) -> Dict[str, Any]:
+        began: Optional[float] = None, skip: Iterable[str] = (),
+        on_kind: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """One decision run on the caller's transaction: skipped when another holds the lock. Writes mx_* rows only.
     insight-ingestion runs it in `snapshot()` (markx/jobs.py), so every read of Mark IX's tables sees one snapshot.
     `stage(name)` is called as each stage begins (0112 Decided 12: the stage logs and the time limit); one that
@@ -1308,7 +1309,10 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
 
     0188: the stages in `skip` (of jobs.SKIPPABLE: the stages after the run's own decisions) are deferred this run,
     as a stage that met a concurrent update is (`deferred` in the counts): jobs.py asks it after two runs in a row ran
-    over LIMIT in that stage, so the run is not the identical one again."""
+    over LIMIT in that stage, so the run is not the identical one again.
+
+    0215: `on_kind` is called with the run's kind ("full" | "incremental") once it is known, before its reading (the
+    caller's time limit is the kind's: jobs.limit_for)."""
     import json as _json
     import time as _time
     from insight_core.markx import incremental, news as mx_news, repo, schemas
@@ -1338,6 +1342,8 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     memo, warm = incremental.open_state(cur, key)
     nightly = warm and full is None and incremental.nightly_due(cur, now)
     kind = "full" if (full or not warm or nightly) else "incremental"
+    if on_kind is not None:    # 0215: the caller's limit is the kind's (jobs.limit_for: a full run reads everything)
+        on_kind(kind)
     check = None
     if kind == "full" and warm:
         prev = memo

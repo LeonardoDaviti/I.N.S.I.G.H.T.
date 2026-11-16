@@ -175,8 +175,8 @@ class StoriesService:
 
     def _decision_waiting(self) -> bool:
         """v10.13.8: Mark X's decision run is wanted, not running, and has waited (wanted, and not started since)
-        DECISION_WAIT_S or more; 0209: and this job's rebuild doesn't hold it (markx/jobs.decision_waits owns the
-        decision): stepping aside for a run the rebuild holds stopped both for 45 hours on 2026-11-14. False when Mark X
+        DECISION_WAIT_S or more (markx/jobs.decision_waits owns the decision; 0215: no rebuild holds that run, so it
+        can start: on 2026-11-14 stepping aside for a run the rebuild held stopped both for 45 hours). False when Mark X
         has no jobs table or no such row."""
         from insight_core.markx import jobs
         try:
