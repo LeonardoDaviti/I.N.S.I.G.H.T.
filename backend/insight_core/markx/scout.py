@@ -907,7 +907,7 @@ __all__ = ["add_candidates", "advance", "after_answer", "after_judge", "due_week
 
 
 def with_scouts(hook: Optional[Callable[[], Awaitable[Any]]], db_url: str) -> Callable[[], Awaitable[Any]]:
-    """insight-ingestion's after-the-story-job hook (ingestion.default_runner's `originals`), then the scouts' tick
+    """insight-ingestion's after-the-story-job hook (0216: markx/jobs.Jobs.after_stories), then the scouts' tick
     (0148: the weekly scouts, the open runs advanced) and the research runs' (0162). Each guarded: none fails the
     others or the run."""
     async def run() -> Any:

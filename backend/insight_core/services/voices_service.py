@@ -79,8 +79,10 @@ def one_question_per_voice(pairs: Sequence[Dict[str, Any]]) -> List[Dict[str, An
 
 
 def _run_story_job(db_url: str) -> None:
-    from insight_core.services.stories_service import in_own_process, recompute_job
-    threading.Thread(target=in_own_process, args=(recompute_job, db_url), name="stories-voices", daemon=True).start()
+    """A voice changed (a rule input, `StoriesService._facts`): the story job is wanted (0216: insight-ingestion's jobs
+    runner runs it, markx/jobs.py)."""
+    from insight_core.markx.jobs import want_stories
+    want_stories(db_url)
 
 
 class VoicesService:

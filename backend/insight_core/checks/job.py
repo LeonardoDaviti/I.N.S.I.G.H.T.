@@ -52,11 +52,16 @@ def run_deploy_start(db_url: str, now: datetime) -> Dict[str, Any]:
     transaction), on the copy as stored. Returns what it did, and the error if it raised."""
     from insight_core.db.repo_operations import SystemSettingsRepository
     from insight_core.services.news_service import NewsService
-    from insight_core.services.stories_service import SETTINGS_KEY, StoriesService, rules_stamp
+    from insight_core.services import stories_service
+    from insight_core.services.stories_service import SETTINGS_KEY, StoriesService
     clock = lambda: now   # noqa: E731
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
         stored = (SystemSettingsRepository.get(cur, SETTINGS_KEY) or ({}, None))[0] or {}
-    out: Dict[str, Any] = {"rules_change": stored.get("rules") != rules_stamp(), "rebuild_before": stored.get("rebuild")}
+    # 0216: the redo the stamp's parts say is due; a version from before them compares its one stamp (the checks run
+    # on any version)
+    due = getattr(stories_service, "rebuild_due", None)
+    change = due(stored) if due else stored.get("rules") != stories_service.rules_stamp()
+    out: Dict[str, Any] = {"rules_change": change, "rebuild_before": stored.get("rebuild")}
     started = time.monotonic()
     try:
         summary = StoriesService(db_url, clock=clock, news=NewsService(db_url, clock=clock)).recompute()

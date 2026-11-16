@@ -426,6 +426,45 @@ class TheRunner(_Api):
         self.assertEqual(last["rebuild"], {"rebuild": "in progress", "phase": "stories", "done": 1000, "total": 49384})
         self.assertTrue(jobs.readers("stories"))                       # not a Mark X run (markx.ix_unchanged)
 
+    def test_a_wanted_story_job_runs_here_then_the_originals(self):
+        """0216: a fetch that saved posts only wants the story job (`want_stories`); this loop runs it at its next look,
+        Mark X on or off, then the originals and the scouts (`after_stories`) at most every ORIGINALS_GAP. A run that
+        yielded is wanted again, STORIES_GAP after it. A rebuild's slice that nobody wanted asks no originals."""
+        from insight_core.services import stories_service
+        from insight_core.services.stories_service import rules_stamp
+        self.decide_row(started=5)
+        self.stories_setting({"rules": rules_stamp()})
+        out = {"batches": 1, "posts": 4}
+        after = []
+        with mock.patch.object(stories_service.StoriesService, "recompute_safely", lambda svc, full=False: dict(out)), \
+                mock.patch.object(jobs.Jobs, "after_stories", lambda job: after.append(1) or {"ok": True}):
+            self.assertIsNone(self.runner().tick(), "not wanted, no rebuild: nothing")
+            self.assertTrue(jobs.want_stories(db_url()))
+            self.assertEqual(self.runner().tick(), "stories")
+            last = jobs.state(self.cur)["stories"]["last"]
+            self.assertEqual((last["wanted"], last["posts"], len(after)), (True, 4, 1))
+            self.assertIsNone(jobs.state(self.cur)["stories"]["wanted_at"], "taken")
+            os.environ["INSIGHT_MARKX"] = "off"
+            jobs.want_stories(db_url())
+            out["yielded"] = True
+            self.assertEqual(self.runner().tick(), "stories", "at once: its last run did not yield")
+            self.assertEqual(len(after), 1, "the originals at most every ORIGINALS_GAP")
+            self.assertIsNotNone(jobs.state(self.cur)["stories"]["wanted_at"], "yielded: wanted again")
+            self.assertIsNone(self.runner().tick(), "past its rest: STORIES_GAP after")
+            self.cur.execute("UPDATE mx_jobs SET finished_at = now() - make_interval(secs => %s), "
+                             "last = last || jsonb_build_object('after_at', (now() - interval '1 hour')::text) "
+                             "WHERE job = 'stories'", (jobs.STORIES_GAP + 1,))
+            del out["yielded"]
+            self.assertEqual(self.runner().tick(), "stories")
+            self.assertEqual(len(after), 2, "the originals' gap is over")
+            self.stories_setting({"rules": "older rules"})              # a rebuild due: its slices, not wanted
+            self.cur.execute("UPDATE mx_jobs SET finished_at = now() - make_interval(secs => %s), "
+                             "last = last || jsonb_build_object('after_at', (now() - interval '1 hour')::text) "
+                             "WHERE job = 'stories'", (jobs.STORIES_GAP + 1,))
+            self.assertEqual(self.runner().tick(), "stories")
+            self.assertFalse(jobs.state(self.cur)["stories"]["last"]["wanted"])
+            self.assertEqual(len(after), 2, "a slice nobody wanted asks no originals")
+
     def test_a_decision_run_waits_for_its_candidate_finder(self):
         """New vectors: the run finds their candidates first; when that fails, no decision runs on candidates that
         aren't there, and both are wanted again."""

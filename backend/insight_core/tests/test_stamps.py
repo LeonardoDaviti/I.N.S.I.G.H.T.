@@ -171,6 +171,41 @@ class StampsFollowTheRulesTests(unittest.TestCase):
             self.assertEqual(stamps_now(), before)
         self.assertEqual(stamps.fingerprint({"b": {1, 2}, "a": [1]}), stamps.fingerprint({"a": [1], "b": {2, 1}}))
 
+    def test_a_change_moves_only_the_parts_it_shows_in(self):
+        # 0216: three parts, each a fingerprint of its own outputs; a rule change redoes only what its parts need
+        from datetime import timedelta
+        from insight_core.services.stories_service import PARTS, redo_for
+        from insight_core.utils import news_rules
+        now = rules_stamp.__wrapped__()
+
+        def moved():
+            after = rules_stamp.__wrapped__()
+            return {p for p in PARTS if after[p] != now[p]}, redo_for(after, now)
+
+        with mock.patch.object(news_rules, "NEWS_MIN_VOICES", news_rules.NEWS_MIN_VOICES + 1):
+            self.assertEqual(moved(), ({"news"}, "news"), "a News rule: the names and News only")
+        stored = StoriesService.stored_keys
+        with mock.patch.object(StoriesService, "stored_keys", staticmethod(
+                lambda post: {k for k in stored(post) if not k.startswith("a:")})):
+            self.assertEqual(moved(), ({"keys"}, "keys"), "a key's form: the posts whose keys moved")
+        with mock.patch.object(news_rules, "dated", lambda words: False):
+            self.assertEqual(moved(), ({"keys", "news"}, "keys"), "a name rule: the titles' names, then News")
+        with mock.patch.object(story_rules, "THREAD_WITHIN", timedelta(hours=1)):
+            self.assertEqual(moved()[1], "grouping", "an edge rule: every post regrouped")
+
+    def test_a_single_stamp_from_before_the_split_reads_as_its_parts(self):
+        # 0216: this code's own single stamp is its parts; a listed one is what it was measured to be; any other is
+        # every part changed
+        from insight_core.services.stories_service import LEGACY_RULES, redo_for, stored_rules, whole_stamp
+        now = rules_stamp()
+        self.assertEqual(stored_rules(whole_stamp()), now)
+        self.assertEqual(stored_rules(dict(now)), now)
+        self.assertIsNone(redo_for(stored_rules(whole_stamp())))
+        self.assertEqual(redo_for(stored_rules("rules of a version never listed")), "grouping")
+        self.assertEqual(redo_for(stored_rules(None)), "grouping", "a database the job never ran on")
+        with mock.patch.dict(LEGACY_RULES, {"v-old": {"keys": now["keys"], "grouping": now["grouping"]}}):
+            self.assertEqual(redo_for(stored_rules("v-old")), "news")
+
 
 @requires_test_db
 class SearchVersionTests(unittest.TestCase):

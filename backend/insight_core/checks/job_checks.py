@@ -400,7 +400,8 @@ def api_during_rebuild(db_url: str, now: datetime) -> Found:
     """0121 Decided 8: the reader's API answers during a deploy's first start after a rule change (the v10.0.1 review
     saw 2.0-5.8 s stalls of the whole API then). The copy's stories are marked as of other rules, as a deploy of new
     rules finds them; then the version's start work runs as its container runs it (the supervisor's child process:
-    the search refill and the start's story job, a rule change's rebuild, then Mark X's first run is asked for), while
+    the search refill and the start's story job, a rule change's rebuild, then Mark X's first run is asked for; 0216:
+    the start wants the story job and its first run follows in the same child, as the jobs runner runs it), while
     the probes run as for markx.api_during_run, and with the same baseline (added_by_run). The rebuild is measured to
     its end, or REBUILD_LIMIT_S, then stopped (the last check: the copy is scratch)."""
     import importlib.util
@@ -426,9 +427,12 @@ def api_during_rebuild(db_url: str, now: datetime) -> Found:
 
     def work(api: _Api) -> Dict[str, Any]:
         log = open("api_during_rebuild.start.log", "w", encoding="utf-8")
+        # 0216: the start only wants the story job and insight-ingestion's jobs runner runs it (its first slice here, in
+        # this child, as the start ran it before; a run that finds the last one resting skips)
         child = subprocess.Popen([sys.executable, "-c", "from insight_core.scripts.api_supervisor import start_work; "
-                                  "start_work()"], env=api.env, stdout=log, stderr=subprocess.STDOUT,
-                                 start_new_session=True)
+                                  "start_work(); import os; from insight_core.services.stories_service import "
+                                  "StoriesService; StoriesService(os.environ['DATABASE_URL']).recompute_safely()"],
+                                 env=api.env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             child.wait(REBUILD_LIMIT_S)
             ended = "finished"

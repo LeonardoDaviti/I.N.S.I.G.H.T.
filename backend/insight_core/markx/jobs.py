@@ -116,6 +116,7 @@ STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + thi
 JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source", "discover", "official",
         "stories")
 STORIES_GAP = 120.0              # 0209: a rebuild's next slice starts this long after the last ended (it rests 90 s after a yield)
+ORIGINALS_GAP = 1800.0           # 0216: the originals follow a wanted story run at most this often (hourly fetches: each)
 STARVE_AFTER = 900.0             # 0209: candidates or official due this long go before the kept views
 OFFICIAL_EVERY = 1800.0          # 0196: the official channels' pass at most every 30 minutes
 REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
@@ -222,6 +223,21 @@ def want(cur: Any, job: str) -> None:
         cur.execute("INSERT INTO mx_jobs (job, wanted_at) VALUES (%s, now()) ON CONFLICT (job) DO NOTHING", (job,))
 
 
+def want_stories(db_url: str) -> bool:
+    """0216: Mark IX's story job is wanted (a fetch run that saved posts, the API's start, a voice change): the runner
+    runs it within POLL seconds (`due`), in a process of its own, with the originals after it (`Jobs.stories`). The
+    posts are already queued (migration 0059's triggers). One short transaction; never raises. Returns whether it
+    was marked."""
+    from insight_core.db import database
+    try:
+        with database.transaction(db_url) as cur:
+            want(cur, "stories")
+        return True
+    except Exception:  # noqa: BLE001 - the next fetch that saves posts wants it again
+        log.exception("Mark IX's story job could not be marked wanted")
+        return False
+
+
 def note_posts(cur: Any, post_ids: Iterable[str]) -> int:
     """New vectors for these posts: they wait for the candidate finder (mx_candidate_posts), and it is wanted."""
     ids = sorted({str(p) for p in post_ids})
@@ -285,7 +301,7 @@ def mark_ix(cur: Any) -> Dict[str, Any]:
     """Mark IX's story job as a decision run sees it (0121 Decided 3, 0209): {locked: its lock is held now (a batch
     regrouping posts), rebuild: "in progress" (its progress in the story job's setting) | "due" (the stored rows are
     of other rules than this code's) | None, and a rebuild's done, total (posts regrouped, of), phase, started_at}."""
-    from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY, rules_stamp
+    from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY, rebuild_due
     cur.execute("""SELECT (SELECT value FROM system_settings WHERE key = %(key)s),
                           EXISTS (SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
                                    WHERE d.datname = current_database() AND l.locktype = 'advisory'
@@ -300,7 +316,7 @@ def mark_ix(cur: Any) -> Dict[str, Any]:
             rebuild = rebuild if isinstance(rebuild, dict) else {}
             out.update(rebuild="in progress", done=rebuild.get("done"), total=rebuild.get("total"),
                        phase=rebuild.get("phase"), started_at=rebuild.get("started_at"))
-        elif value.get("rules") and value["rules"] != rules_stamp():
+        elif value.get("rules") and rebuild_due(value):   # 0216: some part of the rules changed
             out["rebuild"] = "due"
     return out
 
@@ -688,30 +704,62 @@ class Jobs:
         return self._keep("discover", lambda _cur: keep(self.db_url), snapshot=False)
 
     def stories(self) -> Optional[Dict[str, Any]]:
-        """0209: the next slice of a rule change's rebuild: Mark IX's story job (stories_service.recompute_safely: its
-        bounded steps for STEP_BUDGET_S, then it yields and rests, or steps aside for a waiting decision run), in this
-        process. Its summary, the rebuild's progress and this process's peak memory are recorded with it."""
+        """Mark IX's story job (stories_service.recompute_safely: its bounded steps for STEP_BUDGET_S, then it yields
+        and rests, or steps aside for a waiting decision run), in this process: 0209, the next slice of a rule change's
+        rebuild; 0216, its only driver: a run wanted by a fetch that saved posts (`want_stories`; the ingestion run used
+        to run it inline, after its fetch, 132-388 s of every hourly run on the server), the API's start or a voice
+        change, then the originals the new stories lack and Mark X's scout and research ticks (`after_stories`, in
+        that order, as after the fetch before). A wanted run that yielded or stepped aside is wanted again (its queue
+        waits). Its summary, the rebuild's progress and this process's peak memory are recorded with it."""
         from insight_core.services.stories_service import StoriesService
         t0 = time.monotonic()
-        self._begin("stories", "rebuilding")
+        with self._tx() as cur:
+            cur.execute("SELECT wanted_at IS NOT NULL, last->>'after_at' FROM mx_jobs WHERE job = 'stories'")
+            row = cur.fetchone() or (False, None)
+        wanted, after_at = bool(row[0]), row[1]
+        self._begin("stories", "regrouping" if wanted else "rebuilding")
         try:
             out = StoriesService(self.db_url, clock=self.clock).recompute_safely() or {}
             with self._tx() as cur:
                 ix = mark_ix(cur)
         except Exception as exc:
-            log.exception("Mark IX's rebuild: the slice failed; tried again after its backoff")
-            self._finish("stories", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            log.exception("Mark IX's story job: the run failed; tried again after its backoff")
+            self._finish("stories", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
+                         again=wanted)
             return None
         failed = not out   # recompute_safely logged the failure
-        last = {"ok": not failed, "seconds": round(time.monotonic() - t0, 1),
-                "peak_mb": peak.mb(),
+        last = {"ok": not failed, "seconds": round(time.monotonic() - t0, 1), "wanted": wanted,
                 **{k: out[k] for k in ("skipped", "batches", "yielded", "posts", "changed") if k in out},
                 "rebuild": {k: ix.get(k) for k in ("rebuild", "phase", "done", "total")}}
         if failed:
             last["error"] = "the story job failed (its log says why)"
-        log.info("Mark IX's rebuild: a slice in %.1f s: %s", last["seconds"], last)
-        self._finish("stories", last)
+        if wanted and not out.get("skipped") and (
+                after_at is None or (self.clock() - datetime.fromisoformat(after_at)).total_seconds() >= ORIGINALS_GAP):
+            self._stage("stories", "originals")
+            last["after"] = self.after_stories()
+            last["after_at"] = self.clock().isoformat()
+        elif after_at:
+            last["after_at"] = after_at
+        last["peak_mb"] = peak.mb()
+        log.info("Mark IX's story job: a run in %.1f s: %s", time.monotonic() - t0, last)
+        self._finish("stories", {**last, "seconds": round(time.monotonic() - t0, 1)},
+                     again=wanted and bool(out.get("yielded") or out.get("skipped")))
         return out
+
+    def after_stories(self) -> Dict[str, Any]:
+        """0216: after a wanted story run, in its process: the originals its stories lack, asked within their budget
+        (issues 0114, 0123), then Mark X's scouts and research runs advanced (0148, 0162; markx/scout.with_scouts). They
+        read its stories, so they follow it. Never raises. Returns each one's seconds."""
+        import asyncio
+        from insight_core.markx.scout import with_scouts
+        from insight_core.services.originals_service import run_originals
+        t0 = time.monotonic()
+        try:
+            asyncio.run(with_scouts(run_originals(self.db_url), self.db_url)())
+            return {"ok": True, "seconds": round(time.monotonic() - t0, 1)}
+        except Exception as exc:  # noqa: BLE001 - the story run stands
+            log.warning("Could not ask for the stories' originals: %s", exc)
+            return {"ok": False, "error": str(exc)[:300], "seconds": round(time.monotonic() - t0, 1)}
 
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
@@ -821,9 +869,7 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     (KeptView.markx False).
     0209: the candidate finder or the official channels' pass due for `starve_after` seconds goes before the kept
     views, which can be due at every look: before, they ran only when nothing else was due."""
-    s = states.get("stories") or {}
-    slice_due = rebuild and s.get("stage") is None and not held(s, now, gap) and (
-        s.get("finished_at") is None or (now - s["finished_at"]).total_seconds() >= STORIES_GAP)
+    slice_due = stories_due(states.get("stories") or {}, now, rebuild=rebuild, gap=gap)
     if not markx:
         if slice_due:
             return "stories"
@@ -865,6 +911,21 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     if official_at is not None:
         return "official"     # 0196: after everything else that is due
     return None
+
+
+def stories_due(s: Dict[str, Any], now: datetime, *, rebuild: bool, gap: float = GAP) -> bool:
+    """Mark IX's story job may start now (`s`: its state): not running, not waiting out a failed run's backoff, and
+    0216: wanted (posts saved: `want_stories`), at once (within POLL) unless its last run yielded or stepped aside
+    (then STORIES_GAP after it, past its rest); 0209: or a rule change's rebuild due or in progress (`rebuild`, the
+    lock free), STORIES_GAP after the last run ended."""
+    if s.get("stage") is not None or held(s, now, gap):
+        return False
+    last = s.get("last") or {}
+    since = None if s.get("finished_at") is None else (now - s["finished_at"]).total_seconds()
+    rested = since is None or since >= STORIES_GAP
+    if s.get("wanted_at") is not None and (rested or not (last.get("yielded") or last.get("skipped"))):
+        return True
+    return rebuild and rested
 
 
 def _kept_may(view: KeptView, s: Dict[str, Any], now: datetime, gap: float, *, after_run: bool = False) -> bool:
