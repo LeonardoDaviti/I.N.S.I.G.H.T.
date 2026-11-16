@@ -38,7 +38,9 @@
   },
   "timeline": {
     "about": "0165 (markx/rename.py; the components rule dropped in v10.18, 0203: 26 of 60 right). renames: two entities of one maker, one older, sharing an own address, a 'formerly' sentence or the new one's post naming the old, are asked (rename-v1) and Haiku's `renamed` queued for the owner, never merged by itself (rename_cap questions a run).",
-    "renames": true, "rename_cap": 200, "rename_overlap_days": 7
+    "renames": true, "rename_cap": 200, "rename_overlap_days": 7,
+    "stops_about": "0165 C (markx/stops.py, stop-v1): `stops` on: a story is a stop on a thing's line when its stop-v1 answer says it is about the thing (else, unasked, by its share of the members), the rest shown as only naming it; `stop_types` on: each stop shows what happened to the thing (launch, weights, benchmark...), off: the answers are kept and not shown.",
+    "stops": true, "stop_types": false
   },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},
