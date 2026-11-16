@@ -381,9 +381,9 @@ def _whole_days(cur: Cursor, first: Any, last: Any, cand: Sequence[str]) -> Dict
             docs=sql.Literal(_DOCS.format(where=_day(cur, d)))), (d, gen))
     if keep:
         cur.execute("DELETE FROM mx_word_days WHERE day < %s", (first - timedelta(days=KEEP_DAYS_BEFORE),))
+    # a filter, not a join: Postgres hashes the words asked once (a join's estimates could hash every kept term instead)
     cur.execute("""SELECT x.w, sum(x.n)::int FROM mx_word_days d CROSS JOIN LATERAL unnest(d.words, d.ndocs) AS x(w, n)
-                     JOIN unnest(%s::text[]) AS c(w) ON c.w = x.w
-                    WHERE d.day BETWEEN %s AND %s AND NOT d.day = ANY(%s::date[]) GROUP BY 1""",
+                    WHERE x.w = ANY(%s::text[]) AND d.day BETWEEN %s AND %s AND NOT d.day = ANY(%s::date[]) GROUP BY 1""",
                 (list(cand), first, last, counted))
     for w, n in cur.fetchall():
         out[w] = out.get(w, 0) + n
@@ -485,13 +485,19 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
     return pos - NEAR_PULL * max(0.0, (near if near is not None else -1.0) - pos)
 
 
+# v10.22 (0216): each post's vector read once. A stored vector (halfvec, 2 kB) is out of line (TOAST), and every
+# `ps.v <=> pr.v` below fetched it again: 3 cosines x every probe (~60 fetches, ~88 buffers a post; the scoring of a
+# plan pass was ~2.3M of its 3.7M buffers on the scale clone). The post's row now carries the vector itself: the cast to
+# vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is exact), in a subquery the
+# planner keeps (OFFSET 0), so it is made once a post.
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
-ps AS (SELECT p.id, {DATE} AS at, p.source_id, e.v, p.search_vector
+ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector
          FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
         WHERE {{where}}
           AND (NOT %(passive)s OR (p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
-                                   AND {{suggestable}})))
+                                   AND {{suggestable}}))
+        OFFSET 0)
 SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
        cardinality(%(doms)s::text[]) > 0 AND EXISTS (
            SELECT 1 FROM post_links l WHERE l.post_id = ps.id AND NOT l.boilerplate AND l.target_site = ANY(%(doms)s)
