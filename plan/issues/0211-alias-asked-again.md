@@ -1,6 +1,53 @@
 # 0211: Is an answered alias pair asked again? (Stealth v10.20)
 
-Status: **spec** (branch `v1020-alias-spec` from `v1020` = main, v10.19). Measured on a scratch clone; nothing built.
+Status: **A and C built** (branch `v1020-alias` from `v1020` = main, v10.19; migration **0144**). B skipped (owner's
+coordinator, 2026-11-16). Not merged, not pushed, not deployed. alias4's Sonnet routing goes in v10.19.1 ("Haiku
+only"): nothing here relies on alias4.
+
+## What was built, and measured
+
+**A.** `identity.Asked` is a read-through lookup:
+
+- `prime(pairs)` reads the alias, alias2 and alias3/alias4 tasks of a chunk's pairs in one query, through the
+  new index `mx_tasks_entity_pair_idx` on `(least(a, b), greatest(a, b))` for the pair kinds (migration 0144).
+- `prime_collide(entities)` reads the collide tasks, with their input, of the entities `collisions` considers.
+- A key never primed is read alone when first asked. What a key read is kept for the run.
+- The whole-table read of every task's input is gone.
+
+**C.** `third()` keeps a running union of clusters, the way `chain_guard` does:
+
+- the chunk's automatic merges count first;
+- each `third` merge counts as it is accepted;
+- one that would pass MAX_CLUSTER stays queued, with its answer.
+
+**Tests.** Two new tests in `tests/test_markx_entities.py`:
+
+- `Merging.test_an_asked_pair_is_found_by_its_pair_and_never_asked_again`;
+- `TheUnsureQueue.test_several_merges_into_one_cluster_in_one_chunk_keep_to_its_cap`. Three merges into a cluster of
+  4 give 2 merged and 1 queued; the old check merged all 3.
+
+**Answers identical (A).** One state, run under v10.19 and under A alone:
+
+- **The state.** The replay's end state with a third of its alias tasks hidden, so 1,114 pairs are asked again. It
+  carries 352k filler alias tasks, the server's count.
+- **The runs.** A full pass, then synthetic answers, then an incremental pass. Each code ran from its own copy of the
+  state.
+- **Result: identical.** All 359,782 tasks (kind, pair, input hash, status), 952 redirects, 1,838 queue items and
+  18,556 mention links.
+- **With C as well**, the same tasks and links. C's difference: two `third` merges that would have made clusters past 6
+  names (base made 3 such clusters in these two runs, A+C made none). 4 queue items differ accordingly.
+
+**Memory and time.** At the server's alias count (357k tasks, inputs of 1.4 KB):
+
+| | v10.19 | A (and A+C) |
+|---|---|---|
+| peak RSS, the 8-round replay (2 full passes, 6 incremental) | 1,927 MB | 156 MB (153 MB) |
+| peak RSS, a full pass then an incremental pass | 1,904 MB | 128 MB (129 MB) |
+| the stage's `load` step, cold cache (replay rounds 0 and 1) | 16.9 s, 32.7 s | 0.08 s, 0.06 s |
+| the stage's `load` step, warm (other rounds) | 1.0-3.7 s | 0.04-0.15 s |
+| a full pass / an incremental pass (warm) | 12.4 s / 2.3 s | 11.8 s / 1.2 s |
+
+The rest of this file is the spec as written before the build.
 
 ## The suspicion
 

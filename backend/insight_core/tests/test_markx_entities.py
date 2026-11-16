@@ -558,6 +558,30 @@ class Merging(_Db):
         self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'alias'")
         self.assertEqual(self.cur.fetchone()[0], 1)                    # asked of Haiku, queued only if same
 
+    def test_an_asked_pair_is_found_by_its_pair_and_never_asked_again(self):
+        """0211: a pair's question is its pair, never its input text: new posts change the text it would show, a full
+        pass pools it again, and it is not asked again; the lookup reads only the pairs it is given, either order."""
+        a, b = self.post(0, T0), self.post(1, T0 + H)
+        self.mentions(a, ("Kestrel Coder", "software", "subject"))
+        self.mentions(b, ("Kestrel Coder CLI", "software", "subject"))
+        self.stage()
+        self.answer_task("alias", {"evidence": "one tool", "relation": "same", "confidence": 0.86})
+        for n in range(3):   # more posts on both sides: the question's text would differ now
+            self.mentions(self.post(2 + n % 3, T0 + (2 + n) * H, title=f"Kestrel news {n}"),
+                          ("Kestrel Coder", "software", "subject"), ("Kestrel Coder CLI", "software", "mention"))
+        self.stage(since=self.since)
+        self.stage(full=True)
+        self.cur.execute("SELECT id::text, a::text, b::text, status FROM mx_tasks WHERE kind = 'alias'")
+        (tid, x, y, status), = self.cur.fetchall()
+        got = I.asked(self.cur)
+        self.assertEqual(got.alias[(x, y)], (tid, status))           # read when first asked
+        got = I.asked(self.cur)
+        got.prime([(y, x)])                                           # primed either way round: keyed by pair()
+        self.assertEqual((got.alias.known, got.alias[I.pair(y, x)]), ({I.pair(x, y)}, (tid, status)))
+        self.cur.execute("SELECT id::text, status FROM mx_tasks WHERE kind = 'alias2'")
+        self.assertEqual(got.alias2[(x, y)], self.cur.fetchone())        # its second opinion (0.86), asked once
+        self.assertNotIn(I.pair(x, str(uuid.uuid4())), got.alias)   # an unknown pair: read, not asked
+
     def test_haiku_answers_decide_the_next_run(self):
         a, b = self.post(0, T0), self.post(1, T0 + H)
         self.mentions(a, ("Kestrel Coder", "software", "subject"))
@@ -825,6 +849,27 @@ class TheUnsureQueue(_Db):
         self.assertEqual(I.third(book, [d], {}), [])
         d.ask2, d.second = False, {"relation": "part", "confidence": 0.9}
         self.assertEqual(I.third(book, [d], {}), [])
+
+    def test_several_merges_into_one_cluster_in_one_chunk_keep_to_its_cap(self):
+        """0211 C: each `third` merge is counted as it is made: three into a cluster of 4 names in one chunk merge
+        two (6 names), the third stays queued (each was checked alone against the cluster of 4 before: 7 names)."""
+        names = ["Kestrel Coder", "Kestrel-Coder", "KestrelCoder", "Kestrel Coder AI", "Kestrel Code", "KCoder",
+                 "Kestrel Coding"]
+        book = Rules.book(Rules, *[Rules.ent(Rules, f"e{n}", nm, "software") for n, nm in enumerate(names)])
+        book.redirect = I.Redirects({f"e{n}": ("e0", True) for n in (1, 2, 3)})   # a cluster of 4 names
+
+        def held(n):
+            return I.Decision(("e0", f"e{n}"), "queue", "chain", 0.95, "c1", {"relation": "same", "confidence": 0.95},
+                              reasons=("chain",))
+        answers = {("e0", f"e{n}"): [(f"c3{n}", {"relation": "same", "confidence": 0.9})] for n in (4, 5, 6)}
+        ds = [held(n) for n in (4, 5, 6)]
+        I.third(book, ds, answers)
+        self.assertEqual([d.tier for d in ds], ["auto", "auto", "queue"])
+        self.assertEqual(ds[2].judge["third"]["confidence"], 0.9)              # stays queued, with the answer
+        # the chunk's own automatic merges count too: one already into the cluster leaves room for one more
+        ds = [I.Decision(("e0", "e4"), "auto", "haiku", 0.95)] + [held(n) for n in (5, 6)]
+        I.third(book, ds, answers)
+        self.assertEqual([d.tier for d in ds], ["auto", "auto", "queue"])
 
     def test_the_question_shows_facts_accounts_and_four_posts(self):
         ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(10)]
