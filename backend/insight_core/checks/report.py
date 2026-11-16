@@ -5,7 +5,8 @@ identity and the diff, from the two sides realdata-check.sh ran. Private: it nam
                                         [--label-base main --label-head <branch>] [--copy <db>] [--allow name=reason …]
 
 Exits 1 when the change can't merge: a case marked pass fails, an invariant rose with no reason
-named, or a side's step failed.
+named, a side's step failed, or (0218) a job's peak memory or seconds is over its budget or more than 20% worse than
+the base's (checks/resources.py).
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from insight_core.checks import diff
+from insight_core.checks import diff, resources
 
 
 # What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
@@ -55,7 +56,7 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         if job:
             lines.append(f"- {label}: story job (full) {job.get('wall_seconds')} s, {job.get('posts')} posts, {job.get('stories')} stories, "
                          f"News {job.get('news')}, Classics {job.get('classics')}; clock {job.get('now')}.")
-        for step in ("snapshot", "invariants", "cases", "jobs"):
+        for step in ("snapshot", "invariants", "cases", "jobs", "resources"):
             log = os.path.join(side, f"{step}.log")
             if step != "cases" and os.path.exists(log) and not os.path.exists(os.path.join(side, f"{step}.json")):
                 problems.append(f"{label}: {step} produced nothing (see {step}.log)")
@@ -115,6 +116,18 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
             # A version's finding may hold no list here (main's markx.api_during_run under load put its seconds there).
             examples = h.get("examples") if isinstance(h.get("examples"), list) else []
             lines.append(f"- `{name}`: " + "; ".join(str(e) for e in examples) + (f" ({h['note']})" if h.get("note") else ""))
+
+    # B2. the jobs' resources (0218): each job's own peak memory and seconds, against its budget and the base
+    rb, rh = _load(os.path.join(base, "resources.json")), _load(os.path.join(head, "resources.json"))
+    lines += ["", "## B2. The jobs' resources", ""]
+    if rh:
+        rows = resources.compare((rb or {}).get("jobs"), rh.get("jobs"))
+        lines += resources.lines(rows, labels)
+        lines += ["", f"A head over its budget, or more than {resources.WORSE_BY:.0%} above {labels[0]}'s peak MB or CPU "
+                      f"seconds (by more than {resources.FLOOR_MB:g} MB / {resources.FLOOR_S:g} s), fails."]
+        problems += [p for r in rows for p in r["problems"]]
+    else:
+        lines.append("Not measured (no resources.json: a version before 0218's check, or its step failed).")
 
     # C. the diff
     before, after = _load(os.path.join(base, "snapshot.json")), _load(os.path.join(head, "snapshot.json"))

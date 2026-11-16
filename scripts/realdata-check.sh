@@ -21,7 +21,7 @@
 # Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
 # server; default scripts/scratch-db.sh's), SCRATCH_DB=0 (copies on PG_SRC), SCRATCH_A / SCRATCH_B (the
 # scratch copies' names: <db>_check_<pid>_a / _b, one pair per run),
-# NETWORK (insight_insight-network).
+# NETWORK (insight_insight-network), RESOURCE_BUDGETS (JSON: the jobs' budgets for this run, checks/resources.py).
 #
 # Each version's code runs over its own scratch copy (one pg_restore of the dump, then a template copy of it), in a
 # container of its own, both at once: first what a deploy's first start runs (the incremental job to the end, a
@@ -215,7 +215,7 @@ say "report"
 ALLOW_ARGS=(); [ ${#ALLOW[@]} -gt 0 ] && ALLOW_ARGS=(--allow "${ALLOW[@]}")
 set +e
 docker run --rm --name "$RUN_ID-report" --network "$NETWORK" -v "$WORK/trees/head/backend:/app:ro" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" -w /work -e PYTHONPATH=/app \
-  -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python -m insight_core.checks.report --work /work --out /work/report.md \
+  -e PYTHONDONTWRITEBYTECODE=1 ${RESOURCE_BUDGETS:+-e RESOURCE_BUDGETS="$RESOURCE_BUDGETS"} "$IMAGE" python -m insight_core.checks.report --work /work --out /work/report.md \
   --label-base "$BASE" --label-head "$HEAD_LABEL" --copy "$DB" "${ALLOW_ARGS[@]}"
 verdict=$?
 set -e
@@ -225,7 +225,7 @@ cache_note=""
 { cat "$WORK/report.md"; echo; echo "Took ${elapsed} s ($(( elapsed / 60 )) min $(( elapsed % 60 )) s), image $IMAGE.$cache_note"; } > "$REPORT"
 mkdir -p "${REPORT%.md}"
 for side in base head; do
-  for f in deploy.json invariants.json jobs.json cases.json job.json; do
+  for f in deploy.json invariants.json jobs.json cases.json job.json resources.json; do
     [ -f "$WORK/$side/$f" ] && cp "$WORK/$side/$f" "${REPORT%.md}/$side-$f"
   done
 done

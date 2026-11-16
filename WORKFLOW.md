@@ -98,6 +98,25 @@ SQL, hashed), the checks' code, the cases file, the image and `--now`. A second 
 runs only the head side. `--no-cache` runs the base again (and replaces the entry). The report says when the base
 came from the cache.
 
+### The jobs' resources (0218)
+
+Each side also measures its jobs as the jobs process runs them, each in a fresh `spawn`ed process (its peak is its own
+address space's high-water, `utils/peak`, as the server's job records say): the decision run twice (the copy's first,
+full, then the next, incremental), Mark IX's story job (wanted; its originals and scouts left out: a check reads no
+web) and Discover (its web reads off). `resources.json` on each side; the report's section B2 compares them.
+
+| job | budget (head) |
+|---|---|
+| `decide` (incremental) | 600 MB peak, 90 s |
+| `stories` | 300 MB peak |
+| `discover` | 300 MB peak |
+| `decide_full` | none (compared with the base only) |
+
+The check **fails** when the head is over a budget, or more than 20% above the base's peak MB or CPU seconds (a
+difference under 50 MB or 5 s never fails: noise). The budgets are the server's targets; the check's copy is smaller,
+so a head over them is over at any size. They are values in `backend/insight_core/checks/resources.py` (`BUDGETS`,
+`WORSE_BY`, `FLOOR_MB`, `FLOOR_S`), overridable for one run: `RESOURCE_BUDGETS='{"decide": {"peak_mb": 500}}' scripts/realdata-check.sh ...`. A base from before the check has no `resources.json`: only the budgets apply.
+
 ## Measured (2026-11-13, v10.17; the machine shared with ~6 other agents' suites)
 
 | what | before | after |
