@@ -128,6 +128,9 @@ def tweet_author(url: Optional[str]) -> Optional[str]:
 _PREPRINT = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$", re.I)
 _DOI_PREFIX = re.compile(r"^10\.\d{4,9}$")
 _DOI_END = re.compile(r"(?:\.full)?(?:\.pdf|\+html)?$", re.I)
+# A Postgres regex every address `paper_id` names a paper in matches (a superset: a preprint id, or a DOI prefix with
+# more after it, as a path segment), for reading only the links that can be papers (v10.22).
+PAPER_SHAPE = r"/(\d{4}\.\d{4,5}|10\.\d{4,9}/)"
 _FILE_SEGMENTS = frozenset({"pdf", "epdf", "pdfdirect", "download"})
 
 

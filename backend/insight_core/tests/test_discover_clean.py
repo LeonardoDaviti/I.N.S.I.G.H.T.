@@ -130,6 +130,40 @@ class DiscoverCleanTests(unittest.TestCase):
         self.assertLess(order.index(mixed), order.index(listed), "2 against 1.5, though fewer articles")
         self.assertEqual(by_key[mixed]["voice_names"][0], f"Voice 3 {self.mark}", "its own post's voice first")
 
+    def test_a_round_up_tagged_since_counts_again_only_the_keys_it_links(self):
+        """v10.22: a decision run that tags a post a round-up (or untags one) moved the kept counts' stamp, and the next
+        count was a full one, its platforms found again (26 s on the server, every decision run). Now only the keys
+        its posts link are counted again, and the counts are a full count's."""
+        from unittest import mock
+        from insight_core.db.repo_discover import DiscoverRepository
+        from insight_core.db.repo_stories import SourceFacts
+        voices = [self._voice(n) for n in range(4)]
+        for voice in voices:
+            self._post(voice, self._pages("listed"))
+        later = [self._post(voice, self._pages("other")) for voice in voices[:3]]
+        self._discover()                                   # counted and kept
+        for voice, pid in zip(voices, later):          # three posts tagged since
+            self.cur.execute("""INSERT INTO mx_roundups (post_id, source_id, version, basis, roundup, said, why)
+                                VALUES (%s, %s, 'test', 'test', true, true, 'reading')""", (pid, voice[0]))
+            self.roundups.append(str(pid))
+        self.conn.commit()
+        with mock.patch.object(DiscoverRepository, "platforms", side_effect=AssertionError("a full count")), \
+                mock.patch.object(DiscoverRepository, "keys_linked_by", wraps=DiscoverRepository.keys_linked_by) as keys:
+            kept = StoriesService._counted(self.cur, SourceFacts(self.cur))
+        self.assertEqual(keys.call_args.args[1], set(self.roundups))
+        self.cur.execute("DELETE FROM system_settings WHERE key = %s", (KEPT_KEY,))
+        fresh = StoriesService._counted(self.cur, SourceFacts(self.cur), keep=False)
+
+        def by_key(found):
+            return {s["key"]: {**s, "voices": sorted(map(tuple, s["voices"])), "roundups": sorted(s["roundups"]),
+                               "sources": sorted(map(tuple, s["sources"])), "classics": sorted(s["classics"]),
+                               "articles": [(a[0], sorted(a[1]), *a[2:]) for a in s["articles"]]} for s in found}
+        self.assertEqual(by_key(kept["found"]), by_key(fresh["found"]))
+        other = by_key(kept["found"])[f"other-{self.mark}.example"]
+        self.assertEqual(sorted(other["roundups"]), sorted(v[0] for v in other["voices"]), "only in round-ups now")
+        self.conn.rollback()
+        self._discover()                                   # and as the walk counts it
+
     def test_a_mirrors_pages_that_are_not_tweets_are_no_site(self):
         mirror, plain = f"mirror-{self.mark}.example", f"plain-{self.mark}.example"
         voices = [self._voice(n) for n in range(3)]

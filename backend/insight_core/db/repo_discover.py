@@ -64,6 +64,7 @@ LOCK_KEY = "insight.discover_addresses"
 _SEGMENTS = ("array_remove(string_to_array(lower(regexp_replace(regexp_replace({url}, '^[a-z]+://[^/]*/?', ''), "
              "'[?#].*$', '') COLLATE \"und-x-icu\"), '/'), '')")
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
+TAGGED_KEY = "discover_tagged"   # the round-up tagged posts the kept counts were made with (v10.22: `retagged`)
 LIST_KEY = "discover_list"     # Discover's last list, by what it was made from (system_settings, issue 0080 cold open)
 SERVED_KEY = "discover_served"   # the answer Discover's page serves, built in the background (issue 0172 c1)
 # When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
@@ -292,10 +293,13 @@ class DiscoverRepository:
 
     @staticmethod
     def _drop_unlinked(cur: Cursor, urls: Optional[Sequence[str]]) -> None:
-        """Drop the addresses (of `urls`, when given) no kept link and no post points to."""
+        """Drop the addresses (of `urls`, when given) no kept link and no post points to. A post is at its normalized
+        address, else at its address (COALESCE(normalized_url, url)), asked as the two indexed lookups (v10.22: the
+        COALESCE has no index, so every call read every post: 2.3 s a story batch on the server, deleting none)."""
         cur.execute("DELETE FROM discover_addresses d WHERE (%(only)s::text[] IS NULL OR d.url = ANY(%(only)s)) "
                     "AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
-                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE COALESCE(p.normalized_url, p.url) = d.url)",
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = d.url) "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = d.url AND p.normalized_url IS NULL)",
                     {"only": None if urls is None else list(urls)})
 
     @staticmethod
@@ -523,10 +527,54 @@ class DiscoverRepository:
     def base(cur: Cursor) -> str:
         """What the counts are counted by, a story run aside: the rules (issue 0072: while they hold, a story
         run counts again only the keys its posts link; a source whose facts change has its posts queued, so
-        the keys they link are among those) and the round-up tags (units.tags_stamp, 0190: a post tagged since
-        moves the voices that link only in round-ups, whatever keys a run's posts link)."""
-        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES, units.tags_stamp(cur)]
+        the keys they link are among those). The round-up tags are apart (v10.22, `retagged`): a post tagged or
+        untagged since moves only the voices of the keys it links."""
+        what = [_COUNTS, _COUNT_RULES, ADDRESS_RULES]
         return hashlib.sha1(json.dumps(what).encode()).hexdigest()[:16]
+
+    @staticmethod
+    def tags(cur: Cursor) -> str:
+        """The round-up tags the counts read (units.tags_stamp), kept with them."""
+        return units.tags_stamp(cur)
+
+    @staticmethod
+    def retagged(cur: Cursor, kept: Optional[Dict[str, Any]], tags: str) -> Optional[Set[str]]:
+        """The posts whose round-up tag (units.py owns it) moved since the kept counts were made: none when the
+        tags' stamp (`tags`, units.tags_stamp) is the kept one's, else those tagged then or now but not both, from
+        the tagged posts kept with them (TAGGED_KEY); None when that is not known (counts kept before v10.22).
+        v10.22: a tag change counted every key again (Discover's full count, its platforms with it: 26 s on the
+        server, every decision run that tagged a post); only the keys these posts link can move (`keys_linked_by`)."""
+        if not kept or "tags" not in kept:
+            return None
+        if kept["tags"] == tags:
+            return set()
+        row = SystemSettingsRepository.get(cur, TAGGED_KEY)
+        was = row[0] if row else None
+        if not was or was.get("stamp") != kept["tags"]:
+            return None
+        return set(was["posts"]) ^ set(units.tagged(cur))
+
+    @staticmethod
+    def keep_tagged(cur: Cursor, tags: str) -> None:
+        """The tagged posts the kept counts were made with (`retagged` reads them), written when they moved."""
+        cur.execute("SELECT value->>'stamp' FROM system_settings WHERE key = %s", (TAGGED_KEY,))
+        row = cur.fetchone()
+        if not row or row[0] != tags:
+            SystemSettingsRepository.upsert(cur, TAGGED_KEY, {"stamp": tags, "posts": units.tagged(cur)})
+
+    @staticmethod
+    def keys_linked_by(cur: Cursor, post_ids: Iterable[str], platforms: Platforms = {}) -> Set[str]:
+        """The Discover keys these posts link (their kept links) or are at (a platform account's repost counts as a
+        link to its address): every key a post's round-up tag counts in (_COUNTS' `linked`)."""
+        ids = sorted(post_ids)
+        if not ids:
+            return set()
+        cur.execute("""SELECT DISTINCT d.key FROM discover_addresses d
+                        WHERE d.rules = %(rules)s AND d.key IS NOT NULL AND d.url IN (
+                              SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND NOT boilerplate
+                              UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE id = ANY(%(ids)s::uuid[]))""",
+                    {"rules": address_stamp(platforms), "ids": ids})
+        return {r[0] for r in cur.fetchall()}
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
