@@ -855,6 +855,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     for ms in stories.values():
         ms.sort(key=lambda m: (posts[m.post].at, m.post))
     window = _window(cur, table, posts, since)
+    cur.execute(f"DROP TABLE IF EXISTS {table}")   # its temporary space back before the run goes on
     if memo is not None:   # v10.22: the texts a question can show (a story's other members, a pair's), read in pages
         incremental.ahead(memo, {m.post for ms in stories.values() if len(ms) > 1 for m in ms}
                           | {p for a, b, _ in window for p in (a, b)})

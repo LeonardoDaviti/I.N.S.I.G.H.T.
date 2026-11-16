@@ -505,9 +505,20 @@ class LazyTexts(Mapping):
 def release(state: State) -> None:
     """0183: the texts and readings this run read, let go once the reading is done (the decision run's stages after
     News read neither; were held to the run's end, beside the entity book: a full run's every text). A text or reading
-    used after is read again, from the run's one snapshot."""
+    used after is read again, from the run's one snapshot. v10.23 (0218): and the answers it read (every kept question's
+    calls: ~63k answers a run on the server), read again on use (`calls_of`; Ask.later reads them by query); and what
+    only the renders read of each post (its text and reading stamps, its reading's kind and events: no render follows
+    News, the briefing's input is its own text); of the world's posts, `save` reads only which they are."""
     state.texts.clear()
     state.readings.clear()
+    state.calls.clear()
+    state.call_task.clear()
+    state.stamp.clear()
+    state.read_stamp.clear()
+    state.kinds.clear()
+    state.events.clear()
+    state.stale = []
+    state.rules = dict.fromkeys(state.rules)
 
 
 class LazyReadings(Mapping):
