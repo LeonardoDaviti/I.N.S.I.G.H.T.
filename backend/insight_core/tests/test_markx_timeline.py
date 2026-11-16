@@ -238,7 +238,22 @@ class Timeline(_Db):
         months = [i for i in tl["items"] if i["kind"] == "outside"]
         self.assertEqual(sum(i["n"] for i in months), 3)
         self.assertEqual([i["at"] for i in tl["items"]], sorted(i["at"] for i in tl["items"]))
-        self.assertEqual(tl["shown"], min(8, tl["total"]))
+        self.assertEqual(tl["shown"], sum(1 for i in tl["items"] if i["top"]))
+        self.assertTrue(all(i.get("named_only") for i in months))                  # mentions only: not among the top
+        self.assertFalse(any(i["top"] for i in months))
+
+    def test_a_post_that_only_names_it_is_never_its_birth_or_first_outside_mention(self):
+        birth, linker, rel, outs, launch = self.thing()
+        aside = self.post_at(4, T0 - 400 * D, "Ten tools we tried this year")       # names it in passing, long before
+        self.mentions(aside, ("Acme Kite", "software", "mention", "Acme", soft()))
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
+        first = [i for i in tl["items"] if i["kind"] == "birth"][0]
+        self.assertEqual(first["post"]["id"], birth)
+        self.assertEqual(first["named_since"], T0 - 400 * D)
+        self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [linker])
+        months = [i for i in tl["items"] if i["kind"] == "outside"]
+        self.assertEqual(sum(i["n"] for i in months), 4)                              # counted in its month
 
     def test_the_eight_most_important_are_shown_first(self):
         self.thing()
@@ -311,7 +326,7 @@ class OneModelsLine(_Db):
     def setUp(self):
         super().setUp()
         from insight_core.markx import stops as ST
-        self.switches = {"stops": True, "stop_types": True}
+        self.switches = {"stops": True, "stop_types": True, "analysis": True}
         patch = mock.patch.object(ST, "config", side_effect=lambda: dict(self.switches))
         patch.start()
         self.addCleanup(patch.stop)
@@ -406,6 +421,9 @@ class OneModelsLine(_Db):
         tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
         self.assertEqual([i["story"] for i in tl["items"] if i["kind"] == "story"], [x["a"], x["b"], x["c"]])
         self.assertEqual(ST.plan(self.cur, now=T0 + 13 * D)["stories"], 0)
+        self.switches["analysis"] = False
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertFalse([i for i in tl["items"] if i["kind"] == "analysis"])
 
     def test_an_answer_saying_not_about_it_makes_a_named_story(self):
         x = self.line()

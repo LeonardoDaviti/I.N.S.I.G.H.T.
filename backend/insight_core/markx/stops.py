@@ -45,11 +45,12 @@ COARSE = {"model_release": "release", "product_release": "release", "research_re
 
 
 def config() -> Dict[str, bool]:
-    """entity_bands.json `timeline`: `stops` (the stop / only-named split on the line) and `stop_types` (each stop's
-    word shown)."""
+    """entity_bands.json `timeline`: `stops` (the stop / only-named split on the line), `stop_types` (each stop's word
+    shown) and `analysis` (breakdowns hung on the line)."""
     from insight_core.markx import identity as I
     got = I.bands().get("timeline") or {}
-    return {"stops": bool(got.get("stops", True)), "stop_types": bool(got.get("stop_types", False))}
+    return {"stops": bool(got.get("stops", True)), "stop_types": bool(got.get("stop_types", False)),
+            "analysis": bool(got.get("analysis", False))}
 
 
 @dataclass(frozen=True)

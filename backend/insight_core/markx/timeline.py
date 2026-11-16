@@ -2,14 +2,16 @@
 (posts, mentions, merges, stories, back-in-the-news rows; nothing fetched).
 
 `of_entity` (the entity page's Timeline block, shown when it has 2+ dated events), each event {at, kind, post, ...}:
-  - `birth`: the oldest post naming it or any earlier name (as which name);
+  - `birth`: the oldest post about it (subject or actor) under any of its names, else the oldest naming it (as which
+    name; `named_since` when an older post only names it);
   - `earlier_name` / `renamed`: each earlier name (a rename merge, markx/rename.py) at its last post, and the first post
     under the name it has now;
   - `release`: a post about it (role subject or actor) by its maker (a source that is the maker, or a site whose name
     is the maker's) or at one of its own addresses; a family's versions at their first post about them;
-  - `first_outside` / `outside`: the posts by anyone else, the first one marked, the rest grouped by month (the month's
-    first post, how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an
-    outside mention though it names it otherwise;
+  - `first_outside` / `outside`: the posts by anyone else, the first one about it (or linking back) marked, the rest
+    grouped by month (the month's first post about it; a month whose posts only name it is `named_only`, never among the
+    top; how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an outside
+    mention though it names it otherwise;
   - `story`: each Mark X or Mark IX story about it (a stop on its line, markx/stops.py), at its first post, with its
     `stop` (what happened to it there: launch, benchmark, ranking, weights...: the stored stop-v1 answer, `stop_by`
     "asked"; else its story type's, `stop_by` "type") and its `share` of the story's members; `in_story`: a story that
@@ -185,8 +187,10 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     rows = lines.rows
     order = sorted(rows, key=lambda p: (rows[p]["at"], p))
     name = lambda e: book.ents[e].name if e in book.ents else None
-    first = order[0]
-    out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0])))
+    about = [p for p in order if rows[p]["roles"] & set(ABOUT)]
+    first = (about or order)[0]                      # 0165 v10.23: the oldest post about it, else naming it
+    out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0]),
+                      **({"named_since": rows[order[0]]["at"]} if order[0] != first else {})))
     # earlier names: each at its last post, then the first post under the name it has now
     for x in earlier:
         mine = [p for p in order if rows[p]["as"] & set(x["members"])]
@@ -226,19 +230,27 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             outside.append(p)
     outside.sort(key=lambda p: (rows[p]["at"], p))
     if outside:
-        p0 = outside[0]
-        out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
+        # 0165 v10.23: the first outside post about it (subject or actor) or linking back to its posts; a post that
+        # only names it is counted in its month, never marked first
+        firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"})]
+        p0 = firsts[0] if firsts else None
+        if p0 is not None:
+            out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
         months: Dict[str, List[str]] = defaultdict(list)
-        for p in outside[1:]:
-            months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
+        for p in outside:
+            if p not in (p0, first):            # the birth is its own line
+                months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
         for month, ps in sorted(months.items()):
-            out.append(_event("outside", rows[ps[0]]["at"], ps[0], month=month, n=len(ps),
-                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX)))
+            lead = next((p for p in ps if rows[p]["roles"] & set(ABOUT)), None)
+            out.append(_event("outside", rows[lead or ps[0]]["at"], lead or ps[0], month=month, n=len(ps),
+                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX),
+                              **({} if lead else {"named_only": True, "rank": RANK["in_story"]})))
     if light:
         return _dedupe(out)
     stops = _stories(cur, book, root, stories or [], rows)
     out += stops
-    out += _analysis(cur, rows, outside)
+    from insight_core.markx import stops as ST
+    out += _analysis(cur, rows, outside) if ST.config()["analysis"] else []   # 0165: off, under its bar
     out = _dedupe(out)
     _hang(out, stops)
     out += _back(cur, set(rows))
@@ -378,8 +390,9 @@ def _back(cur: Any, posts: Set[str]) -> List[Dict[str, Any]]:
 
 
 def _top(evs: List[Dict[str, Any]], n: int = TOP) -> Set[int]:
-    """The `n` most important events (a story that only names the thing never)."""
-    order = sorted((i for i in range(len(evs)) if evs[i]["kind"] != "in_story"), key=lambda i: (evs[i]["rank"], evs[i]["at"]))
+    """The `n` most important events (a story, or a month of posts, that only names the thing never)."""
+    order = sorted((i for i in range(len(evs)) if evs[i]["kind"] != "in_story" and not evs[i].get("named_only")),
+                   key=lambda i: (evs[i]["rank"], evs[i]["at"]))
     return set(order[:n])
 
 
