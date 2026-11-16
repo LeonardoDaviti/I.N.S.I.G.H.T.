@@ -776,13 +776,17 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
             or [m for m in members if m.id != post.id])
 
 
-BACKGROUND_PLANNED = ("check", "cite", "track")   # v10.13.4: kinds the decision job plans, never a lease
+# v10.13.4: kinds the decision job plans, never a lease. v10.22 (0216): + relate, whose planner (graph.plan) read every
+# current edge and same-subject candidate on every lease while its queue ran below the lease's size (the worker drains it
+# all day: 63 runs in 104 minutes on the server, 0.6 s each); the decision run's graph stage plans it too.
+BACKGROUND_PLANNED = ("check", "cite", "track", "relate")
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:
     """v10.13.4: whether the decision job (jobs.Jobs.plan_background), not a lease, plans `kind`. `cite` (ent42.plan
     pages through every post read without a cite task: ~60 s on the server) and `track` (tracks.plan learns each
-    track's finders over 30 days of posts: ~47 s) always; `check` while the story window is wide (v10.13.2)."""
+    track's finders over 30 days of posts: ~47 s) and `relate` (v10.22) always; `check` while the story window is wide
+    (v10.13.2)."""
     if kind == "check":
         return checks_in_background(cur, now)
     return kind in BACKGROUND_PLANNED
@@ -793,7 +797,9 @@ def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None
 # depends on: its code and its settings as it computes them. The clock only narrows check's and cite's windows within
 # a day (now - days: a post that leaves the window adds no question, and an age is only a new task's priority), so the
 # window's length in days is in their key. track's bar and windows move with the clock itself (the share of the last
-# 30 days' posts a probe passes): it has no declaration and always runs.
+# 30 days' posts a probe passes): it has no declaration and always runs. relate (v10.22) has none either: what a pass
+# that planned nothing reads includes every post's text (a question's input), so its stamp would read the posts table
+# whole; it runs every PLAN_EVERY instead of on every lease.
 # v10.18 (0199): of mx_tasks, only the kinds each reads (unchanged.of_kinds): check its own (tasks.add's lookup);
 # cite its own and the ent-v4.2 entities tasks it plans from (ent42.plan). Another kind's lease or answer (the track
 # answers that stream all day) no longer wakes them.

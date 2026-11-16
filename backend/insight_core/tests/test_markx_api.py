@@ -696,26 +696,26 @@ class PlannersRest(_Api):
 
     def test_a_planner_that_added_nothing_rests_then_runs_again(self):
         planner = mock.Mock(return_value=0)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
-            self.lease("relate")
-            self.lease("relate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": planner}):
+            self.lease("embed_name")
+            self.lease("embed_name")
             self.assertEqual(planner.call_count, 1)               # resting
-            api._PLAN_REST["relate"] = 0.0                         # its minute is over
-            self.lease("relate")
+            api._PLAN_REST["embed_name"] = 0.0                         # its minute is over
+            self.lease("embed_name")
             self.assertEqual(planner.call_count, 2)
 
     def test_a_planner_that_added_work_never_rests(self):
         planner = mock.Mock(return_value=3)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": planner}):
-            self.lease("relate")
-            self.lease("relate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": planner}):
+            self.lease("embed_name")
+            self.lease("embed_name")
         self.assertEqual(planner.call_count, 2)
 
     def test_one_kinds_rest_leaves_the_others_planned_in_the_same_lease(self):
         idle, busy = mock.Mock(return_value=0), mock.Mock(return_value=2)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": idle, "translate": busy}):
-            self.lease("relate,translate")                         # relate added nothing: it rests
-            self.lease("relate,translate")
+        with mock.patch.dict(tasks.PLANNERS, {"embed_name": idle, "translate": busy}):
+            self.lease("embed_name,translate")                         # embed_name added nothing: it rests
+            self.lease("embed_name,translate")
         self.assertEqual((idle.call_count, busy.call_count), (1, 2))
 
 
