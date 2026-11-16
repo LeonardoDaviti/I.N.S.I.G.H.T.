@@ -316,17 +316,23 @@ class Subjects:
         from insight_core.markx import schemas
         cur.execute("SELECT from_id::text, to_id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
         self.redirect = dict(cur.fetchall())
-        cur.execute(f"""SELECT m.post_id::text, m.entity_id::text, {_date()}
-                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL""",   # 0133: the current set
-                    (schemas.mention_guides(),))
         self.of: Dict[str, Set[str]] = defaultdict(set)
         self.at: Dict[str, datetime] = {}
-        for pid, eid, at in cur.fetchall():
-            if at is None:
-                continue
-            self.of[pid].add(self.root(eid))
-            self.at[pid] = at
+        sql = f"""SELECT m.post_id::text, m.entity_id::text, {_date()}
+                    FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                   WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL"""   # 0133: the current set
+        # v10.23 (0218): the rows made objects a page at a time, in the order read (every subject mention of every post
+        # was made a tuple at once: ~400k rows at the server-sized copy's 1.5M mentions)
+        cur.execute(sql, (schemas.mention_guides(),))
+        while True:
+            page = cur.fetchmany(20000)
+            if not page:
+                break
+            for pid, eid, at in page:
+                if at is None:
+                    continue
+                self.of[pid].add(self.root(eid))
+                self.at[pid] = at
         self.posts: Dict[str, List[Tuple[datetime, str]]] = defaultdict(list)
         for pid, roots in self.of.items():
             for r in roots:
