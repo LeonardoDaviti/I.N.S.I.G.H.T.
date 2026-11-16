@@ -31,6 +31,7 @@ tick() is the testable unit: it takes its collaborators as arguments.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import signal
 import sys
@@ -235,6 +236,25 @@ async def _heartbeat() -> None:
         await asyncio.sleep(heartbeat.BEAT_SECONDS)
 
 
+def startup_repairs(db_url: str) -> None:
+    """v10.22.1 (0216 8b): the start's one-off repairs, each in its own thread as before, in a spawned process."""
+    import threading
+
+    setup_logging(debug_mode=False)
+    from insight_core.scripts import repair_0135, repair_0137, repair_full_text, rerun_archives_0143
+    from insight_core.scripts.repair_normalized_urls import repair_safely
+    threads = [threading.Thread(target=job, args=(db_url,)) for job in (
+        repair_safely,                       # issue 0130 E1: the posts stored without a normalized address
+        repair_0135.repair_safely,           # issue 0135: Telegram dates, transcripts
+        repair_0137.repair_safely,           # issue 0137: collapsed feeds, author lines, bridge dates
+        repair_full_text.repair_safely,      # issue 0140: the teasers left short read again
+        rerun_archives_0143.rerun_safely)]   # issue 0143: the capped feeds planned again
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+
 async def main() -> None:
     from insight_core.db.ensure_db import ensure_database
     from insight_core.ingestion import run_ingestion
@@ -266,26 +286,9 @@ async def main() -> None:
             logger.info("%s queued archives a restart stopped are queued again", queued_again)
     except Exception:  # noqa: BLE001
         logger.exception("Could not queue again the archives a restart stopped")
-    # The posts stored without a normalized address get one (issue 0130 E1): once, at the deploy's first start;
-    # resumable, and nothing at a later start. In a thread: the scheduler's first tick does not wait for it.
-    from insight_core.scripts.repair_normalized_urls import repair_safely
-    asyncio.get_running_loop().run_in_executor(None, repair_safely, db_url)
-    # Issue 0135: Telegram bridge posts dated by their edit, and transcripts stored as a translation or as
-    # caption markup, put right: the dates once, the transcripts a small budget per start; resumable, logged.
-    from insight_core.scripts import repair_0135
-    asyncio.get_running_loop().run_in_executor(None, repair_0135.repair_safely, db_url)
-    # Issue 0137: feeds collapsed onto one post read again in full once, author lines holding affiliations
-    # cleaned, bridge posts dated by MTProto's message date; no request, resumable, logged.
-    from insight_core.scripts import repair_0137
-    asyncio.get_running_loop().run_in_executor(None, repair_0137.repair_safely, db_url)
-    # Issue 0140: the teasers left short read again once per version of the full-text rules, newest first, politely
-    # (a site at a time, PAGE_DELAY_S apart); resumable (each read records its version), logged.
-    from insight_core.scripts import repair_full_text
-    asyncio.get_running_loop().run_in_executor(None, repair_full_text.repair_safely, db_url)
-    # Issue 0143: the feeds whose archive stopped at the feed planned again through the smart archiver, once, a
-    # source at a time; where more exists an archive is queued (one per host lane). Resumable (each is marked), logged.
-    from insight_core.scripts import rerun_archives_0143
-    asyncio.get_running_loop().run_in_executor(None, rerun_archives_0143.rerun_safely, db_url)
+    # v10.22.1 (0216 8b): the start's repairs in a process of their own, so their high-water leaves with it.
+    from insight_core.services.stories_service import in_own_process
+    asyncio.get_running_loop().run_in_executor(None, in_own_process, startup_repairs, db_url)
     try:   # the scheduler's runs a restart ended mid-run (issue 0070)
         closed = operations_service.close_interrupted_jobs("scheduler")
         if closed:
@@ -330,6 +333,8 @@ async def main() -> None:
     last_archive_poll = 0.0
     loop = asyncio.get_running_loop()
     beating = loop.create_task(_heartbeat())   # issue 0188: what the container's healthcheck reads
+    from insight_core.utils.idle_trim import libc_trim
+    trim = libc_trim()
 
     while RUNNING:
         now = datetime.now(timezone.utc)
@@ -353,6 +358,9 @@ async def main() -> None:
 
             state = await tick(now, state, config, ingest=run_ingestion, daily_work=daily, ops=operations_service)
             await profiles_after_tick(db_url)
+            gc.collect()   # v10.22.1 (0216 8b): the tick's freed memory goes back to the OS
+            if trim is not None:
+                trim()
             logger.info("Next ingestion tick at %s", state.next_tick_at.isoformat() if state.next_tick_at else "?")
         # Sleep in 1s steps so SIGTERM is honoured promptly.
         await asyncio.sleep(1)

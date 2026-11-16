@@ -86,6 +86,7 @@ Both only when INSIGHT_MARKX is on; nothing here raises into the scheduler.
 """
 from __future__ import annotations
 
+import gc
 import logging
 import multiprocessing
 import threading
@@ -96,6 +97,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from insight_core.utils import peak
+from insight_core.utils.idle_trim import libc_trim
 
 log = logging.getLogger(__name__)
 
@@ -791,7 +793,12 @@ class Jobs:
             if name == "full":
                 log.info("Mark X decision run: a full run, %.0f s at most", limit[0])
 
+        trim = libc_trim()
+
         def stage(name: str) -> None:
+            gc.collect()   # v10.22.1: what the finished stage let go goes back to the OS before the next one
+            if trim is not None:
+                trim()
             at = time.monotonic()
             stages.append([current[0], round(at - current[1], 1)])
             log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
