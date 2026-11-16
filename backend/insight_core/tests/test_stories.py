@@ -569,12 +569,7 @@ class StoryJobYieldsTests(unittest.TestCase):
                 mock.patch.object(jobs, "mark_ix", lambda cur: {"locked": False, "rebuild": None}):
             with self._advance([False]):
                 self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
-            # 0209: never for a run this job's rebuild holds (it can't start: both would wait for ever) ...
-            with mock.patch.object(jobs, "mark_ix", lambda cur: rebuild), self._advance([False]):
-                self.assertNotIn("skipped", self.service.recompute())
-            with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # ... until the hold is over
-                cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'",
-                            (self.now - timedelta(seconds=jobs.REBUILD_HOLD + 60),))
+            # 0215: during this job's rebuild too (the rebuild holds no decision run, so the run can start)
             with mock.patch.object(jobs, "mark_ix", lambda cur: rebuild), self._advance([False]):
                 self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
             with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # it started: the job goes on

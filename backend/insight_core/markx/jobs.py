@@ -16,15 +16,15 @@ at 101% CPU and every /api/* request timed out.
         it back to back), and every EVERY seconds. v10.18 (0199): RUN_GAP 15 minutes (was GAP's 5): a worker's answers
         stream in all day, and every run they started cost ~145 s and a ~35 s Labels build on the server (~11 an hour,
         ~60% of a core); the same decisions for the same inputs, at most 15 minutes after the answers instead of 5.
-  - **The order of runs** (0121 Decided 3): no decision run while Mark IX's story job holds its lock or a rule
-    change's rebuild is in progress or due (`mark_ix_busy`): it waits, then runs once. Nor while the candidate finder
-    runs; and a run whose own candidate finder failed doesn't run on candidates that aren't there: both wait.
-    0209: a rebuild holds it at most REBUILD_HOLD after the last decision run started (`decision_hold`, the one
-    decision: the runner, the story job's stepping aside and /api/status's health ask it); past that the run goes
-    ahead on the stories as stored (each rebuild batch commits whole, so they are always one consistent set; the
-    batches after it change some and the next run decides those again), logged and recorded in its `last`. Before,
-    a rebuild held every decision run until its end, and the story job stepped aside for the decision run it was
-    holding (`decision_waits` now asks the hold): on 2026-11-14 neither ran again for 45 hours.
+  - **The order of runs** (0121 Decided 3): no decision run while Mark IX's story job holds its lock (a batch): it
+    waits, then runs once. Nor while the candidate finder runs; and a run whose own candidate finder failed doesn't
+    run on candidates that aren't there: both wait. A rule change's rebuild holds no run (`decision_hold`, the one
+    decision: the runner, the story job's stepping aside and /api/status's health ask it): the run goes ahead on the
+    stories as stored (each rebuild batch commits whole, so they are always one consistent set; the batches after it
+    change some and the next run decides those again), logged and recorded in its `last`. Before, a rebuild held
+    every decision run until its end (0121), then until an hour after the last start (0209: on 2026-11-14 neither ran
+    for 45 hours, the story job stepping aside for the run the rebuild held); 0215: not at all, the rebuild being
+    ~5x faster.
   - **A rule change's rebuild is driven here too** (0209, the job "stories"): while one is due or in progress, the
     story job's next slice (stories_service.recompute: STEP_BUDGET_S, then it rests) STORIES_GAP after the last
     ended, in a process of its own, Mark X on or off. Before, only a fetch that saved posts ran it (hourly: ~3
@@ -33,7 +33,10 @@ at 101% CPU and every /api/* request timed out.
     with its duration (candidates, load, questions and decisions, write, connections, graph, back, headlines, news,
     entities, surges, perspectives_plan), the finish. Past LIMIT seconds it stops before the next stage and logs which;
     its one transaction rolls back (nothing half done) and the run is wanted again. A stage that never ends is killed
-    with its process at HARD_LIMIT.
+    with its process at HARD_LIMIT. 0215: a full run (decide's code changed by a deploy, no kept state, the nightly
+    one) and the run after one that stopped over its limit have CATCH_UP_LIMIT instead (`limit_for`): a stopped run
+    also rolls back the state the next run starts from, so the next one was the same full run, stopped again, for ever
+    (the server after the v10.20 deploy: 121-126 s runs, 92-93 s of them reading the whole window).
   - **A run that dies is a failed run** (v10.13.9): killed at HARD_LIMIT or ended with a non-zero exit code (an OOM
     kill, a segfault), it is recorded with the stage it was in and wanted again. A stage shown for longer than
     HARD_LIMIT + STALE_MARGIN is a dead run's (`stale`): the runner clears it, so nothing waits on it until a restart.
@@ -107,6 +110,7 @@ GAP = 300.0                      # a failed job's backoff unit (0188: GAP x 2^fa
 RUN_GAP = 900.0                  # 0199: at most one decision run starts every 15 minutes while uploads stream in (was GAP)
 EVERY = 3600.0                   # and runs at least hourly
 LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries (Decided 12)
+CATCH_UP_LIMIT = 600.0           # 0215: a full run's, and the next run's after one stopped over its limit (`limit_for`)
 ENTITY_BUDGET = 45.0             # 0128: the entities stage's own seconds, outside LIMIT; its full pass resumes next run
 OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
@@ -116,7 +120,6 @@ HARD_LIMIT = 900.0               # a job's process is killed after this (a stage
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan", "labels", "news", "tracks", "unread", "main_source", "discover", "official",
         "stories")
-REBUILD_HOLD = 3600.0            # 0209: a rule change's rebuild holds a decision run at most this long after the last start
 STORIES_GAP = 120.0              # 0209: a rebuild's next slice starts this long after the last ended (it rests 90 s after a yield)
 STARVE_AFTER = 900.0             # 0209: candidates or official due this long go before the kept views
 OFFICIAL_EVERY = 1800.0          # 0196: the official channels' pass at most every 30 minutes
@@ -316,22 +319,35 @@ def mark_ix(cur: Any) -> Dict[str, Any]:
 def mark_ix_busy(cur: Any) -> Optional[str]:
     """Why work that reads Mark IX's stories waits for it now, or None (0121 Decided 3): its story job holds its lock,
     or a rule change's rebuild is in progress or due. The source stats run waits so; a decision run asks
-    `decision_hold` (0209: a rebuild holds it only so long)."""
+    `decision_hold` (0215: a rebuild holds none)."""
     ix = mark_ix(cur)
     if ix["locked"]:
         return "Mark IX's story job is running"
     return f"a rule change's rebuild is {ix['rebuild']}" if ix["rebuild"] else None
 
 
-def decision_hold(ix: Dict[str, Any], decide: Dict[str, Any], now: datetime, *,
-                  hold: float = REBUILD_HOLD) -> Tuple[Optional[str], Optional[str]]:
-    """0209, the one decision on whether Mark IX holds a decision run now: (held, ahead). `held`: why it waits (the
-    story job's lock, held for a batch's seconds; a rule change's rebuild, due or in progress, for at most `hold`
-    seconds after the last decision run started), else None. `ahead`: when a rebuild no longer holds it, why it goes
-    ahead on the stories as stored (logged, kept in the run's record), else None. `ix`: mark_ix's; `decide`: the
-    decide job's state. Why not wait for the rebuild's end: it is hours of the story job's work on the server's posts
-    (days when only fetches drove it), and every rebuild batch commits whole, so the stories as stored are always one
-    consistent set; the batches after a run change some, and the next run decides those again."""
+def limit_for(kind: Optional[str], previous: Dict[str, Any], limit: float = LIMIT,
+              catch_up: float = CATCH_UP_LIMIT) -> float:
+    """0215, a decision run's time limit: `catch_up` for a full run (`kind`: decide.run says which once it has read its
+    state; None before) and for the run after one that stopped over its limit (`previous`: the decide job's last
+    record), else `limit`. A run over its limit writes nothing, and with it the state the next run starts from (0169),
+    so the next run is the same one: after the v10.20 deploy (decide's code changed: a full run) the server's runs read
+    their whole window again each time (questions and decisions 92-93 s, two days after the last run) and stopped at
+    121-126 s, for ever. A full run reads everything by design; it now has the time to, and the runs after it are
+    incremental again."""
+    if kind == "full" or previous.get("stopped_before"):
+        return max(limit, catch_up)
+    return limit
+
+
+def decision_hold(ix: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """0209, 0215, the one decision on whether Mark IX holds a decision run now: (held, ahead). `held`: the story job's
+    lock (a batch, its seconds), else None. `ahead`: during a rule change's rebuild (due or in progress), that the run
+    goes ahead on the stories as stored (logged, kept in the run's record), else None. `ix`: mark_ix's.
+    0215: a rebuild holds no run (0209 held one until an hour after the last start, 0121 until the rebuild's end).
+    Every rebuild batch commits whole, so the stories as stored are always one consistent set, read by a run in one
+    snapshot; the next run decides again what later batches change. So a run comes every RUN_GAP, as without a
+    rebuild, and the rebuild itself now takes about 1.5-2 h of the server's posts (0215), not 9-10 h."""
     if ix.get("locked"):
         return "Mark IX's story job is running", None
     if not ix.get("rebuild"):
@@ -339,26 +355,19 @@ def decision_hold(ix: Dict[str, Any], decide: Dict[str, Any], now: datetime, *,
     what = f"a rule change's rebuild is {ix['rebuild']}"
     if ix.get("total"):
         what += f" ({int(ix.get('done') or 0):,} of {int(ix['total']):,} posts regrouped)"
-    started = decide.get("started_at")
-    if started is not None and (now - started).total_seconds() < hold:
-        return f"{what}; it holds a decision run until {hold / 60:.0f} min after the last one started", None
-    return None, (f"{what}: the decision run goes ahead on the stories as stored (a rebuild holds it "
-                  f"{hold / 60:.0f} min at most)")
+    return None, f"{what}: the decision run goes ahead on the stories as stored"
 
 
-def held_by_mark_ix(cur: Any, now: Optional[datetime] = None) -> Optional[str]:
+def held_by_mark_ix(cur: Any) -> Optional[str]:
     """0209: why Mark IX holds a decision run now (`decision_hold`), or None; /api/status's health names it."""
-    if now is None:
-        cur.execute("SELECT now()")
-        now = cur.fetchone()[0]
-    return decision_hold(mark_ix(cur), state(cur)["decide"], now)[0]
+    return decision_hold(mark_ix(cur))[0]
 
 
 def decision_waits(cur: Any, now: datetime, wait: float) -> bool:
     """v10.13.8, 0209: whether Mark IX's story job steps aside now for a decision run: Mark X is on, the run is wanted,
-    not running, not waiting out a failed run's backoff, has waited `wait` seconds or more (since it was wanted or last
-    started), and Mark IX doesn't hold it (`decision_hold`, the story job's own lock aside). Stepping aside for a run
-    the rebuild holds only stops the rebuild it waits for: on 2026-11-14 both waited on each other for 45 hours."""
+    not running, not waiting out a failed run's backoff, and has waited `wait` seconds or more (since it was wanted or
+    last started). 0209: stepping aside for a run the rebuild held stopped both for 45 hours on 2026-11-14; 0215: no
+    rebuild holds a run (`decision_hold`), so the run it steps aside for can start."""
     if not enabled():
         return False
     d = state(cur)["decide"]
@@ -366,9 +375,7 @@ def decision_waits(cur: Any, now: datetime, wait: float) -> bool:
     if wanted is None or d.get("stage") is not None or held(d, now):
         return False
     since = max(wanted, started) if started is not None else wanted
-    if (now - since).total_seconds() < wait:
-        return False
-    return decision_hold(dict(mark_ix(cur), locked=False), d, now)[0] is None
+    return (now - since).total_seconds() >= wait
 
 
 def decision_running(cur: Any) -> bool:
@@ -436,8 +443,9 @@ class Jobs:
     Every state write is a short transaction of its own."""
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, limit: float = LIMIT,
-                 entity_budget: Optional[float] = ENTITY_BUDGET) -> None:
+                 entity_budget: Optional[float] = ENTITY_BUDGET, catch_up: float = CATCH_UP_LIMIT) -> None:
         self.db_url, self.clock, self.limit, self.entity_budget = db_url, clock, limit, entity_budget
+        self.catch_up = catch_up
 
     def _tx(self):
         from insight_core.db import database
@@ -728,11 +736,12 @@ class Jobs:
 
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
-        stage logged with its duration; a failed or stopped run is wanted again."""
+        stage logged with its duration; a failed or stopped run is wanted again. 0215: a full run, and the run after one
+        stopped over its limit, have CATCH_UP_LIMIT (`limit_for`)."""
         from insight_core.markx import decide
         with self._tx() as cur:
             before = state(cur)["decide"]
-            ahead = decision_hold(dict(mark_ix(cur), locked=False), before, self.clock())[1]   # 0209
+            ahead = decision_hold(dict(mark_ix(cur), locked=False))[1]   # 0209
         previous = before.get("last") or {}
         skip = [previous["skip_next"]] if previous.get("skip_next") in SKIPPABLE else []
         log.info("Mark X decision run started")
@@ -746,6 +755,14 @@ class Jobs:
         stages: List[List[Any]] = []          # [[stage, seconds]] in order (jsonb keeps no key order)
         current = ["candidates", t0]
         own = [0.0]                           # 0128: the seconds of the stages with a budget of their own
+        limit = [limit_for(None, previous, self.limit, self.catch_up)]   # 0215: the kind's, once the run knows it
+        if limit[0] > self.limit:
+            log.warning("Mark X decision run: the last one stopped over its limit; this one has %.0f s", limit[0])
+
+        def kind(name: str) -> None:
+            limit[0] = limit_for(name, previous, self.limit, self.catch_up)
+            if name == "full":
+                log.info("Mark X decision run: a full run, %.0f s at most", limit[0])
 
         def stage(name: str) -> None:
             at = time.monotonic()
@@ -753,9 +770,9 @@ class Jobs:
             log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
             if current[0] in OWN_BUDGET:
                 own[0] += at - current[1]
-            if at - t0 - own[0] > self.limit:
+            if at - t0 - own[0] > limit[0]:
                 apart = f", the entities stage's {own[0]:.0f} s apart" if own[0] else ""
-                raise TooLong(f"over {self.limit:.0f} s ({at - t0 - own[0]:.0f} s{apart}): stopped before {name}")
+                raise TooLong(f"over {limit[0]:.0f} s ({at - t0 - own[0]:.0f} s{apart}): stopped before {name}")
             current[:] = [name, at]
             self._stage("decide", name)
 
@@ -768,7 +785,7 @@ class Jobs:
         try:
             with decide.snapshot(self.db_url) as cur:
                 out = decide.run(cur, stage=stage, entity_budget=self.entity_budget, limit=self.limit, began=t0,
-                                 skip=skip)
+                                 skip=skip, on_kind=kind)
         except TooLong as exc:
             # the retry waits out the failed run's backoff (0188: GAP x 2^failures), not the next 30 s look (0124);
             # over the limit in the same deferrable stage as the run before, the next run skips that stage once
@@ -780,7 +797,8 @@ class Jobs:
             self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).split("stopped before ", 1)[-1],
                                     "over_in": over_in, **({"skip_next": skip_next} if skip_next else {}),
                                     **({"skipped_stages": skip} if skip else {}),
-                                    "stages": stages, "seconds": round(time.monotonic() - t0, 1)}, again=True)
+                                    "stages": stages, "seconds": round(time.monotonic() - t0, 1),
+                                    "limit": limit[0]}, again=True)
             return None
         except Exception as exc:
             log.exception("Mark X decisions: the run failed")
@@ -795,7 +813,7 @@ class Jobs:
         log.info("Mark X decision run finished in %.1f s: %s", seconds,
                  {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
-                                "skipped": out.get("skipped"), "stages": stages,
+                                "skipped": out.get("skipped"), "stages": stages, "limit": limit[0],
                                 **({"skipped_stages": skip} if skip else {}),
                                 **({"mark_ix": ahead} if ahead else {}),
                                 "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
@@ -1016,7 +1034,7 @@ class Runner:
             states = self._states(markx)
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
-            held_by, ahead = decision_hold(self._ix, states["decide"], self._db_now) if markx else (None, None)
+            held_by, ahead = decision_hold(self._ix) if markx else (None, None)
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=held_by,
                       plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap, markx=markx,
                       official_every=self.official_every(),

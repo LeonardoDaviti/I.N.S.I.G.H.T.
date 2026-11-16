@@ -105,24 +105,20 @@ class TheLabelsQueue(unittest.TestCase):
 
 
 class TheRebuildHold(unittest.TestCase):
-    """0209: Mark IX's rule-change rebuild holds a decision run at most REBUILD_HOLD after the last one started; its
-    slices run from the jobs loop; no job starves behind the kept views."""
+    """0209: Mark IX's rule-change rebuild's slices run from the jobs loop; no job starves behind the kept views.
+    0215: the rebuild holds no decision run (0209: an hour after the last start); the story job's lock (a batch) does."""
 
     IX = {"locked": False, "rebuild": "in progress", "done": 2000, "total": 157752}
 
     def test_the_hold(self):
-        decide = {"started_at": T0 - timedelta(minutes=20)}
-        held, ahead = jobs.decision_hold(self.IX, decide, T0)
-        self.assertEqual((held, ahead), ("a rule change's rebuild is in progress (2,000 of 157,752 posts regrouped); "
-                                         "it holds a decision run until 60 min after the last one started", None))
-        held, ahead = jobs.decision_hold(self.IX, {"started_at": T0 - timedelta(minutes=61)}, T0)
+        held, ahead = jobs.decision_hold(self.IX)
         self.assertIsNone(held)
-        self.assertIn("goes ahead on the stories as stored", ahead)
-        self.assertIsNone(jobs.decision_hold(self.IX, {"started_at": None}, T0)[0])          # never ran: runs
-        self.assertEqual(jobs.decision_hold(dict(self.IX, locked=True), {"started_at": None}, T0),
+        self.assertEqual(ahead, "a rule change's rebuild is in progress (2,000 of 157,752 posts regrouped): the "
+                                "decision run goes ahead on the stories as stored")
+        self.assertEqual(jobs.decision_hold(dict(self.IX, locked=True)),
                          ("Mark IX's story job is running", None))                           # a batch: seconds
-        self.assertEqual(jobs.decision_hold({"locked": False, "rebuild": None}, decide, T0), (None, None))
-        self.assertIn("is due;", jobs.decision_hold({"locked": False, "rebuild": "due"}, decide, T0)[0])
+        self.assertEqual(jobs.decision_hold({"locked": False, "rebuild": None}), (None, None))
+        self.assertIn("is due:", jobs.decision_hold({"locked": False, "rebuild": "due"})[1])
 
     def test_the_rebuild_slice_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
@@ -420,21 +416,23 @@ class TheRunner(_Api):
         self.assertEqual(self.runner().tick(), "decide")                 # then it runs, once
         self.assertIsNone(self.runner().tick())
 
-    def test_no_decision_run_during_a_rule_change_rebuild(self):
-        """0121 Decided 3; 0209: for at most REBUILD_HOLD after the last decision run started, while the rebuild's
-        slices run here."""
+    def test_a_decision_run_goes_ahead_during_a_rule_change_rebuild(self):
+        """0121 Decided 3 held it until the rebuild's end, 0209 until an hour after the last start; 0215: the rebuild's
+        slices and the decision runs take turns at the normal cadence."""
         from insight_core.services.stories_service import rules_stamp
         self.decide_row(started=20, wanted=19)
         self.stories_setting({"rules": "older rules", "rebuild": {"rules": rules_stamp(), "done": 0, "total": 49384}})
-        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")
+        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")   # the source stats wait
+        with self.assertLogs(jobs.log, "WARNING") as logs:
+            self.assertEqual(self.runner().tick(), "decide")          # due: the rebuild doesn't hold it
+        self.assertIn("goes ahead on the stories as stored", "\n".join(logs.output))
         with self.slices() as ran:
-            self.assertEqual(self.runner().tick(), "stories")         # not the decision run: the rebuild's slice
+            self.assertEqual(self.runner().tick(), "stories")         # then the rebuild's slice
         self.assertEqual(len(ran), 1)
         self.stories_setting({"rules": "older rules"})                  # stored by other rules: one is due
         self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is due")
         self.stories_setting({"rules": rules_stamp()})
         self.assertIsNone(jobs.mark_ix_busy(self.cur))
-        self.assertEqual(self.runner().tick(), "decide")
 
     def decide_row(self, *, started, wanted=None, finished=None):
         """The decide job's row: started (wanted, finished) that many minutes ago."""
@@ -464,20 +462,18 @@ class TheRunner(_Api):
     def test_the_2026_11_14_deadlock_ends(self):
         """0209: the server's state: a rule change's rebuild in progress, the decision run wanted since a restart
         ended it 45 hours before. Before, the story job stepped aside for the decision run ("a decision run's turn")
-        and the decision run waited for the rebuild: neither ran again. Now the rebuild no longer holds a run that
-        started over REBUILD_HOLD ago: the story job steps aside for it, and it runs on the stories as stored, saying
-        so in its record."""
+        and the decision run waited for the rebuild: neither ran again. 0215: the rebuild holds no run: the story job
+        steps aside for one that waited, and it runs on the stories as stored, saying so in its record."""
         from insight_core.services.stories_service import DECISION_WAIT_S, StoriesService, rules_stamp
         self.stories_setting({"rules": "older rules",
                               "rebuild": {"rules": rules_stamp(), "phase": "keys", "done": 0, "total": 157752}})
         svc = StoriesService(db_url())
-        self.decide_row(started=20, wanted=19)                         # the hold: the rebuild goes on
+        self.decide_row(started=20, wanted=5)                          # wanted, not for ten minutes: the rebuild goes on
         self.assertFalse(svc._decision_waiting())
-        self.assertFalse(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
-        self.assertIn("rebuild is in progress (0 of 157,752 posts regrouped)", jobs.held_by_mark_ix(self.cur))
-        self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
-        self.assertTrue(svc._decision_waiting())                       # past the hold: its turn
         self.assertIsNone(jobs.held_by_mark_ix(self.cur))
+        self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
+        self.assertTrue(svc._decision_waiting())                       # its turn
+        self.assertTrue(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
         with self.assertLogs(jobs.log, "WARNING") as logs:
             self.assertEqual(self.runner().tick(), "decide")
         self.assertIn("goes ahead on the stories as stored", "\n".join(logs.output))
@@ -622,7 +618,7 @@ class TheLimitAndTheStages(_Api):
         before = self.cur.fetchone()[0]
         clock = iter(range(0, 10_000, 50))                     # each look at the clock: 50 s later
         with mock.patch.object(jobs.time, "monotonic", lambda: next(clock)), self.assertLogs(jobs.log, "WARNING") as logs:
-            self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
+            self.assertIsNone(jobs.Jobs(db_url(), limit=120, catch_up=120).decide())
         self.assertIn("stopped before", "\n".join(logs.output))
         self.cur.execute("SELECT count(*) FROM mx_runs")
         self.assertEqual(self.cur.fetchone()[0], before)       # its one transaction rolled back: no mx_runs row
@@ -669,6 +665,44 @@ class TheLimitAndTheStages(_Api):
                 self.assertLogs(jobs.log, "WARNING"):
             self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
 
+    def test_a_full_run_and_the_run_after_a_stop_have_the_catch_up_limit(self):
+        """0215: after the v10.20 deploy the server's decision runs were full (decide's code changed), read their whole
+        window (92-93 s of 121-126) and stopped at the 120 s limit, rolling back the state the next run would start
+        from: the same full run again, for ever. A full run, and the run after one that stopped, now have
+        CATCH_UP_LIMIT; then the limit is LIMIT again."""
+        clock, kinds = [0.0], []
+
+        def run(cur, *, stage, on_kind=None, **kw):
+            on_kind(kinds.pop(0))
+            for name, secs in (("load", 1), ("questions and decisions", 93), ("write", 1), ("connections", 10),
+                               ("graph", 16), ("back", 10), ("news", 5)):
+                stage(name)
+                clock[0] += secs
+            return {"run": "x", "stories": 0}
+        with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
+                mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "INFO") as logs:
+            j = jobs.Jobs(db_url(), limit=120, catch_up=600)
+            kinds[:] = ["full", "incremental", "incremental", "incremental"]
+            self.assertEqual(j.decide(), {"run": "x", "stories": 0})                 # full: 136 s of its 600
+            last = jobs.state(self.cur)["decide"]["last"]
+            self.assertEqual((last["ok"], last["limit"]), (True, 600))
+            self.assertIsNone(j.decide())                                             # incremental: 120 s again
+            last = jobs.state(self.cur)["decide"]["last"]
+            self.assertEqual((last["ok"], last["limit"], last["stopped_before"]), (False, 120, "back"))   # as the server
+            self.assertEqual(j.decide(), {"run": "x", "stories": 0})                 # the run after: caught up
+            self.assertEqual(jobs.state(self.cur)["decide"]["last"]["limit"], 600)
+            self.assertIsNone(j.decide())                                             # then LIMIT once more
+        text = "\n".join(logs.output)
+        self.assertIn("a full run, 600 s at most", text)
+        self.assertIn("the last one stopped over its limit; this one has 600 s", text)
+
+    def test_the_limit_for_a_run(self):
+        self.assertEqual(jobs.limit_for(None, {}), jobs.LIMIT)
+        self.assertEqual(jobs.limit_for("incremental", {"ok": True}), jobs.LIMIT)
+        self.assertEqual(jobs.limit_for("full", {}), jobs.CATCH_UP_LIMIT)
+        self.assertEqual(jobs.limit_for(None, {"ok": False, "stopped_before": "back"}), jobs.CATCH_UP_LIMIT)
+        self.assertEqual(jobs.limit_for("full", {}, limit=900, catch_up=600), 900)   # never below LIMIT
+
     def test_failures_count_in_a_row_and_a_good_run_clears_them(self):
         j = jobs.Jobs(db_url())
         for _ in range(3):
@@ -696,7 +730,7 @@ class TheLimitAndTheStages(_Api):
             return {"run": "x", "stories": 0}
         with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
                 mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "WARNING") as logs:
-            j = jobs.Jobs(db_url(), limit=120)
+            j = jobs.Jobs(db_url(), limit=120, catch_up=120)   # 0215: past the catch-up limit too
             self.assertIsNone(j.decide())
             first = jobs.state(self.cur)["decide"]["last"]
             self.assertEqual((first["over_in"], first.get("skip_next")), ("graph", None))
@@ -722,7 +756,7 @@ class TheLimitAndTheStages(_Api):
                 clock[0] += secs
         with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
                 mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "WARNING"):
-            j = jobs.Jobs(db_url(), limit=120)
+            j = jobs.Jobs(db_url(), limit=120, catch_up=120)
             for _ in range(3):
                 self.assertIsNone(j.decide())
         last = jobs.state(self.cur)["decide"]["last"]

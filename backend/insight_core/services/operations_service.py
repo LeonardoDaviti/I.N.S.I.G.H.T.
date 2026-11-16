@@ -1025,7 +1025,7 @@ class OperationsService:
             last_run = cur.fetchone()[0]
             stale_workers = [w["worker"] for w in markx_news.workers_view(markx_api.contacts(cur), now) if w["stale"]]
             ix = jobs.mark_ix(cur)                                              # 0209
-            held = jobs.decision_hold(ix, jobs.state(cur)["decide"], now)[0]
+            held = jobs.decision_hold(ix)[0]
         checks["markx"] = {"jobs": {job: {k: v.get(k) for k in ("failures", "failing", "retry_at", "finished_at")}
                                     | {"ok": (v.get("last") or {}).get("ok")} for job, v in view.items()},
                            "last_decision_run_at": iso(last_run), "decision_held": held,
