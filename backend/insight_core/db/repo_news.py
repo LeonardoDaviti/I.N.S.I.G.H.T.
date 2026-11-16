@@ -15,7 +15,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item, voiced
 from insight_core.db.repo_stories import KEY_CHARS
-from insight_core.utils.addresses import paper_id
+from insight_core.utils.addresses import PAPER_SHAPE, paper_id
 from insight_core.utils.story_rules import page_key
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory, Surge
@@ -502,8 +502,11 @@ class NewsRepository:
         wanted = {page_key(url) for url in urls if paper_id(url)}
         if not wanted:
             return list(urls)
+        # v10.22: only the links a paper's id can be in (PAPER_SHAPE, a superset of addresses.paper_id's); every link of
+        # every post holding the key was read (92k rows a story batch on the server, 1.8 s) for the few that are papers
         cur.execute("SELECT DISTINCT pl.target_url FROM story_keys k JOIN post_links pl ON pl.post_id = k.post_id "
-                    "WHERE k.key = ANY(%s) AND NOT pl.boilerplate", (sorted(key[:KEY_CHARS] for key in wanted),))
+                    "WHERE k.key = ANY(%s) AND NOT pl.boilerplate AND pl.target_url ~ %s",
+                    (sorted(key[:KEY_CHARS] for key in wanted), PAPER_SHAPE))
         found = {url for (url,) in cur.fetchall() if paper_id(url) and page_key(url) in wanted}
         return sorted(set(urls) | found)
 

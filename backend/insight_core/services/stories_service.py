@@ -708,15 +708,21 @@ class StoriesService:
         facts = sorted((i, sources.kind[i], own_sites[i], accounts.get(i, ""), selves[i], sources.suggestable(i))
                        for i in sources.site)
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
+        tags = DiscoverRepository.tags(cur)
         kept = DiscoverRepository.kept(cur)
-        if kept and kept["stamp"] == stamp:
+        if kept and kept["stamp"] == stamp and kept.get("tags") == tags:
             return kept
+        # v10.22: the posts whose round-up tag moved (a decision run's) count again only the keys they link
+        retagged = DiscoverRepository.retagged(cur, kept, tags)
+        if urls is None and kept and kept["stamp"] == stamp and retagged is not None:
+            urls = []   # nothing else moved since the kept counts
         mirrors, scanned_to = DiscoverRepository.mirrors(cur, kept)
         off = sorted(sources.off)   # issue 0200: a source switched off or on moves every key it linked, not a run's
         if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept
-                and kept.get("off", []) == off):
+                and kept.get("off", []) == off and retagged is not None):
             platforms = _platforms(kept)
-            keys = DiscoverRepository.keys_of(cur, urls, platforms)
+            keys = (DiscoverRepository.keys_of(cur, urls, platforms)
+                    | DiscoverRepository.keys_linked_by(cur, retagged, platforms))
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, platforms=platforms, **ask)
             # An article's title changes only with the posts at it or linking it: those of the run's addresses.
             titled = {a[0]: a[2] for s in kept["found"] for a in s["articles"] if a[0] not in set(urls)}
@@ -733,10 +739,11 @@ class StoriesService:
                 logger.info("Discover: %d linked addresses not worked out yet, read as the story job left them", unknown)
             StoriesService._title_articles(cur, sources, found)
         found.sort(key=lambda s: s["key"])
-        kept = {"stamp": stamp, "base": base, "found": found, "mirrors": mirrors, "scanned_to": scanned_to,
+        kept = {"stamp": stamp, "base": base, "tags": tags, "found": found, "mirrors": mirrors, "scanned_to": scanned_to,
                 "platforms": {host: list(prefix) for host, prefix in sorted(platforms.items())}, "off": off}
         if keep:
             DiscoverRepository.keep(cur, kept)
+            DiscoverRepository.keep_tagged(cur, tags)
         return kept
 
     @staticmethod
