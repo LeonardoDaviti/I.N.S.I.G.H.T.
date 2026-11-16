@@ -233,3 +233,13 @@ blind: 39/39 the same thing. Pooled with round 4: **67/67 (Wilson 94.6-100%)** â
 0.9 (`third.same_min`, kind alias4). It fires on about 48% of the class (28/60, 39/80): about 910 of ~1,900 merge.
 Sonnet's apart on this class stays off (11/11, too few). The first pass's Sonnet cost is now about 47 $ + 18 $ =
 **~65 $**. Every call in rounds 1-5: about 4.3 $.
+
+## Sonnet routing removed (owner, 2026-11-16, v10.19.1)
+
+The owner decided the worker never uses Sonnet, only Haiku. `entity_bands.json` no longer routes `alias4` to Sonnet
+(`models` is empty), and `identity.model_for` refuses to name any model that is not a Haiku (logged; the task goes
+with the worker's own Haiku). Measured with Haiku, the two Sonnet classes failed the bar (alias-v2 on the weak `same`
+class: 12/15), so `third.reasons` is back to `["chain"]` (alias3, Haiku, 76/77) and the weak class's apart row is off:
+a Haiku answer on these classes never merges or keeps a pair apart. What this takes off the automatic side and leaves
+queued: the weak first `same` class, ~4,250 merges and ~840 aparts; the version-held class, ~910 merges. The first
+pass's Sonnet cost (~65 $) is not spent.

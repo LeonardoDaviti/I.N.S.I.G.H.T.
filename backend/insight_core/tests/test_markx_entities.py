@@ -823,11 +823,11 @@ class TheUnsureQueue(_Db):
         """v10.18: the weak class is asked as alias4, with the model the config gives it; a `same` whose second
         opinion is still to come, or disagrees, is never asked here."""
         I._BANDS["third"] = dict(I._BANDS["third"], reasons=["chain", "below_bar"], kinds={"below_bar": "alias4"})
-        I._BANDS["models"] = {"alias4": "sonnet"}
+        I._BANDS["models"] = {"alias4": "claude-haiku-4-5"}
         book, d = self._decision()
         d.reason, d.reasons = "below_bar", ("below_bar",)
         self.assertEqual((I.third(book, [d], {}), I.third_kind(d)), ([d], "alias4"))
-        self.assertEqual((I.model_for("alias4"), I.model_for("alias3")), ("sonnet", None))
+        self.assertEqual((I.model_for("alias4"), I.model_for("alias3")), ("claude-haiku-4-5", None))
         I._BANDS["third"]["apart"] = {"below_bar": {"relations": ["different", "part"], "min_conf": 0.7}}
         I.third(book, [d], {("a", "b"): [("c4", {"relation": "part", "confidence": 0.75})]})
         self.assertEqual((d.tier, d.reason), ("apart", "third"))          # the weak class's measured apart row
@@ -870,6 +870,30 @@ class TheUnsureQueue(_Db):
         ds = [I.Decision(("e0", "e4"), "auto", "haiku", 0.95)] + [held(n) for n in (5, 6)]
         I.third(book, ds, answers)
         self.assertEqual([d.tier for d in ds], ["auto", "auto", "queue"])
+
+    def test_only_haiku_is_ever_named_for_a_task(self):
+        """Owner 2026-11-16 (v10.19.1): the worker never uses Sonnet. model_for refuses any configured model that is
+        not a Haiku (the task goes with the worker's own Haiku), and the shipped config routes no kind elsewhere: the
+        classes only Sonnet passed the bar for (a weak first `same`, the version-held ones) stay queued."""
+        for other in ("sonnet", "claude-sonnet-4-5", "opus", "gpt-4o"):
+            I._BANDS["models"] = {"alias4": other}
+            self.assertIsNone(I.model_for("alias4"))
+        I._BANDS["models"] = {"alias4": "Claude-Haiku-4-5"}
+        self.assertEqual(I.model_for("alias4"), "Claude-Haiku-4-5")
+        I._BANDS.clear()
+        shipped = I.bands()
+        self.assertTrue(all(not isinstance(m, str) or I.haiku(m) for k, m in shipped["models"].items() if k != "about"))
+        self.assertEqual(shipped["third"]["reasons"], ["chain"])
+        self.assertEqual(shipped["third"]["apart"], {})
+        book, d = self._decision()
+        d.reason, d.reasons = "below_bar", ("below_bar",)
+        I.third(book, [d], {("a", "b"): [("c4", {"relation": "same", "confidence": 0.99})]})
+        self.assertEqual(d.tier, "queue")                                   # a Haiku `same` on the weak class: stays
+        for reason in ("version", "version_year", "version_one_side"):
+            book, d = self._decision()
+            d.reason, d.reasons = reason, (reason,)
+            self.assertEqual(I.third(book, [d], {("a", "b"): [("c4", {"relation": "same", "confidence": 0.99})]}), [])
+            self.assertEqual(d.tier, "queue")
 
     def test_the_question_shows_facts_accounts_and_four_posts(self):
         ps = [self.post(n % 5, T0 + n * H, title=f"Kestrel news {n}") for n in range(10)]

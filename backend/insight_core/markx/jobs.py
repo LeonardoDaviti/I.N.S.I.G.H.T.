@@ -19,6 +19,16 @@ at 101% CPU and every /api/* request timed out.
   - **The order of runs** (0121 Decided 3): no decision run while Mark IX's story job holds its lock or a rule
     change's rebuild is in progress or due (`mark_ix_busy`): it waits, then runs once. Nor while the candidate finder
     runs; and a run whose own candidate finder failed doesn't run on candidates that aren't there: both wait.
+    0209: a rebuild holds it at most REBUILD_HOLD after the last decision run started (`decision_hold`, the one
+    decision: the runner, the story job's stepping aside and /api/status's health ask it); past that the run goes
+    ahead on the stories as stored (each rebuild batch commits whole, so they are always one consistent set; the
+    batches after it change some and the next run decides those again), logged and recorded in its `last`. Before,
+    a rebuild held every decision run until its end, and the story job stepped aside for the decision run it was
+    holding (`decision_waits` now asks the hold): on 2026-11-14 neither ran again for 45 hours.
+  - **A rule change's rebuild is driven here too** (0209, the job "stories"): while one is due or in progress, the
+    story job's next slice (stories_service.recompute: STEP_BUDGET_S, then it rests) STORIES_GAP after the last
+    ended, in a process of its own, Mark X on or off. Before, only a fetch that saved posts ran it (hourly: ~3
+    minutes of an hour, about two days for the server's 158k posts).
   - **A decision run has a time limit and stage logs** (0112 Decided 12): "Mark X decision run started", each stage
     with its duration (candidates, load, questions and decisions, write, connections, graph, back, headlines, news,
     entities, surges, perspectives_plan), the finish. Past LIMIT seconds it stops before the next stage and logs which;
@@ -27,6 +37,8 @@ at 101% CPU and every /api/* request timed out.
   - **A run that dies is a failed run** (v10.13.9): killed at HARD_LIMIT or ended with a non-zero exit code (an OOM
     kill, a segfault), it is recorded with the stage it was in and wanted again. A stage shown for longer than
     HARD_LIMIT + STALE_MARGIN is a dead run's (`stale`): the runner clears it, so nothing waits on it until a restart.
+    0209: so is a run that started and never recorded an end (started_at after finished_at, no stage: a restart
+    cleared its stage before v10.19.1's `recover` recorded it) older than that: recorded as ended, wanted again.
   - **The entities stage has a budget of its own** (0128): ENTITY_BUDGET seconds that LIMIT doesn't count, so its
     nightly full pass (63 s on the server) can't push the other stages over the limit. Past its budget the stage
     stops after a chunk of entities, the run goes on, and the next run resumes the pass (entity_stage).
@@ -66,6 +78,9 @@ at 101% CPU and every /api/* request timed out.
   - **Official channels** (0196, the job "official"): markx/official.run, every OFFICIAL_EVERY seconds while
     INSIGHT_OFFICIAL is not off, in a process of its own (its reads of the web, its judgements' questions, its adds);
     bounded by its own budgets (events, test reads, web searches a pass) and resumable (its state in Postgres).
+  - **No job waits forever behind the others** (0209): `due` takes the jobs in order (plan, decide, the rebuild's
+    slice, the kept views, candidates, official), but a candidates run or an official pass due for STARVE_AFTER
+    goes before the kept views (which can be due at every look: the unread counts every 30 s).
   - **A decision run over LIMIT twice in a row in the same stage skips it once** (0188): when that stage can be
     deferred (SKIPPABLE: a stage after the run's own decisions), the next run defers it (logged, in the run's
     `deferred` counts and the job's `skipped_stages`) instead of repeating the identical run; the run after it
@@ -99,7 +114,11 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan", "labels", "news", "tracks", "unread", "main_source", "discover", "official")
+JOBS = ("candidates", "decide", "plan", "labels", "news", "tracks", "unread", "main_source", "discover", "official",
+        "stories")
+REBUILD_HOLD = 3600.0            # 0209: a rule change's rebuild holds a decision run at most this long after the last start
+STORIES_GAP = 120.0              # 0209: a rebuild's next slice starts this long after the last ended (it rests 90 s after a yield)
+STARVE_AFTER = 900.0             # 0209: candidates or official due this long go before the kept views
 OFFICIAL_EVERY = 1800.0          # 0196: the official channels' pass at most every 30 minutes
 REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
 UNREAD_GAP = 30.0                # 0206: the unread counts whose inputs changed are counted again at most this often
@@ -175,7 +194,7 @@ def reader_rows(cur: Any) -> int:
     """0206: the rows the reader's kept views (KeptView.markx False) hold in the jobs process's tables: their mx_jobs
     rows and their pages' mx_kept_pages rows. The kept views' machinery is shared by Mark X and the reader, so these
     live under mx_ although they are not Mark X's (the real-data check's `markx.ix_unchanged` tells them apart)."""
-    jobs = [v.job for v in KEPT_VIEWS if not v.markx]
+    jobs = [v.job for v in KEPT_VIEWS if not v.markx] + ["stories"]   # 0209: Mark IX's rebuild slices too
     pages = [p for v in KEPT_VIEWS if not v.markx for p in v.pages]
     cur.execute("""SELECT (SELECT count(*) FROM mx_jobs WHERE job = ANY(%s))
                           + (SELECT count(*) FROM mx_kept_pages WHERE page = ANY(%s))""", (jobs, pages))
@@ -183,8 +202,9 @@ def reader_rows(cur: Any) -> int:
 
 
 def readers(job: Optional[str]) -> bool:
-    """0206: whether `job` is a reader's kept view (KeptView.markx False), not Mark X's."""
-    return any(v.job == job and not v.markx for v in KEPT_VIEWS)
+    """0206: whether `job` is a reader's kept view (KeptView.markx False), not Mark X's; 0209: or Mark IX's rebuild
+    slice ("stories")."""
+    return job == "stories" or any(v.job == job and not v.markx for v in KEPT_VIEWS)
 
 
 class TooLong(Exception):
@@ -269,10 +289,10 @@ def failing(s: Dict[str, Any]) -> bool:
 
 # ---- the runner's side: the jobs (in insight-ingestion) ---------------------------------------------
 
-def mark_ix_busy(cur: Any) -> Optional[str]:
-    """Why a decision run must wait for Mark IX now, or None (0121 Decided 3): its story job holds its lock (a batch
-    regrouping posts), or a rule change's rebuild is in progress (its progress in the story job's setting) or due (the
-    stored rows are of other rules than this code's). A run then would decide over stories about to change."""
+def mark_ix(cur: Any) -> Dict[str, Any]:
+    """Mark IX's story job as a decision run sees it (0121 Decided 3, 0209): {locked: its lock is held now (a batch
+    regrouping posts), rebuild: "in progress" (its progress in the story job's setting) | "due" (the stored rows are
+    of other rules than this code's) | None, and a rebuild's done, total (posts regrouped, of), phase, started_at}."""
     from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY, rules_stamp
     cur.execute("""SELECT (SELECT value FROM system_settings WHERE key = %(key)s),
                           EXISTS (SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
@@ -281,14 +301,74 @@ def mark_ix_busy(cur: Any) -> Optional[str]:
                                      AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtext(%(lock)s)::bigint)""",
                 {"key": SETTINGS_KEY, "lock": LOCK_KEY})
     value, locked = cur.fetchone()
-    if locked:
-        return "Mark IX's story job is running"
+    out: Dict[str, Any] = {"locked": bool(locked), "rebuild": None}
     if isinstance(value, dict):
-        if value.get("rebuild"):
-            return "a rule change's rebuild is in progress"
-        if value.get("rules") and value["rules"] != rules_stamp():
-            return "a rule change's rebuild is due"
-    return None
+        rebuild = value.get("rebuild")
+        if rebuild:
+            rebuild = rebuild if isinstance(rebuild, dict) else {}
+            out.update(rebuild="in progress", done=rebuild.get("done"), total=rebuild.get("total"),
+                       phase=rebuild.get("phase"), started_at=rebuild.get("started_at"))
+        elif value.get("rules") and value["rules"] != rules_stamp():
+            out["rebuild"] = "due"
+    return out
+
+
+def mark_ix_busy(cur: Any) -> Optional[str]:
+    """Why work that reads Mark IX's stories waits for it now, or None (0121 Decided 3): its story job holds its lock,
+    or a rule change's rebuild is in progress or due. The source stats run waits so; a decision run asks
+    `decision_hold` (0209: a rebuild holds it only so long)."""
+    ix = mark_ix(cur)
+    if ix["locked"]:
+        return "Mark IX's story job is running"
+    return f"a rule change's rebuild is {ix['rebuild']}" if ix["rebuild"] else None
+
+
+def decision_hold(ix: Dict[str, Any], decide: Dict[str, Any], now: datetime, *,
+                  hold: float = REBUILD_HOLD) -> Tuple[Optional[str], Optional[str]]:
+    """0209, the one decision on whether Mark IX holds a decision run now: (held, ahead). `held`: why it waits (the
+    story job's lock, held for a batch's seconds; a rule change's rebuild, due or in progress, for at most `hold`
+    seconds after the last decision run started), else None. `ahead`: when a rebuild no longer holds it, why it goes
+    ahead on the stories as stored (logged, kept in the run's record), else None. `ix`: mark_ix's; `decide`: the
+    decide job's state. Why not wait for the rebuild's end: it is hours of the story job's work on the server's posts
+    (days when only fetches drove it), and every rebuild batch commits whole, so the stories as stored are always one
+    consistent set; the batches after a run change some, and the next run decides those again."""
+    if ix.get("locked"):
+        return "Mark IX's story job is running", None
+    if not ix.get("rebuild"):
+        return None, None
+    what = f"a rule change's rebuild is {ix['rebuild']}"
+    if ix.get("total"):
+        what += f" ({int(ix.get('done') or 0):,} of {int(ix['total']):,} posts regrouped)"
+    started = decide.get("started_at")
+    if started is not None and (now - started).total_seconds() < hold:
+        return f"{what}; it holds a decision run until {hold / 60:.0f} min after the last one started", None
+    return None, (f"{what}: the decision run goes ahead on the stories as stored (a rebuild holds it "
+                  f"{hold / 60:.0f} min at most)")
+
+
+def held_by_mark_ix(cur: Any, now: Optional[datetime] = None) -> Optional[str]:
+    """0209: why Mark IX holds a decision run now (`decision_hold`), or None; /api/status's health names it."""
+    if now is None:
+        cur.execute("SELECT now()")
+        now = cur.fetchone()[0]
+    return decision_hold(mark_ix(cur), state(cur)["decide"], now)[0]
+
+
+def decision_waits(cur: Any, now: datetime, wait: float) -> bool:
+    """v10.13.8, 0209: whether Mark IX's story job steps aside now for a decision run: Mark X is on, the run is wanted,
+    not running, not waiting out a failed run's backoff, has waited `wait` seconds or more (since it was wanted or last
+    started), and Mark IX doesn't hold it (`decision_hold`, the story job's own lock aside). Stepping aside for a run
+    the rebuild holds only stops the rebuild it waits for: on 2026-11-14 both waited on each other for 45 hours."""
+    if not enabled():
+        return False
+    d = state(cur)["decide"]
+    wanted, started = d.get("wanted_at"), d.get("started_at")
+    if wanted is None or d.get("stage") is not None or held(d, now):
+        return False
+    since = max(wanted, started) if started is not None else wanted
+    if (now - since).total_seconds() < wait:
+        return False
+    return decision_hold(dict(mark_ix(cur), locked=False), d, now)[0] is None
 
 
 def decision_running(cur: Any) -> bool:
@@ -618,13 +698,46 @@ class Jobs:
         from insight_core.services.discover_reads import keep
         return self._keep("discover", lambda _cur: keep(self.db_url), snapshot=False)
 
+    def stories(self) -> Optional[Dict[str, Any]]:
+        """0209: the next slice of a rule change's rebuild: Mark IX's story job (stories_service.recompute_safely: its
+        bounded steps for STEP_BUDGET_S, then it yields and rests, or steps aside for a waiting decision run), in this
+        process. Its summary, the rebuild's progress and this process's peak memory are recorded with it."""
+        import resource
+
+        from insight_core.services.stories_service import StoriesService
+        t0 = time.monotonic()
+        self._begin("stories", "rebuilding")
+        try:
+            out = StoriesService(self.db_url, clock=self.clock).recompute_safely() or {}
+            with self._tx() as cur:
+                ix = mark_ix(cur)
+        except Exception as exc:
+            log.exception("Mark IX's rebuild: the slice failed; tried again after its backoff")
+            self._finish("stories", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)})
+            return None
+        failed = not out   # recompute_safely logged the failure
+        last = {"ok": not failed, "seconds": round(time.monotonic() - t0, 1),
+                "peak_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
+                **{k: out[k] for k in ("skipped", "batches", "yielded", "posts", "changed") if k in out},
+                "rebuild": {k: ix.get(k) for k in ("rebuild", "phase", "done", "total")}}
+        if failed:
+            last["error"] = "the story job failed (its log says why)"
+        log.info("Mark IX's rebuild: a slice in %.1f s: %s", last["seconds"], last)
+        self._finish("stories", last)
+        return out
+
     def decide(self) -> Optional[Dict[str, Any]]:
         """The candidate finder, then one decision run in its own snapshot, LIMIT seconds at most (both count), each
         stage logged with its duration; a failed or stopped run is wanted again."""
         from insight_core.markx import decide
-        previous = self.last("decide").get("last") or {}
+        with self._tx() as cur:
+            before = state(cur)["decide"]
+            ahead = decision_hold(dict(mark_ix(cur), locked=False), before, self.clock())[1]   # 0209
+        previous = before.get("last") or {}
         skip = [previous["skip_next"]] if previous.get("skip_next") in SKIPPABLE else []
         log.info("Mark X decision run started")
+        if ahead:
+            log.warning("Mark X decision run: %s", ahead)
         if skip:
             log.warning("Mark X decision run: the %s stage is skipped this run (over the limit in it twice in a row)",
                         skip[0])
@@ -684,6 +797,7 @@ class Jobs:
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
                                 "skipped": out.get("skipped"), "stages": stages,
                                 **({"skipped_stages": skip} if skip else {}),
+                                **({"mark_ix": ahead} if ahead else {}),
                                 "summary": {k: out.get(k) for k in ("stories", "answered", "changes", "posts")}},
                      again="skipped" in out)
         return out
@@ -692,18 +806,29 @@ class Jobs:
 def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SETTLE, every: float = EVERY,
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
         kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP, markx: bool = True,
-        official_every: Optional[float] = None) -> Optional[str]:
+        official_every: Optional[float] = None, rebuild: bool = False,
+        starve_after: float = STARVE_AFTER) -> Optional[str]:
     """The job to run now, or None: a decision run SETTLE seconds after work arrived or EVERY seconds after the last
-    one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX is `busy` (why, from
-    `mark_ix_busy`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when vectors
-    arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that long
-    ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows.
+    one started (or never ran), never within RUN_GAP seconds of the last start, never while Mark IX holds it (`busy`:
+    why, from `decision_hold`) nor while the candidate finder runs (0121 Decided 3); else the candidate finder when
+    vectors arrived. v10.13.4: with `plan_every`, the background planners ("plan") first when they last started that
+    long ago (or never), so a decision run that keeps failing never stops the planning; a decision run still follows.
+    0209: then, while a rule change's rebuild is due or in progress (`rebuild`), its next slice ("stories") at most
+    STORIES_GAP after the last one ended.
     0182, 0198: then a kept view (`KEPT_VIEWS`) not kept for its inputs (`kept_missing`) that its policy lets start
     (`_kept_may`).
     0188: a job whose last runs failed first waits out its backoff (`held`: GAP x 2^failures after the failed run's
     end, at most MAX_BACKOFF), whatever else makes it due.
-    0206: `markx` False (Mark X off): only the kept views that are not Mark X's (KeptView.markx False)."""
+    0206: `markx` False (Mark X off): only the rebuild's slice and the kept views that are not Mark X's
+    (KeptView.markx False).
+    0209: the candidate finder or the official channels' pass due for `starve_after` seconds goes before the kept
+    views, which can be due at every look: before, they ran only when nothing else was due."""
+    s = states.get("stories") or {}
+    slice_due = rebuild and s.get("stage") is None and not held(s, now, gap) and (
+        s.get("finished_at") is None or (now - s["finished_at"]).total_seconds() >= STORIES_GAP)
     if not markx:
+        if slice_due:
+            return "stories"
         return next((v.job for v in KEPT_VIEWS if not v.markx and v.job in kept_missing
                      and _kept_may(v, states.get(v.job) or {}, now, gap)), None)
     p = states.get("plan") or {}
@@ -718,15 +843,28 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
             return "decide"
         if since is None or since >= every:
             return "decide"
-    if states["candidates"]["stage"] is None:
+    if slice_due:
+        return "stories"
+    c = states["candidates"]
+    candidates = c["wanted_at"] is not None and not held(c, now, gap)
+    o = states.get("official") or {}
+    official_at = None   # since when the official pass is due
+    if official_every is not None and o.get("stage") is None and not held(o, now, gap):
+        if o.get("started_at") is None:
+            official_at = datetime.min.replace(tzinfo=timezone.utc)
+        elif (now - o["started_at"]).total_seconds() >= official_every:
+            official_at = o["started_at"] + timedelta(seconds=official_every)
+    if candidates and (now - c["wanted_at"]).total_seconds() >= starve_after:
+        return "candidates"
+    if official_at is not None and (now - official_at).total_seconds() >= starve_after:
+        return "official"
+    if c["stage"] is None:
         for v in KEPT_VIEWS:
             if v.job in kept_missing and _kept_may(v, states.get(v.job) or {}, now, gap):
                 return v.job
-    if states["candidates"]["wanted_at"] is not None and not held(states["candidates"], now, gap):
+    if candidates:
         return "candidates"
-    o = states.get("official") or {}
-    if official_every is not None and o.get("stage") is None and not held(o, now, gap) and (
-            o.get("started_at") is None or (now - o["started_at"]).total_seconds() >= official_every):
+    if official_at is not None:
         return "official"     # 0196: after everything else that is due
     return None
 
@@ -756,10 +894,19 @@ def kept_due(states: Dict[str, Dict[str, Any]], missing: Iterable[str], now: dat
 def stale(states: Dict[str, Dict[str, Any]], now: datetime, *, after: float = HARD_LIMIT + STALE_MARGIN) -> List[str]:
     """v10.13.9: the jobs shown running whose stage began more than `after` seconds ago. No run lives that long (its
     process is killed at HARD_LIMIT), so such a stage is a run that died without a word: due() would wait on it
-    forever (the candidate finder's stage holds back every decision run and plan)."""
+    forever (the candidate finder's stage holds back every decision run and plan).
+    0209: and the runs that started more than `after` seconds ago and never recorded an end, with no stage (`unended`:
+    a restart cleared the stage before `recover` recorded the end; the server's decision run of 2026-11-14 09:56)."""
     return [job for job, s in states.items()
-            if s.get("stage") is not None and s.get("stage_at") is not None
-            and (now - s["stage_at"]).total_seconds() > after]
+            if (s.get("stage") is not None and s.get("stage_at") is not None
+                and (now - s["stage_at"]).total_seconds() > after)
+            or (unended(s) and (now - s["started_at"]).total_seconds() > after)]
+
+
+def unended(s: Dict[str, Any]) -> bool:
+    """0209: a run that started and recorded no end, shown as not running (no stage): started_at after finished_at."""
+    started, finished = s.get("started_at"), s.get("finished_at")
+    return s.get("stage") is None and started is not None and (finished is None or finished < started)
 
 
 def _job_main(db_url: str, *names: str) -> None:
@@ -791,7 +938,7 @@ class Runner:
         with database.transaction(self.db_url) as cur:
             cur.execute("SELECT now()")
             self._db_now = cur.fetchone()[0]
-            self._busy = mark_ix_busy(cur) if markx else None
+            self._ix = mark_ix(cur)   # 0209: the rebuild's slices run with Mark X off too
             self._kept_missing = self._missing(cur, self._db_now, markx)
             return state(cur)
 
@@ -812,11 +959,17 @@ class Runner:
         return out
 
     def recover(self) -> None:
-        """At the runner's start: a run a restart ended mid-way shows no stage, and its job is wanted again."""
+        """At the runner's start: a run a restart ended mid-way shows no stage, its end is recorded (0209: before, only
+        its stage was cleared, so it showed started after its last end, for ever) and its job is wanted again. Not a
+        failure: a restart (a deploy) ended it, not its work."""
         from insight_core.db import database
         try:
             with database.transaction(self.db_url) as cur:
-                cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, wanted_at = COALESCE(wanted_at, now())
+                cur.execute("""UPDATE mx_jobs SET last = COALESCE(last, '{}'::jsonb)
+                                                      || jsonb_build_object('ok', false, 'stage', stage,
+                                                                            'error', 'ended by a restart'),
+                                                  stage = NULL, stage_at = NULL, finished_at = now(),
+                                                  wanted_at = COALESCE(wanted_at, now())
                                 WHERE stage IS NOT NULL""")
                 if cur.rowcount:
                     log.info("Mark X jobs: %d runs a restart ended are wanted again", cur.rowcount)
@@ -824,9 +977,25 @@ class Runner:
             log.exception("Mark X jobs: could not recover the runs a restart ended")
 
     def _reap(self, job: str, s: Dict[str, Any]) -> None:
-        """A stale stage (`stale`): the run is recorded as dead, wanted again, its stage cleared (only if the row still
-        shows that stage: a run that moved on meanwhile is alive). `s` is updated as due() should see it."""
+        """A stale run (`stale`): recorded as dead, wanted again, its stage cleared (only if the row still shows that
+        stage, or that start with no end: a run that moved on meanwhile is alive). `s` is updated as due() should see
+        it. A stale stage is a failed run; a run with no stage and no end (`unended`, a restart cleared its stage) is
+        recorded as ended, not as a failure (its last record kept, with the error)."""
         from insight_core.db import database
+        if s.get("stage") is None:
+            error = f"started at {s['started_at'].isoformat()} and never finished (a restart or a crash ended it)"
+            with database.transaction(self.db_url) as cur:
+                cur.execute("""UPDATE mx_jobs SET finished_at = now(), wanted_at = COALESCE(wanted_at, now()),
+                                      last = COALESCE(last, '{}'::jsonb) || %s::jsonb
+                                WHERE job = %s AND stage IS NULL AND started_at = %s
+                                  AND (finished_at IS NULL OR finished_at < started_at)
+                            RETURNING wanted_at, finished_at, failures""",
+                            (_json({"ok": False, "error": error}), job, s["started_at"]))
+                row = cur.fetchone()
+            if row:
+                log.error("Mark X jobs: the %s run %s; recorded as ended, wanted again", job, error)
+                s.update(wanted_at=row[0], finished_at=row[1], failures=row[2])
+            return
         error = f"no word from the run for over {self.hard_limit + STALE_MARGIN:.0f} s"
         with database.transaction(self.db_url) as cur:
             cur.execute("""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %s::jsonb,
@@ -847,15 +1016,20 @@ class Runner:
             states = self._states(markx)
             for dead in stale(states, self._db_now, after=self.hard_limit + STALE_MARGIN):
                 self._reap(dead, states[dead])
-            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=self._busy,
+            held_by, ahead = decision_hold(self._ix, states["decide"], self._db_now) if markx else (None, None)
+            job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=held_by,
                       plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap, markx=markx,
-                      official_every=self.official_every())
-            if self._busy != getattr(self, "_told", None):
-                if self._busy:
-                    log.info("Mark X jobs: a decision run waits for Mark IX (%s)", self._busy)
-                self._told = self._busy
+                      official_every=self.official_every(),
+                      rebuild=bool(self._ix.get("rebuild")) and not self._ix.get("locked"))
+            told = held_by.split(" (")[0] if held_by else None
+            if told != getattr(self, "_told", None):
+                if held_by:
+                    log.info("Mark X jobs: a decision run waits for Mark IX (%s)", held_by)
+                self._told = told
             if job is None:
                 return None
+            if job == "decide" and ahead:
+                log.warning("Mark X jobs: %s", ahead)
             if job in KEPT:     # 0198: every kept view due now, in one process
                 self._run(*kept_due(states, self._kept_missing, self._db_now, self.gap, markx=markx))
             else:
@@ -907,13 +1081,15 @@ class Runner:
             # v10.13.9: a crash (an OOM kill's -9, a segfault) is a killed run: recorded, wanted again, its stage
             # cleared. Before, it only logged and the stage stayed set, so due() waited for it until a restart.
             log.error("Mark X jobs: the %s run ended with exit code %s", what, process.exitcode)
-            for job in names:
-                self._dead(job, f"exited with code {process.exitcode}")
+            for job in names:   # 0209: one job alone is recorded even when it never began (no stage to find)
+                self._dead(job, f"exited with code {process.exitcode}", unended=len(names) == 1)
 
-    def _dead(self, job: str, error: str, *, always: bool = False) -> None:
+    def _dead(self, job: str, error: str, *, always: bool = False, unended: bool = False) -> None:
         """A run whose process ended without finishing: {"ok": False, error, the stage it was in}, wanted again, no
         stage; so is the candidate finder a decision run was running inside it. Ended in the entities stage, the full
-        pass waits for the next night. Without `always`, a run that recorded its own end (no stage left) stays as is."""
+        pass waits for the next night. Without `always`, a run that recorded its own end (no stage left) stays as is;
+        0209: with `unended`, a run that never recorded its start or its end is recorded too (a job whose first write
+        failed: before, nothing was recorded and it was due again at the next look, for ever)."""
         try:
             from insight_core.db import database
             with database.transaction(self.db_url) as cur:
@@ -921,6 +1097,10 @@ class Runner:
                             ([job, "candidates"] if job == "decide" else [job],))
                 stages = dict(cur.fetchall())
                 stage = stages.get(job)
+                if unended and stage is None:
+                    cur.execute("SELECT started_at, finished_at FROM mx_jobs WHERE job = %s", (job,))
+                    row = cur.fetchone()
+                    always = row is None or row[1] is None or (row[0] is not None and row[1] < row[0])
                 if job == "decide" and stage == "entities":
                     from insight_core.markx import entity_stage
                     entity_stage.defer_full(cur, f"a decision run ended in the entities stage ({error})")

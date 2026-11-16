@@ -1024,16 +1024,31 @@ class OperationsService:
             cur.execute("SELECT max(finished_at) FROM mx_runs")
             last_run = cur.fetchone()[0]
             stale_workers = [w["worker"] for w in markx_news.workers_view(markx_api.contacts(cur), now) if w["stale"]]
+            ix = jobs.mark_ix(cur)                                              # 0209
+            held = jobs.decision_hold(ix, jobs.state(cur)["decide"], now)[0]
         checks["markx"] = {"jobs": {job: {k: v.get(k) for k in ("failures", "failing", "retry_at", "finished_at")}
                                     | {"ok": (v.get("last") or {}).get("ok")} for job, v in view.items()},
-                           "last_decision_run_at": iso(last_run)}
+                           "last_decision_run_at": iso(last_run), "decision_held": held,
+                           "mark_ix_rebuild": {k: ix.get(k) for k in ("rebuild", "phase", "done", "total", "started_at")}
+                           if ix.get("rebuild") else None}
         for job, v in view.items():
             if v["failing"]:
                 error = (v.get("last") or {}).get("error") or "no error recorded"
                 reasons.append(f"Mark X's {job} job failed {v['failures']} times in a row ({str(error)[:120]})")
         if last_run is None or (now - last_run).total_seconds() > 2 * jobs.EVERY:
-            reasons.append("no Mark X decision run has finished" if last_run is None
-                           else f"the last Mark X decision run finished {_ago(now - last_run)} ago")
+            # 0209: and why a decision run doesn't start, when Mark IX holds it
+            reasons.append(("no Mark X decision run has finished" if last_run is None
+                            else f"the last Mark X decision run finished {_ago(now - last_run)} ago")
+                           + (f"; held: {held}" if held else ""))
+        if ix.get("rebuild") == "in progress" and ix.get("started_at"):
+            try:
+                begun = datetime.fromisoformat(ix["started_at"])
+            except (TypeError, ValueError):
+                begun = None
+            if begun is not None and (now - begun).total_seconds() > 2 * jobs.EVERY:
+                warnings.append(f"Mark IX's rule-change rebuild began {_ago(now - begun)} ago: "
+                                f"{int(ix.get('done') or 0):,} of {int(ix.get('total') or 0):,} posts regrouped "
+                                f"({ix.get('phase')} phase)")
         if stale_workers:
             warnings.append(f"Mark X workers silent for over {markx_news.WORKER_STALE_DAYS} days: "
                             + ", ".join(stale_workers))
