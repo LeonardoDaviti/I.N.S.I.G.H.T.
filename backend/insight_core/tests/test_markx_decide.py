@@ -235,6 +235,24 @@ class Rules(unittest.TestCase):
         self.assertIn("E", out.about)
         self.assertEqual([(c["relation"], c["a"], c["b"], c["call"]) for c in out.connections], [("development", "A", "E", "c1")])
 
+    def test_a_merge_answered_different_is_a_refusal_with_what_it_was_shown(self):
+        """0217: a merge answered "different" (at tau_refuse) keeps the two stories apart: a refusal row, by the stored
+        stories, with the members its question showed; a stale one (its members moved) and one under the bar are not."""
+        m = D.Question("merge:A:E", "merge", story="A", other="E", side=("a", "b"), side_b=("e",))
+        out = D.decide(self.posts, self.stories, [(m, v("different", 0.9, call="c1"))])
+        self.assertIn("E", out.about)
+        rows = D.refusals(out, {"A": "S2", "E": "S1"}, [])
+        self.assertEqual([(r["a"], r["b"], r["p"], r["call"], r["shown"]) for r in rows],
+                         [("S1", "S2", 0.9, "c1", {"a": ["e"], "b": ["a", "b"]})])   # a < b, shown swapped with it
+        apart = [{"a": "S1", "b": "S2", "p": 0.95, "call": "c2", "tid": "connect:x", "shown": {"a": ["e"], "b": ["a"]}}]
+        self.assertEqual([r["call"] for r in D.refusals(out, {"A": "S2", "E": "S1"}, apart)], ["c2"])   # the higher p
+        stale = [{"a": "S1", "b": "S2", "p": 0.99, "call": "c3", "tid": "connect:y", "shown": {"a": ["gone"], "b": ["a"]}}]
+        self.assertEqual([r["call"] for r in D.refusals(out, {"A": "S2", "E": "S1"}, stale)], ["c1"])
+        low = D.decide(self.posts, self.stories, [(m, v("different", 0.5))])
+        self.assertEqual(D.refusals(low, {"A": "S2", "E": "S1"}, []), [])
+        merged = D.decide(self.posts, self.stories, [(m, v("same_event", 0.9))])
+        self.assertEqual(D.refusals(merged, {"A": "S2"}, apart[:0]), [])
+
     def test_a_new_story_merges_into_a_mark_ix_story_which_keeps_its_key(self):
         p = D.Question("pair:g:h", "pair", post="h", anchor="g")
         m = D.Question("merge2:E:g", "merge", story="E", other="g", second=True)
@@ -394,6 +412,22 @@ class Job(unittest.TestCase):
         clear_tables(self.cur, MX_TABLES)
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
+
+    def test_refusals_open_and_close_never_deleted(self):
+        """0217: a run's refusals become the current ones touching its stories; one no longer found (or found over other
+        members) closes, the row kept; stories the run did not touch keep theirs."""
+        s1, s2, s3, far = (str(uuid.uuid4()) for _ in range(4))
+        a, b = sorted([s1, s2])
+        row = {"a": a, "b": b, "p": 0.9, "call": None, "tid": "merge:x:y", "reason": "two events",
+               "shown": {"a": ["p1"], "b": ["p2"]}}
+        self.assertEqual(D.persist_refusals(self.cur, None, [row], {s1, s2, s3}, self.now), {"opened": 1})
+        self.assertEqual(D.persist_refusals(self.cur, None, [row], {s1, s2, s3}, self.now), {})
+        other = dict(row, shown={"a": ["p1", "p3"], "b": ["p2"]})
+        self.assertEqual(D.persist_refusals(self.cur, None, [other], {s1, s2}, self.now + H), {"closed": 1, "opened": 1})
+        self.cur.execute("INSERT INTO mx_refusals (a, b, p, shown) VALUES (%s, %s, 0.8, '{}')", (s3, far))
+        self.assertEqual(D.persist_refusals(self.cur, None, [], {s1, s2}, self.now + 2 * H), {"closed": 1})
+        self.cur.execute("SELECT count(*), count(*) FILTER (WHERE valid_to IS NULL) FROM mx_refusals")
+        self.assertEqual(self.cur.fetchone(), (3, 1))   # the untouched pair's stays current
 
     def post(self, hours, title, *, platform="telegram"):
         source = insert_scratch_source(self.cur, platform=platform, settings_json=json.dumps({"display_name": "Example"}))

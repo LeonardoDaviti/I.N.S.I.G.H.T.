@@ -73,6 +73,7 @@ class Config:
     tau_keep: float = 0.30          # a check removes below it ...
     tau_keep2: float = 0.15         # ... in a 2-voice story below this (rule B)
     tau_connect: float = 0.60       # F6's development bar, for typed connections
+    tau_refuse: float = 0.60        # 0217: a merge or connect "different" at this p or more is stored (mx_refusals)
     min_words: int = _SAME.min_words                # rule A
     cand_lo: float = _SAME.cosine                   # an embedding candidate's cosine
     story_lo: float = _SAME.story_cosine            # story pairs' centroid cosine
@@ -190,6 +191,7 @@ class Outcome:
     final: Dict[str, str] = field(default_factory=dict)        # every key -> the story it ended in (glue, merges)
     merge_calls: Dict[str, Optional[str]] = field(default_factory=dict)   # a key merged away -> the merge's call
     came_from: Dict[Tuple[str, str], str] = field(default_factory=dict)   # (story, post) -> the key it was in before merges
+    refusals: List[Dict[str, Any]] = field(default_factory=list)  # 0217: merges answered "different" (keys, shown)
 
     def stories(self, posts: Dict[str, Post], min_posts: int = 2) -> List[Dict[str, Any]]:
         """Every story of `min_posts`+ known posts, posts earliest first (the prototype's stories_all)."""
@@ -375,6 +377,7 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
     first = {key: posts[ms[0].post].at for key, ms in members.items() if ms}
     log: List[Dict[str, Any]] = []
     connections: List[Dict[str, Any]] = []
+    refusals: List[Dict[str, Any]] = []
     alias: Dict[str, str] = {}
 
     def find(s: str) -> str:
@@ -456,6 +459,10 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
         pa, rel = v.p, v.relation
         if pa is None:
             continue
+        if rel == "different" and pa >= config.tau_refuse:
+            # 0217: the judge keeps the two stories apart (a cannot-link for News's grouping), with what it was shown
+            refusals.append({"a": q.story, "b": q.other, "p": pa, "call": v.call, "tid": q.tid, "reason": v.reason,
+                             "shown": {"a": list(q.side), "b": list(q.side_b)}})
         if rel == "development" and pa >= config.tau_merge:
             log.append({"tid": q.tid, "change": "development_link", "story": q.story, "other": q.other,
                         "p_about": pa, "cos": q.cos, "reason": v.reason, "call": v.call})
@@ -480,7 +487,8 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
     keys = set(glue) | set(alias) | set(about) | set(mentions) | set(members)
     return Outcome(about=dict(merged), mentions={k: dict(v) for k, v in mentions.items()}, log=log,
                    connections=connections, merged_into={k: find(k) for k in alias}, ix=set(members),
-                   final={k: find(g(k)) for k in keys}, merge_calls=merge_calls, came_from=came_from)
+                   final={k: find(g(k)) for k in keys}, merge_calls=merge_calls, came_from=came_from,
+                   refusals=refusals)
 
 
 def _late(at: Any, began: Any) -> bool:
@@ -1157,7 +1165,7 @@ CONNECT_RELATIONS = {"development": "development", "reaction": "reaction", "same
 
 
 def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, config: Config,
-                news_keys: Sequence[str]) -> List[Dict[str, Any]]:
+                news_keys: Sequence[str], apart: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Typed connections (F6): the merges' developments, the late posts', and the connect questions' between News
     stories of `connect_voices`+ voices at most `connect_days` apart whose centroids are at `connect_lo` or more and
     that weren't merged. The pairs are asked newest first (by the later story's first post, then the earlier's), so
@@ -1203,6 +1211,11 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
         if key in shadow:
             ask.shadow_settled["connect"] += 1   # 0210 Shadow: what the gate would settle (asked anyway)
         v = ask.verdict("connect", text, a=groups[x0][0], b=groups[y0][0], add=key not in far)
+        if v is not None and apart is not None and v.relation == "different" and v.p is not None \
+                and v.p >= config.tau_refuse:   # 0217: kept apart, stored with what the question showed
+            apart.append({"a": ids[x0], "b": ids[y0], "p": v.p, "call": v.call, "tid": f"connect:{x0}:{y0}",
+                          "reason": v.reason,
+                          "shown": {"a": groups[x0][:tasks.CONNECT_MEMBERS], "b": groups[y0][:tasks.CONNECT_MEMBERS]}})
         if v is None or v.relation not in CONNECT_RELATIONS:
             continue
         if v.p < config.tau_connect:
@@ -1212,6 +1225,60 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
                      "tid": f"connect:{x0}:{y0}",
                      "shown": {"a": groups[x0][:tasks.CONNECT_MEMBERS], "b": groups[y0][:tasks.CONNECT_MEMBERS]}})
     return rows
+
+
+def refusals(out: Outcome, ids: Dict[str, str], apart: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """0217: the run's refused verdicts between two stored stories: its merges answered "different" (by the stories
+    their keys ended in) and its connect answers `apart`, each while the members its question showed are still those
+    stories' members (a refusal about members that moved is stale); two keys that ended in one story refuse nothing.
+    One row a pair (a < b), the highest p."""
+    members = members_of(out, ids)
+    best: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    rows = [dict(r, a=ids.get(out.final.get(r["a"], r["a"])), b=ids.get(out.final.get(r["b"], r["b"])))
+            for r in out.refusals] + [dict(r) for r in apart]
+    for r in rows:
+        a, b = r.get("a"), r.get("b")
+        if not a or not b or a == b:
+            continue
+        shown = r.get("shown") or {}
+        if not all(set(shown.get(end) or []) <= members.get(r[end], set()) for end in ("a", "b")):
+            continue
+        if a > b:
+            a, b, shown = b, a, {"a": shown.get("b"), "b": shown.get("a")}
+        row = dict(r, a=a, b=b, shown=shown)
+        if (a, b) not in best or (row["p"], row["tid"]) > (best[(a, b)]["p"], best[(a, b)]["tid"]):
+            best[(a, b)] = row
+    return [best[k] for k in sorted(best)]
+
+
+def persist_refusals(cur: Any, run_id: Any, rows: Sequence[Dict[str, Any]], scope: Set[str], now: datetime) -> Counter:
+    """The run's refusals become the current ones touching its stories (`scope`): new ones open, the ones no longer
+    found (or found with another p, call or shown members) close. Never deleted."""
+    import json as _json
+    counts: Counter = Counter()
+    want = {(r["a"], r["b"]): r for r in rows}
+    cur.execute("""SELECT a::text, b::text, p, call_id::text, shown FROM mx_refusals
+                    WHERE valid_to IS NULL AND (a = ANY(%(s)s::uuid[]) OR b = ANY(%(s)s::uuid[]))""",
+                {"s": sorted(scope)})
+    have = {(a, b): (p, call, shown) for a, b, p, call, shown in cur.fetchall()}
+
+    def same(r: Dict[str, Any], h: Tuple) -> bool:
+        return (_p(r.get("p")) == _p(h[0]) and (r.get("call") or None) == (h[1] or None)
+                and (r.get("shown") or None) == (h[2] or None))
+    for k, h in have.items():
+        if k not in want or not same(want[k], h):
+            cur.execute("UPDATE mx_refusals SET valid_to = %s WHERE a = %s AND b = %s AND valid_to IS NULL",
+                        (now, k[0], k[1]))
+            counts["closed"] += 1
+    for k, r in want.items():
+        if k not in have or not same(r, have[k]):
+            cur.execute("""INSERT INTO mx_refusals (a, b, relation, p, call_id, question, shown, reason, valid_from, run_id)
+                           VALUES (%s, %s, 'different', %s, %s, %s, %s::jsonb, %s, %s, %s)
+                           ON CONFLICT (a, b, relation) WHERE valid_to IS NULL DO NOTHING""",
+                        (k[0], k[1], _p(r.get("p")), r.get("call"), r.get("tid"), _json.dumps(r.get("shown") or {}),
+                         r.get("reason"), now, run_id))
+            counts["opened"] += 1
+    return counts
 
 
 def members_of(out: Outcome, ids: Dict[str, str]) -> Dict[str, Set[str]]:
@@ -1372,8 +1439,10 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     ids, written = persist(cur, run_id, out, world, now)
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
     mark("connections")
-    conns = connections(cur, out, ids, world, ask, config, news_keys)
+    apart: List[Dict[str, Any]] = []
+    conns = connections(cur, out, ids, world, ask, config, news_keys, apart=apart)
     counts["connections"] = dict(persist_connections(cur, run_id, conns, set(ids.values()) | set(world.posts), now))
+    counts["refusals"] = dict(persist_refusals(cur, run_id, refusals(out, ids, apart), set(ids.values()), now))
     # v10.13.9: graph and back are stages of their own (were inside "connections", 95.8 s on the server, unsplit).
     # graph counts in LIMIT: its backfills stop at their own deadline, sized as a share of LIMIT (BACKFILL_SECONDS)
     deferred: Dict[str, str] = {}
