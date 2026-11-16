@@ -55,7 +55,7 @@ CONSUMER: Dict[str, str] = {
     "sheet": "perspectives", "read3": "news", "relate": "graph", "stance": "sources", "back": "back", "cite": "entities",
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
-    "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news",
+    "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",   # 0165 C: the timeline stops
     "reading": "news",   # 0212: ent-v5 (planned only while its own switch is shadow or on)
 }
 

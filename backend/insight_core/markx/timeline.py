@@ -2,16 +2,25 @@
 (posts, mentions, merges, stories, back-in-the-news rows; nothing fetched).
 
 `of_entity` (the entity page's Timeline block, shown when it has 2+ dated events), each event {at, kind, post, ...}:
-  - `birth`: the oldest post naming it or any earlier name (as which name);
+  - `birth`: the oldest post about it (subject or actor) under any of its names, else the oldest naming it (as which
+    name; `named_since` when an older post only names it);
   - `earlier_name` / `renamed`: each earlier name (a rename merge, markx/rename.py) at its last post, and the first post
     under the name it has now;
   - `release`: a post about it (role subject or actor) by its maker (a source that is the maker, or a site whose name
     is the maker's) or at one of its own addresses; a family's versions at their first post about them;
-  - `first_outside` / `outside`: the posts by anyone else, the first one marked, the rest grouped by month (the month's
-    first post, how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an
-    outside mention though it names it otherwise;
-  - `story`: each Mark X or Mark IX story it is in, at its first post;
+  - `first_outside` / `outside`: the posts by anyone else, the first one about it (or linking back) marked, the rest
+    grouped by month (the month's first post about it; a month whose posts only name it is `named_only`, never among the
+    top; how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an outside
+    mention though it names it otherwise;
+  - `story`: each Mark X or Mark IX story about it (a stop on its line, markx/stops.py), at its first post, with its
+    `stop` (what happened to it there: launch, benchmark, ranking, weights...: the stored stop-v1 answer, `stop_by`
+    "asked"; else its story type's, `stop_by` "type") and its `share` of the story's members; `in_story`: a story that
+    only names it (an answer saying so, or no answer and too few of its members about it), never among the top;
+  - `analysis`: a breakdown of it hung on the line: a post about it (subject or actor) by anyone but its maker, read
+    as commentary, news_rank.ANALYSIS_CHARS+ characters of its own (News' Analysis rule), with `on` = the stop it
+    belongs to (the stop whose story holds it, else the latest stop before it);
   - `back`: 0136's back in the news (judged development). (0163's `later` rows left the line with Later, 0203.)
+Each post event inside a stop's story carries that story as `on`.
 Each event has its importance (`rank`); the TOP most important (birth, renames, the first and last release, the first
 outside mention, stories, then the rest) are `top` (shown by default); "all" shows every one, oldest first.
 
@@ -34,8 +43,8 @@ TOP = 8
 BEFORE = 3
 MIN_EVENTS = 2
 ABOUT = ("subject", "actor")
-RANK = {"birth": 0, "renamed": 1, "earlier_name": 1, "release": 2, "first_outside": 3, "story": 4, "later": 5,
-        "back": 5, "outside": 6}
+RANK = {"birth": 0, "renamed": 1, "earlier_name": 1, "release": 2, "first_outside": 3, "story": 4, "analysis": 5,
+        "later": 5, "back": 5, "outside": 6, "in_story": 7}
 SECOND_LEVEL = ("co", "com", "org", "net", "ac", "gov", "edu")
 
 
@@ -178,8 +187,10 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     rows = lines.rows
     order = sorted(rows, key=lambda p: (rows[p]["at"], p))
     name = lambda e: book.ents[e].name if e in book.ents else None
-    first = order[0]
-    out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0])))
+    about = [p for p in order if rows[p]["roles"] & set(ABOUT)]
+    first = (about or order)[0]                      # 0165 v10.23: the oldest post about it, else naming it
+    out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0]),
+                      **({"named_since": rows[order[0]]["at"]} if order[0] != first else {})))
     # earlier names: each at its last post, then the first post under the name it has now
     for x in earlier:
         mine = [p for p in order if rows[p]["as"] & set(x["members"])]
@@ -219,26 +230,115 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             outside.append(p)
     outside.sort(key=lambda p: (rows[p]["at"], p))
     if outside:
-        p0 = outside[0]
-        out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
+        # 0165 v10.23: the first outside post about it (subject or actor) or linking back to its posts; a post that
+        # only names it is counted in its month, never marked first
+        firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"})]
+        p0 = firsts[0] if firsts else None
+        if p0 is not None:
+            out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
         months: Dict[str, List[str]] = defaultdict(list)
-        for p in outside[1:]:
-            months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
+        for p in outside:
+            if p not in (p0, first):            # the birth is its own line
+                months[rows[p]["at"].astimezone(timezone.utc).strftime("%Y-%m")].append(p)
         for month, ps in sorted(months.items()):
-            out.append(_event("outside", rows[ps[0]]["at"], ps[0], month=month, n=len(ps),
-                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX)))
-    out = _dedupe(out)
+            lead = next((p for p in ps if rows[p]["roles"] & set(ABOUT)), None)
+            out.append(_event("outside", rows[lead or ps[0]]["at"], lead or ps[0], month=month, n=len(ps),
+                              sources=voice.count((voice.Said(rows[p]["source"]) for p in ps), voice.Policy.MARKX),
+                              **({} if lead else {"named_only": True, "rank": RANK["in_story"]})))
     if light:
-        return out
-    for s in stories or []:
-        if s.get("first_at"):
-            out.append(_event("story", s["first_at"], None, story=s["story"], mark=s["mark"],
-                              headline=s.get("headline"), voices=s.get("voices")))
+        return _dedupe(out)
+    stops = _stories(cur, book, root, stories or [], rows)
+    out += stops
+    from insight_core.markx import stops as ST
+    out += _analysis(cur, rows, outside) if ST.config()["analysis"] else []   # 0165: off, under its bar
+    out = _dedupe(out)
+    _hang(out, stops)
     out += _back(cur, set(rows))
     return out
 
 
-ONE_A_POST = ("birth", "renamed", "earlier_name", "release", "first_outside")
+def _stories(cur: Any, book: I.Book, root: str, stories: List[Dict[str, Any]],
+             rows: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The page's stories as `story` (a stop) or `in_story` events: the stored stop answer decides, else the thing's
+    share of the members (stops.candidate) with the story type's stop. A story given without its members is a stop
+    (the caller knows no better)."""
+    from insight_core.markx import event_types, stops as ST
+    dated = [s for s in stories if s.get("first_at")]
+    members = {s["story"]: [str(p) for p in s.get("members") or []] for s in dated}
+    at: Dict[str, datetime] = {p: r["at"] for p, r in rows.items()}
+    ids = sorted({p for ps in members.values() for p in ps} - set(at))
+    if ids:
+        cur.execute(f"SELECT p.id::text, {pairing.post_date('p')} FROM posts p WHERE p.id = ANY(%s::uuid[])", (ids,))
+        at.update({p: a for p, a in cur.fetchall() if a is not None})
+    on = ST.config()
+    answers = ST.of(cur, book, root, list(members))
+    types = event_types.of_stories(cur, {s: ps for s, ps in members.items() if s not in answers and ps}) \
+        if on["stop_types"] else {}
+    out = []
+    for s in dated:
+        ps = members[s["story"]]
+        sh = ST.share([(at[p], p) for p in ps if p in at],
+                      [p for p in ps if p in rows and rows[p]["roles"] & set(ABOUT)])
+        got = answers.get(s["story"])
+        if got is not None:
+            about, stop, by = got.about, got.stop, "asked"
+        else:
+            about, stop, by = (ST.candidate(sh) if ps else True), ST.coarse(types.get(s["story"])), "type"
+        about = about or not on["stops"]                  # the split off: every story a stop, as before 0165's case 2
+        stop = stop if on["stop_types"] else None         # the word off: kept in the answers, not shown
+        out.append(_event("story" if about else "in_story", s["first_at"], None, story=s["story"], mark=s["mark"],
+                          headline=s.get("headline"), voices=s.get("voices"), stop=stop, stop_by=by,
+                          share=[sh.about, sh.members], members=ps))
+    return out
+
+
+def _analysis(cur: Any, rows: Dict[str, Dict[str, Any]], outside: List[str]) -> List[Dict[str, Any]]:
+    """Breakdowns of the thing (News' Analysis rule, news_rank): its outside posts about it (subject or actor) read as
+    commentary, with ANALYSIS_CHARS+ characters of their own and an origin that is not its maker."""
+    from insight_core.markx import news_rank as NR
+    cand = sorted(p for p in outside if rows[p]["roles"] & set(ABOUT))
+    if not cand:
+        return []
+    pick = f"FROM mx_readings r WHERE r.post_id = p.id AND {NR._RANK} IS NOT NULL"
+    cur.execute(f"""SELECT p.id::text, char_length(btrim(COALESCE(p.content, ''))) - CASE
+                          WHEN COALESCE(p.title, '') <> '' AND btrim(COALESCE(p.content, '')) LIKE p.title || '%%'
+                          THEN char_length(p.title) ELSE 0 END,
+                          (SELECT r.kind {pick} ORDER BY {NR._RANK} LIMIT 1),
+                          (SELECT r.reading->>'origin' {pick} AND r.reading ? 'origin' ORDER BY {NR._RANK} LIMIT 1)
+                     FROM posts p WHERE p.id = ANY(%s::uuid[])""", (cand,))
+    return [_event("analysis", rows[p]["at"], p) for p, own, kind, origin in cur.fetchall()
+            if analysis(kind, own, origin)]
+
+
+def analysis(kind: Optional[str], own_chars: Optional[int], origin: Optional[str]) -> bool:
+    """A breakdown (pure): read as commentary, ANALYSIS_CHARS+ characters of its own, its origin not the maker."""
+    from insight_core.markx import news_rank as NR
+    return kind in NR.ANALYSIS_KINDS and (own_chars or 0) >= NR.ANALYSIS_CHARS and origin != "maker"
+
+
+def _hang(evs: List[Dict[str, Any]], stops: List[Dict[str, Any]]) -> None:
+    """Each post event inside a stop's story gets that story as `on` (the earliest such stop); an analysis outside
+    every stop hangs on the latest stop before it. The stops' member lists are dropped (not shown)."""
+    line = sorted((e for e in stops if e["kind"] == "story"), key=lambda e: (e["at"], e["story"]))
+    of_post: Dict[str, str] = {}
+    for e in line:
+        for p in e.get("members") or []:
+            of_post.setdefault(p, e["story"])
+    for e in evs:
+        p = e.get("post")
+        if not p or e["kind"] in ("story", "in_story", "back"):
+            continue
+        if p in of_post:
+            e["on"] = of_post[p]
+        elif e["kind"] == "analysis" or "analysis" in (e.get("also") or []):
+            before = [s for s in line if s["at"] <= e["at"]]
+            if before:
+                e["on"] = before[-1]["story"]
+    for e in stops:
+        e.pop("members", None)
+
+
+ONE_A_POST = ("birth", "renamed", "earlier_name", "release", "first_outside", "analysis")
 
 
 def _dedupe(evs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -290,7 +390,9 @@ def _back(cur: Any, posts: Set[str]) -> List[Dict[str, Any]]:
 
 
 def _top(evs: List[Dict[str, Any]], n: int = TOP) -> Set[int]:
-    order = sorted(range(len(evs)), key=lambda i: (evs[i]["rank"], evs[i]["at"]))
+    """The `n` most important events (a story, or a month of posts, that only names the thing never)."""
+    order = sorted((i for i in range(len(evs)) if evs[i]["kind"] != "in_story" and not evs[i].get("named_only")),
+                   key=lambda i: (evs[i]["rank"], evs[i]["at"]))
     return set(order[:n])
 
 

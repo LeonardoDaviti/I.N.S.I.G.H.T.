@@ -44,7 +44,7 @@ KIND_WORDS = {"entities": "entities readings (long posts' windows among them)", 
               "alias": "entity name pairs", "alias2": "entity name pairs (second opinions)", "track": "track verdicts",
               "relate": "post relations", "rename": "rename questions", "pair": "same-story pairs",
               "connect": "story connections", "join": "story joins", "cite": "citation readings",
-              "collide": "name collisions", "back": "back-in-the-news questions"}
+              "collide": "name collisions", "back": "back-in-the-news questions", "stop": "timeline stops"}
 
 
 @dataclass

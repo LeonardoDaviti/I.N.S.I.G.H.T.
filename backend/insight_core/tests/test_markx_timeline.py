@@ -238,7 +238,22 @@ class Timeline(_Db):
         months = [i for i in tl["items"] if i["kind"] == "outside"]
         self.assertEqual(sum(i["n"] for i in months), 3)
         self.assertEqual([i["at"] for i in tl["items"]], sorted(i["at"] for i in tl["items"]))
-        self.assertEqual(tl["shown"], min(8, tl["total"]))
+        self.assertEqual(tl["shown"], sum(1 for i in tl["items"] if i["top"]))
+        self.assertTrue(all(i.get("named_only") for i in months))                  # mentions only: not among the top
+        self.assertFalse(any(i["top"] for i in months))
+
+    def test_a_post_that_only_names_it_is_never_its_birth_or_first_outside_mention(self):
+        birth, linker, rel, outs, launch = self.thing()
+        aside = self.post_at(4, T0 - 400 * D, "Ten tools we tried this year")       # names it in passing, long before
+        self.mentions(aside, ("Acme Kite", "software", "mention", "Acme", soft()))
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
+        first = [i for i in tl["items"] if i["kind"] == "birth"][0]
+        self.assertEqual(first["post"]["id"], birth)
+        self.assertEqual(first["named_since"], T0 - 400 * D)
+        self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [linker])
+        months = [i for i in tl["items"] if i["kind"] == "outside"]
+        self.assertEqual(sum(i["n"] for i in months), 4)                              # counted in its month
 
     def test_the_eight_most_important_are_shown_first(self):
         self.thing()
@@ -263,6 +278,160 @@ class Timeline(_Db):
         got = TL.before_post(self.cur, rel, skip=[linker])
         self.assertEqual([(i["kind"], i["post"]["id"]) for i in got[0]["items"]], [("birth", birth)])
         self.assertEqual(TL.before_post(self.cur, birth), [])
+
+
+class StopRules(unittest.TestCase):
+    """No database: the stop candidate rule, the question, the answer, the analysis rule (0165's second case)."""
+
+    def test_a_story_is_a_candidate_stop_by_its_share_or_its_first_post(self):
+        from insight_core.markx import stops as ST
+        at = [(T0 + k * H, f"p{k}") for k in range(8)]
+        self.assertTrue(ST.candidate(ST.share(at, ["p0"])))                  # its first post is about the thing
+        self.assertTrue(ST.candidate(ST.share(at, ["p3", "p5"])))            # a quarter of its members
+        self.assertFalse(ST.candidate(ST.share(at, ["p5"])))                 # one of eight, not the first
+        self.assertFalse(ST.candidate(ST.share([], [])))
+
+    def test_the_question_and_its_answer(self):
+        from insight_core.markx import stops as ST
+        q = ST.question({"name": "Orbit 2 Small", "type": "model", "maker": "Vantor Labs"}, "Vantor opens Orbit 2 Small",
+                        [ST.Line(T0 + H, "Engine Blog", "Day-0 support for Orbit 2 Small", "subject"),
+                         ST.Line(T0, "Vantor Labs", "Orbit 2 Small weights are out", "subject"),
+                         ST.Line(T0 + 2 * H, "Router", "Free on our router", None)])
+        self.assertIn('THING: "Orbit 2 Small" (model, by Vantor Labs)', q)
+        self.assertIn('STORY: "Vantor opens Orbit 2 Small" (', q)
+        lines = q.splitlines()[2:]
+        self.assertTrue(lines[0].endswith("subject: Orbit 2 Small weights are out"))   # oldest first
+        self.assertIn("does not name it: Free on our router", lines[2])
+        self.assertEqual(schemas.KINDS["stop"].guide, "stop-v1")
+        self.assertIsNone(validate.check("stop", {"evidence": "e", "about": True, "stop": "weights"}, q)[1])
+        self.assertIsNotNone(validate.check("stop", {"evidence": "e", "about": True, "stop": "shipped"}, q)[1])
+        self.assertEqual(ST.parse({"about": True, "stop": "weights"}, "t").stop, "weights")
+        self.assertIsNone(ST.parse({"about": True, "stop": "shipped"}, "t"))
+        self.assertEqual(ST.coarse("model_release"), "release")
+
+    def test_an_analysis_is_long_commentary_not_by_the_maker(self):
+        self.assertTrue(TL.analysis("commentary", 1800, "other"))
+        self.assertTrue(TL.analysis("commentary", 1800, None))
+        self.assertFalse(TL.analysis("commentary", 1800, "maker"))
+        self.assertFalse(TL.analysis("commentary", 400, "other"))
+        self.assertFalse(TL.analysis("report", 5000, "other"))
+
+
+@base.requires_test_db
+class OneModelsLine(_Db):
+    """0165's second case, invented names: a lab launches "Orbit 2 Small" (story A: launch and benchmarks), an arena
+    ranks it, a week later its weights open (story B), a practitioner's breakdown joins story B; another model's
+    launch names it once (story C). The line: A -> B as stops in order, the breakdown as analysis on B, C only named."""
+
+    def setUp(self):
+        super().setUp()
+        from insight_core.markx import stops as ST
+        self.switches = {"stops": True, "stop_types": True, "analysis": True}
+        patch = mock.patch.object(ST, "config", side_effect=lambda: dict(self.switches))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def story(self, headline, *members):
+        self.cur.execute("INSERT INTO mx_stories (first_at, headline) VALUES (now(), %s) RETURNING id::text", (headline,))
+        sid = self.cur.fetchone()[0]
+        for m in members:
+            self.cur.execute("INSERT INTO mx_story_posts (story_id, post_id, role, reason, valid_from) "
+                             "VALUES (%s, %s, 'member', 'test', %s)", (sid, m, T0 + 11 * D))
+        return sid
+
+    def read(self, pid, kind, origin=None):
+        task_id, _ = tasks.add(self.cur, "read3", f"read {pid}", a=pid)
+        call = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True, answer={})
+        repo.add_reading(self.cur, post_id=pid, guide="read-v3", call_id=call, kind=kind, events="one", lang="en",
+                         headline=None, reading={"kind": kind, "event_type": "opinion_analysis", "origin": origin})
+
+    def model(self, *posts):
+        for p, role in posts:
+            self.mentions(p, ("Orbit 2 Small", "model", role, "Vantor Labs", soft()))
+
+    def line(self):
+        launch = self.post_at(0, T0, "Introducing Orbit 2 Small", url="https://vantor.example/blog/orbit-2-small")
+        scores = self.post_at(1, T0 + 3 * H, "Orbit 2 Small scores 31 on our index")
+        thread = self.post_at(2, T0 + 5 * H, "Orbit 2 Small is out, thoughts?")
+        self.model((launch, "subject"), (scores, "subject"), (thread, "subject"))
+        ranking = self.post_at(3, T0 + 3 * D, "Orbit 2 Small ranks fourth on the arena")
+        weights = self.post_at(0, T0 + 7 * D, "Orbit 2 Small weights, open", url="https://vantor.example/blog/weights")
+        engine = self.post_at(1, T0 + 7 * D + H, "Day-0 support for Orbit 2 Small")
+        router = self.post_at(2, T0 + 7 * D + 2 * H, "Orbit 2 Small, free on the router")
+        breakdown = self.post_at(4, T0 + 8 * D, "Orbit 2 Small's attention, block by block",
+                                 text="Orbit 2 Small's attention, block by block. " + "Its residual mixing reads " * 60)
+        self.model((ranking, "subject"), (weights, "subject"), (engine, "subject"), (router, "actor"),
+                   (breakdown, "subject"))
+        rival = self.post_at(1, T0 + 10 * D, "Halcyon 3 launches")
+        rival2 = self.post_at(2, T0 + 10 * D + H, "Halcyon 3 is fast")
+        rival3 = self.post_at(3, T0 + 10 * D + 2 * H, "Halcyon 3 beats Orbit 2 Small, says its maker")
+        rival4 = self.post_at(4, T0 + 10 * D + 3 * H, "Halcyon 3 pricing")
+        for p in (rival, rival2, rival4):
+            self.mentions(p, ("Halcyon 3", "model", "subject", "Halcyon", soft()))
+        self.mentions(rival3, ("Halcyon 3", "model", "subject", "Halcyon", soft()),
+                      ("Orbit 2 Small", "model", "mention", "Vantor Labs", soft()))
+        self.read(breakdown, "commentary", "other")
+        self.read(thread, "commentary", "other")      # short: no analysis
+        self.stage()
+        a = self.story("Vantor releases Orbit 2 Small, scoring 31", launch, scores, thread, ranking)
+        b = self.story("Vantor opens Orbit 2 Small's weights", weights, engine, router, breakdown)
+        c = self.story("Halcyon 3 launches", rival, rival2, rival3, rival4)
+        return {"a": a, "b": b, "c": c, "launch": launch, "breakdown": breakdown, "thing": self.entity_of(launch)}
+
+    def test_two_stories_are_stops_in_order_the_breakdown_hangs_on_the_second(self):
+        x = self.line()
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        stops = [(i["story"], i["stop"], i["stop_by"]) for i in tl["items"] if i["kind"] == "story"]
+        self.assertEqual([s for s, _, _ in stops], [x["a"], x["b"]])
+        self.assertEqual({by for _, _, by in stops}, {"type"})                    # nothing asked yet: the story type
+        named = [i for i in tl["items"] if i["kind"] == "in_story"]
+        self.assertEqual([i["story"] for i in named], [x["c"]])
+        self.assertFalse(named[0]["top"])
+        ana = [i for i in tl["items"] if i["kind"] == "analysis"]
+        self.assertEqual([(i["post"]["id"], i["on"]) for i in ana], [(x["breakdown"], x["b"])])
+        birth = tl["items"][0]
+        self.assertEqual((birth["kind"], birth["post"]["id"], birth["on"]), ("birth", x["launch"], x["a"]))
+
+    def test_the_stop_question_is_planned_once_and_its_answer_names_the_stop(self):
+        from insight_core.markx import stops as ST
+        x = self.line()
+        out = ST.plan(self.cur, now=T0 + 12 * D)
+        self.cur.execute("SELECT a::text, b::text, input FROM mx_tasks WHERE kind = 'stop' ORDER BY input")
+        asked = self.cur.fetchall()
+        mine = {a for a, b, _ in asked if b == self.book().root(x["thing"])}
+        self.assertEqual(mine, {x["a"], x["b"]})                                  # not the story that only names it
+        self.assertEqual(out["asked"], len(asked))
+        self.assertEqual(ST.plan(self.cur, now=T0 + 12 * D)["asked"], 0)          # nothing new: nothing asked
+        self.answer_task("stop", {"evidence": "weights opened", "about": True, "stop": "weights"}, a=x["b"])
+        self.answer_task("stop", {"evidence": "launch", "about": True, "stop": "launch"}, a=x["a"])
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertEqual([(i["stop"], i["stop_by"]) for i in tl["items"] if i["kind"] == "story"],
+                         [("launch", "asked"), ("weights", "asked")])
+
+    def test_the_switches(self):
+        """`stop_types` off: the answers are kept, no word shown; `stops` off: every story a stop, nothing planned."""
+        from insight_core.markx import stops as ST
+        x = self.line()
+        ST.plan(self.cur, now=T0 + 12 * D)
+        self.answer_task("stop", {"evidence": "weights opened", "about": True, "stop": "weights"}, a=x["b"])
+        self.switches["stop_types"] = False
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertEqual([i["stop"] for i in tl["items"] if i["kind"] == "story"], [None, None])
+        self.switches["stops"] = False
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertEqual([i["story"] for i in tl["items"] if i["kind"] == "story"], [x["a"], x["b"], x["c"]])
+        self.assertEqual(ST.plan(self.cur, now=T0 + 13 * D)["stories"], 0)
+        self.switches["analysis"] = False
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertFalse([i for i in tl["items"] if i["kind"] == "analysis"])
+
+    def test_an_answer_saying_not_about_it_makes_a_named_story(self):
+        x = self.line()
+        from insight_core.markx import stops as ST
+        ST.plan(self.cur, now=T0 + 12 * D)
+        self.answer_task("stop", {"evidence": "about the router", "about": False, "stop": "adoption"}, a=x["b"])
+        tl = entity_views.entity_page(self.cur, x["thing"], now=T0 + 12 * D)["timeline"]
+        self.assertEqual([i["story"] for i in tl["items"] if i["kind"] == "in_story"], [x["b"], x["c"]])
 
 
 if __name__ == "__main__":

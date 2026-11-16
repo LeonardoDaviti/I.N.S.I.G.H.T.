@@ -781,7 +781,7 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
 # v10.13.4: kinds the decision job plans, never a lease. v10.22 (0216): + relate, whose planner (graph.plan) read every
 # current edge and same-subject candidate on every lease while its queue ran below the lease's size (the worker drains it
 # all day: 63 runs in 104 minutes on the server, 0.6 s each); the decision run's graph stage plans it too.
-BACKGROUND_PLANNED = ("check", "cite", "track", "relate")
+BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop")   # 0165 C: stop (stops.plan, no declared inputs)
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:
@@ -912,13 +912,19 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "read3": lambda cur, **kw: _plan_read3(cur, **kw),
             "translate": lambda cur, **kw: _plan_translations(cur, **kw),   # 0130 D
             "relate": lambda cur, **kw: _plan_relate(cur),                  # 0131
-            "back": lambda cur, **kw: _plan_back(cur)}                      # 0136
+            "back": lambda cur, **kw: _plan_back(cur),                      # 0136
+            "stop": lambda cur, **kw: _plan_stops(cur)}                     # 0165 C
 
 
 def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capped like the decision run's
     from insight_core.markx import back
     from insight_core.markx.decide import Config
     return back.plan(cur, open_cap=Config().back_open)   # 0203: Later developments' questions dropped
+
+
+def _plan_stops(cur: Cursor) -> int:   # 0165 C: a thing's stop in each story about it (stops.plan)
+    from insight_core.markx import stops   # stops reads this module
+    return stops.plan(cur)["asked"]
 
 
 def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's

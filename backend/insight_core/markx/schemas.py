@@ -232,6 +232,15 @@ RENAME_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
+# 0165 C: what happened to a thing in a story about it, a stop on its timeline (stop-v1, markx/stops.py).
+STOP_KINDS = ["teaser", "preview", "launch", "availability", "update", "weights", "benchmark", "ranking", "adoption",
+              "research", "incident", "deal", "analysis", "other"]
+STOP_SCHEMA = {
+    "type": "object",
+    "required": ["about", "stop"],
+    "properties": {"evidence": _STR, "about": {"type": "boolean"}, "stop": {"enum": STOP_KINDS}},
+}
+
 COLLIDE_MENTIONS = 8          # mentions a collision question shows (the lab's MAXM)
 COLLIDE_RUNS = 3              # asked three times; a split two runs make goes to the queue (never applied by itself)
 COLLIDE_SCHEMA = {
@@ -601,6 +610,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the same, for a class asked with its own model
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
     Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
+    Kind("stop", "stop-v1", "story", STOP_SCHEMA),                   # 0165 C: a thing's stop in a story (stops.py)
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged

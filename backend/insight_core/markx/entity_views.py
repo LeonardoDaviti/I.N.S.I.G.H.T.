@@ -583,7 +583,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "versions": versions, "posts": len(lines), "voices": len(sources),
             "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
                            for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
-            "timeline": TL.of_entity(cur, book, root, stories=every),   # 0165 C
+            "timeline": TL.of_entity(cur, book, root, stories=[{**h, "members": a[1]} for h, a, _k in specs]),   # 0165 C
             "stories": blocks, "loose": [line(p) for p in (loose if loose_limit is None else loose[:loose_limit])],
             "loose_counts": groups_n,   # 0144 B2-B4
             "stories_total": len(every), "loose_total": len(loose),   # issue 0195

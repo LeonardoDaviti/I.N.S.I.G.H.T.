@@ -57,7 +57,37 @@ describe('the Timeline block (0165 C)', () => {
 
   it('words a story line', () => {
     expect(timelineWhy(ev('story', '2026-01-01', { mark: 'x', voices: 3 }))).toBe('story · 3 sources');
+    expect(timelineWhy(ev('story', '2026-01-01', { mark: 'x', voices: 3, stop: 'weights' }))).toBe('weights · 3 sources');
+    expect(timelineWhy(ev('in_story', '2026-01-01', { mark: 'x', voices: 9 }))).toBe('named in a story · 9 sources');
     expect(timelineWhy(ev('back', '2026-01-01'))).toBe('back in the news');
+  });
+
+  it('reads one model as one line: each stop with its posts and the breakdown under it (0165, second case)', async () => {
+    const line: MarkxTimeline = {
+      shown: 5, total: 6, earlier: [],
+      items: [
+        ev('birth', '2026-11-05T00:00:00Z', { post: post('p1', 'Introducing Orbit 2 Small', 'Vantor Labs'), on: 'A' }),
+        ev('story', '2026-11-05T00:00:00Z', { story: 'A', mark: 'x', headline: 'Vantor releases Orbit 2 Small', voices: 5, stop: 'launch' }),
+        ev('story', '2026-11-12T00:00:00Z', { story: 'B', mark: 'x', headline: 'Vantor opens Orbit 2 Small weights', voices: 4, stop: null }),
+        ev('analysis', '2026-11-13T00:00:00Z', { post: post('p9', "Orbit 2 Small's attention, block by block", 'a practitioner'), on: 'B' }),
+        ev('outside', '2026-11-14T00:00:00Z', { post: post('p7', 'A look at it', 'Blog'), month: '2026-11', n: 3, sources: 2 }),
+        ev('in_story', '2026-11-15T00:00:00Z', { story: 'C', mark: 'x', headline: 'Halcyon 3 launches', voices: 9, top: false }),
+      ],
+    };
+    renderWithProviders(<Timeline timeline={line} />, { api: makeFakeApi({}) });
+    const block = screen.getByRole('region', { name: 'Timeline' });
+    const nested = within(block).getAllByRole('list', { name: 'In this story' });
+    expect(nested).toHaveLength(2);
+    expect(nested[0]).toHaveTextContent('Introducing Orbit 2 Small · Vantor Labs · first seen');
+    expect(nested[1]).toHaveTextContent("Orbit 2 Small's attention, block by block · a practitioner · analysis");
+    const stops = within(block).getAllByRole('listitem').filter((li) => li.dataset.kind === 'story');
+    expect(stops.map((li) => li.firstElementChild?.textContent)).toEqual([
+      '2026-11-05Vantor releases Orbit 2 Small · launch · 5 sources',
+      '2026-11-12Vantor opens Orbit 2 Small weights · story · 4 sources',
+    ]);
+    expect(within(block).queryByText('Halcyon 3 launches')).not.toBeInTheDocument();
+    await userEvent.click(within(block).getByRole('button', { name: 'All 6 events' }));
+    expect(within(block).getByText('Halcyon 3 launches')).toBeInTheDocument();
   });
 
   it('is on the entity page with its components', async () => {
