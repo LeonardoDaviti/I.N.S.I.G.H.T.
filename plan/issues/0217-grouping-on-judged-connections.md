@@ -896,6 +896,17 @@ its story:
 - **The next measured step.** Drop numbers as a reason by themselves, and ask the worker only on the uncertain events
   (the spec's "the worker only where unsure"). Measure on fresh days: H1 and H3 are now read.
 
+#### Resources of what is on
+
+- **How it was measured.** A full decision run on a migrated `prep_mxreal` clone. The v1023 code before round 2
+  alternated with the head, 3 runs each, rolled back after each run. The machine was shared and loaded: load average
+  37–77 during the runs.
+- **Totals.** Medians 60.9 s before and 58.9 s after. One head run took 109.8 s, all of it in the entities stage,
+  which round 2 does not touch.
+- **The stages round 2 touches.** "Questions and decisions" ran 2.6–3.1 s on both sides. The connections stage,
+  which now also writes the refusals, stayed under 0.5 s in every run.
+- **Peak RSS.** 165.5–167.1 MB before, 159.8–165.1 MB after. No added time or memory beyond the noise.
+
 #### What the overnight work leaves
 
 - **On:**
