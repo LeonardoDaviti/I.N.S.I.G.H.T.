@@ -1841,6 +1841,14 @@ async def get_background_work():
     return await asyncio.to_thread(services().operations.background_work)
 
 
+@app.get("/api/operations/db-statements")
+@error_detail("load the database's top statements")
+async def get_db_statements():
+    """Issue 0215: the database's top 20 statements by total time (pg_stat_statements, normalized: no values). Read
+    only; {"enabled": false, "reason"} while Postgres runs without the library (DEPLOYMENT.md)."""
+    return await asyncio.to_thread(services().operations.top_statements)
+
+
 @app.get("/api/operations/jobs/{job_id}")
 @error_detail("load the job")
 def get_operation_job(job_id: str):

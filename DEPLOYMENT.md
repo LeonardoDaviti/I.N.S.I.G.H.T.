@@ -505,6 +505,22 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
   Postgres and the page cache the rest); 4 cores (a decision run uses one; the API two processes; Postgres the
   rest). A small corpus runs in far less: the limits are ceilings, not reservations.
 
+### The database's top statements (issue 0215)
+
+insight-db loads `pg_stat_statements` (docker-compose.yml's `command`: `shared_preload_libraries`, DML only, 5,000
+statements kept); migration 0146 creates its view in INSIGHT's database. `GET /api/operations/db-statements` lists the
+20 statements with the most total execution time since the counts were last reset (`since`): each as Postgres
+normalized it (every value a `$n`: no post, source or label is shown), its calls, total and mean ms, rows, blocks hit
+and read, and its share of the database's statement time. Read only.
+
+- **After the update that brings it**, the library loads only when insight-db starts again: `./update` recreates the
+  container because its command changed (`docker compose up -d`). Until then the route answers
+  `{"enabled": false, "reason": "...not loaded..."}`. A Postgres of your own: add
+  `shared_preload_libraries = 'pg_stat_statements'` to its configuration and restart it.
+- **To count from now** (after a fix): `docker exec insight-db psql -U insight -d insight -c "SELECT
+  pg_stat_statements_reset()"`.
+- Its cost: a few % of statement time at most, ~10 MB of shared memory.
+
 ## When the API stops answering (issue 0117)
 Docker restarts nothing for being unhealthy: `restart: unless-stopped` acts only when the process exits. On 5 Nov the API answered nothing for over 20 minutes until the owner looked.
 
