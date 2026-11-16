@@ -101,6 +101,38 @@ class SaveBatchTests(unittest.TestCase):
         self.assertEqual(again.inserted, 0)
         self.assertEqual(again.updated, 45)
 
+    def test_a_refetched_post_as_stored_is_not_written_again(self):
+        """0215: a feed's items come again at every fetch; one that would not change is left as it is (no row
+        version, no trigger, no links or refs read again); one whose text changed is written as before."""
+        page = "https://elsewhere.invalid/2026/11/a-page"
+        drafts = [PostDraft(self.source_a, {"url": f"https://test.invalid/refetch/{self.tag}/{n}", "title": f"Post {n}",
+                                            "content": f"Body {n}", "content_html": f'<a href="{page}">a page</a>',
+                                            "date": None}) for n in (1, 2)]
+        self._save(drafts)
+
+        def state():
+            with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+                cur.execute("SELECT url, xmin::text, updated_at, refs_scanned_at FROM posts WHERE source_id = %s "
+                            "ORDER BY url", (self.source_a,))
+                rows = {r[0]: r[1:] for r in cur.fetchall()}
+                cur.execute("SELECT count(*) FROM source_post_stats_changes WHERE source_id = %s", (self.source_a,))
+                return rows, cur.fetchone()[0]
+        before, changes = state()
+        drafts[1] = PostDraft(self.source_a, {**drafts[1].post, "content": "Body 2, corrected"})
+        again = self._save(drafts)
+        self.assertEqual((again.inserted, again.updated), (0, 2))
+        after, changes_after = state()
+        same, edited = sorted(before)
+        self.assertEqual(after[same][1:], before[same][1:], "updated_at, refs_scanned_at")
+        self.assertEqual(after[same], before[same], "the same row version: nothing written")
+        self.assertNotEqual(after[edited][0], before[edited][0], "the changed post is written")
+        self.assertGreater(after[edited][1], before[edited][1])
+        self.assertEqual(changes_after, changes, "neither moved what the source's stats count")
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM post_links pl JOIN posts p ON p.id = pl.post_id WHERE p.source_id = %s",
+                        (self.source_a,))
+            self.assertEqual(cur.fetchone()[0], 2, "their links stand")
+
     def test_one_failing_post_costs_one_post(self):
         drafts = _drafts(self.source_a, 45, tag=self.tag)
         repo = _FailingRepo(self.url, drafts[6].post["url"])
