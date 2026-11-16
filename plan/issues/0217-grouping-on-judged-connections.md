@@ -1,8 +1,13 @@
 # 0217: Stories grouped on judged connections, every join checked against the story's core (Stealth v10.23, experiment spec)
 
-Status: **spec only**. Nothing is built here. Branch `v1023-core-spec` from main (v10.21, 00221ab5). This file holds the
-experiment: what is tested, against what, on which data, by which bars, and when we drop it. The bars and the decision
-rule below are written **before** anything is measured; they are not changed once the held-out windows are read.
+Status: **measured; no arm passes, nothing switched on** (branch `v1023-grouping`, 2026-11-17; results in
+[Built](#built-v1023-grouping) and [Measured](#measured-2026-11-17) at the end). The module and its seam are built and
+tested; Mark X's News rows still use the v10.18 guards. Part 2 is not started (it follows Part 1's wiring).
+
+The spec as written before the measurement (branch `v1023-core-spec` from main, v10.21, 00221ab5) follows. This file
+holds the experiment: what is tested, against what, on which data, by which bars, and when we drop it. The bars and the
+decision rule below are written **before** anything is measured; they are not changed once the held-out windows are
+read.
 
 Real names from the server stay in the private notes (`plan/research/grouping-0217/`, gitignored). The names here are
 invented: *Vela 5* is a model release by *Acme Labs*; *Northwind* is a company whose CEO resigns; *Orbit* is a company
@@ -582,3 +587,173 @@ Measure blind on replayed days (the case above: preview read on day 0 → launch
 and benchmark lines on day 5 join the same update or come back once more if the row was opened in between; 20
 reposts must not bring it back): precision of "Updated" (a labeller agrees something meaningful happened) ≥ 90%
 (Wilson lower bound), returns per row per day ≤ 2, and no meaningful update missed on the labelled set.
+
+---
+
+## Built (v1023-grouping)
+
+Branch `v1023-grouping` from `v1023` (main v10.22.3 + this spec). Not merged, not pushed, not deployed. No migration.
+
+- **`backend/insight_core/utils/grouping.py`**, the deep module of §2.6, pure, no database.
+  - Interface: `group(items, edges, *, policy) -> Grouping(groups, rejected, group_of)`; `Item(id, posts, voices,
+    names, event, main)`, `Post(id, at, things, event, report)`, `Edge(a, b, source, relation, p, name, shown)`,
+    `Policy`, `Evidence` (what a News caller hands it), `Thing.of(name, family, version, variant)`, `core_of`, `CHOSEN`.
+  - The core of §2.1 at the row level: the exact thing (a versioned model or product; the family's last word and the
+    version, stage words such as "preview" are no variant), the core names, the event type, the first post, from
+    the lead posts only (replies, quotes and round-ups never lead; a story of round-ups is about no exact thing).
+  - Admission of §2.2: both ends hold against their groups' cores (the anchor, an item joined as the same event, the
+    anchor's thing, or a name saying the anchor's core name); complete-link conflicts (two exact things; two kinds
+    of happening that cannot be one; two releases not of one thing); confident `different` verdicts as cannot-links;
+    stale verdicts (`shown` no longer held) do not act; rule edges attach, never bridge; v10.18's large-story name
+    rule kept inside (both main names and, with a judge, a connection).
+  - The owner's release rule (2026-11-16) as `core` edges made inside: two items about one exact thing, of the
+    release family, at least one a release or a leak, within `span_days`; a bare version reaches a variant only when
+    one variant is in reach and only as a pre-release stage.
+  - Three order-independent algorithms (`uf`, `agg`, `cc`); `rejected` says why each edge joined nothing.
+- **The seam**: `news_rules.news(..., grouped=grouping.Evidence)`: stories and posts of no story become items, each
+  surge's name an edge, a post in two stories an attachment, the judge's verdicts as given. Without `grouped` (every
+  caller today): the v10.18 guards, unchanged (Mark IX and Mark X).
+- **`event_types.reading_type(kind, action)` / `reading_types(cur, ids)`**: a reading's kind and main action as a
+  closed type (the replay's and an adapter's one mapping).
+- **Tests** (`tests/test_grouping.py`, 24): 20 shuffles of items and edges give one partition (five policies, four
+  seeded worlds); every item in one group; the runaway does not chain (and does with the core check off); the IPO
+  joins; the release shape (teaser, preview day 0, launch day 5, a router's "live, $1.50/M" thread, an evaluator's
+  "+9 points" thread) is ONE group with those as lines, a story that only mentions the model stays out, another
+  lab's release and the lab's deal stay out; the same through `news_rules.news`; a confident `different` blocks a
+  join and a chain; a stale verdict does not act; two releases of two things never join; the thing normalisation.
+- **Not wired.** The Mark X adapter (exact things from the current mention set, `reading_types`, the event-type
+  seam's story types, the judge's verdicts with their `shown` members; the incremental closure through things and
+  verdicts; an `mx_settings` switch) was written for the resource measurement below, measured, and removed when the
+  arm failed. Mark X's News rows are built as on main.
+
+## Measured (2026-11-17)
+
+### Data (Path B, read only)
+
+- **GETs on the server**, 2026-11-17 00:50–02:00, cached in the private notes: `/api/markx/news?all=1` (496 rows,
+  2026-10-18..11-16), the Mark X panel of each of the 2,367 row posts, and each post's text. Nothing written.
+- **Frozen inputs**: 528 stories (members and mentions from the panels), 368 surges (as 0203's replay), 475 judged
+  story verdicts, each post's exact things (subject entities with a version) and reading type.
+- **Fidelity**: the control on the frozen inputs gives 461 of the page's 496 rows back exactly. The page was read an
+  hour before the last panel; the hourly decision runs in between moved some stories.
+- **What Path B lacks, and its cost.**
+  - No refused verdicts: the panels carry the judge's connections only. Production does not store `different`
+    connect verdicts either, so a cannot-link setting could not be wired without a new store. No pair was re-asked;
+    Haiku spend: $0. Every arm ran with no `different` verdicts.
+  - No `shown` stamps: the replay cannot drop a stale verdict, production can. Arms that build from verdicts are
+    judged pessimistically. One stale verdict ("the same event" between a lab's IPO stories and its research tool)
+    was seen on dev.
+  - Post types come from each reading's kind and main action, not read-v3's closed type (the panel does not carry
+    it), except each row's main story's type from the page.
+
+### Dev (2026-11-07..12) and the frozen settings
+
+- 0203's labels of the rows of 2026-11-14 were too coarse to choose: almost every parameter left them unchanged.
+  So the pairs of rows any swept setting joins on dev (178) were labelled blind by two labellers (159 agreed, 51
+  "same"). The release case (§ "Case added") was a hard check: the preview and the launch day's four threads in one
+  row.
+- **Chosen** (`grouping.CHOSEN`): D, average linkage over admitted edges, a mean weight above 1, a release's stages
+  within 14 days, a release edge weighing 3. On dev it joins 30 labelled-same pairs and 1 labelled-different, and it
+  holds the case.
+- **B** (union-find over the same admitted edges) never made fewer than 25 wrong pairs while holding the case: one
+  company's CEO saga (eleven rows: the affair, the investigation, the resignation, the petition, the successor) chains
+  through "same event" and "development" verdicts. Frozen at its best right-minus-wrong.
+- **C** (clustering with no core check, no release edges) cannot hold the case. Frozen at its best right-minus-wrong.
+- Frozen at commit 12052710 (module and seam) and the harness's file hashes (private notes), before any held-out row
+  was labelled.
+- **Seen before freezing**: while building I looked at rows of all days, including 20 of the 161 held-out rows
+  (a model family's release and its flash variant, a lab's IPO and its research tool, the release case). The
+  sensitivity read leaves them out.
+
+### Held-out (H1 2026-11-01..06 ∪ H3 2026-11-13..16)
+
+- **What stands in for H2.** H2 is the 7 days after the freeze (2026-11-17..23): they do not exist yet. H3, the
+  release case's last days after the dev window, stands in.
+- **Labels.** 161 distinct rows pooled over the four arms, labelled blind by two labellers. Cohen's κ: single 0.88,
+  major 0.73. The 28 rows they differed on went to a third labeller. Duplicates were labelled per list, each list
+  apart (8 lists; a row is a duplicate when both labellers put it in a group).
+- **Labellers.** Claude subagents (Sonnet), one model family, so their agreement is likely correlated (0208's note).
+
+| bar | A0 (v10.22.3) | B | C | D (chosen) |
+|---|---|---|---|---|
+| rows | 141 | 123 | 130 | 123 |
+| 1 single-story ≥ 90%, LB ≥ 85%, ≥ A0 + 4 | 86% (79–91) | 85% (77–90) ✗ | 86% (79–91) ✗ | 85% (77–90) ✗ |
+| 1 bootstrap over days, arm − A0 | — | −3.9..+1.3 | −2.4..+3.7 | −5.2..+3.1 |
+| 2 not a duplicate ≥ A0 − 2 | 84% (78–90) | 93% (88–97) ✓ | 92% (86–96) ✓ | 93% (88–97) ✓ |
+| 3 clean major rows ≥ A0 | 45 | 42 ✗ | 45 ✓ | 41 ✗ |
+| 3 major events missed ≤ A0 | 0 | 2 ✗ | 2 ✗ | 2 ✗ |
+| 4 joins lost ≤ 3% (of 1,842 pairs) | — | 0% ✓ | 0% ✓ | 0% ✓ |
+| 5 order independence (20 shuffles) | 20/20 | 20/20 ✓ | 20/20 ✓ | 20/20 ✓ |
+| 6 stability (hourly; lead kept, Jaccard ≥ 0.8) | 98.67% | 98.72% ✓ | 98.66% ✗ | 98.68% ✓ |
+| 6 flapping pairs | 0 | 0 | 0 | 0 |
+| 7 news stage / peak RSS (mxreal clone, 3 runs each) | 1.44 s / 163.3 MB | — | — | 2.65 s / 164.4 MB ✗ |
+| 8 Haiku questions per day | 0 added | 0 | 0 | 0 |
+| the owner's release case | 7 rows | one row (+ the teaser) | 4 rows | one row (+ the teaser) |
+
+- **Sensitivity.** With the 20 rows seen before the freeze left out, the reading is the same: A0 86% single, 89% not
+  duplicate, 41 clean major; D 85%, 97%, 38, 1 missed.
+- **Stability** is the share of rows of the window, hour to hour, whose lead post is unchanged and whose posts'
+  Jaccard is at least 0.8. It covers H1 ∪ H3. A day-by-day reading puts every arm 1–2 points under A0: a release row
+  grows by a stage.
+- **Resources.**
+  - Measured with the Mark X adapter, on a migrated `prep_mxreal` clone (49k posts to 2026-11-05).
+  - A full decision run, rolled back after each run, three runs each. Totals: 52.3 s off, 54.0 s on. Peak RSS:
+    163.3 MB off, 164.4 MB on.
+  - The News stage alone takes 1.44 s off and 2.65 s on. Loading the evidence costs most of it: the exact things
+    from mentions, reading types, story types and verdicts. The grouping itself adds about 0.05 s and 1 MB on the
+    replay's 30-day window.
+  - On that clone, D made 153 rows to the control's 129. With the mean above 1, a surging name alone (weight 1)
+    joins nothing, so stories a name joined in v10.18 stay apart. The replay's held-out rows show no join lost, but
+    the replay only holds posts that were in a row.
+
+**Decision (§5.3 as written): no arm passes bars 1 and 3, and D fails bar 7. Nothing ships; the v10.18 guards
+stay.** The spec drops the idea when no arm passes bars 1–3 on H1 ∪ H2, and H2 is not in yet. Bar 1 is not close for
+any arm. Bar 1's +4 points looks out of reach for any row-level grouping, because:
+
+- every arm mostly merges rows (joins lost: 0);
+- a merge can remove a duplicate (bar 2: +9 points), but it cannot make a mixed row clean;
+- a merge of a clean row with a mixed one makes one mixed row out of two.
+
+### Breakage (D on the held-out days; exact rows in the private notes)
+
+- **Built right (4 rows made of A0 rows, each labelled one story).**
+  - The release case: a rumour, the preview, the launch, the router's availability, the evaluator's and an arena's
+    benchmark threads, 6 A0 rows in one row.
+  - A small open model's release joined to its availability posts.
+  - A lab's research-acceleration essays joined to an evaluator's assessment of it.
+  - A partnership's two announcements, one by each partner.
+- **Built wrong (6 rows labelled not one story).**
+  - **Mixed stories carried as lines, 3 rows.** A story that already mixed two labs' posts (in A0 too) took a model's
+    later benchmark thread. A security tool's row took a mixed leaderboard story. A cyber model's row was already
+    mixed in A0.
+    - Cause: the row-level core trusts each story's core; the story itself is mixed.
+    - Fixing feature: the story's own joins (decide's join judge, 0203's "next step"), not News.
+  - **A 14-day span pulled later research into a release row, 1 row.** Two research results about one model (weight
+    reading; underperformance on safety tasks) came weeks after its release, through a mixed story.
+    - Cause: research results are release lines at any distance in the span.
+    - Fixing feature: research joins a release only near its launch (a shorter span for non-stage lines), measured
+      on fresh days.
+  - **A third party's quantisation of a model joined the model's own release, 1 row.** The labellers call it another
+    story.
+  - **A benchmark row brought one off post along, 1 row.** The merge itself was right by the owner's rule.
+- **Missed (2 major events).**
+  - A model's safety finding, now an off part of the research row above.
+  - A flash variant's launch, now inside the mixed benchmark row.
+
+### What is kept, and what next
+
+- **Kept (§6 "if dropped"):**
+  - the module, its tests and the `grouped` seam, unused by production;
+  - the frozen inputs, both label sets (dev pairs, held-out rows and duplicates) and the scripts, in the private
+    notes, as a test set for the next grouping change;
+  - `rejected`, the explanation of every refused edge, which works over the guards' inputs too.
+- **What the measurement says to do instead.**
+  - **Mixed stories.** They come from the stories' own joins (0203), so fixing them is the join judge's work.
+  - **The release rule.** The owner's "one release, one row" works as a row-level rule. On the held-out days it made
+    4 rows right and 2 wrong; both wrong ones came through mixed stories. It could ship alone once stories are
+    cleaner. It would ship as release edges over the v10.18 guards, without average linkage or the judge's verdicts
+    building, and measured against bars written for it.
+  - **The reader's place for a merged row.** A merged release row starts at its rumour. The reader's News places a
+    row by its first post (`newsPart`), so a launch merged into a preview row from five days earlier leaves "Last 48
+    hours". Part 2's "Updated" return is what fixes that, and it has to ship with any release merge.
+- **Part 2 was not started.** It was to follow Part 1's wiring.
