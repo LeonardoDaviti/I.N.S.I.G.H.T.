@@ -54,6 +54,7 @@ class _Count:
     at: float                 # when read (monotonic)
     limit: Optional[int]      # the allowance then (None: no guard)
     state: str                # the hold's state then (low when no row)
+    confirmed: bool = False   # past the allowance on the database's own count (read, not only this process's)
 
 
 _LOCK = threading.Lock()
@@ -112,7 +113,8 @@ def _read(cur: Cursor, kind: str, day: date) -> _Count:
                            AND NOT {_fresh('pa')} AND NOT {_fresh('pb')}""",
                     {"kind": kind, "start": _day_start(day), "fresh": tasks.fresh_since()})
         base = cur.fetchone()[0]
-    return _Count(base=base, local=0, at=time.monotonic(), limit=limit, state=state)
+    return _Count(base=base, local=0, at=time.monotonic(), limit=limit, state=state,
+                  confirmed=limit is not None and state != "released" and base >= limit)
 
 
 def _new_post(cur: Cursor, ids: Sequence[Any]) -> bool:
@@ -121,7 +123,7 @@ def _new_post(cur: Cursor, ids: Sequence[Any]) -> bool:
     ids = [str(i) for i in ids if i is not None]
     if not ids:
         return False
-    cur.execute(f"SELECT EXISTS (SELECT 1 FROM posts p WHERE p.id::text = ANY(%(ids)s) AND {_fresh('p')})",
+    cur.execute(f"SELECT EXISTS (SELECT 1 FROM posts p WHERE p.id = ANY(%(ids)s::uuid[]) AND {_fresh('p')})",
                 {"ids": ids, "fresh": tasks.fresh_since()})
     return bool(cur.fetchone()[0])
 
@@ -140,11 +142,11 @@ def hold_for(cur: Cursor, kind: str, a: Any = None, b: Any = None, *, now: Optio
             _COUNTS[key] = c
     if c.limit is None or c.state == "released" or c.base + c.local < c.limit:
         return None
-    if c.local:   # reached on this process's own count: read the day's again before holding anything
+    if not c.confirmed:   # reached on this process's own count: read the day's once before holding anything
         c = _read(cur, kind, day)
         with _LOCK:
             _COUNTS[key] = c
-        if c.limit is None or c.state == "released" or c.base < c.limit:
+        if not c.confirmed:
             return None
     if _new_post(cur, (a, b)):
         return None
