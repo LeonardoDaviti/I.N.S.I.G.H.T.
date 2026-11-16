@@ -1339,6 +1339,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     key = _json.dumps([CODE_VERSION, incremental.reading_stamp(), incremental.accounts_stamp(cur), config.as_dict(),
                        guides], sort_keys=True, default=str)
     memo, warm = incremental.open_state(cur, key)
+    why_full = memo.why_full   # v10.22.2: diagnostics (counts.run.why_full)
     nightly = warm and full is None and incremental.nightly_due(cur, now)
     kind = "full" if (full or not warm or nightly) else "incremental"
     if on_kind is not None:    # 0215: the caller's limit is the kind's (jobs.limit_for: a full run reads everything)
@@ -1454,6 +1455,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             "old_added": dict(ask.old_added), "old_waiting": dict(ask.waiting_old)}
     want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
+                     **({"why_full": why_full} if why_full else {}), **({"forced": True} if full else {}),
                      "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
                      "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
                      "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),

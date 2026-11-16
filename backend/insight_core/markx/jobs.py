@@ -97,7 +97,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from insight_core.utils import peak
-from insight_core.utils.idle_trim import libc_trim
+from insight_core.utils.idle_trim import libc_trim, rss_mb
 
 log = logging.getLogger(__name__)
 
@@ -782,6 +782,7 @@ class Jobs:
         t0 = time.monotonic()
         self._begin("decide", "candidates")
         stages: List[List[Any]] = []          # [[stage, seconds]] in order (jsonb keeps no key order)
+        rss: List[List[Any]] = []             # v10.22.2: [[stage, RSS MB at its end, RSS MB after the trim]]
         current = ["candidates", t0]
         own = [0.0]                           # 0128: the seconds of the stages with a budget of their own
         limit = [limit_for(None, previous, self.limit, self.catch_up)]   # 0215: the kind's, once the run knows it
@@ -795,10 +796,16 @@ class Jobs:
 
         trim = libc_trim()
 
+        def mb() -> Optional[float]:
+            got = rss_mb()
+            return None if got is None else round(got)
+
         def stage(name: str) -> None:
+            ended = mb()
             gc.collect()   # v10.22.1: what the finished stage let go goes back to the OS before the next one
             if trim is not None:
                 trim()
+            rss.append([current[0], ended, mb()])
             at = time.monotonic()
             stages.append([current[0], round(at - current[1], 1)])
             log.info("Mark X decision run: %s took %.1f s", current[0], at - current[1])
@@ -831,23 +838,24 @@ class Jobs:
             self._finish("decide", {"ok": False, "error": str(exc), "stopped_before": str(exc).split("stopped before ", 1)[-1],
                                     "over_in": over_in, **({"skip_next": skip_next} if skip_next else {}),
                                     **({"skipped_stages": skip} if skip else {}),
-                                    "stages": stages, "seconds": round(time.monotonic() - t0, 1),
+                                    "stages": stages, "rss_mb": rss, "seconds": round(time.monotonic() - t0, 1),
                                     "limit": limit[0], "peak_mb": peak.mb()}, again=True)
             return None
         except Exception as exc:
             log.exception("Mark X decisions: the run failed")
-            self._finish("decide", {"ok": False, "error": str(exc)[:500], "stages": stages,
+            self._finish("decide", {"ok": False, "error": str(exc)[:500], "stages": stages, "rss_mb": rss,
                                     "seconds": round(time.monotonic() - t0, 1)}, again=True)
             return None
         end = time.monotonic()
         if "skipped" not in out:
             stages.append([current[0], round(end - current[1], 1)])
+            rss.append([current[0], mb(), None])
             log.info("Mark X decision run: %s took %.1f s", current[0], end - current[1])
         seconds = round(end - t0, 1)
         log.info("Mark X decision run finished in %.1f s: %s", seconds,
                  {k: v for k, v in out.items() if k in ("stories", "changes", "news", "skipped")})
         self._finish("decide", {"ok": "skipped" not in out, "seconds": seconds, "run": out.get("run"),
-                                "skipped": out.get("skipped"), "stages": stages, "limit": limit[0],
+                                "skipped": out.get("skipped"), "stages": stages, "rss_mb": rss, "limit": limit[0],
                                 "peak_mb": peak.mb(),
                                 **({"skipped_stages": skip} if skip else {}),
                                 **({"mark_ix": ahead} if ahead else {}),

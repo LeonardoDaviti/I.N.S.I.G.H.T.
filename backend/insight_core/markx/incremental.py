@@ -200,6 +200,7 @@ class State:
     want: Optional[Dict[str, Dict[str, Tuple]]] = None             # the last run's memberships, by final story key
     surges: Optional[Tuple[Tuple, List[Any]]] = None               # (news_surges' stamp, the surges as news reads them)
     report: Dict[str, Any] = field(default_factory=dict)           # this run's dirty set and reading, for counts.run
+    why_full: Optional[Dict[str, Any]] = None                      # v10.22.2: why open_state found no warm state
     # the judge tasks and their answers
     tasks: Dict[Tuple[str, str], Tuple[str, str, int]] = field(default_factory=dict)   # (kind, hash) -> (id, status, n)
     keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # task id -> (kind, input hash)
@@ -247,9 +248,10 @@ def open_state(cur: Any, key: str) -> Tuple[State, bool]:
     db = _db(cur)
     cur.execute("SELECT run_id::text, key FROM mx_inc_state WHERE name = %s", (NAME,))
     row = cur.fetchone()
-    warm = row is not None and row[1] == key and row[0] is not None and row[0] == _last_run(cur)
+    last = _last_run(cur) if row is not None else None
+    warm = row is not None and row[1] == key and row[0] is not None and row[0] == last
     if not warm:
-        return State(db=db, key=key, full=True), False
+        return State(db=db, key=key, full=True, why_full=_why_full(row, key, last)), False
     cur.execute("SELECT stamps, news, want FROM mx_inc_state WHERE name = %s", (NAME,))
     stamps, news, want = cur.fetchone()
     news = decode(news)
@@ -257,6 +259,34 @@ def open_state(cur: Any, key: str) -> Tuple[State, bool]:
         news = None   # 0215: News' rows made by other code: this run makes them in full, its reading incremental
     return State(db=db, key=key, full=False, run_id=row[0], stamps=decode(stamps) or {}, news=news,
                  want=decode(want)), True
+
+
+KEY_PARTS = ("code", "reading", "accounts", "config", "guides")   # decide.run's key, in order
+
+
+def _why_full(row: Any, key: str, last: Optional[str]) -> Dict[str, Any]:
+    """v10.22.2, diagnostics: why the kept state is not warm: none kept, the key's parts that differ (a config's or
+    guides' own keys named), or the run that left it not the last finished one."""
+    if row is None:
+        return {"state": "none"}
+    if row[1] != key:
+        try:
+            was, now = json.loads(row[1]), json.loads(key)
+        except (TypeError, ValueError):
+            return {"key": "unreadable"}
+        if not isinstance(was, list) or not isinstance(now, list):
+            return {"key": "changed"}
+        parts = []
+        for i in range(max(len(was), len(now))):
+            a, b = (was[i] if i < len(was) else None), (now[i] if i < len(now) else None)
+            if a == b:
+                continue
+            name = KEY_PARTS[i] if i < len(KEY_PARTS) else str(i)
+            if isinstance(a, dict) and isinstance(b, dict):
+                name += ":" + ",".join(sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k)))
+            parts.append(name)
+        return {"key": parts}
+    return {"run_id": {"kept": row[0], "last": last}}
 
 
 def fresh(state: State) -> State:
