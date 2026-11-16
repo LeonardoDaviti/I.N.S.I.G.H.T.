@@ -8,8 +8,8 @@ Before, those were loaded, rendered and tried again on every call: with the wind
 read ~110k posts a run (84 s on the server for nothing added), the read and entities leases ~2 s each.
 
 A mark is (kind, guide, post) with why it was passed over (`same_input`, `not_cue`) and the post's text **stamp**: the
-row versions of what tasks.load_posts reads (the post's row, its parts, its kept links) and the source's shown name and
-kind, as the planner's query saw them. The planners skip a post whose mark's stamp is its stamp now; when any of those
+version of what tasks.load_posts reads (the post's row; its parts, its kept links, the source's shown name and kind and
+its linked page, through mx_post_stamps since v10.22), as the planner's query saw them. The planners skip a post whose mark's stamp is its stamp now; when any of those
 rows changes the stamp differs and the post is read again exactly as before (and marked again if passed over again).
 So a planner adds the same tasks as before, only without re-reading what cannot have changed. Marks are derived rows:
 kept (keep everything), overwritten when a post is passed over again.
@@ -26,18 +26,13 @@ LINKED_PAGE = """SELECT o.post_id FROM post_parts lp JOIN story_originals o
                    ON o.kind = 'linked' AND o.url = lp.link_target AND o.post_id IS NOT NULL
                 WHERE lp.post_id = {post} AND lp.link_kind = 'page' LIMIT 1"""
 
-# The post's text stamp, over alias `p` (posts): what load_posts reads. Row versions (xmin || ctid, as
-# incremental.post_stamps) for the post, its parts and its links; the source's values themselves (its row is
-# rewritten by the cadence job, which changes nothing a render shows); 0208: the page a link post is read with, once
-# stored (nothing is added for any other post, so their stamps are as they were).
+# The post's text stamp, over alias `p` (posts): what load_posts reads. Its row's version (xmin || ctid, as
+# incremental.post_stamps) and its dependents' version (v10.22, migration 0147: mx_post_stamps.n, moved by every write of
+# its parts and kept links, of its source's shown name and kind, and of the `linked` original its page is (0208)). Was:
+# those four read again as subqueries for every post of the window on every planner run (on the server 12% of the
+# database's time); now one primary-key probe. A post none of them was written for since 0147 has no row.
 STAMP = """(p.xmin::text || p.ctid::text
-            || '|' || COALESCE((SELECT pp.xmin::text || pp.ctid::text FROM post_parts pp WHERE pp.post_id = p.id), '')
-            || '|' || COALESCE((SELECT md5(concat_ws(chr(31), s.platform, s.handle_or_url, s.settings->>'display_name',
-                                                     s.settings->>'name'))
-                                  FROM sources s WHERE s.id = p.source_id), '')
-            || '|' || COALESCE((SELECT string_agg(l.xmin::text || l.ctid::text, ',' ORDER BY l.position, l.target_url)
-                                  FROM post_links l WHERE l.post_id = p.id), '')
-            || COALESCE('|' || (""" + LINKED_PAGE.format(post="p.id") + """)::text, ''))"""
+            || '|' || COALESCE((SELECT ps.n::text FROM mx_post_stamps ps WHERE ps.post_id = p.id), ''))"""
 
 
 def unmarked(kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> str:

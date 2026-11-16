@@ -105,4 +105,4 @@ class LinkPosts(OriginalsCase):
             cur.execute(f"SELECT {plan_marks.STAMP}, p.xmin::text || p.ctid::text FROM posts p WHERE p.id = %s", (pid,))
             stamp, row = cur.fetchone()
         self.assertTrue(stamp.startswith(row))
-        self.assertEqual(stamp.count("|"), 3)                                  # nothing added: the stamps before 0208
+        self.assertEqual(stamp.count("|"), 1)        # its row, then its dependents' version (0216: no page: nothing added)
