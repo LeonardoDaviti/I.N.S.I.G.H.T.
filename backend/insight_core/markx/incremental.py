@@ -565,6 +565,14 @@ def _fingerprint(state: State, ids: Sequence[str], reads: bool) -> str:
     return "\n".join(parts)
 
 
+def ahead(state: State, ids: Iterable[str]) -> None:
+    """v10.22: of the posts read again (State.stale), only those a question can show (`ids`: decide.load's) are read
+    ahead with a render's miss; a post no question shows is read only if something asks for it (no text more is kept
+    than before: a full run on the mxreal copy 164 MB either way)."""
+    keep = set(ids)
+    state.stale = [pid for pid in state.stale if pid in keep]
+
+
 def rendered(state: Optional[State], kind: str, ids: Sequence[str], render: Callable[[], str], *, reads: bool = False,
              extra: Sequence[str] = (), texts: Optional[LazyTexts] = None,
              readings: Optional[LazyReadings] = None) -> Any:

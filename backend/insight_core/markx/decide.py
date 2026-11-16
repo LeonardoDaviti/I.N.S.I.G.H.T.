@@ -821,6 +821,9 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
         ms.sort(key=lambda m: (posts[m.post].at, m.post))
     window = [(a, b, c) for (a, b), c in pairs.items() if a in posts and b in posts and posts[a].at >= since]
     window.sort(key=lambda abc: (abc[2] is None, -(abc[2] or 0.0), abc[0], abc[1]))
+    if memo is not None:   # v10.22: the texts a question can show (a story's other members, a pair's), read in pages
+        incremental.ahead(memo, {m.post for ms in stories.values() if len(ms) > 1 for m in ms}
+                          | {p for a, b, _ in window for p in (a, b)})
     cur.execute("SELECT story_id::text, post_id::text FROM story_mentions WHERE story_id = ANY(%s::uuid[])", (sorted(stories),))
     ix_mentions: Dict[str, Set[str]] = defaultdict(set)
     for sid, pid in cur.fetchall():
