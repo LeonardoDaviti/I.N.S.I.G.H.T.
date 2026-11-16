@@ -160,7 +160,7 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
     out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
     rows = redirect_rows(cur)
     owner = _owner_same(cur)
-    for root, ms in sorted(book.members().items()):
+    for root, ms in sorted(book.clusters().items()):   # v10.22 (0216): a cluster of one has no side to cut
         if len(ms) < 2 or out["undone"] >= limit:
             continue
         fam, org = book.sides(ms)
@@ -275,7 +275,7 @@ def family_org(book: I.Book, cur: Any = None, show: int = 10) -> Dict[str, Any]:
     run, but for the clusters the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by
     name."""
     mixed = []
-    for root, ms in book.members().items():
+    for root, ms in book.clusters().items():   # v10.22 (0216): a cluster of one holds no family and org
         if len(ms) < 2 or root not in book.ents:
             continue
         fam, org = book.sides(ms)
@@ -575,17 +575,26 @@ def choose(book: I.Book, root: str, members: List[str], spans: Dict[str, List[Tu
             typ if typ and typ != base else None)
 
 
+class _Clusters(dict):
+    """{root: its members} for the clusters of two or more names; any other root's members are itself."""
+
+    def __missing__(self, r: str) -> Set[str]:
+        return {r}
+
+
 def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]], after: Optional[str] = None,
           deadline: Optional[float] = None) -> Dict[str, Any]:
     """The shown name and type of `roots` (None: every cluster, from `after` in id order, in chunks, stopping past
     `deadline` after a chunk; {done, after} says where). Writes only what changed; never an owner's rename."""
     cur.execute("SELECT id::text FROM mx_entities WHERE shown_by = 'owner'")
     owners = {r[0] for r in cur.fetchall()}
-    members = book.members()
-    if roots is None:
-        todo = sorted(r for r in members if r in book.ents and (after is None or r > after))
+    # v10.22 (0216): the clusters of two or more names; any other root is a cluster of one, itself (book.members() of
+    # every root made a set for each of the server's 330k entities, ~90 MB, every run)
+    members = _Clusters(book.clusters())
+    if roots is None:   # every root (an entity that is its own root), from `after`
+        todo = sorted(r for r in book.ents if book.root(r) == r and (after is None or r > after))
     else:
-        todo = sorted({book.root(r) for r in roots if r in book.ents} & set(members))
+        todo = sorted({book.root(r) for r in roots if r in book.ents})
     out = Counter({"clusters": 0, "names": 0, "types": 0})
     from insight_core.markx import rename
     early = rename.earlier_members(cur)   # 0165 B: an earlier name (a rename's old side) is never the name shown

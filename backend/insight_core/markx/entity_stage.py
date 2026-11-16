@@ -19,6 +19,12 @@ relinks in pages of posts (`full.phase` 'link', `link_after`) before its entity 
 addresses' sweep of every post stops likewise (`addresses`: done, after) and goes on in the next runs. The book is read
 once a run, for both.
 
+v10.22 (0216): **and they share it.** A run with a full pass half done gives the linking of the new mentions
+identity.LINK_SHARE of the budget, the full pass the rest, each at least one step: the server's full pass stood still
+for five days, its runs' first linking part taking the whole budget and the pass waiting for the linking to finish.
+The linking pools as an incremental pass does (the full pass's chunks ask every seed's nearest names), and the book
+holds about half what it did (identity.read_ents, load_book).
+
 0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
 names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
 0168: then the handle rule over the posts it has not read (markx/handles.py; `handles`), and the questions its pairs

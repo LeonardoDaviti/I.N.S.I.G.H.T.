@@ -102,7 +102,7 @@ class APagesBook(Ents, built_tests.Stored):
 
     def test_it_cannot_be_walked(self):
         page = I.lazy_book(self.cur)
-        for walk in (lambda: list(page.ents), lambda: page.alias.items(), lambda: len(page.ents), page.members):
+        for walk in (lambda: list(page.ents), lambda: page.alias.items(), lambda: len(page.ents)):
             with self.assertRaises(TypeError):
                 walk()
 

@@ -89,6 +89,7 @@ PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap: the 120-da
 SEED_CHUNK = 1000           # 0128: the full pass's entities pooled and decided at once (its budget is checked between)
 MENTION_CHUNK = 500         # v10.13.9: the mentions an incremental pass links, pools and decides at once (likewise)
 RELINK_PAGE = 2000          # v10.13.9: the posts whose mentions the full pass relinks at once (likewise)
+LINK_SHARE = 0.5            # v10.22 (0216): a half-done full pass's run: the incremental pass's share of the budget left
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
@@ -214,13 +215,13 @@ class Ent:
     @property
     def hk(self) -> Tuple:
         if self._hk is None:
-            self._hk = N.fields_key(self.haiku, self.maker)
+            self._hk = _shared_key(N.fields_key(self.haiku, self.maker))
         return self._hk
 
     @property
     def pk(self) -> Tuple:
         if self._pk is None:
-            self._pk = N.fields_key(N.parse(self.name, self.type, self.maker), self.maker)
+            self._pk = _shared_key(N.fields_key(N.parse(self.name, self.type, self.maker), self.maker))
         return self._pk
 
     @property
@@ -234,6 +235,15 @@ class Ent:
         if self._grams is None:
             self._grams = N.grams(self.sq)
         return self._grams
+
+
+_NO_FIELDS = N.fields_key({})   # (None, None, None, None, None): no family, version, variant, size or build
+
+
+def _shared_key(k: Tuple) -> Tuple:
+    """v10.22 (0216): a fields key that states nothing is the one shared tuple (most names: an org, a person, a place;
+    each entity kept two of its own, ~50 MB of the server's book once every entity's keys were worked out)."""
+    return _NO_FIELDS if k == _NO_FIELDS else k
 
 
 class Redirects(dict):
@@ -273,7 +283,8 @@ class Book:
         self.ents: Dict[str, Ent] = {}
         self.alias: Dict[str, str] = {}
         self.redirect: Dict[str, Tuple[str, bool]] = Redirects()   # from -> (to, automatic)
-        self.types: Dict[str, Counter] = {}                  # 0164: entity -> its current mentions' types, counted
+        self.types: Dict[str, Any] = {}                      # 0164: entity -> its current mentions' types, counted
+                                                             # (`.items()`: a whole book's TypeCounts, a page's Counter)
         self.pins: Dict[Tuple[str, str, int], str] = {}
         self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # 0133: (post, name key): (guide, its pin)
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
@@ -288,11 +299,19 @@ class Book:
             eid = self.redirect[eid][0]
         return eid
 
-    def members(self) -> Dict[str, Set[str]]:
+    def clusters(self) -> Dict[str, Set[str]]:
+        """v10.22 (0216): {root: its entities} for the clusters of two or more entities, from the redirects: every
+        other root is a cluster of one, itself. A walk of the redirects, not of every entity (the members() it replaces
+        made a set for each of the server's 330k entities, ~90 MB, for the repairs, the invariants and the shown
+        names, which skip one-name clusters or need only their own)."""
         out: Dict[str, Set[str]] = defaultdict(set)
-        for eid in self.ents:
-            out[self.root(eid)].add(eid)
-        return out
+        for frm in self.redirect:
+            if frm in self.ents:
+                out[self.root(frm)].add(frm)
+        for r, ms in out.items():
+            if r in self.ents:
+                ms.add(r)
+        return {r: ms for r, ms in out.items() if len(ms) >= 2}
 
     def by_key(self, k: Optional[str]) -> Optional[str]:
         return self.alias.get(k) if k else None
@@ -507,27 +526,80 @@ class Book:
         return None if e is None else schemas_type(e.shown_type or e.type)
 
 
+class TypeCounts(tuple):
+    """v10.22 (0216): an entity's mention types counted, as load_book reads them: (type, n, type, n, ...) in the order
+    read, answering `items()` as the Counter it replaces did (a Counter an entity was ~210 B of the server's book)."""
+    __slots__ = ()
+
+    def items(self) -> Iterable[Tuple[Any, int]]:
+        return zip(self[0::2], self[1::2])
+
+
+class _One(dict):
+    """v10.22 (0216): one object for each distinct value read (`one(x)`), so a book's ~330k entities don't each hold
+    their own copy of "org", "thing" or "provisional" (psycopg makes a new string for every value of every row)."""
+
+    def __call__(self, x: Any) -> Any:
+        if x is None:
+            return None
+        got = self.get(x)
+        if got is None:
+            self[x] = got = x
+        return got
+
+
+def _each(cur: Any, size: int = 5000) -> Iterable[Tuple]:
+    """v10.22 (0216): a query's rows a page at a time (fetchall made every row's values at once)."""
+    while True:
+        rows = cur.fetchmany(size)
+        if not rows:
+            return
+        yield from rows
+
+
+def _same_id(b: "Book", eid: Optional[str]) -> Optional[str]:
+    """v10.22 (0216): an entity id as the book's own string (the one its `ents` key holds), else as given."""
+    e = b.ents.get(eid) if eid is not None else None
+    return e.id if e is not None else eid
+
+
 def read_ents(cur: Any, b: "Book", ids: Optional[Iterable[str]] = None) -> None:
-    """Read entities into the book: every one, or (v10.16) those of `ids`."""
+    """Read entities into the book: every one, or (v10.16) those of `ids`. v10.22 (0216): row by row (not every row
+    held at once), each repeated value one object (`_One`), one `haiku` dict for each distinct set of fields (it is
+    only ever read), a parent as the book's own id: the server's 330k-entity book was 438 MB of objects."""
     cur.execute(f"""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
                           size, build, status, first_seen, shown_name, shown_type FROM mx_entities
                     {"WHERE id = ANY(%s::uuid[])" if ids is not None else ""}""",
                 (sorted(set(ids)),) if ids is not None else None)
+    one: _One = _One()
+    fields: Dict[Tuple, Dict[str, Any]] = {}
     for (eid, type_, name, key, level, parent, maker, fam, version, vkey, variant, size, build, status,
-         first, shown_name, shown_type) in cur.fetchall():
-        b.ents[eid] = Ent(eid, type_, name, key, level, parent, maker, fam, version, N.from_json(vkey), variant, size,
-                          build, status, first, haiku={"family": fam, "version": version, "variant": variant,
-                                                       "size": size, "build": build},
-                          shown_name=shown_name, shown_type=shown_type)
+         first, shown_name, shown_type) in _each(cur):
+        fam, version, variant, size, build = one(fam), one(version), one(variant), one(size), one(build)
+        haiku = fields.get((fam, version, variant, size, build))
+        if haiku is None:
+            haiku = fields[(fam, version, variant, size, build)] = {"family": fam, "version": version,
+                                                                     "variant": variant, "size": size, "build": build}
+        b.ents[eid] = Ent(eid, one(type_), name, key, one(level), parent, one(maker), fam, version, N.from_json(vkey),
+                          variant, size, build, one(status), first, haiku=haiku, shown_name=shown_name,
+                          shown_type=one(shown_type))
+    for e in b.ents.values():
+        if e.parent is not None:
+            e.parent = _same_id(b, e.parent)
 
 
 def load_book(cur: Any, *, counts: bool = True) -> Book:
     b = Book()
     read_ents(cur, b)
     cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases")
-    b.alias = dict(cur.fetchall())
+    for k, eid in _each(cur):   # v10.22 (0216): the entity's own id and key strings, not a copy of each
+        e = b.ents.get(eid)
+        if e is not None:
+            eid = e.id
+            k = e.key if k == e.key else k
+        b.alias[k] = eid
     cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
-    b.redirect = Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
+    b.redirect = Redirects({_same_id(b, f): (_same_id(b, t), auto) for f, t, auto in _each(cur)})
     cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
     b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
     cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
@@ -542,12 +614,12 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
         return b
     cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject') FROM mx_mentions_now
                     WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
-    product: Dict[Optional[str], bool] = {}   # v10.14: a type read once, a Counter made once an entity
-    for eid, type_, n, subj in cur.fetchall():   # 0164: each entity's mentions' types, counted (one read)
+    product: Dict[Optional[str], bool] = {}   # v10.14: a type read once
+    one: _One = _One()
+    for eid, type_, n, subj in _each(cur):   # 0164: each entity's mentions' types, counted (one read; a row a type)
+        eid, type_ = _same_id(b, eid), one(type_)
         got = b.types.get(eid)
-        if got is None:
-            got = b.types[eid] = Counter()
-        got[type_] += n
+        b.types[eid] = TypeCounts((type_, n) if got is None else got + (type_, n))
         if subj:
             if type_ not in product:
                 product[type_] = schemas_type(type_) in PRODUCT_TYPES
@@ -633,7 +705,7 @@ class LazyBook(Book):
     when first asked (`ents.get(id)`, `id in ents`, `alias.get(key)`; `prime` reads many in one go) and kept for the
     request. It answers what a whole book answers by id and key (root, label, by_key, cluster, the maker's names, an
     entity's mention counts, its versions and families, the entities under a cluster, those of a squashed key); it
-    cannot be walked (iterating `ents`, `alias`, `types` raises TypeError; `members()` too). A page's request reads
+    cannot be walked (iterating `ents`, `alias`, `types` raises TypeError). A page's request reads
     a few hundred entities, not the whole book (250k on the server, read in full by every News, post and entity page
     before)."""
 
@@ -1262,19 +1334,29 @@ def _live(book: Book) -> List[Ent]:
 def _index(book: Book, name: str, empty: Any, add: Any) -> Any:
     """An index over the live entities, kept for the book (0128: the full pass's chunks share it). v10.13.9: grown
     with the entities that became live since it was last read (`add(index, entity)`), never rebuilt: the live set only
-    grows within a run (a run's chunks link new mentions), and a merge changes roots, which no index holds."""
-    cache = book.__dict__.setdefault("_indexes", {})
-    if name not in cache:
-        cache[name] = [empty(), set(), None]
-    got = cache[name]
-    index, have = got[0], got[1]
-    if got[2] != (len(book.ents), len(book.mentioned)):
+    grows within a run (a run's chunks link new mentions), and a merge changes roots, which no index holds.
+    v10.22 (0216): the live entities are listed once for all the indexes, in the order they became live (each index
+    remembers how far down it has read): each index kept a set of its own (three sets of every live id, ~48 MB at the
+    server's 330k entities). The three are always grown together (decide_chunk pools strings, families and makers one
+    after the other), so each still meets the entities in the order it did."""
+    live = book.__dict__.get("_live_order")
+    if live is None:
+        live = book.__dict__["_live_order"] = [[], set(), None]   # [ids in the order met, the same as a set, sig]
+    order, have = live[0], live[1]
+    if live[2] != (len(book.ents), len(book.mentioned)):
         for e in _live(book):
             if e.id not in have:
                 have.add(e.id)
-                add(index, e)
-        got[2] = (len(book.ents), len(book.mentioned))
-    return index
+                order.append(e.id)
+        live[2] = (len(book.ents), len(book.mentioned))
+    cache = book.__dict__.setdefault("_indexes", {})
+    if name not in cache:
+        cache[name] = [empty(), 0]
+    got = cache[name]
+    for eid in order[got[1]:]:
+        add(got[0], book.ents[eid])
+    got[1] = len(order)
+    return got[0]
 
 
 def _string_add(index: Any, e: Ent) -> None:
@@ -1849,11 +1931,6 @@ def alias_input(a: str, b: str) -> str:
     return f"A: {a}\nB: {b}"
 
 
-def odd(ms: Sequence[Tuple[str, Optional[str], Optional[str]]]) -> bool:
-    """A key whose mentions (one per post) differ in type or in a stated maker."""
-    return len({t for _, t, _ in ms}) > 1 or len({m for _, _, m in ms if m}) > 1
-
-
 def collide_sample(eid: str, ms: Sequence[Tuple[str, str, Optional[str], Optional[str]]]) -> List[Tuple]:
     """Up to COLLIDE_MENTIONS mentions from distinct posts: one per (type, maker) first, then the rest (the lab's
     sample, seeded by the entity)."""
@@ -2154,7 +2231,12 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         `chunk` seeds in id order, each chunk with its own "X (Y)" posts and collisions (phase 'pool', `after` the
         last seed decided). `full` in the counts says where ({done, phase, after, link_after, chunks, of}) and the
         next run resumes it there: it first links the mentions not linked yet, as an incremental pass does (with
-        the answered pairs), then goes on. Without a deadline nothing stops."""
+        the answered pairs), then goes on. Without a deadline nothing stops.
+      - v10.22 (0216): the two passes share the budget. With a full pass half done, the linking stops at LINK_SHARE
+        of the budget left and the full pass goes on until the deadline, whether the linking is done or not; each
+        does at least one step a run (a part; a page or a chunk), so neither waits on the other (the server's full
+        pass made no progress for five days: its runs' first part spent the whole budget, and the full pass only ran
+        once every mention was linked)."""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -2166,8 +2248,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         timing[step] += t - since_t
         return t
 
-    def past() -> bool:
-        return deadline is not None and _time.monotonic() > deadline
+    def past(until: Optional[float] = deadline) -> bool:
+        return until is not None and _time.monotonic() > until
     guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     t = _time.monotonic()
@@ -2203,10 +2285,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         cur.execute("""SELECT t.a::text FROM mx_tasks t WHERE t.kind = 'embed_name' AND t.status = 'answered'
                           AND t.answered_at >= %s""", (embedded_since or since or now,))
         vec_seeds = {r[0] for r in cur.fetchall()}
-    if full:   # every vector of the seeds to come
-        cur.execute("SELECT entity_id::text FROM mx_entity_vectors WHERE %s::text IS NULL OR entity_id::text > %s",
-                    (after if phase == "pool" else None,) * 2)
-        vec_seeds |= {r[0] for r in cur.fetchall()}
+    # the full pass's chunks: every vector of the seeds to come (ids after `after` in its pool, else all). v10.22 (0216):
+    # asked of each chunk's seeds (vector_neighbours reads only the seeds that have a vector), not read whole at the
+    # start (the server's 330k vectors: ~200k ids held for the run). And only the full pass's own chunks ask them: a
+    # resumed pass's linking pools as an incremental pass does (the names whose vector came since), as the pass's
+    # chunks pool every seed after `after` with its vector anyway (on the server the linking's first part spent
+    # 9-11 s a run asking the nearest names of seeds the pass had still to reach)
+    vec_after = (after if phase == "pool" else None) if full else None
+
+    def vec_wanted(s_: str, sweep: bool) -> bool:
+        return s_ in vec_seeds or (sweep and (vec_after is None or s_ > vec_after))
     t = tick("load", t)
 
     from insight_core.markx import entity_facts
@@ -2258,9 +2346,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
 
     seeded: Set[str] = set()
+    neared: Set[str] = set()   # v10.22 (0216): the seeds whose nearest names the run asked
     collided: Set[str] = set()
 
-    def decide_chunk(seeds: Set[str], parens: Set[Tuple[str, str]], first: bool, collide: Set[str]) -> None:
+    def decide_chunk(seeds: Set[str], parens: Set[Tuple[str, str]], first: bool, collide: Set[str],
+                     sweep: bool = False) -> None:
         """Pool the seeds' candidates, decide the pairs, ask what no rule decides; then the seeds' collisions. A seed
         an earlier chunk of the run pooled by its name is not pooled by its name again (an entity linked since finds
         it from its own side); its handles, addresses and "X (Y)" are (a chunk's posts may add some)."""
@@ -2275,7 +2365,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         hextra = pool_handles(pool, book, hf, seeds)
         anchored = pool_anchors(pool, an, seeds)
         t = tick("pool", t)
-        for a, b, c in vector_neighbours(cur, book, sorted(s_ for s_ in vec_seeds & named if s_ in book.ents)):
+        # a seed's nearest names once a run, when first wanted (a seed the linking pooled without them, which the
+        # full pass's chunk then reaches, is asked them there)
+        near = sorted(s_ for s_ in seeds if s_ not in neared and vec_wanted(s_, sweep) and s_ in book.ents)
+        neared.update(near)
+        for a, b, c in vector_neighbours(cur, book, near):
             pool.add(a, b, "emb")
         t = tick("vectors", t)
         if first:
@@ -2424,9 +2518,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             collide_out.update(collisions(cur, book, ask=ask, guide=guide, run_id=run_id, got=got, seeds=collide))
         t = tick("collide", t)
 
-    stopped = False
-    # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks
+    stopped = False      # the full pass stopped at the budget (its pages or chunks left are the next run's)
+    # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks. v10.22 (0216):
+    # with a full pass half done, LINK_SHARE of the budget left, so the full pass always has its turn (it had none for
+    # five days on the server: the first part took the whole budget, every run)
     if not full or resume:
+        own = deadline
+        if deadline is not None and full:
+            at = _time.monotonic()
+            own = at + max(0.0, deadline - at) * LINK_SHARE
+        linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
         if book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet (first)
             cur.execute("""SELECT m.post_id::text, m.n FROM mx_mentions_now m JOIN mx_entity_pins p ON p.post_id = m.post_id
@@ -2453,16 +2554,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             decide_chunk(seeds, parens, k == 0, set())
             linked_seeds |= seeds
             done_parts = k + 1
-            if k + 1 < len(parts) and past():
-                stopped = True
+            if k + 1 < len(parts) and past(own):
+                linking_stopped = True
                 break
         # the collisions of the entities linked (once their chunks are all linked), and of the answers since
         decide_collisions(linked_seeds | collide_since)
         left = sum(len(p_) for p_ in parts[done_parts:])
-        out["incremental"] = {"done": not stopped, "parts": done_parts, "of": len(parts), "left": left}
-    # 2. the full pass: every mention relinked, in pages of posts (post id order)
+        out["incremental"] = {"done": not linking_stopped, "parts": done_parts, "of": len(parts), "left": left}
+    # 2. the full pass: every mention relinked, in pages of posts (post id order); at least a page a run
     moved_n = None
-    if full and not stopped and phase == "link":
+    if full and phase == "link":
         moved_n = 0
         if link_after is None:   # the pass's start: every new key's entity from all of its mentions, as one link did
             made_before = len(w.made)
@@ -2510,7 +2611,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 paren_of.update(paren_by_post(cur, book, guide, sorted(posts - set(paren_of))))
             parens = {p_ for pid in posts for p_ in paren_of.get(pid, ())}
             t = tick("paren", t)
-            decide_chunk(seeds, parens, k == 0 and not resume, seeds)
+            decide_chunk(seeds, parens, k == 0 and not resume, seeds, sweep=True)
             done_chunks = k + 1
             last = max(seeds_list) if seeds_list else last
             if k + 1 < len(chunks) and past():
@@ -2554,26 +2655,28 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     extra = entity_facts.to_ask(cur, book, seeds, guide, int(entity_facts.config().get("cap") or 0))
     if seeds is not None:
         seeds = set(seeds) | extra
-    cur.execute(f"""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
-                     WHERE guide = ANY(%s) AND entity_id IS NOT NULL
-                     {"AND entity_id = ANY(%s::uuid[])" if seeds is not None else ""}
-                     ORDER BY entity_id, post_id, n""", (guide, sorted(seeds)) if seeds is not None else (guide,))
-    by: Dict[str, Dict[str, Tuple]] = defaultdict(dict)
-    for eid, pid, span, type_, maker in cur.fetchall():
-        by[eid].setdefault(pid, (pid, span or "", type_, maker))
+    # the keys whose mentions (the first of each post) differ in type or stated maker (`odd`), 2+ posts, counted by the
+    # database. v10.22 (0216): every mention of every seed was read to count them (a run's peak: ~300 MB more on the
+    # server-sized copy); only the new questions' entities' mentions are read now (`_first_mentions`)
+    cur.execute(f"""WITH f AS (SELECT DISTINCT ON (entity_id, post_id) entity_id, type, NULLIF(maker, '') AS maker
+                                 FROM mx_mentions_now WHERE guide = ANY(%(g)s) AND entity_id IS NOT NULL
+                                 {"AND entity_id = ANY(%(s)s::uuid[])" if seeds is not None else ""}
+                                ORDER BY entity_id, post_id, n)
+                     SELECT entity_id::text FROM f GROUP BY entity_id
+                     HAVING count(*) >= 2 AND (count(DISTINCT type) + max(CASE WHEN type IS NULL THEN 1 ELSE 0 END) > 1
+                                               OR count(DISTINCT maker) > 1 OR entity_id = ANY(%(x)s::uuid[]))
+                      ORDER BY 1""", {"g": guide, "s": sorted(seeds) if seeds is not None else None, "x": sorted(extra)})
     out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
     facts_on = entity_facts.on()
-    want = {eid: list(ms.values()) for eid, ms in by.items()
-            if len(ms) >= 2 and (odd([(p, t, mk) for p, _, t, mk in ms.values()]) or eid in extra)
-            and book.ents.get(eid) and book.ents[eid].status != "not_entity"}
+    want = sorted(eid for (eid,) in cur.fetchall() if book.ents.get(eid) and book.ents[eid].status != "not_entity")
     out["odd"] = len(want)
     got.prime_collide(want)   # 0211: the collision questions of these entities, in one read
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])
     new = []
-    for eid, ms in sorted(want.items()):
+    for eid in want:
         task = got.collide.get(eid)
         if task is None:
-            new.append((eid, ms))
+            new.append(eid)
             continue
         tid, status, text = task
         calls = answers.get(tid) or []
@@ -2612,7 +2715,7 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             out["queued"] += 1
     if new:
         new = new[:max(0, COLLIDE_CAP - ask.added["collide"])]
-        picks = {eid: collide_sample(eid, ms) for eid, ms in new}
+        picks = {eid: collide_sample(eid, ms) for eid, ms in _first_mentions(cur, guide, new).items()}
         posts = tasks.load_posts(cur, {m[0] for pick in picks.values() for m in pick})
         nposts = counts_of(cur, guide, list(picks))
         for eid, pick in picks.items():
@@ -2620,6 +2723,19 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             ask.answer("collide", known + collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
             out["asked"] += 1
     return dict(out)
+
+
+def _first_mentions(cur: Any, guide: Any, eids: Sequence[str]) -> Dict[str, List[Tuple]]:
+    """{entity: [(post, span, type, maker)]}: each post's first mention of each entity, in post order."""
+    if not eids:
+        return {}
+    cur.execute("""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[]) ORDER BY entity_id, post_id, n""",
+                (guide, list(eids)))
+    by: Dict[str, Dict[str, Tuple]] = {e: {} for e in eids}
+    for eid, pid, span, type_, maker in cur.fetchall():
+        by[eid].setdefault(pid, (pid, span or "", type_, maker))
+    return {e: list(by[e].values()) for e in eids}
 
 
 def schemas_guide(kind: str) -> Optional[str]:
