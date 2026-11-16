@@ -7,14 +7,13 @@ from __future__ import annotations
 import os
 import threading
 import unittest
-import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import psycopg
 
 from insight_core.markx import api, decide, jobs
-from insight_core.tests._db import clear_tables, db_url
+from insight_core.tests._db import db_url
 from insight_core.tests.test_markx_api import _Api, call, reading
 
 T0 = datetime(2026, 11, 5, 22, 0, tzinfo=timezone.utc)
@@ -78,30 +77,31 @@ class TheBackoff(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=self.failed(50, 6 * 3600 + 1)), T0), "decide")
 
 
-class TheLabelsQueue(unittest.TestCase):
-    """0182: the Labels queue is built here when the newest run's is not kept, after a decision run is due."""
+class AWantedKeptView(unittest.TestCase):
+    """0182, 0199: a view kept only when wanted (main_source; the Labels queue's policy before v10.22) is built when
+    missing and asked for, after a decision run is due."""
 
     def test_due_when_missing_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
-        asked = {"wanted_at": T0 - timedelta(minutes=1)}                       # 0199: a Labels page asked for it
+        asked = {"wanted_at": T0 - timedelta(minutes=1)}                       # 0199: a page asked for it
         self.assertIsNone(jobs.due(_states(decide=recent), T0))
-        self.assertIsNone(jobs.due(_states(decide=recent), T0, kept_missing={"labels"}))    # 0199: nobody asked
-        self.assertEqual(jobs.due(_states(decide=recent, labels=asked), T0, kept_missing={"labels"}), "labels")
-        self.assertEqual(jobs.due(_states(labels=asked), T0, kept_missing={"labels"}), "decide")     # a run first
-        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}, labels=asked), T0,
-                                  kept_missing={"labels"}), "labels")
+        self.assertIsNone(jobs.due(_states(decide=recent), T0, kept_missing={"main_source"}))    # 0199: nobody asked
+        self.assertEqual(jobs.due(_states(decide=recent, main_source=asked), T0, kept_missing={"main_source"}), "main_source")
+        self.assertEqual(jobs.due(_states(main_source=asked), T0, kept_missing={"main_source"}), "decide")     # a run first
+        self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}, main_source=asked), T0,
+                                  kept_missing={"main_source"}), "main_source")
 
     def test_a_failed_build_waits_for_its_backoff(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
         failed = {"started_at": T0 - timedelta(minutes=3), "finished_at": T0 - timedelta(minutes=2),
                   "last": {"ok": False, "error": "boom"}, "failures": 1, "wanted_at": T0 - timedelta(minutes=2)}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}))
+        self.assertIsNone(jobs.due(_states(decide=recent, main_source=failed), T0, kept_missing={"main_source"}))
         failed["finished_at"] = T0 - timedelta(minutes=11)                                    # GAP x 2 after its end
-        self.assertEqual(jobs.due(_states(decide=recent, labels=failed), T0, kept_missing={"labels"}), "labels")
+        self.assertEqual(jobs.due(_states(decide=recent, main_source=failed), T0, kept_missing={"main_source"}), "main_source")
         ok = {"started_at": T0 - timedelta(seconds=40), "last": {"ok": True}, "wanted_at": T0}  # a newer run's
-        self.assertEqual(jobs.due(_states(decide=recent, labels=ok), T0, kept_missing={"labels"}), "labels")
+        self.assertEqual(jobs.due(_states(decide=recent, main_source=ok), T0, kept_missing={"main_source"}), "main_source")
         running = {"started_at": T0 - timedelta(seconds=40), "stage": "building", "wanted_at": T0}
-        self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, kept_missing={"labels"}))
+        self.assertIsNone(jobs.due(_states(decide=recent, main_source=running), T0, kept_missing={"main_source"}))
 
 
 class TheRebuildHold(unittest.TestCase):
@@ -275,82 +275,6 @@ class TheRunner(_Api):
         self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
         self.assertEqual(self.cur.fetchone()[0], 1)
         self.assertIsNone(self.runner().tick())                      # nothing due: it ran a moment ago
-
-    def test_the_labels_queue_is_built_right_after_the_run_in_its_own_transaction(self):
-        """0182: the decision run, then its Labels queue (labels.keep) in the same tick; a failed build is recorded
-        apart, the run stays committed and ok, and the build runs again on a later pass."""
-        from insight_core.markx import labels
-        self.post()
-        with self.conn.transaction():
-            jobs.want(self.cur, "labels")                            # 0199: a Labels page asked for it
-        self.assertEqual(self.runner().tick(), "decide")
-        s = jobs.state(self.cur)
-        self.assertTrue(s["decide"]["last"]["ok"])
-        self.assertTrue(s["labels"]["last"]["ok"], s["labels"]["last"])
-        self.cur.execute("SELECT id::text FROM mx_runs")
-        run, = [r[0] for r in self.cur.fetchall()]
-        self.assertEqual(s["labels"]["last"]["run"], run)
-        self.assertIn("peak_mb", s["labels"]["last"])
-        self.assertFalse(labels.missing(self.cur))
-        self.cur.execute("SELECT run_id::text, stamp FROM mx_label_queues")
-        self.assertEqual(self.cur.fetchall(), [(run, labels.stamp())])
-        self.assertIsNone(self.runner().tick())                      # nothing due
-        # a failed build: the next run is kept, ok, and its queue missing until a later pass builds it
-        with self.conn.transaction():
-            self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '2 hours' WHERE job = 'decide'")
-            jobs.want(self.cur, "labels")
-        with mock.patch.object(labels, "population", side_effect=RuntimeError("boom")), \
-                self.assertLogs(jobs.log, "ERROR"):
-            self.assertEqual(self.runner().tick(), "decide")
-        s = jobs.state(self.cur)
-        self.assertTrue(s["decide"]["last"]["ok"])
-        self.cur.execute("SELECT count(*) FROM mx_runs WHERE finished_at IS NOT NULL")
-        self.assertEqual(self.cur.fetchone()[0], 2)                 # the run is never lost
-        self.assertFalse(s["labels"]["last"]["ok"])
-        self.assertTrue(labels.missing(self.cur))
-        self.assertEqual(s["labels"]["failures"], 1)
-        self.assertIsNone(self.runner().tick())                      # within its backoff (0188: GAP x 2 after its end)
-        with self.conn.transaction():
-            self.cur.execute("""UPDATE mx_jobs SET started_at = started_at - interval '11 minutes',
-                                       finished_at = finished_at - interval '11 minutes' WHERE job = 'labels'""")
-        self.assertEqual(self.runner().tick(), "labels")
-        self.assertFalse(labels.missing(self.cur))
-
-    def test_a_first_start_after_a_deploy_builds_the_missing_queue(self):
-        from insight_core.markx import labels
-        self.post()
-        self.runner().tick()
-        with self.conn.transaction():
-            clear_tables(self.cur, "mx_label_queue_items, mx_label_queues")
-            self.cur.execute("DELETE FROM mx_jobs WHERE job = 'labels'")
-        self.assertTrue(labels.missing(self.cur))                   # not kept,
-        self.assertIsNone(jobs.state(self.cur)["labels"]["wanted_at"])   # 0199: but nobody asked
-        self.assertIsNone(self.runner().tick())
-        with self.conn.transaction():
-            labels.ask(self.cur, labels.kept(self.cur))              # a Labels page opened: "being built"
-        self.assertTrue(labels.missing(self.cur))
-        self.assertEqual(self.runner().tick(), "labels")
-        self.assertFalse(labels.missing(self.cur))
-
-    def test_a_run_nobody_labels_after_builds_no_queue_and_one_opened_builds_it_once(self):
-        """0199: after a run the queue is built only when a Labels page asked for it, at most once a run."""
-        from insight_core.markx import labels
-        self.post()
-        self.assertEqual(self.runner().tick(), "decide")
-        self.cur.execute("SELECT count(*) FROM mx_label_queues")
-        self.assertEqual(self.cur.fetchone()[0], 0)                 # nobody asked: no build
-        self.assertIsNone(self.runner().tick())
-        with self.conn.transaction():
-            q = labels.ask(self.cur, labels.kept(self.cur))
-        self.assertTrue(q.building)
-        self.assertEqual(self.runner().tick(), "labels")
-        with self.conn.transaction():
-            q = labels.ask(self.cur, labels.kept(self.cur))         # kept now: asks nothing
-        self.assertFalse(q.building)
-        self.assertIsNone(jobs.state(self.cur)["labels"]["wanted_at"])
-        self.assertIsNone(self.runner().tick())
-        self.cur.execute("SELECT count(*) FROM mx_label_queues")
-        self.assertEqual(self.cur.fetchone()[0], 1)
 
     def test_vectors_alone_run_the_candidate_finder(self):
         self.runner().tick()                                        # the first decision run
@@ -706,15 +630,15 @@ class TheLimitAndTheStages(_Api):
     def test_failures_count_in_a_row_and_a_good_run_clears_them(self):
         j = jobs.Jobs(db_url())
         for _ in range(3):
-            j._finish("labels", {"ok": False, "error": "boom"})
-        view = jobs.view(self.cur)["labels"]
+            j._finish("news", {"ok": False, "error": "boom"})
+        view = jobs.view(self.cur)["news"]
         self.assertEqual(view["failures"], 3)
         self.assertTrue(view["failing"])
         self.assertIsNotNone(view["retry_at"])
         j._finish("decide", {"ok": False, "skipped": "another decision run holds the lock"})
         self.assertEqual(jobs.state(self.cur)["decide"]["failures"], 0)             # a skipped run is no failure
-        j._finish("labels", {"ok": True})
-        view = jobs.view(self.cur)["labels"]
+        j._finish("news", {"ok": True})
+        view = jobs.view(self.cur)["news"]
         self.assertEqual((view["failures"], view["failing"], view["retry_at"]), (0, False, None))
 
     def test_over_the_limit_twice_in_the_same_stage_skips_it_once(self):

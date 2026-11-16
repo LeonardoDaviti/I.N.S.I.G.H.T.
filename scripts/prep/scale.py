@@ -113,7 +113,7 @@ ANALYZE posts; ANALYZE post_parts; ANALYZE post_links;
 # The Mark X rows of the snapshot's 0068 shape (ent-v3, read-v2 on a few posts) emptied, as slice M did; the
 # per-post rows the backfills keep (handles, round-ups, units) stay and are completed by them.
 KEEP_MX = ("mx_guides", "mx_settings", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans", "mx_roundups", "mx_units",
-           "mx_attach", "mx_roundup_issues", "mx_workers", "mx_label_queues", "mx_label_queue_items")
+           "mx_attach", "mx_roundup_issues", "mx_workers")
 
 MARKX = """
 -- settings: ent-v4.2 entities, the story window 400 days with its backfill done, every post in the reading window

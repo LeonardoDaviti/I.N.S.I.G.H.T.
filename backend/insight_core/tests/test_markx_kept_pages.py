@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from insight_core.markx import entity_views as EV, jobs, kept_pages, labels, news, repo
+from insight_core.markx import entity_views as EV, jobs, kept_pages, news, repo
 from insight_core.tests import test_markx_built as built_tests
 from insight_core.tests.test_markx_api import _Api, call
 from insight_core.tests.test_markx_built import H
@@ -178,7 +178,7 @@ def labels_tap(cur, post, story):
 
 
 class TheJobsKeepNews(_World):
-    """The runner keeps News' views right after a decision run (with the Labels queue, one after-run step), and again
+    """The runner keeps News' views right after a decision run (the one after-run step), and again
     between runs when an input changed, at most every REBUILD_GAP seconds."""
 
     def runner(self):
@@ -193,50 +193,49 @@ class TheJobsKeepNews(_World):
     def test_the_first_start_keeps_the_missing_views_then_a_label_keeps_them_again(self):
         self.cur.execute("UPDATE mx_jobs SET started_at = now() WHERE job = 'decide'")   # no decision run due
         self.cur.execute("INSERT INTO mx_jobs (job, started_at) VALUES ('decide', now()) ON CONFLICT DO NOTHING")
-        with mock.patch.object(labels, "missing", return_value=False):
-            self.assertEqual(self.runner().tick(), "news")
-            self.assertIsNotNone(news.kept_page(self.cur))
-            s = jobs.state(self.cur)["news"]
-            self.assertTrue(s["last"]["ok"], s["last"])
-            self.assertEqual(s["last"]["built"], ["differences", "all"])
-            self.assertIn("peak_mb", s["last"])
-            self.assertIsNone(self.runner().tick())                                   # kept: nothing due
-            labels_tap(self.cur, self.a, self.s1)
-            self.assertIsNone(news.kept_page(self.cur))
-            self.assertIsNone(self.runner().tick())                                   # within REBUILD_GAP
-            self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '61 seconds' WHERE job = 'news'")
-            self.assertEqual(self.runner().tick(), "news")
-            self.assertEqual(news.kept_page(self.cur), kept_pages.encode(news.reader_view(news.page(self.cur))))
+        self.assertEqual(self.runner().tick(), "news")
+        self.assertIsNotNone(news.kept_page(self.cur))
+        s = jobs.state(self.cur)["news"]
+        self.assertTrue(s["last"]["ok"], s["last"])
+        self.assertEqual(s["last"]["built"], ["differences", "all"])
+        self.assertIn("peak_mb", s["last"])
+        self.assertIsNone(self.runner().tick())                                   # kept: nothing due
+        labels_tap(self.cur, self.a, self.s1)
+        self.assertIsNone(news.kept_page(self.cur))
+        self.assertIsNone(self.runner().tick())                                   # within REBUILD_GAP
+        self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '61 seconds' WHERE job = 'news'")
+        self.assertEqual(self.runner().tick(), "news")
+        self.assertEqual(news.kept_page(self.cur), kept_pages.encode(news.reader_view(news.page(self.cur))))
 
     def test_due_after_the_decision_run_and_its_gap_between_runs(self):
         t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
         states = {j: {"job": j, "wanted_at": None, "started_at": None, "stage": None, "stage_at": None,
                       "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)
-        self.assertEqual(jobs.due(states, t0, kept_missing=["news", "labels"]), "news")
+        self.assertEqual(jobs.due(states, t0, kept_missing=["news", "main_source"]), "news")
         states["news"]["started_at"] = t0 - timedelta(seconds=30)
-        self.assertIsNone(jobs.due(states, t0, kept_missing=["news", "labels"]))          # 0199: Labels not asked for
-        states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
-        self.assertEqual(jobs.due(states, t0, kept_missing=["news", "labels"]), "labels")
+        self.assertIsNone(jobs.due(states, t0, kept_missing=["news", "main_source"]))          # 0199: not asked for
+        states["main_source"]["wanted_at"] = t0 - timedelta(minutes=1)
+        self.assertEqual(jobs.due(states, t0, kept_missing=["news", "main_source"]), "main_source")
         self.assertIsNone(jobs.due(states, t0, kept_missing=["news"]))
-        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])   # a new run: at once
-        states["labels"]["wanted_at"] = None
-        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])   # Labels: when wanted
+        self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news", "main_source"])   # a new run: at once
+        states["main_source"]["wanted_at"] = None
+        self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news"])   # when wanted
 
     def test_a_view_built_only_when_wanted_is_one_policy(self):
-        """0199: the Labels queue's policy is "wanted": built (after a run or not) only when its job was wanted since
-        its last build (labels.ask's mark): the same after-run step, no second path."""
+        """0199: a "wanted" view (main_source; the Labels queue's policy before v10.22) is built (after a run or not)
+        only when its job was wanted since its last build: the same after-run step, no second path."""
         t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
         states = {j: {"job": j, "wanted_at": None, "started_at": t0 - timedelta(hours=1), "stage": None,
                       "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
         self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS],
-                         [("news", "always"), ("labels", "wanted"), ("tracks", "always"), ("unread", "always"),
+                         [("news", "always"), ("tracks", "always"), ("unread", "always"),
                           ("main_source", "wanted"), ("discover", "wanted")])   # 0206
-        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news"])
-        states["labels"]["wanted_at"] = t0 - timedelta(minutes=1)
-        self.assertEqual(jobs.kept_due(states, ["news", "labels"], t0, after_run=True), ["news", "labels"])
-        self.assertEqual(jobs.due(states, t0, kept_missing=["labels"]), "labels")
+        self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news"])
+        states["main_source"]["wanted_at"] = t0 - timedelta(minutes=1)
+        self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news", "main_source"])
+        self.assertEqual(jobs.due(states, t0, kept_missing=["main_source"]), "main_source")
 
 
 class TheEntityPageKept(_World):

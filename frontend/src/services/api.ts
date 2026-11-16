@@ -3,10 +3,7 @@ import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 import type { Byline } from '../lib/byline';
-import type {
-  MarkxAnswer, MarkxFlag, MarkxLabelItem, MarkxLabelled, MarkxLabelQueue, MarkxNews, MarkxOverview, MarkxPostPanel,
-  MarkxPrecision, MarkxSettings,
-} from './markx';
+import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxSettings } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
@@ -1562,13 +1559,6 @@ export function createApi() {
     /** The reading window from the Worker tab: days, or null for every post; counts from the next planner run. */
     setMarkxReadingWindow: (days: number | null) =>
       request<MarkxSettings>('/api/markx/settings/reading-window', { method: 'POST', body: { days } }),
-    /** Mark X's labels (issue 0086 F): the queue, one item (its verdict only once labelled), an answer, precision. */
-    getMarkxLabels: () => request<MarkxLabelQueue>('/api/markx/labels'),
-    getMarkxLabelItem: (itemId: string) => request<MarkxLabelItem>(`/api/markx/labels/items/${enc(itemId)}`),
-    labelMarkxItem: (item: string, answer: MarkxAnswer, note?: string) =>
-      request<MarkxLabelled>('/api/markx/labels', { method: 'POST', body: { item, answer, note: note ?? null } }),
-    getMarkxPrecision: (labeller = 'owner') =>
-      request<MarkxPrecision>(`/api/markx/labels/precision?labeller=${enc(labeller)}`),
     /** One tap on a Mark X News member: wrong story, not about this, or ok (taken back). */
     flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
       request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
