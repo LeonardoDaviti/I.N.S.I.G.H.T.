@@ -824,7 +824,7 @@ class PostsRepository:
         """0215: ON CONFLICT DO UPDATE's condition: the update would change the stored row (its updated_at aside),
         from the same pairs as its SET list. A feed brings its last items at every fetch, nearly all as stored; writing
         them again rewrote each row (a new row version: its TOAST, its indexes, its row triggers) and read its links
-        and refs again: on the scale copy's replayed day, 36% of the database's statement time (7 ms a post) and 224k
+        and refs again: on the scale copy's replayed day, 44% of the database's statement time (7 ms a post) and 224k
         post_refs upserts."""
         pairs = [(column, value) for column, value in self._post_update_pairs(row_prefix="posts.")
                  if column != "updated_at"]
