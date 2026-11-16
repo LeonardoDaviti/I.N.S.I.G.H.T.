@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import reading5, repo, schemas, tasks
 
 KIND = "translate"
 ITEM_KIND = "translation"
@@ -46,7 +46,8 @@ F5 = {"meaning_kept": 0.87, "misleading": 0.02, "set": "150 Russian posts, Opus-
 LANG_SQL = """lower(split_part(COALESCE(
                 (SELECT r.lang FROM mx_readings r
                   WHERE r.post_id = p.id AND NULLIF(btrim(r.lang), '') IS NOT NULL AND lower(r.lang) <> 'und'
-                  ORDER BY r.guide DESC LIMIT 1),
+                    AND """ + reading5.rank_sql("r.guide") + """ IS NOT NULL
+                  ORDER BY """ + reading5.rank_sql("r.guide") + """ LIMIT 1),
                 NULLIF(NULLIF(btrim(p.language_code), ''), 'und')), '-', 1))"""
 
 

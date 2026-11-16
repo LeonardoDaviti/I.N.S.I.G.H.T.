@@ -14,6 +14,7 @@ import { formatCount, plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
 import { usd } from '../../lib/markx';
 import { bylineText } from '../../lib/byline';
+import { Reading5Shadow } from './Reading5';   // 0212
 
 const OVERVIEW_KEY = ['markx-overview'] as const;
 
@@ -441,6 +442,7 @@ export function MarkXWorker() {
             <ReadingWindow days={readingWindow ? readingWindow.days : 30} />
             {storyWindow ? <StoryWindow state={storyWindow} /> : null}
             {entitiesGuide ? <EntitiesGuide state={entitiesGuide} /> : null}
+            <Reading5Shadow />
             <section aria-label="Queue">
               <h2 className={H2}>Queue</h2>
               {kinds.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">No task yet.</p> : (

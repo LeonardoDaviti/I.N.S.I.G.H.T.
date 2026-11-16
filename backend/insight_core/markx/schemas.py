@@ -149,6 +149,24 @@ CITE_SCHEMA = {
                            "type": {"enum": CITE_TYPES}, "role": {"enum": CITE_ROLES}, "by": _STR_OR_NULL}}}},
 }
 
+# 0212 (v10.21): ent-v5, one reading of a post: read-v3's reading (`reading`, without `main`), read-v2's `main` (as
+# `event`), ent-v4.2's entities, and the claims slot (0152: not asked yet). A later window's `reading` and `event` are
+# null (validate sets them so). Entities may leave out the fields with no value (read as null).
+READING_V5_SCHEMA = {
+    "type": "object",
+    "required": ["reading", "event", "entities"],
+    "properties": {
+        "reading": {"anyOf": [{"type": "null"}, {
+            "type": "object",
+            "required": ["kind", "events", "lang", "type_why", "event_type", "origin", "items", "mentions"],
+            "properties": {k: READ3_SCHEMA["properties"][k] for k in ("kind", "events", "lang", "type_why",
+                                                                       "event_type", "origin", "items", "mentions")}}]},
+        "event": READ_SCHEMA["properties"]["main"],
+        "entities": ENTITIES_V4_SCHEMA["properties"]["entities"],
+        "claims": {"type": ["array", "null"]},
+    },
+}
+
 JUDGE_SCHEMA = {
     "type": "object",
     "required": ["relation", "confidence"],
@@ -606,6 +624,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
     Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # 0208: a News row's significance,
                                                                                 # its breakdowns (v2; v1 rows kept)
+    Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
 )}
 
 
@@ -661,8 +680,9 @@ def set_entities_arm(cur, guide: str, *, allow_placeholder: bool = False) -> Arm
 
 
 def mention_guides() -> list:
-    """Every entities guide (identity reads the current set, mx_mentions_now, of any of them)."""
-    return list(ENTITY_ARMS)
+    """Every entities guide (identity reads the current set, mx_mentions_now, of any of them); 0212: and ent-v5's,
+    whose rows are current only once its switch is on (Shadow writes them without moving mx_mention_sets)."""
+    return list(ENTITY_ARMS) + ["ent-v5"]
 
 
 def guide_of(cur, kind: str) -> Optional[str]:

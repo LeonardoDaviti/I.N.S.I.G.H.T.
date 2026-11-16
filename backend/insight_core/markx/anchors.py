@@ -266,8 +266,12 @@ def _wholes(cur: Any, posts: Sequence[Any]) -> List[Any]:
     never is, until its items are units)."""
     if POL.roundups != pairing.ROUNDUP_WHOLE_EXCLUDED or not posts:
         return list(posts)
-    cur.execute("SELECT post_id::text FROM mx_readings WHERE guide = 'read-v2' AND kind = 'roundup' "
-                "AND post_id = ANY(%s::uuid[])", ([p.id for p in posts],))
+    from insight_core.markx import reading5   # 0212: the preferred reading's kind (ent-v5's first when on)
+    order = reading5.guides(cur, "read-v2")
+    cur.execute("""SELECT post_id FROM (SELECT DISTINCT ON (post_id) post_id::text, kind FROM mx_readings
+                                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
+                                    ORDER BY post_id, array_position(%s::text[], guide)) x WHERE kind = 'roundup'""",
+                (order, [p.id for p in posts], order))
     out = {r[0] for r in cur.fetchall()}
     return [p for p in posts if p.id not in out]
 

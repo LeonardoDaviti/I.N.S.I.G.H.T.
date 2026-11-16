@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import event_types
+from insight_core.markx import event_types, reading5   # 0212: reading5
 from insight_core.utils.addresses import PLATFORM_SITES, host_of, is_tweet, publication_of, site_of, tweet_author
 from insight_core.utils.discover_rules import CHECK_DAYS, PLACE_TESTS
 from insight_core.utils.entity_originals import CODE_SITES, MODEL_HUBS, RELEASE, WORK
@@ -527,9 +527,9 @@ def picked_stamp(cur: Any, got: Picked) -> str:
     picked, checked = got
     ids = sorted({p for s, _et, _v in picked.values() for p in s["posts"]})
     cur.execute("""SELECT (SELECT count(*) FROM mx_readings WHERE post_id = ANY(%(ids)s::uuid[])
-                                                             AND guide IN ('read-v2', 'read-v3')),
+                                                             AND guide = ANY(%(g)s)),
                           (SELECT max(at)::text FROM mx_mention_sets WHERE post_id = ANY(%(ids)s::uuid[]))""",
-                {"ids": ids})
+                {"ids": ids, "g": reading5.guides(cur, "read-v2", "read-v3")})   # 0212
     reads, sets = cur.fetchone()
     h = hashlib.sha256(repr((checked, reads, sets)).encode())
     for sid in sorted(picked):
@@ -580,6 +580,8 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Option
         from insight_core.markx import names as N, tasks
         ids = sorted({i for sid in actors for i in sts[sid].ids})
         read = {**tasks.readings(cur, ids, "read-v2"), **tasks.readings(cur, ids, "read-v3")}
+        if reading5.is_on(cur):   # 0212: ent-v5's main actors first while its switch is on
+            read.update(tasks.readings(cur, ids, reading5.GUIDE))
         for sid, a in list(actors.items()):
             st = sts[sid]
 

@@ -200,7 +200,7 @@ def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Opt
                       JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %(lo)s AND %(hi)s
                        {"AND sp.story_id = ANY(%(among)s::uuid[])" if among is not None else ""}
-                       AND {event_types.typed_sql("sp.post_id", "%(types)s")}""",   # 0175: through the seam
+                       AND {event_types.typed_sql("sp.post_id", "%(types)s", event_types.type_guides(cur))}""",   # 0175; 0212: ent-v5 first when on
                 {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES], "among": among})
     return sorted({r[0] for r in cur.fetchall()} - have)
 

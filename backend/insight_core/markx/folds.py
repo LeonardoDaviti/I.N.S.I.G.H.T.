@@ -182,6 +182,7 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
         days = None
     elif days is tasks.SETTING:
         days = tasks.reading_window(cur)
+    from insight_core.markx import reading5   # 0212
     cur.execute(
         f"""SELECT p.id::text, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                     - {pairing.ordinary_date('p')})) / 86400))::int
@@ -195,6 +196,7 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                                              >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
               AND (%(fresh)s::timestamptz IS NULL OR {tasks.fresh_sql()})
               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+              AND {reading5.old_kinds_sql(cur, "p.id")}   -- 0212: not a post ent-v5 reads, while its switch is on
             ORDER BY {pairing.ordinary_date('p')} DESC, p.id
             LIMIT %(limit)s""", {"now": now, "days": days, "kind": KIND, "guide": GUIDE, "limit": limit,
                                  "fresh": fetched_since})

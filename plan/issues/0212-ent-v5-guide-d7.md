@@ -59,8 +59,8 @@ Deciding rules, in order:
 
 ### Origin (who the post is, relative to its main happening)
 **Decide origin in this order** (the first that applies):
-1. **Who WROTE it.** If the input has `Repost: written by @X` (or `Author: @X`), judge @X, never the account that
-   shared it: when @X did the happening (the company or project account, its CEO or staff about their own work, the
+1. **Who WROTE it.** If the input has `Repost: written by @<author>` (or `Author: @<author>`), judge @<author>, never the account that
+   shared it: when @<author> did the happening (the company or project account, its CEO or staff about their own work, the
    paper's authors, the organiser of its own event), origin is `maker`. Being shared by someone else never makes a
    maker's own post `relay`.
 2. **The author did the happening** (its own account, blog, site or channel; its own release, paper, results, event,

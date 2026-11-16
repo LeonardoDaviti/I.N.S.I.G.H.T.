@@ -726,8 +726,10 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     """The post page's Mark X panel: its reading, its entities and their roles, its Mark X stories (role, reason, the
     judge's words) and connections, each with its reason."""
     from insight_core.markx import repo
-    cur.execute("SELECT guide, kind, events, lang, headline, reading FROM mx_readings WHERE post_id = %s ORDER BY guide DESC",
-                (post_id,))
+    from insight_core.markx import reading5   # 0212: the preferred reading (ent-v5 first while its switch is on)
+    rank = reading5.rank_sql("guide")
+    cur.execute(f"SELECT guide, kind, events, lang, headline, reading FROM mx_readings WHERE post_id = %s "
+                f"AND {rank} IS NOT NULL ORDER BY {rank}", (post_id,))
     r = cur.fetchone()
     reading = None if r is None else {"guide": r[0], "kind": r[1], "events": r[2], "lang": r[3], "headline": r[4],
                                       "main": (r[5] or {}).get("main"), "mentions": (r[5] or {}).get("mentions") or []}

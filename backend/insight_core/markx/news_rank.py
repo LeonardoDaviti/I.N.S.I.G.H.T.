@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from insight_core.markx import reading5   # 0212: the one preference list
+
 W_SIG, W_COV, W_FIT = 0.6, 0.3, 0.0     # 0208: sig and cov chosen before the measure; fit showed no gain (a Shadow)
 SIG_UNKNOWN = 0.4                        # a row whose significance is not answered yet
 COVERAGE_FULL = 30.0                     # a score this high (reports + half shares and mentions) is coverage 1
@@ -60,7 +62,8 @@ FIT_PARTS = {"entity": 0.45, "source": 0.35, "track": 0.20}
 NEWS_RANK = "news_rank"                  # mx_settings: {"order": "ranked" | "coverage", "analysis": ...}
 ANALYSIS_MAX = 2                         # a row's Analysis posts, at most
 ANALYSIS_CHARS = 1000                    # a breakdown's own words, at least (significance.LONG_POST)
-ANALYSIS_KINDS = ("commentary",)         # the reading kinds a breakdown has (read-v3, else read-v2)
+ANALYSIS_KINDS = ("commentary",)
+_RANK = reading5.rank_sql("r.guide")     # 0212: the preferred reading (was: the guide sorting last)         # the reading kinds a breakdown has (read-v3, else read-v2)
 ANALYSES = ("shown", "shadow")
 DEFAULT_ANALYSIS = "shadow"              # 0208: measured 9 of 12 real (Wilson .47-.91): under the bar, a Shadow
 ORDERS = ("ranked", "coverage")
@@ -254,7 +257,8 @@ def analysis_of(cur: Any, answers: Dict[str, Dict[str, Any]]) -> Dict[str, List[
     cur.execute("""SELECT p.id::text, char_length(btrim(COALESCE(p.content, ''))) - CASE
                           WHEN COALESCE(p.title, '') <> '' AND btrim(COALESCE(p.content, '')) LIKE p.title || '%%'
                           THEN char_length(p.title) ELSE 0 END,
-                          (SELECT r.kind FROM mx_readings r WHERE r.post_id = p.id ORDER BY r.guide DESC LIMIT 1)
+                          (SELECT r.kind FROM mx_readings r WHERE r.post_id = p.id AND """ + _RANK + """ IS NOT NULL
+                            ORDER BY """ + _RANK + """ LIMIT 1)
                      FROM posts p WHERE p.id = ANY(%s::uuid[])""", (ids,))
     ok = {pid for pid, own, kind in cur.fetchall() if (own or 0) >= ANALYSIS_CHARS and kind in ANALYSIS_KINDS}
     return {rid: [p for p in ps if p in ok][:ANALYSIS_MAX] for rid, ps in named.items()}
