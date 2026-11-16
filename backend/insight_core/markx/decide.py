@@ -790,7 +790,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
                 (since,))
     rows = cur.fetchall()
     if memo is None:
-        # v10.18 (0199): a reading with no incremental state (the Labels queue's, labels.population) reads only the
+        # v10.18 (0199): a reading with no incremental state (the Labels queue's then; v10.22: removed) reads only the
         # candidate pairs the window below keeps (their first post in it, the other stored): every pair's posts and
         # every embedding pair's cosine were read before (452k pairs, 23.7 s a reading at server scale) for the few
         # of its 30 days. The same items, proved on the scale copy (issue 0199).
@@ -971,10 +971,8 @@ def _ask_all(q: "Questions", qs: Sequence[Question], world: World, outcome: Opti
     return out
 
 
-def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
-          answered: Optional[List[Tuple[Question, Verdict]]] = None) -> Tuple[Outcome, Dict[str, Any]]:
-    """The two passes over this world: questions, the verdicts found, the decisions. `answered`, when given, is
-    extended with every (question, verdict) the decisions read (the labels' queue, markx/labels.py)."""
+def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tuple[Outcome, Dict[str, Any]]:
+    """The two passes over this world: questions, the verdicts found, the decisions."""
     q = Questions(world, ask, now, config)
     pol = config.same_story()
     nv = {k: voices(world.posts, [m.post for m in ms]) for k, ms in q.members.items()}
@@ -1002,8 +1000,6 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime,
     got2 = _ask_all(q, q2, world, p1)
     ans2 = [(x, got2[n]) for n, x in enumerate(q2) if got2[n] is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
-    if answered is not None:
-        answered.extend(ans1 + ans2)
     counts = {"questions": dict(Counter(x.type for x in q1 + q2)), "answered": len(ans1) + len(ans2),
               "pass2": len(q2), "changes": dict(Counter(c["change"] for c in out.log))}
     return out, counts

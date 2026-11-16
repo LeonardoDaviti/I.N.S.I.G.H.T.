@@ -32,7 +32,7 @@ that matches can only give what a render would.
 
 **When a run is full** (nothing kept is trusted, everything is read and the state written again): no state, or not
 the last finished run's (a run that failed rolls its state back with it, so the state stays the last finished run's
-and the next run is incremental), the code (`code_stamp`: the modules whose code makes what is kept), config or a
+and the next run is incremental), the code (`reading_stamp`: the modules whose code makes what is kept), config or a
 guide changed, nightly (the first run after NIGHTLY_HOUR), and with `run(full=True)`. A full run with a state first
 reads the snapshot as an incremental run would (writing nothing), then in full; any difference is logged as an
 incremental-run bug (`counts.check`). The first run after deploying 0169 is full: it writes the state.
@@ -74,22 +74,11 @@ READING_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental"
 NEWS_MODULES = ("insight_core.markx.news", "insight_core.utils.news_rules", "insight_core.utils.story_rules",
                 "insight_core.services.news_service", "insight_core.services.stories_service",
                 "insight_core.db.repo_stories", "insight_core.db.repo_news")
-CODE_MODULES = READING_MODULES + NEWS_MODULES
 NOT_KEPT = {"insight_core.markx.decide": ("run", "snapshot")}   # the reading's code that makes nothing kept
 
-# The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
+# The state's own version, in the key with reading_stamp: v2 keeps each post's voice (a followed author's repost counts
 # as that author), so the first run after it is full and writes every post again.
 STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (voice.counted_source, then pairing's)
-
-_code: Optional[str] = None
-
-
-def code_stamp() -> str:
-    """The sha256 of CODE_MODULES' source files: all of the state's code (the Labels queue's stamp reads it)."""
-    global _code
-    if _code is None:
-        _code = _stamp(CODE_MODULES, skip={})
-    return _code
 
 
 def reading_stamp() -> str:

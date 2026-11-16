@@ -51,16 +51,9 @@ at 101% CPU and every /api/* request timed out.
     (mx_inc_*, markx/incremental.py), written in the run's own transaction, so nothing here keeps state between runs.
   - The state is in mx_jobs, written in short transactions of their own (never inside a run's), so marking work
     never waits for a run.
-  - **The Labels tab's queue is built here** (0182, the job "labels"): right after each decision run, in a process
-    and a transaction of its own (a failure never touches the run, which is committed already), and on any pass that
-    finds the newest run's queue not kept for this code (the first start after a deploy; a failed build is tried
-    again after its backoff). v10.18 (0199): only when wanted: a Labels page opened while the newest run's queue is
-    not kept marks it (labels.ask: jobs.want), and the view's policy (KEPT_VIEWS, when="wanted") builds it only then,
-    so a run nobody labels after costs no build. It is a whole decision reading (labels.population): it was built in insight-api before,
-    whose RSS then stayed at the build's high-water mark. The API reads only the kept queue (labels.kept).
-  - **Mark X News is kept here too** (0198, the job "news"): its two views (news.keep_pages) built in the same
-    after-run step as the Labels queue, and again when what the page reads between runs changed (a label, a
-    sectioning or placement, a headline answered, Mark IX's News), at most every REBUILD_GAP seconds. The API sends
+  - **Mark X News is kept here** (0198, the job "news"): its two views (news.keep_pages) built in the after-run
+    step (0182's; v10.22, 0216: the Labels queue it first served is removed), and again when what the page reads
+    between runs changed (a label, a sectioning or placement, a headline answered, Mark IX's News), at most every REBUILD_GAP seconds. The API sends
     the kept view while its inputs are the same, else builds the page as before (never stale, never fails).
   - **One mechanism, a policy per view** (0198): `KEPT_VIEWS` lists the kept views (`KeptView`: its job, how the
     runner tells it is missing, `when` it is built: "always" or only when "wanted", and how often `between_runs`);
@@ -120,7 +113,7 @@ FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back t
 WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads (the rest: the next run, wanted at once)
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
-JOBS = ("candidates", "decide", "plan", "labels", "news", "tracks", "unread", "main_source", "discover", "official",
+JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source", "discover", "official",
         "stories")
 STORIES_GAP = 120.0              # 0209: a rebuild's next slice starts this long after the last ended (it rests 90 s after a yield)
 STARVE_AFTER = 900.0             # 0209: candidates or official due this long go before the kept views
@@ -159,11 +152,6 @@ def _news_missing(cur: Any, now: datetime) -> bool:
     return news.kept_missing(cur, now)
 
 
-def _labels_missing(cur: Any, now: datetime) -> bool:
-    from insight_core.markx import labels
-    return labels.missing(cur)
-
-
 def _tracks_missing(cur: Any, now: datetime) -> bool:
     from insight_core.markx import tracks
     return tracks.kept_missing(cur, now)
@@ -187,7 +175,6 @@ def _wanted(cur: Any, now: datetime) -> bool:
 
 # the kept views, built in this order in one process after a decision run (News first: a page the owner waits on)
 KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP),    # 0198
-              KeptView("labels", _labels_missing, when="wanted"),           # 0182; 0199: when a Labels page asked
               KeptView("tracks", _tracks_missing, between_runs=120.0),      # 0206: tracks.KEPT_GAP
               KeptView("unread", _unread_missing, between_runs=UNREAD_GAP, markx=False, pages=("unread",)),
               KeptView("main_source", _main_source_missing, when="wanted", markx=False, pages=("main_source",)),
@@ -592,28 +579,6 @@ class Jobs:
             return None
         ok = "error" not in out
         self._finish("official", {"ok": ok, "seconds": round(time.monotonic() - t0, 1), **out})
-        return out
-
-    def labels(self) -> Optional[Dict[str, Any]]:
-        """0182: the newest decision run's Labels queue, built and kept (labels.keep) in one REPEATABLE READ
-        transaction of its own; a failure is recorded and the job tried again after GAP. Its seconds and this
-        process's peak memory are recorded with it (mx_label_queues, mx_jobs.last)."""
-        from insight_core.markx import decide, labels as mx_labels
-        t0 = time.monotonic()
-        self._begin("labels", "building")
-        try:
-            with decide.snapshot(self.db_url) as cur:
-                out = mx_labels.keep(cur, now=self.clock(), peak=peak.mb)
-        except Exception as exc:
-            log.exception("Mark X labels: building the queue failed; tried again later")
-            self._finish("labels", {"ok": False, "error": str(exc)[:500], "seconds": round(time.monotonic() - t0, 1)},
-                         again=True)   # 0199: still wanted (its start cleared the mark), tried after its backoff
-            return None
-        seconds = round(time.monotonic() - t0, 1)
-        log.info("Mark X labels: the queue of run %s kept in %.1f s (%s items, peak %.0f MB)", out.get("run"), seconds,
-                 out.get("items", "already"), peak.mb())
-        self._finish("labels", {"ok": True, "seconds": seconds, "peak_mb": peak.mb(),
-                                **{k: v for k, v in out.items() if k != "seconds"}})
         return out
 
     def news(self) -> Optional[Dict[str, Any]]:
@@ -1068,7 +1033,7 @@ class Runner:
 
     def _after_run(self) -> None:
         """0182, 0198, the one after-run step: right after a decision run, the kept views it left missing that their
-        policy builds now (`kept_due(..., after_run=True)`: News always, then the Labels queue), in one process of
+        policy builds now (`kept_due(..., after_run=True)`: News always, then the others), in one process of
         their own (a failed or skipped run leaves none to build). Never raises into the tick."""
         try:
             states = self._states()

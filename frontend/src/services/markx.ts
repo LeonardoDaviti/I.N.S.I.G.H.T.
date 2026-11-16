@@ -325,95 +325,9 @@ export interface MarkxSettings {
   story_window_days?: number | null;
 }
 
-// ---- Labels (issue 0086 F): /api/markx/labels ----
+// ---- Labels (issue 0086 F): one tap on a Mark X News member (v10.22, 0216 D: the Labels queue removed) ----
 
-export type MarkxFeature = 'check' | 'join' | 'pair' | 'merge' | 'connect' | 'entities';
-export type MarkxAnswer = 'same_event' | 'follow_up' | 'related' | 'different' | 'unsure' | 'right' | 'wrong';
 export type MarkxFlag = 'wrong_story' | 'not_about' | 'ok';
-
-export interface MarkxLabelQueue {
-  run: string | null;
-  /** The first test day (ISO date): older items are dev. */
-  cut: string | null;
-  total: number;
-  done: number;
-  features: { feature: MarkxFeature; name: string; total: number; done: number; population: number }[];
-  next: string[];
-  answered: string[];
-  pools: Record<string, number>;
-  /** 0182: the newest decision run's queue is not built yet (insight-ingestion builds it after each run); absent from an older API. */
-  building?: boolean;
-}
-
-export interface MarkxVerdict {
-  relation?: string | null;
-  p?: number | null;
-  reason?: string | null;
-  bar?: number | null;
-  decision: string | null;
-}
-
-export interface MarkxLabelItem {
-  id: string;
-  feature: MarkxFeature;
-  name: string;
-  question: string;
-  answers: MarkxAnswer[];
-  /** The judge's input, exactly as it saw it. */
-  evidence: string;
-  /** For an entities item: what the extraction named. */
-  extracted: { name: string; type: string | null; role: string | null; version: string | null; maker: string | null }[] | null;
-  day: string | null;
-  split: 'dev' | 'test';
-  pool: string | null;
-  position: number | null;
-  label: { answer: MarkxAnswer; note: string | null; split: string; created_at: string } | null;
-  /** Null until the item has a label. */
-  verdict: MarkxVerdict | null;
-}
-
-export interface MarkxLabelled {
-  label: { id: string; answer: MarkxAnswer; note: string | null; split: string };
-  verdict: MarkxVerdict;
-  next: string | null;
-  done: number;
-  total: number;
-}
-
-export interface MarkxStat {
-  labelled: number;
-  right: number;
-  precision: number | null;
-  lo: number | null;
-  hi: number | null;
-  n_eff: number;
-}
-
-export interface MarkxFeaturePrecision {
-  feature: MarkxFeature;
-  name: string;
-  acted: string;
-  bar: number | null;
-  population: number;
-  labelled: number;
-  splits: Record<'dev' | 'test' | 'all', { acted: MarkxStat; rejected: MarkxStat }>;
-  sweep: { bar: number; dev: MarkxStat; test: MarkxStat }[];
-  repick: { bar: number; dev: MarkxStat; test: MarkxStat } | null;
-  flags: Partial<Record<MarkxFlag, number>>;
-}
-
-export interface MarkxPrecision {
-  labeller: string;
-  labellers: string[];
-  cut: string | null;
-  target: number;
-  features: MarkxFeaturePrecision[];
-  stale: number;
-  unsure: number;
-  flags: Record<string, Partial<Record<MarkxFlag, number>>>;
-  /** 0182: as MarkxLabelQueue.building. */
-  building?: boolean;
-}
 
 // ---- 0119 A3: entities (the list, an entity's page, the review queue) ------------------------------------------
 
