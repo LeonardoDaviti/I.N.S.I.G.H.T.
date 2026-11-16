@@ -295,7 +295,11 @@ class Rules(unittest.TestCase):
                 # the v10.0.1 review's two (live): "distinct" and "different ... post"
                 "A Rust inference engine for the models: a related but distinct event.",
                 "The Telegram piece is a different commentary post, so this relation applies to the Reddit member only.",
-                "The essay is the same debate as the commentary but a different piece."]
+                "The essay is the same debate as the commentary but a different piece.",
+                # 0217: the story's event as one point of a wider post
+                "Commentary on an election win, with the data center halt as one of several points rather than a report.",
+                "Commentary on the election and the market, with the permit pause as a related theme.",
+                "Commentary on tech stocks and ballot measures, with the compact only in background."]
         for reason in said:
             self.assertTrue(D.contradicts(reason), reason)
         fine = ["The post reports the same release, a different angle on the same launch.",
@@ -305,6 +309,8 @@ class Rules(unittest.TestCase):
                 "The same release as the story, with the paper only as background.",
                 "Both stories cover the single release and differ only in headline framing.",
                 "A one-line reaction to the model, whose subject is its usability, not a distinct release event.",
+                "The post reports the statement, which is the story's event; the CEO is only background.",
+                "Post reports the release, with the earlier leak as background.",
                 "", None]
         for reason in fine:
             self.assertFalse(D.contradicts(reason), reason)

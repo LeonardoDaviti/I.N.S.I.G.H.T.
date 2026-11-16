@@ -527,7 +527,13 @@ _OTHER_RELATION = (r"\b(?:relation|it|this|which)\s+(?:is|should be|falls under|
                    r"|(?<!not )(?<!no )\b(?:related but|but|is|are|as|a|an) distinct\b|(?<!not )\bdistinct from\b")
 _NOT_ITS_SUBJECT = r"\bnot (?:its|the post's) (?:main )?(?:subject|topic)\b"
 _UNRELATED = r"\bunrelated\b|\babsent from\b|\bno relation\b|\bnot related\b|\bnot mentioned\b"
-NOT_THIS_STORY = re.compile("|".join((_OTHER_RELATION, _NOT_ITS_SUBJECT, _UNRELATED)), re.I)
+#   4. (0217) it says the story's event is one point of a wider post: "with <the event> as one of several points", "as
+#      a related theme", "only in background". Read from the held-out mixed rows of 0217 (53 off-story posts): these
+#      three were the "about" joins whose own reason said so, all three labelled off, none of the posts labelled one
+#      story said it. Not "is only background" or "as background", said as often of a side subject ("Amodei is only
+#      background" of a story that is about its post).
+_ONE_POINT = r"\bas one of (?:several|many) (?:points|themes|topics|items)\b|\bas a related theme\b|\bonly in background\b"
+NOT_THIS_STORY = re.compile("|".join((_OTHER_RELATION, _NOT_ITS_SUBJECT, _UNRELATED, _ONE_POINT)), re.I)
 
 
 def contradicts(reason: Optional[str]) -> bool:
