@@ -170,7 +170,12 @@ class Database:
         # server's data (the lab, 2026-10-30): compiling cost ~300 ms of the Sources list's 370 ms, and
         # no endpoint got slower without it.
         check = env_int("INSIGHT_DB_CLIENT_CHECK_MS", CLIENT_CHECK_MS, minimum=0)
-        options = ["-c jit=off", f"-c client_connection_check_interval={check}"]
+        # 0215: every statement planned for its own parameters. psycopg prepares a statement a connection runs 5 times,
+        # and Postgres then may keep one generic plan for every later run; INSIGHT's optional filters
+        # (`%(ids)s IS NULL OR id = ANY(%(ids)s)`) can't use an index in a plan made for any value: measured on the
+        # scale copy, Discover's address fill 47 ms planned for its URLs, 4,224 ms with the generic plan (a seq scan of
+        # post_links per call), so a long-lived process's story batches got slower the longer it ran.
+        options = ["-c jit=off", "-c plan_cache_mode=force_custom_plan", f"-c client_connection_check_interval={check}"]
         if self.statement_timeout_ms > 0:
             options.append(f"-c statement_timeout={self.statement_timeout_ms}")
         if self.idle_in_transaction_ms > 0:

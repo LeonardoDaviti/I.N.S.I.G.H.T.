@@ -81,6 +81,12 @@ class TopStatements(unittest.TestCase):
 
 @requires_db
 class OnTheDatabase(unittest.TestCase):
+    def test_every_statement_is_planned_for_its_values(self):
+        """0215: no generic plan for a prepared statement (an optional filter's index lost: 47 ms -> 4,224 ms)."""
+        from insight_core.db import database
+        with database.connection(db_url()) as conn:
+            self.assertEqual(conn.execute("SHOW plan_cache_mode").fetchone()[0], "force_custom_plan")
+
     def test_the_route_answers_on_any_postgres(self):
         """The test server may or may not load the library: either way an answer, never an error."""
         import main
