@@ -64,6 +64,12 @@ OWN_HAPPENINGS = frozenset({"model_release", "product_release", "business_event"
 NOT_RELEASE_FAMILY = frozenset({"business_event", "policy_legal", "incident", "public_statement"})
 
 
+_WORD = re.compile(r"[^\W_]+(?:[.][^\W_]+)*", re.UNICODE)
+# Words of a release's stage, never of the thing's name: a preview of Max is Max.
+_STAGES = frozenset({"preview", "beta", "alpha", "exp", "experimental", "early", "access", "rc", "candidate",
+                     "release", "ga", "launch", "teaser"})
+
+
 def _norm(s: Optional[str]) -> str:
     s = unicodedata.normalize("NFKC", s or "").lower()
     return re.sub(r"[\s\-_./]+", "", s)
@@ -79,22 +85,24 @@ class Thing:
     def of(*, name: Optional[str] = None, family: Optional[str] = None, version: Optional[str] = None,
            variant: Optional[str] = None) -> Optional["Thing"]:
         """The thing an entity reading says, or None when it names no version (a bare product or company is no exact
-        thing: "Claude Code" twice in a week is two stories). The version is told apart from the family as written
-        ("Qwen" + "4" and "Qwen4" are one); a variant the version already says is no variant of its own."""
+        thing: "Claude Code" twice in a week is two stories). The name is the family's last word and the version
+        ("Claude Fable 5.2", "Anthropic Fable 5.2" and "Fable 5.2" are one; "V4.1" and "4.1" are one); a stage
+        word is no variant ("Max-Preview" is "Max": a preview is a stage of the release, 0217)."""
         v = _norm(version)
+        v = v[1:] if len(v) > 1 and v[0] == "v" and v[1].isdigit() else v
         if not v:
             return None
-        fam = _norm(family)
-        if not fam:
-            base = _norm(name)
-            i = base.find(v)
-            fam = base[:i] if i > 0 else ""
+        words = _WORD.findall(unicodedata.normalize("NFKC", family or ""))
+        if not words:
+            raw = unicodedata.normalize("NFKC", name or "")
+            i = raw.lower().find((version or "").lower()) if version else -1
+            words = _WORD.findall(raw[:i]) if i > 0 else []
+        fam = _norm(words[-1]) if words else ""
         if not fam:
             return None
         nm = v if v.startswith(fam) else fam + v
-        var = _norm(variant)
-        if var and (var in nm):
-            var = ""
+        var = "".join(w for w in (_norm(x) for x in _WORD.findall(unicodedata.normalize("NFKC", variant or "")))
+                      if w not in _STAGES and w not in nm)
         return Thing(nm, var)
 
     def fits(self, other: "Thing") -> bool:
@@ -116,6 +124,8 @@ class Item:
     posts: Tuple[Post, ...]
     voices: int = 0
     names: FrozenSet[str] = frozenset()    # its core surging names (news_rules.core_names)
+    event: Optional[str] = None            # its kind of happening when the caller knows it (Mark X: the story's type
+                                           # by the event-type seam); None: its lead posts' most common type
 
 
 @dataclass(frozen=True)
@@ -148,6 +158,16 @@ class Policy:
     w_core: float = 2.0
     tau_same: float = 0.5            # a same_event below this p builds nothing
     ls_rounds: int = 2               # cc: rounds of single-item moves
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """What a caller hands News besides its stories and names (news_rules.news' `grouped`): each post's facts, each
+    story's kind of happening, the judge's story verdicts and the policy. Mark IX: no verdicts."""
+    posts: Mapping[str, Post]
+    stories: Mapping[str, Optional[str]] = field(default_factory=dict)
+    judged: Sequence[Edge] = ()
+    policy: Policy = field(default_factory=Policy)
 
 
 @dataclass(frozen=True)
@@ -195,7 +215,7 @@ def core_of(item: Item, policy: Policy = Policy()) -> Core:
         if p.event:
             types[p.event] += 1
     order = {p.event: n for n, p in reversed(list(enumerate(leads))) if p.event}
-    event = max(types, key=lambda t: (types[t], -order[t])) if types else None
+    event = item.event or (max(types, key=lambda t: (types[t], -order[t])) if types else None)
     return Core(thing, item.names, event, posts[0].at, tuple(p.id for p in leads))
 
 
@@ -532,4 +552,4 @@ def _blocked_item(state: _State, i: str, g: str) -> bool:
     return False
 
 
-__all__ = ["Thing", "Post", "Item", "Edge", "Policy", "Core", "Group", "Grouping", "group", "core_of"]
+__all__ = ["Thing", "Post", "Item", "Edge", "Policy", "Evidence", "Core", "Group", "Grouping", "group", "core_of"]

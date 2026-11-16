@@ -178,6 +178,38 @@ def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
     return out
 
 
+# 0217: a reading's kind and main action as a closed type, for a consumer that groups by kind of happening and has a
+# reading but no closed type (read-v2, the post panel's view): a round-up a digest, a commentary an opinion, a tool an
+# explainer; a report by its action's happening group, an announcement still rumoured a leak.
+KIND_TYPES = {"roundup": "digest", "commentary": "opinion_analysis", "tool": "tutorial_explainer"}
+GROUP_TYPES = {"release": "model_release", "pricing": "product_release", "deal": "business_event",
+               "funding": "business_event", "legal": "policy_legal", "people": "public_statement",
+               "research": "research_result"}
+
+
+def reading_type(kind: Optional[str], action: Optional[str]) -> Optional[str]:
+    """The closed event type a reading's kind and main action say (pure; None: no happening named)."""
+    if kind in KIND_TYPES:
+        return KIND_TYPES[kind]
+    group, stage = action_group(action)
+    if group == "announcement":
+        return LEAK if stage == "rumored" else None
+    return GROUP_TYPES.get(group or "")
+
+
+def reading_types(cur: Any, post_ids: Iterable[str]) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
+    """{post: (reading_type of its preferred reading, that reading's kind)} of the posts with a reading (one query;
+    the preferred reading as the post panel picks it, reading5.rank_sql)."""
+    from insight_core.markx import reading5
+    ids = sorted({str(p) for p in post_ids if p})
+    if not ids:
+        return {}
+    rank = reading5.rank_sql("guide")
+    cur.execute(f"""SELECT DISTINCT ON (post_id) post_id::text, kind, reading->'main'->>'action' FROM mx_readings
+                     WHERE post_id = ANY(%s::uuid[]) AND {rank} IS NOT NULL ORDER BY post_id, {rank}""", (ids,))
+    return {pid: (reading_type(kind, action), kind) for pid, kind, action in cur.fetchall()}
+
+
 def types_of(cur: Any, post_ids: Iterable[str]) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
     """{post: (type, origin)} of every post asked ((None, None) when none read): the members' view folds and built
     read."""
@@ -235,4 +267,4 @@ def verbs(groups: Iterable[str]) -> List[str]:
 
 __all__ = ["ACTION_GROUPS", "ANNOUNCED", "EventType", "GROUPS", "GROUP_GUIDE", "LEAK", "NEWS_TYPES", "NOT_HAPPENINGS",
            "SYNONYMS", "TYPE_GUIDES", "UNIT_NEWS", "UNIT_TYPES", "UnitType", "action_group", "typed_sql",
-           "from_reading", "main_objects", "of_posts", "of_stories", "of_units", "types_of", "unit_is_news", "verbs"]
+           "from_reading", "main_objects", "of_posts", "of_stories", "of_units", "reading_type", "reading_types", "types_of", "unit_is_news", "verbs"]

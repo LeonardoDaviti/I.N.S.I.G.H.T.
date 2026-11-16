@@ -256,5 +256,59 @@ class OrderIndependence(unittest.TestCase):
             self.assertEqual(sorted(seen), sorted(i.id for i in items))
 
 
+class ThroughNews(unittest.TestCase):
+    """news_rules.news with `grouped`: the release shape as News rows (the stories and names the Mark X job hands it)."""
+
+    def test_the_release_is_one_row_and_a_mention_stays_out(self):
+        from insight_core.utils import news_rules as N
+        from insight_core.utils.story_rules import Story, StoryPost
+
+        def sp(pid, src, at, title):
+            return StoryPost(id=pid, source_id=src, kind="site", own_site=src, t=at, title=title)
+        launch = [sp(f"l{k}", f"src{k}", T0 + 5 * D + k * H, "Acme launches Orbit Max 4") for k in range(4)]
+        router = [sp("r0", "router", T0 + 5 * D + H, "Orbit Max 4 is live, $1.50/M"),
+                  sp("r1", "lab", T0 + 5 * D + 2 * H, "Orbit Max 4 is live on the router")]
+        bench = [sp("b0", "evals", T0 + 5 * D + H, "Orbit Max 4: +9 points"),
+                 sp("b1", "lab2", T0 + 5 * D + 3 * H, "+9 points over the last one")]
+        preview = [sp("p0", "lab", T0, "Orbit Max 4 preview is live"), sp("p1", "forum", T0 + H, "Orbit 4 preview")]
+        aside = [sp("m0", "blog", T0 + 5 * D, "Monthly model rankings"), sp("m1", "blog2", T0 + 5 * D + H, "Rankings")]
+        posts = launch + router + bench + preview + aside
+
+        def st(sid, ps):
+            return Story(id=sid, first_at=ps[0].t, posts=ps, voices=0, roles={}, reasons={}, mentions=set())
+        stories = [st("s-launch", launch), st("s-router", router), st("s-bench", bench), st("s-preview", preview),
+                   st("s-aside", aside)]
+        facts = {p.id: Post(p.id, p.t, (QMAX,), "model_release") for p in launch + preview}
+        facts.update({p.id: Post(p.id, p.t, (QMAX,), "product_release") for p in router})
+        facts.update({p.id: Post(p.id, p.t, (QMAX,), "research_result") for p in bench})
+        facts.update({p.id: Post(p.id, p.t, (), "opinion_analysis") for p in aside})   # it only mentions the model
+        before = N.news(posts, stories, [], judged=set())
+        self.assertEqual(len(before), 5)
+        rows = N.news(posts, stories, [], grouped=G.Evidence(posts=facts))
+        self.assertEqual(sorted(sorted(p.id for p in r.posts) for r in rows),
+                         [sorted(p.id for p in launch + router + bench + preview), ["m0", "m1"]])
+
+
+class ThingStages(unittest.TestCase):
+    def test_a_stage_is_no_variant(self):
+        self.assertEqual(G.Thing.of(name="Orbit4-Max-Preview", family="Orbit", version="4", variant="Max-Preview"),
+                         Thing("orbit4", "max"))
+        self.assertEqual(G.Thing.of(name="Claude Fable 5.2", family="Claude Fable", version="5.2"),
+                         G.Thing.of(name="Fable 5.2", family="Fable", version="5.2"))
+        self.assertEqual(G.Thing.of(name="DeepSeek V4.1", family="DeepSeek", version="V4.1"),
+                         G.Thing.of(name="DeepSeek 4.1", family="DeepSeek", version="4.1"))
+
+    def test_the_reading_type(self):
+        try:
+            from insight_core.markx import event_types as ET
+        except ImportError:   # no psycopg where the pure tests run outside the image
+            self.skipTest("psycopg")
+        self.assertEqual(ET.reading_type("roundup", "released"), "digest")
+        self.assertEqual(ET.reading_type("report", "launched"), "model_release")
+        self.assertEqual(ET.reading_type("report", "leaked"), "leak_rumour")
+        self.assertEqual(ET.reading_type("report", "acquired"), "business_event")
+        self.assertIsNone(ET.reading_type("report", "reported"))
+
+
 if __name__ == "__main__":
     unittest.main()
