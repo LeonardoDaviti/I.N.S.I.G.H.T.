@@ -36,6 +36,13 @@ class Consumers(_Api):
         tid2, new2 = self.add("read", "Title: a reading question")
         self.assertEqual((new2, repo.get_task(self.cur, tid2)["status"]), (True, "open"))
 
+    def test_a_lease_never_runs_the_planner_of_a_kind_no_feature_reads(self):
+        from unittest import mock
+        planner = mock.Mock(return_value=0)
+        with mock.patch.dict(tasks.PLANNERS, {"back": planner}):
+            self.assertEqual(self.lease(kind="back")[0], 200)
+        self.assertEqual(planner.call_count, 0)
+
     def test_switched_on_its_closed_tasks_open_and_off_its_open_ones_close(self):
         tid, _ = self.add("back", "Back: a question")
         status, got = call("POST", "/api/markx/settings/consumers", body={"feature": "back", "on": True})

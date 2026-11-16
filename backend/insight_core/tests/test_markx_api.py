@@ -700,9 +700,9 @@ class PlannersRest(_Api):
 
     def test_one_kinds_rest_leaves_the_others_planned_in_the_same_lease(self):
         idle, busy = mock.Mock(return_value=0), mock.Mock(return_value=2)
-        with mock.patch.dict(tasks.PLANNERS, {"relate": idle, "back": busy}):
-            self.lease("relate,back")                              # relate added nothing: it rests
-            self.lease("relate,back")
+        with mock.patch.dict(tasks.PLANNERS, {"relate": idle, "translate": busy}):
+            self.lease("relate,translate")                         # relate added nothing: it rests
+            self.lease("relate,translate")
         self.assertEqual((idle.call_count, busy.call_count), (1, 2))
 
 

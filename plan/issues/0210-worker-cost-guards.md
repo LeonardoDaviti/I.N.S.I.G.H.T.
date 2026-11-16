@@ -166,4 +166,7 @@ cap change re-reads the archive by design; it is now held past 2,000 a day and s
 `test_markx_holds` (8), `test_markx_consumers` (5), `test_markx_decide` (+1: a far connect pair settled, asked with the
 gate off), `test_markx_pairing` (the legacy comparison runs with the gate off), `test_markx_back`, `test_markx_jobs`
 (the features each test turns on), `scripts/tests/test_markx_worker.py` (89, OK), the frontend `markx.test.tsx` (17,
-OK; typecheck and lint clean). The full backend suite: see the report.
+OK; typecheck and lint clean). The full backend suite (`JOBS=6`, 6 shards, 3,579 tests): 2 failures, both tests that
+expected the back planner to run on a lease (`test_markx_api` PlannersRest, `test_markx_scale` LeaseDuringARun); the
+first now uses another kind, the second turns back on; those modules and `test_markx_consumers` (+1: a lease never
+runs an off kind's planner) re-run: 74 tests, OK.

@@ -273,6 +273,10 @@ class LeaseDuringARun(_Api):
 
     def test_relate_and_back_are_not_planned_while_a_run_holds_the_lock(self):
         relate, back, read = mock.Mock(return_value=0), mock.Mock(return_value=0), mock.Mock(return_value=0)
+        from insight_core.markx import consumers   # 0210: back is off (not shipped); this test is about its planner on
+        with self.conn.transaction():
+            consumers.set_on(self.cur, "back", True)
+        self.addCleanup(consumers.forget)
         with mock.patch.dict(tasks.PLANNERS, {"relate": relate, "back": back, "read": read}):
             with psycopg.connect(db_url()) as run:
                 run.execute("SELECT pg_try_advisory_xact_lock(%s)", (decide.LOCK_KEY,))
