@@ -167,7 +167,10 @@ export interface MarkxPostPanel {
 
 /** 0165 C: one dated line of an entity's timeline, and why it is on the line. */
 export type MarkxTimelineKind = 'birth' | 'earlier_name' | 'renamed' | 'release' | 'first_outside' | 'outside' | 'story'
-  | 'later' | 'back';
+  | 'later' | 'back' | 'analysis' | 'in_story';
+/** 0165 C: what happened to the thing in a story about it (stop-v1). */
+export type MarkxStop = 'teaser' | 'preview' | 'launch' | 'availability' | 'update' | 'weights' | 'benchmark' | 'ranking'
+  | 'adoption' | 'research' | 'incident' | 'deal' | 'analysis' | 'other';
 export interface MarkxTimelineEvent {
   kind: MarkxTimelineKind;
   at: string;
@@ -183,6 +186,10 @@ export interface MarkxTimelineEvent {
   month?: string; n?: number; sources?: number; linked?: boolean;
   /** story, later, back. */
   story?: string; mark?: 'x' | 'ix'; headline?: string | null; voices?: number;
+  /** story (a stop on the line): what happened to it there, when shown (null: not shown); its share of the members. */
+  stop?: MarkxStop | null; stop_by?: 'asked' | 'type'; share?: [number, number];
+  /** A post event inside a stop's story, or an analysis after it: that stop's story. */
+  on?: string | null;
 }
 export interface MarkxTimeline {
   items: MarkxTimelineEvent[];
