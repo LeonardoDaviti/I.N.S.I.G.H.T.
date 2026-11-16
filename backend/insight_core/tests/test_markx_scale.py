@@ -350,7 +350,7 @@ class Readers(_Db):
             types.setdefault(eid, {})[t] = types.get(eid, {}).get(t, 0) + n
             if s and identity.schemas_type(t) in identity.PRODUCT_TYPES:
                 subject[eid] = subject.get(eid, 0) + s
-        self.assertEqual({k: dict(v) for k, v in b.types.items()}, types)
+        self.assertEqual({k: dict(v.items()) for k, v in b.types.items()}, types)   # v10.22: TypeCounts
         self.assertEqual(b.subject, subject)
         self.assertTrue(subject)
 

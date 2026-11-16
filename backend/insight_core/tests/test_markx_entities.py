@@ -449,6 +449,33 @@ class BothPassesKeepToTheBudget(_Db):
         self.assertEqual(sum(o["merged"] for o in seen), n)
         self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))
 
+    def test_a_half_done_full_pass_and_new_mentions_both_go_on_every_run(self):
+        """v10.22 (0216): on the server a full pass made no progress for five days. Its runs first linked the new
+        mentions, whose first part took the whole budget, and the full pass only ran once they were all linked. Now
+        the linking has LINK_SHARE of the budget and the full pass the rest, each at least one step a run: with no
+        budget at all, every run links a part and decides a chunk, until both are done."""
+        n = self.names()
+        self.stage()                                            # linked and merged
+        self.cur.execute("DELETE FROM mx_entity_redirects")     # as if never merged: the full pass must find them
+        first = self.run_stage(full=True, budget=0, chunk=1)    # the relinking's one page: the pool is the next run's
+        self.assertEqual((first["full"]["phase"], first["full"]["done"]), ("pool", False))
+        new = [self.post(n % 5, T0 + 10 * H + n * H) for n in range(3)]   # new posts, their mentions not linked yet
+        for k, pid in enumerate(new):
+            self.mentions(pid, (f"Vela Atlas {k}", "product", "subject"))
+        seen = []
+        with mock.patch.object(I, "MENTION_CHUNK", 1):
+            while not seen or not ((seen[-1].get("full") or {}).get("done") and seen[-1]["incremental"]["done"]):
+                seen.append(self.run_stage(budget=0, chunk=1))
+                self.assertLess(len(seen), 50)
+        self.assertEqual([o["incremental"]["parts"] for o in seen[:len(new)]], [1] * len(new))   # a mention a run...
+        self.assertEqual([o["full"]["chunks"] for o in seen[:len(new)]], [1] * len(new))         # ...and a chunk too
+        self.assertEqual(seen[0]["incremental"]["left"], len(new) - 1)
+        self.assertEqual(sum(o["link"]["linked"] for o in seen), len(new))
+        self.assertEqual(sum(o["merged"] for o in seen), n)     # every pair found again, once
+        self.cur.execute("SELECT count(*) FROM mx_mentions WHERE entity_id IS NULL")
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))
+
     def test_an_unfinished_pass_recorded_before_resumes_in_its_pool(self):
         self.names()
         self.stage()
@@ -950,6 +977,19 @@ class Collisions(_Db):
         self.stage(since=self.since)
         self.assertEqual((self.entity_of(ps[2]), self.entity_of(ps[0])), (new, e))   # the run applies the pin
         self.assertIn("store agent", book.ents[new].name)
+
+    def test_the_odd_keys_are_those_whose_first_mention_a_post_differs(self):
+        """v10.22 (0216): the database counts the odd keys (each post's first mention; a type left out counts as a
+        type, an empty maker as none), as the Python test of every mention read did."""
+        ps = [self.post(n, T0 + n * H) for n in range(4)]
+        self.mentions(ps[0], ("Kora", "org", "subject"), ("Vexa", "org", "subject", ""),
+                      ("Tamo", "model", "subject"), ("Tamo", "product", "actor"))
+        self.mentions(ps[1], ("Kora", None, "subject"), ("Vexa", "org", "subject", "Acme"), ("Tamo", "model", "subject"))
+        self.mentions(ps[2], ("Pela", "org", "subject"), ("Pela", "person", "actor"))
+        out = self.stage()
+        self.assertEqual(out["collide"]["odd"], 1)      # Kora only: Vexa states one maker, Tamo and Pela one type
+        self.cur.execute("SELECT e.key FROM mx_tasks t JOIN mx_entities e ON e.id = t.a WHERE t.kind = 'collide'")
+        self.assertEqual([r[0] for r in self.cur.fetchall()], ["kora"])
 
     def test_one_run_alone_never_splits(self):
         ps = [self.post(n, T0 + n * H) for n in range(2)]
