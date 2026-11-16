@@ -22,7 +22,7 @@ from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_link
 from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
-                                            Edge, Story, source_site)
+                                            Edge, Story, source_site, text_chars_sql)
 from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
 from insight_core.utils import voice as voice_keys
 from insight_core.utils.tree_rules import _PAGE
@@ -400,7 +400,7 @@ class StoriesRepository:
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {ix_date("p")}, p.title, p.content_hash,
-                   length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
+                   {text_chars_sql("p.content")}, p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
                    pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
                    CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END,
@@ -424,13 +424,18 @@ class StoriesRepository:
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
+        # The stored post each link is: the first stored at its address. v10.22: looked up once an address (a hash join
+        # with the links), not once a link (a lateral probe for each of ~32k links a load on the server, 246 ms).
         cur.execute(
             """
-            SELECT pl.post_id, pl.target_url, t.id, pl.link_text
-            FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
-                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
-            WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[])
-            ORDER BY pl.post_id, pl.position
+            WITH l AS MATERIALIZED (SELECT post_id, target_url, link_text, position FROM post_links
+                                     WHERE NOT boilerplate AND post_id = ANY(%s::uuid[])),
+                 t AS (SELECT DISTINCT ON (tp.normalized_url) tp.normalized_url, tp.id FROM posts tp
+                        WHERE tp.normalized_url IN (SELECT target_url FROM l)
+                        ORDER BY tp.normalized_url, tp.fetched_at, tp.created_at, tp.id)
+            SELECT l.post_id, l.target_url, t.id, l.link_text
+            FROM l LEFT JOIN t ON t.normalized_url = l.target_url
+            ORDER BY l.post_id, l.position
             """,
             (list(by_id),),
         )

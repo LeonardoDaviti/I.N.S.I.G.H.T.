@@ -189,22 +189,25 @@ _PLATFORMS = """
 WITH src AS (
     SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[], %(selves)s::text[]) AS s(id, kind, own_site, selves)
 ),
-link AS (
+link AS MATERIALIZED (            -- each kept link once a voice (v10.22: before any address is parsed)
     SELECT DISTINCT pl.target_url AS url, s.selves,
            """ + voice_keys.source_key_sql("s.kind", "s.own_site", "p.source_id") + """ AS voice
     FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN src s ON s.id = p.source_id
-    WHERE NOT pl.boilerplate AND s.kind <> 'saved' AND pl.target_url !~ %(tweet)s
+    WHERE NOT pl.boilerplate AND s.kind <> 'saved'
+      AND NOT (strpos(pl.target_url, '/status/') > 0 AND pl.target_url ~ %(tweet)s)   -- the shape needs it (v10.22)
 ),
-parsed AS (
-    SELECT url, voice, selves, regexp_replace(lower(split_part(regexp_replace(url, '^[a-z]+://', ''), '/', 1)), '^www[.]', '') AS host,
-           """ + _SEGMENTS.format(url="url") + """ AS segs
-    FROM link
+parsed AS MATERIALIZED (          -- each address parsed once (v10.22: was once a link and voice), not a listed platform's
+    SELECT url, host, segs[1:%(depth)s] AS head, cardinality(segs) > %(depth)s AS deeper FROM (
+        SELECT url, regexp_replace(lower(split_part(regexp_replace(url, '^[a-z]+://', ''), '/', 1)), '^www[.]', '') AS host,
+               """ + _SEGMENTS.format(url="url") + """ AS segs
+        FROM (SELECT DISTINCT url FROM link) u
+    ) x
+    WHERE NOT (host = ANY(%(listed)s) OR host LIKE ANY(%(under)s))   -- v10.22: a pattern each (was a subquery an address)
 )
-SELECT host, segs[1:%(depth)s] || CASE WHEN cardinality(segs) > %(depth)s THEN ARRAY['*'] ELSE '{}'::text[] END,
-       count(DISTINCT url), array_agg(DISTINCT voice)
-FROM parsed
-WHERE NOT (host = ANY(%(listed)s) OR EXISTS (SELECT 1 FROM unnest(%(listed)s::text[]) l WHERE host LIKE '%%.' || l))
-  AND NOT (selves <> '' AND EXISTS (SELECT 1 FROM unnest(segs[1:%(depth)s]) g WHERE ltrim(g, '@~') = ANY(string_to_array(selves, ' '))))
+SELECT a.host COLLATE "C", (a.head || CASE WHEN a.deeper THEN ARRAY['*'] ELSE '{}'::text[] END) COLLATE "C",
+       count(DISTINCT l.url), array_agg(DISTINCT l.voice)   -- grouped byte for byte: the same groups, a cheaper sort
+FROM link l JOIN parsed a USING (url)
+WHERE NOT (l.selves <> '' AND EXISTS (SELECT 1 FROM unnest(a.head) g WHERE ltrim(g, '@~') = ANY(string_to_array(l.selves, ' '))))
 GROUP BY 1, 2
 """
 
@@ -362,7 +365,8 @@ class DiscoverRepository:
         cur.execute("SET LOCAL work_mem = '%s'" % WORK_MEM)
         cur.execute(_PLATFORMS, {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
                                  "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "tweet": shape,
-                                 "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS)})
+                                 "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS),
+                                 "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)]})
         return find_platforms((host, tuple(segs), n, voices) for host, segs, n, voices in cur.fetchall())
 
     @staticmethod
