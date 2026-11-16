@@ -563,3 +563,22 @@ check case: the launch day shows ONE row for the model, with the router and the 
 (rumour/teaser, preview, official launch, availability on platforms, benchmarks, breakdowns) is ONE row, with the
 stages and the smaller stories as lines inside it, across the days it spans. Expected check case for the case above:
 one row for the model from day 0 to day 5. The core check still keeps out stories that only mention the thing.
+
+## Part 2 (owner 2026-11-16): an updated row comes back
+
+Today the reader's read state is per post; a row that gains posts neither says so nor moves back up, and the tags
+shown on rows (NEW / SAME / CHANGED) compare Mark X with Mark IX, which means nothing to the reader.
+Build, on top of Part 1's one-row-per-release:
+1. **Seen per row:** when the reader last opened a row (deepen 0154's seen state, built for tracks in v10.18; no
+   parallel store), keyed by the row's stable identity across rebuilds.
+2. **A meaningful update:** a new stage (teaser → preview → launch), new numbers (price, benchmark, size), a new
+   independent source (not a repost or a copy of a voice already in the row), a correction or denial. Plain
+   repetition does not count. Judged from stored readings (ent-v5 event type/origin, numbers) first, the worker only
+   where unsure.
+3. **The row comes back:** a row the reader has seen that gains a meaningful update returns to the top of News as
+   "Updated: <what> · +N sources", its new lines marked; a row never seen is "New". The Mark X-vs-Mark IX tags leave
+   the reader's News (they stay on /markx).
+Measure blind on replayed days (the case above: preview read on day 0 → launch on day 5 must come back; the router
+and benchmark lines on day 5 join the same update or come back once more if the row was opened in between; 20
+reposts must not bring it back): precision of "Updated" (a labeller agrees something meaningful happened) ≥ 90%
+(Wilson lower bound), returns per row per day ≤ 2, and no meaningful update missed on the labelled set.
