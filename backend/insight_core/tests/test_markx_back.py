@@ -98,6 +98,10 @@ class _Back(_Api):
         # 0180: these tests are the old engine's; the anchors engine's Shadow rows are test_markx_anchors' (it turns
         # the Shadow back on)
         repo.set_setting(self.cur, anchors.SHADOW_KEY, self.shadow)
+        # 0210: Back in the news is off (not shipped); these tests are its own, with it on
+        from insight_core.markx import consumers
+        consumers.set_on(self.cur, "back", True)
+        self.addCleanup(consumers.forget)
 
     shadow = False
 

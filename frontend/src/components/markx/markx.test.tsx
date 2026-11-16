@@ -196,6 +196,20 @@ describe('the decision job', () => {
     expect(setMarkxHold).toHaveBeenLastCalledWith('entities:2026-11-14', 'released');
   });
 
+  it('lists what is asked, and stops or asks a feature (0210)', async () => {
+    const data = overview({ decide: job({}), candidates: job({}) });
+    data.consumers = [{ feature: 'back', on: false, default: false, why: 'Back in the news: not shipped', kinds: ['back'] },
+      { feature: 'news', on: true, default: true, why: 'Mark X News', kinds: ['read', 'pair'] }];
+    const setMarkxConsumer = vi.fn(async () => ({}));
+    const methods = { getMarkxOverview: vi.fn(async () => data), setMarkxReadingWindow: vi.fn(), runMarkxDecisions: vi.fn(),
+      setMarkxConsumer };
+    renderWithProviders(<MarkXWorker />, { api: makeFakeApi(methods) });
+    const section = await screen.findByRole('region', { name: 'What is asked' });
+    expect(within(section).getByText('not asked')).toBeInTheDocument();
+    await userEvent.click(within(section).getByRole('button', { name: 'ask' }));
+    expect(setMarkxConsumer).toHaveBeenLastCalledWith('back', true);
+  });
+
   it('says nothing of the last run when it ended well', () => {
     renderWithProviders(<DecisionJob job={job({ wanted_at: now, last: { ok: true } })} />, { api: makeFakeApi({}) });
     expect(screen.getAllByRole('status')).toHaveLength(1);

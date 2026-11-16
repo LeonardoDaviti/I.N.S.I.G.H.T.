@@ -94,18 +94,22 @@ def add_task(cur: Cursor, *, kind: str, guide: str, subject_kind: str, input: st
              day: Optional[date] = None, priority: int = 0) -> Tuple[UUID, bool]:
     """A question: (its id, whether it is new). The same (kind, guide, input) is one task, whatever
     `a`, `b` and `priority` say: the existing one is returned unchanged. 0210: a new task past its kind's daily
-    allowance is born held (markx/holds.py decides)."""
-    from insight_core.markx import holds   # holds reads this module
+    allowance is born held (markx/holds.py decides); one no feature reads is born closed (markx/consumers.py: failed,
+    with its reason; returned as not new: nothing is asked)."""
+    from insight_core.markx import consumers, holds   # both read this module
     input_hash = sha256_hex(input)
-    hold = holds.hold_for(cur, kind, a, b)
-    cur.execute("""INSERT INTO mx_tasks (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    closed = consumers.born_closed(cur, kind)
+    hold = None if closed else holds.hold_for(cur, kind, a, b)
+    status, error = closed or ("open", None)
+    cur.execute("""INSERT INTO mx_tasks (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold, status,
+                                         last_error)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (kind, guide, input_hash) DO NOTHING RETURNING id""",
-                (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold))
+                (kind, guide, subject_kind, a, b, day, input, input_hash, priority, hold, status, error))
     row = cur.fetchone()
     if row:
-        holds.note_added(kind, hold)
-        return row[0], True
+        holds.note_added(kind, hold if not closed else "closed")
+        return row[0], not closed
     cur.execute("SELECT id FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = %s", (kind, guide, input_hash))
     return cur.fetchone()[0], False
 

@@ -463,6 +463,13 @@ class Jobs:
             log.info("Mark X jobs: %d %s tasks planned in %.1f s", added, kind, seconds)
             out[kind] = {"added": added, "seconds": seconds}
         out["track_places"] = self._keep_track_places()
+        try:   # 0210: the open tasks of the kinds no feature reads, closed (kept, with the reason)
+            from insight_core.markx import consumers
+            with self._tx() as cur:
+                out["not_asked"] = consumers.close_off(cur)
+        except Exception as exc:  # noqa: BLE001 - tried again at the next plan
+            log.exception("Mark X jobs: closing the tasks no feature reads failed")
+            out["not_asked"] = {"error": str(exc)[:300]}
         return out
 
     def _keep_track_places(self) -> Dict[str, Any]:

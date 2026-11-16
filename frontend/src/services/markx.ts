@@ -249,7 +249,11 @@ export interface MarkxOverview {
   entity_invariants?: MarkxEntityInvariants | null;
   /** 0210: the re-ask guard's holds (absent from an older API). */
   holds?: MarkxHolds;
+  /** 0210: the features that read each kind's answers; an off one's kinds are not asked (absent from an older API). */
+  consumers?: MarkxConsumer[];
 }
+
+export interface MarkxConsumer { feature: string; on: boolean; default: boolean; why: string; kinds: string[] }
 
 /** 0210: a kind's tasks planned in a day past `per_day` (null: no guard) that are not new posts' are held: asked after
  *  every other task (`low`), never (`stopped`), or as any task (`released`). */

@@ -1384,7 +1384,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts["graph"] = guarded("graph", lambda: graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open))
     mark("back")
     from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
-    counts["back"] = guarded("back", lambda: back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
+    from insight_core.markx import consumers   # 0210: a stage whose answers no feature reads is not run
+    counts["back"] = (guarded("back", lambda: back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
+                      if consumers.wanted(cur, back.KIND) else {"off": consumers.NOT_ASKED})
     mark("headlines")
     counts["headlines_changed"] = headlines(cur, out, ids, world, ask, news_keys)
     mark("news")
@@ -1415,7 +1417,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
                                                                       since=previous, window_days=recent_days))
     mark("perspectives_plan")           # 0119 B: perspectives inside a story and the story sheet
     from insight_core.markx import perspectives
-    counts["perspectives"] = guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id))
+    counts["perspectives"] = (guarded("perspectives", lambda: perspectives.stage(cur, ask=ask, now=now, run_id=run_id))
+                              if consumers.wanted(cur, "perspective") or consumers.wanted(cur, "sheet")
+                              else {"off": consumers.NOT_ASKED})
     counts["briefing"] = guarded("briefing", lambda: mx_news.briefing(cur, ask=ask, now=now, hour=BRIEFING_HOUR,
                                                                       limit=BRIEFING_STORIES))
     if deferred:

@@ -127,7 +127,7 @@ from pydantic import BaseModel, Field, StrictInt
 
 from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
 from insight_core.markx import ent42   # 0133 v4.2
-from insight_core.markx import holds   # 0210
+from insight_core.markx import consumers, holds   # 0210
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -304,8 +304,8 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
                 if not tasks.FRESH_PLANNERS[kind](cur):
                     _PLAN_REST[FRESH + kind] = time.monotonic() + FRESH_REST_SECONDS
         for kind in wanted:
-            if kind not in tasks.PLANNERS:
-                continue
+            if kind not in tasks.PLANNERS or not consumers.wanted(cur, kind):
+                continue                                          # 0210: no feature reads it: nothing planned
             if tasks.planned_in_background(cur, kind):
                 continue                                          # v10.13.2/4: the decision job plans them
             if kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
@@ -646,7 +646,8 @@ def mx_overview():
                 "story_window": _story_window_view(cur),   # 0144
                 "entities_guide": _entities_guide(cur),   # 0133
                 "entity_invariants": _entity_invariants(cur),   # 0164 C
-                "holds": holds.view(cur)}   # 0210: the re-ask guard's holds
+                "holds": holds.view(cur),   # 0210: the re-ask guard's holds
+                "consumers": consumers.view(cur)}   # 0210: the features that read each kind's answers
 
 
 class HoldIn(BaseModel):   # 0210
@@ -664,6 +665,23 @@ def mx_set_hold(body: HoldIn):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {**got, "holds": holds.view(cur)}
+
+
+class ConsumerIn(BaseModel):   # 0210
+    feature: str = Field(min_length=1, max_length=40)
+    on: bool
+
+
+@router.post("/settings/consumers")
+def mx_set_consumer(body: ConsumerIn):
+    """0210: a feature that reads some kinds' answers switched on (its closed tasks open again) or off (its kinds'
+    planners add nothing, its open tasks are closed, kept)."""
+    with transaction() as cur:
+        try:
+            got = consumers.set_on(cur, body.feature, body.on)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {**got, "consumers": consumers.view(cur)}
 
 
 class GuardIn(BaseModel):   # 0210

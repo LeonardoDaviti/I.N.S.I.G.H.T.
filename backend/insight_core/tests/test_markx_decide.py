@@ -816,6 +816,9 @@ class Snapshot(unittest.TestCase):
         clear_tables(self.cur, f"{tables}")
         self.addCleanup(clear_tables, self.cur, f"{tables}")
         schemas.load_guides(self.cur)
+        from insight_core.markx import consumers   # 0210: Back in the news is off; these tests use its stage
+        consumers.set_on(self.cur, "back", True)
+        self.addCleanup(consumers.forget)
         self.now = T + 30 * H
         self.posts, self.sources = [], []
         self.addCleanup(self._clean)

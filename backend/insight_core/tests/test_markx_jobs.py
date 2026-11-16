@@ -625,8 +625,10 @@ class PlanningInTheBackground(_Api):
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
-        self.assertEqual({k: v["added"] for k, v in got.items() if k != "track_places"}, {"check": 7, "cite": 2, "track": 0})
+        self.assertEqual({k: v["added"] for k, v in got.items() if k not in ("track_places", "not_asked")},
+                         {"check": 7, "cite": 2, "track": 0})
         self.assertIn("placed", got["track_places"])   # issue 0195: the track placements kept after the planners
+        self.assertEqual(got["not_asked"], {})          # 0210: nothing open of a kind no feature reads
 
     def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks

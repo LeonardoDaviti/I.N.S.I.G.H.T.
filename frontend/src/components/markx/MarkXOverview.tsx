@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
 import type {
-  MarkxEntitiesGuide, MarkxEntityInvariants, MarkxHolds, MarkxHoldState, MarkxJob, MarkxOverview, MarkxSettings,
-  MarkxStoryWindow,
+  MarkxConsumer, MarkxEntitiesGuide, MarkxEntityInvariants, MarkxHolds, MarkxHoldState, MarkxJob, MarkxOverview,
+  MarkxSettings, MarkxStoryWindow,
 } from '../../services/markx';
 import { request } from '../../lib/request';   // 0133
 import { Button, TextLink } from '../ui';
@@ -381,6 +381,44 @@ export function Holds({ state }: { state: MarkxHolds | undefined }) {
   );
 }
 
+type SetConsumer = (feature: string, on: boolean) => Promise<unknown>;
+function consumersApi(api: object): { setMarkxConsumer: SetConsumer } {
+  const got = (api as { setMarkxConsumer?: unknown }).setMarkxConsumer;
+  return { setMarkxConsumer: typeof got === 'function' ? (got as SetConsumer)
+    : (feature, on) => request('/api/markx/settings/consumers', { method: 'POST', body: { feature, on } }) };
+}
+
+/** 0210: the features that read the answers; an off one's questions are not asked (its open tasks closed, kept). */
+export function Consumers({ state }: { state: MarkxConsumer[] | undefined }) {
+  const api = consumersApi(useApi());
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: ({ feature, on }: { feature: string; on: boolean }) => api.setMarkxConsumer(feature, on),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: [...OVERVIEW_KEY] }); },
+  });
+  if (!state) return null;
+  return (
+    <section aria-label="What is asked">
+      <h2 className={H2}>What is asked</h2>
+      <ul className="mt-2 text-[0.8125rem] text-fg-2">
+        {state.map((c) => (
+          <li key={c.feature} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line py-1.5">
+            <span className="text-fg">{c.on ? 'asked' : 'not asked'}</span>
+            <span className="[overflow-wrap:anywhere]">{c.why} · {c.kinds.join(', ')}</span>
+            <span className="ml-auto">
+              <Button size="sm" variant="secondary" disabled={save.isPending}
+                      onClick={() => save.mutate({ feature: c.feature, on: !c.on })}>
+                {c.on ? 'stop asking' : 'ask'}
+              </Button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {save.isError ? <p className="mt-2 text-[0.8125rem] text-fg">× {errorMessage(save.error)}</p> : null}
+    </section>
+  );
+}
+
 /** The worker's side: the queue by kind, answers per day, tokens and their API price, failures, contacts, the last run. */
 export function MarkXWorker() {
   const api = useApi();
@@ -395,7 +433,7 @@ export function MarkXWorker() {
   return (
     <Loaded>
       {({ worker, reading_window: readingWindow, story_window: storyWindow, entities_guide: entitiesGuide,
-         entity_invariants: entityInvariants, holds }) => {
+         entity_invariants: entityInvariants, holds, consumers }) => {
         const kinds = Object.keys(worker.queue).sort();
         const counts = worker.last_run?.counts as Record<string, unknown> | null | undefined;
         return (
@@ -424,6 +462,7 @@ export function MarkXWorker() {
               )}
             </section>
             <Holds state={holds} />
+            <Consumers state={consumers} />
             <section aria-label="Answers">
               <h2 className={H2}>Answers and tokens</h2>
               <p className="mt-3 text-[0.8125rem] tabular-nums text-fg-2">
