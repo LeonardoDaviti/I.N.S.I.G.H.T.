@@ -452,54 +452,72 @@ def same_vector(cur: Cursor, pairs: Iterable[Tuple[str, str, float]]) -> Set[Tup
     return {(a, b) for a, b in one if not copies(a, b)}
 
 
-def current_candidates(cur: Cursor, rows: Sequence[Tuple[Any, Any, str, Optional[float]]], model: str = MODEL
-                       ) -> Iterator[Tuple[Any, Any, str, Optional[float]]]:
-    """mx_candidates rows (a, b, source, score) as the posts' current vectors have them: an `embedding` row whose
-    post's vector was set aside and not replaced (a text that said nothing, embed text v1) is dropped, a row of two
-    current vectors carries their cosine now (a vector replaced since moved) and is dropped when they are one vector
-    (same_vector).
-    The rows themselves are kept (never deleted). A dropped row whose post already has an answered pair or join
-    stays as it was, so no story it made changes silently.
+PAIRS_TABLE = "pg_temp.mx_current_pairs"
 
-    v10.17.2 (0204): each embedding row's cosine is read by its place among them (not keyed by its two posts), and the
-    rows are given back one at a time, in order: a decision run's ~450k pairs were held three times at once (the
-    rows, their cosines by (a, b), the list given back)."""
-    emb = [k for k, (_a, _b, src, _s) in enumerate(rows) if src == "embedding"]
-    if not emb:
-        return iter(rows)
-    cur.execute("""SELECT k.i, 1 - (x.v <=> y.v)
-                     FROM unnest(%s::uuid[], %s::uuid[]) WITH ORDINALITY AS k(a, b, i)
-                     JOIN mx_embeddings x ON x.post_id = k.a AND x.model = %s
-                     JOIN mx_embeddings y ON y.post_id = k.b AND y.model = %s""",
-                ([str(rows[k][0]) for k in emb], [str(rows[k][1]) for k in emb], model, model))
-    now: Dict[int, float] = {}            # the row's index in `rows` -> its cosine now
-    for i, c in cur:
-        now[emb[i - 1]] = float(c)
 
-    def ab(k: int) -> Tuple[str, str]:
-        return str(rows[k][0]), str(rows[k][1])
-    ids = sorted({p for k in emb if k not in now for p in ab(k)})
-    cur.execute("""SELECT s.post_id::text FROM mx_embeddings s
-                    WHERE s.model = %s AND s.post_id = ANY(%s::uuid[])
-                      AND NOT EXISTS (SELECT 1 FROM mx_embeddings e WHERE e.post_id = s.post_id AND e.model = %s)""",
-                (SET_ASIDE, ids, model))
-    aside = {r[0] for r in cur.fetchall()}
-    one = same_vector(cur, [(*ab(k), c) for k, c in now.items() if c >= IDENTICAL])
-    gone = {ab(k) for k in emb if ab(k)[0] in aside or ab(k)[1] in aside or (k in now and ab(k) in one)}
+def current_pairs(cur: Cursor, rows_sql: str, params: Optional[Dict[str, Any]] = None, model: str = MODEL) -> str:
+    """v10.23 (0218): mx_candidates rows (`rows_sql`, with `params`: k, a, b, source, score; k a row's place, or NULL)
+    as the posts' current vectors have them, in the database: the rows kept, each with `now` (its two current vectors'
+    cosine, not rounded; NULL for a row that is no embedding or lacks a vector), in a temporary table whose name it
+    returns (PAIRS_TABLE). An `embedding` row whose post's vector was set aside and not replaced (a text that said
+    nothing, embed text v1) is dropped, as is one of two posts of one vector (same_vector); a dropped row whose post
+    already has an answered pair or join stays as it was, so no story it made changes silently. The rows themselves are
+    kept (never deleted). Nothing of them is held here: a decision run read its ~450k pairs whole (~400 MB at the
+    server's size) to give them back (`current_candidates` reads this table)."""
+    drop = "" if getattr(getattr(cur, "connection", None), "autocommit", False) else " ON COMMIT DROP"
+    cur.execute(f"DROP TABLE IF EXISTS {PAIRS_TABLE}")
+    cur.execute(f"""CREATE TEMP TABLE mx_current_pairs{drop} AS
+                     SELECT r.k, r.a, r.b, r.source, r.score::float8 AS score,
+                            CASE WHEN r.source = 'embedding' THEN 1 - (x.v <=> y.v) END AS now
+                       FROM ({rows_sql}) r
+                       LEFT JOIN mx_embeddings x ON r.source = 'embedding' AND x.post_id = r.a AND x.model = %(model)s
+                       LEFT JOIN mx_embeddings y ON r.source = 'embedding' AND y.post_id = r.b AND y.model = %(model)s""",
+                {**(params or {}), "model": model})
+    cur.execute(f"""SELECT a::text, b::text, now FROM {PAIRS_TABLE}
+                     WHERE source = 'embedding' AND now >= %s""", (IDENTICAL,))
+    one = same_vector(cur, cur.fetchall())
+    cur.execute(f"""SELECT DISTINCT p.a::text, p.b::text FROM {PAIRS_TABLE} p
+                     WHERE p.source = 'embedding' AND p.now IS NULL
+                       AND EXISTS (SELECT 1 FROM mx_embeddings s
+                                    WHERE s.model = %(aside)s AND s.post_id IN (p.a, p.b)
+                                      AND NOT EXISTS (SELECT 1 FROM mx_embeddings e
+                                                       WHERE e.post_id = s.post_id AND e.model = %(model)s))""",
+                {"aside": SET_ASIDE, "model": model})
+    gone = {(a, b) for a, b in cur.fetchall()} | one
     if gone:
         ids = sorted({p for pair_ in gone for p in pair_})
         cur.execute("""SELECT DISTINCT unnest(ARRAY[a, b])::text FROM mx_tasks
                         WHERE kind IN ('pair', 'join') AND status = 'answered'
                           AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""", (ids, ids))
         asked = {r[0] for r in cur.fetchall()}
-        gone = {pair_ for pair_ in gone if not (pair_[0] in asked or pair_[1] in asked)}
+        gone = sorted(pair_ for pair_ in gone if not (pair_[0] in asked or pair_[1] in asked))
+        if gone:
+            cur.execute(f"""DELETE FROM {PAIRS_TABLE} p USING unnest(%s::uuid[], %s::uuid[]) g(a, b)
+                             WHERE p.source = 'embedding' AND p.a = g.a AND p.b = g.b""",
+                        ([a for a, _b in gone], [b for _a, b in gone]))
+    return PAIRS_TABLE
+
+
+def current_candidates(cur: Cursor, rows: Sequence[Tuple[Any, Any, str, Optional[float]]], model: str = MODEL
+                       ) -> Iterator[Tuple[Any, Any, str, Optional[float]]]:
+    """mx_candidates rows (a, b, source, score) as the posts' current vectors have them (`current_pairs`), given back
+    one at a time, in order: a dropped row is left out, a row of two current vectors carries their cosine now
+    (rounded to 4 places)."""
+    if not any(src == "embedding" for _a, _b, src, _s in rows):
+        return iter(rows)
+    table = current_pairs(cur, """SELECT u.k, u.a, u.b, u.source, NULL::real AS score
+                                    FROM unnest(%(a)s::uuid[], %(b)s::uuid[], %(s)s::text[]) WITH ORDINALITY u(a, b, source, k)""",
+                          {"a": [str(r[0]) for r in rows], "b": [str(r[1]) for r in rows], "s": [r[2] for r in rows]},
+                          model)
+    cur.execute(f"SELECT k, now FROM {table} WHERE source = 'embedding'")
+    kept: Dict[int, Optional[float]] = {int(k) - 1: (None if c is None else float(c)) for k, c in cur.fetchall()}
 
     def given() -> Iterator[Tuple[Any, Any, str, Optional[float]]]:
         for k, (a, b, src, score) in enumerate(rows):
             if src == "embedding":
-                if gone and ab(k) in gone:
+                if k not in kept:
                     continue
-                if k in now:
-                    score = round(now[k], 4)
+                if kept[k] is not None:
+                    score = round(kept[k], 4)
             yield a, b, src, score
     return given()
