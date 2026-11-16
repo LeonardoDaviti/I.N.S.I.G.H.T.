@@ -1,5 +1,4 @@
 -- 0147_markx_change_markers.sql (Stealth v10.22, issue 0216: the planners' fingerprints and the passes' stamps)
--- no transaction
 --
 -- 1. mx_post_stamps: a post's text version (markx/plan_marks.py STAMP). A post's text stamp was its row's version plus
 --    four subqueries a post (its parts' row version, its source's shown name, every kept link's row version, the page
@@ -20,7 +19,9 @@
 --    guide), a query reading tasks by `a` alone took the new index and its rows in another order, and one decision run
 --    of the mxreal copy asked one rename question more (an order-dependent step; measured: base code, index swapped).
 --
--- Every statement runs on its own (no transaction: the index is built CONCURRENTLY) and is safe to run again.
+-- One transaction, like every file the archive restore replays (import_export.restore runs each in a transaction: a
+-- CONCURRENTLY build can't run there). The index is built in it: mx_tasks' writes wait for the build (seconds on the
+-- server's 1.7M tasks, during ./update's restart). Every statement is safe to run again.
 
 CREATE SEQUENCE IF NOT EXISTS mx_post_stamps_seq;
 CREATE TABLE IF NOT EXISTS mx_post_stamps (
@@ -167,5 +168,4 @@ CREATE TRIGGER mx_tasks_changes_trunc AFTER TRUNCATE ON mx_tasks
   FOR EACH STATEMENT EXECUTE FUNCTION mx_tasks_changed();
 
 -- 3. The planners' probe from the index alone.
-DROP INDEX CONCURRENTLY IF EXISTS mx_tasks_kind_guide_a_idx;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS mx_tasks_kind_guide_a_idx ON mx_tasks (kind, guide, a) WHERE a IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mx_tasks_kind_guide_a_idx ON mx_tasks (kind, guide, a) WHERE a IS NOT NULL;
