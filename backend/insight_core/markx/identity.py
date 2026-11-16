@@ -2213,7 +2213,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
           link_limit: int = LINK_LIMIT, embedded_since: Optional[datetime] = None, after: Optional[str] = None,
           deadline: Optional[float] = None, chunk: int = SEED_CHUNK, link_after: Optional[str] = None,
           phase: Optional[str] = None, book: Optional[Book] = None, mention_chunk: Optional[int] = None,
-          relink_page: Optional[int] = None) -> Dict[str, Any]:
+          relink_page: Optional[int] = None, may_skip: bool = True) -> Dict[str, Any]:
     """The decision run's entities stage. `full`: the nightly pass (every mention relinked and checked, every entity
     pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts;
     `days` the days whose mentions it linked (the surges recount them), `posts_linked` the posts whose mentions it
@@ -2236,7 +2236,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         of the budget left and the full pass goes on until the deadline, whether the linking is done or not; each
         does at least one step a run (a part; a page or a chunk), so neither waits on the other (the server's full
         pass made no progress for five days: its runs' first part spent the whole budget, and the full pass only ran
-        once every mention was linked)."""
+        once every mention was linked). v10.22.2: a resumed pass's chunks wait a run when the linking spent the
+        whole budget (`full.skipped`), never two runs in a row (`may_skip`)."""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -2519,6 +2520,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         t = tick("collide", t)
 
     stopped = False      # the full pass stopped at the budget (its pages or chunks left are the next run's)
+    linked_parts = 0     # v10.22.2: the mentions the linking linked this run
     # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks. v10.22 (0216):
     # with a full pass half done, LINK_SHARE of the budget left, so the full pass always has its turn (it had none for
     # five days on the server: the first part took the whole budget, every run)
@@ -2560,6 +2562,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         # the collisions of the entities linked (once their chunks are all linked), and of the answers since
         decide_collisions(linked_seeds | collide_since)
         left = sum(len(p_) for p_ in parts[done_parts:])
+        linked_parts = sum(len(p_) for p_ in parts[:done_parts])   # an empty part (nothing to link) spent nothing
         out["incremental"] = {"done": not linking_stopped, "parts": done_parts, "of": len(parts), "left": left}
     # 2. the full pass: every mention relinked, in pages of posts (post id order); at least a page a run
     moved_n = None
@@ -2594,6 +2597,12 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         out["check"] = {"same": moved_n == 0, "relinked": moved_n}
     # 3. the full pass: every entity pooled and decided, in chunks of seeds (id order)
     done_chunks, n_chunks, last = 0, None, after
+    # v10.22.2: a resumed pass whose linking already spent the budget runs no chunk (one is ~35 s: the stage ran 82-88 s
+    # against 45); the chunks left are the next run's
+    # (`may_skip` False: the last run skipped them so, this one runs one: the pass never waits on the linking for good)
+    skipped = full and not stopped and resume and linked_parts > 0 and moved_n is None and may_skip and past()
+    if skipped:
+        stopped = True
     if full and not stopped:
         if moved_n is not None or facts["hf"] is None:
             facts_for(None)   # read after the relinking (it may move a mention to another entity)
@@ -2632,7 +2641,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         out["full"] = {"done": done, "phase": None if done else phase,
                        "after": None if done or phase != "pool" else last,
                        "link_after": None if done or phase != "link" else link_after,
-                       "chunks": done_chunks, "of": n_chunks, "resumed": resume}
+                       "chunks": done_chunks, "of": n_chunks, "resumed": resume,
+                       **({"skipped": True} if skipped else {})}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
     if entity_facts.on():   # 0184
         out["facts"] = {"placed": dict(placed), "facts": collide_out.get("facts", 0), "split": collide_out.get("split", 0),

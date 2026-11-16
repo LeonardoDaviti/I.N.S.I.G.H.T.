@@ -122,7 +122,8 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
                           deadline=None if budget is None else time.monotonic() + budget * REPAIR_SHARE)
     out = identity.stage(cur, ask=ask, now=now, run_id=run_id, full=whole, since=since,
                          after=left.get("after") if left else None, link_after=left.get("link_after") if left else None,
-                         phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book)
+                         phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book,
+                         may_skip=not (left or {}).get("skipped"))
     out["repair"] = fixed
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
@@ -130,13 +131,13 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
         out["full"]["started"] = now.isoformat()
     linked = out.pop("posts_linked", [])
     out["shown"] = shown(cur, book, whole=whole, since=since, posts=linked, deadline=deadline)
-    out["invariants"] = invariants(cur, book)
+    out["invariants"] = invariants(cur, book, deadline=deadline)
     sweep = whole and not left
     out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
                                  deadline=deadline, also=linked, book=book)
     # 0165 B: every thing once a night (the run that finishes the full pass, within the budget), else the run's posts
     every = whole and bool((out.get("full") or {}).get("done")) and (deadline is None or time.monotonic() < deadline)
-    out["renames"] = renames(cur, book, ask=ask, run_id=run_id, full=every, since=since, posts=linked)
+    out["renames"] = renames(cur, book, ask=ask, run_id=run_id, full=every, since=since, posts=linked, deadline=deadline)
     # 0168: the handle rule over the posts not read by it yet (newest first), then the questions the pairs raise
     out["handles"] = handles(cur, book, run_id=run_id, deadline=deadline)
     days = {date.fromisoformat(d) for d in out.pop("days", [])}
@@ -174,12 +175,16 @@ def last_invariants(cur: Any) -> Optional[Dict[str, Any]]:
     return None if row is None else {**(row[0] or {}), "at": row[1]}
 
 
-def invariants(cur: Any, book: Any) -> Dict[str, Any]:
+def invariants(cur: Any, book: Any, *, deadline: Optional[float] = None) -> Dict[str, Any]:
     """0164 C: what must hold after every run, counted, with an alarm on /markx when it doesn't: `family_org`, the
     clusters holding a product family and an org or person (0 after the repair; the owner's own merges are `held`).
-    Read only; a failure is logged in the counts, never the run's."""
+    Read only; a failure is logged in the counts, never the run's. v10.22.2: past the stage's `deadline`, not counted
+    (`{"skipped": "deadline"}`; the next run counts them)."""
     import logging
+    import time
     from insight_core.markx import entity_repair
+    if deadline is not None and time.monotonic() > deadline:
+        return {"skipped": "deadline"}
     cur.execute("SAVEPOINT entity_invariants")
     try:
         got = {"family_org": entity_repair.family_org(book, cur)}
@@ -261,7 +266,7 @@ def handles(cur: Any, book: Any, *, run_id: Any, deadline: Optional[float]) -> D
 
 
 def renames(cur: Any, book: Any, *, ask: Any, run_id: Any, full: bool, since: Optional[datetime],
-            posts: Any) -> Dict[str, Any]:
+            posts: Any, deadline: Optional[float] = None) -> Dict[str, Any]:
     """0165 B: the rename questions (markx/rename.py) of the entities the run's posts name (every thing on the full
     pass), and Haiku's `renamed` answers queued for the owner. In a savepoint: a failure is logged in the counts,
     never the run's."""
@@ -275,7 +280,7 @@ def renames(cur: Any, book: Any, *, ask: Any, run_id: Any, full: bool, since: Op
                             WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""",
                         (schemas.mention_guides(), list(posts)))
             seeds = {r[0] for r in cur.fetchall()}
-        got = rename.stage(cur, book, ask=ask, run_id=run_id, full=full, since=since, seeds=seeds)
+        got = rename.stage(cur, book, ask=ask, run_id=run_id, full=full, since=since, seeds=seeds, deadline=deadline)
     except Exception as error:  # noqa: BLE001 - a derived step never stops the run
         cur.execute("ROLLBACK TO SAVEPOINT entity_renames")
         logging.getLogger(__name__).exception("Mark X: the rename step failed")

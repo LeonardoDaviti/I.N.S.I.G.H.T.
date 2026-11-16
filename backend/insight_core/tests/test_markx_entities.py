@@ -453,7 +453,8 @@ class BothPassesKeepToTheBudget(_Db):
         """v10.22 (0216): on the server a full pass made no progress for five days. Its runs first linked the new
         mentions, whose first part took the whole budget, and the full pass only ran once they were all linked. Now
         the linking has LINK_SHARE of the budget and the full pass the rest, each at least one step a run: with no
-        budget at all, every run links a part and decides a chunk, until both are done."""
+        budget at all, every run links a part and decides a chunk, until both are done. v10.22.2: a run whose linking
+        spent the budget decides no chunk, never two runs in a row (the stage ran 82-88 s against 45 on the server)."""
         n = self.names()
         self.stage()                                            # linked and merged
         self.cur.execute("DELETE FROM mx_entity_redirects")     # as if never merged: the full pass must find them
@@ -468,7 +469,8 @@ class BothPassesKeepToTheBudget(_Db):
                 seen.append(self.run_stage(budget=0, chunk=1))
                 self.assertLess(len(seen), 50)
         self.assertEqual([o["incremental"]["parts"] for o in seen[:len(new)]], [1] * len(new))   # a mention a run...
-        self.assertEqual([o["full"]["chunks"] for o in seen[:len(new)]], [1] * len(new))         # ...and a chunk too
+        self.assertEqual([o["full"]["chunks"] for o in seen[:len(new)]], [0, 1, 0])              # ...a chunk every other
+        self.assertEqual([bool(o["full"].get("skipped")) for o in seen[:len(new)]], [True, False, True])
         self.assertEqual(seen[0]["incremental"]["left"], len(new) - 1)
         self.assertEqual(sum(o["link"]["linked"] for o in seen), len(new))
         self.assertEqual(sum(o["merged"] for o in seen), n)     # every pair found again, once

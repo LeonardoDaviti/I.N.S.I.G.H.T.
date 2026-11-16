@@ -350,9 +350,12 @@ def asked(cur: Any) -> Dict[Tuple[str, str], Tuple[str, str]]:
 
 
 def stage(cur: Any, book: I.Book, *, ask: Any, run_id: Any, full: bool, since: Optional[datetime],
-          seeds: Iterable[str] = ()) -> Dict[str, Any]:
+          seeds: Iterable[str] = (), deadline: Optional[float] = None) -> Dict[str, Any]:
     """The decision run's rename step (after the addresses): the candidates touching the run's linked entities
-    (every thing on the full pass) asked, and the answers come since (every answer on the full pass) queued."""
+    (every thing on the full pass) asked, and the answers come since (every answer on the full pass) queued.
+    v10.22.2: past the stage's `deadline` no candidates are found nor asked (`stopped`; the next run's posts and the
+    nightly pass find them); the answers are still queued."""
+    import time
     from insight_core.markx import entity_addresses as EA, tasks
     cfg = config()
     if not cfg["renames"]:
@@ -362,7 +365,11 @@ def stage(cur: Any, book: I.Book, *, ask: Any, run_id: Any, full: bool, since: O
     got = asked(cur)
     out = {"candidates": 0, "asked": 0, "waiting": 0, "queued": 0, "answered": 0, "apart": 0}
     seeds = None if full else {book.root(s) for s in seeds if book.root(s)}
-    found = candidates(cur, book, seeds=seeds, overlap_days=cfg["rename_overlap_days"]) if seeds is None or seeds else []
+    stop = deadline is not None and time.monotonic() > deadline
+    if stop:
+        out["stopped"] = True
+    found = (candidates(cur, book, seeds=seeds, overlap_days=cfg["rename_overlap_days"])
+             if not stop and (seeds is None or seeds) else [])
     out["candidates"] = len(found)
     by_rule: Dict[str, int] = defaultdict(int)
     for c in found:
