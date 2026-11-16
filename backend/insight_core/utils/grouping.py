@@ -409,6 +409,8 @@ def _release_edges(ids: Sequence[str], cores: Mapping[str, Core], policy: Policy
                 ta, tb = cores[a].thing, cores[b].thing
                 if (not ta.variant) != (not tb.variant):
                     bare = a if not ta.variant else b
+                    if cores[bare].event not in (LEAK, None):
+                        continue   # a bare version reaches a variant only as a stage before it (a teaser, a rumour)
                     variants = {cores[o].thing.variant for o in xs if o != bare and cores[o].thing.variant
                                 and _release_pair(cores[bare], cores[o], policy)}
                     if len(variants) != 1:

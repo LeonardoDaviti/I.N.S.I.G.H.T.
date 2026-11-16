@@ -167,6 +167,15 @@ class Shapes(unittest.TestCase):
                 g = G.group(items, edges, policy=Policy(algo=algo))
                 self.assertEqual(partition(g), [["ipo1", "ipo2", "ipo3"], ["vela"]])
 
+    def test_a_bare_versions_benchmark_is_no_stage_of_its_variant(self):
+        """0217 round 2 (found on the held-out days): a benchmark of the base model is not a line of its flash
+        variant's launch; only a teaser or a rumour of the bare version reaches a variant."""
+        items = [story("bench", T0, 3, things=(Thing("hy4"),), event="research_result"),
+                 story("flash", T0 + 2 * D, 4, things=(Thing("hy4", "flash"),), event="model_release")]
+        self.assertEqual(G.releases(items, Policy(span_days=14.0, line_days=3.0)), [])
+        items[0] = story("bench", T0, 3, things=(Thing("hy4"),), event="leak_rumour")
+        self.assertEqual(G.releases(items, Policy(span_days=14.0, line_days=3.0)), [("bench", "flash")])
+
     def test_two_releases_of_two_things_never_join(self):
         """A bare version's release and its variant's are two models; a release of an exact thing and a release of
         an unversioned product are two releases, whatever the judge said (a stale verdict, 0205)."""
