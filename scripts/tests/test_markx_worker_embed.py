@@ -15,7 +15,10 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from test_markx_worker import TOKEN, W, Base
+try:
+    from test_markx_worker import TOKEN, W, Base
+except ModuleNotFoundError:   # run as tests.test_markx_worker_embed from scripts/
+    from tests.test_markx_worker import TOKEN, W, Base
 
 GUIDE_BODY = "GUIDE embed-v1: no model reads this guide."
 GUIDE = {"sha256": hashlib.sha256(GUIDE_BODY.encode()).hexdigest(), "body": GUIDE_BODY,

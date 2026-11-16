@@ -35,6 +35,16 @@ A cycle
    are released at the end of the cycle. A call refused by the usage policy is halved, from its first refusal
    (0191), until the refused task stands alone; that one is posted as an empty answer (a failed try) and
    remembered in refused.json beside the spool: its later leases ask it alone, never in a batch again.
+   0214: the same halving takes a call that answered without some of its lines (or with no line it could read):
+   its answers are kept and the tasks left without one are asked again at once, in calls of at most half the
+   call (rounded up), never with the call's answered tasks, halving down to one task a call; a task still
+   without an answer after its call alone is released. Such a call's log line keeps its output's first 4,000
+   characters (`missing_text`). A call that failed (an error, a timeout) is asked once more in calls of
+   --per-call, as before. Besides lines, an output that is one JSON array of answers, or one object keyed by
+   task id, is read.
+   0214: a call that could not reach Claude's API ("Can't reach the API server", a connection error) is asked
+   again as it was after 30, 60 and 120 s (--unreachable-wait), not as a new attempt and not halved; three such
+   results in a row, across calls (--unreachable-stop), stop the cycle: no new call, leases released, exit 3.
 6. Tokens and cost come from Claude Code's JSON (`usage`: input + cache read + cache creation tokens in,
    output tokens out; `total_cost_usd`; the model from `modelUsage`). Every call is logged with them; each
    posted answer carries its share of its batch (an even split; a retried task carries its share of both
@@ -53,7 +63,8 @@ A cycle
    expire on the server after 30 minutes.
 
 Exit codes: 0 done (also: nothing to do); 2 bad arguments, token file or `claude` not found, or the
-embedder unreachable; 3 server unreachable or a server error; 4 Claude usage limit; 5 Claude auth error;
+embedder unreachable; 3 server unreachable or a server error, or (0214) Claude's API unreachable
+--unreachable-stop times in a row (its leases released); 4 Claude usage limit (the weekly limit too); 5 Claude auth error;
 6 the server refused the token (401/403); 7 the server refused the embedder's build or model (409/400);
 1 a bug: a batch or the leaser raised (v10.13.3: the pipeline logs it as "bug" and stops, never exits 0).
 
@@ -191,6 +202,11 @@ USAGE_RE = re.compile(r"usage limit|limit reached|hit your (?:\w+ )?limit|(?:wee
                       r"rate.?limit|out of extra usage|credit balance|quota|limit will reset|resets? at|resets \w", re.I)
 AUTH_RE = re.compile(r"/login|invalid api key|not logged in|authentication|oauth token|unauthori[sz]ed|"
                      r"token has expired|expired token|invalid x-api-key|\b401\b|\b403\b", re.I)
+# 0214: Claude's API out of reach (the device's network or the API): the same call is asked again after a wait
+UNREACHABLE_RE = re.compile(r"can.t reach the api server|connection error|unable to connect|ECONNREFUSED|ECONNRESET|"
+                            r"ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|socket hang up", re.I)
+UNREACHABLE_WAIT, UNREACHABLE_STOP = "30,60,120", 3   # 0214: the waits before asking again; this many in a row stop
+MISSING_TEXT = 4000   # 0214: characters of a call's output kept in its log line when some of its lines are missing
 
 
 # ---------------------------------------------------------------------------------------------- errors
@@ -260,7 +276,7 @@ class Log:
             if self.path:
                 self._write(json.dumps(rec, ensure_ascii=False) + "\n")
             if not self.quiet:
-                brief = " ".join(f"{k}={v}" for k, v in rec.items() if k not in ("at", "event") and v is not None)
+                brief = " ".join(f"{k}={v}" for k, v in rec.items() if k not in ("at", "event", "missing_text") and v is not None)
                 print(f"markx-worker {event} {brief}", file=sys.stderr, flush=True)
 
 
@@ -461,6 +477,17 @@ def effort_arg(value):
     return out
 
 
+def waits_arg(value):
+    """--unreachable-wait (0214): seconds, comma-separated, e.g. "30,60,120"."""
+    try:
+        out = [float(x) for x in value.split(",") if x.strip()]
+    except ValueError:
+        out = None
+    if out is None or any(w < 0 for w in out):
+        raise argparse.ArgumentTypeError("seconds, comma-separated, e.g. 30,60,120")
+    return out
+
+
 # ---------------------------------------------------------------------------------------------- the server's checks
 
 _RULES = []   # [module or None]: the server's validate.py, loaded once
@@ -557,8 +584,14 @@ def classify(text):
     return None
 
 
+def unreachable(text):
+    """0214: True when a failed call's text says Claude's API could not be reached (and it is no usage or auth stop)."""
+    return classify(text) is None and bool(UNREACHABLE_RE.search(text or ""))
+
+
 def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=None):
-    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model, cread, cwrite, think} or {error, fatal, ms}.
+    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model, cread, cwrite, think} or {error, fatal, ms}
+    (0214: and "unreachable": True when Claude's API could not be reached).
     `env` (0191): variables for Claude Code (its prompt cache), over this process's."""
     t0 = time.time()
     try:
@@ -577,10 +610,14 @@ def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=Non
             raise ValueError("not an object")
     except (ValueError, IndexError):
         out = (p.stdout or "") + "\n" + (p.stderr or "")
-        return {"error": f"unparsable output rc={p.returncode}: {out.strip()[:300]}", "fatal": classify(out), "ms": ms}
-    if r.get("is_error") or r.get("subtype") != "success":
-        msg = f"{r.get('subtype')}: {str(r.get('result'))[:300]}"
-        return {"error": msg, "fatal": classify(str(r.get("result")) + " " + (p.stderr or "")), "ms": ms}
+        return {"error": f"unparsable output rc={p.returncode}: {out.strip()[:300]}", "fatal": classify(out), "ms": ms,
+                **({"unreachable": True} if unreachable(out) else {})}
+    said = str(r.get("result"))
+    if (r.get("is_error") or r.get("subtype") != "success"
+            or (said.lstrip().startswith("API Error") and unreachable(said))):   # 0214: an API error given as the answer
+        why = said + " " + (p.stderr or "")
+        return {"error": f"{r.get('subtype')}: {said[:300]}", "fatal": classify(why), "ms": ms,
+                **({"unreachable": True} if unreachable(why) else {})}
     u = r.get("usage") or {}
     mu = r.get("modelUsage") or {}
     used = max(mu, key=lambda k: (mu[k] or {}).get("outputTokens") or 0) if mu else None
@@ -597,8 +634,54 @@ def prompt_for(tasks):
     return HEAD + "\n\n".join(f"### ITEM id: {t['id']}\n{t['input']}" for t in tasks)
 
 
+def _answer_line(o):
+    """(str(task id), answer) of one answer object ({"id", ..} or {"task_id", "answer": {..}}), or None."""
+    if not isinstance(o, dict):
+        return None
+    key = "id" if "id" in o else "task_id" if "task_id" in o else None
+    if key is None or o[key] in (None, "") or isinstance(o[key], (dict, list)):
+        return None
+    ans = {k: v for k, v in o.items() if k not in ("id", "task_id")}
+    if set(ans) == {"answer"} and isinstance(ans["answer"], dict):
+        ans = ans["answer"]
+    return str(o[key]), ans
+
+
+def _whole(text):
+    """0214: the answers of an output that is one JSON value: an array of answer objects, or one object keyed by
+    task id whose values are answers (a fenced block, or the text from its first bracket to its last)."""
+    blocks = re.findall(r"```(?:json)?\s*\n(.*?)```", text, re.S) or [text]
+    out = {}
+    for b in blocks:
+        b = b.strip()
+        v = None
+        for cand in (b, b[b.find("["):b.rfind("]") + 1], b[b.find("{"):b.rfind("}") + 1]):
+            if not cand:
+                continue
+            try:
+                v = json.loads(cand)
+                break
+            except json.JSONDecodeError:
+                continue
+        if isinstance(v, list):
+            for o in v:
+                got = _answer_line(o)
+                if got:
+                    out.setdefault(*got)
+        elif isinstance(v, dict):
+            got = _answer_line(v)
+            if got:
+                out.setdefault(*got)
+            elif v and all(isinstance(x, dict) for x in v.values()):
+                for k, x in v.items():
+                    x = {f: y for f, y in x.items() if f not in ("id", "task_id")}
+                    out.setdefault(str(k), x["answer"] if set(x) == {"answer"} and isinstance(x["answer"], dict) else x)
+    return out
+
+
 def parse_lines(text):
-    """{str(task id): answer} from the model's JSON lines (the prototype's parser)."""
+    """{str(task id): answer} from the model's JSON lines (the prototype's parser). 0214: also an output that is one
+    JSON array of answer objects, or one object keyed by task id (fenced or not); a line read wins over them."""
     out = {}
     for line in (text or "").replace("```json", "").replace("```", "").split("\n"):
         line = line.strip()
@@ -608,15 +691,12 @@ def parse_lines(text):
             o = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(o, dict):
-            continue
-        key = "id" if "id" in o else "task_id" if "task_id" in o else None
-        if key is None or o[key] in (None, ""):
-            continue
-        ans = {k: v for k, v in o.items() if k not in ("id", "task_id")}
-        if set(ans) == {"answer"} and isinstance(ans["answer"], dict):
-            ans = ans["answer"]
-        out[str(o[key])] = ans
+        got = _answer_line(o)
+        if got:
+            out[got[0]] = got[1]
+    if text and ("[" in text or not out):
+        for k, v in _whole(text).items():
+            out.setdefault(k, v)
     return out
 
 
@@ -762,7 +842,7 @@ class Worker:
     def __init__(self, args, server, log):
         self.a, self.server, self.log = args, server, log
         self.stop = threading.Event()
-        self.fatal = None            # 'usage', 'auth', 'setup', 'server', 'token'
+        self.fatal = None            # 'usage', 'auth', 'setup', 'server', 'token', 'api' (0214: Claude's API unreachable)
         self.fatal_why = None
         self.held = {}               # str(task id) -> task id as leased, for tasks not yet answered or released
         self.spent = {}              # str(task id) -> {tokens_in, tokens_out, ms, cost_usd}
@@ -775,6 +855,7 @@ class Worker:
         self.model_seen = None
         self.refused = self.load_refused()   # 0191: tasks and posts a refusal was isolated to before
         self.warm = {}                       # 0191: kind -> set once its first call under the 5-minute cache returned
+        self.unreachable_run = 0             # 0214: calls in a row (across calls) that could not reach Claude's API
 
     # -- fatal ------------------------------------------------------------------------------------------
     def set_fatal(self, kind, why):
@@ -872,13 +953,39 @@ class Worker:
 
     def ask(self, batch, tasks, attempt):
         """Asks one call. Returns (ok [(task, answer)], invalid [(task, answer, error)], missing [task], late,
-        model, refused) or None when no call was made."""
+        model, refused, answered) or None when no call was made. `answered`: the call gave an output (0214: its
+        missing tasks are asked again halved; a failed call's are not). 0214: a call that could not reach Claude's
+        API is asked again as it was after each of --unreachable-wait's waits (the same attempt, not halved);
+        --unreachable-stop such results in a row, across calls, stop the cycle (its leases released, exit 3)."""
+        waits = list(self.a.unreachable_wait)
+        while True:
+            r, res = self.ask_once(batch, tasks, attempt)
+            if r is None or not res.get("unreachable"):
+                with self.lock:
+                    if r is not None:
+                        self.unreachable_run = 0
+                return r
+            with self.lock:
+                self.unreachable_run += 1
+                run = self.unreachable_run
+            if run >= self.a.unreachable_stop:
+                self.set_fatal("api", f"Claude's API unreachable {run} times in a row: {res.get('error')}")
+                return r
+            if not waits or self.stop.is_set():
+                return r
+            wait = waits.pop(0)
+            self.log("unreachable", kind=batch.kind, attempt=attempt, size=len(tasks), run=run, wait=wait)
+            if self.stop.wait(wait):
+                return r
+
+    def ask_once(self, batch, tasks, attempt):
+        """One call of ask: (its result as ask's, or None when no call was made; call()'s result)."""
         if self.stop.is_set():
-            return None
+            return None, {}
         left = (batch.lease_until - datetime.now(timezone.utc)).total_seconds()
         if left < self.a.lease_margin:
             self.log("lease-expiring", kind=batch.kind, attempt=attempt, size=len(tasks), seconds_left=int(left))
-            return None
+            return None, {}
         res = call(self.a.claude, batch.model or self.a.model, system_for(batch.guide), prompt_for(tasks),
                    timeout=self.a.timeout, kind=batch.kind, effort=self.effort(batch.kind),
                    env=PROMPT_CACHE[self.cache_mode(batch.kind)])
@@ -927,12 +1034,14 @@ class Worker:
                  tokens_in=res.get("tin"), tokens_out=res.get("tout"), model=res.get("model"),
                  cache_read=res.get("cread"), cache_write=res.get("cwrite"), thinking=res.get("think"),
                  effort=self.effort(batch.kind), rule_invalid=ruled or None, dropped=dropped or None,
-                 refused=refused or None,
+                 refused=refused or None, unreachable=res.get("unreachable"),
                  late=late or None, error=res.get("error"),
-                 invalid_errors=[e for _, _, e in invalid][:5] or None)
+                 invalid_errors=[e for _, _, e in invalid][:5] or None,
+                 # 0214: what a call that answered without some of its lines wrote, to count why
+                 missing_text=res["text"][:MISSING_TEXT] if missing and "text" in res else None)
         if res.get("fatal"):
             self.set_fatal(res["fatal"], res["error"])
-        return ok, invalid, missing, late, res.get("model"), refused
+        return (ok, invalid, missing, late, res.get("model"), refused, "text" in res), res
 
     # -- refusals (0191) ----------------------------------------------------------------------------------
     def refused_path(self):
@@ -974,10 +1083,7 @@ class Worker:
         first refusal on (0191: before, the first refused call was asked once more whole). A task refused alone is
         posted as an empty answer (the server stores a failed try; three and the task fails) and remembered."""
         if len(batch.tasks) > 1:
-            half = len(batch.tasks) // 2
-            for part in (batch.tasks[:half], batch.tasks[half:]):
-                self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until, batch.model),
-                            attempt)
+            self.halve(batch, batch.tasks, attempt)
             return
         t = batch.tasks[0]
         first_line = (t.get("input") or "").split("\n", 1)[0]
@@ -987,32 +1093,49 @@ class Worker:
         self.remember_refused(batch.kind, t)
         self.post([self.answer_row(t, {})], None)
 
+    def halve(self, batch, tasks, attempt, size=None):
+        """Asks `tasks` (all or some of `batch`'s) again, in calls of at most half of `batch` (rounded up; `size`
+        instead when given), each through second(): a refused call's tasks (0191) and, 0214, the tasks an answered
+        call left without a line, down to one task a call. Never with the tasks of `batch` that were answered."""
+        size = size or max(1, -(-len(batch.tasks) // 2))
+        for part in split_calls(tasks, size):
+            if self.stop.is_set():
+                return
+            self.second(Batch(batch.kind, batch.guide_id, batch.guide, part, batch.lease_until, batch.model), attempt)
+
     # -- a round ----------------------------------------------------------------------------------------
     def first(self, batch):
+        """Asks a batch; posts its valid answers. Returns (the tasks to ask again: invalid, then missing; whether the
+        call answered)."""
         r = self.ask(batch, batch.tasks, 1)
         if r is None:
-            return []
-        ok, invalid, missing, late, model, refused = r
+            return [], False
+        ok, invalid, missing, late, model, refused, answered = r
         if refused and not late:
             self.isolate(batch, 2)
-            return []
+            return [], False
         rows = [self.answer_row(t, a) for t, a in ok]
         if late:   # the lease is gone: no retry; the invalid ones are stored with their errors
             rows += [self.answer_row(t, a) for t, a, _ in invalid]
             self.post(rows, model)
-            return []
+            return [], False
         self.post(rows, model)
-        return [t for t, _, _ in invalid] + missing
+        return [t for t, _, _ in invalid] + missing, answered
 
     def second(self, batch, attempt=2):
+        """A retry: posts every answer, valid or not. 0214: tasks the call answered without (a call of more than one
+        task that answered) are halved again at once; a task still without an answer after its call alone (or after a
+        call that failed) is left to be released at the end of the cycle."""
         r = self.ask(batch, batch.tasks, attempt)
         if r is None:
             return
-        ok, invalid, missing, late, model, refused = r
+        ok, invalid, missing, late, model, refused, answered = r
         if refused and not late:
             self.isolate(batch, attempt)
             return
         self.post([self.answer_row(t, a) for t, a in ok] + [self.answer_row(t, a) for t, a, _ in invalid], model)
+        if missing and answered and len(batch.tasks) > 1 and not late and not self.a.no_retry:
+            self.halve(batch, missing, attempt + 1)
 
     # -- embeddings -------------------------------------------------------------------------------------
     def note_vectors(self, payload, r):
@@ -1259,29 +1382,27 @@ class Worker:
             ready.set()
 
     def run_batch(self, b):
-        """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked once more in calls
-        of per_call(kind) (as a round's retry did before v10.13.3)."""
+        """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked again: 0214, after a
+        call that answered, in calls of at most half the batch, the missing ones halved again down to one task a call
+        (halve); after a call that failed, once more in calls of per_call(kind) (as a round's retry did before
+        v10.13.3)."""
         try:
             if b.kind in EMBED_KINDS:
                 self.embed(b)
                 return
             if self.stop.is_set():
                 return
-            todo = self.warmed(b)
+            todo, answered = self.warmed(b)
             if not todo or self.stop.is_set() or self.a.no_retry:
                 return
-            n = self.per_call(b.kind)
-            for k in range(0, len(todo), n):
-                if self.stop.is_set():
-                    return
-                self.second(Batch(b.kind, b.guide_id, b.guide, todo[k:k + n], b.lease_until, b.model))
+            self.halve(b, todo, 2, None if answered else self.per_call(b.kind))
         except Exception as e:   # a bug: logged, the cycle stops and exits 1 (never 0)
             self.log("bug", where="batch", kind=b.kind, error=repr(e)[:300])
             self.set_fatal("bug", repr(e)[:300])
 
     def finish(self, fatal, why):
         try:
-            if fatal in ("usage", "auth", "setup", "build"):
+            if fatal in ("usage", "auth", "setup", "build", "api"):
                 r = self.server.release(self.a.worker)
                 self.counts["released"] += int((r or {}).get("released") or 0)
                 self.held.clear()
@@ -1294,7 +1415,7 @@ class Worker:
             fatal, why = fatal or "server", why or str(e)
         self.counts["cost_usd"] = round(self.counts["cost_usd"], 6)
         code = {None: EXIT_OK, "usage": EXIT_USAGE, "auth": EXIT_AUTH, "setup": EXIT_SETUP, "build": EXIT_BUILD,
-                "server": EXIT_SERVER, "token": EXIT_TOKEN, "bug": EXIT_BUG}[fatal]
+                "server": EXIT_SERVER, "api": EXIT_SERVER, "token": EXIT_TOKEN, "bug": EXIT_BUG}[fatal]
         self.log("done", exit=code, stopped=fatal, why=(why or None) and str(why)[:300], **self.counts)
         return code
 
@@ -1344,6 +1465,12 @@ def main(argv=None):
     c.add_argument("--post-tries", type=int, default=3, help="tries per post (default 3)")
     c.add_argument("--retry-wait", type=float, default=2.0, help="seconds between post tries, times the try")
     c.add_argument("--no-retry", action="store_true", help="no retry of missing or invalid answers")
+    c.add_argument("--unreachable-wait", type=waits_arg, default=waits_arg(UNREACHABLE_WAIT),
+                   help="0214: seconds to wait before asking a call that could not reach Claude's API again, one per "
+                        "try (default %s)" % UNREACHABLE_WAIT)
+    c.add_argument("--unreachable-stop", type=int, default=UNREACHABLE_STOP,
+                   help="0214: this many unreachable results in a row, across calls, stop the cycle: leases released, "
+                        "exit 3 (default %(default)s)")
     c.add_argument("--spool", default=str(state_dir() / "spool.jsonl"), help="answers not yet delivered")
     c.add_argument("--embedder", help="for the embed kind: a local llama-server --embedding's address")
     c.add_argument("--embedder-gguf", help="the embedder's GGUF, for its sha256 (default: the model_path of its /props)")

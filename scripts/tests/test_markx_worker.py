@@ -1300,5 +1300,144 @@ class TestLogRotation(unittest.TestCase):
             self.assertEqual(len(lines), 400)
 
 
+class Test0214(Base):
+    """0214: missing lines asked again halved at once, other output shapes read, the unreachable API waited out then a
+    stop (exit 3), the output of a call with missing lines logged, the weekly limit a stop within one round."""
+
+    def sizes(self):
+        return [len(re.findall(r"^### ITEM id: ", c["stdin"], re.M)) for c in self.fake_calls()]
+
+    def ids(self):
+        return [re.findall(r"^### ITEM id: (\S+)$", c["stdin"], re.M) for c in self.fake_calls()]
+
+    def test_missing_lines_asked_again_in_calls_of_half_never_with_the_answered(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="missing:12,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.sizes(), [20, 10, 2])                     # the 12 missing: calls of at most ceil(20/2)
+        self.assertTrue(all(int(i) > 8 for c in self.ids()[1:] for i in c), "only the missing are asked again")
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        self.assertEqual(len(self.stub.calls), 20)                      # the first 8 posted once, never asked again
+        self.assertEqual(self.stub.releases, [])
+        first = self.events("call")[0]
+        self.assertEqual((first["ok"], first["missing"]), (8, 12))
+        self.assertIn('{"id": 1, "kind": "news"', first["missing_text"])  # the output kept, to count why
+        self.assertIsNone(self.events("call")[1]["missing_text"])          # a complete call keeps none
+
+    def test_missing_text_is_the_first_4000_characters(self):
+        self.stub.add("read", 100)
+        self.stub.tasks["100"]["input"] += " SKIP"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", "--batch", "100", plan="skip:SKIP")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        first = self.events("call")[0]
+        self.assertEqual((first["size"], first["missing"]), (100, 1))
+        self.assertEqual(len(first["missing_text"]), W.MISSING_TEXT)   # the output is longer; its start is kept
+        self.assertTrue(first["missing_text"].startswith('{"id": 1, '))
+
+    def test_a_task_still_missing_after_its_call_alone_is_released(self):
+        self.stub.add("read", 20)
+        for tid in ("5", "6"):
+            self.stub.tasks[tid]["input"] += " SKIP"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="skip:SKIP")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.ids(), [[str(i) for i in range(1, 21)], ["5", "6"], ["5"], ["6"]])
+        self.assertEqual(len(self.stub.by_status("answered")), 18)
+        self.assertEqual(self.stub.releases, [{"worker": "test-device", "task_ids": [5, 6]}])
+        self.assertEqual((self.stub.tasks["5"]["attempts"], self.stub.tasks["6"]["attempts"]), (0, 0))
+
+    def test_missing_ones_are_halved_down_to_one_task_a_call(self):
+        self.stub.add("read", 20)
+        skipped = {str(i) for i in (2, 4, 6, 8, 10, 12, 14)}
+        for tid in skipped:
+            self.stub.tasks[tid]["input"] += " SKIP"
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="skip:SKIP")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        # 20 -> the 7 (at most 10) -> 4, 3 -> 2, 2, 2, 1 -> 1 each: every one asked alone exactly once
+        self.assertEqual(sorted(self.sizes()), sorted([20, 7, 4, 2, 1, 1, 2, 1, 1, 3, 2, 1, 1, 1]))
+        alone = [c[0] for c in self.ids() if len(c) == 1]
+        self.assertEqual(sorted(alone), sorted(skipped))
+        self.assertTrue(all(set(c) <= skipped for c in self.ids()[1:]))
+        self.assertEqual(sorted(map(str, self.stub.by_status("open"))), sorted(skipped))
+        self.assertEqual(len(self.stub.by_status("answered")), 13)
+
+    def test_an_output_with_no_readable_line_is_asked_again_halved(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", plan="prose,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.sizes(), [20, 10, 10])
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+        first = self.events("call")[0]
+        self.assertEqual(first["missing"], 20)
+        self.assertTrue(first["missing_text"].startswith("I read the items"))
+
+    def test_an_array_or_an_object_keyed_by_id_is_read(self):
+        for n, plan in enumerate(("array", "keyed", "array+fence", "keyed+fence")):
+            self.stub.add("read", 20, start=100 * (n + 1))
+            if self.fake_log.exists():
+                self.fake_log.unlink()
+            p = self.run_worker("--kinds", "read", plan=plan)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(self.sizes(), [20], plan)
+            self.assertEqual(len(self.stub.by_status("answered")), 20 * (n + 1), plan)
+
+    def test_parse_lines_reads_the_other_shapes(self):
+        arr = '[\n  {"id": 1, "kind": "news"},\n  {"task_id": "b", "answer": {"kind": "x"}},\n  {"no": "id"},\n  3\n]'
+        self.assertEqual(W.parse_lines(arr), {"1": {"kind": "news"}, "b": {"kind": "x"}})
+        self.assertEqual(W.parse_lines("Here:\n```json\n" + arr + "\n```\nDone."), {"1": {"kind": "news"}, "b": {"kind": "x"}})
+        keyed = '{\n  "7": {"kind": "news"},\n  "8": {"answer": {"kind": "x"}}\n}'
+        self.assertEqual(W.parse_lines(keyed), {"7": {"kind": "news"}, "8": {"kind": "x"}})
+        self.assertEqual(W.parse_lines("Sure. " + keyed + " That is all."), {"7": {"kind": "news"}, "8": {"kind": "x"}})
+        one = '{\n  "id": 9,\n  "kind": "news"\n}'                          # one answer over several lines
+        self.assertEqual(W.parse_lines(one), {"9": {"kind": "news"}})
+        # a line read wins over the same id elsewhere; prose is nothing
+        self.assertEqual(W.parse_lines('{"id": 1, "kind": "news", "list": [1]}'), {"1": {"kind": "news", "list": [1]}})
+        self.assertEqual(W.parse_lines("no answer here"), {})
+        self.assertEqual(W.parse_lines('{"kind": "news", "headline": "x"}'), {})   # no id: nothing to match
+
+    def test_unreachable_api_the_same_call_asked_again_after_a_wait(self):
+        self.stub.add("read", 20)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", "--unreachable-wait", "0.01,0.02,0.04",
+                            plan="unreachable,unreachable,valid")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.sizes(), [20, 20, 20])                    # not halved
+        self.assertEqual(len(set(c["stdin"] for c in self.fake_calls())), 1)   # the same prompt
+        self.assertEqual([e["attempt"] for e in self.events("call")], [1, 1, 1])   # not an attempt
+        self.assertEqual([e["unreachable"] for e in self.events("call")], [True, True, None])
+        self.assertEqual([(e["run"], e["wait"]) for e in self.events("unreachable")], [(1, 0.01), (2, 0.02)])
+        self.assertEqual(len(self.stub.by_status("answered")), 20)
+
+    def test_three_unreachable_in_a_row_release_the_leases_and_exit_3(self):
+        self.stub.add("read", 60)
+        p = self.run_worker("--kinds", "read", "--parallel", "1", "--unreachable-wait", "0.01,0.01,0.01",
+                            plan="unreachable")
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(self.sizes(), [20, 20, 20])                    # three tries of one call, then no call
+        self.assertEqual(self.stub.by_status("leased"), [])
+        self.assertEqual(self.stub.releases[-1], {"worker": "test-device"})
+        self.assertEqual(self.done()["stopped"], "api")
+        self.assertIn("unreachable 3 times in a row", self.done()["why"])
+        self.assertTrue(all(t["attempts"] == 0 for t in self.stub.tasks.values()))
+
+    def test_unreachable_results_count_across_calls(self):
+        self.stub.add("read", 100)
+        p = self.run_worker("--kinds", "read", "--parallel", "3", "--unreachable-wait", "20,20,20",
+                            plan="sleep:0.3+unreachable", timeout=30)
+        self.assertEqual(p.returncode, 3, p.stderr)
+        self.assertEqual(len(self.fake_calls()), 3)                     # the waits end at the stop; no call after
+        self.assertEqual(self.stub.by_status("leased"), [])
+
+    def test_the_weekly_limit_ends_the_cycle_within_one_round_of_calls(self):
+        self.assertEqual(W.classify("You've hit your weekly limit · resets Nov 15, 3pm (Asia/Tbilisi)"), "usage")
+        self.stub.add("read", 800)
+        p = self.run_worker("--kinds", "read", "--parallel", "20", "--batches", "40", plan="sleep:0.5+weekly")
+        self.assertEqual(p.returncode, 4, p.stderr)
+        self.assertLessEqual(len(self.fake_calls()), 20)                # the calls in flight, none after
+        self.assertEqual(self.stub.by_status("leased"), [])
+        self.assertEqual(self.stub.releases[-1], {"worker": "test-device"})
+        self.assertEqual(self.done()["stopped"], "usage")
+        self.assertIn("weekly limit", self.done()["why"])
+        self.assertTrue(all(t["attempts"] == 0 for t in self.stub.tasks.values()))
+
+
 if __name__ == "__main__":
     unittest.main()
