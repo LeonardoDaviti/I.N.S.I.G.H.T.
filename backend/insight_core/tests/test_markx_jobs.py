@@ -105,24 +105,20 @@ class TheLabelsQueue(unittest.TestCase):
 
 
 class TheRebuildHold(unittest.TestCase):
-    """0209: Mark IX's rule-change rebuild holds a decision run at most REBUILD_HOLD after the last one started; its
-    slices run from the jobs loop; no job starves behind the kept views."""
+    """0209: Mark IX's rule-change rebuild's slices run from the jobs loop; no job starves behind the kept views.
+    0215: the rebuild holds no decision run (0209: an hour after the last start); the story job's lock (a batch) does."""
 
     IX = {"locked": False, "rebuild": "in progress", "done": 2000, "total": 157752}
 
     def test_the_hold(self):
-        decide = {"started_at": T0 - timedelta(minutes=20)}
-        held, ahead = jobs.decision_hold(self.IX, decide, T0)
-        self.assertEqual((held, ahead), ("a rule change's rebuild is in progress (2,000 of 157,752 posts regrouped); "
-                                         "it holds a decision run until 60 min after the last one started", None))
-        held, ahead = jobs.decision_hold(self.IX, {"started_at": T0 - timedelta(minutes=61)}, T0)
+        held, ahead = jobs.decision_hold(self.IX)
         self.assertIsNone(held)
-        self.assertIn("goes ahead on the stories as stored", ahead)
-        self.assertIsNone(jobs.decision_hold(self.IX, {"started_at": None}, T0)[0])          # never ran: runs
-        self.assertEqual(jobs.decision_hold(dict(self.IX, locked=True), {"started_at": None}, T0),
+        self.assertEqual(ahead, "a rule change's rebuild is in progress (2,000 of 157,752 posts regrouped): the "
+                                "decision run goes ahead on the stories as stored")
+        self.assertEqual(jobs.decision_hold(dict(self.IX, locked=True)),
                          ("Mark IX's story job is running", None))                           # a batch: seconds
-        self.assertEqual(jobs.decision_hold({"locked": False, "rebuild": None}, decide, T0), (None, None))
-        self.assertIn("is due;", jobs.decision_hold({"locked": False, "rebuild": "due"}, decide, T0)[0])
+        self.assertEqual(jobs.decision_hold({"locked": False, "rebuild": None}), (None, None))
+        self.assertIn("is due:", jobs.decision_hold({"locked": False, "rebuild": "due"})[1])
 
     def test_the_rebuild_slice_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
@@ -420,21 +416,23 @@ class TheRunner(_Api):
         self.assertEqual(self.runner().tick(), "decide")                 # then it runs, once
         self.assertIsNone(self.runner().tick())
 
-    def test_no_decision_run_during_a_rule_change_rebuild(self):
-        """0121 Decided 3; 0209: for at most REBUILD_HOLD after the last decision run started, while the rebuild's
-        slices run here."""
+    def test_a_decision_run_goes_ahead_during_a_rule_change_rebuild(self):
+        """0121 Decided 3 held it until the rebuild's end, 0209 until an hour after the last start; 0215: the rebuild's
+        slices and the decision runs take turns at the normal cadence."""
         from insight_core.services.stories_service import rules_stamp
         self.decide_row(started=20, wanted=19)
         self.stories_setting({"rules": "older rules", "rebuild": {"rules": rules_stamp(), "done": 0, "total": 49384}})
-        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")
+        self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")   # the source stats wait
+        with self.assertLogs(jobs.log, "WARNING") as logs:
+            self.assertEqual(self.runner().tick(), "decide")          # due: the rebuild doesn't hold it
+        self.assertIn("goes ahead on the stories as stored", "\n".join(logs.output))
         with self.slices() as ran:
-            self.assertEqual(self.runner().tick(), "stories")         # not the decision run: the rebuild's slice
+            self.assertEqual(self.runner().tick(), "stories")         # then the rebuild's slice
         self.assertEqual(len(ran), 1)
         self.stories_setting({"rules": "older rules"})                  # stored by other rules: one is due
         self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is due")
         self.stories_setting({"rules": rules_stamp()})
         self.assertIsNone(jobs.mark_ix_busy(self.cur))
-        self.assertEqual(self.runner().tick(), "decide")
 
     def decide_row(self, *, started, wanted=None, finished=None):
         """The decide job's row: started (wanted, finished) that many minutes ago."""
@@ -464,20 +462,18 @@ class TheRunner(_Api):
     def test_the_2026_11_14_deadlock_ends(self):
         """0209: the server's state: a rule change's rebuild in progress, the decision run wanted since a restart
         ended it 45 hours before. Before, the story job stepped aside for the decision run ("a decision run's turn")
-        and the decision run waited for the rebuild: neither ran again. Now the rebuild no longer holds a run that
-        started over REBUILD_HOLD ago: the story job steps aside for it, and it runs on the stories as stored, saying
-        so in its record."""
+        and the decision run waited for the rebuild: neither ran again. 0215: the rebuild holds no run: the story job
+        steps aside for one that waited, and it runs on the stories as stored, saying so in its record."""
         from insight_core.services.stories_service import DECISION_WAIT_S, StoriesService, rules_stamp
         self.stories_setting({"rules": "older rules",
                               "rebuild": {"rules": rules_stamp(), "phase": "keys", "done": 0, "total": 157752}})
         svc = StoriesService(db_url())
-        self.decide_row(started=20, wanted=19)                         # the hold: the rebuild goes on
+        self.decide_row(started=20, wanted=5)                          # wanted, not for ten minutes: the rebuild goes on
         self.assertFalse(svc._decision_waiting())
-        self.assertFalse(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
-        self.assertIn("rebuild is in progress (0 of 157,752 posts regrouped)", jobs.held_by_mark_ix(self.cur))
-        self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
-        self.assertTrue(svc._decision_waiting())                       # past the hold: its turn
         self.assertIsNone(jobs.held_by_mark_ix(self.cur))
+        self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
+        self.assertTrue(svc._decision_waiting())                       # its turn
+        self.assertTrue(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
         with self.assertLogs(jobs.log, "WARNING") as logs:
             self.assertEqual(self.runner().tick(), "decide")
         self.assertIn("goes ahead on the stories as stored", "\n".join(logs.output))

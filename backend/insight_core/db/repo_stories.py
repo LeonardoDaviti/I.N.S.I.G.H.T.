@@ -723,11 +723,17 @@ class StoriesRepository:
         return cur.fetchall()
 
     @staticmethod
-    def queued(cur: Cursor) -> Dict[str, int]:
-        cur.execute("SELECT count(*) FILTER (WHERE key LIKE 'redo:%%'), count(*) FILTER (WHERE key NOT LIKE 'redo:%%') "
-                    "FROM story_queue")
-        redo, changed = cur.fetchone()
-        return {"redo": int(redo), "changed": int(changed)}
+    def regrouped(cur: Cursor) -> Dict[str, int]:
+        """0215: a rule change's progress, counted from the rows as they are: every post (`total`) and those
+        regrouped by the rules now (`done`): no regroup of it waits in the queue (its rule change's redo:, or a post:
+        saved or changed since). A post saved mid-rebuild counts in both once its own batch has run, a removed one in
+        neither. Was: the posts when the rebuild began less the redo: keys left, which went below zero once posts
+        saved since were queued with the rest (the server: done -1,132 of 157,752)."""
+        cur.execute("""SELECT (SELECT count(*) FROM posts),
+                              (SELECT count(DISTINCT p.id) FROM story_queue q JOIN posts p ON p.id = substr(q.key, 6)::uuid
+                                WHERE q.key LIKE 'redo:%%' OR q.key LIKE 'post:%%')""")
+        total, waiting = cur.fetchone()
+        return {"done": int(total) - int(waiting), "total": int(total)}
 
     @staticmethod
     def take_keys(cur: Cursor, keys: Sequence[str]) -> None:

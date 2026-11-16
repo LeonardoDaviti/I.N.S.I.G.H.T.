@@ -1020,7 +1020,7 @@ def due(state: Dict[str, Any], stories: Dict[str, Any], now: datetime, *, busy: 
 
 def run_job(db_url: str) -> Dict[str, Any]:
     """One stats run in its own transaction, its outcome kept in mx_settings (time, rows, peak memory)."""
-    import resource
+    from insight_core.utils import peak
     from insight_core.db import database
     from insight_core.markx import repo
     t0 = time.monotonic()
@@ -1032,7 +1032,7 @@ def run_job(db_url: str) -> Dict[str, Any]:
         log.exception("Source stats: the run failed")
         out = {"ok": False, "error": str(exc)[:500]}
     out["seconds"] = round(time.monotonic() - t0, 2)
-    out["peak_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    out["peak_mb"] = peak.mb()   # 0215: its own (ru_maxrss carried the scheduler's across the spawn)
     with database.transaction(db_url) as cur:
         prev = job_state(cur)
         state = dict(prev, last=out)

@@ -203,10 +203,13 @@ def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
     named: Dict[str, List[StoryPost]] = defaultdict(list)
     said: Dict[str, List[StoryPost]] = defaultdict(list)
     if named_by is not None:
-        for p in rows:
-            for name in only or ():
-                if p.id in named_by.get(name, ()):
-                    named[name].append(p)
+        # 0215: each name's posts looked up by id, in `rows`' order (was: every row against every name, ~3x10^8
+        # lookups a rebuild batch at server scale: 60 of its ~110 s)
+        at = {p.id: i for i, p in enumerate(rows)}
+        for name in only or ():
+            found_at = sorted(at[pid] for pid in named_by.get(name, ()) if pid in at)
+            if found_at:
+                named[name] = [rows[i] for i in found_at]
     else:
         for p in rows:
             for name in names(p.title):

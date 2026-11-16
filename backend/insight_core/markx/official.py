@@ -834,7 +834,7 @@ def run(db_url: str, *, now: Optional[datetime] = None, reader: Optional[Any] = 
     """The jobs process's pass: plan (events, candidates, lookups), then advance (reads, judgements, decisions).
     Off: nothing. Never raises into the caller: a failure is recorded on the run."""
     from insight_core.db import database
-    import resource
+    from insight_core.utils import peak
     now = now or datetime.now(timezone.utc)
     m = mode()
     if m == "off":
@@ -855,7 +855,7 @@ def run(db_url: str, *, now: Optional[datetime] = None, reader: Optional[Any] = 
     except Exception as exc:  # noqa: BLE001 - recorded; the next pass resumes from Postgres
         log.exception("Official channels: the pass failed")
         error = str(exc)[:300]
-    out = {"mode": m, **dict(counts), "peak_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)}
+    out = {"mode": m, **dict(counts), "peak_mb": peak.mb()}   # 0215: its own, not the scheduler's
     if error:
         out["error"] = error
     with database.transaction(db_url) as cur:
