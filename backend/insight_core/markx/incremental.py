@@ -62,14 +62,19 @@ HUB, HUB_MIN = 0.25, 40                                            # a closure o
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
 TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
-# The modules whose code makes what the state keeps (the rules' posts, the renders, near-copies, News' rows): any
-# change to them makes the next run full (a deploy then starts from a full run, as before 0169).
-CODE_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "insight_core.markx.tasks",
-                "insight_core.markx.news", "insight_core.markx.pairing", "insight_core.markx.plan_marks",
-                "insight_core.utils.post_parts", "insight_core.utils.post_links", "insight_core.utils.news_rules",
-                "insight_core.utils.story_rules", "insight_core.services.news_service",
-                "insight_core.services.stories_service", "insight_core.db.repo_stories", "insight_core.db.repo_news",
-                "insight_core.utils.voice", "insight_core.utils.byline")
+# The modules whose code makes what the state keeps, by the part of it they make (0215; before, one stamp of all of
+# them: any change made the next run full, a full reading of the window: 92-93 s on the server after each deploy):
+#   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
+#     in the state's key). decide.run and decide.snapshot are left out: they run the stages, they make nothing kept;
+#   - News' rows (`news_stamp`, kept with them): a change makes the next run's News full, its reading incremental.
+READING_MODULES = ("insight_core.markx.decide", "insight_core.markx.incremental", "insight_core.markx.tasks",
+                   "insight_core.markx.pairing", "insight_core.markx.plan_marks", "insight_core.utils.post_parts",
+                   "insight_core.utils.post_links", "insight_core.utils.voice", "insight_core.utils.byline")
+NEWS_MODULES = ("insight_core.markx.news", "insight_core.utils.news_rules", "insight_core.utils.story_rules",
+                "insight_core.services.news_service", "insight_core.services.stories_service",
+                "insight_core.db.repo_stories", "insight_core.db.repo_news")
+CODE_MODULES = READING_MODULES + NEWS_MODULES
+NOT_KEPT = {"insight_core.markx.decide": ("run", "snapshot")}   # the reading's code that makes nothing kept
 
 # The state's own version, in the key with code_stamp: v2 keeps each post's voice (a followed author's repost counts
 # as that author), so the first run after it is full and writes every post again.
@@ -79,16 +84,48 @@ _code: Optional[str] = None
 
 
 def code_stamp() -> str:
-    """The sha256 of CODE_MODULES' source files."""
+    """The sha256 of CODE_MODULES' source files: all of the state's code (the Labels queue's stamp reads it)."""
     global _code
     if _code is None:
-        import importlib
-        h = hashlib.sha256(STATE_VERSION.encode())
-        for name in CODE_MODULES:
-            with open(importlib.import_module(name).__file__, "rb") as f:
-                h.update(name.encode() + b"\0" + f.read() + b"\0")
-        _code = h.hexdigest()
+        _code = _stamp(CODE_MODULES, skip={})
     return _code
+
+
+def reading_stamp() -> str:
+    """0215: the sha256 of the reading's code (READING_MODULES, NOT_KEPT's functions left out): in the state's key."""
+    if "reading" not in _stamps:
+        _stamps["reading"] = _stamp(READING_MODULES, skip=NOT_KEPT)
+    return _stamps["reading"]
+
+
+def news_stamp() -> str:
+    """0215: the sha256 of the code that makes News' rows (NEWS_MODULES): kept with them (`State.news["code"]`)."""
+    if "news" not in _stamps:
+        _stamps["news"] = _stamp(NEWS_MODULES, skip={})
+    return _stamps["news"]
+
+
+_stamps: Dict[str, str] = {}
+
+
+def _stamp(names: Sequence[str], *, skip: Mapping[str, Sequence[str]]) -> str:
+    """The sha256 of these modules' source files, each without the top-level functions `skip` names for it."""
+    import ast
+    import importlib
+    h = hashlib.sha256(STATE_VERSION.encode())
+    for name in names:
+        with open(importlib.import_module(name).__file__, "rb") as f:
+            source = f.read()
+        if skip.get(name):
+            text = source.decode("utf-8")
+            lines = text.splitlines(keepends=True)
+            cut = sorted(((node.lineno - len(node.decorator_list), node.end_lineno) for node in ast.parse(text).body
+                          if isinstance(node, ast.FunctionDef) and node.name in skip[name]), reverse=True)
+            for first, last in cut:
+                del lines[first - 1:last]
+            source = "".join(lines).encode("utf-8")
+        h.update(name.encode() + b"\0" + source + b"\0")
+    return h.hexdigest()
 
 
 def accounts_stamp(cur: Any) -> str:
@@ -224,7 +261,10 @@ def open_state(cur: Any, key: str) -> Tuple[State, bool]:
         return State(db=db, key=key, full=True), False
     cur.execute("SELECT stamps, news, want FROM mx_inc_state WHERE name = %s", (NAME,))
     stamps, news, want = cur.fetchone()
-    return State(db=db, key=key, full=False, run_id=row[0], stamps=decode(stamps) or {}, news=decode(news),
+    news = decode(news)
+    if isinstance(news, dict) and news.get("code") != news_stamp():
+        news = None   # 0215: News' rows made by other code: this run makes them in full, its reading incremental
+    return State(db=db, key=key, full=False, run_id=row[0], stamps=decode(stamps) or {}, news=news,
                  want=decode(want)), True
 
 

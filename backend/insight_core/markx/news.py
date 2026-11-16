@@ -374,7 +374,7 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     if memo is not None:
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
                      "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()},
-                     "inputs": inputs}
+                     "inputs": inputs, "code": incremental.news_stamp()}   # 0215: the code that made them
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
         made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
