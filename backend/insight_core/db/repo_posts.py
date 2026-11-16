@@ -442,9 +442,16 @@ class PostsRepository:
                     other_form = row is None and self._other_form(cur, params)
                     row = row if row is not None or other_form else self._same_post_elsewhere(cur, params)
                     if not other_form and row is None:
+                        # 0215: stored as it is: nothing written, its parts, links and refs stand. Read first: an
+                        # INSERT ... ON CONFLICT that updates nothing still locks (writes) the stored row.
+                        cur.execute(f"SELECT id FROM posts WHERE url = %(url)s AND NOT ({self._post_update_changes()})",
+                                    params)
+                        same = cur.fetchone()
+                        if same is not None:
+                            return Saved((str(same[0]), False), changed=False)
                         cur.execute(query, params)
                         row = cur.fetchone()
-                        if row is None:   # 0215: stored as it is: nothing written, its parts, links and refs stand
+                        if row is None:   # it became as stored meanwhile (another writer): the same as above
                             cur.execute("SELECT id FROM posts WHERE url = %s", (url,))
                             return Saved((str(cur.fetchone()[0]), False), changed=False)
                     if row is not None:
