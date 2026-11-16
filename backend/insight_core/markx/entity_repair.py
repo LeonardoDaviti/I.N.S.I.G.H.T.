@@ -246,7 +246,6 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
     """v10.23 (0218): the names of two words or more typed an org (as their mentions say), not versions, by id: read
     row by row, a page at a time (a book read by need is asked the rest of a page in one go: the mention types, then
     the names their words could be), none held past its page."""
-    want_fams = getattr(book.families(), "want", None)
     page: List[I.Ent] = []
 
     def ready(page: List[I.Ent]) -> List[I.Ent]:
@@ -254,6 +253,7 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
         got = [e for e in page if types.get(e.id) == "org"]
         rests = {" ".join(e.key.split()[i:]) for e in got for i in range(1, len(e.key.split()))}
         book.prime(keys=rests)
+        want_fams = getattr(book.families(), "want", None)
         if want_fams is not None:
             want_fams(rests)
         return got
@@ -693,6 +693,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             for want in (getattr(book.types, "want", None), getattr(book.version_parents(), "want", None)):
                 if want is not None:
                     want(page)
+            book.prime_products(page)
             for r in page:
                 write(r, {})
             if roots is None:
@@ -701,6 +702,8 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     last, done = after, True
     for k in range(0, len(many), SHOWN_CHUNK):
         chunk = many[k:k + SHOWN_CHUNK]
+        book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
+        book.prime_products(m for r in chunk for m in members[r])
         spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
         for r in chunk:
             write(r, spans)

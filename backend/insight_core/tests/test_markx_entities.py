@@ -552,6 +552,28 @@ class PublishedIndexed(unittest.TestCase):
             self.assertEqual(got[0], got[1], f"seed {seed}")
 
 
+class CompactIndex(unittest.TestCase):
+    """0218: the run's book keeps a key of one id as the id alone; read and grown as the list it was."""
+
+    def test_a_key_of_one_id_reads_and_grows_as_a_list(self):
+        from collections import defaultdict
+        idx = defaultdict(list)
+        for n in range(1500):
+            idx[f"k{n}"].append(f"id{n}")
+        idx["k0"].append("id-x")
+        got = I._compact(idx)
+        self.assertEqual(got.get("k1", ()), ("id1",))
+        self.assertEqual(list(got.get("k0", ())), ["id0", "id-x"])
+        self.assertEqual(got.get("nope", ()), ())
+        got["k1"].append("id-y")                                       # grown by an index's add
+        got["new"].append("z")
+        self.assertEqual((list(got.get("k1")), got.get("new")), (["id1", "id-y"], ["z"]))
+        small = defaultdict(list, {"a": ["x"]})
+        self.assertIs(I._compact(small), small)                         # a small index stays as it is
+        pair = I._compact((idx, small))
+        self.assertEqual((pair[0].get("k2"), pair[1]), (("id2",), small))
+
+
 class TheRunsBook(_Db):
     maxDiff = None
     """0218: the entities stage reads its book by need (identity.RunBook): the same rows as with the whole book, and

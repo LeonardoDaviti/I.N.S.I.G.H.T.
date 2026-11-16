@@ -28,7 +28,7 @@ holds about half what it did (identity.read_ents, load_book).
 v10.23 (0218): **the book is read by need** (identity.RunBook): the entities and aliases the run touches, the mention
 counts and versions as a snapshot in the run's transaction, the pool's indexes from one read of every row (none
 kept), the repairs' walks row by row. The same rows as with the whole book (the server-sized copy: every mx_* table);
-the stage's peak 515 MB instead of 694 MB there.
+the stage's peak 317 MB instead of 694 MB there (+99 MB above its start, was +344).
 
 0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
 names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).

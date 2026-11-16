@@ -385,6 +385,10 @@ class Book:
         """v10.23 (0218): read ahead what the clusters of `roots` are asked (their entities, mention types, version
         parents): a whole book holds it (RunBook reads it now, in one go)."""
 
+    def prime_products(self, ids: Iterable[str]) -> None:
+        """v10.23 (0218): read ahead what `product_of` asks of these entities' names (the aliases and families their
+        last words could be): a whole book holds it (RunBook reads it now, in one go)."""
+
     def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
         """v10.23 (0218): {root: the name keys that name it: its members' own keys and every alias of them} of `roots`
         (entity_addresses' names)."""
@@ -414,6 +418,11 @@ class Book:
         """v10.23 (0218): {id: etype} of many entities at once (a book read by need reads them for one step, none
         kept)."""
         return {e.id: self.etype(e.id) for e in ents}
+
+    def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
+        """v10.23 (0218): {id: its key} of `ids` (a seed's string candidates: up to GRAM_TOP each), for one step: a
+        book read by need reads the keys of those it does not hold, and keeps none of them."""
+        return {i: self.ents[i].key for i in ids}
 
     def maker_roots(self) -> Set[str]:
         """The clusters some entity names as its maker (its stated maker's alias, read through the merges)."""
@@ -809,6 +818,7 @@ class _Has:
 
     def __init__(self, has: Any, many: Any = None) -> None:
         self._has, self._many, self._got = has, many, {}
+        self._added: Set[Any] = set()
 
     def want(self, xs: Iterable[Any]) -> None:
         todo = sorted({x for x in xs if x is not None and x not in self._got})
@@ -824,6 +834,7 @@ class _Has:
     def add(self, x: Any) -> None:
         """v10.23 (0218): `x` is in it from now (a Writer's new version names its parent)."""
         self._got[x] = True
+        self._added.add(x)
 
     def _whole(self, *_a: Any, **_k: Any) -> Any:
         raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
@@ -1027,17 +1038,16 @@ def lazy_book(cur: Any) -> LazyBook:
 
 class _Mentioned:
     """RunBook's `mentioned`: the entities a current mention named when the book was read (as load_book's: every entity
-    with a mention, every pinned one), and those the run's linking named since (`|=`, kept in the order met, `fresh`).
-    Asked one at a time or many at once (`want`) before the pool's indexes are read; from their read on, a set."""
+    with a mention, every pinned one: the snapshot's), and those the run's linking named since (`|=`, kept in the order
+    met, `fresh`). Asked one at a time or many at once (`want`: the pool's pairs, a chunk's in one go); only what was
+    asked is held."""
 
     def __init__(self, book: "RunBook") -> None:
         self.book = book
         self.fresh: Dict[str, None] = {}      # named since the book was read (insertion-ordered)
-        self._got: Dict[str, bool] = {}       # asked before the indexes were read
+        self._got: Dict[str, bool] = {}       # what was asked of the snapshot
 
     def want(self, xs: Iterable[Any]) -> None:
-        if self.book._start is not None:
-            return
         todo = sorted({x for x in xs if isinstance(x, str) and x not in self._got and x not in self.fresh})
         if todo:
             ok = [x for x in todo if _UUID.match(x)]
@@ -1053,14 +1063,13 @@ class _Mentioned:
             return False
         if x in self.fresh:
             return True
-        start = self.book._start
-        if start is not None:
-            return x in start
         if x not in self._got:
             self.want([x])
         return self._got.get(x, False)
 
     def __ior__(self, xs: Iterable[Any]) -> "_Mentioned":
+        xs = list(xs)
+        self.want(xs)                         # one read for them all
         for x in xs:
             if x is not None and x not in self:
                 self.fresh[x] = None
@@ -1070,6 +1079,38 @@ class _Mentioned:
         raise TypeError("the run's book (identity.run_book) holds only what was asked")
 
     __iter__ = __len__ = _whole
+
+
+class _Compact(dict):
+    """An index's {key: ids} as RunBook keeps it: a key of one id holds the id alone (most keys: a list each was ~90 B
+    of the server's ~330k), read as a tuple (`get`); asked for its list (`[key]`, the index's `add`), it becomes one."""
+
+    def get(self, k: Any, default: Any = None) -> Any:
+        v = dict.get(self, k, default)
+        return (v,) if isinstance(v, str) else v
+
+    def __getitem__(self, k: Any) -> Any:
+        v = dict.get(self, k)
+        if v is None:
+            v = []
+        elif isinstance(v, str):
+            v = [v]
+        else:
+            return v
+        dict.__setitem__(self, k, v)
+        return v
+
+
+def _compact(index: Any) -> Any:
+    """An index (INDEXES: a dict of lists, or a tuple of them) as RunBook keeps it (_Compact)."""
+    if isinstance(index, tuple):
+        return tuple(_compact(x) for x in index)
+    if len(index) < 1000:
+        return index
+    out = _Compact()
+    for k, v in index.items():
+        dict.__setitem__(out, k, v[0] if len(v) == 1 else v)
+    return out
 
 
 class RunBook(LazyBook):
@@ -1121,8 +1162,7 @@ class RunBook(LazyBook):
         self._pinned = frozenset(self.pins.values())
         self.mentioned = _Mentioned(self)
         self._made_at: Dict[str, int] = {}
-        self._start: Optional[Set[str]] = None        # mentioned when read (from the indexes' read on)
-        self._have: Set[str] = set()                  # the live entities the indexes hold
+        self._made_in: Set[str] = set()               # the entities made since that the indexes hold
         self._idx: Optional[Dict[str, Any]] = None
         self._fv: Optional[Dict[str, List[Set[Any]]]] = None
         self._fv_made = 0
@@ -1211,6 +1251,21 @@ class RunBook(LazyBook):
         self.ents.want(ids)
         self.types.want(ids)
         self.version_parents().want(ids)
+        self.kids().want(ids)
+
+    def prime_products(self, ids: Iterable[str]) -> None:
+        keys = [e.key for i in ids if (e := self.ents.get(i)) is not None and " " in (e.key or "")]
+        rests = sorted({" ".join(k.split()[i:]) for k in keys for i in range(1, len(k.split()))})
+        if rests:
+            self.alias.want(rests)
+            fams = self.families()
+            fams.want(rests)
+            # the families product_of then tries: their clusters (maker_keys reads them, and their versions)
+            found = {dict.get(self.alias, r) for r in rests} | {c for r in rests for c in (dict.get(fams, r) or ())}
+            found.discard(None)
+            self.ents.want(found)
+            self.prime_clusters({self.root(c) for c in found} | {self.root(e.parent) for c in found
+                                                                 if (e := dict.get(self.ents, c)) is not None and e.parent})
 
     def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
         lead = {i: r for r in set(roots) if r for i in self._leading_to(r) if _UUID.match(i)}
@@ -1235,12 +1290,33 @@ class RunBook(LazyBook):
         self._cur.execute(f"SELECT key, entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = ANY(%s)", (forms,))
         return ents, [(k, eid) for k, eid in self._cur.fetchall()]
 
+    def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
+        ids = set(ids)
+        out = {i: e.key for i in ids if (e := dict.get(self.ents, i)) is not None}
+        todo = sorted(i for i in ids - set(out) if isinstance(i, str) and _UUID.match(i))
+        if todo:
+            self._cur.execute("SELECT id::text, key FROM mx_entities WHERE id = ANY(%s::uuid[])", (todo,))
+            out.update(self._cur.fetchall())
+        return out
+
     def forget(self, ids: Iterable[str]) -> None:
-        """Let go of entities read for one step (a sweep over every cluster): read again if asked. The run's own (made
-        since) stay."""
+        """Let go of entities read for one step (a sweep over every cluster), and what was read of them (their mention
+        counts, whether a version names them): read again if asked. The run's own (made since) stay."""
+        vp = self.__dict__.get("_version_parents")
         for x in ids:
-            if x not in self._made_at:
-                dict.pop(self.ents, x, None)
+            if x in self._made_at:
+                continue
+            dict.pop(self.ents, x, None)
+            if x in self._counted_ids:
+                self._counted_ids.discard(x)
+                self._types_got.pop(x, None)
+                self._subject_got.pop(x, None)
+                dict.pop(self.types, x, None)
+                dict.pop(self.subject, x, None)
+                self.types._absent.discard(x)
+                self.subject._absent.discard(x)
+            if vp is not None and x not in vp._added:   # what the run added is the run's: kept
+                vp._got.pop(x, None)
 
     def etypes(self, ents: Sequence["Ent"]) -> Dict[str, Optional[str]]:
         """As Book.etypes, from the snapshot's counts, none kept (those read already are the ones read)."""
@@ -1305,8 +1381,6 @@ class RunBook(LazyBook):
         `not_entity`) into the pool's indexes, every one's family values (Book.family_values); then the entities made
         since (live ones, in the order made). None of them is kept but those the run holds already."""
         idx = {name: empty() for name, (empty, _add) in INDEXES.items()}
-        start: Set[str] = set()
-        have = self._have
         fv: Dict[str, List[Set[Any]]] = defaultdict(lambda: [set(), set(), set(), set()])
         made = _EntRows()
         fresh = self.mentioned.fresh
@@ -1317,34 +1391,32 @@ class RunBook(LazyBook):
             held = dict.get(self.ents, row[0])
             e = held if held is not None else made(row[:-1])
             named = row[-1] or e.id in self._pinned
-            if named:
-                start.add(e.id)
             _family_value(fv, e)
             if (named or e.id in fresh) and e.status != "not_entity":
-                have.add(e.id)
                 for name, (_empty, add) in INDEXES.items():
                     add(idx[name], e)
-        self._start, self._idx, self._fv = start, idx, fv
-        self._fresh_seen = 0
+        self._idx, self._fv = {name: _compact(got) for name, got in idx.items()}, fv
+        self._fresh_seen = len(fresh)   # those named by then are in (a run's linking names only what was not named)
         self._grow()
 
     def _grow(self) -> None:
         """The entities the run made live since the indexes were last read (as the whole book's `_live` meets them: the
         ones read, in their place when read, then the ones made, in the order made)."""
         fresh = list(self.mentioned.fresh)
-        old = [x for x in fresh[self._fresh_seen:] if x not in self._have and x not in self._made_at]
+        old = [x for x in fresh[self._fresh_seen:] if x not in self._made_at]
         self._fresh_seen = len(fresh)
         if old:
             self._cur.execute("SELECT id::text, ord FROM pg_temp.mx_run_order WHERE id = ANY(%s::uuid[])",
                               ([x for x in old if _UUID.match(x)],))
             old = self._in_order(self._cur.fetchall())
-        new = [x for x in self.made if x not in self._have and x in self.mentioned]
+        new = [x for x in self.made if x not in self._made_in and x in self.mentioned]
         self.ents.want(old)
         for x in old + new:
             e = self.ents.get(x)
-            if e is None or e.status == "not_entity" or x in self._have:
+            if e is None or e.status == "not_entity":
                 continue
-            self._have.add(x)
+            if x in self._made_at:
+                self._made_in.add(x)
             for name, (_empty, add) in INDEXES.items():
                 add(self._idx[name], e)
 
@@ -1869,14 +1941,20 @@ def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
             if len(got) < GRAM_CAP:
                 cands.update(got)
         found.append((e, [oid for oid, _ in cands.most_common(GRAM_TOP) if oid != e.id]))
-    book.prime(ids={oid for _e, oids in found for oid in oids})
+    # v10.23 (0218): only the candidates' keys are read (a book read by need reads no more), their squashed form and
+    # grams worked out once a chunk
+    keys = book.keys_of({oid for _e, oids in found for oid in oids})
+    forms: Dict[str, Tuple[str, Set[str]]] = {}
     for e, oids in found:
         for oid in oids:
-            o = book.ents[oid]
-            a, b = e.sq, o.sq
-            # N.jaccard(a, b), on the grams each entity keeps
-            if a == b or (min(len(a), len(b)) >= 4 and N.word_contains(e.key, o.key)) or \
-                    len(e.grams & o.grams) / max(1, len(e.grams | o.grams)) >= JAC_BAR:
+            if oid not in forms:
+                sq = N.squash(keys[oid])
+                forms[oid] = (sq, N.grams(sq))
+            b, grams = forms[oid]
+            a = e.sq
+            # N.jaccard(a, b), on the grams of each
+            if a == b or (min(len(a), len(b)) >= 4 and N.word_contains(e.key, keys[oid])) or \
+                    len(e.grams & grams) / max(1, len(e.grams | grams)) >= JAC_BAR:
                 pool.add(e.id, oid, "str")
 
 
