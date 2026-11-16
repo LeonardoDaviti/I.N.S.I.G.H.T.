@@ -221,3 +221,13 @@ Far under the bar and too rare a class to measure at 97/90 from the server's pos
 ~36 right answers in a row). Not built into the pipeline; the first case stays unjoined.
 
 Haiku spent the second night: about $0.09.
+
+**The stop's word, third try: several words a stop (off).** Guide stop-v3 (`plan/research/0165-timeline/stop-v3-draft.md`)
+asks for every happening the story reports about the thing (one to four, the main one first). On 130 fresh held-out pairs
+(frozen in `frozen4.sha`, never used for any guide), three blind labellers first gave each pair's about and main
+happening, then judged each word Haiku showed (is that happening really in the story about this thing):
+- words shown right: **97/123 = 78.9% [70.8–85.1]** (bar 97 / 90): **fails**; Haiku gave one word for 106 of 130;
+- the labellers' main happening among the words: 74/96 = 77.1% [67.7–84.4];
+- about (precision of the stops): 96/97 = 99.0% [94.4–99.8].
+Wrong words are spread over the kinds (benchmark, launch, analysis, availability, update, ranking): the same
+inconsistency as one word, not a missing second word. `stop_types` stays off. Haiku: $0.02.
