@@ -328,11 +328,22 @@ KEEP_DAYS_BEFORE = 1   # built days kept before the window's first whole day (a 
 
 
 def _ts_stat(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
-    """ts_stat's ndoc over the posts matching `where` (literal SQL), for the words `cand`."""
+    """ts_stat's ndoc over the posts matching `where` (literal SQL), for the words `cand` (v10.22.2: the tests'
+    reference; the counts read `_ndoc`)."""
     from psycopg import sql
     cur.execute(sql.SQL("SELECT word, ndoc FROM ts_stat({docs}) WHERE word IN (SELECT unnest(%s::text[]))").format(
         docs=sql.Literal(_DOCS.format(where=where))), (list(cand),))
     return dict(cur.fetchall())
+
+
+def _ndoc(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
+    """v10.22.2: `_ts_stat`'s counts (a word in no post left out), each post's distinct lexemes matched against `cand`:
+    ts_stat built a tree of every word of the posts (~1.8 s a partial edge day on the server, every plan pass)."""
+    from psycopg import sql
+    cur.execute(sql.SQL("""SELECT x.w, count(*) FROM ({docs}) d(v) CROSS JOIN LATERAL unnest(tsvector_to_array(d.v)) AS x(w)
+                            WHERE x.w IN (SELECT unnest(%s::text[])) GROUP BY 1""").format(docs=sql.SQL(_DOCS.format(where=where))),
+                (list(cand),))
+    return {w: int(n) for w, n in cur.fetchall()}
 
 
 def _between(cur: Cursor, since: datetime, until: datetime, *, open_end: bool = False) -> str:
@@ -367,7 +378,7 @@ def _whole_days(cur: Cursor, first: Any, last: Any, cand: Sequence[str]) -> Dict
     counted = []
     for d, gen in stale:
         if not keep:   # counted from its posts, not kept
-            for w, n in _ts_stat(cur, _day(cur, d), cand).items():
+            for w, n in _ndoc(cur, _day(cur, d), cand).items():
                 out[w] = out.get(w, 0) + n
             counted.append(d)
             continue
@@ -398,11 +409,11 @@ def word_counts(cur: Cursor, win: Tuple[datetime, datetime], cand: Sequence[str]
         return {}
     d0, d1 = since.astimezone(timezone.utc).date(), until.astimezone(timezone.utc).date()
     if d0 == d1:
-        return _ts_stat(cur, _between(cur, since, until), cand)
+        return _ndoc(cur, _between(cur, since, until), cand)
     out = _whole_days(cur, d0 + timedelta(days=1), d1 - timedelta(days=1), cand)
     for part in (_between(cur, since, _day_start(d0 + timedelta(days=1)), open_end=True),
                  _between(cur, _day_start(d1), until)):
-        for w, n in _ts_stat(cur, part, cand).items():
+        for w, n in _ndoc(cur, part, cand).items():
             out[w] = out.get(w, 0) + n
     return out
 
