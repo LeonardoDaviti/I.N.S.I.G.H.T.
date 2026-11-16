@@ -1641,6 +1641,32 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
     cfg = bands().get("third") or {}
     if not cfg.get("on"):
         return []
+    # v10.20 (0211 C): the clusters as the chunk's merges leave them, each `third` merge counted as it is made, so
+    # several merges into one cluster in one chunk never pass MAX_CLUSTER together (each was checked alone before)
+    size: Dict[str, int] = {}
+    parent: Dict[str, str] = {}
+
+    def f(x: str) -> str:
+        x = book.root(x)
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    def join(a: str, b: str) -> bool:
+        ra, rb = f(a), f(b)
+        if ra == rb:
+            return True
+        for r in (ra, rb):
+            if r not in size:
+                size[r] = book.cluster_size(r) or 1
+        if size[ra] + size[rb] > MAX_CLUSTER:
+            return False
+        parent[rb] = ra
+        size[ra] += size[rb]
+        return True
+    for d in decisions:
+        if d.tier == "auto":   # the chain guard's merges come first
+            join(*d.pair)
     need = []
     for d in decisions:
         if d.tier != "queue" or not d.judge or d.judge.get("relation") != "same" or d.rules:
@@ -1657,7 +1683,7 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
         conf = float(a.get("confidence") or 0)
         d.second = d.second if d.second is not None else None
         if a.get("relation") == "same" and conf >= float((cfg.get("same_min") or {}).get(d.reason, cfg.get("same_min_conf", 1.01))) and \
-                book.cluster_size(book.root(d.pair[0])) + book.cluster_size(book.root(d.pair[1])) <= MAX_CLUSTER:
+                join(*d.pair):
             d.tier, d.reason, d.conf, d.call_id, d.judge = "auto", "third", conf, call, dict(a)
         elif a.get("relation") in (apart_cfg(cfg, d).get("relations") or ()) \
                 and conf >= float(apart_cfg(cfg, d).get("min_conf", 1.01)):
@@ -1995,28 +2021,79 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
     return got[0]
 
 
-@dataclass
+PAIR_KINDS = ("alias", "alias2", "alias3", "alias4")   # a pair's questions (alias3 and alias4: one between them)
+
+
+class _Lookup:
+    """v10.20 (0211): what is asked of a key, read from the database when first asked (in one read with the other keys
+    `Asked.prime` was given) and kept for the run: `key in`, `[key]`, `.get(key)`."""
+
+    def __init__(self, fill: Any) -> None:
+        self._fill = fill
+        self.got: Dict[Any, Tuple] = {}
+        self.known: Set[Any] = set()
+
+    def _read(self, key: Any) -> None:
+        if key not in self.known:
+            self._fill([key])
+
+    def __contains__(self, key: Any) -> bool:
+        self._read(key)
+        return key in self.got
+
+    def __getitem__(self, key: Any) -> Tuple:
+        self._read(key)
+        return self.got[key]
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._read(key)
+        return self.got.get(key, default)
+
+
 class Asked:
-    alias: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)   # pair -> (task id, status)
-    collide: Dict[str, Tuple[str, str, str]] = field(default_factory=dict)         # entity -> (task id, status, input)
-    alias2: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)  # 0130 A2: the second opinions
-    alias3: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)  # 0201: the unsure queue's question
+    """The questions already asked: of a pair (alias, alias2, the unsure queue's alias3/alias4: pair -> (task id,
+    status)) and of an entity (collide: entity -> (task id, status, input)). A question's identity is its pair (or
+    entity), of any status and guide, never its input text: an asked pair is never asked again.
+
+    v10.20 (0211): read by the pairs and entities a chunk decides (`prime`, `prime_collide`; the index
+    mx_tasks_entity_pair_idx), not by reading every task and its input each run (at the server's 357k alias tasks that
+    read took 5.1 s and 1.8 GB of a decision run's peak). What a key reads is kept for the run, as the run's one read
+    at its start was: a question the run adds itself is not seen (the run decides each pair once)."""
+
+    def __init__(self, cur: Any) -> None:
+        self.cur = cur
+        self.alias, self.alias2, self.alias3 = _Lookup(self.prime), _Lookup(self.prime), _Lookup(self.prime)
+        self.collide = _Lookup(self.prime_collide)
+
+    def prime(self, pairs: Iterable[Tuple[str, str]]) -> None:
+        want = sorted({pair(*p) for p in pairs} - self.alias.known)
+        if not want:
+            return
+        for lk in (self.alias, self.alias2, self.alias3):
+            lk.known.update(want)
+        self.cur.execute("""SELECT t.id::text, t.kind, t.a::text, t.b::text, t.status
+                              FROM unnest(%s::uuid[], %s::uuid[]) u(x, y)
+                              JOIN mx_tasks t ON least(t.a, t.b) = u.x AND greatest(t.a, t.b) = u.y
+                             WHERE t.kind IN ('alias', 'alias2', 'alias3', 'alias4') AND t.b IS NOT NULL
+                             ORDER BY t.created_at, t.id""", ([x for x, _ in want], [y for _, y in want]))
+        for tid, kind, a, b, status in self.cur.fetchall():
+            into = self.alias2 if kind == "alias2" else self.alias3 if kind in ("alias3", "alias4") else self.alias
+            into.got[pair(a, b)] = (tid, status)
+
+    def prime_collide(self, eids: Iterable[str]) -> None:
+        want = sorted(set(eids) - self.collide.known)
+        if not want:
+            return
+        self.collide.known.update(want)
+        self.cur.execute("""SELECT id::text, a::text, status, input FROM mx_tasks
+                             WHERE kind = 'collide' AND b IS NULL AND a = ANY(%s::uuid[]) ORDER BY created_at, id""",
+                         (want,))
+        for tid, a, status, text in self.cur.fetchall():
+            self.collide.got[a] = (tid, status, text)
 
 
 def asked(cur: Any) -> Asked:
-    out = Asked()
-    cur.execute("SELECT id::text, kind, a::text, b::text, status, input FROM mx_tasks "
-                "WHERE kind IN ('alias', 'alias2', 'alias3', 'alias4', 'collide') ORDER BY created_at")
-    for tid, kind, a, b, status, text in cur.fetchall():
-        if kind == "alias2" and b is not None:
-            out.alias2[pair(a, b)] = (tid, status)
-        elif kind in ("alias3", "alias4") and b is not None:   # one unsure-queue answer a pair, whichever kind
-            out.alias3[pair(a, b)] = (tid, status)
-        elif b is not None:
-            out.alias[pair(a, b)] = (tid, status)
-        elif a is not None:
-            out.collide[a] = (tid, status, text)
-    return out
+    return Asked(cur)
 
 
 def valid_answers(cur: Any, task_ids: Sequence[str]) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
@@ -2218,6 +2295,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         pairs = pairs[:max(0, PAIR_LIMIT - n["pairs"])]
         n["pairs"] += len(pairs)
         decided.update((p.a, p.b) for p in pairs)
+        got.prime((p.a, p.b) for p in pairs)   # 0211: the questions of these pairs, in one read
         answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias] +
                                 [got.alias2[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias2] +
                                 [got.alias3[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias3])
@@ -2478,6 +2556,7 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             if len(ms) >= 2 and (odd([(p, t, mk) for p, _, t, mk in ms.values()]) or eid in extra)
             and book.ents.get(eid) and book.ents[eid].status != "not_entity"}
     out["odd"] = len(want)
+    got.prime_collide(want)   # 0211: the collision questions of these entities, in one read
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])
     new = []
     for eid, ms in sorted(want.items()):
