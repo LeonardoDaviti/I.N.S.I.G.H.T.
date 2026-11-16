@@ -85,7 +85,14 @@ def maker_index(book: I.Book) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]
     """({root: its maker ids}, {maker id: the roots it makes}), one pass over the entities: a stated maker is its
     cluster (or its key when no entity has it), a thing's org or person parent its cluster. Versions are their family's."""
     makers: Dict[str, Set[str]] = defaultdict(set)
-    for eid, e in book.ents.items():
+    # v10.23 (0218): the things naming a maker or a parent, read row by row from a book read by need
+    named = [e for e in book.walk("e.level <> ALL(%s) AND e.status <> 'not_entity' AND "
+                                  "((e.maker IS NOT NULL AND e.maker <> '') OR e.parent IS NOT NULL)",
+                                  (list(I.VERSION_LEVELS),))
+             if e.level not in I.VERSION_LEVELS and e.status != "not_entity" and (e.maker or e.parent)]
+    book.prime(ids={e.parent for e in named if e.parent}, keys={N.key(e.maker) for e in named if e.maker})
+    for e in named:
+        eid = e.id
         if e.level in I.VERSION_LEVELS or e.status == "not_entity":
             continue
         r = book.root(eid)

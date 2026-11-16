@@ -609,18 +609,23 @@ def learn(cur: Any, book: Any, *, run_id: Any = None, limit: int = PROPOSE_LIMIT
     agree = pair_names(cur)
     if not agree:
         return dict(got)
+    # the persons and orgs named by the pairs' display names and handles (v10.23, 0218: only those forms are ever looked
+    # up, so only their names are read: Book.named_by; was every entity and alias of the book)
+    forms = {p["sq"] for p in agree.values()} | {N.squash(h) for (_pl, h) in agree}
+    named_ents, named_aliases = book.named_by(forms)
+    book.prime(ids=[eid for eid, _sq in named_ents] + [eid for _k, eid in named_aliases])
+
+    def kept(r: Optional[str]) -> bool:   # a person or org that is an entity (every entity's root is one of its own)
+        return r in book.ents and book.ents[r].status != "not_entity" and \
+            schemas.entity_type(book.ents[r].shown_type or book.ents[r].type) in ("person", "org")
     by_sq: Dict[str, Set[str]] = defaultdict(set)
-    for eid, e in book.ents.items():
+    for eid, sq in named_ents:
         r = book.root(eid)
-        if r not in book.ents or book.ents[r].status == "not_entity" or e.status == "not_entity":
-            continue
-        if schemas.entity_type(book.ents[r].shown_type or book.ents[r].type) not in ("person", "org"):
-            continue
-        by_sq[e.sq].add(r)
-    kept = {x for xs in by_sq.values() for x in xs}
-    for k, eid in book.alias.items():
+        if book.ents[eid].status != "not_entity" and kept(r):
+            by_sq[sq].add(r)
+    for k, eid in named_aliases:
         r = book.root(eid)
-        if r in kept:
+        if kept(r):
             by_sq[N.squash(k)].add(r)
     cur.execute("""SELECT DISTINCT ON (entity_id, platform, handle) entity_id::text, platform, handle, answer
                      FROM mx_entity_handles ORDER BY entity_id, platform, handle, created_at DESC, id DESC""")

@@ -552,6 +552,69 @@ class PublishedIndexed(unittest.TestCase):
             self.assertEqual(got[0], got[1], f"seed {seed}")
 
 
+class TheRunsBook(_Db):
+    maxDiff = None
+    """0218: the entities stage reads its book by need (identity.RunBook): the same rows as with the whole book, and
+    only the entities the run touches held."""
+
+    def fixture(self):
+        v = lambda fam, ver: {"family": fam, "version": ver, "variant": None, "size": None, "build": None}   # noqa: E731
+        rows = [[("Nimbus 5", "model", "subject", "Acme", v("Nimbus", "5")), ("Acme", "org", "actor")],
+                [("Nimbus 5.1", "model", "subject", "Acme", v("Nimbus", "5.1")), ("Acme AI", "org", "actor")],
+                [("Deep Kestrel", "software", "subject"), ("Orbit Labs", "org", "mentioned")],
+                [("DeepKestrel", "software", "subject"), ("@orbitlabs", "org", "mentioned")],
+                [("Zeta Z200", "product", "subject", "Zeta"), ("Zentra", "org", "actor")],
+                [("Z200", "product", "subject", "Zeta"), ("Zentra 6", "model", "subject", "Zentra", v("Zentra", "6"))],
+                [("Kestrel Coder", "software", "subject"), ("Kestrel Coder CLI", "software", "mention")]]
+        for n in range(20):   # names the run never touches (linked by the run before)
+            self.mentions(self.post(n % 5, T0 - D - n * H, title=f"Quiet {n}"), (f"Quiet Thing {n}", "product", "subject"))
+        self.mentions(self.post(0, T0 - D, title="Zeta Z200 is out"), *rows[4])
+        self.stage(full=True)
+        for n, ents in enumerate(rows):
+            self.mentions(self.post(n % 5, T0 + n * H, title=f"Zeta Z200 and Nimbus {n}"), *ents)
+
+    def rows(self):
+        out = {}
+        for table, cols in (("mx_entities", "type, name, key, level, status, shown_name, shown_type"),
+                            ("mx_entity_aliases", "key"), ("mx_entity_redirects", "by, automatic"),
+                            ("mx_entity_queue", "kind, proposal, reason"), ("mx_tasks", "kind, input, status"),
+                            ("mx_mentions", "post_id, n, (entity_id IS NULL)")):
+            self.cur.execute(f"SELECT {cols} FROM {table} ORDER BY {cols}")
+            out[table] = self.cur.fetchall()
+        # a pair's question shows its two names in id order, and the entities this run makes take new ids each run
+        out["mx_tasks"] = sorted((k, tuple(sorted(re.split(r"^A: |\nB: ", text)))) if k.startswith("alias") else (k, text)
+                                 for k, text, _s in out["mx_tasks"])
+        return out
+
+    def run_with(self, book):
+        run = repo.start_run(self.cur, code_version="test", config={})
+        out, _days = entity_stage.entities(self.cur, ask=decide.Ask(self.cur, T0), now=T0 + 2 * D, run_id=run,
+                                           since=self.since, book=book)
+        self.assertEqual(out["kind"], "incremental")
+        for k in ("seconds", "timing"):
+            out.pop(k, None)
+        out["repair"].pop("seconds", None)
+        return out, self.rows()
+
+    def test_the_same_rows_as_with_the_whole_book(self):
+        self.fixture()
+        self.cur.execute("SAVEPOINT whole")
+        whole = self.run_with(I.load_book(self.cur))
+        self.cur.execute("ROLLBACK TO SAVEPOINT whole")
+        book = I.run_book(self.cur)
+        got = self.run_with(book)
+        self.assertEqual({k: v for k, v in got[0].items() if v != whole[0].get(k)}, {})
+        diff = {k: (sorted(set(v) - set(whole[1][k])), sorted(set(whole[1][k]) - set(v)))
+                for k, v in got[1].items() if v != whole[1].get(k)}
+        self.assertEqual(diff, {})
+        self.cur.execute("SELECT count(*) FROM mx_entities")
+        held = len(dict.keys(book.ents))
+        self.assertLess(held, self.cur.fetchone()[0])                    # the quiet names never read
+        with self.assertRaises(TypeError):
+            list(book.ents.values())                                     # it cannot be walked: walk() reads rows
+        self.assertEqual(sorted(e.id for e in book.walk()), sorted(I.load_book(self.cur).ents))
+
+
 class Merging(_Db):
     def test_squashed_equal_names_merge_with_a_redirect_and_can_be_undone(self):
         a, b = self.post(0, T0), self.post(1, T0 + H)

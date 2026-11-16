@@ -239,17 +239,46 @@ def apply_cuts(cur: Any, book: I.Book, members: List[str], edges: List[Tuple[str
 
 # ---- 1b. a product account made an org ---------------------------------------------------------------------------
 
+PAGE = 2000   # v10.23 (0218): the entities a walk reads ahead for at once
+
+
+def _org_names(book: I.Book) -> Iterable[I.Ent]:
+    """v10.23 (0218): the names of two words or more typed an org (as their mentions say), not versions, by id: read
+    row by row, a page at a time (a book read by need is asked the rest of a page in one go: the mention types, then
+    the names their words could be), none held past its page."""
+    want_fams = getattr(book.families(), "want", None)
+    page: List[I.Ent] = []
+
+    def ready(page: List[I.Ent]) -> List[I.Ent]:
+        types = book.etypes(page)
+        got = [e for e in page if types.get(e.id) == "org"]
+        rests = {" ".join(e.key.split()[i:]) for e in got for i in range(1, len(e.key.split()))}
+        book.prime(keys=rests)
+        if want_fams is not None:
+            want_fams(rests)
+        return got
+    for e in book.walk("position(' ' in e.key) > 0 AND e.status <> 'not_entity' AND e.level <> ALL(%s)",
+                       (list(I.VERSION_LEVELS),), by_id=True):
+        if " " not in e.key or e.status == "not_entity" or e.level in I.VERSION_LEVELS:
+            continue
+        page.append(e)
+        if len(page) >= PAGE:
+            yield from ready(page)
+            page = []
+    yield from ready(page)
+
+
 def product_accounts(cur: Any, book: I.Book, *, run_id: Any, limit: int = PRODUCT_LIMIT) -> Dict[str, int]:
     """0164 B on the data already made: an entity typed an org whose name is a product account's (Book.product_of:
     "Zentra Vela", the family Vela's maker in front of it) merges into its family (rule 'product_account'), when
     neither cluster holds an org (step 1 cut the automatic links to one; an owner's link is left, `held`) and the
     owner never kept them apart. Its shown type is the family's (`shown`). Idempotent: once one cluster, skipped."""
     out = Counter({"accounts": 0, "merged": 0, "held": 0})
-    for e in sorted(book.ents.values(), key=lambda e: e.id):
+    # v10.23 (0218): the names of two words or more, not versions, read row by row (a book read by need is asked the
+    # rest in one go: their mention types, then the names their words could be)
+    for e in _org_names(book):
         if out["merged"] >= limit:
             break
-        if " " not in e.key or e.status == "not_entity" or e.level in I.VERSION_LEVELS or book.etype(e.id) != "org":
-            continue
         fam = book.product_of(e.key)
         if fam is None:
             continue
@@ -301,9 +330,10 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
     out = Counter({"versions": 0, "families_made": 0})
     orgish: Dict[str, bool] = {}
     groups: Dict[Tuple[str, str], List[I.Ent]] = defaultdict(list)
-    for e in sorted(book.ents.values(), key=lambda e: e.id):
-        if e.level not in I.VERSION_LEVELS or not e.parent or e.status == "not_entity":
-            continue
+    versions = _versions(book)
+    book.prime(ids={e.parent for e in versions})
+    book.prime_clusters({book.root(e.parent) for e in versions})
+    for e in versions:
         r = book.root(e.parent)
         if r not in book.ents:
             continue
@@ -338,14 +368,38 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
 
 # ---- 3. families split by a maker or brand prefix -------------------------------------------------------------
 
+def _versions(book: I.Book) -> List[I.Ent]:
+    """v10.23 (0218): the versions, variants and checkpoints naming a parent, not `not_entity`, in id order (read row
+    by row from a book read by need)."""
+    return [e for e in book.walk("e.level = ANY(%s) AND e.parent IS NOT NULL AND e.status <> 'not_entity'",
+                                 (list(I.VERSION_LEVELS),), by_id=True)
+            if e.level in I.VERSION_LEVELS and e.parent and e.status != "not_entity"]
+
+
+def _families(book: I.Book) -> List[I.Ent]:
+    """v10.23 (0218): the families (a `family` entity, or a name a version names as its parent, as the book's version
+    parents say), not `not_entity`, of no org or person type, in the book's order. A book read by need narrows its
+    read to the families and the parents of versions, then and now."""
+    lv = list(I.VERSION_LEVELS)
+    got = [e for e in book.walk("""e.status <> 'not_entity' AND (e.level = 'family'
+                                     OR e.id IN (SELECT v.parent FROM mx_entities v
+                                                  WHERE v.level = ANY(%s) AND v.parent IS NOT NULL)
+                                     OR e.id IN (SELECT v.parent FROM pg_temp.mx_run_versions v))""", (lv,))
+           if e.status != "not_entity"]
+    vp = book.version_parents()
+    for want in (getattr(vp, "want", None), getattr(book.types, "want", None)):
+        if want is not None:
+            want([e.id for e in got])
+    return [e for e in got if (e.level == "family" or e.id in vp) and book.etype(e.id) not in I.ORGISH]
+
+
 def _family_roots(book: I.Book) -> Dict[str, List[str]]:
     """{root: its names} of the clusters holding a family (a `family` entity, or a name a version names as its parent:
     a family first written bare is a `thing`) and no org: every member but its versions."""
     roots: Set[str] = set()
-    vp = book.version_parents()
-    for e in book.ents.values():
-        if (e.level == "family" or e.id in vp) and e.status != "not_entity" and book.etype(e.id) not in I.ORGISH:
-            roots.add(book.root(e.id))
+    for e in _families(book):
+        roots.add(book.root(e.id))
+    book.prime_clusters(roots)
     out: Dict[str, List[str]] = {}
     for r in roots:
         ms = book.cluster(r)
@@ -372,7 +426,7 @@ def _children(book: I.Book) -> Tuple[Dict[str, Set[str]], Dict[str, Set[Tuple]]]
     """({family root: the clusters of its versions}, {family root: the versions they state})."""
     kids: Dict[str, Set[str]] = defaultdict(set)
     sigs: Dict[str, Set[Tuple]] = defaultdict(set)
-    for e in book.ents.values():
+    for e in _versions(book):
         if e.level in I.VERSION_LEVELS and e.parent and e.status != "not_entity":
             r = book.root(e.parent)
             kids[r].add(book.root(e.id))
@@ -461,15 +515,11 @@ def merge_versions(cur: Any, book: I.Book, *, run_id: Any, limit: int = FAMILY_L
     one version, variant, size and build: merged by the rule 'family_version' through decide_pair and the chain
     guard (every guard of a rule's merge)."""
     fam_keys: Dict[str, Set[str]] = defaultdict(set)
-    vp = book.version_parents()
-    for e in book.ents.values():
-        if (e.level == "family" or e.id in vp) and e.status != "not_entity" and book.etype(e.id) not in I.ORGISH:
-            fam_keys[book.root(e.id)].add(e.key)
+    for e in _families(book):
+        fam_keys[book.root(e.id)].add(e.key)
     multi = {r for r, ks in fam_keys.items() if len(ks) >= 2}
     by: Dict[Tuple[str, Tuple], Dict[str, str]] = defaultdict(dict)
-    for e in sorted(book.ents.values(), key=lambda e: e.id):
-        if e.level not in I.VERSION_LEVELS or not e.parent or e.status == "not_entity":
-            continue
+    for e in _versions(book):
         r = book.root(e.parent)
         sig = I._vsig(e)
         if r in multi and any(x is not None for x in sig):
@@ -592,7 +642,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     # every root made a set for each of the server's 330k entities, ~90 MB, every run)
     members = _Clusters(book.clusters())
     if roots is None:   # every root (an entity that is its own root), from `after`
-        todo = sorted(r for r in book.ents if book.root(r) == r and (after is None or r > after))
+        todo = [r for r in book.ids(after) if book.root(r) == r]   # v10.23: read in id order, not walked
     else:
         todo = sorted({book.root(r) for r in roots if r in book.ents})
     out = Counter({"clusters": 0, "names": 0, "types": 0})
@@ -634,9 +684,19 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             out["types"] += int(typ != e.shown_type)
             e.shown_name, e.shown_type = name, typ
     # one name: only its type can change, read from the book (no query); the clusters of several names in chunks
-    for r in todo:
-        if len(members[r]) == 1 and (roots is not None or after is None):
-            write(r, {})
+    # v10.23 (0218): a page at a time (a book read by need reads each page in one go and lets it go after)
+    if roots is not None or after is None:
+        singles = [r for r in todo if len(members[r]) == 1]
+        for k in range(0, len(singles), SHOWN_CHUNK):
+            page = singles[k:k + SHOWN_CHUNK]
+            book.prime(ids=page)
+            for want in (getattr(book.types, "want", None), getattr(book.version_parents(), "want", None)):
+                if want is not None:
+                    want(page)
+            for r in page:
+                write(r, {})
+            if roots is None:
+                book.forget(page)
     many = [r for r in todo if len(members[r]) > 1]
     last, done = after, True
     for k in range(0, len(many), SHOWN_CHUNK):
