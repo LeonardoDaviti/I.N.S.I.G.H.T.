@@ -92,7 +92,7 @@ class Health(_Env):
 
 
 class MarkXHealth(_Env):
-    def run_health(self, view, last_run, contacts):
+    def run_health(self, view, last_run, contacts, ix=None, decide=None):
         os.environ["INSIGHT_MARKX"] = "on"
         svc = OperationsService.__new__(OperationsService)
         svc.db_url = "postgresql://unused"
@@ -115,7 +115,9 @@ class MarkXHealth(_Env):
         from insight_core.markx import api as markx_api, jobs
         with mock.patch.object(ops_module.db, "connection", connection), \
                 mock.patch.object(jobs, "view", lambda cur: view), \
-                mock.patch.object(markx_api, "contacts", lambda cur: contacts):
+                mock.patch.object(markx_api, "contacts", lambda cur: contacts), \
+                mock.patch.object(jobs, "mark_ix", lambda cur: ix or {"locked": False, "rebuild": None}), \
+                mock.patch.object(jobs, "state", lambda cur: {"decide": decide or {"started_at": None}}):
             return svc.system_health(NOW)
 
     def job(self, **over):
@@ -130,6 +132,24 @@ class MarkXHealth(_Env):
                                           "the last Mark X decision run finished 3.0 hours ago"])
         self.assertEqual(out["warnings"], ["Mark X workers silent for over 3 days: desk"])
         self.assertEqual(out["checks"]["markx"]["jobs"]["decide"]["failures"], 4)
+
+    def test_names_why_mark_ix_holds_the_decision_run(self):
+        """0209: an old decision run's reason says why none starts (Mark IX's rebuild holds it), and a rebuild going on
+        for hours is a warning with its progress."""
+        ix = {"locked": False, "rebuild": "in progress", "done": 1200, "total": 157752, "phase": "stories",
+              "started_at": (NOW - timedelta(hours=5)).isoformat()}
+        out = self.run_health({"decide": self.job()}, NOW - timedelta(hours=45), {"laptop": NOW}, ix=ix,
+                              decide={"started_at": NOW - timedelta(minutes=20)})
+        self.assertEqual(out["reasons"], ["the last Mark X decision run finished 45.0 hours ago; held: a rule change's "
+                                          "rebuild is in progress (1,200 of 157,752 posts regrouped); it holds a "
+                                          "decision run until 60 min after the last one started"])
+        self.assertEqual(out["warnings"], ["Mark IX's rule-change rebuild began 5.0 hours ago: 1,200 of 157,752 posts "
+                                           "regrouped (stories phase)"])
+        self.assertEqual(out["checks"]["markx"]["mark_ix_rebuild"]["done"], 1200)
+        out = self.run_health({"decide": self.job()}, NOW - timedelta(hours=45), {"laptop": NOW}, ix=ix,
+                              decide={"started_at": NOW - timedelta(hours=45)})
+        self.assertEqual(out["reasons"], ["the last Mark X decision run finished 45.0 hours ago"])   # past the hold
+        self.assertIsNone(out["checks"]["markx"]["decision_held"])
 
     def test_mark_x_healthy(self):
         out = self.run_health({"decide": self.job()}, NOW - timedelta(minutes=40), {"laptop": NOW})

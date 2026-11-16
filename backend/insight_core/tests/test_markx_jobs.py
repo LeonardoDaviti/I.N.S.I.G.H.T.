@@ -104,6 +104,53 @@ class TheLabelsQueue(unittest.TestCase):
         self.assertIsNone(jobs.due(_states(decide=recent, labels=running), T0, kept_missing={"labels"}))
 
 
+class TheRebuildHold(unittest.TestCase):
+    """0209: Mark IX's rule-change rebuild holds a decision run at most REBUILD_HOLD after the last one started; its
+    slices run from the jobs loop; no job starves behind the kept views."""
+
+    IX = {"locked": False, "rebuild": "in progress", "done": 2000, "total": 157752}
+
+    def test_the_hold(self):
+        decide = {"started_at": T0 - timedelta(minutes=20)}
+        held, ahead = jobs.decision_hold(self.IX, decide, T0)
+        self.assertEqual((held, ahead), ("a rule change's rebuild is in progress (2,000 of 157,752 posts regrouped); "
+                                         "it holds a decision run until 60 min after the last one started", None))
+        held, ahead = jobs.decision_hold(self.IX, {"started_at": T0 - timedelta(minutes=61)}, T0)
+        self.assertIsNone(held)
+        self.assertIn("goes ahead on the stories as stored", ahead)
+        self.assertIsNone(jobs.decision_hold(self.IX, {"started_at": None}, T0)[0])          # never ran: runs
+        self.assertEqual(jobs.decision_hold(dict(self.IX, locked=True), {"started_at": None}, T0),
+                         ("Mark IX's story job is running", None))                           # a batch: seconds
+        self.assertEqual(jobs.decision_hold({"locked": False, "rebuild": None}, decide, T0), (None, None))
+        self.assertIn("is due;", jobs.decision_hold({"locked": False, "rebuild": "due"}, decide, T0)[0])
+
+    def test_the_rebuild_slice_after_the_decision_run(self):
+        recent = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
+        self.assertEqual(jobs.due(_states(decide=recent), T0, rebuild=True), "decide")       # not held: first
+        self.assertEqual(jobs.due(_states(decide=recent), T0, rebuild=True, busy="held"), "stories")
+        ended = {"finished_at": T0 - timedelta(seconds=jobs.STORIES_GAP - 1)}
+        self.assertIsNone(jobs.due(_states(decide=recent, stories=ended), T0, rebuild=True, busy="held"))
+        self.assertEqual(jobs.due(_states(stories=ended), T0 + timedelta(seconds=2), rebuild=True, markx=False),
+                         "stories")
+        self.assertIsNone(jobs.due(_states(decide=recent), T0, busy="held"))                 # no rebuild: none
+
+    def test_candidates_and_official_never_starve_behind_the_kept_views(self):
+        """The unread counts can be due at every look; before, official ran only when nothing else was due."""
+        ran = {"started_at": T0 - timedelta(minutes=10)}
+        missing = ["unread"]
+        self.assertEqual(jobs.due(_states(decide=ran), T0, kept_missing=missing, official_every=1800.0), "official")
+        o = {"started_at": T0 - timedelta(seconds=1800 + jobs.STARVE_AFTER - 60)}
+        self.assertEqual(jobs.due(_states(decide=ran, official=o), T0, kept_missing=missing, official_every=1800.0),
+                         "unread")                                                            # due, not for long
+        o = {"started_at": T0 - timedelta(seconds=1800 + jobs.STARVE_AFTER + 60)}
+        self.assertEqual(jobs.due(_states(decide=ran, official=o), T0, kept_missing=missing, official_every=1800.0),
+                         "official")
+        c = {"wanted_at": T0 - timedelta(minutes=2)}
+        self.assertEqual(jobs.due(_states(decide=ran, candidates=c), T0, kept_missing=missing), "unread")
+        c = {"wanted_at": T0 - timedelta(seconds=jobs.STARVE_AFTER + 1)}
+        self.assertEqual(jobs.due(_states(decide=ran, candidates=c), T0, kept_missing=missing), "candidates")
+
+
 class TheOrderOfRuns(unittest.TestCase):
     """0121 Decided 3 (the v10.0.1 review's W6): a decision run ran during Mark IX's first-start rebuild, at 0 of
     49,384 posts, and queued 159 checks against stories about to change; one started 29 s before the candidate finder
@@ -194,6 +241,11 @@ class TheRunner(_Api):
         # 0206: the reader's kept views (the unread counts, Discover) have tests of their own (test_kept_pages_wave_2);
         # these are about the decision run, the finder and Mark X's own views
         patcher = mock.patch.object(jobs, "KEPT_VIEWS", tuple(v for v in jobs.KEPT_VIEWS if v.markx))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # 0209: nor official channels (test_official_0196): its pass reads the web. Before, its first write failed
+        # (mx_jobs' check lacked it) and the tick returned None, which these tests read as "nothing due"
+        patcher = mock.patch.object(jobs.Runner, "official_every", lambda self: None)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -369,15 +421,90 @@ class TheRunner(_Api):
         self.assertIsNone(self.runner().tick())
 
     def test_no_decision_run_during_a_rule_change_rebuild(self):
+        """0121 Decided 3; 0209: for at most REBUILD_HOLD after the last decision run started, while the rebuild's
+        slices run here."""
         from insight_core.services.stories_service import rules_stamp
+        self.decide_row(started=20, wanted=19)
         self.stories_setting({"rules": "older rules", "rebuild": {"rules": rules_stamp(), "done": 0, "total": 49384}})
         self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is in progress")
-        self.assertIsNone(self.runner().tick())
+        with self.slices() as ran:
+            self.assertEqual(self.runner().tick(), "stories")         # not the decision run: the rebuild's slice
+        self.assertEqual(len(ran), 1)
         self.stories_setting({"rules": "older rules"})                  # stored by other rules: one is due
         self.assertEqual(jobs.mark_ix_busy(self.cur), "a rule change's rebuild is due")
         self.stories_setting({"rules": rules_stamp()})
         self.assertIsNone(jobs.mark_ix_busy(self.cur))
         self.assertEqual(self.runner().tick(), "decide")
+
+    def decide_row(self, *, started, wanted=None, finished=None):
+        """The decide job's row: started (wanted, finished) that many minutes ago."""
+        def ago(m):
+            return None if m is None else datetime.now(timezone.utc) - timedelta(minutes=m)
+        self.cur.execute("INSERT INTO mx_jobs (job) VALUES ('decide') ON CONFLICT (job) DO NOTHING")
+        self.cur.execute("""UPDATE mx_jobs SET started_at = %s, wanted_at = %s, finished_at = %s, stage = NULL,
+                                   stage_at = NULL, failures = 0 WHERE job = 'decide'""",
+                         (ago(started), ago(wanted), ago(finished)))
+
+    def slices(self):
+        """The rebuild's slice (stories_service.recompute_safely) recorded, not run."""
+        from insight_core.services import stories_service
+        ran = []
+        patcher = mock.patch.object(stories_service.StoriesService, "recompute_safely",
+                                    lambda svc, full=False: ran.append(1) or {"batches": 3, "yielded": True})
+
+        class _Ctx:
+            def __enter__(self_):
+                patcher.start()
+                return ran
+
+            def __exit__(self_, *exc):
+                patcher.stop()
+        return _Ctx()
+
+    def test_the_2026_11_14_deadlock_ends(self):
+        """0209: the server's state: a rule change's rebuild in progress, the decision run wanted since a restart
+        ended it 45 hours before. Before, the story job stepped aside for the decision run ("a decision run's turn")
+        and the decision run waited for the rebuild: neither ran again. Now the rebuild no longer holds a run that
+        started over REBUILD_HOLD ago: the story job steps aside for it, and it runs on the stories as stored, saying
+        so in its record."""
+        from insight_core.services.stories_service import DECISION_WAIT_S, StoriesService, rules_stamp
+        self.stories_setting({"rules": "older rules",
+                              "rebuild": {"rules": rules_stamp(), "phase": "keys", "done": 0, "total": 157752}})
+        svc = StoriesService(db_url())
+        self.decide_row(started=20, wanted=19)                         # the hold: the rebuild goes on
+        self.assertFalse(svc._decision_waiting())
+        self.assertFalse(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
+        self.assertIn("rebuild is in progress (0 of 157,752 posts regrouped)", jobs.held_by_mark_ix(self.cur))
+        self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
+        self.assertTrue(svc._decision_waiting())                       # past the hold: its turn
+        self.assertIsNone(jobs.held_by_mark_ix(self.cur))
+        with self.assertLogs(jobs.log, "WARNING") as logs:
+            self.assertEqual(self.runner().tick(), "decide")
+        self.assertIn("goes ahead on the stories as stored", "\n".join(logs.output))
+        last = jobs.state(self.cur)["decide"]["last"]
+        self.assertTrue(last["ok"], last)
+        self.assertIn("goes ahead on the stories as stored", last["mark_ix"])
+        self.assertFalse(svc._decision_waiting())                      # it ran: the story job goes on
+
+    def test_the_rebuild_slices_run_here_with_mark_x_off_too(self):
+        """0209: the slices run from this loop (not only after a fetch that saved posts), STORIES_GAP after the last
+        ended, recorded with the rebuild's progress; with Mark X off as well (Mark IX's work)."""
+        from insight_core.services.stories_service import rules_stamp
+        self.decide_row(started=5)
+        self.stories_setting({"rules": "older rules",
+                              "rebuild": {"rules": rules_stamp(), "phase": "stories", "done": 1000, "total": 49384}})
+        with self.slices() as ran:
+            self.assertEqual(self.runner().tick(), "stories")
+            self.assertIsNone(self.runner().tick())                     # STORIES_GAP after the last
+            self.cur.execute("UPDATE mx_jobs SET finished_at = now() - make_interval(secs => %s) WHERE job = 'stories'",
+                             (jobs.STORIES_GAP + 1,))
+            os.environ["INSIGHT_MARKX"] = "off"
+            self.assertEqual(self.runner().tick(), "stories")
+        self.assertEqual(len(ran), 2)
+        last = jobs.state(self.cur)["stories"]["last"]
+        self.assertEqual((last["ok"], last["batches"], last["yielded"]), (True, 3, True))
+        self.assertEqual(last["rebuild"], {"rebuild": "in progress", "phase": "stories", "done": 1000, "total": 49384})
+        self.assertTrue(jobs.readers("stories"))                       # not a Mark X run (markx.ix_unchanged)
 
     def test_a_decision_run_waits_for_its_candidate_finder(self):
         """New vectors: the run finds their candidates first; when that fails, no decision runs on candidates that
@@ -424,11 +551,25 @@ class TheRunner(_Api):
         self.assertIsNotNone(s["wanted_at"])
 
     def test_a_run_a_restart_ended_is_wanted_again(self):
-        self.cur.execute("INSERT INTO mx_jobs (job, stage, stage_at, started_at) VALUES ('decide', 'decide', now(), now())")
+        self.cur.execute("""INSERT INTO mx_jobs (job, stage, stage_at, started_at, last)
+                            VALUES ('decide', 'decide', now(), now(), '{"skip_next": "graph"}')""")
         self.runner().recover()
         s = jobs.state(self.cur)["decide"]
         self.assertIsNone(s["stage"])
         self.assertIsNotNone(s["wanted_at"])
+        # 0209: its end recorded (not a run started after its last end, for ever), not as a failure
+        self.assertGreaterEqual(s["finished_at"], s["started_at"])
+        self.assertEqual(s["last"], {"skip_next": "graph", "ok": False, "stage": "decide", "error": "ended by a restart"})
+        self.assertEqual(s["failures"], 0)
+
+    def test_every_job_has_its_row(self):
+        """0209: mx_jobs' check names every job: official's runs (v10.18) could never write their row, so every pass
+        crashed at its start and official channels never ran on the server."""
+        for job in jobs.JOBS:
+            with self.conn.transaction():
+                self.cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
+        jobs.Jobs(db_url())._begin("official", "running")
+        self.assertEqual(jobs.state(self.cur)["official"]["stage"], "running")
 
     def test_a_spawned_run_that_never_ends_is_killed(self):
         r = jobs.Runner(db_url(), spawn=True, hard_limit=0.5)
@@ -730,13 +871,49 @@ class ADeadRun(_Api):
                                        stage_at = now() - make_interval(secs => %s), wanted_at = NULL WHERE job = %s""",
                              (stage, ago, ago, job))
 
-    def exit_with(self, code):
+    def exit_with(self, code, job="decide"):
         ended = mock.Mock()
         ended.is_alive.return_value = False
         ended.exitcode = code
         with mock.patch("multiprocessing.get_context") as ctx, self.assertLogs(jobs.log, "ERROR"):
             ctx.return_value.Process.return_value = ended
-            jobs.Runner(db_url())._in_own_process("decide")
+            jobs.Runner(db_url())._in_own_process(job)
+
+    def test_a_run_that_crashed_before_its_first_write_is_recorded(self):
+        """0209: a job whose process ended before it recorded its start (official's, whose row the table refused) is
+        recorded as failed and waits out its backoff; before, nothing was written and it ran again at every look."""
+        self.cur.execute("DELETE FROM mx_jobs WHERE job = 'official'")
+        self.exit_with(1, "official")
+        s = jobs.state(self.cur)["official"]
+        self.assertEqual((s["failures"], s["last"]["error"]), (1, "exited with code 1"))
+        self.assertTrue(jobs.held(s, datetime.now(timezone.utc)))
+
+    def test_a_run_with_no_stage_and_no_end_is_stale(self):
+        """0209: the server's decision run of 2026-11-14 09:56: started after its last end, no stage (a restart
+        cleared it). Older than any run lives: stale."""
+        unended = {"started_at": T0 - timedelta(hours=45), "finished_at": T0 - timedelta(hours=45, minutes=3)}
+        ended = {"started_at": T0 - timedelta(hours=45), "finished_at": T0 - timedelta(hours=44)}
+        young = {"started_at": T0 - timedelta(seconds=jobs.HARD_LIMIT)}
+        self.assertEqual(jobs.stale(_states(decide=unended, candidates=ended, plan=young), T0), ["decide"])
+
+    def test_the_runner_records_the_end_of_a_run_that_never_finished(self):
+        self.cur.execute("INSERT INTO mx_jobs (job) VALUES ('decide') ON CONFLICT (job) DO NOTHING")
+        self.cur.execute("""UPDATE mx_jobs SET started_at = now() - interval '45 hours',
+                                   finished_at = now() - interval '45 hours 3 minutes', stage = NULL, wanted_at = NULL,
+                                   failures = 0, last = '{"ok": true, "run": "r1"}' WHERE job = 'decide'""")
+        seen = {}
+
+        def due(states, now, **kw):
+            seen.update(states)
+            return None
+        with mock.patch.object(jobs, "due", due), self.assertLogs(jobs.log, "ERROR"):
+            jobs.Runner(db_url(), spawn=False, on=lambda: True).tick()
+        s = jobs.state(self.cur)["decide"]
+        self.assertGreater(s["finished_at"], s["started_at"])
+        self.assertIsNotNone(s["wanted_at"])
+        self.assertEqual((s["failures"], s["last"]["run"], s["last"]["ok"]), (0, "r1", False))
+        self.assertIn("never finished", s["last"]["error"])
+        self.assertEqual(seen["decide"]["finished_at"], s["finished_at"], "due() sees it ended")
 
     def test_a_crashed_run_is_recorded_like_a_killed_one(self):
         self.set_stage("decide", "connections")

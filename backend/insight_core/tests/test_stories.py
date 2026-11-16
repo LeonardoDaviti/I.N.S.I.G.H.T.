@@ -563,11 +563,25 @@ class StoryJobYieldsTests(unittest.TestCase):
             cur.execute("UPDATE mx_jobs SET wanted_at = %s, started_at = %s, stage = NULL WHERE job = 'decide'",
                         (self.now - timedelta(minutes=11), self.now - timedelta(minutes=30)))
         self.addCleanup(self._restore_decide, saved)
-        with self._advance([False]):
-            self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
-        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # it started: the job goes on
-            cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'", (self.now - timedelta(minutes=1),))
-        with self._advance([False]):
+        from insight_core.markx import jobs
+        rebuild = {"locked": False, "rebuild": "in progress", "done": 0, "total": 100}
+        with mock.patch.dict(os.environ, {"INSIGHT_MARKX": "on"}), \
+                mock.patch.object(jobs, "mark_ix", lambda cur: {"locked": False, "rebuild": None}):
+            with self._advance([False]):
+                self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
+            # 0209: never for a run this job's rebuild holds (it can't start: both would wait for ever) ...
+            with mock.patch.object(jobs, "mark_ix", lambda cur: rebuild), self._advance([False]):
+                self.assertNotIn("skipped", self.service.recompute())
+            with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # ... until the hold is over
+                cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'",
+                            (self.now - timedelta(seconds=jobs.REBUILD_HOLD + 60),))
+            with mock.patch.object(jobs, "mark_ix", lambda cur: rebuild), self._advance([False]):
+                self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
+            with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # it started: the job goes on
+                cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'", (self.now - timedelta(minutes=1),))
+            with self._advance([False]):
+                self.assertNotIn("skipped", self.service.recompute())
+        with self._advance([False]):   # 0209: Mark X off: no decision run will start, nothing to step aside for
             self.assertNotIn("skipped", self.service.recompute())
 
     def _restore_decide(self, saved):

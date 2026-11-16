@@ -182,7 +182,9 @@ class TheJobsKeepNews(_World):
     between runs when an input changed, at most every REBUILD_GAP seconds."""
 
     def runner(self):
-        return jobs.Runner(self._db(), spawn=False, plan_every=None)
+        runner = jobs.Runner(self._db(), spawn=False, plan_every=None)
+        runner.official_every = lambda: None   # 0209: official channels (never run here) would go first, overdue
+        return runner
 
     def _db(self):
         from insight_core.tests._db import db_url

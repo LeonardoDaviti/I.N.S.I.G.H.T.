@@ -14,7 +14,9 @@ once when the backend starts (main.py, in the background), each time in a proces
    linked, Discover's counts for the keys linked. A new story keeps its id when an earlier post joins.
 3. a rule change (another `rules_stamp`, issue 0071) regroups every post the same way, in bounded
    batches, in the background: the posts' keys and the threads first, then every post queued
-   (`redo:`). The rows of the old rules are served until each batch replaces them.
+   (`redo:`). The rows of the old rules are served until each batch replaces them. 0209: its slices run after
+   fetches and also from insight-ingestion's jobs loop (markx/jobs.py, the job "stories", STORIES_GAP apart while a
+   rebuild is due or in progress); it holds a decision run at most jobs.REBUILD_HOLD (`jobs.decision_hold`).
 `recompute(full=True)` regroups every post at once (`regroup`): the oracle the incremental job is
 measured against, row by row (the same stories, News, Classics and Discover). Deterministic and
 idempotent. One job at a time (an advisory lock); a job that finds one running skips. No AI, no fetch.
@@ -73,7 +75,7 @@ REST_AFTER_YIELD_S = 90.0
 YIELD_KEY = "stories_yield"   # system_settings: {"at": ISO} of the last run that yielded
 # v10.13.8: runs that each end within the budget still follow each other at once (one after every fetch that saves),
 # so a decision run (it waits while this job holds its lock) waited all day. When one has waited DECISION_WAIT_S, a
-# run steps aside (skips) until it has started.
+# run steps aside (skips) until it has started. 0209: unless this job's rebuild holds that run (jobs.decision_waits).
 DECISION_WAIT_S = 600.0
 STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewer; a rule change's are all)
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
@@ -169,18 +171,15 @@ class StoriesService:
 
     def _decision_waiting(self) -> bool:
         """v10.13.8: Mark X's decision run is wanted, not running, and has waited (wanted, and not started since)
-        DECISION_WAIT_S or more. False when Mark X has no jobs table or no such row."""
+        DECISION_WAIT_S or more; 0209: and this job's rebuild doesn't hold it (markx/jobs.decision_waits owns the
+        decision): stepping aside for a run the rebuild holds stopped both for 45 hours on 2026-11-14. False when Mark X
+        has no jobs table or no such row."""
+        from insight_core.markx import jobs
         try:
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
-                cur.execute("""SELECT wanted_at, started_at, stage FROM mx_jobs WHERE job = 'decide'""")
-                row = cur.fetchone()
+                return jobs.decision_waits(cur, self.clock(), DECISION_WAIT_S)
         except Exception:  # noqa: BLE001 - Mark X absent: nothing waits
             return False
-        if not row or row[0] is None or row[2] is not None:
-            return False
-        wanted, started = row[0], row[1]
-        waited_since = max(wanted, started) if started is not None else wanted
-        return (self.clock() - waited_since).total_seconds() >= DECISION_WAIT_S
 
     def _resting(self) -> bool:
         """v10.13.7: the last run yielded less than REST_AFTER_YIELD_S ago (the decision run's turn)."""
