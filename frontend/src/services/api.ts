@@ -4,7 +4,7 @@ import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 import type { Byline } from '../lib/byline';
 import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxSettings } from './markx';
-import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue } from './markx';
+import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue, MarkxQueueView } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
 
@@ -1577,9 +1577,12 @@ export function createApi() {
         limits?.loose !== undefined ? `loose_limit=${limits.loose}` : ''].filter(Boolean).join('&');
       return request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${q ? `?${q}` : ''}`);
     },
-    /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. */
-    getMarkxEntityQueue: (limit?: number) =>
-      request<MarkxEntityQueue>(`/api/markx/entities/queue${limit !== undefined ? `?limit=${limit}` : ''}`),
+    /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. 0222: `view`
+     *  flagged (the API's default: only Claude's flags) or all (the operator's view). */
+    getMarkxEntityQueue: (limit?: number, view?: MarkxQueueView) => {
+      const q = [limit !== undefined ? `limit=${limit}` : '', view ? `view=${view}` : ''].filter(Boolean).join('&');
+      return request<MarkxEntityQueue>(`/api/markx/entities/queue${q ? `?${q}` : ''}`);
+    },
     answerMarkxEntity: (item: string, answer: MarkxEntityAnswer) =>
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
     undoMarkxMerge: (redirect: string) =>

@@ -366,6 +366,9 @@ export interface MarkxEntityPost {
   roles?: string[];
   /** 0144: false for a story's post that neither names the entity nor is by it. */
   about?: boolean;
+  /** 0222: the 2-4 sentences of the post around its first mention of the entity, the mentions marked (`m`); null when
+   *  only its title names it. */
+  context?: { t: string; m?: boolean }[] | null;
 }
 
 /** 0144 B2-B3: a Mark X story (mark x) or, for a post in none, its Mark IX story (mark ix), with every post, the
@@ -423,6 +426,8 @@ export interface MarkxEntityList {
   items: MarkxEntityRow[];
   accuracy: MarkxEntityAccuracy;
   queue: number;
+  /** 0222: the open items Claude's review flagged for you (all you are asked). */
+  flagged?: number;
 }
 
 /** Issue 0195: how many stories and posts in no story an entity's page lists (GET ...?stories_limit=&loose_limit=). */
@@ -575,6 +580,11 @@ export interface MarkxQueueItem {
   /** v10.18: who proposes the alias item: Haiku's answer with its own confidence, or a name rule (no confidence). */
   opinion?: { by: 'haiku'; relation?: string | null; confidence: number | null; rules: string[] }
     | { by: 'rule'; rules: string[] } | null;
+  /** 0222: Haiku's answer was about posts a side no longer holds (posts), or that can't be found on it now
+   *  (unmatched): not shown; the next run closes the item and asks again. */
+  void?: 'posts' | 'unmatched' | 'head' | null;
+  /** 0222: flagged for you by Claude's review, with why. */
+  flag?: { at: string; by: string; note: string | null } | null;
   evidence: {
     judge?: { relation?: string; confidence?: number; evidence?: string } | null;
     rules?: string[] | null;
@@ -602,11 +612,17 @@ export interface MarkxEntityQueue {
   answered: MarkxQueueItem[];
   merges: { id: string; from: { id: string; name: string | null }; to: { id: string; name: string | null }; by: string;
     automatic: boolean; at: string; undone_at: string | null; confidence: number | null; kind?: 'same' | 'rename' }[];
-  counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number };
+  counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number;
+    /** 0222: the open items flagged for you. */
+    flagged?: number };
   accuracy: MarkxEntityAccuracy;
   /** Issue 0195: `open` is a page; the offset of the next one, null at the end (absent from an older API). */
   next_offset?: number | null;
+  /** 0222: flagged (yours, the default) or all (the operator's view). */
+  view?: MarkxQueueView;
 }
+
+export type MarkxQueueView = 'flagged' | 'all';
 
 // ---- perspectives inside a story and the story sheet (issue 0119 B6-B7) ----------------------------------------
 

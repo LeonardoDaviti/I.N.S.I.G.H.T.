@@ -15,6 +15,7 @@ an answer in the queue shows at once.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -188,7 +189,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
                                   "read": read} for p, (_at, read) in newest[eid]],
                       "surges": surge.get(eid, [])[:3]})
     return {"window_days": WINDOW_DAYS, "total": len(agg), "items": items, "accuracy": ACCURACY,
-            "queue": open_count(cur)}
+            "queue": open_count(cur), "flagged": flagged_count(cur)}   # 0222: the owner is asked only the flagged
 
 
 def named_now(cur: Any, book: I.Book) -> Set[str]:
@@ -600,6 +601,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": queue_about(cur, book, root)}
+    if CONTEXT_ON:
+        _with_contexts(cur, book, members, page)   # 0222: the sentences around the mention under each post
     return page, _until(now, every, offer_sample)
 
 
@@ -624,6 +627,159 @@ def _relations(cur: Any, book: I.Book, root: str, members: Set[str]) -> List[Dic
         x["posts"] = len(x.pop("_posts"))
         out.append(x)
     return sorted(out, key=lambda x: (x["relation"], x["direction"], x["since"] or "", x["other"]["name"] or ""))
+
+
+# ---- the mention's context under each post (issue 0222) ---------------------------------------------------------
+
+CONTEXT_ON = True        # the measurement's switch (the page built with and without it)
+CONTEXT_CHARS = 30000    # a post's text read at most (its first characters: a mention further in shows no context)
+CONTEXT_WINDOW = 420     # the context's characters at most (2-4 sentences around the mention)
+_SENTENCE_END = re.compile(r"(?<=[.!?…。！？])\s+|\n+")
+
+
+def _sentences(text: str) -> List[Tuple[int, int]]:
+    """(start, end) of each sentence (or line) of `text`, blanks left out."""
+    out, at = [], 0
+    for m in _SENTENCE_END.finditer(text):
+        if text[at:m.start()].strip():
+            out.append((at, m.start()))
+        at = m.end()
+    if text[at:].strip():
+        out.append((at, len(text)))
+    return out
+
+
+def _in_address(low: str, at: int) -> bool:
+    """Whether position `at` is inside a web address ("github.com/acme/x": a name there is not the post naming it)."""
+    a = max(low.rfind(" ", 0, at), low.rfind("\n", 0, at)) + 1
+    token = low[a:at]
+    return "://" in token or token.startswith("www.") or ("/" in token and "." in token)
+
+
+def _find(low: str, terms: Sequence[str]) -> Optional[Tuple[int, int]]:
+    """The first occurrence (start, end) in `low` of the first term found, in the terms' order (the post's own
+    spans first), whole words where the term starts or ends with a word character; one in the text before one inside
+    a web address (that only when the text names it nowhere else)."""
+    in_address = None
+    for t in terms:
+        tl = t.lower().strip()
+        if len(tl) < 2:
+            continue
+        pat = (r"(?<!\w)" if tl[0].isalnum() else "") + re.escape(tl) + (r"(?!\w)" if tl[-1].isalnum() else "")
+        for m in re.finditer(pat, low):
+            if not _in_address(low, m.start()):
+                return m.start(), m.end()
+            in_address = in_address or (m.start(), m.end())
+    return in_address
+
+
+def mention_context(text: Optional[str], terms: Sequence[str], window: int = CONTEXT_WINDOW
+                    ) -> Optional[List[Dict[str, Any]]]:
+    """The 2-4 sentences of `text` closest to the first mention of `terms`, as parts [{t, m?}] (m: a mention of a
+    term, highlighted), at most `window` characters (cut with an ellipsis); None when no term occurs in the text (the
+    post's title stands alone)."""
+    if not text or not terms:
+        return None
+    low = text.lower()
+    hit = _find(low, terms)
+    if hit is None:
+        return None
+    sents = _sentences(text)
+    k = next((i for i, (a, b) in enumerate(sents) if a <= hit[0] < b), None)
+    if k is None:
+        lo, hi = max(0, hit[0] - window // 2), min(len(text), hit[1] + window // 2)
+    else:
+        lo, hi = sents[k]
+        # the sentences around it, the next first, while the window has room (up to 4)
+        i, j = k, k
+        while j - i < 3:
+            grown = False
+            for nxt in (j + 1, i - 1):
+                if 0 <= nxt < len(sents) and nxt not in range(i, j + 1):
+                    a, b = min(lo, sents[nxt][0]), max(hi, sents[nxt][1])
+                    if b - a <= window:
+                        lo, hi = a, b
+                        i, j = min(i, nxt), max(j, nxt)
+                        grown = True
+                        break
+            if not grown:
+                break
+        if hi - lo > window:   # one long sentence: the window around the mention
+            lo = max(lo, min(hit[0] - window // 3, hi - window))
+            hi = min(hi, lo + window)
+    # an ellipsis where the window cuts into a sentence
+    lead = "" if lo == 0 or any(a == lo for a, _b in sents) else "… "
+    tail = "" if hi == len(text) or any(b == hi for _a, b in sents) else " …"
+    piece = text[lo:hi]
+    # every mention of a term inside the window, highlighted (the longest first where two overlap)
+    marks: List[Tuple[int, int]] = []
+    plow = piece.lower()
+    for t in sorted({t.lower().strip() for t in terms if len(t.strip()) >= 2}, key=len, reverse=True):
+        pat = (r"(?<!\w)" if t[0].isalnum() else "") + re.escape(t) + (r"(?!\w)" if t[-1].isalnum() else "")
+        for m in re.finditer(pat, plow):
+            if not any(m.start() < e and s < m.end() for s, e in marks):
+                marks.append((m.start(), m.end()))
+    parts: List[Dict[str, Any]] = []
+    at = 0
+    for s, e in sorted(marks):
+        if s > at:
+            parts.append({"t": piece[at:s]})
+        parts.append({"t": piece[s:e], "m": True})
+        at = e
+    if at < len(piece):
+        parts.append({"t": piece[at:]})
+    for p in parts:   # one line: the breaks and runs of spaces squashed
+        p["t"] = re.sub(r"\s+", " ", p["t"])
+    if parts:
+        parts[0]["t"] = lead + parts[0]["t"].lstrip()
+        parts[-1]["t"] = parts[-1]["t"].rstrip() + tail
+    return parts
+
+
+def _contexts(cur: Any, members: Set[str], book: I.Book, want: Dict[str, Set[str]]) -> Dict[str, Any]:
+    """{post: mention_context} of the posts shown (`want`: {post: the names its line says it is about}): each post's
+    own spans of the cluster's names first, then those names, then the cluster's names; its text's first
+    CONTEXT_CHARS read (one query for the shown posts, never the full text sent)."""
+    from insight_core.utils.post_parts import Body, shown
+    ids = sorted(want)
+    if not ids:
+        return {}
+    cur.execute("""SELECT m.post_id::text, m.span, m.entity_id::text, m.guide, m.n FROM mx_mentions_now m
+                    WHERE m.post_id = ANY(%s::uuid[]) AND m.guide = ANY(%s) AND m.span IS NOT NULL""", (ids, _guide()))
+    own: Dict[str, List[str]] = defaultdict(list)
+    roots = {book.root(m) for m in members}
+    for pid, span, eid, g, n in cur.fetchall():
+        if eid and span and book.root(book.pins.get((pid, g, n), eid)) in roots:
+            own[pid].append(span)
+    cur.execute("""SELECT p.id::text, left(p.content, %s), pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break,
+                          left(pp.text_copy, %s)
+                     FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id WHERE p.id = ANY(%s::uuid[])""",
+                (CONTEXT_CHARS, CONTEXT_CHARS, ids))
+    names = sorted({book.ents[m].name for m in members if m in book.ents}, key=len, reverse=True)
+    out: Dict[str, Any] = {}
+    for pid, content, cut, decode, brk, copy in cur.fetchall():
+        text = shown(content, Body(cut=cut, decode_entities=bool(decode), cut_leaves_break=bool(brk), copy=copy))
+        terms = list(dict.fromkeys(sorted(own.get(pid, []), key=len, reverse=True) +
+                                   [x.lstrip("@") if x.startswith("@") else x for x in sorted(want[pid])] + names))
+        got = mention_context(text, terms)
+        if got:
+            out[pid] = got
+    return out
+
+
+def _with_contexts(cur: Any, book: I.Book, members: Set[str], page: Dict[str, Any]) -> None:
+    """Each shown line about the entity gets `context` (its mention's sentences, `_contexts`); the stories' posts,
+    the loose posts, the citing and recommending ones."""
+    lines = [ln for b in page["stories"] for ln in b["posts"]] + page["loose"] + page.get("citing", []) + \
+        page.get("recommending", [])
+    want: Dict[str, Set[str]] = {}
+    for ln in lines:
+        if ln.get("about"):
+            want.setdefault(ln["id"], set()).update(ln.get("named") or ())
+    got = _contexts(cur, members, book, want)
+    for ln in lines:
+        if ln.get("about"):
+            ln["context"] = got.get(ln["id"])
 
 
 def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:
@@ -688,6 +844,43 @@ def schemas_type(t: Optional[str]) -> Optional[str]:
 def open_count(cur: Any) -> int:
     cur.execute("SELECT count(*) FROM mx_entity_queue WHERE answer IS NULL AND closed_at IS NULL")
     return cur.fetchone()[0]
+
+
+def flagged_count(cur: Any) -> int:
+    """0222: the open items Claude's review flagged for the owner (all the owner is asked by default)."""
+    cur.execute("SELECT count(*) FROM mx_entity_queue WHERE flagged_at IS NOT NULL AND answer IS NULL AND closed_at IS NULL")
+    return cur.fetchone()[0]
+
+
+QUEUE_COLS = ("id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at, created_at, "
+              "call_id::text, flagged_at, flagged_by, flag_note")
+VIEWS = ("flagged", "all")
+
+
+def _voids(cur: Any, book: I.Book, rows: Sequence[Tuple]) -> Dict[str, str]:
+    """0222: {item id: why} of the open alias items whose Haiku answer (or second opinion) no longer holds: the posts
+    its question showed of a side are no longer that side's (identity.void_opinions; read, nothing written). Such an
+    item's answer is never shown nor banded; the next run closes it and asks the pair again."""
+    calls: Dict[str, List[str]] = defaultdict(list)
+    for r in rows:
+        ev = r[7] or {}
+        if r[1] == "alias" and r[8] is None:
+            for c in (r[11], ev.get("second_call")):
+                if c:
+                    calls[str(c)].append(r[0])
+    if not calls:
+        return {}
+    cur.execute("""SELECT c.id::text, t.id::text, t.kind, t.input_hash FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+                    WHERE c.id = ANY(%s::uuid[]) AND t.kind IN ('alias', 'alias2', 'alias3', 'alias4')""", (sorted(calls),))
+    task_of = {cid: (tid, (kind, h)) for cid, tid, kind, h in cur.fetchall()}
+    void = I.void_opinions(cur, book, _guide(), {tid: kh for tid, kh in task_of.values()}, store=False)
+    out: Dict[str, str] = {}
+    for cid, items in calls.items():
+        why = void.get(task_of.get(cid, (None,))[0])
+        if why:
+            for q in items:
+                out.setdefault(q, why)
+    return out
 
 
 def _side(book: I.Book, eid: Optional[str], examples: Dict[str, List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
@@ -762,10 +955,15 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
 
 
 def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
-          joins: Dict[str, Any]) -> Dict[str, Any]:
-    """One queue row as the queue shows it (`ex`: its entities' examples; `joins`: join()'s cache)."""
-    qid, kind, a, b, proposal, reason, conf, ev, ans, at, created = r
-    ev = ev or {}
+          joins: Dict[str, Any], void: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """One queue row (QUEUE_COLS) as the queue shows it (`ex`: its entities' examples; `joins`: join()'s cache;
+    `void`: `_voids`, the items whose answer is about other posts: shown with no answer, no confidence, no band)."""
+    qid, kind, a, b, proposal, reason, conf, ev, ans, at, created, _call, flagged_at, flagged_by, flag_note = r
+    ev = dict(ev or {})
+    why_void = (void or {}).get(qid)
+    if why_void:   # 0222: never shown on a stale verdict
+        ev.update(judge=None, second=None, disagree=None)
+        conf = None
     judge = ev.get("judge") if isinstance(ev.get("judge"), dict) else None
     opinion = None
     if kind == "alias":
@@ -777,7 +975,8 @@ def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
     return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
             "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
             "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
-            "opinion": opinion,
+            "opinion": opinion, "void": why_void,   # 0222
+            "flag": {"at": flagged_at, "by": flagged_by, "note": flag_note} if flagged_at else None,   # 0222
             # 0130 A1: the measured band Haiku's `same` falls in (none for a rule's proposal or another answer)
             "band": I.band_of(conf) if opinion and opinion["by"] == "haiku" and opinion["relation"] == "same" else None,
             "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
@@ -794,39 +993,49 @@ def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
 
 
 def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: Optional[int] = None,
-          offset: int = 0) -> Dict[str, Any]:
+          offset: int = 0, view: str = "all") -> Dict[str, Any]:
     """The review queue: {open, answered, merges, counts, accuracy}. Issue 0195: with `limit`, `open` is the page of
     `limit` open items from `offset` (counts.open still counts every open item) and `next_offset` the next page's
-    (None at the end); only the shown items are built."""
+    (None at the end); only the shown items are built.
+
+    0222: `view` 'flagged' lists only the open items Claude's review flagged for the owner (the owner's default: every
+    other item is decided by its measured band, or stays apart or held and is asked again); 'all' every open item
+    (the operator's view). counts.flagged counts the flagged ones; in the flagged view counts.open is every open row.
+    An item whose Haiku answer is about posts its sides no longer hold shows no answer (`void`, `_voids`)."""
+    if view not in VIEWS:
+        raise ValueError(f"view: one of {', '.join(VIEWS)}")
     guide = _guide()
     book = book or I.lazy_book(cur)   # v10.17 (0186): what the queue's items ask of the book
     # Issue 0206: paged in SQL. The open items are read as their ids and sides only (the narrow rows the named test
     # needs: every open item is counted), the answered ones `history` at most; only the rows shown are read whole
     # (their reasons and evidence: 28.9 MB for 12,572 open items on the server before 0195, all read on every page).
     order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at, id"   # ties by id (were unordered)
+    flagged = view == "flagged"
     cur.execute(f"""SELECT id::text, a::text, b::text FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
-                     ORDER BY {order}""")
+                       {"AND flagged_at IS NOT NULL" if flagged else ""}
+                     ORDER BY {"flagged_at DESC, " if flagged else ""}{order}""")
     sides = cur.fetchall()
     named = named_now(cur, book)   # 0138: an item about an entity no current reading names waits, unshown
     if isinstance(named, I._Has):
         named.want({book.root(x) for _q, a, b in sides for x in (a, b) if x})
     open_ids = [q for q, a, b in sides if all(book.root(x) in named for x in (a, b) if x)]
-    open_total = len(open_ids)
+    shown_total = len(open_ids)
+    open_total = open_count(cur) if flagged else shown_total
     if limit is not None:
         open_ids = open_ids[offset:offset + limit]
-    cols = "id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at, created_at"
-    cur.execute(f"SELECT {cols} FROM mx_entity_queue WHERE id = ANY(%s::uuid[])", (open_ids,))
+    cur.execute(f"SELECT {QUEUE_COLS} FROM mx_entity_queue WHERE id = ANY(%s::uuid[])", (open_ids,))
     whole = {r[0]: r for r in cur.fetchall()}
     open_rows = [whole[q] for q in open_ids if q in whole]
-    cur.execute(f"""SELECT {cols} FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NOT NULL
+    cur.execute(f"""SELECT {QUEUE_COLS} FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NOT NULL
                      ORDER BY {order} LIMIT %s""", (history,))
     done_rows = cur.fetchall()
     book.prime(ids=[x for r in open_rows + done_rows for x in (r[2], r[3]) if x])
     ex = _examples(cur, {x for r in open_rows + done_rows for x in (r[2], r[3]) if x}, guide)
+    void = _voids(cur, book, open_rows)
     joins: Dict[str, Any] = {}
 
     def item(r) -> Dict[str, Any]:
-        return _item(cur, book, r, ex, joins)
+        return _item(cur, book, r, ex, joins, void)
 
     cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.automatic, r.at, r.undone_at, r.evidence,
                           r.kind FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
@@ -841,18 +1050,18 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: 
     answered = dict(cur.fetchall())
     return {"open": [item(r) for r in open_rows], "answered": [item(r) for r in done_rows], "merges": merges,
             "counts": {"open": open_total, "answered": answered, "automatic_merges": auto_live,
-                       "automatic_undone": auto_undone}, "accuracy": ACCURACY,
-            **({} if limit is None else {"next_offset": offset + limit if offset + limit < open_total else None})}
+                       "automatic_undone": auto_undone, "flagged": shown_total if flagged else flagged_count(cur)},
+            "accuracy": ACCURACY, "view": view,
+            **({} if limit is None else {"next_offset": offset + limit if offset + limit < shown_total else None})}
 
 
 def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
     """The open items whose side `a` or `b` is `root` itself, as queue()'s `open` shows them: the entity page's
-    questions (issue 0195: only these are built, not every open item of the queue)."""
+    questions (issue 0195: only these are built, not every open item of the queue). 0222: flagged ones first."""
     guide = _guide()
-    cur.execute("""SELECT id::text, kind, a::text, b::text, proposal, reason, confidence, evidence, answer, answered_at,
-                          created_at FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
+    cur.execute(f"""SELECT {QUEUE_COLS} FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
                       AND (a = %s::uuid OR b = %s::uuid)
-                    ORDER BY confidence DESC NULLS LAST, created_at""", (root, root))
+                    ORDER BY flagged_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at""", (root, root))
     rows = cur.fetchall()
     book.prime(ids=[x for r in rows for x in (r[2], r[3]) if x])
     named = named_now(cur, book)
@@ -860,8 +1069,9 @@ def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
         named.want({book.root(x) for r in rows for x in (r[2], r[3]) if x})
     mine = [r for r in rows if all(book.root(x) in named for x in (r[2], r[3]) if x)]
     ex = _examples(cur, {x for r in mine for x in (r[2], r[3]) if x}, guide)
+    void = _voids(cur, book, mine)
     joins: Dict[str, Any] = {}
-    return [_item(cur, book, r, ex, joins) for r in mine]
+    return [_item(cur, book, r, ex, joins, void) for r in mine]
 
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
