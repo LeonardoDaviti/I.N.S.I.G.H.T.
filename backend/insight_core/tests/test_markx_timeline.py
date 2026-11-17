@@ -690,3 +690,96 @@ class ThingLinks(_Db):
         closed = [row for row in self.edges(current=False) if row[2] == "based_on"]
         self.assertEqual(len(closed), 1)
         self.assertIsNotNone(closed[0][6])
+
+
+class DerivedRelations(unittest.TestCase):
+    """0224 (no database): the relations ent-v5's own fields say (graph.derived), no relation asked."""
+
+    @staticmethod
+    def m(name, type_, role, maker=None, span=None):
+        return {"name": name, "span": span or name, "type": type_, "role": role, "maker": maker}
+
+    def test_a_maker_the_reading_names_released_the_thing(self):
+        from insight_core.markx import graph
+        ms = [self.m("Vantor", "org", "actor"), self.m("Orbit 3", "model", "subject", "Vantor"),
+              self.m("Kestrel", "org", "mention"), self.m("Lumen", "product", "subject", "Zentra"),   # maker not named
+              self.m("Orbit Set", "dataset", "subject", "Vantor"),                                   # not a thing type
+              self.m("Rae Lin", "person", "subject"), self.m("tinyorbit", "software", "subject", "rae lin"),
+              self.m("Vantor Cloud", "product", "subject", "Vantor Cloud"),                          # itself: never
+              self.m("Orbit Mini", "model", "mention", "Vantor")]                                     # not the subject
+        self.assertEqual(graph.derived(ms, on=("released",)), [(0, "released", 1), (5, "released", 6)])
+        self.assertEqual(graph.derived(ms, on=("based_on",)), [])
+        # the maker named only by a thing (not an org or person), or only in passing (not the subject or actor): never
+        self.assertEqual(graph.derived([self.m("Orbit", "software", "mention"),
+                                        self.m("Orbit Lite", "product", "subject", "Orbit")]), [])
+        self.assertEqual(graph.derived([self.m("Vantor", "org", "mention"),
+                                        self.m("Orbit 3", "model", "subject", "Vantor")]), [])
+        # the maker matched by its span ("Вантор" written, "Vantor" its name)
+        self.assertEqual(graph.derived([self.m("Vantor", "org", "actor", span="Вантор"),
+                                        self.m("Orbit 3", "model", "subject", "Вантор")]), [(0, "released", 1)])
+
+    def test_the_subject_is_based_on_each_predecessor(self):
+        from insight_core.markx import graph
+        ms = [self.m("Sabi 2", "model", "subject", "Kestrel"), self.m("Orbit 3", "model", "predecessor", "Vantor"),
+              self.m("Orbit 2", "model", "compared"), self.m("Vantor", "org", "mention"),
+              self.m("Old Report", "document", "predecessor"),                                       # not a thing
+              self.m("Sabi 2", "model", "subject", span="Sabi-2")]                                    # the same name: once
+        self.assertEqual(graph.derived(ms, on=("based_on",)), [(0, "based_on", 1)])
+        self.assertEqual(graph.derived(ms), [(0, "based_on", 1)])                # Orbit 3 is not the subject
+
+
+@base.requires_test_db
+class DerivedLinks(_Db):
+    """0224: graph section 4 reads the relations ent-v5's fields say from the post's current ent-v5 mentions, in the one
+    path (`stated`): switched off, nothing; on, the edges with their posts."""
+
+    def v5_mentions(self, pid, *ents):
+        task_id, _ = tasks.entities_task(self.cur, pid)
+        call = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True,
+                             answer={"entities": []})
+        rows = [dict({"span": e[0], "name": e[0], "name_key": tasks.name_key(e[0]), "type": e[1], "role": e[2],
+                      "maker": e[3] if len(e) > 3 else None}, **{f: None for f in N.FIELDS}) for e in ents]
+        repo.add_mentions(self.cur, post_id=pid, guide="ent-v5", call_id=call, mentions=rows)
+
+    def graph(self, derived, now=T0 + 2 * D):
+        from insight_core.markx import graph
+        bands = json.loads(json.dumps(I.bands()))
+        bands["relations"]["derived"] = {r: True for r in derived}
+        run = repo.start_run(self.cur, code_version="test", config={})
+        with mock.patch.object(I, "bands", return_value=bands):
+            return graph.stage(self.cur, now=now, run_id=run, budget=None)
+
+    def edges(self):
+        self.cur.execute("""SELECT a::text, b::text, relation, evidence FROM mx_connections
+                             WHERE a_kind = 'entity' AND rule = 'stated' AND valid_to IS NULL""")
+        return {(a, b, r): ev for a, b, r, ev in self.cur.fetchall()}
+
+    def test_ent_v5_fields_become_edges_only_when_switched_on(self):
+        launch = self.post_at(0, T0 - 3 * D, "Vantor releases Orbit 3")
+        self.v5_mentions(launch, ("Vantor", "org", "actor"), ("Orbit 3", "model", "subject", "Vantor"),
+                         ("Lumen", "product", "mention", "Zentra"))
+        tune = self.post_at(1, T0 - 2 * D, "Sabi 2, fine-tuned from Orbit 3")
+        self.v5_mentions(tune, ("Sabi 2", "model", "subject"), ("Orbit 3", "model", "predecessor", "Vantor"))
+        self.stage()
+        vantor, orbit, sabi = self.entity_of(launch), self.entity_of(launch, 1), self.entity_of(tune)
+        self.graph(derived=())
+        self.assertEqual(self.edges(), {})                                     # off: nothing from ent-v5's fields
+        out = self.graph(derived=("released",), now=T0 + 3 * D)
+        self.assertTrue(out["relations"]["backfill"]["done"])
+        self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # switched on: the backfill reads them
+        self.assertEqual(self.edges()[(vantor, orbit, "released")]["posts"], [launch])
+        self.graph(derived=("released", "based_on"), now=T0 + 4 * D)
+        got = self.edges()
+        self.assertEqual(set(got), {(vantor, orbit, "released"), (sabi, orbit, "based_on")})
+        self.assertEqual(got[(sabi, orbit, "based_on")]["posts"], [tune])
+
+    def test_a_new_answer_is_read_by_the_next_run(self):
+        self.stage()
+        self.graph(derived=("released",))                                      # the backfill done: nothing yet
+        launch = self.post_at(0, T0 - 3 * D, "Vantor releases Orbit 3")
+        self.v5_mentions(launch, ("Vantor", "org", "actor"), ("Orbit 3", "model", "subject", "Vantor"))
+        self.stage()
+        self.cur.execute("UPDATE mx_calls SET created_at = %s WHERE task_id IN (SELECT id FROM mx_tasks WHERE a = %s)",
+                         (T0 + 2 * D + H, launch))
+        self.graph(derived=("released",), now=T0 + 3 * D)                      # its call is new since the last run
+        self.assertEqual(set(self.edges()), {(self.entity_of(launch), self.entity_of(launch, 1), "released")})

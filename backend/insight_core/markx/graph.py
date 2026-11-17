@@ -510,12 +510,106 @@ def corroborated(rel: str, a: str, b_maker: Optional[str]) -> bool:
     return rel != "released" or (bool(b_maker) and N.key(b_maker) == N.key(a))
 
 
+# 0224: ent-v5 (the reading, on) asks no `relations` (0223: asking them in its guide failed, and the guide must not
+# change), but its fields already say two. Read from one post's current ent-v5 mentions (every window), never asked:
+#   released: the reading's subject (a model, product or software) whose own `maker` is the name (or span) of an org
+#             or person the same reading lists as the subject or the actor -> that maker `released` it. Any thing with
+#             its maker anywhere in the reading was 135/193 = 69.9% stated (held out 1): a thing merely named (Codex
+#             used, iOS 12 in passing) with a maker the post never ties to it. As written (the main event's maker
+#             and thing): held out 2 175/180 = 97.2% [93.7-98.8]: on;
+#   based_on: the reading's subject (a model, product or software) `based_on` each `predecessor` of those types
+#             (held out 1: 20/33 = 60.6%: a predecessor is mostly what the subject replaces or is compared with).
+# Each switched on by entity_bands.json `relations.derived` (and the relation itself on); measured blind on frozen
+# held-out sets (plan/issues/0223, section "0224").
+DERIVED_GUIDE = "ent-v5"
+THING_TYPES = ("model", "product", "software")
+MAKER_TYPES = ("org", "person")
+MAKER_ROLES = ("subject", "actor")
+
+
+def derived_on() -> Set[str]:
+    """The relations read from ent-v5's fields (entity_bands.json `relations.derived`, each also switched on)."""
+    from insight_core.markx import identity as I
+    got = (I.bands().get("relations") or {}).get("derived") or {}
+    return {r for r, on in got.items() if on} & relations_on()
+
+
+def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released", "based_on")) -> List[Tuple[int, str, int]]:
+    """(pure) The relations one post's ent-v5 mentions say by their fields: [(a, relation, b)], indexes into
+    `mentions` ({name, span, type, role, maker}), never a thing to itself, each once."""
+    from insight_core.markx import names as N
+    on = set(on)
+    keys: Dict[str, List[int]] = defaultdict(list)
+    for i, m in enumerate(mentions):
+        for k in {N.key(m.get("name")), N.key(m.get("span"))}:
+            if k:
+                keys[k].append(i)
+    own = [N.key(m.get("name")) for m in mentions]
+    out: List[Tuple[int, str, int]] = []
+    if "released" in on:
+        for b, m in enumerate(mentions):
+            if m.get("type") not in THING_TYPES or m.get("role") != "subject" or not N.key(m.get("maker")):
+                continue
+            a = next((i for i in keys.get(N.key(m.get("maker")), ())
+                      if i != b and own[i] != own[b] and mentions[i].get("type") in MAKER_TYPES
+                      and mentions[i].get("role") in MAKER_ROLES), None)
+            if a is not None:
+                out.append((a, "released", b))
+    if "based_on" in on:
+        things = [i for i, m in enumerate(mentions) if m.get("type") in THING_TYPES]
+        for a in (i for i in things if mentions[i].get("role") == "subject"):
+            for b in (j for j in things if mentions[j].get("role") == "predecessor"):
+                if own[a] != own[b]:
+                    out.append((a, "based_on", b))
+    seen: Set[Tuple[str, str, str]] = set()
+    uniq = []
+    for a, rel, b in out:
+        if (own[a], rel, own[b]) not in seen:
+            seen.add((own[a], rel, own[b]))
+            uniq.append((a, rel, b))
+    return uniq
+
+
+def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
+    """`derived` over these posts' current ent-v5 mentions (pins read): {(a root, b root, relation): {post: date}}."""
+    cur.execute(f"""SELECT m.post_id::text, m.name, m.span, m.type, m.role, m.maker, m.entity_id::text, {_date()},
+                          (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
+                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1)
+                     FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                    WHERE m.post_id = ANY(%s::uuid[]) AND m.guide = %s ORDER BY m.post_id, m.n""", (list(ids), DERIVED_GUIDE))
+    posts: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    dates: Dict[str, datetime] = {}
+    for pid, name, span, typ, role, maker, eid, at, pin in cur.fetchall():
+        if at is not None:
+            posts[pid].append({"name": name, "span": span, "type": typ, "role": role, "maker": maker, "eid": pin or eid})
+            dates[pid] = at
+    out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
+    for pid, ms in posts.items():
+        for a, rel, b in derived(ms, on):
+            if ms[a]["eid"] and ms[b]["eid"]:
+                ra, rb = root(ms[a]["eid"]), root(ms[b]["eid"])
+                if ra != rb:
+                    out[(ra, rb, rel)][pid] = dates[pid]
+    return out
+
+
 def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
     """{(a root, b root, relation): {post: its date}}: what these posts' current entities answers state, each side one
-    of that answer's mentions (pins read), the relations switched on, never an entity to itself."""
+    of that answer's mentions (pins read), the relations switched on, never an entity to itself; and (0224) what
+    their ent-v5 readings' fields say (`derived`), the derived relations switched on."""
+    ids = sorted(set(post_ids))
+    out = _stated_answers(cur, ids, root)
+    d_on = derived_on() if ids else set()
+    if d_on:
+        for t, dates in _derived_stated(cur, ids, root, d_on).items():
+            out.setdefault(t, {}).update(dates)
+    return out
+
+
+def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
+    """The relations the answers' own `relations` state (ent-v3 / ent-v4.2, 0220)."""
     from insight_core.markx import names as N, schemas
     on = relations_on()
-    ids = sorted(set(post_ids))
     if not on or not ids:
         return {}
     guides = schemas.mention_guides()
@@ -609,13 +703,25 @@ def _evidence(dates: Dict[str, str]) -> str:
     return json.dumps({"posts": order, "since": dates[order[0]] if order else None, "dates": dates})
 
 
+def _derived_sql(alias: str = "m") -> str:
+    """SQL: the mention row `alias` (mx_mentions_now) may say a derived relation (0224); FALSE when none is on."""
+    on = derived_on()
+    parts = (["{a}.type IN ('model', 'product', 'software') AND {a}.role = 'subject' AND {a}.maker IS NOT NULL"]
+             if "released" in on else []) + \
+            (["{a}.type IN ('model', 'product', 'software') AND {a}.role = 'predecessor'"] if "based_on" in on else [])
+    if not parts:
+        return "FALSE"
+    return f"({alias}.guide = '{DERIVED_GUIDE}' AND (" + " OR ".join(f"({p.format(a=alias)})" for p in parts) + "))"
+
+
 def _relation_scope(cur: Any, since: datetime) -> Set[str]:
     """The posts whose entities answer stating a relation is new since, and the evidence posts of the stated edges
     whose side is no longer a root (merged since: they open again on the root)."""
     from insight_core.markx import schemas
-    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+    cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
                     WHERE m.guide = ANY(%s) AND c.created_at >= %s
                       AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
+                           OR {_derived_sql()}
                            OR EXISTS (SELECT 1 FROM mx_connections x WHERE x.valid_to IS NULL AND x.rule = %s
                                         AND x.a_kind = 'entity' AND x.evidence->'posts' ? m.post_id::text))""",
                 (schemas.mention_guides(), since, RULE_STATED))
@@ -632,16 +738,17 @@ def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, dead
     RELATIONS_BATCH at a time until the deadline; resumable (mx_settings RELATIONS_KEY)."""
     from insight_core.markx import repo, schemas
     state = dict(repo.get_setting(cur, RELATIONS_KEY, default=None) or {})
-    on = sorted(relations_on())
+    on = sorted(relations_on()) + sorted(f"derived:{r}" for r in derived_on())   # 0224: a derived one on: read again
     if state.get("version") != RELATIONS_VERSION or state.get("on") != on:   # a relation switched on: read again
         state = {"version": RELATIONS_VERSION, "on": on, "after": "", "done": False}
     if state["done"] or not on:
         return {"done": state["done"]}
     counts: Counter = Counter()
     while True:
-        cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+        cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
                         WHERE m.guide = ANY(%s) AND (%s = '' OR m.post_id > %s::uuid)
-                          AND jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb
+                          AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
+                               OR {_derived_sql()})
                         ORDER BY 1 LIMIT %s""", (schemas.mention_guides(), state["after"], state["after"] or None,
                                                  RELATIONS_BATCH))
         part = [r[0] for r in cur.fetchall()]
