@@ -320,5 +320,25 @@ class Fixes(base._Db):
         self.assertEqual(self.cur.fetchall(), want)
 
 
+    def test_a_sweep_of_single_names_steps_and_resumes_too(self):
+        """0218: no cluster of several names (the server-sized copy has none): SHOWN_SINGLES single names a step."""
+        from insight_core.markx import schemas
+        for n, name in enumerate(["Kip", "Zentra", "Orbis", "Lumen", "Tarn", "Vesk", "Quill"]):
+            self.mentions(self.post(n % 3, T0 + n * H), (name, "org", "subject"))
+        self.stage()
+        roots = sorted(I.run_book(self.cur).ids())
+        after, steps = None, []
+        with mock.patch.object(R, "SHOWN_SINGLES", 3):
+            while True:
+                got = R.shown(self.cur, I.run_book(self.cur), schemas.mention_guides(), roots=None, after=after,
+                              deadline=0.0)
+                steps.append(got["clusters"])
+                if got["done"]:
+                    break
+                after = got["after"]
+                self.assertEqual(after, roots[sum(steps) - 1])
+        self.assertEqual(steps, [3, 3, 1])
+
+
 if __name__ == "__main__":
     unittest.main()

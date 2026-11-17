@@ -38,7 +38,6 @@ Config: entity_bands.json `repairs` (each on or off, and their bars).
 """
 from __future__ import annotations
 
-import bisect
 import itertools
 import json
 import logging
@@ -56,6 +55,7 @@ PRODUCT_LIMIT = 500       # product accounts a run merges into their family (pro
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
 SHOWN_CHUNK = 2000        # clusters whose shown name one query reads
+SHOWN_SINGLES = 20000     # v10.23 (0218): a sweep's step: SHOWN_CHUNK clusters of several names, or this many of one
 BRAND_MIN = 3
 SHOWN_TYPE_SHARE = 0.75
 SHOWN_TYPE_MIN = 5
@@ -697,29 +697,32 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
         if roots is None:
             book.forget(page)   # v10.23 (0218): a book read by need lets each page go
 
-    # v10.23 (0218): one sweep in id order, a step at a time: the next SHOWN_CHUNK clusters of several names and the
-    # clusters of one name before them (the last step: all the rest), stopping past `deadline` after a step; `after`
-    # (the last root of the last step) says where the next run resumes. The single names were all done at a sweep's
-    # start, past the deadline (every run with a full pass half done starts a sweep once the last is done: 330k
-    # names read and let go, 18 s past the budget, on a book read by need).
-    many = [r for r in todo if len(members[r]) > 1]
-    lone = [r for r in todo if len(members[r]) == 1]
-    last, done, i = after, True, 0   # the single names before lone[i] are done
-    for k in range(0, max(1, len(many)), SHOWN_CHUNK):
-        chunk = many[k:k + SHOWN_CHUNK]
-        final = k + SHOWN_CHUNK >= len(many)
-        j = len(lone) if final else bisect.bisect_right(lone, chunk[-1], lo=i)
-        for p in range(i, j, SHOWN_CHUNK):
-            singles(lone[p:min(j, p + SHOWN_CHUNK)])
-        i = j
-        if chunk:
-            book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
-            book.prime_products(m for r in chunk for m in members[r])
-            spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
-            for r in chunk:
-                write(r, spans)
-        if roots is None and not final and deadline is not None and time.monotonic() > deadline:
-            done, last = False, chunk[-1]
+    def several(chunk: List[str]) -> None:
+        """Clusters of several names: their names' spans read in one go."""
+        book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
+        book.prime_products(m for r in chunk for m in members[r])
+        spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
+        for r in chunk:
+            write(r, spans)
+
+    # v10.23 (0218): one sweep in id order, a step at a time (SHOWN_CHUNK clusters of several names or SHOWN_SINGLES
+    # of one, whichever comes first), stopping past `deadline` after a step; `after` (the step's last root) says where
+    # the next run resumes. The single names were all done at a sweep's start, past the deadline: every run with a
+    # full pass half done starts a sweep once the last is done (330k names read and let go, 18 s past the budget).
+    done, last = True, after
+    lone: List[str] = []
+    many: List[str] = []
+    for n, r in enumerate(todo):
+        (many if len(members[r]) > 1 else lone).append(r)
+        if n + 1 < len(todo) and len(many) < SHOWN_CHUNK and len(lone) < SHOWN_SINGLES:
+            continue
+        for p in range(0, len(lone), SHOWN_CHUNK):
+            singles(lone[p:p + SHOWN_CHUNK])
+        if many:
+            several(many)
+        lone, many = [], []
+        if roots is None and n + 1 < len(todo) and deadline is not None and time.monotonic() > deadline:
+            done, last = False, r
             break
     got: Dict[str, Any] = dict(out)
     if roots is None:
