@@ -813,6 +813,8 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     things = [("post", post_id)] + [("story", s["id"]) for s in stories]
     for kind, thing in things:
         for c in repo.current_connections(cur, kind, thing):
+            if c["rule"] == "chain_stops":   # 0219: a story's chain is shown on its story page, by its own switch
+                continue
             other_kind, other = (c["b_kind"], c["b"]) if (c["a_kind"], str(c["a"])) == (kind, thing) else (c["a_kind"], c["a"])
             conns.append({"relation": c["relation"], "p": c["p"], "rule": c["rule"], "from": kind,
                           "other_kind": other_kind, "other": str(other), "reason": (c["evidence"] or {}).get("reason")})

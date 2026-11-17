@@ -874,3 +874,267 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
     lid = repo.add_label(cur, item_kind="connection", a=newer, b=older, answer=answer,
                          note=f"{e['relation']}|{e['rule'] or 'judge'}" + (f"|{note}" if note else ""))
     return {"id": str(lid), "answer": answer, "label": None if answer == "undo" else answer, "relation": e["relation"]}
+
+
+# ---- 4. chains between stories (issue 0219) -------------------------------------------------------------------
+# A later story and an earlier one about the same exact thing (both stops on its line, markx/stops.py) get one typed
+# edge: a = the later story, b = the earlier, a_kind = b_kind = 'story', rule CHAIN_RULE (the candidate rule that
+# proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
+
+CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v1"
+CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
+CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
+CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
+CHAIN_RUNS = 2                        # answers a pair is asked for; an edge needs both to agree (0219 dev: same_release
+                                      # 37/40 on one run, 35/36 when two runs agree)
+CHAIN_PLAN_MAX = 300                  # new questions a pass, at most
+CHAIN_MARK = "chains_planned"         # mx_settings: the last pass's clock (the stops answered since are paired)
+CHAIN_SYNCED = "chains_synced"        # mx_settings: the last sync's clock (the pairs answered since are read again)
+CHAIN_DEPTH = 3                       # links followed from a story, each way
+CHAIN_SHOWN = 12                      # links shown each way, at most
+CHAIN_RELATIONS = ("same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated")
+CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # what makes an edge (unrelated makes none)
+
+
+def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence[Any]],
+                   later: Tuple[Optional[str], Sequence[Any]]) -> str:
+    """One chain item: THING, the EARLIER and the LATER story (each its headline, dates and earliest posts, as the stop
+    question shows a story: stops.story_lines), and the days between their first posts. Pure."""
+    from insight_core.markx import stops as ST
+    out = [ST.thing_line(thing), *ST.story_lines(earlier[0], earlier[1], "EARLIER STORY"),
+           *ST.story_lines(later[0], later[1], "LATER STORY")]
+    firsts = [min((x.at for x in side[1]), default=None) for side in (earlier, later)]
+    if firsts[0] is not None and firsts[1] is not None:
+        days = (firsts[1] - firsts[0]).total_seconds() / 86400
+        out.append(f"GAP: the later story starts {days:.0f} days after the earlier one" if days >= 1 else
+                   "GAP: the later story starts the same day as the earlier one")
+    return "\n".join(out)
+
+
+def chain_config() -> Dict[str, Any]:
+    """entity_bands.json `chains`: `on` (the planner asks and syncs; the story page shows) and `shown` (the relations a
+    reader sees; the others are stored, not shown: they failed their bar)."""
+    from insight_core.markx import identity as I
+    got = I.bands().get("chains") or {}
+    return {"on": bool(got.get("on", False)),
+            "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS)}
+
+
+def chain_pairs(stops: Dict[str, Sequence[Tuple[datetime, str]]], fresh: Optional[Set[str]] = None,
+                *, days: int = CHAIN_DAYS, prev: int = CHAIN_PREV) -> Dict[Tuple[str, str], str]:
+    """The candidate pairs {(later, earlier): thing} of each thing's stops {thing: [(first post at, story)]}: a stop
+    and each of the `prev` stops before it whose first post is at most `days` earlier. `fresh`: only the pairs with a
+    story in it. A pair two things propose goes to the one with the fewer stops (the narrower thing). Pure."""
+    out: Dict[Tuple[str, str], str] = {}
+    size = {t: len(v) for t, v in stops.items()}
+    span = timedelta(days=days)
+    for thing in sorted(stops):
+        order = sorted(set(stops[thing]))
+        for j in range(len(order)):
+            for i in range(j - 1, max(-1, j - 1 - prev), -1):
+                if order[j][0] - order[i][0] > span:
+                    break
+                key = (order[j][1], order[i][1])
+                if key[0] == key[1] or (fresh is not None and not ({key[0], key[1]} & fresh)):
+                    continue
+                if key not in out or (size[thing], thing) < (size[out[key]], out[key]):
+                    out[key] = thing
+    return out
+
+
+def chain_verdict(answers: Sequence[Tuple[str, Dict[str, Any]]], runs: int = CHAIN_RUNS) -> Optional[Dict[str, Any]]:
+    """A pair's settled verdict from its first `runs` valid answers [(call id, answer)], oldest first: the relation all
+    of them give (call: the first; reason: its reason), "unknown" when they differ; None until `runs` came."""
+    got = list(answers)[:runs]
+    if len(got) < runs:
+        return None
+    rels = [str(a.get("relation")) for _, a in got]
+    same = len(set(rels)) == 1
+    return {"relation": rels[0] if same else UNKNOWN, "call": got[0][0], "runs": rels,
+            "reason": str(got[0][1].get("reason") or "") if same else None}
+
+
+def chain_after_answer(cur: Any, task: Dict[str, Any]) -> bool:
+    """A chain task's valid answer (tasks.record): open again until it has CHAIN_RUNS valid answers."""
+    cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s AND valid", (task["id"],))
+    if cur.fetchone()[0] >= CHAIN_RUNS:
+        return False
+    cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL WHERE id = %s", (task["id"],))
+    return cur.rowcount == 1
+
+
+def chain_stops(cur: Any, book: Any, *, since: Optional[datetime] = None
+                ) -> Tuple[Dict[str, List[Tuple[datetime, str]]], Set[str]]:
+    """Each thing's stops ({root: [(the story's first current member's date, story)]}: the stored stop answers saying
+    about, under any name of its cluster; stories merged away or with no current member left out), and the stories
+    whose stop answer came since `since` (every one when None)."""
+    from insight_core.markx import stops as ST
+    rows = ST.answered(cur)
+    fresh = {s for s, _e, _ab, at in rows if since is None or at >= since}
+    yes = [(s, e) for s, e, about, _at in rows if about]
+    if not yes:
+        return {}, set()
+    book.ents.want({e for _, e in yes})
+    first = _story_firsts(cur, sorted({s for s, _ in yes}), current=True)
+    out: Dict[str, Set[Tuple[datetime, str]]] = defaultdict(set)
+    for s, e in yes:
+        if s in first and e in book.ents:
+            out[book.root(e)].add((first[s], s))
+    return {t: sorted(v) for t, v in out.items()}, fresh & set(first)
+
+
+def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_PLAN_MAX) -> Dict[str, int]:
+    """The jobs process's plan job (tasks.BACKGROUND_PLANNED): the settled answers made edges first (sync_chains), then
+    the candidate pairs touching the stops answered since the last pass (mx_settings CHAIN_MARK), each pair asked once
+    (a = the later story, b = the earlier), at most `limit` a pass, the newest later story first; the mark moves only
+    when every new pair was asked. {pairs, asked, again, opened, closed}."""
+    from insight_core.markx import identity as I, repo, stops as ST, tasks
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, int] = {"pairs": 0, "asked": 0, "again": 0}
+    if not chain_config()["on"]:
+        return out
+    synced = (repo.get_setting(cur, CHAIN_SYNCED, default=None) or {}).get("at")
+    out.update(sync_chains(cur, now=now, since=datetime.fromisoformat(synced) - MARGIN if synced else None))
+    repo.set_setting(cur, CHAIN_SYNCED, {"at": now.isoformat()})
+    mark = repo.get_setting(cur, CHAIN_MARK, default=None) or {}
+    since = datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") else None
+    book = I.lazy_book(cur)
+    stops, fresh = chain_stops(cur, book, since=since)
+    pairs = chain_pairs(stops, fresh)
+    out["pairs"] = len(pairs)
+    todo: List[Tuple[str, str]] = []
+    if pairs:
+        keys = sorted(pairs)
+        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s
+                        AND (a, b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[]))""",
+                    (CHAIN_KIND, [k[0] for k in keys], [k[1] for k in keys]))
+        asked = {tuple(r) for r in cur.fetchall()}
+        firsts = {s: at for v in stops.values() for at, s in v}
+        todo = sorted((k for k in keys if k not in asked), key=lambda k: (firsts[k[0]], k), reverse=True)
+        out["again"] = len(keys) - len(todo)
+    if todo[:limit]:
+        shown, roles, heads = ST.stories_shown(cur, book, sorted({s for k in todo[:limit] for s in k}))
+        for later, earlier in todo[:limit]:
+            thing = pairs[(later, earlier)]
+            text = chain_question(ST._thing(book, thing),
+                                  (heads.get(earlier), ST.lines_for(shown.get(earlier, []), roles, thing)),
+                                  (heads.get(later), ST.lines_for(shown.get(later, []), roles, thing)))
+            _tid, new = tasks.add(cur, CHAIN_KIND, text, a=later, b=earlier, priority=0)
+            out["asked"] += bool(new)
+    if len(todo) <= limit:
+        repo.set_setting(cur, CHAIN_MARK, {"at": now.isoformat()})
+    return out
+
+
+def _chain_current(cur: Any) -> List[Dict[str, Any]]:
+    cur.execute("""SELECT a::text, b::text, relation FROM mx_connections
+                    WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = %s""", (CHAIN_RULE,))
+    return [{"a": a, "b": b, "relation": rel} for a, b, rel in cur.fetchall()]
+
+
+def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[datetime] = None) -> Dict[str, int]:
+    """The chain edges become what the settled answers say of the pairs still proposed: a linking verdict opens its
+    edge (relation, p 1.0: its runs agree; the call; evidence {reason, thing, runs}); an edge whose verdict changed,
+    or whose pair is no longer two stops of one thing (a stop answer now saying not about, a story merged away or
+    emptied), closes (kept, never deleted). `since`: only the pairs with an answer since then are read again (every
+    current edge is still checked against the pairs proposed). Every relation is stored; what is shown is
+    chain_config's."""
+    from insight_core.markx import identity as I
+    stops, _ = chain_stops(cur, I.lazy_book(cur))
+    cands = chain_pairs(stops)
+    cur.execute(f"""SELECT DISTINCT ON (t.a, t.b) t.a::text, t.b::text, t.id::text FROM mx_tasks t
+                     WHERE t.kind = %(k)s AND t.status = 'answered'
+                       {"AND (t.a, t.b) IN (SELECT a, b FROM mx_tasks WHERE kind = %(k)s AND answered_at >= %(since)s)"
+                        if since is not None else ""}
+                     ORDER BY t.a, t.b, t.created_at DESC, t.id DESC""", {"k": CHAIN_KIND, "since": since})
+    got = cur.fetchall()
+    touched = {(a, b) for a, b, _t in got}
+    newest = {(a, b): tid for a, b, tid in got if (a, b) in cands}
+    calls: Dict[str, List[Tuple[str, Dict[str, Any]]]] = defaultdict(list)
+    ids = sorted(newest.values())
+    for k in range(0, len(ids), 5000):
+        cur.execute("""SELECT task_id::text, id::text, answer FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
+                        ORDER BY created_at, ctid""", (ids[k:k + 5000],))
+        for tid, cid, ans in cur.fetchall():
+            calls[tid].append((cid, ans or {}))
+    want: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for key, tid in newest.items():
+        v = chain_verdict(calls.get(tid) or [])
+        if v and v["relation"] in CHAIN_LINKS:
+            want[key] = dict(v, thing=cands[key])
+    out = {"opened": 0, "closed": 0}
+    kept = set()
+    for e in _chain_current(cur):
+        key = (e["a"], e["b"])
+        if key in cands and (key not in touched or (key in want and want[key]["relation"] == e["relation"])):
+            kept.add(key)
+            continue
+        cur.execute("""UPDATE mx_connections SET valid_to = GREATEST(valid_from, %s)
+                        WHERE a_kind = 'story' AND a = %s AND b_kind = 'story' AND b = %s AND relation = %s
+                          AND rule = %s AND valid_to IS NULL""", (now, e["a"], e["b"], e["relation"], CHAIN_RULE))
+        out["closed"] += cur.rowcount
+    for (a, b), v in sorted(want.items()):
+        if (a, b) in kept:
+            continue
+        cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, call_id, rule, run_id, evidence, valid_from)
+                       VALUES ('story', %s, 'story', %s, %s, 1.0, %s, %s, %s, %s::jsonb, %s)
+                       ON CONFLICT (a_kind, a, b_kind, b, relation) WHERE valid_to IS NULL DO NOTHING""",
+                    (a, b, v["relation"], v["call"], CHAIN_RULE, run_id,
+                     json.dumps({"reason": v["reason"], "thing": v["thing"], "runs": v["runs"]}, ensure_ascii=False), now))
+        out["opened"] += cur.rowcount
+    return out
+
+
+def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: int = CHAIN_DEPTH,
+          shown: int = CHAIN_SHOWN, relations: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """A story's chain: what led to it (`before`: the earlier stories its edges reach, then theirs, `depth` links at
+    most) and what followed (`after`), each link {story, headline, first_at, relation, reason, depth, via}, the nearest
+    first, then by date, `shown` a side (`before_more`, `after_more`: the rest); `as_of`: only the edges valid at that
+    moment (what INSIGHT knew then). `relations`: those shown (chain_config's by default). One recursive query a side;
+    nothing is asked."""
+    rels = list(chain_config()["shown"] if relations is None else relations)
+    out: Dict[str, Any] = {"before": [], "after": [], "before_more": 0, "after_more": 0,
+                           "as_of": as_of.isoformat() if as_of else None}
+    if not rels:
+        return out
+    for side, near, far in (("before", "a", "b"), ("after", "b", "a")):
+        cur.execute(f"""
+            WITH RECURSIVE walk(story, via, relation, reason, depth, seen) AS (
+                SELECT x.{far}, x.{near}, x.relation, x.evidence->>'reason', 1, ARRAY[x.{near}, x.{far}]
+                  FROM mx_connections x
+                 WHERE x.{near} = %(s)s::uuid AND {_CHAIN_VALID}
+                UNION ALL
+                SELECT x.{far}, x.{near}, x.relation, x.evidence->>'reason', w.depth + 1, w.seen || x.{far}
+                  FROM walk w JOIN mx_connections x ON x.{near} = w.story
+                 WHERE w.depth < %(depth)s AND NOT x.{far} = ANY(w.seen) AND {_CHAIN_VALID})
+            SELECT DISTINCT ON (w.story) w.story::text, w.via::text, w.relation, w.reason, w.depth, s.headline
+              FROM walk w JOIN mx_stories s ON s.id = w.story
+             ORDER BY w.story, w.depth, w.relation""",
+                    {"rels": rels, "at": as_of or datetime.now(timezone.utc), "s": story_id,
+                     "depth": depth})
+        rows = cur.fetchall()
+        firsts = _story_firsts(cur, [r[0] for r in rows])
+        items = [{"story": s, "via": via, "relation": rel, "reason": reason, "depth": d, "headline": head,
+                  "first_at": firsts[s].isoformat() if firsts.get(s) else None}
+                 for s, via, rel, reason, d, head in rows]
+        items.sort(key=lambda r: (r["depth"], r["first_at"] or "", r["story"]))
+        out[side] = items[:shown]
+        out[side + "_more"] = max(0, len(items) - shown)
+    return out
+
+
+# the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
+_CHAIN_VALID = (f"x.a_kind = 'story' AND x.b_kind = 'story' AND x.rule = '{CHAIN_RULE}' AND x.relation = ANY(%(rels)s) "
+                "AND x.valid_from <= %(at)s AND (x.valid_to IS NULL OR x.valid_to > %(at)s)")
+
+
+def _story_firsts(cur: Any, story_ids: Sequence[str], *, current: bool = False) -> Dict[str, datetime]:
+    """{story: its first member's date} (`current`: its current members, stories merged away left out)."""
+    if not story_ids:
+        return {}
+    cur.execute(f"""SELECT sp.story_id::text, min({pairing.post_date('p')})
+                      FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
+                      {"JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL" if current else ""}
+                     WHERE sp.role = 'member' AND sp.story_id = ANY(%s::uuid[]) {"AND sp.valid_to IS NULL" if current else ""}
+                     GROUP BY sp.story_id""", (sorted(set(story_ids)),))
+    return {s: at for s, at in cur.fetchall() if at is not None}

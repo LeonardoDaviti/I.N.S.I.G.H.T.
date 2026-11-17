@@ -339,7 +339,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "headline", "briefing", "translate", "embed",   # embed: S2
                                               "alias", "collide", "embed_name",                # 0119 A1
                                               "alias2", "alias3", "alias4",                     # 0130 A2; 0201
-                                              "rename", "stop",                                 # 0165 B, C
+                                              "rename", "stop", "chain",                        # 0165 B, C; 0219
                                               "perspective", "sheet", "read3",                         # 0119 B
                                               "relate", "stance",                               # 0131, 0132 B
                                               "back",                                           # 0136

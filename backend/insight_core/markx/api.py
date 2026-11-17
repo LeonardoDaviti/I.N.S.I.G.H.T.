@@ -929,14 +929,21 @@ class FactLabelIn(BaseModel):
 
 
 @router.get("/stories/{story_id}")
-def mx_story_view(story_id: str):
-    from insight_core.markx import perspective_views
+def mx_story_view(story_id: str, as_of: Optional[datetime] = None):
+    """0219: `chain`, what led to the story and what followed (graph.chain), only the edges valid at `as_of` when
+    given; empty while the chains switch is off."""
+    from insight_core.markx import graph, perspective_views
     found = _uuid(story_id)
+    if as_of is not None and as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
     from insight_core.markx import units
     with transaction() as cur:
         got = perspective_views.story_view(cur, str(found)) if found else None
         if got is not None:   # 0181: the round-ups carrying a member, display only (never a voice or a member)
             got["roundups"] = units.also_in_story(cur, got["story"]["id"])
+            on = graph.chain_config()["on"]
+            got["chain"] = graph.chain(cur, got["story"]["id"], as_of=as_of) if on else \
+                {"before": [], "after": [], "before_more": 0, "after_more": 0, "as_of": None}
     if got is None:
         raise HTTPException(status_code=404, detail="No such Mark X story")
     return got

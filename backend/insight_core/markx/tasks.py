@@ -781,7 +781,8 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
 # v10.13.4: kinds the decision job plans, never a lease. v10.22 (0216): + relate, whose planner (graph.plan) read every
 # current edge and same-subject candidate on every lease while its queue ran below the lease's size (the worker drains it
 # all day: 63 runs in 104 minutes on the server, 0.6 s each); the decision run's graph stage plans it too.
-BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop")   # 0165 C: stop (stops.plan, no declared inputs)
+BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop",   # 0165 C: stop (stops.plan, no declared inputs)
+                      "chain")                                       # 0219: story chains (graph.plan_chains, after stop)
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:
@@ -913,7 +914,8 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "translate": lambda cur, **kw: _plan_translations(cur, **kw),   # 0130 D
             "relate": lambda cur, **kw: _plan_relate(cur),                  # 0131
             "back": lambda cur, **kw: _plan_back(cur),                      # 0136
-            "stop": lambda cur, **kw: _plan_stops(cur)}                     # 0165 C
+            "stop": lambda cur, **kw: _plan_stops(cur),                     # 0165 C
+            "chain": lambda cur, **kw: _plan_chains(cur)}                   # 0219
 
 
 def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capped like the decision run's
@@ -925,6 +927,11 @@ def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capp
 def _plan_stops(cur: Cursor) -> int:   # 0165 C: a thing's stop in each story about it (stops.plan)
     from insight_core.markx import stops   # stops reads this module
     return stops.plan(cur)["asked"]
+
+
+def _plan_chains(cur: Cursor) -> int:   # 0219: the settled chain answers made edges, then new pairs of stops asked
+    from insight_core.markx import graph   # graph imports this module
+    return graph.plan_chains(cur)["asked"]
 
 
 def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's
@@ -991,6 +998,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "relate":                 # 0131: asked until it has graph.RELATE_RUNS valid answers
         from insight_core.markx import graph
         graph.after_answer(cur, task)
+    elif task["kind"] == "chain":                  # 0219: asked until it has graph.CHAIN_RUNS valid answers
+        from insight_core.markx import graph
+        graph.chain_after_answer(cur, task)
     elif task["kind"] == "back":                   # 0136: asked until it has back.RUNS valid answers
         from insight_core.markx import back
         back.after_answer(cur, task)

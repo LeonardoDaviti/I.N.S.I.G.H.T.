@@ -658,6 +658,30 @@ export interface MarkxStoryView {
   posts: Record<string, MarkxStoryPost>;
   /** 0181: the round-ups carrying a member as an item (display only, never a voice). */
   roundups?: { post: string; source: string | null; title: string | null; n: number; item: string }[];
+  /** 0219: what led to the story and what followed, each link typed and explained (only the relations shown). */
+  chain?: MarkxChain;
+}
+
+/** 0219: how a later story relates to an earlier one about the same thing. */
+export type MarkxChainRelation = 'same_release' | 'same_event' | 'follows_up' | 'development' | 'reaction' | 'builds_on';
+
+export interface MarkxChainLink {
+  story: string;
+  /** the story this link hangs on (the page's story at depth 1, a nearer link's beyond). */
+  via: string;
+  relation: MarkxChainRelation;
+  reason: string | null;
+  depth: number;
+  headline: string | null;
+  first_at: string | null;
+}
+
+export interface MarkxChain {
+  before: MarkxChainLink[];
+  after: MarkxChainLink[];
+  before_more: number;
+  after_more: number;
+  as_of: string | null;
 }
 
 export interface MarkxRate {

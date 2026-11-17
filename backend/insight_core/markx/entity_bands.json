@@ -43,6 +43,11 @@
     "stops": true, "stop_types": false, "analysis": false,
     "measured": "plan/issues/0165-a-things-timeline.md, Built and measured (v10.23): stops (about) 97.0% [93.5-98.6] on 198 held-out answers, on; stop words 71-73% on held-out stops, off; analysis 40/60 = 67% [54-77], off"
   },
+  "chains": {
+    "about": "0219 (markx/graph.py, chain-v1): two stories that are both stops of one thing (stored stop answers saying about), the later at most 30 days after and among the 3 stops after the earlier, are asked how they relate (Haiku, two runs; an edge only when both agree), stored as story-to-story mx_connections (rule chain_stops), closed never deleted. `on`: the plan job asks and syncs, the story page shows its chain; `shown`: the relations the reader sees (the others are stored, not shown: under their bar).",
+    "on": true, "shown": [],
+    "measured": "plan/issues/0219-story-chains.md: no relation passes the bar (point 97%, Wilson lower 90%) on held-out sets; same_release (both runs agree) 53/55 = 96.4% [87.7-99.0] (round 1), 92/98 = 93.9% [87.3-97.2] (round 2, final guide); the others 33-75%. Every edge is stored (the input of 0217's one-release row), none is shown."
+  },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},
     {"opinion": "first", "guard": "none", "band": "0.85-0.90", "auto": false, "right": 46, "n": 49},
