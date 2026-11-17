@@ -227,7 +227,11 @@ class Ent:
     @property
     def pk(self) -> Tuple:
         if self._pk is None:
-            self._pk = _shared_key(N.fields_key(N.parse(self.name, self.type, self.maker), self.maker))
+            # v10.24 (0221): a type the parser reads no version of states none (names.parse: NONE), worked out at once:
+            # the run's book reads every entity's once a run (the pool's family values), most of them an org, a
+            # person, a place
+            self._pk = _NO_FIELDS if self.type not in N.VERSIONED else \
+                _shared_key(N.fields_key(N.parse(self.name, self.type, self.maker), self.maker))
         return self._pk
 
     @property
@@ -2161,19 +2165,27 @@ def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> 
     # v10.23 (0218): only the posts with a pair the rule could name have their text read (a full pass's chunk read every
     # text of every post naming one of its 1,000 seeds: 18.5 s of a server run), and a pair is looked for only when its
     # Y is the whole of some "(...)" in the text (a span folds to words and spaces, never a bracket)
-    want = {pid: got for pid, es in by.items() if (got := pairs(es))}
-    posts = tasks.load_posts(cur, sorted(want)) if want else {}
+    # v10.24 (0221): the texts read a page at a time (PAREN_PAGE posts), each page's pairs worked out with it: a full
+    # pass's chunk whose seeds a hub names read ~28k posts' texts at once (757 MB on the server-sized copy)
+    want = sorted(pid for pid, es in by.items() if pairs(es))
     out: Dict[str, Set[Tuple[str, str]]] = {pid: set() for pid in post_ids}
-    for pid, got in want.items():
-        p = posts.get(pid)
-        if p is None:
-            continue
-        text = bracket_fold(p.title + "\n" + p.text)
-        inner = set(_INNER.findall(text)) if "(" in text else ()
-        for (sa, _ta, ea), (sb, _tb, eb) in got:
-            if sb in inner and f"{sa} ({sb})" in text:
-                out[pid].add(pair(ea, eb))
+    for k in range(0, len(want), PAREN_PAGE):
+        page = want[k:k + PAREN_PAGE]
+        posts = tasks.load_posts(cur, page)
+        for pid in page:
+            p = posts.get(pid)
+            if p is None:
+                continue
+            text = bracket_fold(p.title + "\n" + p.text)
+            inner = set(_INNER.findall(text)) if "(" in text else ()
+            for (sa, _ta, ea), (sb, _tb, eb) in pairs(by[pid]):
+                if sb in inner and f"{sa} ({sb})" in text:
+                    out[pid].add(pair(ea, eb))
+        del posts
     return out
+
+
+PAREN_PAGE = 500   # v10.24 (0221): the posts whose texts paren_by_post reads at once
 
 
 _INNER = re.compile(r"\(([^()]*)\)")   # what a "(...)" holds, no bracket inside

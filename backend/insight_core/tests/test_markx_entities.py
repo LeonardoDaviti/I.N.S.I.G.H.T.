@@ -825,6 +825,22 @@ class Merging(_Db):
         self.assertEqual([i["reason"] for i in entity_views.queue(self.cur)["open"]], ["paren"])
         self.assertEqual(self.cur.execute("SELECT count(*) FROM mx_entity_redirects").fetchone()[0], 0)
 
+    def test_x_y_read_a_page_of_texts_at_a_time_finds_the_same_pairs(self):
+        """v10.24 (0221): paren_by_post reads its posts' texts PAREN_PAGE at a time (a hub's chunk read ~28k at once)."""
+        from insight_core.markx import schemas
+        ps = [self.post(0, T0, title="Boxwrap (Kernel) gets a sandbox"), self.post(1, T0 + H, title="Tarn (Vesk) ships"),
+              self.post(2, T0 + 2 * H, title="Nothing in brackets here")]
+        self.mentions(ps[0], ("Boxwrap", "software", "subject"), ("Kernel", "software", "mention"))
+        self.mentions(ps[1], ("Tarn", "software", "subject"), ("Vesk", "software", "mention"))
+        self.mentions(ps[2], ("Orbis", "software", "subject"), ("Lumen", "software", "mention"))
+        self.stage()
+        book, guide = I.run_book(self.cur), schemas.mention_guides()
+        whole = I.paren_by_post(self.cur, book, guide, ps)
+        with mock.patch.object(I, "PAREN_PAGE", 1):
+            paged = I.paren_by_post(self.cur, book, guide, ps)
+        self.assertEqual(paged, whole)
+        self.assertEqual([len(whole[p]) for p in ps], [1, 1, 0])
+
 
 class RuleProposedPairs(_Db):
     """v10.18: a name rule's `same` across two types is decided by Haiku; the open backlog is decided again."""
