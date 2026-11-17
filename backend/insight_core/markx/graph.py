@@ -889,6 +889,7 @@ CHAIN_RUNS = 2                        # answers a pair is asked for; an edge nee
                                       # 37/40 on one run, 35/36 when two runs agree)
 CHAIN_PLAN_MAX = 300                  # new questions a pass, at most
 CHAIN_MARK = "chains_planned"         # mx_settings: the last pass's clock (the stops answered since are paired)
+CHAIN_SYNCED = "chains_synced"        # mx_settings: the last sync's clock (the pairs answered since are read again)
 CHAIN_DEPTH = 3                       # links followed from a story, each way
 CHAIN_SHOWN = 12                      # links shown each way, at most
 CHAIN_RELATIONS = ("same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated")
@@ -992,7 +993,9 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     out: Dict[str, int] = {"pairs": 0, "asked": 0, "again": 0}
     if not chain_config()["on"]:
         return out
-    out.update(sync_chains(cur, now=now))
+    synced = (repo.get_setting(cur, CHAIN_SYNCED, default=None) or {}).get("at")
+    out.update(sync_chains(cur, now=now, since=datetime.fromisoformat(synced) - MARGIN if synced else None))
+    repo.set_setting(cur, CHAIN_SYNCED, {"at": now.isoformat()})
     mark = repo.get_setting(cur, CHAIN_MARK, default=None) or {}
     since = datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") else None
     book = I.lazy_book(cur)
@@ -1029,18 +1032,24 @@ def _chain_current(cur: Any) -> List[Dict[str, Any]]:
     return [{"a": a, "b": b, "relation": rel} for a, b, rel in cur.fetchall()]
 
 
-def sync_chains(cur: Any, *, now: datetime, run_id: Any = None) -> Dict[str, int]:
+def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[datetime] = None) -> Dict[str, int]:
     """The chain edges become what the settled answers say of the pairs still proposed: a linking verdict opens its
     edge (relation, p 1.0: its runs agree; the call; evidence {reason, thing, runs}); an edge whose verdict changed,
     or whose pair is no longer two stops of one thing (a stop answer now saying not about, a story merged away or
-    emptied), closes (kept, never deleted). Every relation is stored; what is shown is chain_config's."""
+    emptied), closes (kept, never deleted). `since`: only the pairs with an answer since then are read again (every
+    current edge is still checked against the pairs proposed). Every relation is stored; what is shown is
+    chain_config's."""
     from insight_core.markx import identity as I
     stops, _ = chain_stops(cur, I.lazy_book(cur))
     cands = chain_pairs(stops)
-    cur.execute("""SELECT DISTINCT ON (t.a, t.b) t.a::text, t.b::text, t.id::text FROM mx_tasks t
-                    WHERE t.kind = %s AND t.status = 'answered' ORDER BY t.a, t.b, t.created_at DESC, t.id DESC""",
-                (CHAIN_KIND,))
-    newest = {(a, b): tid for a, b, tid in cur.fetchall() if (a, b) in cands}
+    cur.execute(f"""SELECT DISTINCT ON (t.a, t.b) t.a::text, t.b::text, t.id::text FROM mx_tasks t
+                     WHERE t.kind = %(k)s AND t.status = 'answered'
+                       {"AND (t.a, t.b) IN (SELECT a, b FROM mx_tasks WHERE kind = %(k)s AND answered_at >= %(since)s)"
+                        if since is not None else ""}
+                     ORDER BY t.a, t.b, t.created_at DESC, t.id DESC""", {"k": CHAIN_KIND, "since": since})
+    got = cur.fetchall()
+    touched = {(a, b) for a, b, _t in got}
+    newest = {(a, b): tid for a, b, tid in got if (a, b) in cands}
     calls: Dict[str, List[Tuple[str, Dict[str, Any]]]] = defaultdict(list)
     ids = sorted(newest.values())
     for k in range(0, len(ids), 5000):
@@ -1057,7 +1066,7 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None) -> Dict[str, int
     kept = set()
     for e in _chain_current(cur):
         key = (e["a"], e["b"])
-        if key in want and want[key]["relation"] == e["relation"]:
+        if key in cands and (key not in touched or (key in want and want[key]["relation"] == e["relation"])):
             kept.add(key)
             continue
         cur.execute("""UPDATE mx_connections SET valid_to = GREATEST(valid_from, %s)
