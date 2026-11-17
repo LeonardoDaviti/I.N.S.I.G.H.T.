@@ -27,7 +27,7 @@ export default function MarkXPage() {
           <TabsList aria-label="Mark X">
             {TABS.map((t) => <TabsTrigger key={t} value={t}>{t}</TabsTrigger>)}
           </TabsList>
-          <TabsContent value="news"><MarkXBack /><MarkXNews /><MarkXRoundup /></TabsContent>
+          <TabsContent value="news"><MarkXNews /><MarkXBack /><MarkXRoundup /></TabsContent>
           <TabsContent value="briefing"><MarkXBriefing /></TabsContent>
           <TabsContent value="entities"><MarkXEntities /></TabsContent>
           <TabsContent value="worker"><MarkXWorker /></TabsContent>
