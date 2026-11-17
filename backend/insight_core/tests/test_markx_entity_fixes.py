@@ -78,7 +78,29 @@ class Guards(unittest.TestCase):
         self.assertEqual((name, typ), ("Zentra", None))          # more sources write it
 
 
+class Tick:
+    """A clock that moves a second each time it is read (entity_repair's `time`): a sweep given a deadline 3.5 s
+    ahead does exactly one step (v10.24, 0221: a step starts only when the last one's seconds are left)."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def monotonic(self):
+        self.t += 1.0
+        return self.t
+
+    def one_step(self):
+        return self.t + 3.5
+
+
 class Fixes(base._Db):
+    def linked(self, **kw):
+        """A run whose repairs are off: the data as linked before a repair could see it (v10.24, 0221: the repairs
+        run after the linking, in the same run; these fixtures are the data they then find)."""
+        off = {k: False for k in R.STEPS}
+        with mock.patch.object(R, "config", lambda: {**off, "shown": True}):
+            return self.stage(**kw)
+
     def ent_named(self, name):
         self.cur.execute("SELECT id::text FROM mx_entities WHERE name = %s ORDER BY created_at LIMIT 1", (name,))
         return self.cur.fetchone()[0]
@@ -144,10 +166,10 @@ class Fixes(base._Db):
         ps = [self.post(n, T0 + n * H) for n in range(4)]
         self.mentions(ps[0], ("Zentra", "org", "actor"))
         self.mentions(ps[2], ("Zentra Vela", "org", "mention"))
-        self.stage()
+        self.linked()
         self.mentions(ps[1], ("Vela 5", "model", "subject", "Zentra", v("Vela", "5")))
         self.mentions(ps[3], ("Vela", "model", "subject"))
-        self.stage()
+        self.linked()
         return [self.ent_named(x) for x in ("Zentra", "Vela", "Zentra Vela", "Vela 5")]
 
     def test_2_a_family_merged_into_an_org_is_cut_apart_by_an_undo_never_the_owners_merge(self):
@@ -219,7 +241,7 @@ class Fixes(base._Db):
         for n, (name, maker, f) in enumerate(rows):
             p = self.post(n % 5, T0 + n * H)
             self.mentions(p, (name, "model", "subject", maker, f), ("Zentra", "org", "actor"))
-        self.stage()
+        self.linked()
         return {name: self.ent_named(name) for name, _, _ in rows}
 
     def test_3_families_split_by_a_brand_or_maker_prefix_join_and_their_versions_follow(self):
@@ -282,9 +304,9 @@ class Fixes(base._Db):
     # ---- 0218: the shown names' sweep resumes ----------------------------------------------------------------------
 
     def test_the_shown_sweep_over_every_cluster_resumes_where_it_stopped_single_names_too(self):
-        """A sweep past its deadline does one step (the next clusters of several names and the single names before
-        them) and the next run resumes after it: every cluster once, the single names never all at a sweep's start;
-        the same names and types as a sweep without a deadline."""
+        """A sweep with the time for one step does one step (the next clusters of several names and the single names
+        before them) and the next run resumes after it: every cluster once, the single names never all at a sweep's
+        start; the same names and types as a sweep without a deadline. v10.24 (0221): past its deadline, none."""
         names = ["Kip", "Kip Marlow", "Zentra", "Zentra Devs", "Orbis", "Lumen", "Tarn", "Vesk", "Quill", "Brae"]
         for n, name in enumerate(names):
             self.mentions(self.post(n % 3, T0 + n * H), (name, "org" if n % 3 else "person", "subject"))
@@ -303,10 +325,12 @@ class Fixes(base._Db):
         want = self.cur.fetchall()
         self.cur.execute("ROLLBACK TO SAVEPOINT sweep")
         self.assertEqual((whole["clusters"], whole["done"]), (len(roots), True))
-        with mock.patch.object(R, "SHOWN_CHUNK", 1):
+        clock = Tick()
+        with mock.patch.object(R, "SHOWN_CHUNK", 1), mock.patch.object(R, "time", clock):
             after, steps = None, []
             while True:
-                got = R.shown(self.cur, I.run_book(self.cur), guide, roots=None, after=after, deadline=0.0)
+                got = R.shown(self.cur, I.run_book(self.cur), guide, roots=None, after=after,
+                              deadline=clock.one_step())
                 steps.append((got["clusters"], sum(1 for r in roots if (after is None or r > after)
                                                    and (got["done"] or r <= got["after"]))))
                 if got["done"]:
@@ -328,16 +352,51 @@ class Fixes(base._Db):
         self.stage()
         roots = sorted(I.run_book(self.cur).ids())
         after, steps = None, []
-        with mock.patch.object(R, "SHOWN_SINGLES", 3):
+        clock = Tick()
+        with mock.patch.object(R, "SHOWN_SINGLES", 3), mock.patch.object(R, "time", clock):
             while True:
                 got = R.shown(self.cur, I.run_book(self.cur), schemas.mention_guides(), roots=None, after=after,
-                              deadline=0.0)
+                              deadline=clock.one_step())
                 steps.append(got["clusters"])
                 if got["done"]:
                     break
                 after = got["after"]
                 self.assertEqual(after, roots[sum(steps) - 1])
         self.assertEqual(steps, [3, 3, 1])
+
+    def test_the_repairs_go_a_step_at_a_time_and_the_next_run_resumes_at_the_step_left(self):
+        """v10.24 (0221): the repairs run with what the stage's budget has left; a step starts only when the seconds
+        it took the last time are left, and the next run begins at the first step this one could not start."""
+        z, vela, zv, v5 = self._org_and_family()
+        took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0}
+        clock = Tick()
+        with mock.patch.object(R, "time", clock):
+            first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 6.5,
+                             last={"took": took})
+        self.assertEqual((first["done"], first["next"]), (False, "reparent"))   # two steps fitted, not the third
+        self.assertEqual(set(first) & set(R.STEPS), {"org_family", "product_accounts"})
+        self.assertEqual(first["product_accounts"]["merged"], 1)
+        self.assertEqual(set(first["took"]), set(R.STEPS))                       # the steps not run keep their seconds
+        second = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=first)
+        self.assertEqual((second["done"], second["next"]), (True, None))
+        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families"})   # resumed where the first stopped
+        third = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=second)
+        self.assertEqual(set(third) & set(R.STEPS), set(R.STEPS))                # done: a new round from the first
+        self.assertEqual(third["product_accounts"]["merged"], 0)                 # idempotent
+
+    def test_the_full_pass_leaves_the_steps_after_it_what_they_took_the_last_time(self):
+        """v10.24 (0221): a full pass half done lasts days on the server; it stops early by what the repairs' next
+        step, a step of the shown names and the invariants took in the last run (a guess for what never ran), and
+        each of those leaves the ones after it theirs."""
+        from insight_core.markx import entity_stage, repo
+        self.assertEqual(entity_stage.after_pass(self.cur), (entity_stage.REPAIR_GUESS, entity_stage.SHOWN_GUESS,
+                                                             entity_stage.INVARIANTS_GUESS))
+        run = repo.start_run(self.cur, code_version="test", config={})
+        repo.finish_run(self.cur, run, counts={"entities": {
+            "repair": {"done": False, "next": "reparent", "took": {"org_family": 9.0, "reparent": 4.0}},
+            "shown": {"done": False, "after": "x", "steps": 3, "seconds": 6.0},
+            "invariants": {"family_org": {"count": 0}, "seconds": 0.5}}})
+        self.assertEqual(entity_stage.after_pass(self.cur), (4.0, 2.0, 0.5))
 
 
 if __name__ == "__main__":

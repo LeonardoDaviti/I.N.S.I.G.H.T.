@@ -81,6 +81,7 @@ class Guards(unittest.TestCase):
 class OwnerAnswers(base._Db):
     """A, B and C on a test database."""
     ent_named, legacy_owner_same, _org_and_family = F.Fixes.ent_named, F.Fixes.legacy_owner_same, F.Fixes._org_and_family
+    linked = F.Fixes.linked
 
     def _server_shape(self):
         """Linked as on the server: the account "Zentra Vela" (an org) before its family was known, then merged into
@@ -89,10 +90,10 @@ class OwnerAnswers(base._Db):
         self.mentions(ps[0], ("Zentra", "org", "actor"))
         self.mentions(ps[1], ("Zentra AI", "org", "actor"))
         self.mentions(ps[2], ("Zentra Vela", "org", "mention", None, None, "@zentravela"))
-        self.stage()
+        self.linked()
         self.mentions(ps[3], ("Vela 5", "model", "subject", "Zentra AI", v("Vela", "5")))
         self.mentions(ps[4], ("Vela", "model", "subject"))
-        self.stage()
+        self.linked()
         z, zai, zv, vela = (self.ent_named(x) for x in ("Zentra", "Zentra AI", "Zentra Vela", "Vela"))
         book = self.book()
         I.merge(self.cur, book, zai, z, by="rule:squash", automatic=True)

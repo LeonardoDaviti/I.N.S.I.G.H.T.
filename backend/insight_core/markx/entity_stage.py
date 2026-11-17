@@ -30,10 +30,15 @@ counts and versions as a snapshot in the run's transaction, the pool's indexes f
 kept), the repairs' walks row by row. The same rows as with the whole book (the server-sized copy: every mx_* table);
 the stage's peak 317 MB instead of 694 MB there (+99 MB above its start, was +344).
 
-0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
-names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
-0168: then the handle rule over the posts it has not read (markx/handles.py; `handles`), and the questions its pairs
-raise. 0164 C: then the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
+v10.24 (0221): **one budget, spent in the order of what matters**, nothing started that the time left can't hold:
+the run's book, then the linking of the new mentions (every part until they are linked), then the full pass, then
+the identity repairs (markx/entity_repair.py; `repair`, a step at a time, resumed at the step the last run left),
+the shown names and types (`shown`: the run's touched clusters, then the sweep over every cluster, resumed by
+`after`), the invariants, the addresses, the rename questions, and the handle rule over the posts it has not read
+(markx/handles.py; `handles`). Each starts only when the seconds it is expected to take are left; what is left is
+the next run's. On the server (v10.23) the repairs ran first in a quarter of the budget and overran it (13.8-17.0 s),
+the linking then did 1 part of 13, and the stage ran 55-87 s against its 45.
+0164 C: the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
 """
 from __future__ import annotations
 
@@ -44,7 +49,6 @@ from insight_core.markx import identity, surges as S
 
 NIGHTLY_HOUR = 4
 MARGIN = timedelta(minutes=2)
-REPAIR_SHARE = 0.25   # 0164: the identity repairs' share of the stage's budget (each step skipped past it)
 
 
 FULL_DEFERRED = "entities_full_deferred"   # mx_settings: {"at": ISO, "why": ...} (v10.13.4)
@@ -122,21 +126,27 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
     book = identity.run_book(cur) if book is None else book   # v10.23 (0218): read by need, once a run (shared)
-    # 0164: the identity repairs first (the linking then sees them), in their share of the budget
-    fixed, book = repairs(cur, book, run_id=run_id, full=whole,
-                          deadline=None if budget is None else time.monotonic() + budget * REPAIR_SHARE)
+    # v10.24 (0221): the linking, then the full pass (its chunks sized by the pace the last run measured)
+    last_full, last_inc = _last(cur, "full"), _last(cur, "incremental")
+    kept = after_pass(cur)   # v10.24: what the repairs, a shown step and the invariants are expected to take
+    rate = last_full.get("rate") if isinstance(last_full, dict) else None
     out = identity.stage(cur, ask=ask, now=now, run_id=run_id, full=whole, since=since,
                          after=left.get("after") if left else None, link_after=left.get("link_after") if left else None,
                          phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book,
-                         may_skip=not (left or {}).get("skipped"))
-    out["repair"] = fixed
+                         seed_rate=rate, keep=sum(kept),
+                         collide_rate=last_inc.get("collide_rate") if isinstance(last_inc, dict) else None)
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
     linked = out.pop("posts_linked", [])
-    out["shown"] = shown(cur, book, whole=whole, since=since, posts=linked, deadline=deadline)
-    out["invariants"] = invariants(cur, book, deadline=deadline)
+    # v10.24 (0221): then the repairs (a step at a time, from where the last run's stopped) and the sweeps, with what
+    # is left (0164: they ran first, in a quarter of the budget they overran); each leaves the next its expected time
+    out["repair"], book = repairs(cur, book, run_id=run_id, full=whole, last=_last(cur, "repair"),
+                                  deadline=None if deadline is None else deadline - kept[1] - kept[2])
+    out["shown"] = shown(cur, book, whole=whole, since=since, posts=linked,
+                         deadline=None if deadline is None else deadline - kept[2])
+    out["invariants"] = invariants(cur, book, deadline=deadline, expect=kept[2])
     sweep = whole and not left
     out["addresses"] = addresses(cur, now=now, since=since, full=sweep, after=None if sweep else addresses_left(cur),
                                  deadline=deadline, also=linked, book=book)
@@ -155,14 +165,39 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     return out, (None if cur.fetchone()[0] else days)
 
 
-def repairs(cur: Any, book: Any, *, run_id: Any, full: bool, deadline: Optional[float]) -> Tuple[Dict[str, Any], Any]:
+REPAIR_GUESS = 3.0   # v10.24 (0221): the seconds kept for a repair step never measured yet (the server's: 1-5 s)
+SHOWN_GUESS = 2.0    # v10.24: likewise for a step of the shown names' sweep
+INVARIANTS_GUESS = 1.0   # v10.24: likewise for the invariants
+
+
+def after_pass(cur: Any) -> Tuple[float, float, float]:
+    """v10.24 (0221): the seconds the steps after the full pass are expected to take this run, as the last run
+    measured them: (the repairs' next step, a step of the shown names' sweep, the invariants), a guess for what was
+    never measured. The full pass leaves their sum (identity.stage `keep`), and each step leaves the ones after it
+    theirs: a pass half done lasts days on the server and every run is "whole" meanwhile, so the pass would take
+    every second the linking leaves, and the repairs would take the sweep's, for good."""
+    from insight_core.markx import entity_repair
+    rep, sh, inv = _last(cur, "repair"), _last(cur, "shown"), _last(cur, "invariants")
+    r = REPAIR_GUESS
+    if isinstance(rep, dict):
+        nxt = rep.get("next") if rep.get("done") is False else entity_repair.STEPS[0]
+        r = float((rep.get("took") or {}).get(nxt) or REPAIR_GUESS)
+    s_ = sh["seconds"] / max(1, sh.get("steps") or 1) if isinstance(sh, dict) and sh.get("seconds") else SHOWN_GUESS
+    i = float(inv.get("seconds") or INVARIANTS_GUESS) if isinstance(inv, dict) else INVARIANTS_GUESS
+    return r, s_, i
+
+
+def repairs(cur: Any, book: Any, *, run_id: Any, full: bool, deadline: Optional[float],
+            last: Any = None) -> Tuple[Dict[str, Any], Any]:
     """0164: entity_repair.repair in a savepoint: (its counts, the book). A failure is logged in the counts and
-    undone (the book read again), never the run's."""
+    undone (the book read again), never the run's. `last`: the last finished run's counts of it (v10.24: the step
+    to resume at, and each step's seconds)."""
     import logging
     from insight_core.markx import entity_repair
     cur.execute("SAVEPOINT entity_repair")
     try:
-        got = entity_repair.repair(cur, book, run_id=run_id, full=full, deadline=deadline)
+        got = entity_repair.repair(cur, book, run_id=run_id, full=full, deadline=deadline,
+                                   last=last if isinstance(last, dict) else None)
     except Exception as error:  # noqa: BLE001 - a derived step never stops the run
         cur.execute("ROLLBACK TO SAVEPOINT entity_repair")
         logging.getLogger(__name__).exception("Mark X: the entity repairs failed")
@@ -180,16 +215,18 @@ def last_invariants(cur: Any) -> Optional[Dict[str, Any]]:
     return None if row is None else {**(row[0] or {}), "at": row[1]}
 
 
-def invariants(cur: Any, book: Any, *, deadline: Optional[float] = None) -> Dict[str, Any]:
+def invariants(cur: Any, book: Any, *, deadline: Optional[float] = None, expect: float = 0.0) -> Dict[str, Any]:
     """0164 C: what must hold after every run, counted, with an alarm on /markx when it doesn't: `family_org`, the
     clusters holding a product family and an org or person (0 after the repair; the owner's own merges are `held`).
     Read only; a failure is logged in the counts, never the run's. v10.22.2: past the stage's `deadline`, not counted
-    (`{"skipped": "deadline"}`; the next run counts them)."""
+    (`{"skipped": "deadline"}`; the next run counts them). v10.24 (0221): nor when the seconds they took the last
+    time (`expect`) are not left."""
     import logging
     import time
     from insight_core.markx import entity_repair
-    if deadline is not None and time.monotonic() > deadline:
-        return {"skipped": "deadline"}
+    if deadline is not None and time.monotonic() + expect > deadline:
+        return {"skipped": "deadline", **({"seconds": expect} if expect else {})}
+    at = time.monotonic()
     cur.execute("SAVEPOINT entity_invariants")
     try:
         got = {"family_org": entity_repair.family_org(book, cur)}
@@ -198,6 +235,7 @@ def invariants(cur: Any, book: Any, *, deadline: Optional[float] = None) -> Dict
         logging.getLogger(__name__).exception("Mark X: the entity invariants failed")
         return {"error": str(error)[:200]}
     cur.execute("RELEASE SAVEPOINT entity_invariants")
+    got["seconds"] = round(time.monotonic() - at, 3)
     return got
 
 
@@ -210,10 +248,20 @@ def shown(cur: Any, book: Any, *, whole: bool, since: Optional[datetime], posts:
     from insight_core.markx import entity_repair, schemas
     if not entity_repair.config()["shown"]:
         return {"off": True}
+    import time
     guide = schemas.mention_guides()
     last = _last(cur, "shown")
     resume = last.get("after") if isinstance(last, dict) and last.get("done") is False else None
     every = whole or resume is not None or not isinstance(last, dict) or since is None
+    if every and deadline is not None:
+        # v10.24 (0221): the sweep starts only when a step's seconds are left (the last run's seconds a step, its
+        # reads of every cluster's root included); else it waits where it is
+        step = (last.get("seconds") or 0.0) / max(1, last.get("steps") or 1) if isinstance(last, dict) else 0.0
+        if time.monotonic() + step > deadline:
+            return {"clusters": 0, "names": 0, "types": 0, "done": False, "steps": 0, "skipped": "deadline",
+                    "after": None if whole and resume is None else resume,
+                    **({"seconds": last["seconds"]} if isinstance(last, dict) and last.get("seconds") else {})}
+    at = time.monotonic()
     cur.execute("SAVEPOINT entity_shown")
     try:
         if every:
@@ -232,6 +280,7 @@ def shown(cur: Any, book: Any, *, whole: bool, since: Optional[datetime], posts:
         logging.getLogger(__name__).exception("Mark X: the shown names failed")
         return {"error": str(error)[:200], "done": False, "after": resume}
     cur.execute("RELEASE SAVEPOINT entity_shown")
+    got["seconds"] = round(time.monotonic() - at, 3)
     return got
 
 

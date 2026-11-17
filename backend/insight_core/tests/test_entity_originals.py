@@ -209,7 +209,8 @@ class Addresses(_AddressCase):
 
     def test_a_sweep_past_its_deadline_stops_after_a_chunk_and_resumes_where_it_stopped(self):
         """v10.13.9: the sweep of every post keeps to the stage's budget; the next runs go on from its `after`, and
-        together they find what one sweep finds."""
+        together they find what one sweep finds. v10.24 (0221): no chunk starts past the budget; a sweep with no time
+        to start waits (FROM_START)."""
         import time
         from unittest import mock
         posts = []
@@ -226,10 +227,14 @@ class Addresses(_AddressCase):
         self.cur.execute("ROLLBACK TO SAVEPOINT once")
         self.assertEqual((once["posts"], once["done"], len(want)), (4, True, 4))
         seen, after = [], None
-        with mock.patch.object(EA, "CHUNK", 1):
+        from insight_core.tests.test_markx_entity_fixes import Tick
+        clock = Tick()   # v10.24 (0221): the time for one chunk a run (none starts past the budget)
+        self.assertEqual(EA.stage(self.cur, now=T0, since=datetime.now(timezone.utc) + D, full=True,
+                                  deadline=time.monotonic() - 1)["after"], EA.FROM_START)   # past it: waits to start
+        with mock.patch.object(EA, "CHUNK", 1), mock.patch.object(EA, "time", clock):
             while not seen or not seen[-1]["done"]:
                 seen.append(EA.stage(self.cur, now=T0, since=datetime.now(timezone.utc) + D, full=not seen, after=after,
-                                     deadline=time.monotonic() - 1))
+                                     deadline=clock.t + 1.5))
                 after = seen[-1]["after"]
                 self.assertLess(len(seen), 10)
         self.assertEqual([o["posts"] for o in seen], [1, 1, 1, 1])     # a chunk a run, none read twice

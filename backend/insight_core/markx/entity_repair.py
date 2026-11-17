@@ -161,7 +161,9 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
     out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
     rows = redirect_rows(cur)
     owner = _owner_same(cur)
-    for root, ms in sorted(book.clusters().items()):   # v10.22 (0216): a cluster of one has no side to cut
+    clusters = book.clusters()
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go, not a cluster at a time
+    for root, ms in sorted(clusters.items()):   # v10.22 (0216): a cluster of one has no side to cut
         if len(ms) < 2 or out["undone"] >= limit:
             continue
         fam, org = book.sides(ms)
@@ -252,11 +254,7 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
     def ready(page: List[I.Ent]) -> List[I.Ent]:
         types = book.etypes(page)
         got = [e for e in page if types.get(e.id) == "org"]
-        rests = {" ".join(e.key.split()[i:]) for e in got for i in range(1, len(e.key.split()))}
-        book.prime(keys=rests)
-        want_fams = getattr(book.families(), "want", None)
-        if want_fams is not None:
-            want_fams(rests)
+        book.prime_names(e.key for e in got)   # v10.24 (0221): and what product_of asks of them, in one go
         return got
     from insight_core.markx import schemas
     org = schemas.stored_types(["org"])
@@ -313,7 +311,9 @@ def family_org(book: I.Book, cur: Any = None, show: int = 10) -> Dict[str, Any]:
     run, but for the clusters the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by
     name."""
     mixed = []
-    for root, ms in book.clusters().items():   # v10.22 (0216): a cluster of one holds no family and org
+    clusters = book.clusters()
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go (none if read already)
+    for root, ms in clusters.items():   # v10.22 (0216): a cluster of one holds no family and org
         if len(ms) < 2 or root not in book.ents:
             continue
         fam, org = book.sides(ms)
@@ -341,7 +341,9 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
     groups: Dict[Tuple[str, str], List[I.Ent]] = defaultdict(list)
     versions = _versions(book)
     book.prime(ids={e.parent for e in versions})
-    book.prime_clusters({book.root(e.parent) for e in versions})
+    parents = {book.root(e.parent) for e in versions}
+    book.prime_clusters(parents)
+    book.prime_sides(m for r in parents if r for m in book.cluster(r))   # v10.24 (0221): org_like's, in one go
     for e in versions:
         r = book.root(e.parent)
         if r not in book.ents:
@@ -409,6 +411,7 @@ def _family_roots(book: I.Book) -> Dict[str, List[str]]:
     for e in _families(book):
         roots.add(book.root(e.id))
     book.prime_clusters(roots)
+    book.prime_sides(m for r in roots if r for m in book.cluster(r))   # v10.24 (0221): sides', in one go
     out: Dict[str, List[str]] = {}
     for r in roots:
         ms = book.cluster(r)
@@ -717,47 +720,67 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     # of one, whichever comes first), stopping past `deadline` after a step; `after` (the step's last root) says where
     # the next run resumes. The single names were all done at a sweep's start, past the deadline: every run with a
     # full pass half done starts a sweep once the last is done (330k names read and let go, 18 s past the budget).
-    done, last = True, after
+    # v10.24 (0221): a step starts only when the seconds the last one took are left (the first: any time left), so
+    # the sweep never runs past the stage's budget; `steps` says how many it did
+    done, last, steps, took = True, after, 0, 0.0
     lone: List[str] = []
     many: List[str] = []
     for n, r in enumerate(todo):
         (many if len(members[r]) > 1 else lone).append(r)
         if n + 1 < len(todo) and len(many) < SHOWN_CHUNK and len(lone) < SHOWN_SINGLES:
             continue
+        if roots is None and deadline is not None and time.monotonic() + took > deadline:
+            done = False   # this step and the rest are the next run's (it resumes after the last step done)
+            break
+        at = time.monotonic()
         for p in range(0, len(lone), SHOWN_CHUNK):
             singles(lone[p:p + SHOWN_CHUNK])
         if many:
             several(many)
         lone, many = [], []
-        if roots is None and n + 1 < len(todo) and deadline is not None and time.monotonic() > deadline:
-            done, last = False, r
-            break
+        steps, last, took = steps + 1, r, time.monotonic() - at
     got: Dict[str, Any] = dict(out)
     if roots is None:
-        got.update(done=done, after=None if done else last)
+        got.update(done=done, after=None if done else last, steps=steps)
     return got
 
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None) -> Dict[str, Any]:
-    """Steps 1-3 and 1b, in order, each skipped past `deadline` (the next run does it)."""
-    from insight_core.markx import schemas
+STEPS = ("org_family", "product_accounts", "reparent", "families")
+GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
+
+
+def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None,
+           last: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Steps 1, 1b, 2 and 3, in order. v10.24 (0221): with what the stage's budget has left after the linking and the
+    full pass. A step starts only when the seconds it took the last time (`last`: the last run's counts, `took`) are
+    left; the steps it can't start are the next run's, which begins at the first of them (`next`) and goes on to the
+    last (`done` once the last ran). Each step is idempotent: run again, it finds what is left to fix."""
     cfg = config()
-    guide = schemas.mention_guides()
     w = I.Writer(cur, book, run_id)
     out: Dict[str, Any] = {}
     t0 = time.monotonic()
-    steps = [("org_family", lambda: undo_org_family(cur, book, run_id=run_id)),
-             ("product_accounts", lambda: product_accounts(cur, book, run_id=run_id)),
-             ("reparent", lambda: reparent(cur, book, w, run_id=run_id)),
-             ("families", lambda: merge_families(cur, book, run_id=run_id))]
-    for name, step in steps:
+    steps = {"org_family": lambda: undo_org_family(cur, book, run_id=run_id),
+             "product_accounts": lambda: product_accounts(cur, book, run_id=run_id),
+             "reparent": lambda: reparent(cur, book, w, run_id=run_id),
+             "families": lambda: merge_families(cur, book, run_id=run_id)}
+    last = last or {}
+    took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
+    start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0
+    took: Dict[str, float] = {}
+    nxt = None
+    for name in STEPS[start:]:
         if not cfg.get(name, True):
             continue
-        if deadline is not None and time.monotonic() > deadline:
-            out[name] = {"skipped": "budget"}
-            continue
-        out[name] = step()
+        expect = float(took_before.get(name) or GUESS)
+        if deadline is not None and time.monotonic() + expect > deadline:
+            nxt = name   # this step and those after it are the next run's
+            break
+        at = time.monotonic()
+        out[name] = steps[name]()
+        took[name] = round(time.monotonic() - at, 3)
+    out["took"] = {**{k: v for k, v in took_before.items() if k in STEPS}, **took}
+    out["done"], out["next"] = nxt is None, nxt
     out["seconds"] = round(time.monotonic() - t0, 3)
     return out

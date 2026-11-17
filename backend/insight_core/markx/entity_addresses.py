@@ -10,6 +10,7 @@ entity in its current set (a later guide's reading may not).
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -40,6 +41,9 @@ def _makers(book: I.Book, root: str) -> Set[str]:
         if e.parent and e.level == "thing" and e.parent in book.ents:
             out.add(book.ents[book.root(e.parent) or e.parent].key)
     return {m for m in out if m}
+
+
+FROM_START = "00000000-0000-0000-0000-000000000000"   # v10.24 (0221): a sweep waiting to start resumes after it
 
 
 def _mentions(cur: Any, post_ids: Optional[List[str]], after: Optional[str] = None) -> List[Tuple]:
@@ -133,16 +137,21 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
     """Find and store the addresses of the posts whose current set came since `since` and the posts in `also` (the
     posts whose mentions the run linked: v10.13.9, a run that stops at its budget links the rest later, after their
     set came). `full` or no `since`: a sweep of every post, in post id order; `after` resumes a sweep past that post.
-    A sweep stops after the chunk of CHUNK posts that passes `deadline` (a time.monotonic() value) and says where
-    ({done: false, after}); the run's own posts are done first, always. Returns {posts, found, added, by_rule, done,
-    after}."""
-    import time
+    A sweep starts no chunk of CHUNK posts past `deadline` (a time.monotonic() value; v10.24: none at all) and says
+    where it stopped ({done: false, after}); the run's own posts are done first, always. Returns {posts, found,
+    added, by_rule, done, after}."""
     sweep = full or since is None or after is not None
+    # v10.24 (0221): no time left for the sweep: the run's own posts only, and the sweep waits where it is (from the
+    # start: FROM_START), for a run with time left (it read every post's mentions before its first chunk, then ran
+    # that chunk past the budget)
+    waits = after or FROM_START if sweep and deadline is not None and time.monotonic() > deadline else None
+    if waits is not None:
+        sweep, after = False, None
     first: Set[str] = set(also)
     if since is not None and not full:
         cur.execute("SELECT post_id::text FROM mx_mention_sets WHERE at >= %s", (since - MARGIN,))
         first |= {r[0] for r in cur.fetchall()}
-    empty = {"posts": 0, "found": 0, "added": 0, "by_rule": {}, "done": True, "after": None}
+    empty = {"posts": 0, "found": 0, "added": 0, "by_rule": {}, "done": waits is None, "after": waits}
     if not sweep and not first:
         return empty
     # a resumed sweep reads the posts past where it stopped (and the run's own), not every post again
@@ -182,8 +191,8 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
         done_posts += len(chunk)
         if k >= n_head:
             last = chunk[-1]
-        if n_head <= k < len(chunks) - 1 and deadline is not None and time.monotonic() > deadline:
-            done = False   # the sweep's posts left are the next run's (it stops only after one of its own chunks)
+        if n_head <= k + 1 < len(chunks) and deadline is not None and time.monotonic() > deadline:
+            done = False   # the sweep's posts left are the next run's (v10.24: none started past the budget)
             break
     added = 0
     for (root, url), (kind, rule, pid, owner) in sorted(found.items()):
@@ -192,6 +201,8 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
                     (root, url, kind, rule, pid, now, owner))
         added += cur.rowcount
         by_rule[rule] += 1
+    if waits is not None:
+        done, last = False, waits
     return {"posts": done_posts, "found": len(found), "added": added, "by_rule": dict(by_rule), "done": done,
             "after": None if done else last}
 

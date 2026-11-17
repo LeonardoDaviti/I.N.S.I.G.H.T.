@@ -430,9 +430,9 @@ def scan_pending(cur: Any, *, limit: int = SCAN_LIMIT, deadline: Optional[float]
     {posts, refs, pairs, done: nothing left pending}."""
     import time
     got: Counter = Counter({"posts": 0, "refs": 0, "pairs": 0})
-    first = True   # one batch a run even past the deadline, so a long full pass never starves the scan
-    while got["posts"] < limit and (first or deadline is None or time.monotonic() < deadline):
-        first = False
+    # v10.24 (0221): no batch past the deadline (one a run went past it, so a long full pass never starved the scan:
+    # the stage now spends its budget in order, and the scan has what the linking and the full pass leave)
+    while got["posts"] < limit and (deadline is None or time.monotonic() < deadline):
         ids = pending(cur, min(SCAN_BATCH, limit - got["posts"]))
         if not ids:
             break
