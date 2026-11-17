@@ -262,6 +262,108 @@ class Timeline(_Db):
         self.assertEqual(len(top), 8)
         self.assertIn(10, top)                                                        # the birth, though last
 
+    def reading(self, pid, kind, obj, headline, event_type="product_release"):
+        task_id, _ = tasks.add(self.cur, "read3", f"read {pid}", a=pid)
+        call = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True, answer={})
+        repo.add_reading(self.cur, post_id=pid, guide="read-v3", call_id=call, kind=kind, events="one", lang="en",
+                         headline=headline, reading={"kind": kind, "event_type": event_type, "origin": "other",
+                                                     "main": {"object": obj, "actors": [], "headline_en": headline}})
+
+    def test_a_round_up_or_a_post_about_another_thing_only_names_it(self):
+        """0220: the extractor marks the thing subject of a digest naming everything, or of a post about another
+        thing; by the post's reading, neither is its birth, first outside mention or a month's lead (the switch
+        `by_reading`, off: the measured line gained nothing; on here)."""
+        from insight_core.markx import stops as ST
+        on = {"stops": True, "stop_types": False, "analysis": False, "by_reading": True}
+        with mock.patch.object(ST, "config", side_effect=lambda: dict(on)):
+            self.round_up_case()
+        self.assertFalse(ST.config()["by_reading"])
+
+    def round_up_case(self):
+        birth, linker, rel, outs, launch = self.thing()
+        digest = self.post_at(4, T0 - 300 * D, "This week: forty tools")
+        self.mentions(digest, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(digest, "roundup", "forty tools", "Forty tools shipped this week", event_type="digest")
+        other = self.post_at(2, T0 - 250 * D, "Day-0 support for Zentra 5")
+        self.mentions(other, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(other, "report", "Zentra 5", "An engine supports Zentra 5 on day zero")
+        self.reading(birth, "report", "Acme Kite", "Acme introduces Kite")       # names it as "Kite": no form; kept below
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
+        first = [i for i in tl["items"] if i["kind"] == "birth"][0]
+        self.assertEqual(first["post"]["id"], birth)                                 # not the digest, not the other
+        self.assertEqual(first["named_since"], T0 - 300 * D)                         # they still name it, earlier
+        self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [linker])
+        self.assertFalse(any(i["top"] for i in tl["items"] if (i.get("post") or {}).get("id") in (digest, other)))
+
+    def test_a_name_whose_posts_span_years_is_asked_whether_it_is_one_thing(self):
+        """0220 (a): one name, several things breaks a line (an archive post about another thing of the name); its
+        types and makers agree, so only the span asks the collision question, its sample across the years."""
+        old = self.post_at(3, T0 - 4000 * D, "Lumen predicts the election")
+        self.mentions(old, ("Lumen", "product", "subject"))
+        for k in range(4):
+            p = self.post_at(k % 3, T0 - (10 - k) * D, f"Lumen, the capture card ({k})")
+            self.mentions(p, ("Lumen", "product", "subject"))
+        self.stage(since=self.since)
+        self.cur.execute("SELECT a::text, input FROM mx_tasks WHERE kind = 'collide'")
+        got = self.cur.fetchall()
+        self.assertEqual([a for a, _ in got], [self.entity_of(old)])
+        self.assertIn("Lumen predicts the election", got[0][1])                       # the old year is in the sample
+        young = self.post_at(0, T0 - 2 * D, "Kestrel ships")                           # a short span: never asked
+        self.mentions(young, ("Kestrel", "product", "subject"))
+        later = self.post_at(1, T0 - D, "Kestrel, a week in")
+        self.mentions(later, ("Kestrel", "product", "subject"))
+        self.stage(since=self.since)
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'collide'")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+
+    def test_the_collision_sample_spans_the_years(self):
+        from datetime import datetime, timezone
+        at = lambda y: datetime(y, 6, 1, tzinfo=timezone.utc)
+        ms = [(f"p{k}", "Lumen", "product", None, at(2026)) for k in range(12)] + [("old", "Lumen", "product", None, at(2012))]
+        pick = I.collide_sample("e1", ms)
+        self.assertEqual(len(pick), I.COLLIDE_MENTIONS)
+        self.assertIn("old", [m[0] for m in pick])
+
+    def test_whether_a_reading_is_about_the_thing(self):
+        forms = {"acmekite", "kite"}
+        self.assertTrue(TL.about_by_reading("report", {"main": {"object": "Acme Kite 2", "actors": []}}, None, forms))
+        self.assertTrue(TL.about_by_reading("commentary", {"main": {"object": "x", "actors": ["Kite"]}}, None, forms))
+        self.assertFalse(TL.about_by_reading("roundup", {"main": {"object": "Acme Kite"}}, None, forms))
+        self.assertFalse(TL.about_by_reading("report", {"event_type": "digest"}, "Acme Kite and more", forms))
+        self.assertFalse(TL.about_by_reading("report", {"main": {"object": "Zentra 5"}}, "Zentra 5 on day zero", forms))
+        self.assertTrue(TL.about_by_reading("report", {}, "Zentra 5", set()))         # nothing to tell by: kept
+
+    def test_the_entity_pages_version_line(self):
+        """0220: the family's versions on one line, the page's own version marked; a version few posts name is off."""
+        ids = {}
+        for k, (name, version) in enumerate([("Orbit 2", "2"), ("Orbit 2.5", "2.5"), ("Orbit 3", "3")]):
+            for n in range(4):
+                p = self.post_at(n % 4, T0 - (300 - 100 * k - n) * D, f"{name} is out ({n})")
+                self.mentions(p, (name, "model", "subject" if n < 2 else "mention", "Vantor",
+                                  soft(family="Orbit", version=version)))
+                ids[name] = p
+        guess = self.post_at(1, T0 - D, "Orbit 9 next year?")
+        self.mentions(guess, ("Orbit 9", "model", "subject", "Vantor", soft(family="Orbit", version="9")))
+        self.stage()
+        from insight_core.markx import stops as ST
+        self.assertFalse(ST.config()["version_line"])                                   # off: under its bar
+        self.assertIsNone(entity_views.entity_page(self.cur, self.entity_of(ids["Orbit 2.5"]), now=T0 + 2 * D)["version_line"])
+        on = dict(ST.config(), version_line=True)
+        with mock.patch.object(ST, "config", side_effect=lambda: dict(on)):
+            self.version_line_on(ids)
+
+    def version_line_on(self, ids):
+        page = entity_views.entity_page(self.cur, self.entity_of(ids["Orbit 2.5"]), now=T0 + 2 * D)
+        line = page["version_line"]
+        self.assertEqual([[s["name"] for s in ln] for ln in line["lines"]], [["Orbit 2", "Orbit 2.5", "Orbit 3"]])
+        self.assertEqual([s["current"] for s in line["lines"][0]], [False, True, False])
+        self.assertEqual(line["lines"][0][0]["first"], T0 - 300 * D)                  # its first post about it
+        self.assertEqual(line["lines"][0][0]["posts"], 4)
+        self.assertEqual(line["family"]["name"], "Orbit")
+        fam = entity_views.entity_page(self.cur, line["family"]["id"], now=T0 + 2 * D)["version_line"]
+        self.assertEqual(fam["lines"], [[dict(s, current=False) for s in line["lines"][0]]])   # the family's page too
+
     def test_no_timeline_under_two_events(self):
         p = self.post_at(0, T0, "Acme Kite")
         self.mentions(p, ("Acme Kite", "software", "mention", "Acme", soft()))
@@ -452,3 +554,139 @@ class OneModelsLine(_Db):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def ver(id_, name, key, *, posts=5, about=2, maker=None, first=None):
+    from insight_core.markx import timeline as TL
+    return TL.Version(id_, name, key, maker, posts, about, first or T0, None)
+
+
+class VersionLineRules(unittest.TestCase):
+    """0220, no database: a family's versions on one line (invented names), and what keeps a version off it."""
+
+    def line(self, vs, family="Orbit", maker=None):
+        return TL.version_lines(vs, family_name=family, family_maker=maker, same_maker=lambda a, b: a == b)
+
+    def names(self, lines):
+        return [[s.versions[0].name for s in ln] for ln in lines]
+
+    def test_versions_in_number_order_one_stop_a_version(self):
+        got = self.line([ver("c", "Orbit 3", (3,), first=T0 + 9 * D), ver("a", "Orbit 2", (2,)),
+                         ver("b", "Orbit 2.5", (2, 5), first=T0 + 3 * D), ver("d", "Orbit 3.0", (3, 0), posts=4)])
+        self.assertEqual(self.names(got), [["Orbit 2", "Orbit 2.5", "Orbit 3"]])
+        three = got[0][2]
+        self.assertEqual([v.id for v in three.versions], ["c", "d"])          # 3.0 is 3: one stop, the most named first
+        self.assertEqual(three.first, T0)                                        # its first post about either
+        self.assertEqual(TL.line_key((3, 0)), ("", (3,)))
+        self.assertIsNone(TL.line_key((3, "x")))                                  # "3.x" is no version
+
+    def test_a_letter_starts_its_own_line_and_a_number_written_without_it_joins_it(self):
+        got = self.line([ver("k2", "Kite K2", ("k", 2)), ver("k25", "Kite K2.5", ("k", 2, 5)),
+                         ver("k3", "Kite K3", ("k", 3)), ver("x3", "Kite 3", (3,), posts=2),
+                         ver("s4", "Kite S4", ("s", 4)), ver("s5", "Kite S5", ("s", 5))], family="Kite")
+        self.assertEqual(self.names(got), [["Kite K2", "Kite K2.5", "Kite K3"], ["Kite S4", "Kite S5"]])
+        self.assertEqual([v.id for v in got[0][2].versions], ["k3", "x3"])      # "Kite 3" is K3 (no other line has 3)
+        both = self.line([ver("k3", "Kite K3", ("k", 3)), ver("s3", "Kite S3", ("s", 3)), ver("x3", "Kite 3", (3,)),
+                          ver("x4", "Kite 4", (4,)), ver("k4", "Kite K4", ("k", 4))], family="Kite")
+        self.assertEqual(self.names(both), [["Kite K3", "Kite K4"]])   # 4 is only K's; 3 is K's and S's: left alone
+        self.assertEqual([v.id for v in both[0][1].versions], ["k4", "x4"])
+        lost = self.line([ver("k2", "Kite K2", ("k", 2)), ver("k26", "Kite K2.6", (2, 6)), ver("k27", "Kite K2.7", (2, 7)),
+                          ver("k3", "Kite K3", ("k", 3)), ver("v2", "Kite V2.5", (2, 5)), ver("v3", "Kite V3", (3,)),
+                          ver("v4", "Kite V4", (4,))], family="Kite")
+        self.assertEqual(self.names(lost), [["Kite K2", "Kite K2.6", "Kite K2.7", "Kite K3"],
+                                            ["Kite V2.5", "Kite V3", "Kite V4"]])
+        own = self.line([ver("r1", "Kite R1", ("r", 1)), ver("r2", "Kite R2", ("r", 2)), ver("v2", "Kite V2", (2,)),
+                         ver("v3", "Kite V3", (3,)), ver("v4", "Kite V4", (4,))], family="Kite")
+        self.assertEqual(self.names(own), [["Kite V2", "Kite V3", "Kite V4"], ["Kite R1", "Kite R2"]])   # a line of its own
+
+    def test_another_makers_version_is_off_the_line(self):
+        got = self.line([ver("a", "Orbit 4", (4,), maker="Vantor"), ver("b", "Orbit 5", (5,), maker="Vantor"),
+                         ver("y", "Zentra Orbit 5", (5,), maker="Zentra", posts=5), ver("c", "Orbit 6", (6,))],
+                        maker="Wrongco")                       # the family's own field was wrong: its posts decide
+        self.assertEqual(self.names(got), [["Orbit 4", "Orbit 5", "Orbit 6"]])
+        self.assertEqual([v.id for v in got[0][1].versions], ["b"])
+
+    def test_a_version_few_posts_name_or_none_is_about_is_off(self):
+        got = self.line([ver("a", "Orbit 2", (2,)), ver("b", "Orbit 3", (3,)), ver("z", "Orbit 81", (81,), posts=3, about=1),
+                         ver("y", "Orbit 9", (9,), posts=5, about=0)])
+        self.assertEqual(self.names(got), [["Orbit 2", "Orbit 3"]])
+
+    def test_a_build_number_or_a_dot_left_out_is_not_a_new_version(self):
+        got = self.line([ver("a", "Orbit 4", (4,)), ver("b", "Orbit 4.6", (4, 6)), ver("c", "Orbit 46", (46,), posts=2),
+                         ver("d", "Orbit 2512", (2512,), posts=8), ver("e", "Orbit 5", (5,))])
+        self.assertEqual(self.names(got), [["Orbit 4", "Orbit 4.6", "Orbit 5"]])
+        self.assertEqual([v.id for v in got[0][1].versions], ["b", "c"])          # 46 is 4.6 written without its dot
+        eleven = self.line([ver("a", "Orbit 1.1", (1, 1), posts=4), ver("b", "Orbit 3", (3,)), ver("c", "Orbit 11", (11,), posts=40)])
+        self.assertEqual(self.names(eleven), [["Orbit 1.1", "Orbit 3", "Orbit 11"]])   # 11 is the better named: its own
+        dated = self.line([ver("a", "Orbit 2407", (2407,)), ver("b", "Orbit 2512", (2512,))])
+        self.assertEqual(self.names(dated), [["Orbit 2407", "Orbit 2512"]])      # one numbering: a line still
+
+    def test_no_line_for_a_one_letter_family_or_one_stop(self):
+        self.assertEqual(self.line([ver("a", "X-33", (33,)), ver("b", "X-45", (45,))], family="x"), [])
+        self.assertEqual(self.line([ver("a", "Orbit 2", (2,))]), [])
+
+
+@base.requires_test_db
+class ThingLinks(_Db):
+    """0220: the relations a post states between two of its things, as entity edges with their posts (graph section
+    4), shown on both pages; the ones switched off never written; `released` only with the thing's own maker."""
+
+    def state(self, pid, relations):
+        self.cur.execute("UPDATE mx_calls SET answer = %s::jsonb WHERE task_id IN (SELECT id FROM mx_tasks WHERE a = %s)",
+                         (json.dumps({"entities": [], "relations": relations}), pid))
+
+    def graph(self, now=T0 + 2 * D):
+        from insight_core.markx import graph
+        run = repo.start_run(self.cur, code_version="test", config={})
+        return graph.stage(self.cur, now=now, run_id=run, budget=None)
+
+    def edges(self, current=True):
+        self.cur.execute("""SELECT a::text, b::text, relation, rule, evidence, valid_from, valid_to FROM mx_connections
+                             WHERE a_kind = 'entity' AND rule = 'stated'""" + (" AND valid_to IS NULL" if current else ""))
+        return self.cur.fetchall()
+
+    def touched(self, pid, at):
+        self.cur.execute("UPDATE mx_calls SET created_at = %s WHERE task_id IN (SELECT id FROM mx_tasks WHERE a = %s)",
+                         (at, pid))
+
+    def test_stated_relations_become_edges_with_their_posts(self):
+        tune = self.post_at(0, T0 - 10 * D, "Sabi 2: a fine-tune of Orbit 3")
+        self.mentions(tune, ("Sabi 2", "model", "subject", "Kestrel"), ("Orbit 3", "model", "mention", "Vantor"))
+        self.state(tune, [{"a": "Sabi 2", "rel": "based_on", "b": "Orbit 3"}])
+        again = self.post_at(1, T0 - 5 * D, "Sabi 2 is built on Orbit 3")
+        self.mentions(again, ("Sabi 2", "model", "subject", "Kestrel"), ("Orbit 3", "model", "mention", "Vantor"))
+        self.state(again, [{"a": "Sabi 2", "rel": "based_on", "b": "Orbit 3"}])
+        launch = self.post_at(2, T0 - 3 * D, "Vantor releases Orbit 3")
+        self.mentions(launch, ("Vantor", "org", "actor"), ("Orbit 3", "model", "subject", "Vantor"),
+                      ("Rehost", "org", "mention"))
+        self.state(launch, [{"a": "Vantor", "rel": "released", "b": "Orbit 3"},
+                            {"a": "Rehost", "rel": "released", "b": "Orbit 3"},        # not its maker: never
+                            {"a": "Vantor", "rel": "partnered_with", "b": "Rehost"},   # switched off: never
+                            {"a": "Nobody", "rel": "based_on", "b": "Orbit 3"}])       # not one of its things
+        self.stage()
+        out = self.graph()
+        sabi, orbit, vantor = self.entity_of(tune), self.entity_of(tune, 1), self.entity_of(launch)
+        got = {(a, b, rel): (ev, vf) for a, b, rel, _r, ev, vf, _vt in self.edges()}
+        self.assertEqual(set(got), {(sabi, orbit, "based_on"), (vantor, orbit, "released")})
+        ev, since = got[(sabi, orbit, "based_on")]
+        self.assertEqual((ev["posts"], since), ([tune, again], T0 - 10 * D))         # oldest first, from its first post
+        self.assertTrue(out["relations"]["backfill"]["done"])
+        page = entity_views.entity_page(self.cur, sabi, now=T0 + 2 * D)
+        self.assertEqual([(r["relation"], r["direction"], r["other"]["name"], r["posts"]) for r in page["relations"]],
+                         [("based_on", "out", "Orbit 3", 2)])
+        page = entity_views.entity_page(self.cur, orbit, now=T0 + 2 * D)
+        self.assertEqual([(r["relation"], r["direction"], r["other"]["name"]) for r in page["relations"]],
+                         [("based_on", "in", "Sabi 2"), ("released", "in", "Vantor")])
+        # a post that no longer states it leaves the evidence; the last one closes the edge, kept
+        self.state(again, [])
+        self.touched(again, T0 + 3 * D)                                               # read again: states nothing
+        self.graph(now=T0 + 3 * D)
+        now_ev = {(a, b, r): ev for a, b, r, _r, ev, *_ in self.edges()}
+        self.assertEqual(now_ev[(sabi, orbit, "based_on")]["posts"], [tune])
+        self.state(tune, [])
+        self.touched(tune, T0 + 4 * D)
+        self.graph(now=T0 + 4 * D)
+        self.assertNotIn((sabi, orbit, "based_on"), {(a, b, r) for a, b, r, *_ in self.edges()})
+        closed = [row for row in self.edges(current=False) if row[2] == "based_on"]
+        self.assertEqual(len(closed), 1)
+        self.assertIsNotNone(closed[0][6])

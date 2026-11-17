@@ -100,6 +100,7 @@ MAX_CLUSTER = 6
 ALIAS_CAP, COLLIDE_CAP = 10000, 1000   # new questions a run adds of each (a pair over it waits for the nightly pass)
 COLLIDE_RUNS = 3
 COLLIDE_MENTIONS = 8
+COLLIDE_SPAN_DAYS = 365   # 0220: a name whose posts span a year or more is asked whether it is one thing
 QUEUE_ONLY = {"paren", "handle_extra_word", "maker_unstated", "fields_parser"}
 TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
 ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.I)
@@ -2534,17 +2535,25 @@ def alias_input(a: str, b: str) -> str:
     return f"A: {a}\nB: {b}"
 
 
-def collide_sample(eid: str, ms: Sequence[Tuple[str, str, Optional[str], Optional[str]]]) -> List[Tuple]:
-    """Up to COLLIDE_MENTIONS mentions from distinct posts: one per (type, maker) first, then the rest (the lab's
-    sample, seeded by the entity)."""
+def collide_sample(eid: str, ms: Sequence[Tuple]) -> List[Tuple]:
+    """Up to COLLIDE_MENTIONS mentions from distinct posts ((post, span, type, maker[, at])): one per (type, maker)
+    first, then (0220) one per year the posts span, the oldest years first (an archive post may be another thing of
+    the name), then the rest (the lab's sample, seeded by the entity)."""
     rnd = random.Random(int(hashlib.md5(eid.encode()).hexdigest(), 16) % 100000)
-    ms = sorted(ms)
+    ms = sorted(ms, key=lambda m: tuple("" if x is None else str(x) for x in m))
     rnd.shuffle(ms)
     pick, seen = [], set()
     for m in ms:
         g = (m[2], m[3])
         if g not in seen:
             seen.add(g)
+            pick.append(m)
+    years = {m[4].year for m in pick if len(m) > 4 and m[4] is not None}
+    for m in sorted((m for m in ms if len(m) > 4 and m[4] is not None), key=lambda m: m[4]):
+        if len(pick) >= COLLIDE_MENTIONS:
+            break
+        if m[4].year not in years and m not in pick:
+            years.add(m[4].year)
             pick.append(m)
     for m in ms:
         if len(pick) >= COLLIDE_MENTIONS:
@@ -2558,7 +2567,7 @@ def collide_sample(eid: str, ms: Sequence[Tuple[str, str, Optional[str], Optiona
 
 def collide_input(e: Ent, n_posts: int, pick: Sequence[Tuple], posts: Dict[str, Any]) -> str:
     lines = [f'NAME "{e.name}" ({n_posts} posts; {len(pick)} mentions shown)']
-    for n, (pid, span, type_, maker) in enumerate(pick, 1):
+    for n, (pid, span, type_, maker, *_at) in enumerate(pick, 1):
         p = posts.get(pid)
         lines.append(f'{n}. written "{span}" | type {type_} | maker guess {maker or "none"}\n   '
                      + (_ctx(p, span, 170, 250) if p else ""))
@@ -3279,14 +3288,21 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     # the keys whose mentions (the first of each post) differ in type or stated maker (`odd`), 2+ posts, counted by the
     # database. v10.22 (0216): every mention of every seed was read to count them (a run's peak: ~300 MB more on the
     # server-sized copy); only the new questions' entities' mentions are read now (`_first_mentions`)
-    cur.execute(f"""WITH f AS (SELECT DISTINCT ON (entity_id, post_id) entity_id, type, NULLIF(maker, '') AS maker
-                                 FROM mx_mentions_now WHERE guide = ANY(%(g)s) AND entity_id IS NOT NULL
-                                 {"AND entity_id = ANY(%(s)s::uuid[])" if seeds is not None else ""}
-                                ORDER BY entity_id, post_id, n)
+    # 0220: and, for a run's touched entities, the ones whose posts span COLLIDE_SPAN_DAYS or more (one name, several
+    # things: an archive post about another thing of the name, a line's failure); asked once, its sample across years
+    span = seeds is not None
+    cur.execute(f"""WITH f AS (SELECT DISTINCT ON (m.entity_id, m.post_id) m.entity_id, m.type, NULLIF(m.maker, '') AS maker
+                                      {", COALESCE(p.published_at, p.created_at) AS at" if span else ""}
+                                 FROM mx_mentions_now m {"JOIN posts p ON p.id = m.post_id" if span else ""}
+                                WHERE m.guide = ANY(%(g)s) AND m.entity_id IS NOT NULL
+                                 {"AND m.entity_id = ANY(%(s)s::uuid[])" if seeds is not None else ""}
+                                ORDER BY m.entity_id, m.post_id, m.n)
                      SELECT entity_id::text FROM f GROUP BY entity_id
                      HAVING count(*) >= 2 AND (count(DISTINCT type) + max(CASE WHEN type IS NULL THEN 1 ELSE 0 END) > 1
-                                               OR count(DISTINCT maker) > 1 OR entity_id = ANY(%(x)s::uuid[]))
-                      ORDER BY 1""", {"g": guide, "s": sorted(seeds) if seeds is not None else None, "x": sorted(extra)})
+                                               OR count(DISTINCT maker) > 1 OR entity_id = ANY(%(x)s::uuid[])
+                                               {"OR max(at) - min(at) >= make_interval(days => %(d)s)" if span else ""})
+                      ORDER BY 1""", {"g": guide, "s": sorted(seeds) if seeds is not None else None, "x": sorted(extra),
+                                      "d": COLLIDE_SPAN_DAYS})
     out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
     facts_on = entity_facts.on()
     odd = [eid for (eid,) in cur.fetchall()]
@@ -3349,15 +3365,17 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
 
 
 def _first_mentions(cur: Any, guide: Any, eids: Sequence[str]) -> Dict[str, List[Tuple]]:
-    """{entity: [(post, span, type, maker)]}: each post's first mention of each entity, in post order."""
+    """{entity: [(post, span, type, maker, at)]}: each post's first mention of each entity, in post order."""
     if not eids:
         return {}
-    cur.execute("""SELECT entity_id::text, post_id::text, span, type, maker FROM mx_mentions_now
-                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[]) ORDER BY entity_id, post_id, n""",
+    cur.execute("""SELECT m.entity_id::text, m.post_id::text, m.span, m.type, m.maker,
+                          COALESCE(p.published_at, p.created_at)
+                     FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                    WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[]) ORDER BY m.entity_id, m.post_id, m.n""",
                 (guide, list(eids)))
     by: Dict[str, Dict[str, Tuple]] = {e: {} for e in eids}
-    for eid, pid, span, type_, maker in cur.fetchall():
-        by[eid].setdefault(pid, (pid, span or "", type_, maker))
+    for eid, pid, span, type_, maker, at in cur.fetchall():
+        by[eid].setdefault(pid, (pid, span or "", type_, maker, at))
     return {e: list(by[e].values()) for e in eids}
 
 

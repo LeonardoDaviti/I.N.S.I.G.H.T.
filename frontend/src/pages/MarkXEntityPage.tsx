@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
-import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
+import { ThingLinks, Timeline, VersionLine } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
@@ -307,6 +307,8 @@ export default function MarkXEntityPage() {
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}
           {d.rabbit_hole ? <RabbitHole hole={d.rabbit_hole} entityId={entityId} /> : null}
           <Accuracy accuracy={d.accuracy} />
+          {d.version_line ? <VersionLine line={d.version_line} /> : null}{/* 0220 */}
+          {d.relations?.length ? <ThingLinks relations={d.relations} /> : null}{/* 0220 */}
           {d.versions.length ? (
             <section aria-label="Versions">
               <h2 className={H2}>{d.family ? 'Other versions of the family' : 'Versions'}</h2>

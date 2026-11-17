@@ -2,7 +2,8 @@ import { useState, type ReactNode } from 'react';
 
 import { TextLink } from '../ui';
 import { plural } from '../../lib/format';
-import type { MarkxStop, MarkxTimeline, MarkxTimelineEvent, MarkxTimelineKind } from '../../services/markx';
+import type { MarkxEntityRelation, MarkxStop, MarkxTimeline, MarkxTimelineEvent, MarkxTimelineKind,
+  MarkxVersionLine } from '../../services/markx';
 import { bylineText } from '../../lib/byline';
 
 /** Why a line is on the timeline (0165 C), in words. */
@@ -108,6 +109,70 @@ export function Timeline({ timeline }: { timeline: MarkxTimeline }) {
         <button type="button" className="mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline"
                 onClick={() => setAll(true)}>All {plural(timeline.total, 'event')}</button>
       ) : null}
+    </section>
+  );
+}
+
+
+/**
+ * 0220: the family's versions on one line ("Orbit 2 -> Orbit 2.5 -> Orbit 3"), each with the month of its first post
+ * about it; the page's own version marked, the others linked. A family running two numbered lines shows each.
+ */
+export function VersionLine({ line }: { line: MarkxVersionLine }) {
+  return (
+    <section aria-label="Version line">
+      <h2 className="border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2">
+        Version line{line.family.name ? <span className="font-normal text-fg-3"> · {line.family.name}</span> : null}
+      </h2>
+      {line.lines.map((stops, n) => (
+        <ol key={n} className="mt-2 flex flex-wrap items-baseline gap-x-1 gap-y-1 text-[0.8125rem]">
+          {stops.map((s, k) => (
+            <li key={s.id} className="flex items-baseline gap-x-1">
+              {k ? <span aria-hidden="true" className="text-fg-3">→ </span> : null}
+              {s.current ? <span aria-current="true" className="font-semibold text-fg">{s.name}</span>
+                : <TextLink to={`/markx/entities/${encodeURIComponent(s.id)}`}>{s.name}</TextLink>}
+              {s.first ? <span className="tabular-nums text-fg-3"> · {s.first.slice(0, 7)}</span> : null}
+            </li>
+          ))}
+        </ol>
+      ))}
+    </section>
+  );
+}
+
+const RELATION: Record<MarkxEntityRelation['relation'], [string, string]> = {
+  based_on: ['Based on', 'Built on it'], released: ['Released', 'Released by'], acquired: ['Acquired', 'Acquired by'],
+  part_of: ['Part of', 'Its parts'], partnered_with: ['Partnered with', 'Partnered with'],
+};
+
+/** 0220: how a relation reads from this thing's page (out: it -> the other thing; in: the other thing -> it). */
+const relationWords = (relation: MarkxEntityRelation['relation'], direction: MarkxEntityRelation['direction']) =>
+  RELATION[relation][direction === 'out' ? 0 : 1];
+
+/** 0220: the relations posts state between this thing and others (only the measured ones reach the page), grouped. */
+export function ThingLinks({ relations }: { relations: MarkxEntityRelation[] }) {
+  if (!relations.length) return null;
+  const groups = new Map<string, MarkxEntityRelation[]>();
+  for (const r of relations) {
+    const k = relationWords(r.relation, r.direction);
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  return (
+    <section aria-label="Links">
+      <h2 className="border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2">Links</h2>
+      <ul className="mt-2 space-y-1 text-[0.8125rem] text-fg-2">
+        {[...groups].map(([words, rows]) => (
+          <li key={words} className="[overflow-wrap:anywhere]">
+            {words}:{' '}
+            {rows.map((r, n) => (
+              <span key={r.other.id}>{n ? ', ' : ''}
+                <TextLink to={`/markx/entities/${encodeURIComponent(r.other.id)}`}>{r.other.name ?? 'a thing'}</TextLink>
+                <span className="text-fg-3"> ({plural(r.posts, 'post')})</span>
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
