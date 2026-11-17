@@ -2588,6 +2588,28 @@ def _input_sides(text: str) -> Optional[Tuple[str, str]]:
     return (text[3:k], text[k + 4:]) if k > 0 else None
 
 
+@dataclass(slots=True)
+class _Head:
+    """What an example line starts with (`_ctx`): the post's kind, day and title, as tasks.load_posts reads them."""
+    kind: str
+    iso: str
+    title: str
+
+
+def _example_heads(cur: Any, ids: Iterable[str]) -> Dict[str, _Head]:
+    """{post: its example line's head}, read without the posts' text (tasks.load_posts reads every body)."""
+    from insight_core.markx import tasks
+    from insight_core.utils.post_links import source_kind
+    ids = sorted(set(ids))
+    if not ids:
+        return {}
+    cur.execute(f"""SELECT p.id::text, s.platform, s.handle_or_url, {pairing.ordinary_date('p')}, COALESCE(pp.title, p.title)
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    return {pid: _Head(source_kind(platform, handle), at.astimezone(timezone.utc).isoformat(), tasks._squash(title))
+            for pid, platform, handle, at, title in cur.fetchall()}
+
+
 def derive_inputs(cur: Any, book: Book, guide: Any, rows: Sequence[Tuple[str, str, str, str, str]]
                   ) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """What questions asked before mx_opinion_inputs showed, read back from their input text: {(kind, hash): basis}.
@@ -2595,7 +2617,6 @@ def derive_inputs(cur: Any, book: Book, guide: Any, rows: Sequence[Tuple[str, st
     ...") is the post naming that side on that day whose line starts so. An example no post of the side matches now
     (its mention moved to another entity, or the post's title changed) is counted `unmatched`, and so is a head
     that is not the side's: either voids the answer."""
-    from insight_core.markx import tasks
     parsed: Dict[Tuple[str, str], List[Tuple[str, Optional[str], List[Tuple[str, str]]]]] = {}
     want: Set[Tuple[str, str]] = set()
     for kind, h, a, b, text in rows:
@@ -2621,7 +2642,7 @@ def derive_inputs(cur: Any, book: Book, guide: Any, rows: Sequence[Tuple[str, st
                     ([x for x, _ in ws], [d for _, d in ws], list(guide)))
         for eid, pid, d in cur.fetchall():
             by[(eid, d.isoformat())].append(pid)
-    posts = tasks.load_posts(cur, {p for ps in by.values() for p in ps}, linked=False)
+    posts = _example_heads(cur, {p for ps in by.values() for p in ps})
     book.prime(ids={x for got in parsed.values() for x, _h, _e in got if x})
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for key, got in parsed.items():
@@ -2645,7 +2666,7 @@ def derive_inputs(cur: Any, book: Book, guide: Any, rows: Sequence[Tuple[str, st
 
 
 def void_opinions(cur: Any, book: Book, guide: Any, asked_: Dict[str, Tuple[str, str]], *,
-                  store: bool = True) -> Dict[str, str]:
+                  store: bool = True, missing: Optional[Dict[str, List[Tuple[str, str]]]] = None) -> Dict[str, str]:
     """{task id: why its answer no longer holds} of `asked_` ({task id: (kind, input hash)}): 'head' (a side is not
     what the question showed), 'posts' (an example post no longer names its side), 'unmatched' (a question asked
     before mx_opinion_inputs whose examples are not found on their side now). A question asked before is read back
@@ -2690,9 +2711,50 @@ def void_opinions(cur: Any, book: Book, guide: Any, asked_: Dict[str, Tuple[str,
                 out[tid] = "head"
             elif any((s["id"], pid) not in still for pid in s.get("posts") or ()):
                 out[tid] = "posts"
+                if missing is not None:
+                    missing[tid] = [(x["id"], pid) for x in basis["sides"] if x.get("id")
+                                    for pid in x.get("posts") or () if (x["id"], pid) not in still]
             if tid in out:
                 break
     return out
+
+
+def opinion_report(cur: Any, *, examples: int = 20) -> Dict[str, Any]:
+    """0222, read only: the automatic merges a Haiku answer made (by haiku, second, third; live) and the open alias
+    items, whose answer no longer holds today (`void_opinions`, nothing stored). A merge's example post whose mention
+    set changed before the merge (mx_mention_sets.at) was gone when it merged: `before_merge` counts those (made on a
+    stale answer); the rest broke after (the answer held when it merged, or a relink moved the post: no time kept).
+    For the server (one read; nothing written; the transaction rolled back):
+      docker exec insight-api python -c "import json; from insight_core.markx import api, identity as I
+      with api.transaction() as cur: print(json.dumps(I.opinion_report(cur), default=str)); cur.connection.rollback()"
+    """
+    from insight_core.markx import schemas
+    guide = schemas.mention_guides()
+    book = lazy_book(cur)
+    cur.execute("""SELECT r.id::text, r.from_id::text, r.to_id::text, r.by, r.at, t.id::text, t.kind, t.input_hash
+                     FROM mx_entity_redirects r JOIN mx_calls c ON c.id = r.call_id JOIN mx_tasks t ON t.id = c.task_id
+                    WHERE r.automatic AND r.undone_at IS NULL AND t.kind IN ('alias', 'alias2', 'alias3', 'alias4')""")
+    merges = cur.fetchall()
+    cur.execute("""SELECT q.id::text, t.id::text, t.kind, t.input_hash FROM mx_entity_queue q
+                     JOIN mx_calls c ON c.id = q.call_id JOIN mx_tasks t ON t.id = c.task_id
+                    WHERE q.kind = 'alias' AND q.answer IS NULL AND q.closed_at IS NULL""")
+    items = cur.fetchall()
+    asked_ = {tid: (k, h) for *_x, tid, k, h in merges} | {tid: (k, h) for _q, tid, k, h in items}
+    missing: Dict[str, List[Tuple[str, str]]] = {}
+    void = void_opinions(cur, book, guide, asked_, store=False, missing=missing)
+    gone = sorted({pid for xs in missing.values() for _e, pid in xs})
+    changed: Dict[str, Any] = {}
+    if gone:
+        cur.execute("SELECT post_id::text, at FROM mx_mention_sets WHERE post_id = ANY(%s::uuid[])", (gone,))
+        changed = dict(cur.fetchall())
+    bad = [(rid, f, t, by, at, tid) for rid, f, t, by, at, tid, _k, _h in merges if tid in void]
+    before = [m for m in bad if any(changed.get(pid) is not None and changed[pid] <= m[4] for _e, pid in missing.get(m[5], ()))]
+    return {"merges": {"checked": len(merges), "void": len(bad), "before_merge": len(before),
+                       "by_why": dict(Counter(void[m[5]] for m in bad)), "by": dict(Counter(m[3] for m in bad)),
+                       "examples": [{"redirect": rid, "from": book.label(f) or f, "to": book.label(t) or t, "by": by,
+                                     "at": at, "why": void[tid]} for rid, f, t, by, at, tid in (before or bad)[:examples]]},
+            "queue": {"checked": len(items), "void": sum(1 for _q, tid, _k, _h in items if tid in void),
+                      "by_why": dict(Counter(void[tid] for _q, tid, _k, _h in items if tid in void))}}
 
 
 def collide_sample(eid: str, ms: Sequence[Tuple[str, str, Optional[str], Optional[str]]]) -> List[Tuple]:

@@ -624,18 +624,28 @@ def _sentences(text: str) -> List[Tuple[int, int]]:
     return out
 
 
+def _in_address(low: str, at: int) -> bool:
+    """Whether position `at` is inside a web address ("github.com/acme/x": a name there is not the post naming it)."""
+    a = max(low.rfind(" ", 0, at), low.rfind("\n", 0, at)) + 1
+    token = low[a:at]
+    return "://" in token or token.startswith("www.") or ("/" in token and "." in token)
+
+
 def _find(low: str, terms: Sequence[str]) -> Optional[Tuple[int, int]]:
     """The first occurrence (start, end) in `low` of the first term found, in the terms' order (the post's own
-    spans first), whole words where the term starts or ends with a word character."""
+    spans first), whole words where the term starts or ends with a word character; one in the text before one inside
+    a web address (that only when the text names it nowhere else)."""
+    in_address = None
     for t in terms:
         tl = t.lower().strip()
         if len(tl) < 2:
             continue
         pat = (r"(?<!\w)" if tl[0].isalnum() else "") + re.escape(tl) + (r"(?!\w)" if tl[-1].isalnum() else "")
-        m = re.search(pat, low)
-        if m:
-            return m.start(), m.end()
-    return None
+        for m in re.finditer(pat, low):
+            if not _in_address(low, m.start()):
+                return m.start(), m.end()
+            in_address = in_address or (m.start(), m.end())
+    return in_address
 
 
 def mention_context(text: Optional[str], terms: Sequence[str], window: int = CONTEXT_WINDOW

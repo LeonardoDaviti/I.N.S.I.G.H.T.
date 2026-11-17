@@ -109,6 +109,26 @@ class AnOpinionHoldsForWhatItWasAskedOn(_Pairs):
         self.assertNotEqual(book.root(self.entity_of(a[1])), book.root(self.entity_of(b[0])))
 
 
+class TheReport(_Pairs):
+    def test_it_counts_the_automatic_merges_and_open_items_whose_answer_no_longer_holds(self):
+        a = [self.post(n, T0 + n * H, title=f"Kestrel story {n}") for n in range(2)]
+        b = [self.post(2 + n, T0 + (2 + n) * H, title=f"Kestrel CLI story {n}") for n in range(2)]
+        for p in a:
+            self.mentions(p, ("Kestrel Coder", "software", "subject"))
+        for p in b:
+            self.mentions(p, ("Kestrel Coder CLI", "software", "subject"))
+        self.stage()
+        self.answer_task("alias", {"evidence": "one tool", "relation": "same", "confidence": 0.97})
+        self.assertEqual(self.stage(since=self.since)["merged"], 1)
+        got = I.opinion_report(self.cur)
+        self.assertEqual((got["merges"]["checked"], got["merges"]["void"], got["queue"]["checked"]), (1, 0, 0))
+        self.cur.execute("DELETE FROM mx_opinion_inputs")   # as on the server: asked before 0222
+        self.reread(b[0], ("Borealis Shell", "software", "subject"))
+        got = I.opinion_report(self.cur)
+        self.assertEqual((got["merges"]["void"], got["merges"]["by_why"], got["merges"]["by"]), (1, {"unmatched": 1}, {"haiku": 1}))
+        self.assertEqual(self.inputs(), [])                 # read only
+
+
 class AQuestionAskedBeforeIsReadBack(_Pairs):
     def test_its_input_says_what_it_showed(self):
         a, b = self.kestrel()
@@ -183,6 +203,15 @@ class MentionContext(unittest.TestCase):
         self.assertTrue(whole.startswith("… ") and whole.endswith(" …"))
         self.assertLessEqual(len(whole), entity_views.CONTEXT_WINDOW + 4)
         self.assertEqual([p["t"] for p in parts if p.get("m")], ["Kestrel Coder"])
+
+    def test_the_text_naming_it_before_a_web_address(self):
+        text = "See https://github.com/acme/math for the code. Acme released the proofs today."
+        parts = entity_views.mention_context(text, ["Acme"])
+        whole = "".join(p["t"] for p in parts)
+        self.assertIn("Acme released the proofs today.", whole)
+        self.assertEqual(entity_views._find(text.lower(), ["acme"]), (47, 51))
+        only = entity_views.mention_context("Code: github.com/acme/math", ["Acme"])
+        self.assertEqual([p["t"] for p in only if p.get("m")], ["acme"])   # named nowhere else: the address
 
     def test_any_script_and_a_handle(self):
         parts = entity_views.mention_context("Строка\nКестрел вышел 🚀 сегодня.\nЕщё строка", ["Кестрел"])
