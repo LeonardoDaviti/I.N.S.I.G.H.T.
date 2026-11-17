@@ -759,9 +759,11 @@ def mx_labels_news(body: FlagIn):
 
 # ---- the entities tab (0119 A3; added 2026-11-06; the routes above are unchanged; no bearer: the app's own) ---------
 # GET  /api/markx/entities                    the list (markx/entity_views.py): {window_days, total, items, accuracy, queue}
-# GET  /api/markx/entities/queue              the review queue: {open, answered, merges, counts, accuracy}
+# GET  /api/markx/entities/queue              the review queue: {open, answered, merges, counts, accuracy, view};
+#                                             0222: ?view=flagged (default: Claude's flags only) | all (the operator's)
 # POST /api/markx/entities/queue/{id}         {answer: same | other_version | different | not_entity, note?}: applied at
 #                                             once (a merge, a split, a merge undone) and stored as a label
+# POST /api/markx/entities/queue/{id}/flag    0222: {flag: true | false, note?, by?: claude | owner}: flagged for the owner
 # POST /api/markx/entities/merges/{id}/undo   {note?}: one merge undone from the history (a label 'different')
 # GET  /api/markx/entities/{id}               the entity's page (a merged entity's id opens its cluster's page)
 
@@ -782,12 +784,37 @@ def mx_entities():
 
 
 @router.get("/entities/queue")
-def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0)):
+def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0),
+                    view: str = Query("flagged", pattern="^(flagged|all)$")):
     """Issue 0195: `limit` open items (50) from `offset`; `next_offset` the next page's, null at the end (12,572 open
-    items answered 28.9 MB in 14.7 s on the server)."""
+    items answered 28.9 MB in 14.7 s on the server). 0222: `view` flagged (the default: only the items Claude's review
+    flagged for the owner) or all (the operator's view of every open item)."""
     from insight_core.markx import entity_views
     with transaction() as cur:
-        return entity_views.queue(cur, limit=limit, offset=offset)
+        return entity_views.queue(cur, limit=limit, offset=offset, view=view)
+
+
+class EntityFlagIn(BaseModel):   # 0222
+    flag: bool = True
+    note: Optional[str] = Field(default=None, max_length=2000)
+    by: str = "claude"
+
+
+@router.post("/entities/queue/{item_id}/flag")
+def mx_entity_flag(item_id: str, body: EntityFlagIn):
+    """0222: an open review item flagged for the owner by Claude's review ({flag: true, note}), or unflagged
+    ({flag: false}). The owner's queue shows only the flagged items by default."""
+    from insight_core.markx import entity_answers
+    found = _uuid(item_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such item in the queue")
+    with transaction() as cur:
+        try:
+            return entity_answers.flag(cur, str(found), body.flag, note=body.note, by=body.by)
+        except entity_answers.NotFound:
+            raise HTTPException(status_code=404, detail="No such item in the queue")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/entities/queue/{item_id}")

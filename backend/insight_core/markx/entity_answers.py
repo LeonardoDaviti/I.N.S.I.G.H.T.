@@ -282,6 +282,25 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     return applied
 
 
+FLAGGERS = ("claude", "owner")
+
+
+def flag(cur: Any, item_id: str, on: bool = True, note: Optional[str] = None, by: str = "claude") -> Dict[str, Any]:
+    """0222: an open review item flagged for the owner (Claude's review: the owner sees only these by default), or
+    unflagged (`on` False). Nothing else changes: the item is decided as before until it is answered."""
+    if by not in FLAGGERS:
+        raise ValueError(f"by: one of {', '.join(FLAGGERS)}")
+    note = ((note or "").strip() or None) if on else None
+    cur.execute("""UPDATE mx_entity_queue SET flagged_at = CASE WHEN %s THEN COALESCE(flagged_at, now()) END,
+                          flagged_by = CASE WHEN %s THEN %s END, flag_note = %s
+                    WHERE id = %s RETURNING id::text, flagged_at, flagged_by, flag_note, answer IS NULL AND closed_at IS NULL""",
+                (on, on, by, note, item_id))
+    row = cur.fetchone()
+    if row is None:
+        raise NotFound(item_id)
+    return {"id": row[0], "flagged_at": row[1], "flagged_by": row[2], "flag_note": row[3], "open": row[4]}
+
+
 def undo(cur: Any, redirect_id: str, note: Optional[str] = None) -> Dict[str, Any]:
     """Undo one merge from the history: its redirect closes, the pair is never merged automatically again, and the
     answer is a label ('different')."""

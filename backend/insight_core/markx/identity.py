@@ -45,6 +45,13 @@ to REDECIDE_CAP open alias items not yet decided by this rule set (stamped `evid
 apart or already one cluster closes its open item (kept, with `closed_by`), one still queued says what was decided now
 (`refresh_queued`, the earlier reason and confidence in `evidence.before`).
 
+v10.24 (issue 0222): **an opinion holds only for what it was asked on.** A pair question records what it showed of
+each side (mx_opinion_inputs: name, type, maker, the example posts; `record_input`; a question asked before is read
+back from its input, `derive_inputs`). Before an answer decides anything, `void_opinions` checks that each side still
+holds the posts it was shown (a relink, a post read again under a new guide or a split moves them): a void answer
+merges nothing and is never shown; its open item is closed (closed_by 'void', kept) and the pair asked again. A
+question's identity is still its pair: a pair asked whose answer holds is never asked again.
+
 The owner's answers (`answer`, the API's, in the request's own transaction: mx_entity* and mx_labels only) apply at
 once for the pages, which read through redirects and pins; the next run's snapshot sees them.
 
@@ -106,7 +113,8 @@ ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.
 ANSWERS = ("same", "other_version", "different", "not_entity")
 ALIAS2_CAP = 2000           # 0130 A2: second-opinion questions a run adds
 ALIAS3_CAP = 2000           # 0201: the unsure queue's questions (alias-v2) a run adds
-REDECIDE = "v10.18"         # the queue's open alias items decided again by this rule set (evidence.redecided)
+REDECIDE = "v10.24"         # the queue's open alias items decided again by this rule set (evidence.redecided);
+                            # v10.24 (0222): every open item's answer checked against what it was asked on
 REDECIDE_CAP = 2000         # v10.18: open alias items a run decides again (the backlog, oldest first)
 
 
@@ -2401,12 +2409,13 @@ def third_kind(d: Decision) -> str:
     return ((bands().get("third") or {}).get("kinds") or {}).get(d.reason, "alias3")
 
 
-def alias3_input(cur: Any, book: Book, guide: Any, a: str, b: str) -> str:
+def alias3_input(cur: Any, book: Book, guide: Any, a: str, b: str,
+                 picked: Optional[Dict[str, List[str]]] = None) -> str:
     """alias-v2's item: each side's name and fields, its known facts (markx/entity_facts.py), the accounts whose
     posts name it (their handles), and four example posts with wider windows."""
     from insight_core.markx import entity_facts
     ids = [a, b]
-    ex = examples(cur, guide, ids, n=4, wide=True)
+    ex = examples(cur, guide, ids, n=4, wide=True, picked=picked)
     written, nposts = spans(cur, guide, ids), counts_of(cur, guide, ids)
     facts = entity_facts.read(cur, [book.root(x) for x in ids], force=True)
     cur.execute("""SELECT m.entity_id::text, array_agg(DISTINCT r.handle) FROM mx_mentions_now m
@@ -2483,10 +2492,10 @@ def _pick(eid: str, ms: Sequence[Tuple[str, str, str, str]], n: int, salt: int =
 
 
 def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool = False,
-             wide: bool = False) -> Dict[str, List[str]]:
+             wide: bool = False, picked: Optional[Dict[str, List[str]]] = None) -> Dict[str, List[str]]:
     """Up to n example posts of each entity: distinct sources, subjects first, picked by a seed of its key (stable).
     `other` (0130 A2, the second opinion): n other posts than the first question's, topped up with the first's when
-    the entity has fewer."""
+    the entity has fewer. `picked` (0222): filled with each entity's example posts (what its question showed)."""
     from insight_core.markx import tasks
     if not eids:
         return {}
@@ -2505,6 +2514,8 @@ def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool 
         picks[eid] = first
     posts = tasks.load_posts(cur, {pid for xs in picks.values() for pid, _ in xs})
     win = (300, 500) if wide else (140, 220)   # 0201: alias-v2's wider windows
+    if picked is not None:
+        picked.update({eid: [pid for pid, _ in xs if pid in posts] for eid, xs in picks.items()})
     return {eid: [_ctx(posts[pid], span, *win) for pid, span in xs if pid in posts] for eid, xs in picks.items()}
 
 
@@ -2532,6 +2543,156 @@ def show(e: Ent, written: Sequence[str], n_posts: int, ex: Sequence[str]) -> str
 
 def alias_input(a: str, b: str) -> str:
     return f"A: {a}\nB: {b}"
+
+
+# ---- an opinion holds only for what it was asked on (issue 0222) ------------------------------------------------
+#
+# A pair question shows each side as it is when asked: its name, type and maker (they never change for an id) and up
+# to four example posts naming it. A side's posts do change: a relink, a post read again under a new entities guide,
+# an owner's split move a post's mention to another entity. Its answer is about the posts it was shown, so it holds
+# only while those posts still name that side: `void_opinions` reads what each answered question showed (recorded at
+# ask time in mx_opinion_inputs, `record_input`; read back from the input of a question asked before, `derive_inputs`)
+# and voids an answer whose side lost one of them. A void answer decides nothing: the pair's open item is closed
+# (kept, closed_by 'void') and the pair asked again with what it is now (the server, v10.23: "Qwen 14B" = "Qwen3.8FN"
+# at 0.97, Haiku's evidence "the same two posts appear on each side", shown and banded >= 0.90 while the two sides
+# shared no post). New posts on a side never void it (the posts it was shown are still that side's).
+
+_EXAMPLE = re.compile(r'^  example: \[([^,\]]*), (\d{4}-\d{2}-\d{2})')
+
+
+def side_head(e: Ent) -> List[Optional[str]]:
+    """What a question shows of a side besides its posts and their counts: its name, type and maker."""
+    return [e.name, e.type, e.maker]
+
+
+def input_basis(book: Book, a: str, b: str, picked: Dict[str, List[str]]) -> Dict[str, Any]:
+    """What a pair question shows: each side's id, head and the example posts it quotes (`examples`' `picked`)."""
+    return {"sides": [{"id": x, "head": side_head(book.ents[x]), "posts": sorted(set(picked.get(x) or ()))}
+                      for x in (a, b)]}
+
+
+def record_input(cur: Any, kind: str, text: str, a: str, b: str, basis: Dict[str, Any]) -> None:
+    """The question's input (kind, its text's hash, as mx_tasks keys a task) and what it showed. A question asked again
+    with the same text records what it shows now (a derived row is replaced by the recorded one)."""
+    from insight_core.markx import repo
+    _savepoint(cur, """INSERT INTO mx_opinion_inputs (kind, input_hash, a, b, basis) VALUES (%s, %s, %s, %s, %s::jsonb)
+                       ON CONFLICT (kind, input_hash) DO UPDATE SET a = EXCLUDED.a, b = EXCLUDED.b,
+                              basis = EXCLUDED.basis, derived = false, created_at = now()""",
+               (kind, repo.sha256_hex(text), a, b, json.dumps(basis)))
+
+
+def _input_sides(text: str) -> Optional[Tuple[str, str]]:
+    if not text or not text.startswith('A: name "'):
+        return None
+    k = text.find('\nB: name "')
+    return (text[3:k], text[k + 4:]) if k > 0 else None
+
+
+def derive_inputs(cur: Any, book: Book, guide: Any, rows: Sequence[Tuple[str, str, str, str, str]]
+                  ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """What questions asked before mx_opinion_inputs showed, read back from their input text: {(kind, hash): basis}.
+    rows: (kind, input hash, a, b, input). A side's head is its first line; each example line ("[kind, day] "title"
+    ...") is the post naming that side on that day whose line starts so. An example no post of the side matches now
+    (its mention moved to another entity, or the post's title changed) is counted `unmatched`, and so is a head
+    that is not the side's: either voids the answer."""
+    from insight_core.markx import tasks
+    parsed: Dict[Tuple[str, str], List[Tuple[str, Optional[str], List[Tuple[str, str]]]]] = {}
+    want: Set[Tuple[str, str]] = set()
+    for kind, h, a, b, text in rows:
+        sides = _input_sides(text or "")
+        if sides is None:
+            parsed[(kind, h)] = [(a, None, []), (b, None, [])]
+            continue
+        got = []
+        for x, side in zip((a, b), sides):
+            lines = side.split("\n")
+            ex = [(ln, m.group(2)) for ln in lines[1:] for m in [_EXAMPLE.match(ln)] if m]
+            got.append((x, lines[0], ex))
+            want.update((x, day) for _ln, day in ex)
+        parsed[(kind, h)] = got
+    by: Dict[Tuple[str, str], List[str]] = defaultdict(list)
+    if want:
+        ws = sorted(want)
+        cur.execute(f"""SELECT DISTINCT m.entity_id::text, m.post_id::text, u.d
+                          FROM unnest(%s::uuid[], %s::date[]) u(e, d)
+                          JOIN mx_mentions_now m ON m.entity_id = u.e AND m.guide = ANY(%s)
+                          JOIN posts p ON p.id = m.post_id
+                         WHERE ({pairing.ordinary_date('p')} AT TIME ZONE 'UTC')::date = u.d""",
+                    ([x for x, _ in ws], [d for _, d in ws], list(guide)))
+        for eid, pid, d in cur.fetchall():
+            by[(eid, d.isoformat())].append(pid)
+    posts = tasks.load_posts(cur, {p for ps in by.values() for p in ps}, linked=False)
+    book.prime(ids={x for got in parsed.values() for x, _h, _e in got if x})
+    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for key, got in parsed.items():
+        sides = []
+        for x, head, ex in got:
+            e = book.ents.get(x) if x else None
+            ok = e is not None and head is not None and head.startswith(f'name "{e.name}" (written: ') and \
+                f" | type {e.type} | maker {e.maker} | version fields " in head
+            found, unmatched = [], 0 if ok else 1
+            for ln, day in ex:
+                hit = next((pid for pid in by.get((x, day), ()) if pid in posts and ln.startswith(
+                    f'  example: [{posts[pid].kind}, {posts[pid].iso[:10]}] "{posts[pid].title[:110]}" … ')), None)
+                if hit is None:
+                    unmatched += 1
+                else:
+                    found.append(hit)
+            sides.append({"id": x, "head": side_head(e) if ok else None, "posts": sorted(set(found)),
+                          **({"unmatched": unmatched} if unmatched else {})})
+        out[key] = {"sides": sides}
+    return out
+
+
+def void_opinions(cur: Any, book: Book, guide: Any, asked_: Dict[str, Tuple[str, str]], *,
+                  store: bool = True) -> Dict[str, str]:
+    """{task id: why its answer no longer holds} of `asked_` ({task id: (kind, input hash)}): 'head' (a side is not
+    what the question showed), 'posts' (an example post no longer names its side), 'unmatched' (a question asked
+    before mx_opinion_inputs whose examples are not found on their side now). A question asked before is read back
+    once (`derive_inputs`) and, with `store`, kept as derived (the run's; a page reads it without writing)."""
+    if not asked_:
+        return {}
+    keys = sorted(set(asked_.values()))
+    cur.execute("""SELECT o.kind, o.input_hash, o.basis FROM unnest(%s::text[], %s::text[]) u(k, h)
+                     JOIN mx_opinion_inputs o ON o.kind = u.k AND o.input_hash = u.h""",
+                ([k for k, _ in keys], [h for _, h in keys]))
+    bases: Dict[Tuple[str, str], Dict[str, Any]] = {(k, h): b for k, h, b in cur.fetchall()}
+    old = sorted({tid for tid, kh in asked_.items() if kh not in bases})
+    if old:
+        cur.execute("SELECT kind, input_hash, a::text, b::text, input FROM mx_tasks WHERE id = ANY(%s::uuid[])", (old,))
+        derived = derive_inputs(cur, book, guide, cur.fetchall())
+        for (k, h), basis in derived.items():
+            bases[(k, h)] = basis
+            if store:
+                ids = [s["id"] for s in basis["sides"]]
+                _savepoint(cur, """INSERT INTO mx_opinion_inputs (kind, input_hash, a, b, basis, derived)
+                                   VALUES (%s, %s, %s, %s, %s::jsonb, true) ON CONFLICT (kind, input_hash) DO NOTHING""",
+                           (k, h, ids[0], ids[1], json.dumps(basis)))
+    shown = {(s["id"], pid) for b_ in bases.values() for s in b_["sides"] if s.get("id") for pid in s.get("posts") or ()}
+    still: Set[Tuple[str, str]] = set()
+    if shown:
+        ps = sorted(shown)
+        cur.execute("""SELECT DISTINCT m.entity_id::text, m.post_id::text FROM unnest(%s::uuid[], %s::uuid[]) u(e, p)
+                         JOIN mx_mentions_now m ON m.entity_id = u.e AND m.post_id = u.p AND m.guide = ANY(%s)""",
+                    ([e for e, _ in ps], [p for _, p in ps], list(guide)))
+        still = {(e, p) for e, p in cur.fetchall()}
+    book.prime(ids={s["id"] for b_ in bases.values() for s in b_["sides"] if s.get("id")})
+    out: Dict[str, str] = {}
+    for tid, kh in asked_.items():
+        basis = bases.get(kh)
+        if basis is None:
+            continue
+        for s in basis["sides"]:
+            e = book.ents.get(s.get("id")) if s.get("id") else None
+            if s.get("unmatched"):
+                out[tid] = "unmatched"
+            elif e is None or s.get("head") != side_head(e):
+                out[tid] = "head"
+            elif any((s["id"], pid) not in still for pid in s.get("posts") or ()):
+                out[tid] = "posts"
+            if tid in out:
+                break
+    return out
 
 
 def collide_sample(eid: str, ms: Sequence[Tuple[str, str, Optional[str], Optional[str]]]) -> List[Tuple]:
@@ -2755,6 +2916,7 @@ class Asked:
         self.cur = cur
         self.alias, self.alias2, self.alias3 = _Lookup(self.prime), _Lookup(self.prime), _Lookup(self.prime)
         self.collide = _Lookup(self.prime_collide)
+        self.inputs: Dict[str, Tuple[str, str]] = {}   # 0222: task id -> (kind, input hash)
 
     def prime(self, pairs: Iterable[Tuple[str, str]]) -> None:
         want = sorted({pair(*p) for p in pairs} - self.alias.known)
@@ -2762,14 +2924,15 @@ class Asked:
             return
         for lk in (self.alias, self.alias2, self.alias3):
             lk.known.update(want)
-        self.cur.execute("""SELECT t.id::text, t.kind, t.a::text, t.b::text, t.status
+        self.cur.execute("""SELECT t.id::text, t.kind, t.a::text, t.b::text, t.status, t.input_hash
                               FROM unnest(%s::uuid[], %s::uuid[]) u(x, y)
                               JOIN mx_tasks t ON least(t.a, t.b) = u.x AND greatest(t.a, t.b) = u.y
                              WHERE t.kind IN ('alias', 'alias2', 'alias3', 'alias4') AND t.b IS NOT NULL
                              ORDER BY t.created_at, t.id""", ([x for x, _ in want], [y for _, y in want]))
-        for tid, kind, a, b, status in self.cur.fetchall():
+        for tid, kind, a, b, status, h in self.cur.fetchall():
             into = self.alias2 if kind == "alias2" else self.alias3 if kind in ("alias3", "alias4") else self.alias
             into.got[pair(a, b)] = (tid, status)
+            self.inputs[tid] = (kind, h)   # 0222: the question's input, what its answer holds for
 
     def prime_collide(self, eids: Iterable[str]) -> None:
         want = sorted(set(eids) - self.collide.known)
@@ -2952,7 +3115,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     decided: Set[Tuple[str, str]] = set()
     pooled: Set[Tuple[str, str]] = set()
     n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0, "refreshed": 0,
-         "added3": 0}
+         "added3": 0, "void_alias": 0, "void_alias2": 0, "void_alias3": 0}
     closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
 
     seeded: Set[str] = set()
@@ -3016,6 +3179,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias] +
                                 [got.alias2[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias2] +
                                 [got.alias3[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias3])
+        # 0222: an answer holds only for what its question showed; a void one decides nothing (asked again below)
+        void = void_opinions(cur, book, guide, {tid: got.inputs[tid] for tid in answers if tid in got.inputs},
+                             store=not getattr(ask, "dry", False))
+        voided: Dict[str, Dict[Tuple[str, str], str]] = {"alias": {}, "alias2": {}, "alias3": {}}
+        for k_, lk in (("alias", got.alias), ("alias2", got.alias2), ("alias3", got.alias3)):
+            for p in pairs:
+                task_ = lk.get((p.a, p.b))
+                if task_ and task_[0] in void:
+                    voided[k_][(p.a, p.b)] = void[task_[0]]
+                    answers.pop(task_[0], None)
+                    n["void_" + k_] += 1
         decisions: List[Decision] = []
         for p in pairs:
             if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
@@ -3044,11 +3218,19 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         asks_by.update(w_ for d in decisions if d.tier == "ask" for w_ in pool.pairs[d.pair].why)
         reasons.update(f"{d.tier}:{d.reason}" for d in decisions)
         t = tick("decide", t)
-        # Haiku's questions for the pairs no rule decides
-        need = [d for d in decisions if d.tier == "ask" and d.pair not in got.alias]
+        def asked_on(kind_: str, text_: str, d_: Decision, picked_: Dict[str, List[str]]) -> None:
+            """0222: the question asked, and what it showed of each side (its answer holds only for that)."""
+            ask.answer(kind_, text_, a=d_.pair[0], b=d_.pair[1])
+            if not getattr(ask, "dry", False):
+                record_input(cur, kind_, text_, d_.pair[0], d_.pair[1], input_basis(book, *d_.pair, picked_))
+
+        # Haiku's questions for the pairs no rule decides (0222: and those whose answer is void)
+        need = [d for d in decisions if d.tier == "ask" and (d.pair not in got.alias or d.pair in voided["alias"])]
         if need:
             ids = sorted({x for d in need for x in d.pair})
-            ex, written, nposts = examples(cur, guide, ids), spans(cur, guide, ids), counts_of(cur, guide, ids)
+            picked: Dict[str, List[str]] = {}
+            ex, written, nposts = (examples(cur, guide, ids, picked=picked), spans(cur, guide, ids),
+                                   counts_of(cur, guide, ids))
             for d in need:
                 a, b = (book.ents[x] for x in d.pair)
                 text = alias_input(show(a, written.get(a.id, [a.name]), nposts.get(a.id, 0), ex.get(a.id, [])),
@@ -3056,13 +3238,15 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if ask.added["alias"] >= ALIAS_CAP:
                     ask.waiting["alias"] += 1
                     continue
-                ask.answer("alias", text, a=d.pair[0], b=d.pair[1])
+                asked_on("alias", text, d, picked)
                 n["added"] += 1
         # 0130 A2: the second opinions (alias-v1 with two other example posts) for the held-back `same` the bands allow
-        need2 = [d for d in decisions if d.ask2 and d.pair not in got.alias2]
+        need2 = [d for d in decisions if d.ask2 and (d.pair not in got.alias2 or d.pair in voided["alias2"])]
         if need2:
             ids = sorted({x for d in need2 for x in d.pair})
-            ex, written, nposts = examples(cur, guide, ids, other=True), spans(cur, guide, ids), counts_of(cur, guide, ids)
+            picked = {}
+            ex, written, nposts = (examples(cur, guide, ids, other=True, picked=picked), spans(cur, guide, ids),
+                                   counts_of(cur, guide, ids))
             for d in need2:
                 a, b = (book.ents[x] for x in d.pair)
                 text = alias_input(show(a, written.get(a.id, [a.name]), nposts.get(a.id, 0), ex.get(a.id, [])),
@@ -3070,20 +3254,26 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if ask.added["alias2"] >= ALIAS2_CAP:
                     ask.waiting["alias2"] += 1
                     continue
-                ask.answer("alias2", text, a=d.pair[0], b=d.pair[1])
+                asked_on("alias2", text, d, picked)
                 n["added2"] += 1
         if need3:   # 0201: the unsure queue's question, each side's facts, accounts and four posts
             for d in need3:
-                if d.pair in got.alias3:
+                if d.pair in got.alias3 and d.pair not in voided["alias3"]:
                     continue
                 kind3 = third_kind(d)
                 if ask.added[kind3] >= ALIAS3_CAP:
                     ask.waiting[kind3] += 1
                     continue
-                ask.answer(kind3, alias3_input(cur, book, guide, *d.pair), a=d.pair[0], b=d.pair[1])
+                picked = {}
+                asked_on(kind3, alias3_input(cur, book, guide, *d.pair, picked=picked), d, picked)
                 n["added3"] += 1
         t = tick("ask", t)
         for d in decisions:
+            why_void = voided["alias"].get(d.pair)
+            if why_void and d.tier == "ask":
+                # 0222: its open item showed an answer about other posts: closed (kept, with why); asked again above
+                closed["void"] += close_queued(cur, d.pair, {"closed_by": "void", "void": why_void, "redecided": REDECIDE})
+                continue
             if d.tier == "auto":
                 ev = {"rules": list(d.rules), "confidence": d.conf, "judge": d.judge}
                 if d.reason == "second":
@@ -3112,6 +3302,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     ev.update(second=d.second, second_call=d.second_call, disagree=not second_agrees(d.second))
                 elif d.ask2:
                     ev["second_asked"] = True
+                if d.second is None and d.pair in voided["alias2"]:   # 0222: a void second opinion is not shown
+                    ev.update(second=None, second_call=None, disagree=None)
                 if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
                               evidence=ev, call_id=d.call_id, run_id=run_id):
                     n["queued"] += 1
@@ -3247,6 +3439,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     out["third"] = {"asked": n["added3"]}
     out["merged"], out["queued"] = n["merged"], n["queued"]
     out["queue"] = {"again": len(again), "closed": dict(closed), "refreshed": n["refreshed"]}   # v10.18: the backlog
+    out["void"] = {k: n["void_" + k] for k in ("alias", "alias2", "alias3")}   # 0222: answers about other posts
     if full:
         done = not stopped
         out["full"] = {"done": done, "phase": None if done else phase,
