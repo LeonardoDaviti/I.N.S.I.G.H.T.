@@ -258,8 +258,16 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
         if want_fams is not None:
             want_fams(rests)
         return got
-    for e in book.walk("position(' ' in e.key) > 0 AND e.status <> 'not_entity' AND e.level <> ALL(%s)",
-                       (list(I.VERSION_LEVELS),), by_id=True):
+    from insight_core.markx import schemas
+    org = schemas.stored_types(["org"])
+    # v10.23 (0218): a book read by need narrows its read to the names some mention types an org (or, none counted,
+    # typed an org themselves): the walk read every name of two words (~220k rows of the server-sized copy's 330k,
+    # 5 s of the stage's budget) for the ~37k its test keeps
+    for e in book.walk("""position(' ' in e.key) > 0 AND e.status <> 'not_entity' AND e.level <> ALL(%s)
+                          AND e.id IN (SELECT t.id FROM pg_temp.mx_run_types t WHERE t.type = ANY(%s)
+                                       UNION ALL SELECT x.id FROM mx_entities x WHERE x.type = ANY(%s) AND NOT EXISTS
+                                                 (SELECT 1 FROM pg_temp.mx_run_types t WHERE t.id = x.id))""",
+                       (list(I.VERSION_LEVELS), org, org), by_id=True):
         if " " not in e.key or e.status == "not_entity" or e.level in I.VERSION_LEVELS:
             continue
         page.append(e)
