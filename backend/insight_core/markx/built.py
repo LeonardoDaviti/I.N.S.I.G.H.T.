@@ -209,7 +209,8 @@ def _connected(cur: Any, story_ids: Sequence[str]) -> Set[FrozenSet[str]]:
     if not story_ids:
         return set()
     cur.execute("""SELECT a::text, b::text FROM mx_connections WHERE valid_to IS NULL AND a_kind = 'story'
-                     AND b_kind = 'story' AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
+                     AND b_kind = 'story' AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))
+                     AND rule IS DISTINCT FROM 'chain_stops'""",   # 0219: a story chain is graph's, not decide's
                 (list(CONNECTED), list(story_ids), list(story_ids)))
     return {frozenset(r) for r in cur.fetchall()}
 

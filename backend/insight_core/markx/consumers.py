@@ -38,7 +38,7 @@ FEATURES: Dict[str, Feature] = {f.name: f for f in (
     Feature("news", True, "Mark X News, its stories, headlines, cards and readings (the reader's)"),
     Feature("entities", True, "entities: the pages, names and the identity review queue"),
     Feature("tracks", True, "tracks: verdicts, sub-topics, digests and finders"),
-    Feature("graph", True, "Stalker's edges: a post's earlier posts on its page (0131)"),
+    Feature("graph", True, "Stalker's edges: a post's earlier posts on its page (0131), a story's chain (0219)"),
     Feature("sources", True, "sources: stance, the source judge and research (asked by the owner)"),
     Feature("embeddings", True, "the embedder's vectors (no model cost)"),
     Feature("briefing", True, "the day's briefing on /markx"),
@@ -52,7 +52,8 @@ CONSUMER: Dict[str, str] = {
     "connect": "news", "card": "news", "headline": "news", "briefing": "briefing", "translate": "news",
     "embed": "embeddings", "embed_name": "embeddings", "alias": "entities", "alias2": "entities", "alias3": "entities",
     "alias4": "entities", "collide": "entities", "rename": "entities", "perspective": "perspectives",
-    "sheet": "perspectives", "read3": "news", "relate": "graph", "stance": "sources", "back": "back", "cite": "entities",
+    "sheet": "perspectives", "read3": "news", "relate": "graph", "chain": "graph",   # 0219: story chains
+    "stance": "sources", "back": "back", "cite": "entities",
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
     "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",   # 0165 C: the timeline stops

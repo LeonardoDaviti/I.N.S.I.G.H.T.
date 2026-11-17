@@ -320,6 +320,16 @@ RELATE_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
 }
 
+# 0219: how a later story about a thing relates to an earlier story about the same thing (chain-v1, markx/graph.py's
+# story chains). next_version is never one of them: a successor is an entity relation, by rule (0131).
+CHAIN_RELATIONS = ["same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated"]
+CHAIN_SCHEMA = {
+    "type": "object",
+    "required": ["reason", "relation"],
+    "properties": {"reason": {"type": "string", "minLength": 1}, "relation": {"enum": CHAIN_RELATIONS},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
+}
+
 # 0136 (back in the news): a verdict per new post (back-v1, the lab's frozen back_v3c.md); code makes the candidate's.
 BACK_VERDICTS = ["development", "retold", "related", "unrelated"]
 BACK_SCHEMA = {
@@ -616,6 +626,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
+    Kind("chain", "chain-v1", "story_story", CHAIN_SCHEMA),          # 0219: a later story and an earlier one, one thing
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)

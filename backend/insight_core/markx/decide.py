@@ -1174,7 +1174,8 @@ def persist_connections(cur: Any, run_id: Any, wanted_rows: List[Dict[str, Any]]
     cur.execute("""SELECT a_kind, a::text, b_kind, b::text, relation, p, call_id::text, rule, evidence->'shown'
                      FROM mx_connections
                     WHERE valid_to IS NULL AND (a = ANY(%(s)s::uuid[]) OR b = ANY(%(s)s::uuid[]))
-                      AND NOT (a_kind = 'post' AND b_kind = 'post')""", {"s": sorted(scope)})
+                      AND NOT (a_kind = 'post' AND b_kind = 'post')
+                      AND rule IS DISTINCT FROM 'chain_stops'""", {"s": sorted(scope)})   # 0219: graph's story chains
     have = {tuple(r[:5]): r for r in cur.fetchall()}
 
     def same(c: Dict[str, Any], r: Tuple) -> bool:
