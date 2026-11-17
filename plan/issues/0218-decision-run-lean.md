@@ -14,38 +14,40 @@ server's state (a full pass half done) at the server's budgets: time and memory 
 
 | S1 (a normal incremental run) | base fb373c40 | v1023-light |
 |---|---|---|
-| questions and decisions: peak / RSS after the trim | 500 / 354 MB | 284 / 237 MB |
-| RSS when the entity stages start | 350 MB | 217 MB |
-| entities stage: peak / above its start / CPU | 694 MB / +344 MB / 16.8 s | **316 MB / +99 MB** / 15.8 s |
-| RSS after the trim: graph, news, entities, surges | 362, 350, 398, 398 | 264, 217, 219, 220 |
+| questions and decisions: peak / RSS after the trim | 500 / 354 MB | 285 / 237 MB |
+| RSS when the entity stages start | 350 MB | 219 MB |
+| entities stage: peak / above its start / CPU (wall) | 694 MB / +344 MB / 16.8 s (99.4 s, a loaded machine; 24 s quiet) | **322 MB / +103 MB** / 14.0 s (25.2 s) |
+| RSS after the trim: graph, news, entities, surges | 362, 350, 398, 398 | 267, 219, 220, 220 |
 | the run's peak | 694 MB (entities) | 541 MB (the graph stage: its backfill unbounded in this harness) |
 
 | S2 (the server's state, entities 45 s, the graph's own budget) | base | v1023-light |
 |---|---|---|
-| the run's peak | 744 MB (entities) | 539 MB (graph) |
-| entities stage: peak / identity.stage peak | 744 / 744 MB | **392 / 359 MB** |
-| graph stage peak | 634 MB | 539 MB |
-| entities stage: wall / CPU | 51.8 s / 30.5 s | 67.1 s / 35.6 s (see "Reading S2") |
-| the work it did in its 45 s | 13 of 13 linking parts, 4 full-pass chunks (the base with "X (Y)" only) | 1 of 13 parts, 3 chunks |
+| the run's peak | 744 MB (entities) | 542 MB (graph) |
+| entities stage: peak / identity.stage peak | 744 / 744 MB | **348 / 345 MB** |
+| graph stage peak | 634 MB | 542 MB |
+| entities stage: wall / CPU | 51.8 s / 30.5 s | 69.5 s / 31.7 s (see "Reading S2") |
+| the work it did in its 45 s | 13 of 13 linking parts, 4 full-pass chunks | 1 of 13 parts, 3 chunks |
 
 Per slice (S1 unless said; each commit's rows equal to the base's):
 
 | slice | before | after |
 |---|---|---|
-| 1. the entity book read by need (RunBook) | load_book +250 MB; entities stage peak 694 MB | no whole book; peak 316 MB (S2: 744 -> 392) |
-| 2. the candidate pairs in the database | decide.load peak 500 MB (+416) | 284 MB (+202) |
+| 1. the entity book read by need (RunBook) | load_book +250 MB; entities stage peak 694 MB | no whole book; peak 316-322 MB (S2: 744 -> 348) |
+| 2. the candidate pairs in the database | decide.load peak 500 MB (+416) | 284 MB (+202); its DB time 29.7 -> 3.5 s (S2) |
 | 3. the nearest names (120 seeds, warm) | 324 ms, 227k buffers | 260 ms, 217k (the same rows); "X (Y)" reads the texts of posts with a pair only |
 | 4. what each stage lets go | after the trim: Q&D 354 ... entities 398 | 237 ... 219 (flat after Q&D) |
 | 5. the story job before the decision run | a due decision run went first | a wanted story run first (tests) |
 | 6. budgets in the real-data check | none | each job's peak MB and seconds, base and head; fails over budget or 20% worse |
 
-**Against the targets.** The entities stage's memory: +99 MB above its start on S1 (target ~150), its peak 392 MB on
-the server's state against 744. Its time: 29 s (CPU 16 s) on S1; on the server's state its budget decides, and the
-run's book costs time there (fewer linking parts in the share; the shown names' sweep over every entity, 18 s past
-the deadline against 3 s): **slower than the base on S2**, see "Reading S2". The post-trim baseline is flat after
-questions and decisions (217-264 MB). The run's peak is now the graph stage's (539-541 MB); questions and decisions
-284 MB, entities 316-392 MB. **Not reached**: a run under 500 MB at the clone's size (the graph stage) and under 90 s
-(the clone's candidate finder alone took 29-129 s on the shared machine; the server's 12 s).
+**Against the targets.** The entities stage's memory: +99-103 MB above its start on S1 (target ~150), its peak 348 MB on
+the server's state against 744. Its time: 25-29 s (CPU 14-16 s) on S1, within its 45 s; on the server's state its budget
+decides, and the run's book costs time there (the pool's indexes built from one read of every row inside the budget:
+1 linking part of 13 against 13, 3 chunks against 4; the shown names' sweep over every entity, 18 s past the deadline
+against 3 s): CPU 31.7 s against 30.5 s, wall 69.5 s against 51.8 s, see "Reading S2". The post-trim baseline is flat
+after questions and decisions (219-267 MB). The run's peak is now the graph stage's (539-542 MB); questions and
+decisions 285 MB, entities 322-348 MB. **Not reached**: a run under 500 MB at the clone's size (the graph stage) and
+under 90 s (the clone's candidate finder alone took 29-129 s on the shared machine, the server's 12 s; the graph stage
+28-127 s for the same code).
 
 ## The server (read-only GETs, v10.22.2)
 
@@ -192,7 +194,14 @@ neighbour's vector read back: -10k buffers (the neighbours' heap and TOAST pages
 naming one of its 1,000 seeds and tried every pair of each post's mentions against the whole text. Now only the posts
 with a pair the rule could name (two entities of one type, not a place or person) have their text read, and a pair is
 looked for only when its Y is the whole of a "(...)" in the text (a span folds to words and spaces, never a bracket,
-so the rule's match implies it). The same pairs.
+so the rule's match implies it). The same pairs. Measured on S2: 8.3 s -> 7.5 s for 13 parts and 4 chunks (the base
+with the SQL hook, against 7c36a14f); the clone's synthetic posts nearly all hold a nameable pair (4-7 more mentions
+of six types each), so the texts read barely fall there; the server's real posts (18.5 s for one part and one chunk)
+were not measured.
+
+**The DB time of the reading's pairs** (slice 2's table, S2 with the SQL hook): the base computed the 452k cosines
+with the rows sent back as two arrays of ids (`embed.py:470`, 29.7 s that run); the table computes them in one join
+from mx_candidates (3.5 s).
 
 ## Slice 4: what each stage lets go (decide.run)
 
@@ -219,13 +228,20 @@ made tuples at once), in the order read.
 
 - **The pool's indexes are still whole.** The run's book reads its entities by need, but the pool (blocking by grams,
   squashed key, family, maker prefix) still indexes every live entity in the process, built from one read of every
-  row each run: most of the entities stage's +99 MB on the clone (330k ids, their grams and keys). Below that the index
+  row each run: tracemalloc at identity.stage's end (S2) holds ~100 MB of Python objects, ~70 MB of them the index
+  (the 330k ids 26 MB, the gram lists 26 MB, the squashed keys 11 MB, the keys' dicts 7 MB) and ~22 MB the entities
+  the run read; the rest of the stage is let go at its end (49 MB traced after it, as before it). Below that the index
   has to live in the database: a gram table kept by the Writer (a migration and a backfill), or pg_trgm with the
   rule's Jaccard as the recheck, read per chunk. Its liveness (an entity a mention names, as when the book was read)
   is the snapshot RunBook already keeps.
 - **The judge tasks' state is the server's largest share of "questions and decisions"** (106,924 kept inputs, ~63k
   answers a run) and the clone holds 1,902 judge tasks: a compact state (hashes as bytes, answers as their fields) is
   to be measured on a clone with the server's judge tasks. The answers are let go after News (`incremental.release`).
+  On the clone the stage's end holds 153 MB of Python objects (tracemalloc), the world's 130k posts': their kept rows
+  27 MB, their readings' kinds and events 35 MB, stamps 25 MB, texts 13 MB; 49 MB once released after News.
+- **The graph stage is now the run's peak** (539-541 MB on the clone; tracemalloc's peak in it 349 MB of Python objects
+  against 154 MB before and after): its `Subjects` (every post's subject mentions, 1.5M mentions on the clone) and
+  the backfill's reads. Read by need (the subjects of the posts the stage looks at) is its next step.
 - **A full pass half done keeps every run "whole"** (0216): with its steps cheaper (the "X (Y)" texts, the nearest
   names' second read), more chunks fit the 45 s; the server's pace after the deploy says whether the pass needs a job
   of its own.
@@ -247,6 +263,7 @@ seconds vary with the shared machine (other agents' suites); CPU seconds less.
 | + a seed's candidates not held | 157.1 s / 43.2 s | 567 | 11.9 s, 285 -> 237 | 284 | 59.7 s, 567 | 240 | 28.6 s (CPU 16.3), 421 -> 288 | 20.2 s, 421 | **94 of 94 equal** |
 | + the releases after News, liveness from the snapshot, the graph's subjects paged, the shown names' chunks read ahead | 176.2 s / 45.3 s | 541 | 79.8 s, 286 -> 238 | 284 | 29.8 s, 541 | 218 | 30.3 s (CPU 16.7), 317 -> 220 | 20.6 s, 317 | **94 of 94 equal** |
 | + a seed's candidates read as keys, the shown sweep's pages let go (head8) | 228.6 s / 44.0 s | 541 | 12.0 s, 284 -> 237 | 283 | 29.0 s, 541 | 217 | 29.0 s (CPU 15.8), 316 -> 219 | 20.8 s, 316 | **94 of 94 equal** |
+| + the anchors' keys in one go, a sweep's unfound names let go (head9, the branch's last) | 191.5 s / 40.7 s | 541 | 11.8 s, 285 -> 237 | 284 | 27.2 s, 541 | 219 | 25.2 s (CPU 14.0), 322 -> 220 | 17.2 s, 322 | **94 of 94 equal** |
 
 (The first head's 109 s entities stage: the repairs' first walks, unnarrowed (84.5 s of correlated subqueries); the
 next commit narrowed them. The second head's 85 s "questions and decisions": 4.2 s of CPU, the machine's waits.)
@@ -260,25 +277,27 @@ same code's graph stage took 28.6 s and 127.1 s in two runs).
 | run | wall / CPU | peak | Q&D (peak -> end) | graph (s, peak) | entities (s, CPU, peak -> end) | identity.stage | shown | linking parts | full chunks | paren / vectors / pool / facts (s) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | base_s2 | 199.0 / 61.0 s | 744 | 502 -> 354 | 30.4 s, 634 | 51.8 s, 30.5 s, 744 -> 408 | 40.7 s, 744 | 3.3 s, 742 | ? of ? | 4 | ? / ? / ? / ? |
+| basesql_s2 | 161.4 / 60.7 s | 733 | 503 -> 355 | 35.6 s, 639 | 52.5 s, 31.3 s, 733 -> 414 | 41.5 s, 733 | 3.1 s, 729 | 13 of 13 | 4 | 8.31 / 9.4 / 6.15 / 1.9 |
 | c7_s2 | 224.0 / 60.2 s | 702 | 501 -> 326 | 28.6 s, 593 | 51.6 s, 30.1 s, 702 -> 385 | 40.1 s, 702 | 3.1 s, 702 | 13 of 13 | 4 | 7.5 / 9.57 / 5.89 / 1.87 |
 | head5_s2 | 250.3 / 61.0 s | 604 | 288 -> 237 | 127.1 s, 566 | 62.4 s, 33.5 s, 604 -> 333 | 39.5 s, 480 | 15.0 s, 604 | 5 of 13 | 3 | 6.59 / 7.2 / 8.36 / 4.25 |
 | head6_s2 | 237.5 / 61.5 s | 541 | 285 -> 237 | 28.5 s, 541 | 61.9 s, 33.3 s, 490 -> 247 | 39.3 s, 361 | 14.7 s, 490 | 1 of 13 | 3 | 6.13 / 7.11 / 8.32 / 4.86 |
 | head8_s2 | 231.5 / 63.5 s | 539 | 285 -> 237 | 95.5 s, 539 | 67.1 s, 35.6 s, 392 -> 241 | 40.3 s, 359 | 18.1 s, 392 | 1 of 13 | 3 | 6.3 / 7.35 / 9.03 / 4.76 |
+| head9_s2 | 199.1 / 58.8 s | 542 | 282 -> 238 | 82.4 s, 542 | 69.5 s, 31.7 s, 348 -> 228 | 35.0 s, 345 | 18.1 s, 348 | 1 of 13 | 3 | 6.36 / 7.16 / 7.77 / 2.03 |
 
-(base_s2: fb373c40; c7_s2: 7c36a14f, slices 4 and "X (Y)" without the run's book; head5: the run's book, slices 2 and
+(base_s2, basesql_s2: fb373c40, the second with the SQL timing hook; c7_s2: 7c36a14f, slices 4 and "X (Y)" without the run's book; head5: the run's book, slices 2 and
 3, the index's one-id keys; head6: the releases after News, the graph's subjects paged, liveness from the snapshot;
-head8: a seed's candidates read as keys, the shown sweep's pages let go and read ahead. The base_s2 row predates the
-harness's per-step timing.)
+head8: a seed's candidates read as keys, the shown sweep's pages let go and read ahead; head9: the anchors' keys read
+in one go, the names asked and not found let go with a sweep's page.)
 
 **Reading S2.** The stage keeps to its budget either way: the linking gets half of what is left (LINK_SHARE), the full
 pass's chunks the rest, then one step past it. With the run's book its first step costs more: the pool's indexes are
 built from one read of every row (~8 s; the whole book was read before, and its index built from memory), and what a
 part asks of the book is read from the database (the alias questions' renders, the chunk's pairs, the anchors'
-keys: read in one go where the stage knows them). So on this clone it links 1 of 13 parts in its share against 13 of
-13 (the base with "X (Y)"), and does 3 chunks against 4; its memory is what it saves (identity.stage 359 MB against
+keys: read in one go where the stage knows them; the anchors' read went from 4.8 s to 2.0 s so). So on this clone it links 1 of 13 parts in its share against 13 of
+13 (the base with "X (Y)"), and does 3 chunks against 4; its memory is what it saves (identity.stage 345 MB against
 744). Past the deadline, on a whole run whose last shown-names sweep was done, the sweep starts again over every
 entity (the clone's S2: 330k): the whole book held them all (3.1 s); the run's book reads them a page at a time and
-lets each page go (18.1 s, +33 MB; before the pages were let go 14.7 s, +136 MB). On the server that sweep comes once
+lets each page go, and the names it asked and did not find (18.1 s, +3 MB; +136 MB before). On the server that sweep comes once
 per cycle of the shown names (its record says where it is); the singles could resume by `after` as the clusters do (a
 change of what a run writes: not built).
 
