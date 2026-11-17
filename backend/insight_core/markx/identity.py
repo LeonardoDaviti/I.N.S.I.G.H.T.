@@ -65,6 +65,7 @@ once for the pages, which read through redirects and pins; the next run's snapsh
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import itertools
 import json
@@ -1168,6 +1169,7 @@ class RunBook(LazyBook):
         self._fv_made = 0
         self._fresh_seen = 0
         self._walks = 0
+        self.reading = 0.0   # the seconds of the indexes' one read (_build): not the stage's budget (identity.stage)
 
     # -- the mention counts, as they stood when the book was read -------------------------------------------------
     def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
@@ -1385,17 +1387,31 @@ class RunBook(LazyBook):
     def _build(self) -> None:
         """Every entity read once, row by row: which a mention named when the book was read, the live ones (named, not
         `not_entity`) into the pool's indexes, every one's family values (Book.family_values); then the entities made
-        since (live ones, in the order made). None of them is kept but those the run holds already."""
+        since (live ones, in the order made). None of them is kept but those the run holds already. Its seconds are
+        the book's `reading`."""
+        import time as _time
+        t0 = _time.monotonic()
         idx = {name: empty() for name, (empty, _add) in INDEXES.items()}
         fv: Dict[str, List[Set[Any]]] = defaultdict(lambda: [set(), set(), set(), set()])
         made = _EntRows()
         fresh = self.mentioned.fresh
-        for row in self._stream(f"""SELECT {ENT_COLUMNS},
-                                           EXISTS (SELECT 1 FROM pg_temp.mx_run_types t WHERE t.id = e.id)
-                                      FROM mx_entities e JOIN pg_temp.mx_run_order o ON o.id = e.id
-                                     ORDER BY o.ord"""):
+        hks: Dict[Tuple[int, Optional[str]], Tuple] = {}   # a fields key once for each set of fields and maker
+        # only what the indexes and the family values read (an entity read here is let go): no parent, version key,
+        # first seen or shown name
+        for row in self._stream("""SELECT e.id::text, e.type, e.name, e.key, e.level, NULL, e.maker, e.family_key,
+                                          e.version, NULL, e.variant, e.size, e.build, e.status, NULL, NULL, NULL,
+                                          EXISTS (SELECT 1 FROM pg_temp.mx_run_types t WHERE t.id = e.id)
+                                     FROM mx_entities e JOIN pg_temp.mx_run_order o ON o.id = e.id
+                                    ORDER BY o.ord"""):
             held = dict.get(self.ents, row[0])
-            e = held if held is not None else made(row[:-1])
+            if held is not None:
+                e = held
+            else:
+                e = made(row[:-1])
+                hk = hks.get((id(e.haiku), e.maker))
+                if hk is None:
+                    hk = hks[(id(e.haiku), e.maker)] = e.hk
+                e._hk = hk
             named = row[-1] or e.id in self._pinned
             _family_value(fv, e)
             if (named or e.id in fresh) and e.status != "not_entity":
@@ -1404,6 +1420,7 @@ class RunBook(LazyBook):
         self._idx, self._fv = {name: _compact(got) for name, got in idx.items()}, fv
         self._fresh_seen = len(fresh)   # those named by then are in (a run's linking names only what was not named)
         self._grow()
+        self.reading += _time.monotonic() - t0
 
     def _grow(self) -> None:
         """The entities the run made live since the indexes were last read (as the whole book's `_live` meets them: the
@@ -1909,8 +1926,14 @@ def _family_add(by_fam: Any, e: Ent) -> None:
         by_fam[f].append(e.id)
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _maker_key(maker: Optional[str]) -> str:
+    """A maker's key, worked out once a maker (the pool's maker index meets every live entity's)."""
+    return N.key(maker or "")
+
+
 def _maker_add(index: Any, e: Ent) -> None:
-    mk = N.key(e.maker or "")
+    mk = _maker_key(e.maker)
     if mk and e.key.startswith(mk + " "):
         index[N.squash(e.key[len(mk) + 1:])].append(e.id)
 
@@ -2829,8 +2852,14 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         timing[step] += t - since_t
         return t
 
+    def clock() -> float:
+        """v10.23 (0218): the budget's clock: the run's book's one read of the pool's indexes (RunBook.reading, once a
+        run, shared by every part and chunk) is not counted: the budget is the parts' and chunks' work, and the read
+        must not cost the linking its parts (the new mentions wait) or the full pass its chunks."""
+        return _time.monotonic() - getattr(book, "reading", 0.0)
+
     def past(until: Optional[float] = deadline) -> bool:
-        return until is not None and _time.monotonic() > until
+        return until is not None and clock() > until
     guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     t = _time.monotonic()
@@ -3109,7 +3138,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     if not full or resume:
         own = deadline
         if deadline is not None and full:
-            at = _time.monotonic()
+            at = clock()
             own = at + max(0.0, deadline - at) * LINK_SHARE
         linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
