@@ -130,6 +130,35 @@ class TheRebuildHold(unittest.TestCase):
                          "stories")
         self.assertIsNone(jobs.due(_states(decide=recent), T0, busy="held"))                 # no rebuild: none
 
+    def test_a_wanted_story_run_goes_before_the_decision_run(self):
+        """0218: posts saved want the story job and the decision run; the story job groups them first, so the run
+        decides them in their stories (before, a run due at the same look went first)."""
+        due_run = {"started_at": T0 - timedelta(minutes=61), "wanted_at": T0 - timedelta(minutes=2)}
+        wanted = {"wanted_at": T0 - timedelta(seconds=40), "finished_at": T0 - timedelta(hours=1)}
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=wanted), T0), "stories")
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=wanted), T0, rebuild=True), "stories")
+        # then the decision run (the story run's start cleared its want)
+        ran = {"started_at": T0 - timedelta(seconds=50), "finished_at": T0 - timedelta(seconds=5)}
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=ran), T0), "decide")
+        # the plan still first (it never starves)
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=wanted), T0, plan_every=300), "plan")
+
+    def test_a_rested_or_running_story_job_never_holds_the_decision_run(self):
+        due_run = {"started_at": T0 - timedelta(minutes=61)}
+        # a wanted run that yielded (or stepped aside for this run) rests STORIES_GAP: the decision run goes meanwhile
+        for how in ("yielded", "skipped"):
+            rested = {"wanted_at": T0 - timedelta(seconds=30), "finished_at": T0 - timedelta(seconds=30),
+                      "last": {"ok": True, how: True}}
+            self.assertEqual(jobs.due(_states(decide=due_run, stories=rested), T0), "decide")
+        running = {"wanted_at": T0 - timedelta(seconds=30), "stage": "regrouping", "stage_at": T0}
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=running), T0), "decide")
+        # a failed story run waits out its backoff; the decision run does not wait with it
+        failed = {"wanted_at": T0 - timedelta(minutes=1), "finished_at": T0 - timedelta(seconds=10), "failures": 1,
+                  "last": {"ok": False, "error": "boom"}}
+        self.assertEqual(jobs.due(_states(decide=due_run, stories=failed), T0), "decide")
+        # a rebuild's slice alone (not wanted) still follows the decision run
+        self.assertEqual(jobs.due(_states(decide=due_run), T0, rebuild=True), "decide")
+
     def test_candidates_and_official_never_starve_behind_the_kept_views(self):
         """The unread counts can be due at every look; before, official ran only when nothing else was due."""
         ran = {"started_at": T0 - timedelta(minutes=10)}

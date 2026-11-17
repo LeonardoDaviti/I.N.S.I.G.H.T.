@@ -25,6 +25,11 @@ for five days, its runs' first linking part taking the whole budget and the pass
 The linking pools as an incremental pass does (the full pass's chunks ask every seed's nearest names), and the book
 holds about half what it did (identity.read_ents, load_book).
 
+v10.23 (0218): **the book is read by need** (identity.RunBook): the entities and aliases the run touches, the mention
+counts and versions as a snapshot in the run's transaction, the pool's indexes from one read of every row (none
+kept), the repairs' walks row by row. The same rows as with the whole book (the server-sized copy: every mx_* table);
+the stage's peak 317 MB instead of 694 MB there (+99 MB above its start, was +344).
+
 0164: the identity repairs (markx/entity_repair.py) run first, in REPAIR_SHARE of the budget (`repair`), and the shown
 names and types after the linking (`shown`: the touched clusters, every cluster on a full pass, resumed by `after`).
 0168: then the handle rule over the posts it has not read (markx/handles.py; `handles`), and the questions its pairs
@@ -116,7 +121,7 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     whole = bool(full) or left is not None or full_due(cur, now)
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
-    book = identity.load_book(cur) if book is None else book   # read once a run: identity's stage and the addresses share it
+    book = identity.run_book(cur) if book is None else book   # v10.23 (0218): read by need, once a run (shared)
     # 0164: the identity repairs first (the linking then sees them), in their share of the budget
     fixed, book = repairs(cur, book, run_id=run_id, full=whole,
                           deadline=None if budget is None else time.monotonic() + budget * REPAIR_SHARE)
@@ -161,7 +166,7 @@ def repairs(cur: Any, book: Any, *, run_id: Any, full: bool, deadline: Optional[
     except Exception as error:  # noqa: BLE001 - a derived step never stops the run
         cur.execute("ROLLBACK TO SAVEPOINT entity_repair")
         logging.getLogger(__name__).exception("Mark X: the entity repairs failed")
-        return {"error": str(error)[:200]}, identity.load_book(cur)
+        return {"error": str(error)[:200]}, identity.run_book(cur)
     cur.execute("RELEASE SAVEPOINT entity_repair")
     return got, book
 

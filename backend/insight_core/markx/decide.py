@@ -792,6 +792,42 @@ class World:
         return out
 
 
+def _window(cur: Any, table: str, posts: Dict[str, Post], since: datetime) -> List[Tuple[str, str, Optional[float]]]:
+    """The window's candidate pairs (a, b, cosine; None for a pair found otherwise), strongest first: each pair of
+    `table` (embed.current_pairs: its rows) once, at its embedding row's cosine (now, rounded as current_candidates
+    gives it, else as stored), both posts in the world and the first in the window. Read as a stream, a pair at a time,
+    on the world's own id strings."""
+    canon = {p: p for p in posts}
+    out: List[Tuple[str, str, Optional[float]]] = []
+    last: Optional[Tuple[str, str]] = None
+    best: Optional[float] = None
+
+    def keep() -> None:
+        a, b = last
+        if a in posts and b in posts and posts[a].at >= since:
+            out.append((canon[a], canon[b], best))
+    with cur.connection.cursor(name=f"mx_window_{id(out)}") as c:
+        c.itersize = 20000
+        c.execute(f"SELECT a::text, b::text, source, score, now FROM {table} ORDER BY a, b")
+        for a, b, source, score, now in c:
+            if source != "embedding":
+                cos = None
+            elif now is not None:
+                cos = round(float(now), 4)
+            else:
+                cos = None if score is None else float(score)
+            if (a, b) != last:
+                if last is not None:
+                    keep()
+                last, best = (a, b), cos
+            elif cos is not None and (best is None or cos > best):
+                best = cos
+    if last is not None:
+        keep()
+    out.sort(key=lambda abc: (abc[2] is None, -(abc[2] or 0.0), abc[0], abc[1]))
+    return out
+
+
 def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     """Mark IX's stories with a post in the last `config.days` (read only), every post of them and of the window's
     candidate pairs, and their readings. With `memo` (0116, 0169: incremental.State), the rules' posts are kept by
@@ -808,19 +844,18 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
         # candidate pairs the window below keeps (their first post in it, the other stored): every pair's posts and
         # every embedding pair's cosine were read before (452k pairs, 23.7 s a reading at server scale) for the few
         # of its 30 days. The same items, proved on the scale copy (issue 0199).
-        cur.execute(f"""SELECT c.a::text, c.b::text, c.source, c.score FROM mx_candidates c JOIN posts pa ON pa.id = c.a
-                         WHERE c.kind = 'post_post' AND c.source <> 'link' AND {pairing.ordinary_date('pa')} >= %s
-                           AND EXISTS (SELECT 1 FROM posts pb WHERE pb.id = c.b)""", (since,))
+        rows_sql = f"""SELECT NULL::bigint AS k, c.a, c.b, c.source, c.score FROM mx_candidates c JOIN posts pa ON pa.id = c.a
+                        WHERE c.kind = 'post_post' AND c.source <> 'link' AND {pairing.ordinary_date('pa')} >= %(since)s
+                          AND EXISTS (SELECT 1 FROM posts pb WHERE pb.id = c.b)"""
     else:
-        cur.execute("SELECT a::text, b::text, source, score FROM mx_candidates WHERE kind = 'post_post' AND source <> 'link'")
-    pairs: Dict[Tuple[str, str], Optional[float]] = {}
-    for a, b, source, score in embed.current_candidates(cur, cur.fetchall()):   # by the vectors now (embed text v2)
-        cos = float(score) if source == "embedding" and score is not None else None
-        if (a, b) not in pairs:
-            pairs[(a, b)] = cos
-        elif cos is not None and (pairs[(a, b)] is None or cos > pairs[(a, b)]):
-            pairs[(a, b)] = cos
-    ids = {r[1] for r in rows} | {p for ab in pairs for p in ab}
+        rows_sql = """SELECT NULL::bigint AS k, a, b, source, score FROM mx_candidates
+                       WHERE kind = 'post_post' AND source <> 'link'"""
+    # v10.23 (0218): the pairs by the vectors now (embed text v2) in the database (embed.current_pairs), read as a
+    # stream once the world is known: a run held every pair's row, cosine and key at once (~450k: ~400 MB at the
+    # server's size); now the window's pairs only, on the world's own id strings
+    table = embed.current_pairs(cur, rows_sql, {"since": since})
+    cur.execute(f"SELECT DISTINCT unnest(ARRAY[a, b])::text FROM {table}")
+    ids = {r[1] for r in rows} | {r[0] for r in cur.fetchall()}
     if memo is not None:       # 0169: the rules' posts kept by their stamps; texts and readings read on use
         text, posts, readings = incremental.world(cur, memo, ids)
     else:
@@ -833,8 +868,8 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
             stories[sid].append(Member(pid, role, why))
     for ms in stories.values():
         ms.sort(key=lambda m: (posts[m.post].at, m.post))
-    window = [(a, b, c) for (a, b), c in pairs.items() if a in posts and b in posts and posts[a].at >= since]
-    window.sort(key=lambda abc: (abc[2] is None, -(abc[2] or 0.0), abc[0], abc[1]))
+    window = _window(cur, table, posts, since)
+    cur.execute(f"DROP TABLE IF EXISTS {table}")   # its temporary space back before the run goes on
     if memo is not None:   # v10.22: the texts a question can show (a story's other members, a pair's), read in pages
         incremental.ahead(memo, {m.post for ms in stories.values() if len(ms) > 1 for m in ms}
                           | {p for a, b, _ in window for p in (a, b)})
@@ -1434,6 +1469,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     mark("questions and decisions")     # the checks, joins and pairs, glue and merges, the second pass
     world, ask, out, counts = _reading(cur, memo, now, config)
+    world.candidates = []   # v10.23 (0218): the first pass's input only (~450k pairs at the server's size), let go
     counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     mark("write")
     ids, written = persist(cur, run_id, out, world, now)
@@ -1491,6 +1527,14 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         if diff:
             log.warning("Mark X incremental-run bug: a full run reads this snapshot otherwise: %s", diff)
     incremental.release(memo)           # 0183: the texts and readings the stages above read, let go
+    # v10.23 (0218): what the run's end reads of the reading, taken now; the reading itself (the world's Mark IX
+    # stories, the outcome, its connections) let go before the entity stages (it was held to the run's end, under the
+    # entity book). The kept state (memo) stays: its save is the run's last write.
+    want = wanted(out, world.posts)
+    closure = (incremental.closure(memo, want, world.stories) if kind == "incremental" else
+               {"closure": len(want), "stories": len(want)})
+    read = {"stories": len(ids), "window_since": world.since.isoformat(), "posts": len(world.posts)}
+    del world, out, conns, ids, news_keys
     mark("entities")                    # 0119 A1: linking, merges, the review queue, the alias and collide questions
     from insight_core.markx import entity_stage
     # v10.17.2 (0204): each stage reads the book it needs: the entities stage the whole book (read in the stage), the
@@ -1528,23 +1572,21 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             cur, now, waiting_old=sum(ask.waiting_old.values()),
             candidates_left=mx_candidates.unfound_count(cur, since_next) if since_next else 0, held=held),
             "old_added": dict(ask.old_added), "old_waiting": dict(ask.waiting_old)}
-    want = wanted(out, world.posts)
     counts["run"] = {"kind": kind, "now": now.isoformat(), **({"nightly": True} if nightly else {}),
                      **({"why_full": why_full} if why_full else {}), **({"forced": True} if full else {}),
                      "dirty_tasks": memo.report.get("dirty_tasks", 0) if kind == "incremental" else None,
                      "dirty_posts": len(memo.report.get("dirty_posts") or ()) if kind == "incremental" else None,
                      "texts_read": memo.report.get("texts_read"), "ix_changed": memo.report.get("ix_changed"),
                      **{k: memo.report.get(k) for k in ("texts_loaded", "inputs_rendered", "inputs_kept")},
-                     **(incremental.closure(memo, want, world.stories) if kind == "incremental" else
-                        {"closure": len(want), "stories": len(want)})}
+                     **closure}
     counts["run"]["state"] = incremental.save(cur, memo, run_id, want)   # 0169: what the next run starts from
     counts["run"]["seconds"] = round(_time.monotonic() - started, 3)
-    counts.update({"stories": len(ids), "memberships": dict(written), "tasks_added": dict(ask.added),
+    counts.update({"stories": read["stories"], "memberships": dict(written), "tasks_added": dict(ask.added),
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "tasks_settled": dict(ask.settled),   # 0210: settled by a cheap signal, never asked
                    "tasks_shadow_settled": dict(ask.shadow_settled),   # 0210: a Shadow gate would settle them
                    "isolation": isolation,
-                   "window_since": world.since.isoformat(), "posts": len(world.posts)})
+                   "window_since": read["window_since"], "posts": read["posts"]})
     repo.finish_run(cur, run_id, counts=counts)
     return {"run": str(run_id), **counts}
 

@@ -279,6 +279,66 @@ class Fixes(base._Db):
         book = self.book()
         self.assertNotEqual(book.root(self.ent_named("Zentra")), book.root(self.ent_named("Zentra AI")))
 
+    # ---- 0218: the shown names' sweep resumes ----------------------------------------------------------------------
+
+    def test_the_shown_sweep_over_every_cluster_resumes_where_it_stopped_single_names_too(self):
+        """A sweep past its deadline does one step (the next clusters of several names and the single names before
+        them) and the next run resumes after it: every cluster once, the single names never all at a sweep's start;
+        the same names and types as a sweep without a deadline."""
+        names = ["Kip", "Kip Marlow", "Zentra", "Zentra Devs", "Orbis", "Lumen", "Tarn", "Vesk", "Quill", "Brae"]
+        for n, name in enumerate(names):
+            self.mentions(self.post(n % 3, T0 + n * H), (name, "org" if n % 3 else "person", "subject"))
+        self.stage()
+        ids = sorted(I.run_book(self.cur).ids())
+        # the first cluster of two names the smallest ids, the second the largest: every single name between them
+        for a, b in ((ids[0], ids[1]), (ids[-2], ids[-1])):
+            I.merge(self.cur, self.book(), a, b, by="rule:handle", automatic=True)
+        self.cur.execute("UPDATE mx_entities SET shown_name = NULL, shown_type = 'event', shown_by = 'evidence'")
+        from insight_core.markx import schemas
+        guide = schemas.mention_guides()
+        roots = sorted(r for r in I.run_book(self.cur).ids() if self.book().root(r) == r)
+        self.cur.execute("SAVEPOINT sweep")
+        whole = R.shown(self.cur, I.run_book(self.cur), guide, roots=None, after=None, deadline=None)
+        self.cur.execute("SELECT id::text, shown_name, shown_type FROM mx_entities ORDER BY id")
+        want = self.cur.fetchall()
+        self.cur.execute("ROLLBACK TO SAVEPOINT sweep")
+        self.assertEqual((whole["clusters"], whole["done"]), (len(roots), True))
+        with mock.patch.object(R, "SHOWN_CHUNK", 1):
+            after, steps = None, []
+            while True:
+                got = R.shown(self.cur, I.run_book(self.cur), guide, roots=None, after=after, deadline=0.0)
+                steps.append((got["clusters"], sum(1 for r in roots if (after is None or r > after)
+                                                   and (got["done"] or r <= got["after"]))))
+                if got["done"]:
+                    break
+                self.assertGreater(got["after"], after or "")
+                after = got["after"]
+        self.assertEqual(len(steps), 2)                          # a step for each of the two clusters of two names
+        self.assertEqual(steps[0], (1, 1))                       # the first: its cluster alone, no single name yet
+        self.assertEqual(steps[1], (len(roots) - 1,) * 2)        # resumed: every cluster after it, single names too
+        self.cur.execute("SELECT id::text, shown_name, shown_type FROM mx_entities ORDER BY id")
+        self.assertEqual(self.cur.fetchall(), want)
+
+
+    def test_a_sweep_of_single_names_steps_and_resumes_too(self):
+        """0218: no cluster of several names (the server-sized copy has none): SHOWN_SINGLES single names a step."""
+        from insight_core.markx import schemas
+        for n, name in enumerate(["Kip", "Zentra", "Orbis", "Lumen", "Tarn", "Vesk", "Quill"]):
+            self.mentions(self.post(n % 3, T0 + n * H), (name, "org", "subject"))
+        self.stage()
+        roots = sorted(I.run_book(self.cur).ids())
+        after, steps = None, []
+        with mock.patch.object(R, "SHOWN_SINGLES", 3):
+            while True:
+                got = R.shown(self.cur, I.run_book(self.cur), schemas.mention_guides(), roots=None, after=after,
+                              deadline=0.0)
+                steps.append(got["clusters"])
+                if got["done"]:
+                    break
+                after = got["after"]
+                self.assertEqual(after, roots[sum(steps) - 1])
+        self.assertEqual(steps, [3, 3, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

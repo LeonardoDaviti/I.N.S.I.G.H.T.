@@ -65,6 +65,7 @@ once for the pages, which read through redirects and pins; the next run's snapsh
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import itertools
 import json
@@ -291,6 +292,67 @@ class Book:
         self.mentioned: Set[str] = set()                     # the entities a mention names (a maker or family made
                                                              # for the hierarchy alone is never a candidate)
         self.subject: Dict[str, int] = {}                    # 0164 B: entity -> its subject mentions typed a product
+        self.made: List[str] = []                            # v10.23: the entities made since it was read, in order
+
+    def added(self, e: "Ent") -> None:
+        """v10.23 (0218): an entity the Writer just made (its row written): the book holds it, and what the book keeps
+        of the others (the version parents, the versions under a parent, the families by key) says it."""
+        self.ents[e.id] = e
+        self.made.append(e.id)
+        if e.parent and e.level in VERSION_LEVELS:
+            self.version_parents().add(e.parent)
+            self.kids()[e.parent].append(e.id)
+        if e.level == "family":
+            self.families().setdefault(e.key, []).append(e.id)
+
+    def walk(self, where: Optional[str] = None, params: Sequence[Any] = (), *, by_id: bool = False) -> Iterable["Ent"]:
+        """v10.23 (0218): every entity, in the book's order (as read, then as made) or by id: the walks over the whole
+        book (the repairs). `where` (SQL over mx_entities `e`, with `params`) is only a narrowing a book read by need
+        (RunBook) asks the database for; the caller keeps its own test, which decides. A whole book walks them all."""
+        return sorted(self.ents.values(), key=lambda e: e.id) if by_id else list(self.ents.values())
+
+    def ids(self, after: Optional[str] = None) -> List[str]:
+        """v10.23 (0218): every entity's id after `after` (None: all), in id order (the full pass's seeds)."""
+        return sorted(e for e in self.ents if after is None or e > after)
+
+    def index(self, name: str) -> Any:
+        """One of the pool's indexes (INDEXES) over the live entities, kept for the book (0128: the full pass's chunks
+        share it). v10.13.9: grown with the entities that became live since it was last read, never rebuilt: the live
+        set only grows within a run (a run's chunks link new mentions), and a merge changes roots, which no index holds.
+        v10.22 (0216): the live entities are listed once for all the indexes, in the order they became live (each index
+        remembers how far down it has read): each index kept a set of its own (three sets of every live id, ~48 MB at the
+        server's 330k entities). The three are always grown together (decide_chunk pools strings, families and makers one
+        after the other), so each still meets the entities in the order it did."""
+        empty, add = INDEXES[name]
+        live = self.__dict__.get("_live_order")
+        if live is None:
+            live = self.__dict__["_live_order"] = [[], set(), None]   # [ids in the order met, the same as a set, sig]
+        order, have = live[0], live[1]
+        if live[2] != (len(self.ents), len(self.mentioned)):
+            for e in _live(self):
+                if e.id not in have:
+                    have.add(e.id)
+                    order.append(e.id)
+            live[2] = (len(self.ents), len(self.mentioned))
+        cache = self.__dict__.setdefault("_indexes", {})
+        if name not in cache:
+            cache[name] = [empty(), 0]
+        got = cache[name]
+        for eid in order[got[1]:]:
+            add(got[0], self.ents[eid])
+        got[1] = len(order)
+        return got[0]
+
+    def family_values(self) -> Dict[str, List[Set[Any]]]:
+        """{family key: [the versions, variants, sizes, builds its entities state]} (Haiku's fields and the parser's),
+        read once a book (the narrowed version guard's 'the family has several')."""
+        got = self.__dict__.get("_family_values")
+        if got is None:
+            got = defaultdict(lambda: [set(), set(), set(), set()])
+            for e in self.ents.values():
+                _family_value(got, e)
+            self.__dict__["_family_values"] = got
+        return got
 
     def root(self, eid: Optional[str]) -> Optional[str]:
         seen = set()
@@ -319,6 +381,49 @@ class Book:
     def prime(self, ids: Iterable[Optional[str]] = (), keys: Iterable[Optional[str]] = ()) -> None:
         """Read ahead the entities (by id) and aliases (by key) a reader is about to ask, in one read each: a whole
         book holds them all already (a page's book, `lazy_book`, reads them now)."""
+
+    def prime_clusters(self, roots: Iterable[Optional[str]]) -> None:
+        """v10.23 (0218): read ahead what the clusters of `roots` are asked (their entities, mention types, version
+        parents): a whole book holds it (RunBook reads it now, in one go)."""
+
+    def prime_products(self, ids: Iterable[str]) -> None:
+        """v10.23 (0218): read ahead what `product_of` asks of these entities' names (the aliases and families their
+        last words could be): a whole book holds it (RunBook reads it now, in one go)."""
+
+    def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
+        """v10.23 (0218): {root: the name keys that name it: its members' own keys and every alias of them} of `roots`
+        (entity_addresses' names)."""
+        roots = set(roots)
+        out: Dict[str, Set[str]] = defaultdict(set)
+        for eid, e in self.ents.items():
+            r = self.root(eid)
+            if r in roots:
+                out[r].add(e.key)
+        for k, eid in self.alias.items():
+            r = self.root(eid)
+            if r in roots:
+                out[r].add(k)
+        return out
+
+    def named_by(self, forms: Iterable[str]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+        """v10.23 (0218): ([(entity, its squashed key)], [(alias key, its entity)]) whose squashed key is one of `forms`
+        (names.squash), in the book's order."""
+        forms = set(forms)
+        return ([(eid, e.sq) for eid, e in self.ents.items() if e.sq in forms],
+                [(k, eid) for k, eid in self.alias.items() if N.squash(k) in forms])
+
+    def forget(self, ids: Iterable[str]) -> None:
+        """v10.23 (0218): let go of entities read for one step (a whole book holds them all: nothing)."""
+
+    def etypes(self, ents: Sequence["Ent"]) -> Dict[str, Optional[str]]:
+        """v10.23 (0218): {id: etype} of many entities at once (a book read by need reads them for one step, none
+        kept)."""
+        return {e.id: self.etype(e.id) for e in ents}
+
+    def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
+        """v10.23 (0218): {id: its key} of `ids` (a seed's string candidates: up to GRAM_TOP each), for one step: a
+        book read by need reads the keys of those it does not hold, and keeps none of them."""
+        return {i: e.key for i in ids if (e := self.ents.get(i)) is not None}
 
     def maker_roots(self) -> Set[str]:
         """The clusters some entity names as its maker (its stated maker's alias, read through the merges)."""
@@ -563,26 +668,44 @@ def _same_id(b: "Book", eid: Optional[str]) -> Optional[str]:
     return e.id if e is not None else eid
 
 
+ENT_COLUMNS = """e.id::text, e.type, e.name, e.key, e.level, e.parent::text, e.maker, e.family_key, e.version,
+                 e.version_key, e.variant, e.size, e.build, e.status, e.first_seen, e.shown_name, e.shown_type"""
+
+
+class _EntRows:
+    """mx_entities rows (ENT_COLUMNS) made Ents, each repeated value one object (`_One`), one `haiku` dict for each
+    distinct set of fields (it is only ever read)."""
+
+    def __init__(self) -> None:
+        self.one: _One = _One()
+        self.fields: Dict[Tuple, Dict[str, Any]] = {}
+
+    def __call__(self, row: Tuple) -> Ent:
+        one = self.one
+        (eid, type_, name, key, level, parent, maker, fam, version, vkey, variant, size, build, status,
+         first, shown_name, shown_type) = row
+        fam, version, variant, size, build = one(fam), one(version), one(variant), one(size), one(build)
+        haiku = self.fields.get((fam, version, variant, size, build))
+        if haiku is None:
+            haiku = self.fields[(fam, version, variant, size, build)] = {"family": fam, "version": version,
+                                                                          "variant": variant, "size": size,
+                                                                          "build": build}
+        return Ent(eid, one(type_), name, key, one(level), parent, one(maker), fam, version, N.from_json(vkey),
+                   variant, size, build, one(status), first, haiku=haiku, shown_name=shown_name,
+                   shown_type=one(shown_type))
+
+
 def read_ents(cur: Any, b: "Book", ids: Optional[Iterable[str]] = None) -> None:
     """Read entities into the book: every one, or (v10.16) those of `ids`. v10.22 (0216): row by row (not every row
     held at once), each repeated value one object (`_One`), one `haiku` dict for each distinct set of fields (it is
     only ever read), a parent as the book's own id: the server's 330k-entity book was 438 MB of objects."""
-    cur.execute(f"""SELECT id::text, type, name, key, level, parent::text, maker, family_key, version, version_key, variant,
-                          size, build, status, first_seen, shown_name, shown_type FROM mx_entities
-                    {"WHERE id = ANY(%s::uuid[])" if ids is not None else ""}""",
+    cur.execute(f"""SELECT {ENT_COLUMNS} FROM mx_entities e
+                    {"WHERE e.id = ANY(%s::uuid[])" if ids is not None else ""}""",
                 (sorted(set(ids)),) if ids is not None else None)
-    one: _One = _One()
-    fields: Dict[Tuple, Dict[str, Any]] = {}
-    for (eid, type_, name, key, level, parent, maker, fam, version, vkey, variant, size, build, status,
-         first, shown_name, shown_type) in _each(cur):
-        fam, version, variant, size, build = one(fam), one(version), one(variant), one(size), one(build)
-        haiku = fields.get((fam, version, variant, size, build))
-        if haiku is None:
-            haiku = fields[(fam, version, variant, size, build)] = {"family": fam, "version": version,
-                                                                     "variant": variant, "size": size, "build": build}
-        b.ents[eid] = Ent(eid, one(type_), name, key, one(level), parent, one(maker), fam, version, N.from_json(vkey),
-                          variant, size, build, one(status), first, haiku=haiku, shown_name=shown_name,
-                          shown_type=one(shown_type))
+    made = _EntRows()
+    for row in _each(cur):
+        e = made(row)
+        b.ents[e.id] = e
     for e in b.ents.values():
         if e.parent is not None:
             e.parent = _same_id(b, e.parent)
@@ -670,6 +793,20 @@ class _Reads(dict):
         self.want((k,))
         return dict.__getitem__(self, k)
 
+    def __setitem__(self, k: Any, v: Any) -> None:
+        self._absent.discard(k)
+        dict.__setitem__(self, k, v)
+
+    def setdefault(self, k: Any, v: Any = None) -> Any:
+        """v10.23 (0218): as a whole dict's: the value held (read first), else `v`."""
+        self.want((k,))
+        self._absent.discard(k)
+        return dict.setdefault(self, k, v)
+
+    def held(self, k: Any) -> bool:
+        """Whether `k` was read already (no read)."""
+        return dict.__contains__(self, k)
+
     def _whole(self, *_a: Any, **_k: Any) -> Any:
         raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
 
@@ -682,6 +819,7 @@ class _Has:
 
     def __init__(self, has: Any, many: Any = None) -> None:
         self._has, self._many, self._got = has, many, {}
+        self._added: Set[Any] = set()
 
     def want(self, xs: Iterable[Any]) -> None:
         todo = sorted({x for x in xs if x is not None and x not in self._got})
@@ -693,6 +831,11 @@ class _Has:
         if x not in self._got:
             self._got[x] = bool(self._has(x))
         return self._got[x]
+
+    def add(self, x: Any) -> None:
+        """v10.23 (0218): `x` is in it from now (a Writer's new version names its parent)."""
+        self._got[x] = True
+        self._added.add(x)
 
     def _whole(self, *_a: Any, **_k: Any) -> Any:
         raise TypeError("a page's book (identity.lazy_book) holds only what was asked: read the whole book (load_book)")
@@ -894,6 +1037,434 @@ def lazy_book(cur: Any) -> LazyBook:
     return LazyBook(cur)
 
 
+class _Mentioned:
+    """RunBook's `mentioned`: the entities a current mention named when the book was read (as load_book's: every entity
+    with a mention, every pinned one: the snapshot's), and those the run's linking named since (`|=`, kept in the order
+    met, `fresh`). Asked one at a time or many at once (`want`: the pool's pairs, a chunk's in one go); only what was
+    asked is held."""
+
+    def __init__(self, book: "RunBook") -> None:
+        self.book = book
+        self.fresh: Dict[str, None] = {}      # named since the book was read (insertion-ordered)
+        self._got: Dict[str, bool] = {}       # what was asked of the snapshot
+
+    def want(self, xs: Iterable[Any]) -> None:
+        todo = sorted({x for x in xs if isinstance(x, str) and x not in self._got and x not in self.fresh})
+        if todo:
+            ok = [x for x in todo if _UUID.match(x)]
+            yes: Set[str] = set()
+            if ok:
+                self.book._cur.execute("SELECT DISTINCT id::text FROM pg_temp.mx_run_types WHERE id = ANY(%s::uuid[])",
+                                       (ok,))
+                yes = {r[0] for r in self.book._cur.fetchall()}
+            self._got.update({x: x in yes or x in self.book._pinned for x in todo})
+
+    def __contains__(self, x: Any) -> bool:
+        if x is None:
+            return False
+        if x in self.fresh:
+            return True
+        if x not in self._got:
+            self.want([x])
+        return self._got.get(x, False)
+
+    def __ior__(self, xs: Iterable[Any]) -> "_Mentioned":
+        xs = list(xs)
+        self.want(xs)                         # one read for them all
+        for x in xs:
+            if x is not None and x not in self:
+                self.fresh[x] = None
+        return self
+
+    def _whole(self, *_a: Any, **_k: Any) -> Any:
+        raise TypeError("the run's book (identity.run_book) holds only what was asked")
+
+    __iter__ = __len__ = _whole
+
+
+class _Compact(dict):
+    """An index's {key: ids} as RunBook keeps it: a key of one id holds the id alone (most keys: a list each was ~90 B
+    of the server's ~330k), read as a tuple (`get`); asked for its list (`[key]`, the index's `add`), it becomes one."""
+
+    def get(self, k: Any, default: Any = None) -> Any:
+        v = dict.get(self, k, default)
+        return (v,) if isinstance(v, str) else v
+
+    def __getitem__(self, k: Any) -> Any:
+        v = dict.get(self, k)
+        if v is None:
+            v = []
+        elif isinstance(v, str):
+            v = [v]
+        else:
+            return v
+        dict.__setitem__(self, k, v)
+        return v
+
+
+def _compact(index: Any) -> Any:
+    """An index (INDEXES: a dict of lists, or a tuple of them) as RunBook keeps it (_Compact)."""
+    if isinstance(index, tuple):
+        return tuple(_compact(x) for x in index)
+    if len(index) < 1000:
+        return index
+    out = _Compact()
+    for k, v in index.items():
+        dict.__setitem__(out, k, v[0] if len(v) == 1 else v)
+    return out
+
+
+class RunBook(LazyBook):
+    """v10.23 (0218): the decision run's entities stage's book, read by need: the entities and aliases a run touches
+    (the seeds of the new mentions, their pool, the clusters they reach, what the questions show), not the whole book
+    (330k entities on the server: 198 MB of objects, 742 MB at the stage's end). It answers as the whole book does, as
+    of when it was read:
+      - each entity and alias read when first asked (LazyBook), the merges, pins and the owner's "never" read whole;
+      - the mention types (`types`, `subject`, `mentioned`) as they stood when it was read: a snapshot in a temporary
+        table (`pg_temp.mx_run_types`), read by need, as load_book's counts were (the run's own linking never moves
+        them: `mentioned` adds what it links);
+      - the order of the whole book (as read, then as made: the first family of a key, the versions under a parent):
+        each entity's place when it was read (`pg_temp.mx_run_order`), the entities made since after, in the order
+        made;
+      - the pool's indexes over the live entities (Book.index): built from one read of every entity, row by row, none
+        of them kept but those asked; grown with the entities the run makes live, in the whole book's order;
+      - the walks over the whole book (`walk`, the repairs): read row by row, narrowed by the caller's SQL; an entity
+        the run holds is the one given (its changes are the run's).
+    The temporary tables go with the transaction (ON COMMIT DROP)."""
+
+    def __init__(self, cur: Any) -> None:
+        drop = "" if getattr(getattr(cur, "connection", None), "autocommit", False) else " ON COMMIT DROP"
+        cur.execute("DROP TABLE IF EXISTS pg_temp.mx_run_types")
+        cur.execute(f"""CREATE TEMP TABLE mx_run_types{drop} AS
+                         SELECT entity_id AS id, type, count(*) AS n, count(*) FILTER (WHERE role = 'subject') AS subj
+                           FROM mx_mentions_now WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
+        cur.execute("CREATE INDEX ON pg_temp.mx_run_types (id)")
+        cur.execute("DROP TABLE IF EXISTS pg_temp.mx_run_order")
+        cur.execute(f"""CREATE TEMP TABLE mx_run_order{drop} AS
+                         SELECT id, row_number() OVER (ORDER BY ctid) AS ord FROM mx_entities""")
+        cur.execute("CREATE UNIQUE INDEX ON pg_temp.mx_run_order (id)")
+        cur.execute("DROP TABLE IF EXISTS pg_temp.mx_run_versions")
+        cur.execute(f"""CREATE TEMP TABLE mx_run_versions{drop} AS
+                         SELECT parent, id FROM mx_entities WHERE parent IS NOT NULL AND level = ANY(%s)""",
+                    (list(VERSION_LEVELS),))
+        cur.execute("CREATE INDEX ON pg_temp.mx_run_versions (parent)")
+        cur.execute("ANALYZE pg_temp.mx_run_types")
+        cur.execute("ANALYZE pg_temp.mx_run_order")
+        cur.execute("ANALYZE pg_temp.mx_run_versions")
+        super().__init__(cur)
+        cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
+                         ON m.post_id = p.post_id AND m.guide = p.guide AND m.n = p.n WHERE p.undone_at IS NULL""")
+        self.pin_keys = {(pid, N.key(name)): (g, e) for pid, name, g, e in cur.fetchall()}
+        cur.execute("""SELECT least(a, b)::text, greatest(a, b)::text FROM mx_entity_queue
+                        WHERE kind = 'alias' AND answer IN ('other_version', 'different', 'not_entity')
+                       UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
+                        WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
+        self.never = {(x, y) for x, y in cur.fetchall()}
+        self._pinned = frozenset(self.pins.values())
+        self.mentioned = _Mentioned(self)
+        self._made_at: Dict[str, int] = {}
+        self._made_in: Set[str] = set()               # the entities made since that the indexes hold
+        self._idx: Optional[Dict[str, Any]] = None
+        self._fv: Optional[Dict[str, List[Set[Any]]]] = None
+        self._fv_made = 0
+        self._fresh_seen = 0
+        self._walks = 0
+        self.reading = 0.0   # the seconds of the indexes' one read (_build): counted in the stage's budget, kept for diagnostics
+
+    # -- the mention counts, as they stood when the book was read -------------------------------------------------
+    def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
+        todo = [i for i in ids if isinstance(i, str) and _UUID.match(i) and i not in self._counted_ids]
+        if todo:
+            self._cur.execute("""SELECT id::text, type, n, subj FROM pg_temp.mx_run_types WHERE id = ANY(%s::uuid[])""",
+                              (todo,))
+            product: Dict[Optional[str], bool] = {}
+            for eid, type_, n, subj in self._cur.fetchall():
+                self._types_got.setdefault(eid, Counter())[type_] += n
+                if subj:
+                    if type_ not in product:
+                        product[type_] = schemas_type(type_) in PRODUCT_TYPES
+                    if product[type_]:
+                        self._subject_got[eid] = self._subject_got.get(eid, 0) + subj
+            self._counted_ids.update(todo)
+        return ({i: self._types_got[i] for i in ids if i in self._types_got},
+                {i: self._subject_got[i] for i in ids if i in self._subject_got})
+
+    # -- the whole book's order ----------------------------------------------------------------------------------------
+    def _in_order(self, rows: Iterable[Tuple[str, Optional[int]]]) -> List[str]:
+        """Ids with their place when the book was read (None: made since), in the whole book's order."""
+        return [i for i, _ in sorted(rows, key=lambda r: (r[1] is None, r[1] if r[1] is not None
+                                                           else self._made_at.get(r[0], 1 << 60), r[0]))]
+
+    def _ordered_ids(self, where: str, args: Any) -> List[str]:
+        self._cur.execute(f"""SELECT id::text, o.ord FROM mx_entities LEFT JOIN pg_temp.mx_run_order o USING (id)
+                               WHERE {where}""", args)
+        got = self._in_order(self._cur.fetchall())
+        self.ents.want(got)
+        return got
+
+    def added(self, e: "Ent") -> None:
+        self.ents[e.id] = e
+        self._made_at[e.id] = len(self.made)
+        self.made.append(e.id)
+        if e.parent and e.level in VERSION_LEVELS:
+            self.version_parents().add(e.parent)
+            self.kids()[e.parent].append(e.id)   # the snapshot's versions under it, then this one
+        if e.level == "family":
+            fams = self.families()
+            if fams.held(e.key):
+                dict.__getitem__(fams, e.key).append(e.id)
+            else:                                # read when asked (it is in the table now), even if asked before
+                fams._absent.discard(e.key)
+
+    # -- the versions under a parent, as they stood when the book was read (then as the run makes them) -------------
+    def version_parents(self) -> Any:
+        got = self.__dict__.get("_version_parents")
+        if got is None:
+            def many(xs: Sequence[str]) -> List[str]:
+                ok = [x for x in xs if isinstance(x, str) and _UUID.match(x)]
+                if not ok:
+                    return []
+                self._cur.execute("SELECT DISTINCT parent::text FROM pg_temp.mx_run_versions WHERE parent = ANY(%s::uuid[])",
+                                  (ok,))
+                return [r[0] for r in self._cur.fetchall()]
+            got = self.__dict__["_version_parents"] = _Has(lambda x: bool(many([x])), many)
+        return got
+
+    def kids(self) -> Dict[str, List[str]]:
+        def read(parents: Sequence[str]) -> Dict[str, List[str]]:
+            ps = [p for p in parents if isinstance(p, str) and _UUID.match(p)]
+            out: Dict[str, List[str]] = {p: [] for p in parents}   # as a whole book's defaultdict: none is []
+            if ps:
+                self._cur.execute("""SELECT v.parent::text, v.id::text, o.ord FROM pg_temp.mx_run_versions v
+                                       JOIN pg_temp.mx_run_order o ON o.id = v.id WHERE v.parent = ANY(%s::uuid[])""",
+                                  (ps,))
+                rows = self._cur.fetchall()
+                parent = {i: p for p, i, _o in rows}
+                for i in self._in_order((i, o) for _p, i, o in rows):
+                    out.setdefault(parent[i], []).append(i)
+            return out
+        got = self.__dict__.get("_kids")
+        if got is None:
+            got = self.__dict__["_kids"] = _Reads(read)
+        return got
+
+    def prime_clusters(self, roots: Iterable[Optional[str]]) -> None:
+        ids = sorted({i for r in roots if r for i in self._leading_to(r) if _UUID.match(i)})
+        self.ents.want(ids)
+        self.types.want(ids)
+        self.version_parents().want(ids)
+        self.kids().want(ids)
+
+    def prime_products(self, ids: Iterable[str]) -> None:
+        keys = [e.key for i in ids if (e := self.ents.get(i)) is not None and " " in (e.key or "")]
+        rests = sorted({" ".join(k.split()[i:]) for k in keys for i in range(1, len(k.split()))})
+        if rests:
+            self.alias.want(rests)
+            fams = self.families()
+            fams.want(rests)
+            # the families product_of then tries: their clusters (maker_keys reads them, and their versions)
+            found = {dict.get(self.alias, r) for r in rests} | {c for r in rests for c in (dict.get(fams, r) or ())}
+            found.discard(None)
+            self.ents.want(found)
+            self.prime_clusters({self.root(c) for c in found} | {self.root(e.parent) for c in found
+                                                                 if (e := dict.get(self.ents, c)) is not None and e.parent})
+
+    def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
+        lead = {i: r for r in set(roots) if r for i in self._leading_to(r) if _UUID.match(i)}
+        out: Dict[str, Set[str]] = defaultdict(set)
+        if lead:
+            self._cur.execute("""SELECT id::text, key, true FROM mx_entities WHERE id = ANY(%(ids)s::uuid[])
+                                 UNION ALL SELECT entity_id::text, key, false FROM mx_entity_aliases
+                                  WHERE entity_id = ANY(%(ids)s::uuid[])""", {"ids": sorted(lead)})
+            for i, k, _own in self._cur.fetchall():
+                out[lead[i]].add(k)
+        return out
+
+    def named_by(self, forms: Iterable[str]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+        forms = sorted({f for f in forms if f})
+        if not forms:
+            return [], []
+        self._cur.execute(f"""SELECT id::text, {N.SQUASH_SQL}, o.ord FROM mx_entities LEFT JOIN pg_temp.mx_run_order o
+                                     USING (id) WHERE {N.SQUASH_SQL} = ANY(%s)""", (forms,))
+        rows = self._cur.fetchall()
+        sq = {i: s for i, s, _o in rows}
+        ents = [(i, sq[i]) for i in self._in_order((i, o) for i, _s, o in rows)]
+        self._cur.execute(f"SELECT key, entity_id::text FROM mx_entity_aliases WHERE {N.SQUASH_SQL} = ANY(%s)", (forms,))
+        return ents, [(k, eid) for k, eid in self._cur.fetchall()]
+
+    def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
+        ids = set(ids)
+        out = {i: e.key for i in ids if (e := dict.get(self.ents, i)) is not None}
+        todo = sorted(i for i in ids - set(out) if isinstance(i, str) and _UUID.match(i))
+        if todo:
+            self._cur.execute("SELECT id::text, key FROM mx_entities WHERE id = ANY(%s::uuid[])", (todo,))
+            out.update(self._cur.fetchall())
+        return out
+
+    def forget(self, ids: Iterable[str]) -> None:
+        """Let go of entities read for one step (a sweep over every cluster), and what was read of them (their mention
+        counts, whether a version names them): read again if asked. The run's own (made since) stay."""
+        vp = self.__dict__.get("_version_parents")
+        for x in ids:
+            if x in self._made_at:
+                continue
+            dict.pop(self.ents, x, None)
+            if x in self._counted_ids:
+                self._counted_ids.discard(x)
+                self._types_got.pop(x, None)
+                self._subject_got.pop(x, None)
+                dict.pop(self.types, x, None)
+                dict.pop(self.subject, x, None)
+                self.types._absent.discard(x)
+                self.subject._absent.discard(x)
+            if vp is not None and x not in vp._added:   # what the run added is the run's: kept
+                vp._got.pop(x, None)
+        # the names asked and not found for them (product_of's tries): asked again if need be (the Writer's own aliases
+        # and families are in the table)
+        self.alias._absent.clear()
+        fams = self.__dict__.get("_families")
+        if fams is not None:
+            fams._absent.clear()
+
+    def etypes(self, ents: Sequence["Ent"]) -> Dict[str, Optional[str]]:
+        """As Book.etypes, from the snapshot's counts, none kept (those read already are the ones read)."""
+        todo = [e.id for e in ents if _UUID.match(e.id) and e.id not in self._counted_ids]
+        got: Dict[str, Counter] = {}
+        if todo:
+            self._cur.execute("SELECT id::text, type, n FROM pg_temp.mx_run_types WHERE id = ANY(%s::uuid[])", (todo,))
+            for eid, type_, n in self._cur.fetchall():
+                got.setdefault(eid, Counter())[type_] += n
+        out: Dict[str, Optional[str]] = {}
+        for e in ents:
+            c = self._types_got.get(e.id) if e.id in self._counted_ids else got.get(e.id)
+            out[e.id] = schemas_type(max(c.items(), key=lambda kv: (kv[1], str(kv[0])))[0]) if c else schemas_type(e.type)
+        return out
+
+    # -- clusters, read in one go ---------------------------------------------------------------------------------------
+    def cluster(self, root: str) -> List[str]:
+        ids = [i for i in self._leading_to(root) if _UUID.match(i)]
+        self.ents.want(ids)
+        self.types.want(ids)
+        return super().cluster(root)
+
+    def clusters(self) -> Dict[str, Set[str]]:
+        ids = sorted({x for f, (t, _a) in self.redirect.items() for x in (f, t) if _UUID.match(x)})
+        self.ents.want(ids)
+        self.types.want(ids)
+        self.version_parents().want(ids)
+        return super().clusters()
+
+    # -- the whole book, row by row -----------------------------------------------------------------------------------
+    def ids(self, after: Optional[str] = None) -> List[str]:
+        self._cur.execute("SELECT id::text FROM mx_entities WHERE %s::uuid IS NULL OR id > %s::uuid ORDER BY id",
+                          (after, after))
+        return [r[0] for r in self._cur.fetchall()]
+
+    def _stream(self, sql: str, params: Sequence[Any] = ()) -> Iterable[Tuple]:
+        self._walks += 1
+        with self._cur.connection.cursor(name=f"mx_run_walk_{id(self)}_{self._walks}") as c:
+            c.itersize = 5000
+            c.execute(sql, params)
+            yield from c
+
+    def walk(self, where: Optional[str] = None, params: Sequence[Any] = (), *, by_id: bool = False) -> Iterable["Ent"]:
+        made = _EntRows()
+        later: List[Tuple[int, "Ent"]] = []
+        for row in self._stream(f"""SELECT {ENT_COLUMNS}, o.ord FROM mx_entities e
+                                      LEFT JOIN pg_temp.mx_run_order o ON o.id = e.id
+                                     {"WHERE " + where if where else ""}
+                                     ORDER BY {"e.id" if by_id else "o.ord NULLS LAST, e.id"}""", params):
+            held = dict.get(self.ents, row[0])
+            e = held if held is not None else made(row[:-1])
+            if row[-1] is None and not by_id:
+                later.append((self._made_at.get(e.id, 1 << 60), e))   # made since: after, in the order made
+                continue
+            yield e
+        for _k, e in sorted(later, key=lambda x: (x[0], x[1].id)):
+            yield e
+
+    # -- the pool's indexes and the family values ----------------------------------------------------------------------
+    def _build(self) -> None:
+        """Every entity read once, row by row: which a mention named when the book was read, the live ones (named, not
+        `not_entity`) into the pool's indexes, every one's family values (Book.family_values); then the entities made
+        since (live ones, in the order made). None of them is kept but those the run holds already. Its seconds are
+        the book's `reading`."""
+        import time as _time
+        t0 = _time.monotonic()
+        idx = {name: empty() for name, (empty, _add) in INDEXES.items()}
+        fv: Dict[str, List[Set[Any]]] = defaultdict(lambda: [set(), set(), set(), set()])
+        made = _EntRows()
+        fresh = self.mentioned.fresh
+        hks: Dict[Tuple[int, Optional[str]], Tuple] = {}   # a fields key once for each set of fields and maker
+        # only what the indexes and the family values read (an entity read here is let go): no parent, version key,
+        # first seen or shown name
+        for row in self._stream("""SELECT e.id::text, e.type, e.name, e.key, e.level, NULL, e.maker, e.family_key,
+                                          e.version, NULL, e.variant, e.size, e.build, e.status, NULL, NULL, NULL,
+                                          EXISTS (SELECT 1 FROM pg_temp.mx_run_types t WHERE t.id = e.id)
+                                     FROM mx_entities e JOIN pg_temp.mx_run_order o ON o.id = e.id
+                                    ORDER BY o.ord"""):
+            held = dict.get(self.ents, row[0])
+            if held is not None:
+                e = held
+            else:
+                e = made(row[:-1])
+                hk = hks.get((id(e.haiku), e.maker))
+                if hk is None:
+                    hk = hks[(id(e.haiku), e.maker)] = e.hk
+                e._hk = hk
+            named = row[-1] or e.id in self._pinned
+            _family_value(fv, e)
+            if (named or e.id in fresh) and e.status != "not_entity":
+                for name, (_empty, add) in INDEXES.items():
+                    add(idx[name], e)
+        self._idx, self._fv = {name: _compact(got) for name, got in idx.items()}, fv
+        self._fresh_seen = len(fresh)   # those named by then are in (a run's linking names only what was not named)
+        self._grow()
+        self.reading += _time.monotonic() - t0
+
+    def _grow(self) -> None:
+        """The entities the run made live since the indexes were last read (as the whole book's `_live` meets them: the
+        ones read, in their place when read, then the ones made, in the order made)."""
+        fresh = list(self.mentioned.fresh)
+        old = [x for x in fresh[self._fresh_seen:] if x not in self._made_at]
+        self._fresh_seen = len(fresh)
+        if old:
+            self._cur.execute("SELECT id::text, ord FROM pg_temp.mx_run_order WHERE id = ANY(%s::uuid[])",
+                              ([x for x in old if _UUID.match(x)],))
+            old = self._in_order(self._cur.fetchall())
+        new = [x for x in self.made if x not in self._made_in and x in self.mentioned]
+        self.ents.want(old)
+        for x in old + new:
+            e = self.ents.get(x)
+            if e is None or e.status == "not_entity":
+                continue
+            if x in self._made_at:
+                self._made_in.add(x)
+            for name, (_empty, add) in INDEXES.items():
+                add(self._idx[name], e)
+
+    def index(self, name: str) -> Any:
+        if self._idx is None:
+            self._build()
+        else:
+            self._grow()
+        return self._idx[name]
+
+    def family_values(self) -> Dict[str, List[Set[Any]]]:
+        if self._fv is None:
+            self._build()
+        if self._fv_made is not None:   # the entities made up to the first ask (as the whole book's first ask held them)
+            for x in self.made:
+                _family_value(self._fv, self.ents[x])
+            self._fv_made = None
+        return self._fv
+
+
+def run_book(cur: Any) -> RunBook:
+    """v10.23 (0218): the decision run's entities stage's book (RunBook): what the run touches, read when asked."""
+    return RunBook(cur)
+
+
 def pair(a: str, b: str) -> Tuple[str, str]:
     return (a, b) if a < b else (b, a)
 
@@ -978,16 +1549,11 @@ class Writer:
                           json.dumps(N.version_json(fk[1])), fields.get("variant"), fields.get("size"),
                           fields.get("build"), first_seen, self.run_id))
         eid = self.cur.fetchone()[0]
-        self.book.ents[eid] = Ent(eid, type_, name, key, level, parent, maker, fk[0], fields.get("version"), fk[1],
-                                  fields.get("variant"), fields.get("size"), fields.get("build"), "provisional",
-                                  first_seen, haiku=dict(fields))
+        self.book.added(Ent(eid, type_, name, key, level, parent, maker, fk[0], fields.get("version"), fk[1],
+                            fields.get("variant"), fields.get("size"), fields.get("build"), "provisional",
+                            first_seen, haiku=dict(fields)))
         self.alias(key, eid, name)
         self.made.append(eid)
-        if parent and level in VERSION_LEVELS:
-            self.book.version_parents().add(parent)
-            self.book.kids()[parent].append(eid)
-        if level == "family":
-            self.book.families().setdefault(key, []).append(eid)
         return eid
 
     def alias(self, key: str, eid: str, name: str, source: str = "rule", call_id: Any = None) -> None:
@@ -1178,6 +1744,7 @@ def make_entities(book: Book, w: Writer, ms: Sequence[Mention]) -> None:
     for m in ms:
         if m.key:
             by_key[m.key].append(m)
+    book.prime(keys=list(by_key) + [N.key(m.ref) for m in ms if m.ref])   # v10.23: a book read by need, in one go
     for k in sorted(by_key):
         refs = [m for m in by_key[k] if m.ref]   # 0133: a key whose document's identifier names an entity joins it
         if book.by_key(k) is None:
@@ -1227,20 +1794,19 @@ def vconflict(a: Ent, b: Ent, literal: bool = False) -> Optional[str]:
 def family_values(book: Book) -> Dict[str, List[Set[Any]]]:
     """{family key: [the versions, variants, sizes, builds its entities state]} (Haiku's fields and the parser's),
     read once a book (the narrowed version guard's 'the family has several')."""
-    got = getattr(book, "_family_values", None)
-    if got is None:
-        got = defaultdict(lambda: [set(), set(), set(), set()])
-        for e in book.ents.values():
-            if e.status == "not_entity":
-                continue
-            for fk in (e.hk, e.pk):
-                if not fk or not fk[0]:
-                    continue
-                for i, v in enumerate(N.version_part(fk)):
-                    if v is not None:
-                        got[N.squash(fk[0])][i].add(v)
-        book._family_values = got
-    return got
+    return book.family_values()
+
+
+def _family_value(got: Dict[str, List[Set[Any]]], e: "Ent") -> None:
+    """One entity's family values into `got` (Book.family_values)."""
+    if e.status == "not_entity":
+        return
+    for fk in (e.hk, e.pk):
+        if not fk or not fk[0]:
+            continue
+        for i, v in enumerate(N.version_part(fk)):
+            if v is not None:
+                got[N.squash(fk[0])][i].add(v)
 
 
 def soft_reason(book: Book, a: Ent, b: Ent, literal: bool = False) -> str:
@@ -1313,50 +1879,39 @@ class Pooled:
 
 
 class Pool:
+    """The pairs a chunk pools. v10.23 (0218): a pair is checked against the entities a mention names (`mentioned`)
+    when the pairs are read, all of them in one go (a book read by need asks the database once, not once a pair)."""
+
     def __init__(self, book: Book) -> None:
         self.book = book
-        self.pairs: Dict[Tuple[str, str], Pooled] = {}
+        self._pairs: Dict[Tuple[str, str], Pooled] = {}
+        self._todo: List[Tuple[str, str, str, Optional[str]]] = []
 
     def add(self, a: str, b: str, why: str, rule: Optional[str] = None) -> None:
-        if a == b or a not in self.book.mentioned or b not in self.book.mentioned:
-            return
-        x, y = pair(a, b)
-        p = self.pairs.setdefault((x, y), Pooled(x, y))
-        p.why.add(why)
-        if rule:
-            p.rules.add(rule)
+        if a != b:
+            self._todo.append((a, b, why, rule))
+
+    @property
+    def pairs(self) -> Dict[Tuple[str, str], Pooled]:
+        if self._todo:
+            todo, self._todo = self._todo, []
+            want = getattr(self.book.mentioned, "want", None)
+            if want is not None:
+                want({x for a, b, _w, _r in todo for x in (a, b)})
+            mentioned = self.book.mentioned
+            for a, b, why, rule in todo:
+                if a not in mentioned or b not in mentioned:
+                    continue
+                x, y = pair(a, b)
+                p = self._pairs.setdefault((x, y), Pooled(x, y))
+                p.why.add(why)
+                if rule:
+                    p.rules.add(rule)
+        return self._pairs
 
 
 def _live(book: Book) -> List[Ent]:
     return [e for e in book.ents.values() if e.status != "not_entity" and e.id in book.mentioned]
-
-
-def _index(book: Book, name: str, empty: Any, add: Any) -> Any:
-    """An index over the live entities, kept for the book (0128: the full pass's chunks share it). v10.13.9: grown
-    with the entities that became live since it was last read (`add(index, entity)`), never rebuilt: the live set only
-    grows within a run (a run's chunks link new mentions), and a merge changes roots, which no index holds.
-    v10.22 (0216): the live entities are listed once for all the indexes, in the order they became live (each index
-    remembers how far down it has read): each index kept a set of its own (three sets of every live id, ~48 MB at the
-    server's 330k entities). The three are always grown together (decide_chunk pools strings, families and makers one
-    after the other), so each still meets the entities in the order it did."""
-    live = book.__dict__.get("_live_order")
-    if live is None:
-        live = book.__dict__["_live_order"] = [[], set(), None]   # [ids in the order met, the same as a set, sig]
-    order, have = live[0], live[1]
-    if live[2] != (len(book.ents), len(book.mentioned)):
-        for e in _live(book):
-            if e.id not in have:
-                have.add(e.id)
-                order.append(e.id)
-        live[2] = (len(book.ents), len(book.mentioned))
-    cache = book.__dict__.setdefault("_indexes", {})
-    if name not in cache:
-        cache[name] = [empty(), 0]
-    got = cache[name]
-    for eid in order[got[1]:]:
-        add(got[0], book.ents[eid])
-    got[1] = len(order)
-    return got[0]
 
 
 def _string_add(index: Any, e: Ent) -> None:
@@ -1366,13 +1921,43 @@ def _string_add(index: Any, e: Ent) -> None:
         by_gram[g].append(e.id)   # candidates' are (pool_strings), ~1 KB an entity held to the run's end before
 
 
+def _family_add(by_fam: Any, e: Ent) -> None:
+    for f in {e.hk[0], e.pk[0]} - {None}:
+        by_fam[f].append(e.id)
+
+
+@functools.lru_cache(maxsize=1 << 16)
+def _maker_key(maker: Optional[str]) -> str:
+    """A maker's key, worked out once a maker (the pool's maker index meets every live entity's)."""
+    return N.key(maker or "")
+
+
+def _maker_add(index: Any, e: Ent) -> None:
+    mk = _maker_key(e.maker)
+    if mk and e.key.startswith(mk + " "):
+        index[N.squash(e.key[len(mk) + 1:])].append(e.id)
+
+
+# The pool's indexes over the live entities (Book.index): name -> (an empty one, how an entity goes in)
+INDEXES: Dict[str, Tuple[Any, Any]] = {
+    "strings": (lambda: (defaultdict(list), defaultdict(list)), _string_add),   # (by gram, by squashed key)
+    "family": (lambda: defaultdict(list), _family_add),                         # by family key (Haiku's, the parser's)
+    "makers": (lambda: defaultdict(list), _maker_add)}                          # by the name its maker's prefix leaves
+
+
+def _index(book: Book, name: str) -> Any:
+    return book.index(name)
+
+
 def _strings(book: Book):
-    return _index(book, "strings", lambda: (defaultdict(list), defaultdict(list)), _string_add)
+    return _index(book, "strings")
 
 
 def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
-    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams."""
+    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams. v10.23:
+    each seed's candidates found first, then read in one go (a book read by need), then judged."""
     by_gram, by_sq = _strings(book)
+    found: List[Tuple[Ent, List[str]]] = []
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None or not e.sq:
@@ -1384,23 +1969,27 @@ def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
             got = by_gram.get(g, ())
             if len(got) < GRAM_CAP:
                 cands.update(got)
-        for oid, _ in cands.most_common(GRAM_TOP):
-            if oid == e.id:
-                continue
-            o = book.ents[oid]
-            a, b = e.sq, o.sq
-            # N.jaccard(a, b), on the grams each entity keeps
-            if a == b or (min(len(a), len(b)) >= 4 and N.word_contains(e.key, o.key)) or \
-                    len(e.grams & o.grams) / max(1, len(e.grams | o.grams)) >= JAC_BAR:
+        found.append((e, [oid for oid, _ in cands.most_common(GRAM_TOP) if oid != e.id]))
+    # v10.23 (0218): only the candidates' keys are read (a book read by need reads no more), their squashed form and
+    # grams worked out once a chunk
+    keys = book.keys_of({oid for _e, oids in found for oid in oids})
+    forms: Dict[str, Tuple[str, Set[str]]] = {}
+    for e, oids in found:
+        for oid in oids:
+            if oid not in forms:
+                sq = N.squash(keys[oid])
+                forms[oid] = (sq, N.grams(sq))
+            b, grams = forms[oid]
+            a = e.sq
+            # N.jaccard(a, b), on the grams of each
+            if a == b or (min(len(a), len(b)) >= 4 and N.word_contains(e.key, keys[oid])) or \
+                    len(e.grams & grams) / max(1, len(e.grams | grams)) >= JAC_BAR:
                 pool.add(e.id, oid, "str")
 
 
 def pool_family(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
     """The same family key, another surface form."""
-    def add(by_fam: Dict[str, List[str]], e: Ent) -> None:
-        for f in {e.hk[0], e.pk[0]} - {None}:
-            by_fam[f].append(e.id)
-    by_fam = _index(book, "family", lambda: defaultdict(list), add)
+    by_fam = _index(book, "family")
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None:
@@ -1412,12 +2001,8 @@ def pool_family(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
 
 def pool_makers(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
     """The maker-prefix forms ("Zeta Z200" / "Z200")."""
-    def add(index: Any, e: Ent) -> None:
-        mk = N.key(e.maker or "")
-        if mk and e.key.startswith(mk + " "):
-            index[N.squash(e.key[len(mk) + 1:])].append(e.id)
     by_sq = _strings(book)[1]
-    prefixed = _index(book, "makers", lambda: defaultdict(list), add)
+    prefixed = _index(book, "makers")
     for sid in seeds:
         e = book.ents.get(sid)
         if e is None:
@@ -1472,18 +2057,21 @@ def anchors(cur: Any, book: Book, guide: str, post_ids: Optional[Sequence[str]] 
                        {"AND m.post_id = ANY(%s::uuid[])" if post_ids is not None else ""}""",
                 (guide, list(post_ids)) if post_ids is not None else (guide,))
     out: Dict[str, Set[str]] = into if into is not None else defaultdict(set)
-    for eid, url in cur.fetchall():
-        e = book.ents.get(eid)
+    rows = cur.fetchall()
+    keys = book.keys_of({eid for eid, _url in rows})   # v10.23 (0218): only their keys, in one read
+    for eid, url in rows:
+        key = keys.get(eid)
         mm = ANCHOR_RE.search(url or "")
-        if e is None or not mm:
+        if key is None or not mm:
             continue
+        sq = N.squash(key)
         # the address names it: the repository's name is its name (a build tag after it dropped: "-GGUF"). Not a name
         # inside a longer one: the lab's containment test merged a maker's product into a repository of its tool.
         words = N.tokens(mm.group(3).replace(".", " "))
         while len(words) > 1 and N.BUILD.match(words[-1]):
             words = words[:-1]
         repo = N.squash(" ".join(words))
-        if e.sq and len(repo) >= 4 and (e.sq == repo or e.sq == N.squash(mm.group(3).casefold())):
+        if sq and len(repo) >= 4 and (sq == repo or sq == N.squash(mm.group(3).casefold())):
             out[eid].add(f"{mm.group(1).lower()}/{mm.group(2).lower()}/{mm.group(3).lower()}")
     return out
 
@@ -1517,22 +2105,34 @@ def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> 
     if not post_ids:
         return {}
     from insight_core.markx import tasks
-    posts = tasks.load_posts(cur, post_ids)
     cur.execute("""SELECT post_id::text, span, type, entity_id::text FROM mx_mentions_now
                     WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (guide, list(post_ids)))
     by: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for pid, span, type_, eid in cur.fetchall():
         by[pid].append((fold(span), type_, eid))
+
+    def pairs(es: List[Tuple[str, str, str]]) -> List[Tuple[Tuple[str, str, str], Tuple[str, str, str]]]:
+        return [(x, y) for x, y in itertools.permutations(es, 2)
+                if x[2] != y[2] and x[0] and y[0] and x[1] == y[1] and x[1] not in ("place", "person")]
+    # v10.23 (0218): only the posts with a pair the rule could name have their text read (a full pass's chunk read every
+    # text of every post naming one of its 1,000 seeds: 18.5 s of a server run), and a pair is looked for only when its
+    # Y is the whole of some "(...)" in the text (a span folds to words and spaces, never a bracket)
+    want = {pid: got for pid, es in by.items() if (got := pairs(es))}
+    posts = tasks.load_posts(cur, sorted(want)) if want else {}
     out: Dict[str, Set[Tuple[str, str]]] = {pid: set() for pid in post_ids}
-    for pid, es in by.items():
+    for pid, got in want.items():
         p = posts.get(pid)
         if p is None:
             continue
         text = bracket_fold(p.title + "\n" + p.text)
-        for (sa, ta, ea), (sb, tb, eb) in itertools.permutations(es, 2):
-            if ea != eb and sa and sb and ta == tb and ta not in ("place", "person") and f"{sa} ({sb})" in text:
+        inner = set(_INNER.findall(text)) if "(" in text else ()
+        for (sa, _ta, ea), (sb, _tb, eb) in got:
+            if sb in inner and f"{sa} ({sb})" in text:
                 out[pid].add(pair(ea, eb))
     return out
+
+
+_INNER = re.compile(r"\(([^()]*)\)")   # what a "(...)" holds, no bracket inside
 
 
 def bracket_fold(s: str) -> str:
@@ -1545,9 +2145,12 @@ def vector_neighbours(cur: Any, book: Book, seeds: Sequence[str], model: str = "
     """A name's EMB_TOPK nearest names at cosine >= EMB_BAR (mx_entity_vectors, the embed_name kind)."""
     if not seeds:
         return []
-    cur.execute("""SELECT s.entity_id::text, n.entity_id::text, 1 - (n.v <=> s.v)
+    # v10.23 (0218): the HNSW index walks each seed's nearest names (EXPLAIN on the server-sized copy: ~1,800 buffers a
+    # seed, the graph's 1024-dim tuples); the distance is the scan's own, not computed again from each neighbour's
+    # vector read back (its heap and TOAST pages: ~80 buffers a seed, 20% of the query's time warm). The same rows.
+    cur.execute("""SELECT s.entity_id::text, n.entity_id::text, 1 - n.d
                      FROM mx_entity_vectors s
-                     CROSS JOIN LATERAL (SELECT entity_id, v FROM mx_entity_vectors o
+                     CROSS JOIN LATERAL (SELECT o.entity_id, o.v <=> s.v AS d FROM mx_entity_vectors o
                                           WHERE o.model = s.model AND o.entity_id <> s.entity_id
                                           ORDER BY o.v <=> s.v LIMIT %s) n
                     WHERE s.model = %s AND s.entity_id = ANY(%s::uuid[])""", (EMB_TOPK, model, list(seeds)))
@@ -2249,12 +2852,18 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         timing[step] += t - since_t
         return t
 
+    def clock() -> float:
+        """v10.23 (0218): the budget's clock. The run's book's one read of the pool's indexes (RunBook.reading, once a
+        run, shared by every part and chunk) counts against the budget: the stage keeps its seconds (measured on the
+        server's state: 13 of 13 linking parts, 4 chunks, 49.7 s against the base's 52.4)."""
+        return _time.monotonic()
+
     def past(until: Optional[float] = deadline) -> bool:
-        return until is not None and _time.monotonic() > until
+        return until is not None and clock() > until
     guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     t = _time.monotonic()
-    book = book if book is not None else load_book(cur)
+    book = book if book is not None else run_book(cur)   # v10.23 (0218): read by need
     w = Writer(cur, book, run_id)
     resume = full and (after is not None or link_after is not None or phase is not None)
     if full and not resume:
@@ -2359,6 +2968,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         hf, an = facts["hf"], facts["an"]
         named = seeds - seeded
         seeded.update(named)
+        book.prime(ids=seeds)   # v10.23 (0218): a book read by need reads them in one go
         pool = Pool(book)
         pool_strings(pool, book, named)
         pool_family(pool, book, named)
@@ -2399,6 +3009,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         pooled.update(pool.pairs)
         pairs = [p for p in sorted(pool.pairs.values(), key=lambda p: (p.a, p.b)) if (p.a, p.b) not in decided]
         pairs = pairs[:max(0, PAIR_LIMIT - n["pairs"])]
+        book.prime(ids={x for p in pairs for x in (p.a, p.b)})
         n["pairs"] += len(pairs)
         decided.update((p.a, p.b) for p in pairs)
         got.prime((p.a, p.b) for p in pairs)   # 0211: the questions of these pairs, in one read
@@ -2527,7 +3138,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     if not full or resume:
         own = deadline
         if deadline is not None and full:
-            at = _time.monotonic()
+            at = clock()
             own = at + max(0.0, deadline - at) * LINK_SHARE
         linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
@@ -2606,7 +3217,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     if full and not stopped:
         if moved_n is not None or facts["hf"] is None:
             facts_for(None)   # read after the relinking (it may move a mention to another entity)
-        rest = sorted(e for e in book.ents if after is None or e > after)
+        rest = book.ids(after)   # v10.23 (0218): read in id order, not walked from the book
         chunks = [rest[k:k + chunk] for k in range(0, len(rest), max(1, chunk))] or [[]]
         n_chunks = len(chunks)
         paren_of: Dict[str, Set[Tuple[str, str]]] = {}   # a post's "X (Y)" pairs, read once over the chunks
@@ -2678,7 +3289,9 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                       ORDER BY 1""", {"g": guide, "s": sorted(seeds) if seeds is not None else None, "x": sorted(extra)})
     out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
     facts_on = entity_facts.on()
-    want = sorted(eid for (eid,) in cur.fetchall() if book.ents.get(eid) and book.ents[eid].status != "not_entity")
+    odd = [eid for (eid,) in cur.fetchall()]
+    book.prime(ids=odd)
+    want = sorted(eid for eid in odd if book.ents.get(eid) and book.ents[eid].status != "not_entity")
     out["odd"] = len(want)
     got.prime_collide(want)   # 0211: the collision questions of these entities, in one read
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])

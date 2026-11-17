@@ -29,6 +29,11 @@ if [ -n "${CASES:-}" ] && [ -f "$CASES" ]; then
   echo $? > cases.exit
 fi
 if [ "${NO_JOB:-0}" != "1" ]; then
+  # 0218: each job's own peak memory and seconds (a fresh process each, as the jobs process runs it), before the job
+  # checks' runs: the first decision run is the copy's full one, the second incremental
+  step "resources (the decision runs, the story job, Discover: peak MB and seconds)"
+  python -m insight_core.checks.resources --db "$DSN" --json resources.json $NOWARG > resources.log 2>&1 \
+    || step "resources FAILED (resources.log)"
   step "job checks (a second rebuild; ${IDENTITY:-the incremental job's identity check})"
   python -m insight_core.checks.job_checks --db "$DSN" ${IDENTITY:+--identity "$IDENTITY"} --json jobs.json $NOWARG > jobs.log 2>&1 \
     || step "job checks FAILED (jobs.log)"

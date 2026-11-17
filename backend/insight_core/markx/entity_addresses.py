@@ -24,17 +24,9 @@ CHUNK = 2000
 
 def _names(book: I.Book, roots: Set[Optional[str]]) -> Dict[str, Set[str]]:
     """{root: the name keys that name it: its members' own keys and every alias of them}, of `roots` (v10.17.2, 0204:
-    the roots the run's mentions name, not every root of the book at each run)."""
-    out: Dict[str, Set[str]] = defaultdict(set)
-    for eid, e in book.ents.items():
-        r = book.root(eid)
-        if r in roots:
-            out[r].add(e.key)
-    for k, eid in book.alias.items():
-        r = book.root(eid)
-        if r in roots:
-            out[r].add(k)
-    return out
+    the roots the run's mentions name, not every root of the book at each run; v10.23, 0218: Book.names_of, a book read
+    by need reads them)."""
+    return book.names_of(roots)
 
 
 def _makers(book: I.Book, root: str) -> Set[str]:

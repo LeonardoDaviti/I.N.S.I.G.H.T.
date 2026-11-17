@@ -310,29 +310,19 @@ def backfill(cur: Any, *, now: datetime, run_id: Any, deadline: Optional[float] 
 # ---- the subjects (ent-v3, one entity after 0119 A identity) ---------------------------------------------------
 
 class Subjects:
-    """Every post's ent-v3 subjects as their root entities (redirects read through), with the posts' dates."""
+    """The posts' ent-v3 subjects as their root entities (redirects read through), with the posts' dates. v10.23
+    (0218): read by need, for the posts and roots a step asks (`posts`, `want`, `versions`, `post_ids`): every post's
+    subjects were read at once (~400k rows at the server-sized copy's 1.5M mentions: the graph stage's peak, the run's
+    largest after the entity book was read by need)."""
 
     def __init__(self, cur: Any) -> None:
         from insight_core.markx import schemas
+        self._cur = cur
+        self._guide = schemas.mention_guides()   # 0133: the current set
         cur.execute("SELECT from_id::text, to_id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
         self.redirect = dict(cur.fetchall())
-        cur.execute(f"""SELECT m.post_id::text, m.entity_id::text, {_date()}
-                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL""",   # 0133: the current set
-                    (schemas.mention_guides(),))
-        self.of: Dict[str, Set[str]] = defaultdict(set)
-        self.at: Dict[str, datetime] = {}
-        for pid, eid, at in cur.fetchall():
-            if at is None:
-                continue
-            self.of[pid].add(self.root(eid))
-            self.at[pid] = at
-        self.posts: Dict[str, List[Tuple[datetime, str]]] = defaultdict(list)
-        for pid, roots in self.of.items():
-            for r in roots:
-                self.posts[r].append((self.at[pid], pid))
-        for xs in self.posts.values():
-            xs.sort()
+        self._leading: Optional[Dict[str, List[str]]] = None
+        self._by_root: Dict[str, List[Tuple[datetime, str]]] = {}
 
     def root(self, eid: str) -> str:
         seen = set()
@@ -341,10 +331,75 @@ class Subjects:
             eid = self.redirect[eid]
         return eid
 
+    def _members(self, roots: Iterable[str]) -> List[str]:
+        """Every id whose root is one of `roots` (the roots themselves too)."""
+        if self._leading is None:
+            self._leading = defaultdict(list)
+            for f in self.redirect:
+                self._leading[self.root(f)].append(f)
+        return sorted({x for r in roots for x in [r] + self._leading.get(r, [])})
+
+    def _rows(self, where: str, args: Sequence[Any]) -> Iterable[Tuple[str, str, datetime]]:
+        """(post, entity, date) of the subject mentions `where` says, a page at a time (no date: none)."""
+        self._cur.execute(f"""SELECT m.post_id::text, m.entity_id::text, {_date()}
+                                FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                               WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL
+                                 AND {where}""", (self._guide, *args))
+        while True:
+            page = self._cur.fetchmany(20000)
+            if not page:
+                return
+            for pid, eid, at in page:
+                if at is not None:
+                    yield pid, eid, at
+
+    def posts(self, pids: Iterable[str]) -> Tuple[Dict[str, Set[str]], Dict[str, datetime]]:
+        """({post: its subjects' roots}, {post: its date}) of `pids`."""
+        of: Dict[str, Set[str]] = defaultdict(set)
+        at: Dict[str, datetime] = {}
+        ids = sorted(set(pids))
+        if ids:
+            for pid, eid, d in self._rows("m.post_id = ANY(%s::uuid[])", (ids,)):
+                of[pid].add(self.root(eid))
+                at[pid] = d
+        return of, at
+
+    def want(self, roots: Iterable[str]) -> None:
+        """The posts of `roots` (each a subject of theirs), by date, for `between`; what was read before let go."""
+        roots = set(roots)
+        got: Dict[str, Set[Tuple[datetime, str]]] = defaultdict(set)
+        ids = self._members(roots)
+        if ids:
+            for pid, eid, d in self._rows("m.entity_id = ANY(%s::uuid[])", (ids,)):
+                r = self.root(eid)
+                if r in roots:
+                    got[r].add((d, pid))
+        self._by_root = {r: sorted(xs) for r, xs in got.items()}
+
+    def versions(self, roots: Iterable[str]) -> Iterable[Tuple[str, str, datetime]]:
+        """(post, root, date) of every post a subject of which has its root in `roots` (once a post and root)."""
+        roots = set(roots)
+        seen: Set[Tuple[str, str]] = set()
+        ids = self._members(roots)
+        if ids:
+            for pid, eid, d in self._rows("m.entity_id = ANY(%s::uuid[])", (ids,)):
+                r = self.root(eid)
+                if r in roots and (pid, r) not in seen:
+                    seen.add((pid, r))
+                    yield pid, r, d
+
+    def post_ids(self, after: str, n: int) -> List[str]:
+        """The next `n` posts with a subject (and a date) after `after` ('': the first), in id order."""
+        self._cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                               WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL
+                                 AND {_date()} IS NOT NULL AND (%s = '' OR m.post_id > %s::uuid)
+                               ORDER BY 1 LIMIT %s""", (self._guide, after or "", after or None, n))
+        return [r[0] for r in self._cur.fetchall()]
+
     def between(self, root: str, lo: datetime, hi: datetime) -> List[str]:
-        xs = self.posts.get(root) or []
+        xs = self._by_root.get(root) or []
         i = bisect.bisect_left(xs, (lo, ""))
-        j = bisect.bisect_right(xs, (hi, "￿"))
+        j = bisect.bisect_right(xs, (hi, "\uffff"))
         return [p for _, p in xs[i:j]]
 
 
@@ -368,32 +423,33 @@ def _vnorm(t: Any) -> Optional[Tuple[int, ...]]:
 def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """{(newer, older): the edge}: the newer post's subject is the next version, in one family, after the older post's
     subject; the older post GAP_DAYS back or more, the predecessor's earliest NEXT_VERSION_POSTS posts."""
-    roots = sorted({r for rs in subjects.of.values() for r in rs})
-    if not roots:
-        return {}
+    # v10.23 (0218): the versions first (the roots that can make an edge), then only their posts (every post's subjects
+    # were read at once); a version none of whose posts has a date names no family's step, as before
     cur.execute("""SELECT id::text, level, parent::text, version_key, variant, size, build, key, name FROM mx_entities
-                    WHERE id = ANY(%s::uuid[])""", (roots,))
-    ents = {}
+                    WHERE level = 'version' AND parent IS NOT NULL""")
+    found = {}
     for eid, level, parent, vkey, variant, size, build, key, name in cur.fetchall():
         v = _vnorm(vkey)
-        if level != "version" or parent is None or v is None or variant or size or build:
+        if level != "version" or parent is None or v is None or variant or size or build or subjects.root(eid) != eid:
             continue
-        ents[eid] = (subjects.root(parent), v, key, name)
+        found[eid] = (subjects.root(parent), v, key, name)
+    group: Dict[Tuple[str, Tuple[int, ...]], List[Tuple[datetime, str, str]]] = defaultdict(list)
+    ents = {}
+    for pid, r, at in subjects.versions(found):
+        ents[r] = found[r]
+        fam, v, _k, _n = found[r]
+        group[(fam, v)].append((at, pid, r))
+    if not ents:
+        return {}
     family: Dict[str, Set[Tuple[int, ...]]] = defaultdict(set)
     for fam, v, _k, _n in ents.values():
         family[fam].add(v)
     order = {fam: sorted(vs) for fam, vs in family.items()}
-    group: Dict[Tuple[str, Tuple[int, ...]], List[Tuple[datetime, str, str]]] = defaultdict(list)
-    for pid, rs in subjects.of.items():
-        for r in rs:
-            if r in ents:
-                fam, v, _k, _n = ents[r]
-                group[(fam, v)].append((subjects.at[pid], pid, r))
     for xs in group.values():
         xs.sort()
     gap = timedelta(days=GAP_DAYS)
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for (fam, v), posts in group.items():
+    for (fam, v), posts in sorted(group.items()):   # v10.23: one order (a pair two families name: the last)
         vs = order[fam]
         i = vs.index(v)
         if i == 0:
@@ -433,11 +489,13 @@ def discover(cur: Any, subjects: Subjects, scope: Iterable[str]) -> int:
     from insight_core.markx import repo
     lo, hi = timedelta(days=GAP_DAYS), timedelta(days=RELATE_DAYS)
     pairs: Set[Tuple[str, str]] = set()
+    of, ats = subjects.posts(scope)   # v10.23 (0218): the scope's subjects, then their roots' posts, read by need
+    subjects.want({r for rs in of.values() for r in rs})
     for pid in set(scope):
-        at = subjects.at.get(pid)
+        at = ats.get(pid)
         if at is None:
             continue
-        for r in subjects.of.get(pid, ()):
+        for r in of.get(pid, ()):
             pairs |= {(pid, o) for o in subjects.between(r, at - hi, at - lo) if o != pid}
             pairs |= {(n, pid) for n in subjects.between(r, at + lo, at + hi) if n != pid}
     if not pairs:
@@ -700,17 +758,18 @@ def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float],
         state = {"version": BACKFILL_VERSION, "after": "", "done": False, "candidates": 0}
     if state["done"]:
         return {"done": True}
-    ids = sorted(subjects.of)
-    i = bisect.bisect_right(ids, state["after"])
-    added = 0
-    while i < len(ids):
-        part = ids[i:i + chunk]
+    added, done = 0, False
+    while True:
+        part = subjects.post_ids(state["after"], chunk + 1)   # v10.23 (0218): a chunk at a time, in id order
+        done = len(part) <= chunk
+        part = part[:chunk]
+        if not part:
+            break
         added += discover(cur, subjects, part)
         state["after"] = part[-1]
-        i += len(part)
-        if deadline is not None and time.monotonic() >= deadline:
+        if done or (deadline is not None and time.monotonic() >= deadline):
             break
-    state["done"] = i >= len(ids)
+    state["done"] = done
     state["candidates"] = state.get("candidates", 0) + added
     repo.set_setting(cur, RELATE_BACKFILL_KEY, state)
     return {"done": state["done"], "candidates": added}

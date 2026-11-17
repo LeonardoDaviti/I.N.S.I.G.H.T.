@@ -350,6 +350,48 @@ class DiffTests(unittest.TestCase):
                 _, problems = report.build(work)
                 self.assertEqual(any("markx.ix_unchanged" in p for p in problems), failed, (base, head))
 
+    def test_a_job_over_its_budget_or_a_fifth_worse_than_main_fails_the_check(self):
+        """0218: each job's own peak MB and seconds, against its budget and the base's (checks/resources.py)."""
+        import json
+        import tempfile
+        from unittest import mock
+        from insight_core.checks import report, resources
+
+        def side(peak, seconds=20.0, cpu=10.0):
+            return {"now": "t", "jobs": {"decide": {"peak_mb": peak, "seconds": seconds, "cpu_s": cpu, "kind": "incremental"},
+                                         "stories": {"peak_mb": 200.0, "seconds": 5.0, "cpu_s": 3.0},
+                                         "discover": {"not_measured": "this version has no discover job"}}}
+        cases_ = [(side(400), side(450), []),                                  # 12% worse: ok
+                  (side(400), side(500), ["decide: peak_mb 500 is 25% above"]),  # a fifth worse
+                  (side(400), side(610), ["over its budget 600", "52% above"]),   # over the budget, and worse
+                  (side(400), side(400, seconds=95), ["seconds 95 over its budget 90"]),
+                  (side(400, cpu=4.0), side(400, cpu=8.0), []),                # 100% worse, under the floor
+                  (side(400, cpu=10.0), side(400, cpu=20.0), ["cpu_s 20 is 100% above"]),
+                  (None, side(500), [])]                                       # a base before the check: budgets only
+        with tempfile.TemporaryDirectory() as work:
+            for base, head, want in cases_:
+                for name, got in (("base", base), ("head", head)):
+                    os.makedirs(os.path.join(work, name), exist_ok=True)
+                    path = os.path.join(work, name, "resources.json")
+                    if got is None:
+                        if os.path.exists(path):
+                            os.remove(path)
+                        continue
+                    with open(path, "w") as f:
+                        json.dump(got, f)
+                text, problems = report.build(work)
+                self.assertIn("## B2. The jobs' resources", text)
+                found = [p for p in problems if p.startswith(("decide", "stories", "discover"))]
+                self.assertEqual(len(found), len(want), (want, found))
+                for w in want:
+                    self.assertTrue(any(w in p for p in found), (w, found))
+        stopped = {"decide": {"peak_mb": 100.0, "seconds": 10.0, "cpu_s": 1.0, "not_finished": "over 120 s: stopped"}}
+        self.assertEqual([p for r in resources.compare({}, stopped) for p in r["problems"]],
+                         ["decide: not finished (over 120 s: stopped)"])   # a run that did not finish fails too
+        with mock.patch.dict(os.environ, {"RESOURCE_BUDGETS": '{"stories": {"peak_mb": 150}}'}):
+            rows = resources.compare(side(400)["jobs"], side(400)["jobs"])
+        self.assertEqual([p for r in rows for p in r["problems"]], ["stories: peak_mb 200 over its budget 150"])
+
     def test_the_report_counts_every_thing_and_says_what_wasnt_compared(self):
         before = {"now": "t", "parts": {"posts": {"a": {"title": "x", "text": "y"}}}, "missing": {}}
         after = {"now": "t", "parts": {"posts": {"a": {"title": "x2", "text": "y"}}}, "missing": {"news": "absent"}}
@@ -401,6 +443,21 @@ class ReadOnlyTests(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", code, db_url()], capture_output=True, text=True, cwd=str(BACKEND_DIR),
                              env={**os.environ, "PYTHONPATH": str(BACKEND_DIR)}, timeout=60)
         self.assertEqual(out.stdout.strip(), "2", out.stderr[-500:])
+
+
+@requires_test_db
+class ResourcesTests(unittest.TestCase):
+    """0218: a job measured as the jobs process runs it, in a spawned process of its own (commits its run's rows)."""
+
+    def test_a_job_in_its_own_process_records_its_own_peak_and_seconds(self):
+        from insight_core.checks import resources
+        got = resources.measure(db_url(), "decide", NOW, timeout=300)
+        self.assertNotIn("error", got, got)
+        self.assertGreater(got["peak_mb"], 20)            # its own address space's high-water, not this process's
+        self.assertGreaterEqual(got["seconds"], 0)
+        self.assertIn(got["kind"], ("full", "incremental"))
+        self.assertEqual(resources.measure(db_url(), "nonesuch", NOW, timeout=120)["not_measured"][:22],
+                         "this version has no no")
 
 
 @requires_test_db
