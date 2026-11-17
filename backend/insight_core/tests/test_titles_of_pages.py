@@ -283,7 +283,7 @@ class DiscoverTitleMapTests(unittest.TestCase):
             self._cite(voices, f"https://{site}/2026/10/page-{n}")
         self.conn.commit()
         service = StoriesService(db_url())
-        service.discover()
+        service.refresh()   # as the job does (discover_reads.keep): the reads work from the answer served (v10.22.2)
         http = FakeHttp(lambda url: ValueError(f"HTTP 404 while fetching {url}"))   # every read fails: stored all the same
         asyncio.run(discover_reads.read_first_page(service, http, KindRegistry.default(http, None), clock=lambda: NOW))
         built = []
