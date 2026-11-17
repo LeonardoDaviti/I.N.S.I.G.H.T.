@@ -1,10 +1,69 @@
 # 0218: The decision run, lean (Stealth v10.23)
 
-Status: **built** (branch `v1023-light` from `v1023` fb373c40). No migration. Not merged, not pushed. Module tests
+Status: **built**, review follow-up built (branch `v1023-light` from `v1023` fb373c40). No migration. Not merged, not pushed. Module tests
 only (the full suite and the real-data check are the owner's session's). Scripts and logs:
 `plan/research/v1023-light/` (private). **On the deploy:** the reading's code changed (decide.load, incremental.release:
 the reading's stamp), so the first decision run after it is full (0215: its catch-up limit, 600 s), as after any change
 of the reading.
+
+## Review follow-up (2026-11-17): the server's state's regression, the shown names, the graph stage
+
+The review held the merge: on S2 the branch linked 1 part of 13 and did 3 full-pass chunks against 4 (the backlog
+could stall again). Five commits on the same branch (2f601e60, ee4bc6fc, d515347d, 646cdcf9, b070c44f), measured on
+templates S1 and S2 built again from prep_scale the same way (the old ones were dropped; the base measured again on
+them: `rbase_*`).
+
+**Why the linking lost its parts.** Inside the stage's 45 s, before any part: the repairs (6.2-14.9 s: the product
+accounts' walk read every name of two words, ~222k rows, for the ~37k typed an org) and the pool's indexes' one read
+of every entity (7.7 s). The base spent load_book (4.9 s) and its repairs (1.6 s) there.
+
+**Built.**
+- *The indexes' read outside the budget* (646cdcf9): still once a run, shared by every part and chunk; its seconds
+  (`RunBook.reading`) are left out of identity.stage's clock and of the later steps' deadline. And cheaper: only the
+  columns the indexes and family values read, a fields key once for each set of fields and maker, a maker's key once
+  a maker: 7.7 -> 5.7 s. (Not a stored structure: the indexes' list order, the whole book's order when read, decides
+  the gram candidates' ties, so a table would not give the same rows.)
+- *The repairs' walk narrowed* (b070c44f): a book read by need reads the names some mention types an org (or, none
+  counted, typed an org), one semi-join on the run's snapshot; the caller's test still decides. 5.0 -> 2.1 s.
+- *The shown names' sweep resumes* (2f601e60, ee4bc6fc). Why it restarted: a run with a full pass half done is
+  "whole", and a whole run whose last sweep was done starts a new one; the sweep did every single name (330k on the
+  clone, which has no cluster of several names) at its start whatever the deadline, and resumed only the clusters of
+  several names. Now one sweep in id order, a step at a time (2,000 clusters of several names or 20,000 of one,
+  whichever first), stopping past the deadline after a step, the next run resuming after it (the same {done, after}).
+- *The graph stage's subjects read by need* (d515347d). The dominant structure: `Subjects` held every post's subject
+  mentions (on S2: 484k rows, 129k posts, 128 MB of Python objects, 161 MB while read; RSS 489 MB after it in a fresh
+  process). Now next_version reads the versions, then only their posts; discover the scope's subjects, then their
+  roots' posts by date; the relate backfill a chunk at a time.
+
+**S1 (a normal incremental run): all 94 mx_* tables equal to the base** (rbase_s1 against wip2_s1, the branch's
+last commit).
+
+| S1 | base fb373c40 | v1023-light b070c44f |
+|---|---|---|
+| the run's peak | 695 MB | **298 MB** |
+| questions and decisions: peak / after trim | 501 / 354 MB | 281 / 237 MB |
+| graph stage: peak / CPU | 631 MB / 12.0 s | **292 MB** / 10.2 s |
+| entities stage: wall / CPU / peak | 23.5 s / 16.8 s / 695 MB | 22.3 s / 10.9 s / 298 MB |
+| the run's CPU | 45.8 s | 36.5 s |
+| rows | - | **94 of 94 equal** |
+
+| S2 (the server's state, entities 45 s, the graph's own budget) | base fb373c40 | v1023-light b070c44f (read outside the budget) | the same, read inside (measured variant) |
+|---|---|---|---|
+| linking parts | 13 of 13 | **13 of 13** | 13 of 13 |
+| full-pass chunks | 4 | **5** | 4 |
+| entities stage: wall / CPU | 52.4 s / 31.3 s | 57.4 s / 28.3 s | 49.7 s / 24.2 s |
+| before identity.stage (in the budget) | load_book 4.9 + repairs 1.6 s | repairs 3.5 s (the read, ~5.5 s, outside) | repairs 3.5 s + the read |
+| shown | 3.2 s | 1.7 s (one step) | 2.2 s |
+| entities stage peak | 733 MB | 410 MB | 363 MB |
+| graph stage peak | 634 MB | 293 MB | 294 MB |
+| the run's peak / CPU | 733 MB / 61.8 s | **410 MB** / 54.8 s | 363 MB / 50.5 s |
+
+**Wall time against the base.** With the read outside the budget, the stage's deadline moves by the read's seconds by
+construction, so on S2 its wall is the base's plus ~5 s (57.4 s against 52.4 s), for one more chunk (5 against 4) and
+13 of 13 parts. The variant with the read inside the budget (one line: `RunBook.reading` not counted) meets every
+number, 13 parts, 4 chunks, 49.7 s, because the read and the repairs now cost less than the base's load_book and
+repairs did; it was measured, not committed (the review asked for the read outside the budget). Wall seconds on this
+machine vary (the candidate finder, unchanged, took 30-96 s across these runs); CPU seconds less.
 
 ## Summary
 
@@ -233,15 +292,13 @@ made tuples at once), in the order read.
   the run read; the rest of the stage is let go at its end (49 MB traced after it, as before it). Below that the index
   has to live in the database: a gram table kept by the Writer (a migration and a backfill), or pg_trgm with the
   rule's Jaccard as the recheck, read per chunk. Its liveness (an entity a mention names, as when the book was read)
-  is the snapshot RunBook already keeps.
+  is the snapshot RunBook already keeps. (Review follow-up: the read is outside the budget and costs 5.7 s, not 7.7.)
 - **The judge tasks' state is the server's largest share of "questions and decisions"** (106,924 kept inputs, ~63k
   answers a run) and the clone holds 1,902 judge tasks: a compact state (hashes as bytes, answers as their fields) is
   to be measured on a clone with the server's judge tasks. The answers are let go after News (`incremental.release`).
   On the clone the stage's end holds 153 MB of Python objects (tracemalloc), the world's 130k posts': their kept rows
   27 MB, their readings' kinds and events 35 MB, stamps 25 MB, texts 13 MB; 49 MB once released after News.
-- **The graph stage is now the run's peak** (539-541 MB on the clone; tracemalloc's peak in it 349 MB of Python objects
-  against 154 MB before and after): its `Subjects` (every post's subject mentions, 1.5M mentions on the clone) and
-  the backfill's reads. Read by need (the subjects of the posts the stage looks at) is its next step.
+- **The graph stage** was the run's peak (539-541 MB): built in the review follow-up (its subjects read by need: 292 MB).
 - **A full pass half done keeps every run "whole"** (0216): with its steps cheaper (the "X (Y)" texts, the nearest
   names' second read), more chunks fit the 45 s; the server's pace after the deploy says whether the pass needs a job
   of its own.
