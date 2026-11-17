@@ -38,6 +38,7 @@ Config: entity_bands.json `repairs` (each on or off, and their bars).
 """
 from __future__ import annotations
 
+import bisect
 import itertools
 import json
 import logging
@@ -683,33 +684,42 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             out["names"] += int(name != e.shown_name)
             out["types"] += int(typ != e.shown_type)
             e.shown_name, e.shown_type = name, typ
-    # one name: only its type can change, read from the book (no query); the clusters of several names in chunks
-    # v10.23 (0218): a page at a time (a book read by need reads each page in one go and lets it go after)
-    if roots is not None or after is None:
-        singles = [r for r in todo if len(members[r]) == 1]
-        for k in range(0, len(singles), SHOWN_CHUNK):
-            page = singles[k:k + SHOWN_CHUNK]
-            book.prime(ids=page)
-            for want in (getattr(book.types, "want", None), getattr(book.version_parents(), "want", None)):
-                if want is not None:
-                    want(page)
-            book.prime_products(page)
-            for r in page:
-                write(r, {})
-            if roots is None:
-                book.forget(page)
+
+    def singles(page: List[str]) -> None:
+        """One name each: only its type can change, read from the book (no spans)."""
+        book.prime(ids=page)
+        for want in (getattr(book.types, "want", None), getattr(book.version_parents(), "want", None)):
+            if want is not None:
+                want(page)
+        book.prime_products(page)
+        for r in page:
+            write(r, {})
+        if roots is None:
+            book.forget(page)   # v10.23 (0218): a book read by need lets each page go
+
+    # v10.23 (0218): one sweep in id order, a step at a time: the next SHOWN_CHUNK clusters of several names and the
+    # clusters of one name before them (the last step: all the rest), stopping past `deadline` after a step; `after`
+    # (the last root of the last step) says where the next run resumes. The single names were all done at a sweep's
+    # start, past the deadline (every run with a full pass half done starts a sweep once the last is done: 330k
+    # names read and let go, 18 s past the budget, on a book read by need).
     many = [r for r in todo if len(members[r]) > 1]
-    last, done = after, True
-    for k in range(0, len(many), SHOWN_CHUNK):
+    lone = [r for r in todo if len(members[r]) == 1]
+    last, done, i = after, True, 0   # the single names before lone[i] are done
+    for k in range(0, max(1, len(many)), SHOWN_CHUNK):
         chunk = many[k:k + SHOWN_CHUNK]
-        book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
-        book.prime_products(m for r in chunk for m in members[r])
-        spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
-        for r in chunk:
-            write(r, spans)
-        last = chunk[-1]
-        if roots is None and k + SHOWN_CHUNK < len(many) and deadline is not None and time.monotonic() > deadline:
-            done = False
+        final = k + SHOWN_CHUNK >= len(many)
+        j = len(lone) if final else bisect.bisect_right(lone, chunk[-1], lo=i)
+        for p in range(i, j, SHOWN_CHUNK):
+            singles(lone[p:min(j, p + SHOWN_CHUNK)])
+        i = j
+        if chunk:
+            book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
+            book.prime_products(m for r in chunk for m in members[r])
+            spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
+            for r in chunk:
+                write(r, spans)
+        if roots is None and not final and deadline is not None and time.monotonic() > deadline:
+            done, last = False, chunk[-1]
             break
     got: Dict[str, Any] = dict(out)
     if roots is None:
