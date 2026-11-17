@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 
-import { ThingLinks, VersionLine, relationWords } from './MarkXTimeline';
+import { ThingLinks, VersionLine } from './MarkXTimeline';
 import type { MarkxEntityRelation, MarkxVersionLine } from '../../services/markx';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
@@ -46,16 +46,13 @@ describe('the version line (0220)', () => {
 
 describe('the relations between things (0220)', () => {
   it('words each relation by its direction and groups the other things', () => {
-    expect(relationWords('based_on', 'out')).toBe('Based on');
-    expect(relationWords('based_on', 'in')).toBe('Built on it');
-    expect(relationWords('released', 'out')).toBe('Released');
-    expect(relationWords('released', 'in')).toBe('Released by');
     renderWithProviders(<ThingLinks relations={[rel('based_on', 'in', 's2', 'Sabi 2', 3), rel('based_on', 'in', 'k1', 'Kestrel 1'),
-      rel('released', 'in', 'v', 'Vantor', 2)]} />, { api });
+      rel('released', 'in', 'v', 'Vantor', 2), rel('based_on', 'out', 'o3', 'Orbit 3'), rel('released', 'out', 'w', 'Widget')]} />,
+    { api });
     const section = screen.getByRole('region', { name: 'Links' });
     const rows = within(section).getAllByRole('listitem');
     expect(rows.map((r) => r.textContent)).toEqual(['Built on it: Sabi 2 (3 posts), Kestrel 1 (1 post)',
-      'Released by: Vantor (2 posts)']);
+      'Released by: Vantor (2 posts)', 'Based on: Orbit 3 (1 post)', 'Released: Widget (1 post)']);
     expect(within(rows[0]).getByRole('link', { name: 'Sabi 2' })).toHaveAttribute('href', '/markx/entities/s2');
   });
 

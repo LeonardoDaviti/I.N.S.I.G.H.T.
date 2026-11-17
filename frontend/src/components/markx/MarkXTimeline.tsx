@@ -146,7 +146,7 @@ const RELATION: Record<MarkxEntityRelation['relation'], [string, string]> = {
 };
 
 /** 0220: how a relation reads from this thing's page (out: it -> the other thing; in: the other thing -> it). */
-export const relationWords = (relation: MarkxEntityRelation['relation'], direction: MarkxEntityRelation['direction']) =>
+const relationWords = (relation: MarkxEntityRelation['relation'], direction: MarkxEntityRelation['direction']) =>
   RELATION[relation][direction === 'out' ? 0 : 1];
 
 /** 0220: the relations posts state between this thing and others (only the measured ones reach the page), grouped. */
