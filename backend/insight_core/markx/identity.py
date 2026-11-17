@@ -390,6 +390,15 @@ class Book:
         """v10.23 (0218): read ahead what `product_of` asks of these entities' names (the aliases and families their
         last words could be): a whole book holds it (RunBook reads it now, in one go)."""
 
+    def prime_names(self, keys: Iterable[str]) -> None:
+        """v10.24 (0221): read ahead what `product_of` asks of these names: a whole book holds it."""
+
+    def prime_makers(self, roots: Iterable[Optional[str]]) -> None:
+        """v10.24 (0221): read ahead what `maker_keys` asks of these clusters: a whole book holds it."""
+
+    def prime_sides(self, members: Iterable[str]) -> None:
+        """v10.24 (0221): read ahead what `sides` asks of these entities: a whole book holds it."""
+
     def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
         """v10.23 (0218): {root: the name keys that name it: its members' own keys and every alias of them} of `roots`
         (entity_addresses' names)."""
@@ -1257,17 +1266,47 @@ class RunBook(LazyBook):
 
     def prime_products(self, ids: Iterable[str]) -> None:
         keys = [e.key for i in ids if (e := self.ents.get(i)) is not None and " " in (e.key or "")]
-        rests = sorted({" ".join(k.split()[i:]) for k in keys for i in range(1, len(k.split()))})
+        self.prime_names(keys)
+
+    def prime_names(self, keys: Iterable[str]) -> None:
+        """v10.24 (0221): what `product_of` asks of these names, in one go: the aliases and families their last words
+        could be, those families' clusters and what `maker_keys` reads of them (prime_makers). One name at a time,
+        the repairs' walks asked the database ~30k times a run (the server: 17 s of the stage, v10.22's whole book
+        5.5 s)."""
+        rests = sorted({" ".join(k.split()[i:]) for k in keys if k for i in range(1, len(k.split()))})
         if rests:
             self.alias.want(rests)
             fams = self.families()
             fams.want(rests)
-            # the families product_of then tries: their clusters (maker_keys reads them, and their versions)
             found = {dict.get(self.alias, r) for r in rests} | {c for r in rests for c in (dict.get(fams, r) or ())}
             found.discard(None)
             self.ents.want(found)
-            self.prime_clusters({self.root(c) for c in found} | {self.root(e.parent) for c in found
-                                                                 if (e := dict.get(self.ents, c)) is not None and e.parent})
+            self.types.want(found)
+            self.version_parents().want(found)
+            self.prime_makers({self.root(c) for c in found})
+
+    def prime_makers(self, roots: Iterable[Optional[str]]) -> None:
+        """v10.24 (0221): what `maker_keys` asks of these clusters, in one go: their members (prime_clusters), the
+        versions under them, their parents' clusters, and the clusters of the makers they and their versions state."""
+        roots = {r for r in roots if r}
+        self.prime_clusters(roots)
+        members = [e for r in roots for i in self._leading_to(r) if (e := dict.get(self.ents, i)) is not None]
+        kids = self.kids()
+        kid_ids = sorted({k for e in members for k in (dict.get(kids, e.id) or ())})
+        self.ents.want(kid_ids)
+        stated = {N.key(x.maker) for x in members + [dict.get(self.ents, k) for k in kid_ids]
+                  if x is not None and x.maker} - {""}
+        self.alias.want(stated)
+        more = {self.root(e.parent) for e in members if e.parent} | \
+            {self.root(dict.get(self.alias, k)) for k in stated if dict.get(self.alias, k)}
+        self.prime_clusters(more - roots)
+
+    def prime_sides(self, members: Iterable[str]) -> None:
+        """v10.24 (0221): what `sides` asks of these entities (held already: a cluster's members) besides their own
+        rows: the product test of the ones typed an org with a name of several words (prime_names)."""
+        got = [e for i in members if (e := dict.get(self.ents, i)) is not None and " " in (e.key or "")]
+        self.types.want([e.id for e in got])
+        self.prime_names([e.key for e in got if self.etype(e.id) == "org"])
 
     def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
         lead = {i: r for r in set(roots) if r for i in self._leading_to(r) if _UUID.match(i)}

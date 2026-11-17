@@ -161,7 +161,9 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
     out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
     rows = redirect_rows(cur)
     owner = _owner_same(cur)
-    for root, ms in sorted(book.clusters().items()):   # v10.22 (0216): a cluster of one has no side to cut
+    clusters = book.clusters()
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go, not a cluster at a time
+    for root, ms in sorted(clusters.items()):   # v10.22 (0216): a cluster of one has no side to cut
         if len(ms) < 2 or out["undone"] >= limit:
             continue
         fam, org = book.sides(ms)
@@ -252,11 +254,7 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
     def ready(page: List[I.Ent]) -> List[I.Ent]:
         types = book.etypes(page)
         got = [e for e in page if types.get(e.id) == "org"]
-        rests = {" ".join(e.key.split()[i:]) for e in got for i in range(1, len(e.key.split()))}
-        book.prime(keys=rests)
-        want_fams = getattr(book.families(), "want", None)
-        if want_fams is not None:
-            want_fams(rests)
+        book.prime_names(e.key for e in got)   # v10.24 (0221): and what product_of asks of them, in one go
         return got
     from insight_core.markx import schemas
     org = schemas.stored_types(["org"])
@@ -313,7 +311,9 @@ def family_org(book: I.Book, cur: Any = None, show: int = 10) -> Dict[str, Any]:
     run, but for the clusters the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by
     name."""
     mixed = []
-    for root, ms in book.clusters().items():   # v10.22 (0216): a cluster of one holds no family and org
+    clusters = book.clusters()
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go (none if read already)
+    for root, ms in clusters.items():   # v10.22 (0216): a cluster of one holds no family and org
         if len(ms) < 2 or root not in book.ents:
             continue
         fam, org = book.sides(ms)
@@ -341,7 +341,9 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
     groups: Dict[Tuple[str, str], List[I.Ent]] = defaultdict(list)
     versions = _versions(book)
     book.prime(ids={e.parent for e in versions})
-    book.prime_clusters({book.root(e.parent) for e in versions})
+    parents = {book.root(e.parent) for e in versions}
+    book.prime_clusters(parents)
+    book.prime_sides(m for r in parents if r for m in book.cluster(r))   # v10.24 (0221): org_like's, in one go
     for e in versions:
         r = book.root(e.parent)
         if r not in book.ents:
@@ -409,6 +411,7 @@ def _family_roots(book: I.Book) -> Dict[str, List[str]]:
     for e in _families(book):
         roots.add(book.root(e.id))
     book.prime_clusters(roots)
+    book.prime_sides(m for r in roots if r for m in book.cluster(r))   # v10.24 (0221): sides', in one go
     out: Dict[str, List[str]] = {}
     for r in roots:
         ms = book.cluster(r)
