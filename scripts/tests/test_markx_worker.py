@@ -1268,6 +1268,26 @@ class TestCost0191(Base):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
 
+class TestChain0219(unittest.TestCase):
+    """0219: the story chain question, asked as it was measured (Haiku, effort low, 10 a call), after relate; the
+    server's rules accept a reason and refuse an empty one or a successor (identity's, never the judge's)."""
+
+    def test_the_chain_kind_is_asked_with_the_measured_settings(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds.index("chain"), kinds.index("relate") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["chain"], 10)
+        self.assertEqual(W.effort_arg(W.EFFORT)["chain"], "low")
+
+    def test_the_answer_passes_the_workers_checks(self):
+        rules = W.server_rules()
+        schema = rules.schemas.CHAIN_SCHEMA
+        ok = {"reason": "The launch, then its weights a week later.", "relation": "same_release", "confidence": 80}
+        self.assertIsNone(W.check_answer(schema, ok))
+        self.assertIsNone(W.rule_error("chain", ok, "THING: x", "chain-v1"))
+        self.assertIsNotNone(W.check_answer(schema, dict(ok, relation="next_version")))
+        self.assertIn("reason", W.rule_error("chain", dict(ok, reason="  "), "THING: x", "chain-v1") or "")
+
+
 class TestReading0212(unittest.TestCase):
     """0212: ent-v5's kind `reading`, asked with the settings it was measured at (d7), checked by the server's rules."""
     WINDOW = ("Platform: site | Source: Example\nTitle: T\nWindow: 2 of 3 of the post's text (characters 5,801-11,800 "
