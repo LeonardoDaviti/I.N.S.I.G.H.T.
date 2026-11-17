@@ -720,47 +720,67 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
     # of one, whichever comes first), stopping past `deadline` after a step; `after` (the step's last root) says where
     # the next run resumes. The single names were all done at a sweep's start, past the deadline: every run with a
     # full pass half done starts a sweep once the last is done (330k names read and let go, 18 s past the budget).
-    done, last = True, after
+    # v10.24 (0221): a step starts only when the seconds the last one took are left (the first: any time left), so
+    # the sweep never runs past the stage's budget; `steps` says how many it did
+    done, last, steps, took = True, after, 0, 0.0
     lone: List[str] = []
     many: List[str] = []
     for n, r in enumerate(todo):
         (many if len(members[r]) > 1 else lone).append(r)
         if n + 1 < len(todo) and len(many) < SHOWN_CHUNK and len(lone) < SHOWN_SINGLES:
             continue
+        if roots is None and deadline is not None and time.monotonic() + took > deadline:
+            done = False   # this step and the rest are the next run's (it resumes after the last step done)
+            break
+        at = time.monotonic()
         for p in range(0, len(lone), SHOWN_CHUNK):
             singles(lone[p:p + SHOWN_CHUNK])
         if many:
             several(many)
         lone, many = [], []
-        if roots is None and n + 1 < len(todo) and deadline is not None and time.monotonic() > deadline:
-            done, last = False, r
-            break
+        steps, last, took = steps + 1, r, time.monotonic() - at
     got: Dict[str, Any] = dict(out)
     if roots is None:
-        got.update(done=done, after=None if done else last)
+        got.update(done=done, after=None if done else last, steps=steps)
     return got
 
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None) -> Dict[str, Any]:
-    """Steps 1-3 and 1b, in order, each skipped past `deadline` (the next run does it)."""
-    from insight_core.markx import schemas
+STEPS = ("org_family", "product_accounts", "reparent", "families")
+GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
+
+
+def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None,
+           last: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Steps 1, 1b, 2 and 3, in order. v10.24 (0221): with what the stage's budget has left after the linking and the
+    full pass. A step starts only when the seconds it took the last time (`last`: the last run's counts, `took`) are
+    left; the steps it can't start are the next run's, which begins at the first of them (`next`) and goes on to the
+    last (`done` once the last ran). Each step is idempotent: run again, it finds what is left to fix."""
     cfg = config()
-    guide = schemas.mention_guides()
     w = I.Writer(cur, book, run_id)
     out: Dict[str, Any] = {}
     t0 = time.monotonic()
-    steps = [("org_family", lambda: undo_org_family(cur, book, run_id=run_id)),
-             ("product_accounts", lambda: product_accounts(cur, book, run_id=run_id)),
-             ("reparent", lambda: reparent(cur, book, w, run_id=run_id)),
-             ("families", lambda: merge_families(cur, book, run_id=run_id))]
-    for name, step in steps:
+    steps = {"org_family": lambda: undo_org_family(cur, book, run_id=run_id),
+             "product_accounts": lambda: product_accounts(cur, book, run_id=run_id),
+             "reparent": lambda: reparent(cur, book, w, run_id=run_id),
+             "families": lambda: merge_families(cur, book, run_id=run_id)}
+    last = last or {}
+    took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
+    start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0
+    took: Dict[str, float] = {}
+    nxt = None
+    for name in STEPS[start:]:
         if not cfg.get(name, True):
             continue
-        if deadline is not None and time.monotonic() > deadline:
-            out[name] = {"skipped": "budget"}
-            continue
-        out[name] = step()
+        expect = float(took_before.get(name) or GUESS)
+        if deadline is not None and time.monotonic() + expect > deadline:
+            nxt = name   # this step and those after it are the next run's
+            break
+        at = time.monotonic()
+        out[name] = steps[name]()
+        took[name] = round(time.monotonic() - at, 3)
+    out["took"] = {**{k: v for k, v in took_before.items() if k in STEPS}, **took}
+    out["done"], out["next"] = nxt is None, nxt
     out["seconds"] = round(time.monotonic() - t0, 3)
     return out

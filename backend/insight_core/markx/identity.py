@@ -90,7 +90,12 @@ PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap: the 120-da
 SEED_CHUNK = 1000           # 0128: the full pass's entities pooled and decided at once (its budget is checked between)
 MENTION_CHUNK = 500         # v10.13.9: the mentions an incremental pass links, pools and decides at once (likewise)
 RELINK_PAGE = 2000          # v10.13.9: the posts whose mentions the full pass relinks at once (likewise)
-LINK_SHARE = 0.5            # v10.22 (0216): a half-done full pass's run: the incremental pass's share of the budget left
+SEED_RATE = 40.0            # v10.24 (0221): the full pass's seeds a second before a run measures its own (the server:
+                            # ~1,000 seeds in ~25 s, its nearest names read from a cold disk)
+SEED_MIN = 100              # v10.24: the smallest full-pass chunk worth starting (less time left: the next run's)
+PACE_MARGIN = 0.8           # v10.24: a chunk is sized to this share of the time left at the pace measured (it varies)
+COLLIDE_RATE = 0.002        # v10.24: the collisions' seconds a linked mention before a run measures its own (the
+                            # server, v10.23: 0.91 s for 496 mentions)
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
@@ -2837,6 +2842,11 @@ def valid_answers(cur: Any, task_ids: Sequence[str]) -> Dict[str, List[Tuple[str
     return out
 
 
+def _book_reading(book: Any) -> float:
+    """The seconds a run's book spent on its once-a-run reads (RunBook.reading: the pool's indexes), else 0."""
+    return getattr(book, "reading", 0.0) or 0.0
+
+
 def _parts(ms: Sequence[Mention], size: int) -> List[List[Mention]]:
     """The mentions in chunks of about `size`, a post's mentions always in one chunk, in the order the posts first
     come (at least one chunk, maybe empty)."""
@@ -2855,7 +2865,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
           link_limit: int = LINK_LIMIT, embedded_since: Optional[datetime] = None, after: Optional[str] = None,
           deadline: Optional[float] = None, chunk: int = SEED_CHUNK, link_after: Optional[str] = None,
           phase: Optional[str] = None, book: Optional[Book] = None, mention_chunk: Optional[int] = None,
-          relink_page: Optional[int] = None, may_skip: bool = True) -> Dict[str, Any]:
+          relink_page: Optional[int] = None, seed_rate: Optional[float] = None, keep: float = 0.0,
+          collide_rate: Optional[float] = None) -> Dict[str, Any]:
     """The decision run's entities stage. `full`: the nightly pass (every mention relinked and checked, every entity
     pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts;
     `days` the days whose mentions it linked (the surges recount them), `posts_linked` the posts whose mentions it
@@ -2874,12 +2885,15 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         last seed decided). `full` in the counts says where ({done, phase, after, link_after, chunks, of}) and the
         next run resumes it there: it first links the mentions not linked yet, as an incremental pass does (with
         the answered pairs), then goes on. Without a deadline nothing stops.
-      - v10.22 (0216): the two passes share the budget. With a full pass half done, the linking stops at LINK_SHARE
-        of the budget left and the full pass goes on until the deadline, whether the linking is done or not; each
-        does at least one step a run (a part; a page or a chunk), so neither waits on the other (the server's full
-        pass made no progress for five days: its runs' first part spent the whole budget, and the full pass only ran
-        once every mention was linked). v10.22.2: a resumed pass's chunks wait a run when the linking spent the
-        whole budget (`full.skipped`), never two runs in a row (`may_skip`)."""
+      - v10.24 (0221): the budget is spent in order: the linking (every part until its mentions are linked), then
+        the full pass. A part, page or chunk starts only when the time it is expected to take is left (the last
+        one's seconds; a full-pass chunk is sized to the time left at `seed_rate`, the seeds a second the last run
+        measured, else SEED_RATE), so the stage never runs past its budget but for the first unit of the most urgent
+        work pending: the linking's first part, or the full pass's first page or chunk when nothing waited to be
+        linked. The full pass stops `keep` seconds early: what the steps after it (entity_stage) are expected to
+        take, so a pass that lasts days never starves them. (v10.22's LINK_SHARE split and v10.22.2's chunk
+        every other run are gone: on the server the linking did 1 part of 13 a run for days and the stage ran
+        55-87 s against 45.)"""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -2893,12 +2907,13 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
 
     def clock() -> float:
         """v10.23 (0218): the budget's clock. The run's book's one read of the pool's indexes (RunBook.reading, once a
-        run, shared by every part and chunk) counts against the budget: the stage keeps its seconds (measured on the
-        server's state: 13 of 13 linking parts, 4 chunks, 49.7 s against the base's 52.4)."""
+        run, shared by every part and chunk) counts against the budget (v10.24: and is left out of what a unit is
+        expected to take)."""
         return _time.monotonic()
 
-    def past(until: Optional[float] = deadline) -> bool:
-        return until is not None and clock() > until
+    def fits(seconds: float, until: Optional[float] = deadline) -> bool:
+        """v10.24 (0221): a unit expected to take `seconds` ends within the budget (`until`)."""
+        return until is None or clock() + seconds <= until
     guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     t = _time.monotonic()
@@ -3170,15 +3185,20 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         t = tick("collide", t)
 
     stopped = False      # the full pass stopped at the budget (its pages or chunks left are the next run's)
-    linked_parts = 0     # v10.22.2: the mentions the linking linked this run
-    # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks. v10.22 (0216):
-    # with a full pass half done, LINK_SHARE of the budget left, so the full pass always has its turn (it had none for
-    # five days on the server: the first part took the whole budget, every run)
+    # v10.24 (0221): one budget, spent in the order of what matters: 1. the linking of the mentions not linked yet,
+    # every part until they are all linked or the budget is spent; 2. the full pass with what is left; 3.
+    # (entity_stage) the repairs and sweeps with what is left after that. A unit (a part, a page, a chunk) starts only
+    # when the time it is expected to take is left (the last one's seconds; a full-pass chunk is sized to the time
+    # left at the pace measured), so nothing runs past the budget but the first unit of the most urgent work pending:
+    # the linking's first part (the run's newest mentions and the answers since), or, when the linking had nothing to
+    # link, the full pass's first page or chunk. Was (v10.22, 0216): LINK_SHARE of the budget for the linking, the
+    # rest for the full pass, each at least one step, and the repairs (a quarter) before both: on the server the stage
+    # ran 55-87 s against its 45, linked 1 part of 13 a run (the newest mentions; ~5.5k waited for days) and the full
+    # pass moved a chunk every other run.
+    linked_any = False   # the linking had mentions to link (then the full pass's first unit waits for time left)
+    # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks
     if not full or resume:
-        own = deadline
-        if deadline is not None and full:
-            at = clock()
-            own = at + max(0.0, deadline - at) * LINK_SHARE
+        at_start = clock()
         linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
         if book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet (first)
@@ -3189,6 +3209,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             if moved:
                 have = {(m.post_id, m.n) for m in ms}
                 ms = [m for m in _mentions(cur, guide, unlinked=False) if (m.post_id, m.n) in moved - have] + ms
+        linked_any = bool(ms)
         t = tick("load", t)
         make_entities(book, w, ms)   # every new key's entity, from all of the run's mentions of it
         link_out["entities_made"] += len(w.made)
@@ -3196,7 +3217,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         parts = _parts(ms, mention_chunk)
         linked_seeds: Set[str] = set()
         done_parts = 0
+        took = 0.0   # the last part's seconds, as the next is expected to take (once-a-run reads left out)
+        # the collisions of what the parts link come after them (once an entity's mentions are all linked): a part
+        # starts only when its seconds and its mentions' collisions (`collide_rate` a mention, the last run's) are left
+        per = collide_rate if collide_rate is not None and collide_rate >= 0 else COLLIDE_RATE
+        n_linked = 0
         for k, part in enumerate(parts):
+            if k > 0 and not fits(took + per * (n_linked + len(part))):
+                linking_stopped = True
+                break
+            began, read0, facts0 = clock(), _book_reading(book), timing["facts"]
             link_part(part)
             facts_for(sorted({m.post_id for m in part}))
             paren_posts = sorted({m.post_id for m in part if m.entity_id})
@@ -3206,24 +3236,42 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             decide_chunk(seeds, parens, k == 0, set())
             linked_seeds |= seeds
             done_parts = k + 1
-            if k + 1 < len(parts) and past(own):
-                linking_stopped = True
-                break
+            n_linked += len(part)
+            # the book's one read of the pool's indexes and the first part's facts of every post are once a run
+            took = max(0.0, clock() - began - (_book_reading(book) - read0)
+                       - (timing["facts"] - facts0 if k == 0 else 0.0))
         # the collisions of the entities linked (once their chunks are all linked), and of the answers since
+        began = clock()
         decide_collisions(linked_seeds | collide_since)
+        collide_s = clock() - began
         left = sum(len(p_) for p_ in parts[done_parts:])
-        linked_parts = sum(len(p_) for p_ in parts[:done_parts])   # an empty part (nothing to link) spent nothing
-        out["incremental"] = {"done": not linking_stopped, "parts": done_parts, "of": len(parts), "left": left}
-    # 2. the full pass: every mention relinked, in pages of posts (post id order); at least a page a run
+        out["incremental"] = {"done": not linking_stopped, "parts": done_parts, "of": len(parts), "left": left,
+                              "seconds": round(clock() - at_start, 2),
+                              # v10.24 (0221): the collisions' seconds a mention linked (the next run keeps them)
+                              "collide_rate": (round(collide_s / n_linked, 5) if n_linked >= mention_chunk
+                                               else collide_rate)}
+        stopped = linking_stopped   # the budget is spent: the full pass's pages or chunks are the next run's
+    first_unit = not linked_any     # the full pass is the most urgent work pending: its first unit always goes
+    full_at = clock()
+    # the full pass never ends while it is half done (a pass takes days on the server): it leaves the steps after it
+    # the seconds they are expected to take (`keep`, entity_stage), so each of them has its turn every run
+    pass_end = None if deadline is None else deadline - max(0.0, keep)
+    # 2. the full pass: every mention relinked, in pages of posts (post id order)
     moved_n = None
-    if full and phase == "link":
+    if full and phase == "link" and not stopped:
         moved_n = 0
         if link_after is None:   # the pass's start: every new key's entity from all of its mentions, as one link did
             made_before = len(w.made)
             make_entities(book, w, _mentions(cur, guide, unlinked=True))
             link_out["entities_made"] += len(w.made) - made_before
             t = tick("link", t)
+        took = 0.0
         while True:
+            if not first_unit and not fits(took, pass_end):
+                stopped = True   # the pages left (and the pool) are the next run's
+                break
+            first_unit = False
+            began = clock()
             cur.execute("""SELECT DISTINCT post_id::text FROM mx_mentions_now WHERE guide = ANY(%s)
                               AND (%s::uuid IS NULL OR post_id > %s::uuid) ORDER BY 1 LIMIT %s""",
                         (guide, link_after, link_after, relink_page + 1))
@@ -3239,28 +3287,36 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             moved_n += sum(1 for m in ms if before.get((m.post_id, m.guide, m.n))
                            and before[(m.post_id, m.guide, m.n)] != m.entity_id)
             link_after = ids[-1] if ids else link_after
+            took = clock() - began
             if not more:
                 phase, after = "pool", None
-            if past() or not more:
-                stopped = past()   # the pages left (or the pool) are the next run's
                 break
         out["check"] = {"same": moved_n == 0, "relinked": moved_n}
-    # 3. the full pass: every entity pooled and decided, in chunks of seeds (id order)
+    # 3. the full pass: every entity pooled and decided, in chunks of seeds (id order), each sized to the time left
     done_chunks, n_chunks, last = 0, None, after
-    # v10.22.2: a resumed pass whose linking already spent the budget runs no chunk (one is ~35 s: the stage ran 82-88 s
-    # against 45); the chunks left are the next run's
-    # (`may_skip` False: the last run skipped them so, this one runs one: the pass never waits on the linking for good)
-    skipped = full and not stopped and resume and linked_parts > 0 and moved_n is None and may_skip and past()
-    if skipped:
-        stopped = True
-    if full and not stopped:
+    seeds_done, seeds_left, rate = 0, None, seed_rate
+    if full and phase == "pool" and not stopped:
         if moved_n is not None or facts["hf"] is None:
             facts_for(None)   # read after the relinking (it may move a mention to another entity)
         rest = book.ids(after)   # v10.23 (0218): read in id order, not walked from the book
-        chunks = [rest[k:k + chunk] for k in range(0, len(rest), max(1, chunk))] or [[]]
-        n_chunks = len(chunks)
+        n_chunks = max(1, -(-len(rest) // max(1, chunk)))
         paren_of: Dict[str, Set[Tuple[str, str]]] = {}   # a post's "X (Y)" pairs, read once over the chunks
-        for k, seeds_list in enumerate(chunks):
+        pace = seed_rate if seed_rate and seed_rate > 0 else SEED_RATE   # seeds a second: the last run's, else a guess
+        measured = [0, 0.0]   # this run's chunks: seeds, seconds (its pace once one is measured)
+        k = 0
+        while k == 0 or k < len(rest):
+            size = chunk
+            if pass_end is not None and rest:
+                room = pass_end - clock()
+                size = min(chunk, int(PACE_MARGIN * pace * room)) if room > 0 else 0
+                if size < min(SEED_MIN, chunk):
+                    if not first_unit:
+                        stopped = True   # too little time left for a chunk: the seeds left are the next run's
+                        break
+                    size = min(SEED_MIN, chunk)
+            first_unit = False
+            seeds_list = rest[k:k + size]
+            began, read0 = clock(), _book_reading(book)
             seeds = set(seeds_list)
             posts: Set[str] = set()
             if seeds:   # the posts naming a seed
@@ -3271,11 +3327,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             parens = {p_ for pid in posts for p_ in paren_of.get(pid, ())}
             t = tick("paren", t)
             decide_chunk(seeds, parens, k == 0 and not resume, seeds, sweep=True)
-            done_chunks = k + 1
+            spent = clock() - began - (_book_reading(book) - read0)
+            if len(seeds_list) >= min(SEED_MIN, chunk) and spent > 0:
+                measured[0] += len(seeds_list)
+                measured[1] += spent
+                pace = rate = measured[0] / measured[1]
+            done_chunks += 1
+            seeds_done += len(seeds_list)
             last = max(seeds_list) if seeds_list else last
-            if k + 1 < len(chunks) and past():
-                stopped = True
-                break
+            k += len(seeds_list) or 1
+        seeds_left = max(0, len(rest) - seeds_done)
+        stopped = stopped or seeds_left > 0
     out["link"] = dict(link_out)
     out["pool"] = {"pairs": len(pooled), "by": dict(by)}
     out["decisions"] = dict(tiers)
@@ -3292,7 +3354,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                        "after": None if done or phase != "pool" else last,
                        "link_after": None if done or phase != "link" else link_after,
                        "chunks": done_chunks, "of": n_chunks, "resumed": resume,
-                       **({"skipped": True} if skipped else {})}
+                       # v10.24 (0221): the seeds decided this run and those left, the pace (seeds a second: the next
+                       # run sizes its chunks by it) and the pass's seconds this run
+                       "seeds": seeds_done, "left": seeds_left, "rate": None if rate is None else round(rate, 1),
+                       "seconds": round(clock() - full_at, 2)}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
     if entity_facts.on():   # 0184
         out["facts"] = {"placed": dict(placed), "facts": collide_out.get("facts", 0), "split": collide_out.get("split", 0),

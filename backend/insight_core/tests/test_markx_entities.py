@@ -428,6 +428,8 @@ class BothPassesKeepToTheBudget(_Db):
         n = self.names()
         with mock.patch.object(I, "MENTION_CHUNK", 1):
             out = self.run_stage(budget=None)
+        for k in ("seconds", "collide_rate"):   # v10.24: durations
+            out["incremental"].pop(k)
         self.assertEqual(out["incremental"], {"done": True, "parts": 2 * n, "of": 2 * n, "left": 0})
         self.assertEqual((out["link"]["linked"], out["merged"], self.unlinked()), (2 * n, n, 0))
 
@@ -449,12 +451,12 @@ class BothPassesKeepToTheBudget(_Db):
         self.assertEqual(sum(o["merged"] for o in seen), n)
         self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))
 
-    def test_a_half_done_full_pass_and_new_mentions_both_go_on_every_run(self):
-        """v10.22 (0216): on the server a full pass made no progress for five days. Its runs first linked the new
-        mentions, whose first part took the whole budget, and the full pass only ran once they were all linked. Now
-        the linking has LINK_SHARE of the budget and the full pass the rest, each at least one step a run: with no
-        budget at all, every run links a part and decides a chunk, until both are done. v10.22.2: a run whose linking
-        spent the budget decides no chunk, never two runs in a row (the stage ran 82-88 s against 45 on the server)."""
+    def test_a_half_done_full_pass_waits_for_the_new_mentions_then_goes_on(self):
+        """v10.24 (0221): the budget is spent in order: the new mentions' linking first, then the full pass. With no
+        budget at all, a run does the first unit of the most urgent work pending and nothing else: a part of the
+        linking while mentions wait to be linked, then, once they are all linked, a chunk of the full pass a run, until
+        it is done. (v10.22's LINK_SHARE gave each a step a run, and the stage ran 55-87 s against its 45 on the
+        server, linking 1 part of 13 a run for days.)"""
         n = self.names()
         self.stage()                                            # linked and merged
         self.cur.execute("DELETE FROM mx_entity_redirects")     # as if never merged: the full pass must find them
@@ -469,8 +471,9 @@ class BothPassesKeepToTheBudget(_Db):
                 seen.append(self.run_stage(budget=0, chunk=1))
                 self.assertLess(len(seen), 50)
         self.assertEqual([o["incremental"]["parts"] for o in seen[:len(new)]], [1] * len(new))   # a mention a run...
-        self.assertEqual([o["full"]["chunks"] for o in seen[:len(new)]], [0, 1, 0])              # ...a chunk every other
-        self.assertEqual([bool(o["full"].get("skipped")) for o in seen[:len(new)]], [True, False, True])
+        self.assertEqual([o["full"]["chunks"] for o in seen[:len(new)]], [0] * len(new))         # ...the pass waits
+        self.assertTrue(all(o["full"]["chunks"] == 1 for o in seen[len(new):]))                  # then a chunk a run
+        self.assertGreater(len(seen), len(new))
         self.assertEqual(seen[0]["incremental"]["left"], len(new) - 1)
         self.assertEqual(sum(o["link"]["linked"] for o in seen), len(new))
         self.assertEqual(sum(o["merged"] for o in seen), n)     # every pair found again, once
@@ -615,7 +618,10 @@ class TheRunsBook(_Db):
         self.assertEqual(out["kind"], "incremental")
         for k in ("seconds", "timing"):
             out.pop(k, None)
-        out["repair"].pop("seconds", None)
+        for part, keys in (("repair", ("seconds", "took")), ("incremental", ("seconds", "collide_rate")),
+                           ("shown", ("seconds",))):
+            for k in keys:
+                (out.get(part) or {}).pop(k, None)
         return out, self.rows()
 
     def test_the_same_rows_as_with_the_whole_book(self):
