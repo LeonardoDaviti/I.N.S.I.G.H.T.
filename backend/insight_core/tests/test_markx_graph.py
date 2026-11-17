@@ -77,12 +77,13 @@ class TheKind(unittest.TestCase):
         self.assertFalse(graph.linked(graph.relate_input(p, q, newer_at=NOW, older_at=NOW, anchor=None,
                                                          docs=["example.com/paper"])))
 
-    def test_versions_order_by_their_numbers(self):
-        self.assertEqual(graph._vnorm([4, 1]), (4, 1))
-        self.assertEqual(graph._vnorm(["k", 3, 1]), (3, 1))
-        self.assertEqual(graph._vnorm([5, 0]), (5,))
-        self.assertIsNone(graph._vnorm(["pro"]))
-        self.assertIsNone(graph._vnorm(None))
+    def test_versions_order_by_their_numbers_on_their_line(self):
+        from insight_core.markx import timeline as TL   # 0220: the entity page's version line is the order
+        self.assertEqual(TL.line_key([4, 1]), ("", (4, 1)))
+        self.assertEqual(TL.line_key(["k", 3, 1]), ("k", (3, 1)))       # a letter is a line of its own
+        self.assertEqual(TL.line_key([5, 0]), ("", (5,)))
+        self.assertIsNone(TL.line_key(["pro"]))
+        self.assertIsNone(TL.line_key(None))
 
 
 class _Graph(_Api):
@@ -215,13 +216,13 @@ class TheJudge(_Graph):
                          (name, name.lower(), level, parent, None if version is None else str(list(version))))
         return self.cur.fetchone()[0]
 
-    def subject(self, post, entity, name="Widget"):
+    def subject(self, post, entity, name="Widget", role="subject"):
         with self.conn.transaction():
             tid, _ = tasks.entities_task(self.cur, post)
             call_id = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="m", valid=True, answer={})
             repo.add_mentions(self.cur, post_id=post, guide=schemas.KINDS["entities"].guide, call_id=call_id,
                               mentions=[{"span": name, "name": name, "name_key": name.lower(), "type": "model",
-                                         "role": "subject"}])
+                                         "role": role}])
             self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, post))
 
     def vector(self, post, v):
@@ -349,6 +350,10 @@ class TheJudge(_Graph):
         for p in old4:
             self.subject(p, v4)
         self.subject(old41, v41, "Widget 4.1")
+        for k in range(3):                                        # 0220: a version on the line is named by 4+ posts
+            self.subject(self.post(source=self.other, at=self.at(20 + k)), v41, "Widget 4.1", role="mention")
+        for k in range(2):
+            self.subject(self.post(source=self.other, at=self.at(5 + k)), v5, "Widget 5", role="mention")
         self.subject(new5, v5, "Widget 5")
         self.subject(soon5, v5, "Widget 5")
         # a judge's next_version on the pair first
@@ -375,6 +380,8 @@ class TheJudge(_Graph):
         for p in olds + [late]:
             self.subject(p, v1, "Gadget 1")
         self.subject(new, v2, "Gadget 2")
+        for k in range(3):                  # 0220: named by 4+ posts (a mention is never an edge's side)
+            self.subject(self.post(at=self.at(1 + k)), v2, "Gadget 2", role="mention")
         self.stage()
         got = sorted(b for a, b, rel, rule, *_ in self.edges() if rule == "entity_next_version")
         self.assertEqual(got, sorted(olds[2:]))                       # the 3 earliest (102-104 days back)

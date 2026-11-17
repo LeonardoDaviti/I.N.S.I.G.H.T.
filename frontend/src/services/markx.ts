@@ -472,6 +472,32 @@ export interface MarkxEntityPage {
   components?: { id: string; name: string | null; type: string | null; posts: number }[];
   /** 0165 C: its timeline (null under two dated events). */
   timeline?: MarkxTimeline | null;
+  /** 0220: its family's versions on one line (each line oldest version first; the line holding it first). */
+  version_line?: MarkxVersionLine | null;
+  /** 0220: the relations posts state between it and other things (only the measured ones). */
+  relations?: MarkxEntityRelation[];
+}
+
+/** 0220: one version on a family's line: the name most posts use, its first post about it, how many posts name it. */
+export interface MarkxVersionStop {
+  id: string;
+  name: string;
+  version: string | null;
+  first: string | null;
+  posts: number;
+  current: boolean;
+}
+export interface MarkxVersionLine {
+  family: { id: string; name: string | null };
+  lines: MarkxVersionStop[][];
+}
+/** 0220: a relation between two things, as posts state it (out: this thing -> other; in: other -> this thing). */
+export interface MarkxEntityRelation {
+  relation: 'based_on' | 'released' | 'acquired' | 'part_of' | 'partnered_with';
+  direction: 'out' | 'in';
+  other: { id: string; name: string | null; type: string | null };
+  since: string | null;
+  posts: number;
 }
 
 export interface MarkxRabbitHole {

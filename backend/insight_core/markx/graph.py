@@ -23,8 +23,10 @@ valid_to, never deleted):
      edge the judge only refines the relation (builds_on, follows_up, same_event); any other answer leaves it
      `refers_back`, never removes it. Planned capped like connect (`decide.Config.relate_open` open at a time).
   3. **next_version from entity identity** (no model; the judge's next_version calls were 1 of 4 right as a type):
-     the newer post's subject is the version right after the older post's subject in one family (0119 A), the older
-     post GAP_DAYS back or more; the predecessor's earliest NEXT_VERSION_POSTS posts. rule `entity_next_version`,
+     the newer post's subject is the version right after the older post's subject on its family's version line
+     (timeline.version_lines, 0220: a letter starts its own line, another maker's thing, a version named once and a
+     build number are off it), the older post GAP_DAYS back or more; the previous stop's earliest NEXT_VERSION_POSTS
+     posts. rule `entity_next_version`,
      evidence both entity keys. It replaces any judge call of next_version on that pair.
 
 Dates are G2's: published first (Pairing's `published_date`, 0128's published).
@@ -331,6 +333,14 @@ class Subjects:
             eid = self.redirect[eid]
         return eid
 
+    def members_of(self, roots: Iterable[str]) -> Dict[str, List[str]]:
+        """{root: every id whose root it is (itself first)}."""
+        if self._leading is None:
+            self._leading = defaultdict(list)
+            for f in self.redirect:
+                self._leading[self.root(f)].append(f)
+        return {r: [r] + sorted(self._leading.get(r, [])) for r in roots}
+
     def _members(self, roots: Iterable[str]) -> List[str]:
         """Every id whose root is one of `roots` (the roots themselves too)."""
         if self._leading is None:
@@ -405,62 +415,54 @@ class Subjects:
 
 # ---- 3. next_version from identity ----------------------------------------------------------------------------
 
-def _vnorm(t: Any) -> Optional[Tuple[int, ...]]:
-    """A version tuple to order by: a leading letter prefix dropped (K3.1 = 3.1, as names.ver_eq); None unless the
-    rest is numbers."""
-    if not t:
-        return None
-    t = tuple(t)
-    if isinstance(t[0], str):
-        t = t[1:]
-    if not t or not all(isinstance(x, int) and not isinstance(x, bool) for x in t):
-        return None
-    while len(t) > 1 and t[-1] == 0:   # 5.0 = 5
-        t = t[:-1]
-    return t
-
-
 def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Dict[str, Any]]:
-    """{(newer, older): the edge}: the newer post's subject is the next version, in one family, after the older post's
-    subject; the older post GAP_DAYS back or more, the predecessor's earliest NEXT_VERSION_POSTS posts."""
-    # v10.23 (0218): the versions first (the roots that can make an edge), then only their posts (every post's subjects
-    # were read at once); a version none of whose posts has a date names no family's step, as before
-    cur.execute("""SELECT id::text, level, parent::text, version_key, variant, size, build, key, name FROM mx_entities
-                    WHERE level = 'version' AND parent IS NOT NULL""")
-    found = {}
-    for eid, level, parent, vkey, variant, size, build, key, name in cur.fetchall():
-        v = _vnorm(vkey)
-        if level != "version" or parent is None or v is None or variant or size or build or subjects.root(eid) != eid:
+    """{(newer, older): the edge}: the newer post's subject is the version right after the older post's subject on its
+    family's version line (timeline.version_lines, 0220: the line the entity page shows); the older post GAP_DAYS back
+    or more, the previous stop's earliest NEXT_VERSION_POSTS posts."""
+    from insight_core.markx import timeline as TL
+    # v10.23 (0218): the versions first (the roots that can make an edge), then only their posts. 0220: their counts
+    # (posts naming each, about each) by the database, one row a version
+    cur.execute("""SELECT id::text, parent::text, version_key, key, name, maker, variant, size, build FROM mx_entities
+                    WHERE level = 'version' AND parent IS NOT NULL AND status <> 'not_entity'""")
+    fams: Dict[str, List[Tuple[str, str, Any, Optional[str]]]] = defaultdict(list)
+    keys: Dict[str, Tuple[str, str]] = {}
+    for eid, parent, vkey, key, name, maker, variant, size, build in cur.fetchall():
+        if variant or size or build or subjects.root(eid) != eid or TL.line_key(vkey) is None:
             continue
-        found[eid] = (subjects.root(parent), v, key, name)
-    group: Dict[Tuple[str, Tuple[int, ...]], List[Tuple[datetime, str, str]]] = defaultdict(list)
-    ents = {}
-    for pid, r, at in subjects.versions(found):
-        ents[r] = found[r]
-        fam, v, _k, _n = found[r]
-        group[(fam, v)].append((at, pid, r))
-    if not ents:
+        fams[subjects.root(parent)].append((eid, name, vkey, maker))
+        keys[eid] = (key, name)
+    fams = {f: rows for f, rows in fams.items() if len(rows) >= 2}
+    if not fams:
         return {}
-    family: Dict[str, Set[Tuple[int, ...]]] = defaultdict(set)
-    for fam, v, _k, _n in ents.values():
-        family[fam].add(v)
-    order = {fam: sorted(vs) for fam, vs in family.items()}
+    roots = [r for rows in fams.values() for r, *_ in rows]
+    counts = TL.version_counts(cur, subjects.members_of(roots))
+    cur.execute("SELECT id::text, name, maker FROM mx_entities WHERE id = ANY(%s::uuid[])", (sorted(fams),))
+    fam_of = {fid: (name, maker) for fid, name, maker in cur.fetchall()}
+    stop_of: Dict[str, Tuple[str, int, int]] = {}
+    for fam, rows in sorted(fams.items()):
+        name, maker = fam_of.get(fam, (None, None))
+        for li, line in enumerate(TL.version_lines(TL.line_versions(rows, counts), family_name=name, family_maker=maker,
+                                                   same_maker=TL.same_maker)):
+            for si, stop in enumerate(line):
+                for v in stop.versions:
+                    stop_of[v.id] = (fam, li, si)
+    group: Dict[Tuple[str, int, int], List[Tuple[datetime, str, str]]] = defaultdict(list)
+    for pid, r, at in subjects.versions(stop_of):
+        group[stop_of[r]].append((at, pid, r))
     for xs in group.values():
         xs.sort()
     gap = timedelta(days=GAP_DAYS)
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for (fam, v), posts in sorted(group.items()):   # v10.23: one order (a pair two families name: the last)
-        vs = order[fam]
-        i = vs.index(v)
-        if i == 0:
+    for (fam, li, si), posts in sorted(group.items()):   # v10.23: one order (a pair two families name: the last)
+        if si == 0:
             continue
-        before = group.get((fam, vs[i - 1])) or []
+        before = group.get((fam, li, si - 1)) or []
         for at, pid, r in posts:
             olders = [(oat, op, orr) for oat, op, orr in before if oat <= at - gap and op != pid][:NEXT_VERSION_POSTS]
             for _oat, op, orr in olders:
                 out[(pid, op)] = {"rule": RULE_NEXT, "p": 1.0, "relation": "next_version",
-                                  "evidence": {"newer": ents[r][2], "older": ents[orr][2], "newer_name": ents[r][3],
-                                               "older_name": ents[orr][3], "newer_entity": r, "older_entity": orr}}
+                                  "evidence": {"newer": keys[r][0], "older": keys[orr][0], "newer_name": keys[r][1],
+                                               "older_name": keys[orr][1], "newer_entity": r, "older_entity": orr}}
     return out
 
 
@@ -478,6 +480,200 @@ def sync_next_version(cur: Any, subjects: Subjects, *, now: datetime, run_id: An
         counts["judge_replaced"] = _close(cur, judged, now=now)
     counts["current"] = len(want)
     return counts
+
+
+# ---- 4. between entities: the relations a post states (0220) ----------------------------------------------------
+# The entities answer's `relations` ({a, rel, b}, ent-v3 / ent-v4.2), each side read as one of that answer's own
+# mentions (its name or span), then its entity's root. An edge a -> b of the relation, rule `stated`, evidence {posts:
+# the posts stating it, since: the first one's date}, valid_from its first post's date; a post that stops stating it
+# leaves its evidence, an edge with none left closes (kept). Only the relations entity_bands.json `relations` switches
+# on are written: measured blind on frozen sets (plan/issues/0220): based_on 95/95, released 89/90 held out once the
+# thing's own mention states the same maker (`released` as stated alone: 87/90); acquired 25/25 (too few rows for the
+# bar), part_of 63/70, partnered_with 86/106: off.
+RULE_STATED = "stated"
+RELATIONS_KEY = "graph_relations"      # the backfill's cursor
+RELATIONS_VERSION = 1
+RELATIONS_BATCH = 500
+
+
+def relations_on() -> Set[str]:
+    """The relations written and shown (entity_bands.json `relations`)."""
+    from insight_core.markx import identity as I
+    got = I.bands().get("relations") or {}
+    return {r for r, on in (got.get("on") or {}).items() if on}
+
+
+def corroborated(rel: str, a: str, b_maker: Optional[str]) -> bool:
+    """Whether a stated relation stands on its own post (pure): `released` only when the thing's own mention names the
+    same maker (the relation alone was 87/90: a host, a quantiser or an OEM 'released' another's model)."""
+    from insight_core.markx import names as N
+    return rel != "released" or (bool(b_maker) and N.key(b_maker) == N.key(a))
+
+
+def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
+    """{(a root, b root, relation): {post: its date}}: what these posts' current entities answers state, each side one
+    of that answer's mentions (pins read), the relations switched on, never an entity to itself."""
+    from insight_core.markx import names as N, schemas
+    on = relations_on()
+    ids = sorted(set(post_ids))
+    if not on or not ids:
+        return {}
+    guides = schemas.mention_guides()
+    cur.execute(f"""SELECT DISTINCT m.post_id::text, m.call_id::text, c.answer->'relations', {_date()}
+                      FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id JOIN posts p ON p.id = m.post_id
+                     WHERE m.post_id = ANY(%s::uuid[]) AND m.guide = ANY(%s)
+                       AND jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb""",
+                (ids, guides))
+    calls = {cid: (pid, rels, at) for pid, cid, rels, at in cur.fetchall() if at is not None}
+    if not calls:
+        return {}
+    cur.execute("""SELECT m.call_id::text, m.post_id::text, m.guide, m.n, m.name, m.span, m.entity_id::text, m.maker,
+                          (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
+                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1)
+                     FROM mx_mentions_now m WHERE m.call_id = ANY(%s::uuid[]) ORDER BY m.call_id, m.n""", (sorted(calls),))
+    names: Dict[str, Dict[str, Tuple[str, Optional[str]]]] = defaultdict(dict)
+    for cid, _pid, _g, _n, name, span, eid, maker, pin in cur.fetchall():
+        eid = pin or eid
+        if eid:
+            for k in (N.key(name), N.key(span)):
+                if k:
+                    names[cid].setdefault(k, (eid, maker))
+    out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
+    for cid, (pid, rels, at) in calls.items():
+        for r in rels if isinstance(rels, list) else []:
+            if not isinstance(r, dict) or r.get("rel") not in on:
+                continue
+            a, b = names[cid].get(N.key(r.get("a"))), names[cid].get(N.key(r.get("b")))
+            if not a or not b or not corroborated(r["rel"], r.get("a") or "", b[1]):
+                continue
+            ra, rb = root(a[0]), root(b[0])
+            if ra != rb:
+                out[(ra, rb, r["rel"])][pid] = at
+    return out
+
+
+def _stated_current(cur: Any, post_ids: Optional[Sequence[str]] = None,
+                    pairs: Optional[Sequence[Tuple[str, str, str]]] = None) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+    """The current `stated` edges citing one of `post_ids`, or of `pairs`: {(a, b, relation): evidence}."""
+    where, params = ["valid_to IS NULL", "a_kind = 'entity'", "b_kind = 'entity'", "rule = %s"], [RULE_STATED]
+    if post_ids is not None:
+        where.append("evidence->'posts' ?| %s::text[]")
+        params.append(sorted(set(post_ids)))
+    if pairs is not None:
+        where.append("(a, b, relation) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[], %s::text[]))")
+        params += [[p[0] for p in pairs], [p[1] for p in pairs], [p[2] for p in pairs]]
+    cur.execute(f"SELECT a::text, b::text, relation, evidence FROM mx_connections WHERE {' AND '.join(where)}", params)
+    return {(a, b, rel): ev or {} for a, b, rel, ev in cur.fetchall()}
+
+
+def sync_relations(cur: Any, post_ids: Iterable[str], root: Any, *, now: datetime, run_id: Any) -> Counter:
+    """These posts' stated relations become exactly what their answers state now: a post joins an edge's evidence
+    (opening it, valid from its date), leaves the evidence of one it no longer states; an edge with no post left
+    closes (kept). RELATIONS_BATCH posts at a time."""
+    ids = sorted({str(p) for p in post_ids})
+    counts: Counter = Counter()
+    for k in range(0, len(ids), RELATIONS_BATCH):
+        part = ids[k:k + RELATIONS_BATCH]
+        want = stated(cur, part, root)
+        have = _stated_current(cur, post_ids=part)
+        have.update(_stated_current(cur, pairs=[t for t in want if t not in have]) if want else {})
+        mine = set(part)
+        for t in sorted(set(want) | set(have)):
+            ev = have.get(t)
+            posts = {p: at for p, at in ((ev or {}).get("dates") or {}).items() if p not in mine}
+            posts.update({p: at.isoformat() for p, at in want.get(t, {}).items()})
+            if ev is None:
+                first = min(want[t].values())
+                cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, run_id, evidence, valid_from)
+                               VALUES ('entity', %s, 'entity', %s, %s, 1.0, %s, %s, %s::jsonb, %s)
+                               ON CONFLICT (a_kind, a, b_kind, b, relation) WHERE valid_to IS NULL DO NOTHING""",
+                            (t[0], t[1], t[2], RULE_STATED, run_id, _evidence(posts), first))
+                counts["opened"] += cur.rowcount
+            elif not posts:
+                cur.execute("""UPDATE mx_connections SET valid_to = GREATEST(valid_from, %s)
+                                WHERE a_kind = 'entity' AND a = %s AND b_kind = 'entity' AND b = %s AND relation = %s
+                                  AND valid_to IS NULL""", (now, *t))
+                counts["closed"] += cur.rowcount
+            elif posts != (ev.get("dates") or {}):
+                cur.execute("""UPDATE mx_connections SET evidence = %s::jsonb
+                                WHERE a_kind = 'entity' AND a = %s AND b_kind = 'entity' AND b = %s AND relation = %s
+                                  AND valid_to IS NULL""", (_evidence(posts), *t))
+                counts["evidence"] += cur.rowcount
+    counts["posts"] = len(ids)
+    return counts
+
+
+def _evidence(dates: Dict[str, str]) -> str:
+    """{posts (oldest first), since, dates {post: iso date}}."""
+    order = sorted(dates, key=lambda p: (dates[p], p))
+    return json.dumps({"posts": order, "since": dates[order[0]] if order else None, "dates": dates})
+
+
+def _relation_scope(cur: Any, since: datetime) -> Set[str]:
+    """The posts whose entities answer stating a relation is new since, and the evidence posts of the stated edges
+    whose side is no longer a root (merged since: they open again on the root)."""
+    from insight_core.markx import schemas
+    cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+                    WHERE m.guide = ANY(%s) AND c.created_at >= %s
+                      AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
+                           OR EXISTS (SELECT 1 FROM mx_connections x WHERE x.valid_to IS NULL AND x.rule = %s
+                                        AND x.a_kind = 'entity' AND x.evidence->'posts' ? m.post_id::text))""",
+                (schemas.mention_guides(), since, RULE_STATED))
+    out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
+    cur.execute("""SELECT DISTINCT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
+                    WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
+                      AND EXISTS (SELECT 1 FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.from_id IN (x.a, x.b))""",
+                (RULE_STATED,))
+    return out | {r[0] for r in cur.fetchall()}
+
+
+def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, deadline: Optional[float]) -> Dict[str, Any]:
+    """Every post whose entities answer states a relation, once (then only what changes), in post id order,
+    RELATIONS_BATCH at a time until the deadline; resumable (mx_settings RELATIONS_KEY)."""
+    from insight_core.markx import repo, schemas
+    state = dict(repo.get_setting(cur, RELATIONS_KEY, default=None) or {})
+    on = sorted(relations_on())
+    if state.get("version") != RELATIONS_VERSION or state.get("on") != on:   # a relation switched on: read again
+        state = {"version": RELATIONS_VERSION, "on": on, "after": "", "done": False}
+    if state["done"] or not on:
+        return {"done": state["done"]}
+    counts: Counter = Counter()
+    while True:
+        cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+                        WHERE m.guide = ANY(%s) AND (%s = '' OR m.post_id > %s::uuid)
+                          AND jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb
+                        ORDER BY 1 LIMIT %s""", (schemas.mention_guides(), state["after"], state["after"] or None,
+                                                 RELATIONS_BATCH))
+        part = [r[0] for r in cur.fetchall()]
+        if part:
+            counts.update(sync_relations(cur, part, root, now=now, run_id=run_id))
+            state["after"] = part[-1]
+        if len(part) < RELATIONS_BATCH:
+            state["done"] = True
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+    repo.set_setting(cur, RELATIONS_KEY, state)
+    return {"done": state["done"], **counts}
+
+
+def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
+    """The entity page's relations (0220): its current stated edges of the relations switched on, either side being
+    one of `members` (its cluster): [{relation, direction (out: it -> other; in), other (an id), since, posts}]."""
+    on = sorted(relations_on())
+    ids = sorted(set(members))
+    if not on or not ids:
+        return []
+    cur.execute("""SELECT a::text, b::text, relation, evidence FROM mx_connections
+                    WHERE valid_to IS NULL AND rule = %s AND a_kind = 'entity' AND b_kind = 'entity'
+                      AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""", (RULE_STATED, on, ids, ids))
+    mine = set(ids)
+    out = []
+    for a, b, rel, ev in cur.fetchall():
+        ev = ev or {}
+        out.append({"relation": rel, "direction": "out" if a in mine else "in", "other": b if a in mine else a,
+                    "since": ev.get("since"), "posts": ev.get("posts") or []})
+    return out
 
 
 # ---- 2. the judge: candidates, the input, the verdicts -----------------------------------------------------
@@ -778,8 +974,9 @@ def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float],
 def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
           budget: Optional[float] = BACKFILL_SECONDS) -> Dict[str, Any]:
     """The decision run's graph, in its `connections` stage: the author-link edges of what changed since the last run,
-    the backfill's next share (`budget` seconds), the identity next_version edges, the same-subject candidates, the
-    settled verdicts applied, and the relate questions planned. Its counts."""
+    the backfill's next share (`budget` seconds), the identity next_version edges, the relations posts state between
+    entities (0220), the same-subject candidates, the settled verdicts applied, and the relate questions planned. Its
+    counts."""
     from insight_core.markx import repo
     t0 = time.monotonic()
     deadline = None if budget is None else t0 + budget
@@ -795,6 +992,11 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     t1 = time.monotonic()
     subjects = Subjects(cur)
     out["next_version"] = dict(sync_next_version(cur, subjects, now=now, run_id=run_id))
+    # 0220: the relations posts state between entities (what changed since, then the backfill's share)
+    rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since), subjects.root, now=now, run_id=run_id))
+    rels["backfill"] = _relations_backfill(cur, subjects.root, now=now, run_id=run_id,
+                                           deadline=None if deadline is None else max(deadline, time.monotonic() + 5))
+    out["relations"] = rels
     relate: Dict[str, Any] = {"candidates": discover(cur, subjects, _subject_scope(cur, since))}
     relate["backfill"] = _relate_backfill(cur, subjects, deadline=None if deadline is None else max(deadline, t1 + 5))
     found = verdicts(cur, since=since)

@@ -41,7 +41,15 @@
     "renames": true, "rename_cap": 200, "rename_overlap_days": 7,
     "stops_about": "0165 C (markx/stops.py, stop-v1): `stops` on: a story is a stop on a thing's line when its stop-v1 answer says it is about the thing (else, unasked, by its share of the members), the rest shown as only naming it; `stop_types` on: each stop shows what happened to the thing (launch, weights, benchmark...), off: the answers are kept and not shown.",
     "stops": true, "stop_types": false, "analysis": false,
+    "by_reading_about": "0220 (timeline.named_only): a post whose role says it is about the thing but whose reading is a round-up, or whose main event (object, actors, headline) never names it, only names it (never the birth, a release, the first outside mention or a month's lead). Measured 2026-11-17 on 20 random things of the last 30 days, frozen before reading, three blind judges: served 17/20 pass, with the rule 17/20; preferred 5, the served 6, same 9: no gain, off.",
+    "by_reading": false,
+    "version_line_about": "0220 (timeline.version_lines, the order graph.next_version_edges joins posts by): a family's versions on one line on the entity page. Measured 2026-11-17 on the server's families, two blind labellers per version (real version of which line), a link right when both stops are real versions of one line: see plan/issues/0220.",
+    "version_line": true,
     "measured": "plan/issues/0165-a-things-timeline.md, Built and measured (v10.23): stops (about) 97.0% [93.5-98.6] on 198 held-out answers, on; stop words 71-73% on held-out stops, off; analysis 40/60 = 67% [54-77], off"
+  },
+  "relations": {
+    "about": "0220 (markx/graph.py, section 4): the relations an entities answer states between two of its own mentions (ent-v3 / ent-v4.2 `relations`), as entity edges (rule `stated`, the posts stating each its evidence) shown on both entities' pages. Measured 2026-11-17 on the 11-05 server copy's 5,541 ent-v3 answers (1,164 relations; frozen samples, two blind labellers, a referee on splits): based_on 95/95 (100%, Wilson 96.1-100): on; released as stated 87/90 (96.7%, 90.7-98.9), and with the thing's own mention naming the same maker (graph.corroborated) 89/90 (98.9%, 94.0-99.8) on 90 more held out: on, corroborated; acquired 25/25 (Wilson 86.7: too few rows for the bar): off; part_of 63/70 (90.0%): off; partnered_with 86/106 (81.1%): off. ent-v5 does not ask for relations: once it is the entities guide, no new edge comes from it.",
+    "on": {"based_on": true, "released": true, "acquired": false, "part_of": false, "partnered_with": false}
   },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},

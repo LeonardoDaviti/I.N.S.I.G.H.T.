@@ -563,7 +563,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     named = named_now(cur, book)
     versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
     # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
-    from insight_core.markx import components as C, timeline as TL
+    from insight_core.markx import components as C, stops as ST, timeline as TL
     comps = [c for c in C.components_of(book, root) if c in named]
     versions = [v for v in versions if v["id"] not in set(comps)]
     comp_posts = _post_counts(cur, book, comps)
@@ -584,6 +584,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
                            for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
             "timeline": TL.of_entity(cur, book, root, stories=[{**h, "members": a[1]} for h, a, _k in specs]),   # 0165 C
+            "version_line": TL.version_line(cur, book, root) if ST.config().get("version_line") else None,   # 0220
+            "relations": _relations(cur, book, root, members),     # 0220: the relations posts state, the measured ones
             "stories": blocks, "loose": [line(p) for p in (loose if loose_limit is None else loose[:loose_limit])],
             "loose_counts": groups_n,   # 0144 B2-B4
             "stories_total": len(every), "loose_total": len(loose),   # issue 0195
@@ -599,6 +601,29 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": queue_about(cur, book, root)}
     return page, _until(now, every, offer_sample)
+
+
+def _relations(cur: Any, book: I.Book, root: str, members: Set[str]) -> List[Dict[str, Any]]:
+    """0220: its current stated relations (markx/graph.py, the ones switched on), one row a relation, direction and
+    other thing (two edges to one group are one row, its posts together), oldest first:
+    [{relation, direction, other {id, name, type}, since, posts}]."""
+    from insight_core.markx import graph
+    rows: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for r in graph.entity_relations(cur, members):
+        other = book.root(r["other"])
+        if other == root or other not in book.ents or book.ents[other].status == "not_entity":
+            continue
+        x = rows.setdefault((r["relation"], r["direction"], other), {
+            "relation": r["relation"], "direction": r["direction"],
+            "other": {"id": other, "name": book.label(other), "type": book.shown_type(other)}, "since": r["since"],
+            "posts": 0, "_posts": set()})
+        x["_posts"] |= set(r["posts"])
+        x["since"] = min(filter(None, (x["since"], r["since"])), default=None)
+    out = []
+    for x in rows.values():
+        x["posts"] = len(x.pop("_posts"))
+        out.append(x)
+    return sorted(out, key=lambda x: (x["relation"], x["direction"], x["since"] or "", x["other"]["name"] or ""))
 
 
 def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:
