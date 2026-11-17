@@ -80,6 +80,8 @@ class Rules(unittest.TestCase):
         self.assertIsNotNone(validate.check("chain", {"reason": "  ", "relation": "same_release"}, "x")[1])
         self.assertIsNotNone(validate.check("chain", {"reason": "x", "relation": "next_version"}, "x")[1])
         self.assertIn("chain", tasks.BACKGROUND_PLANNED)
+        # measured (0219): asked and stored; no relation passed its bar on the held-out sets, so none is shown
+        self.assertEqual(G.chain_config(), {"on": True, "shown": ()})
         from insight_core.markx import consumers
         self.assertEqual(consumers.feature_of("chain"), "graph")
 
