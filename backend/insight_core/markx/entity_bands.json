@@ -43,8 +43,8 @@
     "stops": true, "stop_types": false, "analysis": false,
     "by_reading_about": "0220 (timeline.named_only): a post whose role says it is about the thing but whose reading is a round-up, or whose main event (object, actors, headline) never names it, only names it (never the birth, a release, the first outside mention or a month's lead). Measured 2026-11-17 on 20 random things of the last 30 days, frozen before reading, three blind judges: served 17/20 pass, with the rule 17/20; preferred 5, the served 6, same 9: no gain, off.",
     "by_reading": false,
-    "version_line_about": "0220 (timeline.version_lines, the order graph.next_version_edges joins posts by): a family's versions on one line on the entity page. Measured 2026-11-17 on the server's families, two blind labellers per version (real version of which line), a link right when both stops are real versions of one line: see plan/issues/0220.",
-    "version_line": true,
+    "version_line_about": "0220 (timeline.version_lines, the order graph.next_version_edges joins posts by): a family's versions on one line on the entity page. Measured 2026-11-17 on the server's families, two blind labellers per version (a real version of which line, its number), a link right when both stops are real versions of one line in the labelled order: dev 89/91 (97.8%, Wilson 92.3-99.4); held out 1 (40 families, frozen) 27/28 (96.4%, 82.3-99.4); held out 2 (80 families, frozen) 80/88 (90.9%, 83.1-95.3): under the bar, off (the line next_version had: 78.8-84.3%; graph.next_version_edges uses the new line). Its failures: a product generation ('40 Series') read as a version, a guess at the next number with many posts, a dot-left-out rule folding a well-named 11 into a rare 1.1 (fixed after, in-sample 82/88).",
+    "version_line": false,
     "measured": "plan/issues/0165-a-things-timeline.md, Built and measured (v10.23): stops (about) 97.0% [93.5-98.6] on 198 held-out answers, on; stop words 71-73% on held-out stops, off; analysis 40/60 = 67% [54-77], off"
   },
   "relations": {

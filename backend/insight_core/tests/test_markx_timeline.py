@@ -346,6 +346,14 @@ class Timeline(_Db):
         guess = self.post_at(1, T0 - D, "Orbit 9 next year?")
         self.mentions(guess, ("Orbit 9", "model", "subject", "Vantor", soft(family="Orbit", version="9")))
         self.stage()
+        from insight_core.markx import stops as ST
+        self.assertFalse(ST.config()["version_line"])                                   # off: under its bar
+        self.assertIsNone(entity_views.entity_page(self.cur, self.entity_of(ids["Orbit 2.5"]), now=T0 + 2 * D)["version_line"])
+        on = dict(ST.config(), version_line=True)
+        with mock.patch.object(ST, "config", side_effect=lambda: dict(on)):
+            self.version_line_on(ids)
+
+    def version_line_on(self, ids):
         page = entity_views.entity_page(self.cur, self.entity_of(ids["Orbit 2.5"]), now=T0 + 2 * D)
         line = page["version_line"]
         self.assertEqual([[s["name"] for s in ln] for ln in line["lines"]], [["Orbit 2", "Orbit 2.5", "Orbit 3"]])
@@ -608,6 +616,8 @@ class VersionLineRules(unittest.TestCase):
                          ver("d", "Orbit 2512", (2512,), posts=8), ver("e", "Orbit 5", (5,))])
         self.assertEqual(self.names(got), [["Orbit 4", "Orbit 4.6", "Orbit 5"]])
         self.assertEqual([v.id for v in got[0][1].versions], ["b", "c"])          # 46 is 4.6 written without its dot
+        eleven = self.line([ver("a", "Orbit 1.1", (1, 1), posts=4), ver("b", "Orbit 3", (3,)), ver("c", "Orbit 11", (11,), posts=40)])
+        self.assertEqual(self.names(eleven), [["Orbit 1.1", "Orbit 3", "Orbit 11"]])   # 11 is the better named: its own
         dated = self.line([ver("a", "Orbit 2407", (2407,)), ver("b", "Orbit 2512", (2512,))])
         self.assertEqual(self.names(dated), [["Orbit 2407", "Orbit 2512"]])      # one numbering: a line still
 

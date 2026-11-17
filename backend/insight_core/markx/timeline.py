@@ -660,11 +660,12 @@ def version_lines(versions: Iterable[Version], *, family_name: Optional[str], fa
     groups: Dict[Tuple[str, Tuple[int, ...]], List[Version]] = defaultdict(list)
     for k, v in cand:
         groups[k].append(v)
-    # a dot left out: a number whose digits are another stop's of the same line run together is that stop
+    # a dot left out: a number whose digits are another stop's of the same line run together is that stop, when that
+    # stop is the better named (the slip is the rarer spelling: "Orbit 46" for 4.6, never "Orbit 11" into a 1.1)
     for k in sorted(groups):
         if len(k[1]) == 1 and k[1][0] >= 10:
             hit = [o for o in groups if o[0] == k[0] and len(o[1]) > 1 and "".join(map(str, o[1])) == str(k[1][0])]
-            if len(hit) == 1:
+            if len(hit) == 1 and sum(v.posts for v in groups[hit[0]]) > sum(v.posts for v in groups[k]):
                 groups[hit[0]] += groups.pop(k)
     # a number written without its letter: the only lettered line that has it, unless the unlettered numbers with no
     # lettered twin are a line of their own (two stops or more)
