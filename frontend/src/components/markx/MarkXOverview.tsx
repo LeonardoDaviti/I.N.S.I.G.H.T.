@@ -283,7 +283,13 @@ function EntitiesGuide({ state }: { state: MarkxEntitiesGuide }) {
         ))}
         {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
       </div>
-      {state.labels ? <Precision got={state.labels} /> : null}
+      {state.labels ? (
+        // 0222: a measurement for the operator, never a labelling task for the owner: collapsed
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[0.8125rem] text-fg-2">Operator view: {state.labels.guide} precision</summary>
+          <Precision got={state.labels} />
+        </details>
+      ) : null}
     </section>
   );
 }
@@ -298,7 +304,7 @@ function Precision({ got }: { got: NonNullable<MarkxEntitiesGuide['labels']> }) 
       <p>
         {got.guide}, the owner’s labels: {got.labelled
           ? `${got.right} of ${got.labelled} new entities right: ${pct(got.precision)} (95% from ${pct(got.low)} to ${pct(got.high)})`
-          : 'no new entity labelled yet (✓ / ✗ on the post panel)'}
+          : 'no new entity labelled yet'}
         {got.q2.labelled ? ` · second question: ${got.q2.right} of ${got.q2.labelled} right: ${pct(got.q2.precision)}` : ''}
       </p>
       <p className="text-fg-3">
@@ -463,8 +469,18 @@ export function MarkXWorker() {
                 </div>
               )}
             </section>
-            <Holds state={holds} />
-            <Consumers state={consumers} />
+            {holds || consumers ? (
+              // 0222: operator controls, not the owner's to-do: collapsed
+              <details>
+                <summary className="cursor-pointer text-[0.8125rem] text-fg-2">
+                  Operator controls: held tasks{holds?.holds.length ? ` (${holds.holds.length})` : ''} and what is asked
+                </summary>
+                <div className="mt-3 space-y-10">
+                  <Holds state={holds} />
+                  <Consumers state={consumers} />
+                </div>
+              </details>
+            ) : null}
             <section aria-label="Answers">
               <h2 className={H2}>Answers and tokens</h2>
               <p className="mt-3 text-[0.8125rem] tabular-nums text-fg-2">

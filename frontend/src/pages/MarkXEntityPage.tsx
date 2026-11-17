@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
-import { Accuracy, EntityPostLine, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
+import { Accuracy, EntityPostLine, MentionContext, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
 import { Timeline } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
@@ -58,6 +58,7 @@ export function StoryBlock({ s }: { s: MarkxEntityStory }) {
             <span className="font-semibold text-fg">Original</span>{' '}
             <TextLink to={`/posts/${encodeURIComponent(p.id)}`}>{p.title || '(no title)'}</TextLink>
             <span className="text-fg-3">{p.source ? ` · ${bylineText(p.byline, p.source)}` : ''} · {WHY[o.why] ?? o.why}</span>
+            {p.context?.length ? <MentionContext parts={p.context} /> : null}
           </li>
         ) : <EntityPostLine key={p.id} post={p} />))}
       </ul>
@@ -350,13 +351,28 @@ export default function MarkXEntityPage() {
               <ul className="mt-2 space-y-1">{d.recommending.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
             </section>
           ) : null}
-          {d.queue.length ? (
-            <section aria-label="To review">
-              <h2 className={H2}>To review</h2>
-              <ul>{d.queue.map((item) => <QueueItem key={item.id} item={item} />)}</ul>
+          {d.queue.some((item) => item.flag) ? (
+            <section aria-label="Flagged for you">
+              <h2 className={H2}>Flagged for you</h2>
+              <ul>{d.queue.filter((item) => item.flag).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
             </section>
           ) : null}
-          {d.sample?.length ? <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} /> : null}
+          {d.queue.some((item) => !item.flag) ? (
+            // 0222: the rest is decided by its measured band or asked again: the operator's view, collapsed
+            <details aria-label="Open questions (operator view)">
+              <summary className="cursor-pointer text-[0.8125rem] text-fg-2">
+                Operator view: {plural(d.queue.filter((item) => !item.flag).length, 'open question')} about it
+              </summary>
+              <ul>{d.queue.filter((item) => !item.flag).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
+            </details>
+          ) : null}
+          {d.sample?.length ? (
+            // 0222: old stories offered to check measure the story window; the operator's, collapsed (not a to-do)
+            <details>
+              <summary className="cursor-pointer text-[0.8125rem] text-fg-2">Operator view: {plural(d.sample.length, 'old story', 'old stories')} offered to check</summary>
+              <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} />
+            </details>
+          ) : null}
           {d.stories.map((s) => <StoryBlock key={s.story} s={s} />)}
           {d.stories_total !== undefined && d.stories_total > d.stories.length ? (
             <button type="button" className="text-[0.8125rem] text-fg underline-offset-2 hover:underline"

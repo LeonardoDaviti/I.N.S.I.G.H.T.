@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
 import type {
   MarkxEntityAccuracy, MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
-  MarkxQueueItem, MarkxQueueSide, MarkxSurge,
+  MarkxQueueItem, MarkxQueueSide, MarkxQueueView, MarkxSurge,
 } from '../../services/markx';
 import { Button, Chip, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
@@ -37,15 +37,41 @@ export function SurgeMark({ surges }: { surges: MarkxSurge[] }) {
   );
 }
 
-/** A post line: read posts stay, only dimmed (0115: reading never removes anything). */
-export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Date }) {
+/** 0222: the sentences of a post around its mention of the entity, the mentions marked (the search snippet's style:
+ *  weight and the full tone, never a fill). */
+export function MentionContext({ parts }: { parts: NonNullable<MarkxEntityPost['context']> }) {
   return (
-    <li className={`min-w-0 truncate text-[0.8125rem] ${post.read ? 'text-fg-3' : 'text-fg-2'}`} data-read={post.read || undefined}>
+    <p dir="auto" data-context className="mt-0.5 line-clamp-3 whitespace-normal text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+      {parts.map((part, index) => (part.m
+        ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.t}</mark>
+        : <Fragment key={index}>{part.t}</Fragment>))}
+    </p>
+  );
+}
+
+/** A post line: read posts stay, only dimmed (0115: reading never removes anything). 0222: under it, the sentences
+ *  around its mention when the page sent them. */
+export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Date }) {
+  const line = (
+    <>
       <TextLink to={`/posts/${encodeURIComponent(post.id)}`} muted>{post.title || '(no title)'}</TextLink>
       <span className="text-fg-3">
         {post.source ? ` · ${bylineText(post.byline, post.source)}` : ''}{post.at ? ` · ${postBylineTime(post.at, now)}` : ''}
         {post.roles?.length ? ` · ${post.roles.join(', ')}` : ''}{post.read ? ' · read' : ''}
       </span>
+    </>
+  );
+  if (!post.context?.length) {
+    return (
+      <li className={`min-w-0 truncate text-[0.8125rem] ${post.read ? 'text-fg-3' : 'text-fg-2'}`} data-read={post.read || undefined}>
+        {line}
+      </li>
+    );
+  }
+  return (
+    <li className={`min-w-0 text-[0.8125rem] ${post.read ? 'text-fg-3' : 'text-fg-2'}`} data-read={post.read || undefined}>
+      <span className="block min-w-0 truncate">{line}</span>
+      <MentionContext parts={post.context} />
     </li>
   );
 }
@@ -53,7 +79,7 @@ export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Dat
 export function Accuracy({ accuracy }: { accuracy: MarkxEntityAccuracy }) {
   return (
     <p className="text-[0.75rem] leading-5 text-fg-3">
-      Experimental: {accuracy.merges}; {accuracy.surges}; {accuracy.collisions}. Your answers below are the next test.
+      Experimental: {accuracy.merges}; {accuracy.surges}; {accuracy.collisions}. Claude reviews the decisions first; you are asked only what it flags.
     </p>
   );
 }
@@ -231,8 +257,9 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
             : item.kind === 'handle'
               ? `Is @${item.evidence.handle ?? '?'} ${item.a.name}’s ${PLATFORM_NAMES[item.evidence.platform ?? 'x'] ?? item.evidence.platform} handle?`
               : `Proposed: ${item.proposal.replace('_', ' ')}`}
-        {' · '}{REASONS[item.reason] ?? item.reason}
-        {(item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
+        {/* 0222: a void answer's reasons came from it: not shown either */}
+        {item.void ? ' · asked again' : <>{' · '}{REASONS[item.reason] ?? item.reason}</>}
+        {item.void ? '' : (item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
         {item.kind === 'alias' ? opinionLine(item) : item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
         {item.band ? ` · band ${bandLabel(item.band)}` : ''}
       </p>
@@ -261,6 +288,16 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
       ) : null}
       {item.kind === 'rename' && item.evidence.asked_because ? (
         <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Asked because {item.evidence.asked_because}</p>
+      ) : null}
+      {item.flag ? (
+        <p className="mt-1 text-[0.8125rem] text-fg [overflow-wrap:anywhere]" data-flag="">
+          <Chip variant="solid">flagged for you</Chip>{item.flag.note ? ` ${item.flag.note}` : ''}
+        </p>
+      ) : null}
+      {item.void ? (
+        <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]" data-void={item.void}>
+          Haiku’s answer was about posts these names no longer hold; it is not shown, and the pair is asked again.
+        </p>
       ) : null}
       {judge?.evidence ? <p className="mt-1 text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">Haiku: {judge.evidence}</p> : null}
       <SecondOpinion item={item} />
@@ -316,24 +353,23 @@ const QUEUE_PAGE = 50;
 /** The items listed at once; Show more lists the next ones, asking the API for more when they run out. */
 const QUEUE_SHOWN = 20;
 
-/** The review queue (0119 A3): every pair the rules leave to you, and the merges' history. */
-export function EntityQueue() {
+/** One view of the review queue's open items (0222: `flagged`, yours; `all`, the operator's), banded and paged. */
+function QueueList({ view }: { view: MarkxQueueView }) {
   const api = useApi();
   const [band, setBand] = useState<string | null>(null);
   const [visible, setVisible] = useState(QUEUE_SHOWN);
   const [limit, setLimit] = useState(QUEUE_PAGE);
-  const query = useQuery({ queryKey: [...QUEUE_KEY, limit], queryFn: () => api.getMarkxEntityQueue(limit), staleTime: 30_000,
-    placeholderData: keepPreviousData });
+  const query = useQuery({ queryKey: [...QUEUE_KEY, view, limit], queryFn: () => api.getMarkxEntityQueue(limit, view),
+    staleTime: 30_000, placeholderData: keepPreviousData });
   if (query.isPending) return <LoadingState label="Loading" rows={2} />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const q = query.data;
-  const answered = Object.values(q.counts.answered).reduce((n, x) => n + (x ?? 0), 0);
   const items = q.open as Item[];
+  const total = view === 'flagged' ? (q.counts.flagged ?? items.length) : q.counts.open;
   const inBand = (b: string) => items.filter((i) => i.band === b).length;
   const shown = band ? items.filter((i) => i.band === band) : items;
   return (
-    <section aria-label="Review queue">
-      <h2 className={H2}>To review: {q.counts.open}{answered ? ` · ${answered} answered` : ''}</h2>
+    <>
       {items.some((i) => i.band) ? (
         <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Band">
           <span className="text-[0.75rem] text-fg-3">Haiku’s confidence:</span>
@@ -345,13 +381,19 @@ export function EntityQueue() {
           ))}
         </div>
       ) : null}
-      {shown.length === 0 ? <p className="mt-3 text-[0.8125rem] text-fg-3">Nothing to review.</p> : (
+      {shown.length === 0 ? (
+        <p className="mt-3 text-[0.8125rem] text-fg-3">
+          {view === 'flagged'
+            ? 'Nothing flagged for you. Every other pair is decided by Haiku’s measured bands, or kept apart and asked again.'
+            : 'Nothing open.'}
+        </p>
+      ) : (
         <ul>{shown.slice(0, visible).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
       )}
       {shown.length > visible || q.next_offset != null ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-[0.75rem] text-fg-3">
-            {band ? `${Math.max(0, shown.length - visible)} more loaded` : `${Math.max(0, q.counts.open - visible)} more after these`}
+            {band ? `${Math.max(0, shown.length - visible)} more loaded` : `${Math.max(0, total - visible)} more after these`}
           </span>
           <Button size="sm" variant="secondary" disabled={query.isFetching} onClick={() => {
             const next = visible + QUEUE_SHOWN;
@@ -360,7 +402,33 @@ export function EntityQueue() {
           }}>Show more</Button>
         </div>
       ) : null}
-      <Merges queue={q} />
+    </>
+  );
+}
+
+/** The review queue (0119 A3; 0222: the owner is asked only what Claude's review flagged): the flagged items, the
+ *  whole queue as a collapsed operator's view (asked for only when opened), and the merges' history. */
+export function EntityQueue() {
+  const api = useApi();
+  const [operator, setOperator] = useState(false);
+  // the flagged list's first page (QueueList asks the same: one request, shared): its counts and the merges' history
+  const first = useQuery({ queryKey: [...QUEUE_KEY, 'flagged', QUEUE_PAGE],
+    queryFn: () => api.getMarkxEntityQueue(QUEUE_PAGE, 'flagged'), staleTime: 30_000 });
+  const mine = first.data ?? null;
+  const answered = mine ? Object.values(mine.counts.answered).reduce((n, x) => n + (x ?? 0), 0) : 0;
+  return (
+    <section aria-label="Review queue">
+      <h2 className={H2}>
+        Flagged for you{mine ? `: ${mine.counts.flagged ?? mine.open.length}` : ''}{answered ? ` · ${answered} answered` : ''}
+      </h2>
+      <QueueList view="flagged" />
+      <details className="mt-4" onToggle={(e) => setOperator((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary className="cursor-pointer text-[0.8125rem] text-fg-2">
+          Operator view: the whole queue{mine ? ` (${plural(mine.counts.open, 'open item')})` : ''}
+        </summary>
+        {operator ? <QueueList view="all" /> : null}
+      </details>
+      {mine ? <Merges queue={mine} /> : null}
     </section>
   );
 }

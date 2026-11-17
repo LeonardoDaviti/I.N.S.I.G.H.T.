@@ -56,7 +56,7 @@ describe('Mark X entities (issue 0119 A3)', () => {
     expect(read).toHaveAttribute('data-read', 'true');                         // read: still there, marked
     expect(within(list).getByText('surging')).toBeInTheDocument();
     expect(screen.getByText(/97.6%/)).toBeInTheDocument();
-    expect(await screen.findByText(/To review: 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Flagged for you: 1/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Nimbus 5' })).toHaveAttribute('href', '/markx/entities/e5');
   });
 
