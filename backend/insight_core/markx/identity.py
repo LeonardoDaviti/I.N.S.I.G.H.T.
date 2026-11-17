@@ -422,7 +422,7 @@ class Book:
     def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
         """v10.23 (0218): {id: its key} of `ids` (a seed's string candidates: up to GRAM_TOP each), for one step: a
         book read by need reads the keys of those it does not hold, and keeps none of them."""
-        return {i: self.ents[i].key for i in ids}
+        return {i: e.key for i in ids if (e := self.ents.get(i)) is not None}
 
     def maker_roots(self) -> Set[str]:
         """The clusters some entity names as its maker (its stated maker's alias, read through the merges)."""
@@ -1317,6 +1317,12 @@ class RunBook(LazyBook):
                 self.subject._absent.discard(x)
             if vp is not None and x not in vp._added:   # what the run added is the run's: kept
                 vp._got.pop(x, None)
+        # the names asked and not found for them (product_of's tries): asked again if need be (the Writer's own aliases
+        # and families are in the table)
+        self.alias._absent.clear()
+        fams = self.__dict__.get("_families")
+        if fams is not None:
+            fams._absent.clear()
 
     def etypes(self, ents: Sequence["Ent"]) -> Dict[str, Optional[str]]:
         """As Book.etypes, from the snapshot's counts, none kept (those read already are the ones read)."""
@@ -2028,18 +2034,21 @@ def anchors(cur: Any, book: Book, guide: str, post_ids: Optional[Sequence[str]] 
                        {"AND m.post_id = ANY(%s::uuid[])" if post_ids is not None else ""}""",
                 (guide, list(post_ids)) if post_ids is not None else (guide,))
     out: Dict[str, Set[str]] = into if into is not None else defaultdict(set)
-    for eid, url in cur.fetchall():
-        e = book.ents.get(eid)
+    rows = cur.fetchall()
+    keys = book.keys_of({eid for eid, _url in rows})   # v10.23 (0218): only their keys, in one read
+    for eid, url in rows:
+        key = keys.get(eid)
         mm = ANCHOR_RE.search(url or "")
-        if e is None or not mm:
+        if key is None or not mm:
             continue
+        sq = N.squash(key)
         # the address names it: the repository's name is its name (a build tag after it dropped: "-GGUF"). Not a name
         # inside a longer one: the lab's containment test merged a maker's product into a repository of its tool.
         words = N.tokens(mm.group(3).replace(".", " "))
         while len(words) > 1 and N.BUILD.match(words[-1]):
             words = words[:-1]
         repo = N.squash(" ".join(words))
-        if e.sq and len(repo) >= 4 and (e.sq == repo or e.sq == N.squash(mm.group(3).casefold())):
+        if sq and len(repo) >= 4 and (sq == repo or sq == N.squash(mm.group(3).casefold())):
             out[eid].add(f"{mm.group(1).lower()}/{mm.group(2).lower()}/{mm.group(3).lower()}")
     return out
 
