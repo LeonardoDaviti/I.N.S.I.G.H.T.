@@ -8,6 +8,7 @@ import { MemberLine, StorySheet } from '../components/markx/MarkXPerspectives';
 import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how the story is built
 import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
 import { AlsoInRoundups } from '../components/markx/MarkXRoundup';   // 0181: also in round-ups
+import { StoryChain } from '../components/markx/MarkXChain';   // 0219: what led to it, what followed
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 
@@ -46,6 +47,7 @@ export default function MarkXStoryPage() {
               description="Perspectives are asked for stories of 3 or more sources in the News window, after the worker answers." />
           ) : null}
           <AlsoInRoundups roundups={d.roundups} />
+          <StoryChain chain={d.chain} />
           <BuiltSection built={built} posts={d.posts} />
           {d.sheet ? <StorySheet sheet={d.sheet} posts={d.posts} /> : null}
           {worth.length ? (
