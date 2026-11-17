@@ -130,8 +130,6 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
                          phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book,
                          may_skip=not (left or {}).get("skipped"))
     out["repair"] = fixed
-    if deadline is not None:   # v10.23 (0218): the book's one read of the pool's indexes is not the budget's
-        deadline += getattr(book, "reading", 0.0)
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
     elif "full" in out:
