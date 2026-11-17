@@ -48,7 +48,7 @@ class Table(unittest.TestCase):
                                                                             OLD_C.SPECIFIC_TYPES))
         old = OLD_D.Config()
         self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k not in ("roundup_first", "connect_settle_below",
-                                                                         "connect_shadow_below")},
+                                                                         "connect_shadow_below", "tau_refuse")},
                          asdict(old))   # 0205, 0210: new
         self.assertEqual((same.min_words, same.document_window), (old.min_words, timedelta(days=old.document_days)))
         self.assertEqual((conn.story_cosine, conn.story_window, conn.min_voices),
@@ -106,7 +106,8 @@ CONFIGS = (D.Config(), D.Config.prototype(), D.Config(cand_lo=0.7, min_words=15,
 
 
 def _old(config: D.Config) -> OLD_D.Config:
-    new = ("roundup_first", "connect_settle_below", "connect_shadow_below")   # 0205's rule, 0210's connect gate: new
+    new = ("roundup_first", "connect_settle_below", "connect_shadow_below",   # 0205's rule, 0210's connect gate: new
+           "tau_refuse")   # 0217: the refusals' bar (stored only)
     return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k not in new})
 
 
