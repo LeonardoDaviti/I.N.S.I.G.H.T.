@@ -106,3 +106,105 @@ ent-v5; ent-v5.1 is built, tested and not asked. Haiku spent: $4.12 (seven runs 
   role ent-v5 already gives (a model "fine-tuned from" its base is a predecessor) read as a based_on candidate and
   checked by a small Haiku question of its own on the few posts that have one; each needs its own frozen set.
 - Until then no new based_on or released edge comes from new posts (0220's edges from the old answers stay).
+
+## 0224 — relations from ent-v5's own fields (Stealth v10.24, slice "links from the reading's fields")
+
+Status: **built; `released` ON, `based_on` off.** No new Haiku output, the guide unchanged (ent-v5.md hashed equal to
+0223's: 924b2c83…). No migration. Module tests only. Private notes, both frozen sets, runs, labels and scripts:
+`plan/research/0224-derived/` (gitignored).
+
+### Built (graph.py section 4, the one path)
+
+- `graph.derived(mentions, on)` (pure): one post's ent-v5 mentions (every window) -> `[(a, relation, b)]`:
+  - **released**: the reading's **subject** (a model, product or software) whose own `maker` is the name or span of an
+    org or person the same reading lists as **subject or actor** -> that maker `released` it.
+  - **based_on**: the subject (model, product, software) `based_on` each `predecessor` of those types.
+- `stated()` (what `sync_relations` writes) now returns the answers' own `relations` (ent-v3 / ent-v4.2, as before)
+  plus `derived` over the posts' current ent-v5 mentions (pins read, roots through redirects): the same edges (rule
+  `stated`), the same evidence, closing and backfill; an edge an old answer and a new reading both say has both posts.
+- Scope: `_relation_scope` adds the ent-v5 posts whose call is new since the last run and has a candidate mention
+  (`_derived_sql`: a subject with a maker / a predecessor, only for the derived relations on); the backfill reads them
+  once when a derived relation is switched on (its state's `on` carries `derived:<rel>`; off -> nothing re-read).
+- Switch: `entity_bands.json relations.derived` {released: true, based_on: false} (each also needs `relations.on`).
+- Tests (`test_markx_timeline`): `DerivedRelations` (2, pure: the roles, types, makers by span, the thing itself, a
+  maker in passing), `DerivedLinks` (2, DB: off writes nothing; on, the backfill writes released then based_on with
+  their posts; a new answer read by the next run). `test_markx_timeline`, `_graph`, `_reading5`: 70 OK.
+
+### Measured (Haiku ent-v5 as the worker asks it, 0223's `run.py`; 0220's label guide verbatim; two blind labellers
+### as subagents, decoys mixed in, a referee on splits; bar: point >= 97%, Wilson lower >= 90%)
+
+**Sets.** Not 0223's R/E: those posts had ent-v5 answers only on R (dev here: the rule was designed on them) and
+had been read for relations already. New sets from the 11-05 server copy (prep_mxreal clone migrated to 0156), every
+UUID of 0212's, 0220's, 0223's (and, for set 2, set 1's) files excluded; the set, its picker, the item script, the
+label guide and graph.py hashed before the first call (`frozen.sha`, `frozen2.sha`).
+- **Held out 1** (`frozen.sha` 13:09): H = 400 random posts, B = 800 posts with base/derivative cue words (fine-tune,
+  quantised, based on, fork, distilled, LoRA, successor, replaces, на базе ...). 2,655 windows, 2,588 valid; $2.11.
+- **Held out 2** (`frozen2.sha` 13:43, after set 1 had narrowed the rule): H2 = 300 random posts, C = 700 posts with
+  release cue words. 1,945 windows, 1,881 valid; $1.50.
+
+| rule | set | right | Wilson 95% | bar | |
+|---|---|---|---|---|---|
+| released, first form: any model/product/software with its maker anywhere in the reading (org/person) | held out 1 (all H + B to 200) | 138/200 = 69.0% (H 75/110, B 63/90) | 62.3-75.0 | 97 / 90 | fails |
+| released, as built: the subject's maker, listed as subject or actor | held out 1, in sample (the slice the narrowing came from) | 40/41 = 97.6% | | | dev |
+| **released, as built** | **held out 2 (every item)** | **175/180 = 97.2%** (random H2 36/36; C 139/144) | **93.7-98.8** | 97 / 90 | **passes: ON** |
+| based_on: the subject based on each predecessor | held out 1 (every item) | **20/33 = 60.6%** (H 1/2, B 19/31) | 43.7-75.3 | 97 / 90 | **fails: off** |
+
+Decoys: held out 1 43/46 seen as no relation by both, held out 2 32/36 (the labellers were not just agreeing).
+Referee: 7 splits on set 1 (all released), 2 on set 2 (1 right, 1 wrong).
+
+**What failed** (the labellers' guide counts a relation only when the post states it or clearly reports it as fact):
+- released, first form (62 wrong): a thing merely named or used (a lab's coding agent used by the author, an old OS
+  version in passing, a compared model) whose maker the post never ties to it, though the maker is named elsewhere
+  in the post; the maker named in another window than the thing; a retailer as a tea's maker; an owner as a site's
+  maker. Nearly all are true in the world, not stated in the post: the bar is the post's word, as 0220's.
+- released, as built (5 wrong of 180): the same class, rarer (a lab's model named the subject with the lab the actor
+  but never said to make it; a phone maker and its phone; a model fine-tuned by its own maker's researchers; a pilot
+  of a lab's assistant built by its customer; a video tool's maker not named in the window shown).
+- based_on (13 wrong of 33): a predecessor is mostly what the subject replaces, migrates from or is compared with
+  (one recommender model and its earlier one; a realtime voice model and its previous version; a database migration;
+  an embedding model and an older one); about half pair the subject of one item of a long post or digest with the
+  predecessor of another (the subject in window 1, the predecessor in window 3).
+
+**How often** (valid posts): a `predecessor` (any type) in **0.5-0.7% of random posts** (H 2/387, H2 2/285; 0223's R
+runs 1-5 of ~480), 3.1% of base-cue posts (24/773), 1.6% of release-cue posts (11/671). Released as built: 36 edges'
+worth of items in 285 random posts (12.6 a hundred); the first form gave 110 in 387 (28 a hundred): the narrowing
+keeps about 45% of the pairs, the main event's.
+
+### based_on: a small Haiku check (proposed, not built)
+
+ent-v5's `predecessor` is a candidate, not a relation. A question of its own on each (subject, predecessor) pair of
+one post, both named in the same window: the window's text, A and B, "is A made from B (fine-tune, quantisation,
+distillation, fork, derivative, a version built from it), or does A only replace / follow / compare with B?",
+answers {derived, replaces, compared, other}; `based_on` only on `derived`. Volume at the server's ~1,000 new posts a
+day: ~0.6% have a predecessor (~6 posts, ~8 pairs a day at set 1's 1.4 pairs a post; fewer once a pair must share a
+window): **one call a day** at 20 pairs a call (three for a majority), ~2k input tokens a pair: **< $0.01 a day**.
+Measuring it needs ~40+ pairs: a base-cue set of ~1,500 posts read by ent-v5 (~$2.5) plus the check, the same bar.
+
+### Resources (the 11-05 copy, migrated, one full decision run first; then held out 1's 2,588 ent-v5 answers written
+### as the worker's are, `reading_guide` on: 1,074 posts' sets current; checks/resources.py, each run its own process)
+
+| decision run (incremental) | derived off | released on |
+|---|---|---|
+| 1 (answers new; the entities stage links them after graph) | 115.2 MB, 28.3 s, graph 12.0 s | 114.0 MB, 28.1 s, graph 12.0 s (the switch's backfill: 1,171 posts read, nothing linked yet) |
+| 2 | 142.3 MB, 36.2 s, graph 12.7 s | 145.1 MB, 37.1 s, graph 13.2 s (42 edges opened) |
+| 3 | | 110.5 MB, 21.5 s, graph 14.0 s (97 more opened as linking and merges settle) |
+
+The rule alone on every candidate post of the copy (311 posts, 137 edges): **0.077 s, peak +0.4 MB** (55.3 -> 55.7);
+the answers' own relations on the same posts 0.013 s. Run-to-run noise (±8 s, ±30 MB) is larger than the rule. No
+table is read whole into Python: the scope is the calls new since the last run, the backfill 500 posts a chunk under
+the stage's deadline.
+
+### For the owner
+
+- **released from new posts is on**: the subject's maker, named as the subject or actor of the same reading (97.2% on
+  held out 2, all 36 random-post items right). It asks nothing of Haiku. Edges on the copy with held out 1's 1,074 posts read: 432 released after three
+  runs on, 303 with it off (0220's, from ent-v3 answers).
+- **based_on from new posts stays off** (60.6%); the Haiku check above is the way, measured on its own set first.
+- **A gap this shares with 0220's path (not changed here):** the decision run's graph stage runs before the entities
+  stage, so a new answer's mentions are linked in the run after graph; graph reads them in the next run only because
+  its scope looks back one hour (`MARGIN`) before the last run. A backlog over the linking cap (6,000 mentions a run)
+  or runs more than an hour apart would leave such a post's edges until a backfill. Scoping on a set's linking time
+  would close it (no such column today).
+- Seen while measuring (0220's code): `_relation_scope` re-reads the evidence posts of every edge whose side was ever
+  merged (860 posts each incremental run on the copy, `r.at` not bounded by `since`); cheap here (graph 12 s in all),
+  unmeasured at the server's size.
