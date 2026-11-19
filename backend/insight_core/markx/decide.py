@@ -779,11 +779,20 @@ class World:
         return sorted((i for i in ids if i in self.posts), key=lambda i: (self.posts[i].at, i))
 
     def copies(self) -> Dict[str, Set[str]]:
-        """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3)."""
+        """Each Mark IX story's members that are a near-copy of another of its members (0112 bug 3). v10.25 (0227):
+        with the run's state, the next stories' members read ahead a page at a time (incremental.prefetch)."""
         from insight_core.markx import tasks
         from insight_core.markx import incremental
         out = {}
-        for key, ms in self.stories.items():
+        items = list(self.stories.items())
+        ahead = 0
+        for n, (key, ms) in enumerate(items):
+            if self.memo is not None and n >= ahead:
+                page: List[str] = []
+                while ahead < len(items) and (not page or len(page) < incremental.TEXT_PAGE):
+                    page += [m.post for m in items[ahead][1]]
+                    ahead += 1
+                incremental.prefetch(self.text, None, page)
             ids = [m.post for m in ms if m.post in self.text]
             found = (incremental.copies(self.memo, ids, self.text) if self.memo is not None
                      else tasks.near_copies([self.text[i] for i in ids]))
@@ -926,6 +935,22 @@ class Questions:
         return incremental.rendered(m, kind, ids, render, texts=self.w.text if m is not None else None,
                                     readings=self.w.readings if m is not None else None, **kw)
 
+    def shows(self, q: Question, outcome: Optional[Outcome] = None) -> List[str]:
+        """v10.25 (0227): the posts `q`'s input shows (`verdict`'s renders; a merge's, its two cards' too), to read
+        ahead. Only a guide to the reads: a post left out is read when its render needs it."""
+        from insight_core.markx import tasks
+        if q.type == "check":
+            return [q.post, *q.side]
+        if q.type == "join":
+            return [q.post, *self.story_posts(q.story), *q.side]
+        if q.type == "pair":
+            return [q.anchor, q.post]
+        if q.type == "merge":
+            cards = [p for k in (q.story, q.other) if k not in self.cards
+                     for p in self.w.earliest(self.story_posts(k, outcome))[:tasks.CARD_MEMBERS]]
+            return [*q.side, *q.side_b, *cards]
+        return []
+
     def story_posts(self, key: str, outcome: Optional[Outcome] = None) -> List[str]:
         if key in self.members:
             return [m.post for m in self.members[key]]
@@ -1010,12 +1035,27 @@ def _question_at(q: Question, world: World) -> Any:
 def _ask_all(q: "Questions", qs: Sequence[Question], world: World, outcome: Optional[Outcome] = None) -> List[Optional[Verdict]]:
     """Each question's verdict, in `qs`'s order. While the story window reaches back (the Ask's `old_after`), they are
     asked newest first (0144 A2: a run's page of old questions is the newest ones); the decisions never depend on the
-    order asked (`decide` sorts by kind, then question id)."""
+    order asked (`decide` sorts by kind, then question id). v10.25 (0227): with the run's state, the posts the next
+    questions show are read ahead a page at a time, in the order asked (incremental.prefetch)."""
+    from insight_core.markx import incremental
     order = list(range(len(qs)))
     if q.ask.old_after is not None:
         order.sort(key=lambda n: (_question_at(qs[n], world), qs[n].tid), reverse=True)
     out: List[Optional[Verdict]] = [None] * len(qs)
-    for n in order:
+    ahead = 0
+    for i, n in enumerate(order):
+        if world.memo is not None and i >= ahead:
+            page: List[str] = []
+            reads: List[str] = []          # a check shows no reading
+            while ahead < len(order) and (not page or len(page) < incremental.TEXT_PAGE):
+                shown = q.shows(qs[order[ahead]], outcome)
+                page += shown
+                if qs[order[ahead]].type != "check":
+                    reads += shown
+                ahead += 1
+            incremental.prefetch(world.text, None, page)
+            if reads:
+                incremental.prefetch(world.text, world.readings, reads)
         out[n] = q.verdict(qs[n]) if outcome is None else q.verdict(qs[n], outcome)
     return out
 
@@ -1505,9 +1545,6 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             log.warning("Mark X decision run: the %s stage met a concurrent update and is deferred to the next run: %s",
                         name, deferred[name])
             return default
-    mark("graph")
-    from insight_core.markx import graph   # 0131: Stalker's first edges (authors' links, identity, the judge)
-    counts["graph"] = guarded("graph", lambda: graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open))
     mark("back")
     from insight_core.markx import back    # 0136: back in the news (the trigger, then the back questions)
     from insight_core.markx import consumers   # 0210: a stage whose answers no feature reads is not run
@@ -1544,8 +1581,20 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     got = guarded("entities", lambda: entity_stage.entities(cur, ask=ask, now=now, run_id=run_id, since=previous,
                                                              full=full, budget=entity_budget))
     days = set()                        # deferred: it linked nothing, no day to recount; and no "entities" counts,
-    if got is not None:                 # so the next run resumes a full pass from the last finished run's record
+    linked: List[str] = []              # so the next run resumes a full pass from the last finished run's record
+    if got is not None:
         counts["entities"], days = got
+        linked = counts["entities"].pop("posts_linked", [])
+    # v10.25 (0227): the graph after the entities stage (it was before it), so a new post's edges are made in the run
+    # that links its mentions, and the posts it linked are handed over whatever their answers' age. A graph stage that
+    # does not run (deferred, skipped) keeps them for the next one (graph.defer).
+    mark("graph")
+    from insight_core.markx import graph   # 0131: Stalker's first edges (authors' links, identity, the judge)
+    counts["graph"] = guarded("graph", lambda: graph.stage(cur, now=now, run_id=run_id, open_cap=config.relate_open,
+                                                           linked=linked))
+    if counts["graph"] is None:
+        graph.defer(cur, linked)
+    del linked
     mark("surges")                      # 0119 A2
     counts["surges"] = guarded("surges", lambda: entity_stage.surges(cur, now=now, run_id=run_id, days=days,
                                                                       since=previous, window_days=recent_days))

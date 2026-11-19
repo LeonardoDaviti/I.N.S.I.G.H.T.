@@ -296,6 +296,35 @@ class TheJudge(_Graph):
         self.assertEqual(self.edges(), [])
         self.assertEqual(out["relate"]["settled"], 1)
 
+    def test_a_post_linked_after_its_answer_aged_is_read_through_the_hand_off(self):
+        """0227: a post whose mentions are linked later than its answer came (a linking backlog, runs more than an
+        hour apart) is past the stage's look-back by its answer's time: the run hands the posts it linked over
+        (`linked`), and a run whose graph stage did not run keeps them for the next one (`defer`)."""
+        newer, older = self.same_subject()
+        self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (newer,))
+        entity = self.cur.fetchone()[0]
+        with self.conn.transaction():   # not linked yet; both answers three days old
+            self.cur.execute("UPDATE mx_mentions SET entity_id = NULL WHERE post_id = %s", (newer,))
+            self.cur.execute("""UPDATE mx_calls SET created_at = created_at - interval '3 days'
+                                 WHERE id IN (SELECT call_id FROM mx_mentions WHERE post_id = ANY(%s::uuid[]))""",
+                             ([newer, older],))
+        first = self.stage()             # the relate backfill reads every subject post once: the newer one has none
+        self.assertEqual(first["relate"]["candidates"] + first["relate"]["backfill"].get("candidates", 0), 0)
+        with self.conn.transaction():   # the entities stage links it (a later run)
+            self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, newer))
+        self.assertEqual(self.stage()["relate"]["candidates"], 0)   # by the answer's time alone: missed
+        got = self.stage(linked=[newer])
+        self.assertEqual((got["linked"], got["relate"]["candidates"]), (1, 1))
+        # deferred: kept for the next stage, read once, then let go
+        with self.conn.transaction():
+            self.cur.execute("DELETE FROM mx_candidates WHERE kind = 'relate'")
+            graph.defer(self.cur, [newer])
+        self.assertEqual(repo.get_setting(self.cur, graph.PENDING_KEY), [newer])
+        got = self.stage()
+        self.assertEqual((got["linked"], got["relate"]["candidates"]), (1, 1))
+        self.assertEqual(repo.get_setting(self.cur, graph.PENDING_KEY), [])
+        self.assertEqual(self.stage()["linked"], 0)
+
     def test_no_candidate_outside_the_window_or_below_the_cosine(self):
         self.same_subject(days=200)
         self.same_subject(days=20)
