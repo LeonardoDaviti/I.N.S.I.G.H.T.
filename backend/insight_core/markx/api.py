@@ -778,9 +778,10 @@ class UndoIn(BaseModel):
 
 @router.get("/entities")
 def mx_entities():
+    """0216 item 5, 0232: the list the jobs process kept (entity_views.kept_list), else built here as before."""
     from insight_core.markx import entity_views
     with transaction() as cur:
-        return entity_views.entity_list(cur)
+        return Response(content=entity_views.kept_list(cur), media_type="application/json")
 
 
 @router.get("/entities/queue")
@@ -788,10 +789,12 @@ def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0
                     view: str = Query("flagged", pattern="^(flagged|all)$")):
     """Issue 0195: `limit` open items (50) from `offset`; `next_offset` the next page's, null at the end (12,572 open
     items answered 28.9 MB in 14.7 s on the server). 0222: `view` flagged (the default: only the items Claude's review
-    flagged for the owner) or all (the operator's view of every open item)."""
+    flagged for the owner) or all (the operator's view of every open item). 0216 item 5: the first flagged page (the
+    page's default) is the one the jobs process keeps (entity_views.kept_queue); any other is built here."""
     from insight_core.markx import entity_views
     with transaction() as cur:
-        return entity_views.queue(cur, limit=limit, offset=offset, view=view)
+        got = entity_views.kept_queue(cur, limit=limit, offset=offset, view=view)
+        return Response(content=got, media_type="application/json") if isinstance(got, bytes) else got
 
 
 class EntityFlagIn(BaseModel):   # 0222
@@ -846,11 +849,13 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str, by_limit: int = Query(50, ge=0, le=100000), replies: bool = False,
-                   stories_limit: int = Query(50, ge=1, le=100000), loose_limit: int = Query(100, ge=1, le=100000)):
+def mx_entity_page(entity_id: str, by_limit: int = 50, replies: bool = False, stories_limit: int = 50,
+                   loose_limit: int = 100):
     """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
     old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too.
-    Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total."""
+    Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total.
+    0232: each limit clamped into its range (entity_views.limits: at most 200 stories, 500 loose and 500 by posts),
+    every request cut from the entity's one kept page."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:   # 0198: kept while its inputs are the same, else built as before and kept

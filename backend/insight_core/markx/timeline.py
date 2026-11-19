@@ -132,12 +132,17 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
     out = Lines()
     if not ids:
         return out
-    cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
-                          {pairing.post_date('p')}, p.source_id::text, p.url
-                     FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                    WHERE m.guide = ANY(%s) AND (m.entity_id = ANY(%s::uuid[]) OR (m.post_id, m.guide, m.n) IN
-                          (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[])))""",
-                (schemas.mention_guides(), ids, ids))
+    # 0232: the linked mentions by the entity index, the pinned ones apart (one OR read all of mx_mentions: 0.75 s)
+    sql = f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
+                     {pairing.post_date('p')}, p.source_id::text, p.url
+                FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+               WHERE m.guide = ANY(%s)"""
+    guides = schemas.mention_guides()
+    cur.execute(f"""{sql} AND m.entity_id = ANY(%s::uuid[])
+                    UNION ALL
+                    {sql} AND (m.entity_id IS NULL OR m.entity_id <> ALL(%s::uuid[])) AND (m.post_id, m.guide, m.n) IN
+                          (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[]))""",
+                (guides, ids, guides, ids, ids))
     want = set(ids)
     for pid, g, n, eid, role, at, src, url in cur.fetchall():
         e = book.pins.get((pid, g, n), eid)

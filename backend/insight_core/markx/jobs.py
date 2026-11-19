@@ -116,12 +116,13 @@ WAIT_PAGE = 1000                 # v10.14: waiting posts a candidates run reads 
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # v10.13.9: a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source", "discover", "official",
-        "stories")
+        "stories", "entities")
 STORIES_GAP = 120.0              # 0209: a rebuild's next slice starts this long after the last ended (it rests 90 s after a yield)
 ORIGINALS_GAP = 1800.0           # 0216: the originals follow a wanted story run at most this often (hourly fetches: each)
 STARVE_AFTER = 900.0             # 0209: candidates or official due this long go before the kept views
 OFFICIAL_EVERY = 1800.0          # 0196: the official channels' pass at most every 30 minutes
 REBUILD_GAP = 60.0               # 0198: News whose inputs changed between runs is built again at most this often
+ENTITIES_GAP = 60.0              # 0232: the entity list and queue whose inputs changed, at most this often (KEPT_GAP)
 UNREAD_GAP = 30.0                # 0206: the unread counts whose inputs changed are counted again at most this often
 PLAN_EVERY = 300.0               # v10.13.4: the background planners (tasks.BACKGROUND_PLANNED) run at most every 5 min
 MAX_BACKOFF = 6 * 3600.0         # 0188: a failing job is tried at least every 6 hours, never more often than its backoff
@@ -141,18 +142,27 @@ class KeptView:
         whose inputs change between runs waits from its last build's start before it is built again;
       - `markx` (0206): a Mark X view, kept only while Mark X is on; False: a reader's view (the unread counts,
         Discover), kept whether Mark X is on or off (the runner's loop runs for these alone when it is off);
-      - `pages`: the kept pages (mx_kept_pages.page) its builds write."""
+      - `pages`: the kept pages (mx_kept_pages.page) its builds write;
+      - `after_deploy` (0232): built at the runner's first look when missing (a deploy: no row of the new code), before
+        any other job (the first decision run after a deploy is a long full one); its pages are sent meanwhile from
+        the previous code's rows while their inputs are the same (kept_pages.get's `any_code`)."""
     job: str
     missing: Callable[[Any, datetime], bool]
     when: str = "always"
     between_runs: Optional[float] = None
     markx: bool = True
     pages: Tuple[str, ...] = ()   # 0206: the mx_kept_pages pages its builds write (a reader's view: the reader's rows)
+    after_deploy: bool = False
 
 
 def _news_missing(cur: Any, now: datetime) -> bool:
     from insight_core.markx import news
     return news.kept_missing(cur, now)
+
+
+def _entities_missing(cur: Any, now: datetime) -> bool:
+    from insight_core.markx import entity_views
+    return entity_views.kept_missing(cur, now)
 
 
 def _tracks_missing(cur: Any, now: datetime) -> bool:
@@ -177,7 +187,9 @@ def _wanted(cur: Any, now: datetime) -> bool:
 
 
 # the kept views, built in this order in one process after a decision run (News first: a page the owner waits on)
-KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP),    # 0198
+KEPT_VIEWS = (KeptView("news", _news_missing, between_runs=REBUILD_GAP, after_deploy=True),    # 0198
+              # 0216 item 5, 0232: the entity list, the queue's first page, the most opened entity pages
+              KeptView("entities", _entities_missing, between_runs=ENTITIES_GAP, after_deploy=True),
               KeptView("tracks", _tracks_missing, between_runs=120.0),      # 0206: tracks.KEPT_GAP
               KeptView("unread", _unread_missing, between_runs=UNREAD_GAP, markx=False, pages=("unread",)),
               KeptView("main_source", _main_source_missing, when="wanted", markx=False, pages=("main_source",)),
@@ -630,6 +642,12 @@ class Jobs:
         from insight_core.markx import news as mx_news
         return self._keep("news", lambda cur: mx_news.keep_pages(cur, now=self.clock()))
 
+    def entities(self) -> Optional[Dict[str, Any]]:
+        """0216 item 5, 0232: the entity list, the queue's first page and the most opened entity pages not kept for
+        their inputs, built and kept (entity_views.keep_pages) in one REPEATABLE READ transaction of its own."""
+        from insight_core.markx import entity_views
+        return self._keep("entities", lambda cur: entity_views.keep_pages(cur, now=self.clock()))
+
     def _keep(self, job: str, keep: Callable[[Any], Dict[str, Any]], *, snapshot: bool = True,
               again: bool = False) -> Optional[Dict[str, Any]]:
         """0198, 0206: one kept view's build: `keep(cur)` (the owning module's) in one REPEATABLE READ transaction of
@@ -1016,6 +1034,7 @@ class Runner:
         self.settle, self.every, self.gap, self.hard_limit = settle, every, gap, hard_limit
         self.stop = threading.Event()
         self.thread: Optional[threading.Thread] = None
+        self.fresh = False   # 0232: set by `start` (a deploy, a restart): its first look builds the after_deploy views
 
     def _states(self, markx: bool = True) -> Dict[str, Dict[str, Any]]:
         from insight_core.db import database
@@ -1112,6 +1131,14 @@ class Runner:
                 if held_by:
                     log.info("Mark X jobs: a decision run waits for Mark IX (%s)", held_by)
                 self._told = told
+            if self.fresh and markx:   # 0232: after a start (a deploy), the pages readers open first, before any job
+                self.fresh = False
+                first = [v.job for v in KEPT_VIEWS if v.after_deploy and v.job in self._kept_missing
+                         and _kept_may(v, states.get(v.job) or {}, self._db_now, self.gap, after_run=True)]
+                if first:
+                    log.info("Mark X jobs: after a start, the kept views %s first", "+".join(first))
+                    self._run(*first)
+                    return first[0]
             if job is None:
                 return None
             if job == "decide" and ahead:
@@ -1205,6 +1232,7 @@ class Runner:
         if self.thread is not None:
             return False
         self.recover()
+        self.fresh = True
 
         from insight_core.utils import heartbeat
 

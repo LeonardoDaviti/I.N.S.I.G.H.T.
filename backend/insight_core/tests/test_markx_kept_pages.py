@@ -47,6 +47,8 @@ class _World(Ents, _Api):
 
     def setUp(self):
         super().setUp()
+        self.cur.execute("DELETE FROM mx_page_opens")   # 0232: the opens counted (no other test's table)
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_page_opens")
         self.run = repo.start_run(self.cur, code_version="test", config={})
         self.now = datetime.now(timezone.utc)
         now = self.now
@@ -78,6 +80,11 @@ class _World(Ents, _Api):
 
     def kept(self, only=True, now=None):
         return news.kept_page(self.cur, only_differences=only, now=now or self.now)
+
+    def current(self, only=True, now=None):
+        """0232: the view kept for the inputs now by this code (kept_page sends the newest kept one otherwise)."""
+        run, st = news.page_inputs(self.cur, now or self.now)
+        return kept_pages.get(self.cur, "news", news._view_key(only), run, st)
 
     def built(self, only=True, now=None):
         return kept_pages.encode(news.reader_view(news.page(self.cur, only_differences=only, now=now or self.now)))
@@ -114,7 +121,9 @@ class TheNewsPageKept(_World):
         self.keep()
         run = repo.start_run(self.cur, code_version="test", config={})
         repo.finish_run(self.cur, run, counts={})
-        self.assertIsNone(self.kept())
+        older = self.kept()
+        self.assertIsNone(self.current())
+        self.assertIsNotNone(older)                                 # 0232: the last run's view meanwhile
         self.assertTrue(news.kept_missing(self.cur, self.now))
         self.assertEqual(self.keep()["run"], str(run))
         self.assertEqual(self.kept(), self.built())
@@ -122,10 +131,13 @@ class TheNewsPageKept(_World):
     def test_a_label_a_placement_a_sectioning_a_headline_mark_ixs_news_each_change_the_inputs(self):
         def changed(why, change):
             self.keep()
-            self.assertIsNotNone(self.kept(), why)
+            before = self.kept()
+            self.assertIsNotNone(before, why)
             with self.conn.transaction():
                 change()
-            self.assertIsNone(self.kept(), why)                     # never sent stale: built as before
+            self.assertIsNone(self.current(), why)
+            with mock.patch.object(news, "page", side_effect=AssertionError("News built in a request")):
+                self.assertEqual(self.kept(), before, why)          # 0232: the newest kept while the jobs build
             self.assertTrue(news.kept_missing(self.cur, self.now), why)
             self.keep()
             self.assertEqual(self.kept(), self.built(), why)        # kept again, with the change
@@ -155,14 +167,36 @@ class TheNewsPageKept(_World):
         self.keep()
         self.assertEqual(self.kept(now=self.now + timedelta(minutes=30)), self.built(now=self.now + timedelta(minutes=30)))
         later = self.now + timedelta(hours=46, minutes=30)                     # a row's 48 hours are over
-        self.assertIsNone(self.kept(now=later))
+        self.assertIsNone(self.current(now=later))
         self.keep(now=later)
         self.assertEqual(self.kept(now=later), self.built(now=later))
 
-    def test_another_codes_view_is_never_sent(self):
+    def test_a_deploy_sends_the_previous_codes_view_while_its_inputs_are_the_same(self):
+        """0232: a view kept by the code before a deploy is sent while its inputs are the same, and is missing for
+        the jobs process (built again by this code); an input changed, the newest is sent until then."""
         self.keep()
+        body = self.kept()
+        with mock.patch.object(kept_pages, "_code", "another deploy"), \
+                mock.patch.object(news, "page", side_effect=AssertionError("News built in a request")):
+            self.assertEqual(self.kept(), body)
+            self.assertIsNone(self.current())
+            self.assertTrue(news.kept_missing(self.cur, self.now))
         with mock.patch.object(kept_pages, "_code", "another deploy"):
+            self.assertEqual(self.keep()["built"], ["differences", "all"])
+            self.assertFalse(news.kept_missing(self.cur, self.now))
+
+    def test_another_shapes_view_is_never_sent(self):
+        """0232: a view kept in another shape (news.SHAPE) is never sent, not even as the newest: built as before."""
+        self.keep()
+        with mock.patch.object(news, "SHAPE", "another shape"):
             self.assertIsNone(self.kept())
+
+    def test_only_the_first_start_builds_news_in_a_request(self):
+        self.assertIsNone(self.kept())                              # nothing ever kept: the route builds it
+        self.keep()
+        labels_tap(self.cur, self.a, self.s1)
+        with mock.patch.object(news, "page", side_effect=AssertionError("News built in a request")):
+            self.assertEqual(_raw("/api/markx/news")[0], 200)
 
     def test_only_the_newest_runs_views_stay(self):
         for _ in range(news.KEEP_RUNS + 2):
@@ -201,7 +235,7 @@ class TheJobsKeepNews(_World):
         self.assertIn("peak_mb", s["last"])
         self.assertIsNone(self.runner().tick())                                   # kept: nothing due
         labels_tap(self.cur, self.a, self.s1)
-        self.assertIsNone(news.kept_page(self.cur))
+        self.assertTrue(news.kept_missing(self.cur))
         self.assertIsNone(self.runner().tick())                                   # within REBUILD_GAP
         self.cur.execute("UPDATE mx_jobs SET started_at = started_at - interval '61 seconds' WHERE job = 'news'")
         self.assertEqual(self.runner().tick(), "news")
@@ -230,7 +264,7 @@ class TheJobsKeepNews(_World):
                       "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
         self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS],
-                         [("news", "always"), ("tracks", "always"), ("unread", "always"),
+                         [("news", "always"), ("entities", "always"), ("tracks", "always"), ("unread", "always"),
                           ("main_source", "wanted"), ("discover", "wanted")])   # 0206
         self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news"])
         states["main_source"]["wanted_at"] = t0 - timedelta(minutes=1)
@@ -306,3 +340,185 @@ class TheEntityPageKept(_World):
         self.assertIsNotNone(body)
         self.cur.execute("SELECT count(*) FROM mx_kept_pages WHERE page = 'entity'")
         self.assertEqual(self.cur.fetchone()[0], 0)
+
+
+class OneKeptPageServesEveryLimit(_World):
+    """0232 (#13, #23): a request's limits are clamped into their caps, and one kept page an entity (built at the
+    caps) is cut to every request's limits, byte for byte the page built at those limits."""
+
+    def setUp(self):
+        super().setUp()
+        for i in range(4):   # posts naming Widget 5 in no story (the loose ones)
+            self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
+
+    def test_the_limits_clamp_and_never_error(self):
+        self.assertEqual(EV.limits(), (50, 50, 100))
+        self.assertEqual(EV.limits(100000, 100000, 100000), (EV.BY_CAP, EV.STORIES_CAP, EV.LOOSE_CAP))
+        self.assertEqual(EV.limits(-5, 0, -1), (0, 1, 1))
+        query = {"stories_limit": 100000, "loose_limit": 100000, "by_limit": 100000}
+        status, body, _ = _raw(f"/api/markx/entities/{self.widget}", query)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, kept_pages.encode(EV.entity_page(
+            self.cur, self.widget, offer_sample=True, by_limit=EV.BY_CAP, stories_limit=EV.STORIES_CAP,
+            loose_limit=EV.LOOSE_CAP)))
+        self.assertEqual(_raw(f"/api/markx/entities/{self.widget}", {"stories_limit": -3, "by_limit": -1})[0], 200)
+
+    def test_every_limit_is_cut_from_one_kept_page(self):
+        asks = [dict(by_limit=50, stories_limit=50, loose_limit=100), dict(by_limit=0, stories_limit=1, loose_limit=1),
+                dict(by_limit=1, stories_limit=2, loose_limit=3),
+                dict(by_limit=100000, stories_limit=100000, loose_limit=100000)]
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            got = [EV.kept_entity_page(self.cur, self.widget, **a) for a in asks]
+        self.assertEqual(built.call_count, 1)                       # one build serves them all
+        for a, body in zip(asks, got):
+            by, stories, loose = EV.limits(a["by_limit"], a["stories_limit"], a["loose_limit"])
+            self.assertEqual(body, kept_pages.encode(EV.entity_page(self.cur, self.widget, offer_sample=True,
+                                                                    by_limit=by, stories_limit=stories,
+                                                                    loose_limit=loose)), a)
+        one = json.loads(got[1])
+        self.assertEqual((len(one["stories"]), len(one["loose"])), (1, 1))
+        self.assertEqual(one["loose_total"], 4)
+
+    def test_the_cut_drops_the_by_posts_past_the_limit_and_counts_as_the_build(self):
+        full = {"stories": [{"story": "s1"}, {"story": "s2"}],
+                "loose": [{"id": "r1", "roles": ["subject"]}, {"id": "b1", "roles": ["by"]}, {"id": "b2", "roles": ["by"]},
+                          {"id": "b3", "roles": ["by"]}, {"id": "m1", "roles": ["mention"]}],
+                "loose_counts": {"report": 1, "by": 3, "other": 0, "mention": 1}}
+        cut = EV._cut(full, 1, 1, 10)
+        self.assertEqual([x["id"] for x in cut["loose"]], ["r1", "b1", "m1"])
+        self.assertEqual((cut["loose_total"], len(cut["stories"])), (3, 1))
+        self.assertEqual([x["id"] for x in EV._cut(full, 0, 2, 1)["loose"]], ["r1"])
+        self.assertEqual(EV._cut(full, 0, 2, 1)["loose_total"], 2)
+
+    def test_opens_are_counted_and_another_shape_is_never_sent(self):
+        for _ in range(3):
+            EV.kept_entity_page(self.cur, self.widget)
+        EV.kept_entity_page(self.cur, self.acme)
+        self.assertEqual(kept_pages.most_opened(self.cur, "entity", 5),
+                         [f"{self.widget}?replies=0", f"{self.acme}?replies=0"])
+        with mock.patch.object(EV, "PAGE_SHAPE", "2"), \
+                mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            EV.kept_entity_page(self.cur, self.widget)
+        self.assertEqual(built.call_count, 1)
+
+    def test_a_deploy_sends_the_previous_codes_page_while_its_inputs_are_the_same(self):
+        first = EV.kept_entity_page(self.cur, self.widget)
+        key = kept_pages.shaped(f"{self.widget}?replies=0", EV.PAGE_SHAPE)
+        with mock.patch.object(kept_pages, "_code", "another deploy"):
+            with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built again")):
+                self.assertEqual(EV.kept_entity_page(self.cur, self.widget), first)
+            run, parts = EV.page_inputs(self.cur, self.widget)
+            self.assertIsNone(kept_pages.get(self.cur, "entity", key, run, kept_pages.stamp("entity", key, parts)))
+            labels_tap(self.cur, self.a, self.s1)                   # an input changed: never the old page
+            with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+                EV.kept_entity_page(self.cur, self.widget)
+            self.assertEqual(built.call_count, 1)
+
+
+class TheEntityListAndQueueKept(_World):
+    """0216 item 5: the entity list and the queue's first page kept by the jobs process (job "entities"), sent by the
+    routes byte for byte; built as before when nothing is kept for their inputs; with the most opened entity pages."""
+
+    def keep(self):
+        with self.conn.transaction():
+            return EV.keep_pages(self.cur)
+
+    def test_the_list_kept_byte_for_byte_and_built_again_when_an_input_changes(self):
+        self.assertTrue(EV.kept_missing(self.cur))
+        out = self.keep()
+        self.assertEqual(out["built"], ["entities", "entity_queue"])
+        self.assertFalse(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "entity_list", side_effect=AssertionError("built, not sent as kept")):
+            status, body, _ = _raw("/api/markx/entities")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, kept_pages.encode(EV.entity_list(self.cur)))
+        self.merge(self.ent("Widget Five", "model"), self.widget)    # an owner's mark: built again, never stale
+        self.assertTrue(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "entity_list", wraps=EV.entity_list) as built:
+            body = EV.kept_list(self.cur)
+        self.assertEqual(built.call_count, 1)
+        self.assertEqual(body, kept_pages.encode(EV.entity_list(self.cur)))
+
+    def test_the_queues_first_page_kept_other_pages_built(self):
+        self.keep()
+        with mock.patch.object(EV, "queue", side_effect=AssertionError("built, not sent as kept")):
+            status, body, _ = _raw("/api/markx/entities/queue")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, kept_pages.encode(EV.queue(self.cur, **EV.QUEUE_KEPT)))
+        with mock.patch.object(EV, "queue", wraps=EV.queue) as built:
+            self.assertEqual(_raw("/api/markx/entities/queue", {"limit": 10})[0], 200)
+        self.assertEqual(built.call_count, 1)
+
+    def test_the_most_opened_pages_are_built_after_a_run(self):
+        EV.kept_entity_page(self.cur, self.widget)
+        self.keep()
+        self.assertFalse(EV.kept_missing(self.cur))
+        repo.finish_run(self.cur, repo.start_run(self.cur, code_version="t", config={}), counts={})
+        self.assertTrue(EV.kept_missing(self.cur))                  # a new run: the opened page is missing
+        out = self.keep()
+        self.assertEqual(out["hot"]["pages"], 1)
+        self.assertFalse(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built, not sent as kept")):
+            EV.kept_entity_page(self.cur, self.widget)
+
+
+class TheFirstLookAfterADeploy(_World):
+    """0232 (#24): at the runner's start (a deploy), its first look builds News and the entity pages before any job."""
+
+    def test_the_after_deploy_views_go_first(self):
+        from insight_core.tests._db import db_url
+        runner = jobs.Runner(db_url(), spawn=False, plan_every=None)
+        runner.official_every = lambda: None
+        runner.fresh = True                                          # set by start()
+        self.assertEqual(runner.tick(), "news")                      # though a decision run is due (none ran)
+        self.assertFalse(runner.fresh)
+        self.assertFalse(news.kept_missing(self.cur))
+        self.assertFalse(EV.kept_missing(self.cur))
+        self.assertEqual([v.job for v in jobs.KEPT_VIEWS if v.after_deploy], ["news", "entities"])
+
+
+import re  # noqa: E402
+
+
+def _paths(value, at=""):
+    """The JSON's key paths (a list's items as one `[]`), sorted: what a page's shape is made of."""
+    out = set()
+    if isinstance(value, dict):
+        for k, v in value.items():
+            k = "<id>" if re.fullmatch(r"[0-9a-f-]{36}", str(k)) else k   # a dict keyed by ids: one path
+            out.add(f"{at}.{k}")
+            out |= _paths(v, f"{at}.{k}")
+    elif isinstance(value, list):
+        for v in value:
+            out |= _paths(v, f"{at}[]")
+    return out
+
+
+class TheShapesAreNamed(_World):
+    """0232: a page kept by the previous code is sent after a deploy only while its key's shape is the same. The shape
+    of each such page (on this test's world) is frozen here with its SHAPE: a change of what the page answers fails
+    this test until its module's SHAPE is bumped and the new shape recorded (then an older page is never sent)."""
+
+    def setUp(self):
+        super().setUp()
+        for i in range(4):
+            self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
+
+    FROZEN = {"news": ("1", "f66eae3282fc8ecf"), "entity": ("1", "838c166c26d40691"),
+              "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
+
+    def shapes(self):
+        import hashlib
+        with self.conn.transaction():
+            news.keep_pages(self.cur, now=self.now)
+            EV.keep_pages(self.cur)
+        got = {"news": json.loads(self.kept()), "entity": json.loads(EV.kept_entity_page(self.cur, self.widget)),
+               "entities": json.loads(EV.kept_list(self.cur)),
+               "entity_queue": json.loads(EV.kept_queue(self.cur, **EV.QUEUE_KEPT))}
+        return {k: hashlib.sha256("\n".join(sorted(_paths(v))).encode()).hexdigest()[:16] for k, v in got.items()}
+
+    def test_each_kept_shape_is_its_modules_shape(self):
+        shapes = self.shapes()
+        named = {"news": news.SHAPE, "entity": EV.PAGE_SHAPE, "entities": EV.LIST_SHAPE, "entity_queue": EV.QUEUE_SHAPE}
+        self.assertEqual({p: (named[p], shapes[p]) for p in self.FROZEN}, self.FROZEN,
+                         "a page's answer changed shape: bump its module's SHAPE and record the new pair here")
