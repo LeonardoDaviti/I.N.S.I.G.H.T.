@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import errno
 import functools
 import http.client
 import ipaddress
@@ -68,14 +69,16 @@ T = TypeVar("T")
 
 class HttpError(ValueError):
     """A failed request: status (None for a network error), retry_after (integer seconds from
-    the Retry-After header, else None), timed_out (a connect or read timeout)."""
+    the Retry-After header, else None), timed_out (a connect or read timeout), unreachable (the host
+    does not resolve, refuses the connection or has no route: issue 0242, the source doctor's dead host)."""
 
     def __init__(self, message: str, *, status: Optional[int] = None, retry_after: Optional[int] = None,
-                 timed_out: bool = False) -> None:
+                 timed_out: bool = False, unreachable: bool = False) -> None:
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
         self.timed_out = timed_out
+        self.unreachable = unreachable
 
     @property
     def their_trouble(self) -> bool:
@@ -86,6 +89,16 @@ class HttpError(ValueError):
     def limiting(self) -> bool:
         """The host is limiting us (429) or not answering in time: wait, slow down, retry once."""
         return self.status == 429 or self.timed_out
+
+
+# No route to the host: the connection is refused, or the network or the host is unreachable.
+_UNREACHABLE_ERRNOS = frozenset({errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH})
+
+
+def _unreachable(reason: Any) -> bool:
+    """urllib's URLError reason says the host is not there (issue 0242): it does not resolve, or no route to it."""
+    return isinstance(reason, socket.gaierror) or (isinstance(reason, OSError)
+                                                   and getattr(reason, "errno", None) in _UNREACHABLE_ERRNOS)
 
 
 def _retry_after(headers: Any) -> Optional[int]:
@@ -106,7 +119,7 @@ def _classified(action: str, url: str) -> Iterator[None]:
                         retry_after=_retry_after(exc.headers)) from exc
     except urllib.error.URLError as exc:
         raise HttpError(f"Failed {action} {url}: {exc.reason}",
-                        timed_out=isinstance(exc.reason, TimeoutError)) from exc
+                        timed_out=isinstance(exc.reason, TimeoutError), unreachable=_unreachable(exc.reason)) from exc
     except TimeoutError as exc:   # a read timeout escapes urllib unwrapped
         raise HttpError(f"Timed out {action} {url}", timed_out=True) from exc
     except (OSError, http.client.HTTPException) as exc:   # a dropped connection, a truncated body
@@ -179,9 +192,10 @@ class AddressGuard:
         try:
             found = self._resolve(host, port)
         except OSError as exc:
-            raise HttpError(f"Cannot resolve {host}: {getattr(exc, 'strerror', None) or exc}") from None
+            raise HttpError(f"Cannot resolve {host}: {getattr(exc, 'strerror', None) or exc}",
+                            unreachable=True) from None
         if not found:
-            raise HttpError(f"Cannot resolve {host}")
+            raise HttpError(f"Cannot resolve {host}", unreachable=True)
         private = not all(is_public_address(a) for a in found)
         if private and host not in self.bridges:
             raise AddressNotAllowed(f"{host} is not a public host")
@@ -455,7 +469,6 @@ class KindHttp:
         *,
         timeout: Optional[int] = None,
         user_agent: Optional[str] = None,
-        reddit_user_agent: Optional[str] = None,
         guard: Optional[AddressGuard] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         executor: Optional[Executor] = None,
@@ -464,7 +477,6 @@ class KindHttp:
             os.getenv("RSS_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
         )
         self.user_agent = user_agent or os.getenv("RSS_USER_AGENT", DEFAULT_USER_AGENT)
-        self.reddit_user_agent = reddit_user_agent or os.getenv("REDDIT_USER_AGENT", DEFAULT_USER_AGENT)
         self.guard = guard or AddressGuard()
         self._opener = self.guard.opener()
         self._sleep = sleep
@@ -511,7 +523,21 @@ class KindHttp:
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        return await self._in_thread(self._post_json_sync, url, payload, user_agent, extra_headers)
+        return await self._in_thread(self._post_sync, url, json.dumps(payload).encode("utf-8"), "application/json",
+                                     user_agent, extra_headers)
+
+    async def post_form(
+        self,
+        url: str,
+        fields: Dict[str, str],
+        *,
+        user_agent: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """POST url-encoded fields (an OAuth token request, issue 0242); the JSON answer. Raises HttpError.
+        extra_headers (an Authorization) never appear in errors or logs."""
+        return await self._in_thread(self._post_sync, url, urllib.parse.urlencode(fields).encode("ascii"),
+                                     "application/x-www-form-urlencoded", user_agent, extra_headers)
 
     async def sleep(self, seconds: float) -> None:
         """A politeness delay. Zero or negative is not a sleep (and is not recorded)."""
@@ -574,19 +600,19 @@ class KindHttp:
                 exc.close()   # a 304 has no body: whatever Content-Encoding it names, nothing is unpacked
                 return Conditional(None, exc.geturl() or url, headers, Validators.of(headers))
 
-    def _post_json_sync(
+    def _post_sync(
         self,
         url: str,
-        payload: Dict[str, Any],
+        body: bytes,
+        content_type: str,
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         _web(url)
-        body = json.dumps(payload).encode("utf-8")
         headers = {
             "User-Agent": user_agent or self.user_agent,
             "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
         }
         headers.update(extra_headers or {})
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")

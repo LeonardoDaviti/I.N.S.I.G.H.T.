@@ -9,11 +9,14 @@ Providers:
 - substack {sid}: the substack.sid cookie of the owner's logged-in browser.
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
   the browser sign-in (login_start -> login_code -> login_password), the only session.
-- Reddit and YouTube read public feeds: nothing to add, so they have no row.
+- reddit {client_id, client_secret, username} (issue 0242): the owner's registered Reddit app ("script"
+  type); Reddit ended its feeds, so subreddits are read through its OAuth API with it.
+- YouTube reads public feeds: nothing to add, so it has no row.
 A row stored for a provider not listed here (an old gemini key) is kept but never shown.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
-substack.com whether the cookie is signed in); telegram connects and calls get_me.
+substack.com whether the cookie is signed in); telegram connects and calls get_me; reddit asks
+for an application-only token.
 """
 from __future__ import annotations
 
@@ -77,6 +80,14 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
         testable=True,
         sign_in=True,
     ),
+    ProviderSpec(
+        "reddit", "Reddit",
+        "Reads subreddits. Reddit ended its feeds: register a \"script\" app at reddit.com/prefs/apps, then add it here.",
+        (FieldSpec("client_id", "Client ID", "The string under the app's name at reddit.com/prefs/apps."),
+         FieldSpec("client_secret", "Secret", "The app's secret, shown next to \"secret\"."),
+         FieldSpec("username", "Reddit username", "The account that registered the app (named in the User-Agent).")),
+        testable=True,
+    ),
 )
 _SPECS = {spec.provider: spec for spec in PROVIDERS}
 
@@ -107,6 +118,8 @@ def _last4(value: str) -> str:
 _SID_RE = re.compile(r"^[A-Za-z0-9%._:+/=\-]+$")
 _HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 _PHONE_RE = re.compile(r"^\+?[0-9]{6,15}$")
+_REDDIT_KEY_RE = re.compile(r"^[A-Za-z0-9_\-]{10,40}$")
+_REDDIT_USER_RE = re.compile(r"^[A-Za-z0-9_\-]{3,20}$")
 
 
 def normalise_value(provider: str, key: str, value: Any) -> str:
@@ -126,6 +139,13 @@ def normalise_value(provider: str, key: str, value: Any) -> str:
         if not _HASH_RE.match(text):
             raise CredentialInvalid("The API hash is 32 letters and digits (0-9, a-f)")
         text = text.lower()
+    elif provider == "reddit" and key in ("client_id", "client_secret"):
+        if not _REDDIT_KEY_RE.match(text):
+            raise CredentialInvalid("That does not look like a Reddit app's client id or secret")
+    elif provider == "reddit" and key == "username":
+        text = text.removeprefix("/u/").removeprefix("u/")
+        if not _REDDIT_USER_RE.match(text):
+            raise CredentialInvalid("A Reddit username is 3 to 20 letters, digits, - or _")
     return text
 
 
@@ -155,6 +175,7 @@ class CredentialsService:
     telegram_clients: Optional[Callable[[Any], Any]] = None                  # (provider) -> TelegramClientFactory
     telegram_lock: Any = None
     login_clients: Optional[Callable[[int, str, str], Any]] = None           # (api_id, api_hash, session) -> port
+    reddit_http: Any = None                                                  # the KindHttp the reddit test asks with
     clock: Callable[[], datetime] = _utc_now
     monotonic: Callable[[], float] = time.monotonic
     repo: CredentialsRepository = field(default_factory=CredentialsRepository)
@@ -295,6 +316,8 @@ class CredentialsService:
             raise CredentialInvalid(f"{spec.label} has nothing to test")
         if provider == "substack":
             ok, message = await self._test_substack()
+        elif provider == "reddit":
+            ok, message = await self._test_reddit()
         else:
             ok, message = await self._test_telegram()
         self._record_test(provider, ok, message)
@@ -324,6 +347,20 @@ class CredentialsService:
         from insight_core.ingestion.kinds.substack import SubstackKind
 
         return await SubstackKind(KindHttp(), credentials=self.credentials).check_session(source)
+
+    async def _test_reddit(self) -> Tuple[bool, str]:
+        """Reddit gives the app a token (issue 0242): its credentials work."""
+        from insight_core.ingestion.http import HttpError, KindHttp
+        from insight_core.ingestion.kinds.base import KindUnavailable
+        from insight_core.ingestion.kinds.reddit import RedditKind
+
+        try:
+            await RedditKind(self.reddit_http or KindHttp(), credentials=self.credentials)._bearer(fresh=True)
+        except KindUnavailable as exc:
+            return False, exc.reason
+        except HttpError as exc:
+            return False, f"Reddit did not answer: {str(exc)[:200]}"
+        return True, "Reddit accepted the app"
 
     async def _test_telegram(self) -> Tuple[bool, str]:
         from insight_core.ingestion.kinds.base import KindUnavailable

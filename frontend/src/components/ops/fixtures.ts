@@ -61,7 +61,8 @@ function summarize(rows: SourceHealthRow[]): SourcesHealthResponse['summary'] {
     else if (row.status === 'unavailable') summary.unavailable += 1;
     else if (row.status === 'error') summary.errors += 1;
   }
-  return summary;
+  const stalled = rows.filter((row) => row.stalled).length;
+  return stalled ? { ...summary, stalled } : summary;
 }
 
 export function healthResponse(rows: SourceHealthRow[], now: Date = new Date()): SourcesHealthResponse {

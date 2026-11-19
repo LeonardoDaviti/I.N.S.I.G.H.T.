@@ -1421,12 +1421,14 @@ def item_address(source_url: str, token: str) -> str:
 
 
 def item_identity(link: Optional[str], guid: Optional[str], enclosure: Optional[str], title_date: Optional[str],
-                  source_url: str, shared: bool = False) -> str:
-    """The item's address by its identity (see ITEM_PARAM); shared: other items with other guids have this link."""
+                  source_url: str, shared: bool = False, guid_shared: bool = False) -> str:
+    """The item's address by its identity (see ITEM_PARAM); shared: other items with other identities have this
+    link; guid_shared: they have this guid's address too (issue 0242: "/changelog#v2", "/changelog#v3" are one
+    page once the fragment goes), so the guid is the item's token on the feed's address."""
     own = normalize_url(source_url) or source_url
     if _is_address(link) and not shared and (normalize_url(link) or link) != own:
         return link  # type: ignore[return-value]
-    if _is_address(guid) and (normalize_url(guid) or guid) != own:
+    if _is_address(guid) and not guid_shared and (normalize_url(guid) or guid) != own:
         return guid  # type: ignore[return-value]
     if guid:
         return item_address(source_url, guid)
@@ -1437,16 +1439,29 @@ def item_identity(link: Optional[str], guid: Optional[str], enclosure: Optional[
     return link or source_url
 
 
+def _address_key(value: Optional[str]) -> Optional[str]:
+    """An address as posts are matched by it (normalize_url: no fragment, no tracking), None for no address."""
+    return (normalize_url(value) or value) if _is_address(value) else None
+
+
 def _identities(drafts: List[Dict[str, Any]], source_url: str) -> None:
-    """Each draft's url and title, in place, from its identity (item_identity); the candidates go."""
+    """Each draft's url and title, in place, from its identity (item_identity); the candidates go. An address is
+    shared when SHARED_LINK_ITEMS items with other identities have it as posts are matched (issue 0242: links that
+    differ only by a fragment are one address), whether as their link or as their guid."""
     others: Dict[str, set] = {}
     for draft in drafts:
-        if draft.get("_link"):
-            others.setdefault(draft["_link"], set()).add((draft.get("guid"), draft.get("_enclosure"), draft.get("_title_date")))
+        identity = (draft.get("guid"), draft.get("_enclosure"), draft.get("_title_date"))
+        for value in {_address_key(draft.get("_link")), _address_key(draft.get("guid"))} - {None}:
+            others.setdefault(value, set()).add(identity)
+
+    def shared(value: Optional[str]) -> bool:
+        key = _address_key(value)
+        return key is not None and len(others.get(key, ())) >= SHARED_LINK_ITEMS
+
     for draft in drafts:
         link = draft.pop("_link", None)
         url = item_identity(link, draft.get("guid"), draft.pop("_enclosure", None), draft.pop("_title_date", None),
-                            source_url, shared=bool(link) and len(others.get(link, ())) >= SHARED_LINK_ITEMS)
+                            source_url, shared=bool(link) and shared(link), guid_shared=shared(draft.get("guid")))
         draft["url"] = normalize_feed_urls(url)
         draft["title"] = readable_title(draft["title"], draft["url"])
 

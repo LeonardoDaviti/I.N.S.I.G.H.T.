@@ -28,7 +28,14 @@ export default function ReplacementNotice({ row, now, onSwitched }: { row: Sourc
   const [busy, setBusy] = useState<'switch' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const { replacement, doctor_looked_at: lookedAt, server_error: failing } = row;
+  const { replacement, doctor_looked_at: lookedAt, server_error: failing, dead } = row;
+  if (dead) {
+    // Issue 0242: a dead host. The owner switches it off or replaces it (Add source); nothing is done by itself.
+    return (
+      <Notice tone="warning" title={`${dead.host} ${dead.reason}: this source looks dead.`}
+        message={`Nothing has worked ${dead.since ? `since ${formatRelativeTime(dead.since, now)}` : 'since it was added'}. Switch it off, or replace it with another address; INSIGHT never removes it.`} />
+    );
+  }
   if (failing) {
     return (
       <Notice tone="warning" title={`${failing.site} is failing (${failing.status ? `HTTP ${failing.status}` : 'no answer in time'}): its own server didn't answer, usually temporary.`}

@@ -71,7 +71,7 @@ class PolitenessProfile:
     live_pages_rate_limited: bool = False
     cadence_floor: timedelta = timedelta(0)
     min_posts_per_fetch: int = 0
-    requires: Literal["none", "ytdlp", "telegram_creds"] = "none"
+    requires: Literal["none", "ytdlp", "telegram_creds", "reddit_creds"] = "none"
     blocking_io: bool = False            # the kind's fetch/inspect/archive run in a thread
     fetches: bool = True                 # False: never due, its posts come by hand (Saved, issue 0031)
 
@@ -258,10 +258,15 @@ class FetchedPosts(list):
     title: Optional[str] = None
 
 
-def collapsed(posts: list) -> Optional[str]:
-    """"the feed has 282 items but 1 would be stored (282 items share 1 address)" when items that are
-    not duplicates of each other (another guid, or another title) have one address, else None (issue 0137
-    A1). Duplicates (the same guid, or no guid and the same title) are no failure."""
+# A feed collapses when its items lose most of their own addresses (issue 0242): over this share of its distinct items
+# fold into another item's address. The two cases seen on the server set it: a blog of 48 items, 2 of which share one
+# address, loses 1 item (2%): it is stored, 47 posts; a feed of 888 items on 2 addresses loses 886 (99.8%). Any line
+# between them separates the two; half is the middle, and it reads as "most items share a few addresses". Not tuned.
+COLLAPSED_SHARE = 0.5
+
+
+def _address_groups(posts: list) -> dict:
+    """{normalized address: the identities of the items that have it} (identity: the guid, else the title)."""
     from insight_core.utils.url_normalization import normalize_url
 
     groups: dict = {}
@@ -270,13 +275,37 @@ def collapsed(posts: list) -> Optional[str]:
         if isinstance(url, str):
             key = normalize_url(url) or url
             groups.setdefault(key, set()).add(post.get("guid") or " ".join(str(post.get("title") or "").split()))
+    return groups
+
+
+def _shared_line(groups: dict) -> str:
+    shared = [identities for identities in groups.values() if len(identities) > 1]
+    return f"{sum(map(len, shared))} items share {len(shared)} address{'es' if len(shared) != 1 else ''}"
+
+
+def collapsed(posts: list) -> Optional[str]:
+    """"the feed has 282 items but 1 would be stored (282 items share 1 address)" when the feed collapses: over
+    COLLAPSED_SHARE of its distinct items (another guid, or another title) fold into another item's address, else
+    None (issues 0137 A1, 0242). Duplicates (the same guid, or no guid and the same title) are no failure; a few
+    items sharing an address are stored as the posts they are distinct as (shared_addresses says so)."""
+    groups = _address_groups(posts)
     distinct = sum(len(identities) for identities in groups.values())
     stored = len(groups)
-    if stored >= distinct:
+    if distinct - stored <= distinct * COLLAPSED_SHARE:
         return None
-    shared = [identities for identities in groups.values() if len(identities) > 1]
-    return (f"the feed has {distinct} items but {stored} would be stored "
-            f"({sum(map(len, shared))} items share {len(shared)} address{'es' if len(shared) != 1 else ''})")
+    return f"the feed has {distinct} items but {stored} would be stored ({_shared_line(groups)})"
+
+
+def shared_addresses(posts: list) -> Optional[str]:
+    """"2 of 48 items share 1 address: 47 posts stored" when some items share an address and the feed does not
+    collapse (a warning, issue 0242), else None."""
+    groups = _address_groups(posts)
+    distinct = sum(len(identities) for identities in groups.values())
+    stored = len(groups)
+    if stored >= distinct or collapsed(posts):
+        return None
+    shared = sum(len(identities) for identities in groups.values() if len(identities) > 1)
+    return f"{shared} of {distinct} items share {_shared_line(groups).split(' share ', 1)[1]}: {stored} posts stored"
 
 
 def skip_reasons(skipped: Mapping[str, int]) -> str:
@@ -296,8 +325,10 @@ def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: 
                          + (f" ({skip_reasons(skipped)} skipped)" if total_skipped else ""))
     result = FetchedPosts(posts)
     result.failure = collapsed(posts)
+    warnings = [shared_addresses(posts)]
     if items and total_skipped > items * SKIPPED_WARNING_SHARE:
-        result.warning = f"{total_skipped} of {items} {noun} skipped: {skip_reasons(skipped)}"
+        warnings.append(f"{total_skipped} of {items} {noun} skipped: {skip_reasons(skipped)}")
+    result.warning = "; ".join(filter(None, warnings)) or None
     return result
 
 

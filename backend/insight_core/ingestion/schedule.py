@@ -116,6 +116,8 @@ class Availability:
     # unauthorised session is only known once the session opens: the runner reports it.
     telegram_credentials: bool
     telegram_reason: str | None = None   # why telegram_credentials is False (the skip reason)
+    # Issue 0242: Reddit's registered app (client id, secret, username) stored in Connections; None: all set.
+    reddit_reason: str | None = None
 
 
 IntervalBasis = Literal["override", "tier", "probation", "backlog_guard", "profile_floor"]
@@ -148,7 +150,9 @@ def availability_from_env(
     - telegram_mtproto: an API id (an int), a hash and the session saved by the browser
       sign-in; telegram_reason names what is missing. Credentials come from `credentials`
       (a CredentialProvider), default the Connections store; never from the environment.
+    - reddit_subreddit (issue 0242): the registered app's credentials; reddit_reason says what to add.
     """
+    from insight_core.ingestion.kinds.reddit import reddit_credentials
     from insight_core.ingestion.kinds.telegram_session import (
         LOGIN_HINT,
         telegram_credentials,
@@ -168,6 +172,7 @@ def availability_from_env(
         ytdlp_enabled=ytdlp,
         telegram_credentials=reason is None,
         telegram_reason=reason,
+        reddit_reason=reddit_credentials(credentials)[3],
     )
 
 
@@ -290,6 +295,8 @@ def unavailable_reason(profile: PolitenessProfile, availability: Availability) -
         return "yt-dlp disabled (INSIGHT_YTDLP_ENABLED=0)"
     if profile.requires == "telegram_creds" and not availability.telegram_credentials:
         return availability.telegram_reason or "no Telegram credentials or session"
+    if profile.requires == "reddit_creds" and availability.reddit_reason:
+        return availability.reddit_reason
     return None
 
 

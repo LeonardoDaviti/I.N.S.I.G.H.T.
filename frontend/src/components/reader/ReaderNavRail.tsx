@@ -1,14 +1,16 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Inbox, X } from 'lucide-react';
+import { Inbox, TriangleAlert, X } from 'lucide-react';
 
 import type { UnreadCounts } from '../../services/api';
 import { useReaderDirectory, useSourceDirectory } from '../../hooks/useReaderDirectory';
 import { useTrackCounts } from '../../hooks/useTrackCounts';
+import { useSourcesHealth } from '../../hooks/useSourcesHealth';
+import { STALLED_SOURCES_PATH } from '../sources/sourceList';
 import { scopePath } from '../../lib/feedContext';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
-import { formatCount, middleTruncate } from '../../lib/format';
+import { formatCount, middleTruncate, plural } from '../../lib/format';
 import { fieldClass, iconButtonClass } from '../ui/styles';
 import { FOCUS_RING } from '../states';
 
@@ -88,6 +90,25 @@ function SourceFilter({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
+/** Sources that stopped without anyone seeing (issue 0242): one line under the main feed, to the Sources list
+ *  narrowed to them; nothing when none (or the health table is not loaded). From the health table the Sources
+ *  page and the source names already share (one cached query). */
+function StoppedSources({ onNavigate }: { onNavigate?: () => void }) {
+  const health = useSourcesHealth();
+  const stopped = health.data?.summary?.stalled ?? 0;
+  if (!stopped) return null;
+  return (
+    <Link
+      to={STALLED_SOURCES_PATH}
+      onClick={onNavigate}
+      className={`mt-1 flex min-h-[2.25rem] items-center gap-2 rounded-md px-2.5 text-[0.8125rem] font-semibold text-fg hover:bg-raised coarse:min-h-[2.75rem] ${FOCUS_RING}`}
+    >
+      <TriangleAlert aria-hidden="true" className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 truncate">{`${plural(stopped, 'source')} stopped`}</span>
+    </Link>
+  );
+}
+
 function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
   scope: string; counts: UnreadCounts | undefined; search: string; scopeHref?: (scope: string) => string; onNavigate?: () => void;
 }) {
@@ -131,6 +152,7 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
           icon={<Inbox aria-hidden="true" className="h-4 w-4 shrink-0" />}
           onNavigate={onNavigate}
         />
+        <StoppedSources onNavigate={onNavigate} />
       </div>
 
       <SectionTitle>Tracks</SectionTitle>
