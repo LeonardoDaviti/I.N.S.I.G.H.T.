@@ -98,19 +98,23 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
                   links: List[Tuple[str, Optional[str]]], titles: Dict[str, str], documents: int,
                   names: Set[str], makers: Set[str]) -> List[Tuple[str, str, str, Optional[str]]]:
     """[(kind, address, rule, owner)] one mention's post gives its entity, by the rules; `owner` is a platform page's
-    owner segment when its thing is the entity's name (rule `repo`'s maker candidate), else None."""
+    owner segment when its thing is the entity's name (rule `repo`'s maker candidate), else None. A page the post
+    only cites (0229: rule 1's paper with no own evidence, rule 2's third-party page of a thing) has kind R.CITED."""
     from insight_core.markx import citations, schemas
     t = schemas.entity_type(type_)
     urls = [u for u, _ in links]
+    words = {u: w for u, w in links if w}
     out: List[Tuple[str, str, str, Optional[str]]] = []
-    paper = R.by_identifier(ref=ref, span_ids=citations.ids_in(f"{span} {name}"), links=urls, documents=documents,
-                            is_document=t == "document")
+    span_ids = citations.ids_in(f"{span} {name}")
+    paper = R.by_identifier(ref=ref, span_ids=span_ids, links=urls, documents=documents, is_document=t == "document")
     if paper:
-        out.append((R.PAPER, paper, R.IDENTIFIER, None))
+        own = R.paper_is_its_own(carried=R.carries_id(ref, span_ids), title=titles.get(paper), words=words.get(paper),
+                                 url=paper, names=names, key=N.key)
+        out.append((R.PAPER if own else R.CITED, paper, R.IDENTIFIER, None))
         for kind in (R.CODE, R.DEMO):   # the paper's own links: one of each in the post that gives it
             same = sorted({u for u in urls if R.address_kind(u) == kind})
             if len(same) == 1:
-                out.append((kind, same[0], R.IDENTIFIER, None))
+                out.append((kind if own else R.CITED, same[0], R.IDENTIFIER, None))
     for url, text in links:
         title = titles.get(url) or text
         if R.is_home(url):   # never an address, but a document's work site (E2): its front page is the work
@@ -124,7 +128,10 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
         if not repo and kind == R.RELEASE and R.not_a_release(url):
             continue
         if R.by_title(title, names, N.key):
-            out.append((kind, url, R.TITLE, owner))
+            # 0229: a thing's page titled with its name is its own on its own or its maker's site (or a platform's
+            # page of it, rule repo's); elsewhere a page its post cites (a third party's dashboard, a listing)
+            cited = kind == R.RELEASE and not repo and t in R.MAKER_TYPES and not R.own_site(url, names | makers, N.squash)
+            out.append((R.CITED if cited else kind, url, R.TITLE, owner))
         elif repo:
             out.append((kind, url, R.REPO, owner))
         elif t in R.MAKER_TYPES and R.by_maker(url, title, makers=makers, names=names, squash=N.squash):
@@ -151,7 +158,7 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
     if since is not None and not full:
         cur.execute("SELECT post_id::text FROM mx_mention_sets WHERE at >= %s", (since - MARGIN,))
         first |= {r[0] for r in cur.fetchall()}
-    empty = {"posts": 0, "found": 0, "added": 0, "by_rule": {}, "done": waits is None, "after": waits}
+    empty = {"posts": 0, "found": 0, "added": 0, "changed": 0, "by_rule": {}, "done": waits is None, "after": waits}
     if not sweep and not first:
         return empty
     # a resumed sweep reads the posts past where it stopped (and the run's own), not every post again
@@ -166,6 +173,7 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
     head = sorted(have & first)
     rest = sorted(p for p in have - first if after is None or p > after) if sweep else []
     found: Dict[Tuple[str, str], Tuple[str, str, str, Optional[str]]] = {}
+    seen: Dict[Tuple[str, str], Set[str]] = defaultdict(set)   # 0229: the posts that gave each (entity, address)
     by_rule: Dict[str, int] = defaultdict(int)
     by_post: Dict[str, List[Tuple]] = defaultdict(list)   # v10.13.4: each chunk reads its own posts' rows, not all
     for r in rows:
@@ -187,24 +195,38 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
             for kind, url, rule, owner in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
                                                  links=links[pid], titles=titles, documents=docs.get(pid, 0),
                                                  names=names.get(root, set()), makers=makers[root]):
-                found.setdefault((root, url), (kind, rule, pid, owner))
+                had = found.get((root, url))
+                if had is None or (had[0] == R.CITED and kind != R.CITED):   # 0229: a post naming it as its own wins
+                    found[(root, url)] = (kind, rule, pid, owner)
+                seen[(root, url)].add(pid)
         done_posts += len(chunk)
         if k >= n_head:
             last = chunk[-1]
         if n_head <= k + 1 < len(chunks) and deadline is not None and time.monotonic() > deadline:
             done = False   # the sweep's posts left are the next run's (v10.24: none started past the budget)
             break
-    added = 0
+    added = changed = 0
     for (root, url), (kind, rule, pid, owner) in sorted(found.items()):
-        cur.execute("""INSERT INTO mx_entity_addresses (entity_id, url, kind, rule, post_id, first_at, owner)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (entity_id, url) DO NOTHING""",
-                    (root, url, kind, rule, pid, now, owner))
-        added += cur.rowcount
+        # one row an (entity, address), its first_at kept. 0229: its kind follows the posts that gave it: a row an
+        # older rule took as its own becomes `cited` when the posts this run read give it as cited only and its own
+        # post is among them; any post giving it as its own makes a cited row its own
+        cur.execute("""INSERT INTO mx_entity_addresses AS a (entity_id, url, kind, rule, post_id, first_at, owner)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (entity_id, url) DO UPDATE
+                          SET kind = EXCLUDED.kind, rule = EXCLUDED.rule, post_id = EXCLUDED.post_id, owner = EXCLUDED.owner
+                        WHERE a.kind IS DISTINCT FROM EXCLUDED.kind
+                          AND ((a.kind = 'cited') OR (EXCLUDED.kind = 'cited' AND a.post_id = ANY(%s::uuid[])))
+                    RETURNING (xmax = 0)""",
+                    (root, url, kind, rule, pid, now, owner, sorted(seen[(root, url)])))
+        got = cur.fetchone()
+        if got is not None:
+            added += 1 if got[0] else 0
+            changed += 0 if got[0] else 1
         by_rule[rule] += 1
     if waits is not None:
         done, last = False, waits
-    return {"posts": done_posts, "found": len(found), "added": added, "by_rule": dict(by_rule), "done": done,
-            "after": None if done else last}
+    return {"posts": done_posts, "found": len(found), "added": added, "changed": changed, "by_rule": dict(by_rule),
+            "done": done, "after": None if done else last}
 
 
 def add(cur: Any, *, root: str, url: str, kind: str, rule: str, post_id: Optional[str], now: datetime) -> bool:
@@ -260,11 +282,21 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
 def of_root(cur: Any, book: I.Book, root: str) -> Dict[str, Dict[str, Any]]:
     """{kind: {url, rule, first_at, post_id, owner}} of one entity: one address a kind (the rules' order); `owner` is
     a platform page's owner segment (rule `repo`'s maker candidate), else None."""
+    return page(cur, book, root)[0]
+
+
+def page(cur: Any, book: I.Book, root: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
+    """(of_root's {kind: ...}, the pages its posts cite: [{url, kind: what the page is, rule, post_id}], 0229), from
+    one read of its rows; the cited oldest first."""
     rows = _current(cur, book, [root]).get(root, [])
     picked = R.pick((k, u, r, at) for k, u, r, at, _, _ in rows)
     posts = {(k, u): (pid, owner) for k, u, _, _, pid, owner in rows}
-    return {k: {"url": u, "rule": r, "first_at": at, "post_id": posts.get((k, u), (None, None))[0],
-                "owner": posts.get((k, u), (None, None))[1]} for k, (u, r, at) in picked.items()}
+    own = {k: {"url": u, "rule": r, "first_at": at, "post_id": posts.get((k, u), (None, None))[0],
+               "owner": posts.get((k, u), (None, None))[1]} for k, (u, r, at) in picked.items()}
+    cited = [{"url": u, "kind": R.address_kind(u), "rule": r, "post_id": pid}
+             for k, u, r, at, pid, _ in sorted(rows, key=lambda x: (x[3] is None, x[3].timestamp() if x[3] else 0, x[1]))
+             if k == R.CITED]
+    return own, cited
 
 
-__all__ = ["add", "current", "found_in_post", "of_root", "stage"]
+__all__ = ["add", "current", "found_in_post", "of_root", "page", "stage"]
