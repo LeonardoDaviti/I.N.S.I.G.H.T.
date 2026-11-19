@@ -13,8 +13,11 @@ a process name (which a hung loop keeps).
 so the scheduler parent's memory and CPU are read by a GET (/api/status, GET /metrics) without touching the process.
 Each API process has a beat too, "api-<pid>", written by the API's supervisor (scripts/api_supervisor.py) for its
 numbers only: no healthcheck reads those.
-`processes()` reads every beat with its numbers; an API process's beat older than API_GONE is a process that ended
-(the reader removes its file).
+`processes()` reads every beat with its numbers. 0233 (0225 #18, ghost processes): the writer of a set of beats owns
+their end: the supervisor writes the beats of uvicorn's processes alive now and removes every other "api-" beat in the
+same step (`only`), so a process that ended (killed by the open-files guard, a restarted worker, the previous
+container's after a restart, uvicorn's own pid beaten before its workers were up) is never listed. Before, the reader
+removed an API beat only an hour (API_GONE) after its last write, and /api/status listed the dead processes till then.
 
 Standard library only, and no import of insight_core: the healthcheck starts a Python each minute.
 """
@@ -30,7 +33,6 @@ BEAT_SECONDS = 30.0
 # a heartbeat older than this is a loop that stopped: the scheduler's beats every 30 s; Mark X's after each look,
 # which waits at most for a decision run and the Labels build after it, each up to HARD_LIMIT (900 s) and its kill
 LIMITS = {"scheduler": 180.0, "markx": 2000.0}
-API_GONE = 3600.0   # 0216: an API process's beat this old is a process that ended: listed no more, its file removed
 
 
 def folder() -> str:
@@ -94,10 +96,29 @@ def ages(now: Optional[float] = None) -> Dict[str, Optional[float]]:
     return out
 
 
+def only(prefix: str, names: Any) -> int:
+    """0233: the beats named `prefix`... other than `names` removed (their processes ended): how many. The writer of
+    those beats calls it with the names it just wrote. Never raises."""
+    keep = set(names)
+    gone = 0
+    try:
+        files = os.listdir(folder())
+    except OSError:
+        return 0
+    for file in files:
+        name = file[len("heartbeat-"):]
+        if file.startswith("heartbeat-" + prefix) and not file.endswith(".tmp") and name not in keep:
+            try:
+                os.remove(os.path.join(folder(), file))
+                gone += 1
+            except OSError:
+                pass
+    return gone
+
+
 def processes(now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
     """0216: every beat in the folder, {name: {age, rss_mb, hwm_mb, cpu_s}} (the numbers its process wrote; only `age`
-    for a beat without): the loops' and each API process's ("api-<pid>"). An API process's beat older than API_GONE
-    is removed, not listed."""
+    for a beat without): the loops' and each API process's ("api-<pid>"; 0233: only the live ones, `only`)."""
     now = time.time() if now is None else now
     out: Dict[str, Dict[str, Any]] = {}
     try:
@@ -112,14 +133,7 @@ def processes(now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
         got = _read(path)
         if got is None:
             continue
-        age = max(0.0, now - got.pop("at"))
-        if name.startswith("api-") and age > API_GONE:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-            continue
-        out[name] = {"age": age, **got}
+        out[name] = {"age": max(0.0, now - got.pop("at")), **got}
     return out
 
 
