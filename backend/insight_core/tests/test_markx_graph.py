@@ -225,6 +225,15 @@ class TheJudge(_Graph):
                                          "role": role}])
             self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, post))
 
+    def maker_said(self, post):
+        """0234: the post's reading says its maker tells it (a version on the line is one its maker announced)."""
+        with self.conn.transaction():
+            tid, _ = tasks.add(self.cur, "read3", f"read {post}", a=post)
+            call_id = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="m", valid=True, answer={})
+            repo.add_reading(self.cur, post_id=post, guide="read-v3", call_id=call_id, kind="report", events="one",
+                             lang="en", headline="out", reading={"kind": "report", "event_type": "model_release",
+                                                                 "origin": "maker", "main": {"object": "Widget"}})
+
     def vector(self, post, v):
         repo.put_embedding(self.cur, post_id=post, model="bge-m3", text_hash=uuid.uuid4().hex, vector=v)
 
@@ -385,6 +394,8 @@ class TheJudge(_Graph):
             self.subject(self.post(source=self.other, at=self.at(5 + k)), v5, "Widget 5", role="mention")
         self.subject(new5, v5, "Widget 5")
         self.subject(soon5, v5, "Widget 5")
+        for p in (old4[-1], old41, soon5):                        # 0234: each announced by its maker
+            self.maker_said(p)
         # a judge's next_version on the pair first
         with self.conn.transaction():
             tid, _ = tasks.add(self.cur, "relate", "a question", a=new5, b=old41)
@@ -411,6 +422,8 @@ class TheJudge(_Graph):
         self.subject(new, v2, "Gadget 2")
         for k in range(3):                  # 0220: named by 4+ posts (a mention is never an edge's side)
             self.subject(self.post(at=self.at(1 + k)), v2, "Gadget 2", role="mention")
+        for p in (olds[-1], new):           # 0234: each announced by its maker
+            self.maker_said(p)
         self.stage()
         got = sorted(b for a, b, rel, rule, *_ in self.edges() if rule == "entity_next_version")
         self.assertEqual(got, sorted(olds[2:]))                       # the 3 earliest (102-104 days back)
