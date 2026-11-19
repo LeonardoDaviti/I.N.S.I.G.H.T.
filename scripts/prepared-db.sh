@@ -5,6 +5,9 @@
 #   scripts/prepared-db.sh list                         the prepared copies and their stamps
 #   scripts/prepared-db.sh clone <set> <newdb>          a scratch copy of prep_<set> (CREATE DATABASE ... TEMPLATE)
 #   scripts/prepared-db.sh drop <db>                    drop a scratch copy (or a prepared copy: --force)
+#   scripts/prepared-db.sh clones                       every clone, its size and age in hours, and the server's total
+#   scripts/prepared-db.sh prune                        drop clones older than PRUNE_HOURS (24) nobody is connected to;
+#                                                       every clone prunes first and refuses past CAP_GB (60) in all
 #   scripts/prepared-db.sh refresh <set> [--ref REF]    only the NEW migrations and backfills, on a copy then swapped in
 #   scripts/prepared-db.sh build <set> [--ref REF] [--rebuild|--remirror|--resume]   build prep_<set> (an existing one
 #                                                       is refreshed unless --rebuild; --remirror copies the original
@@ -37,6 +40,8 @@ SRC_CONTAINER="${SRC_CONTAINER:-insight-db}"
 PG_SRC="postgresql://insight:insight@postgres:5432"
 STRATEGY="${STRATEGY:-FILE_COPY}"
 APP=prepared-db
+PRUNE_HOURS="${PRUNE_HOURS:-24}"   # a clone unused this long is dropped by the next clone (or `prune`)
+CAP_GB="${CAP_GB:-60}"             # no new clone past this many GB on the scratch server
 STATE="${XDG_CACHE_HOME:-$HOME/.cache}/insight-prep"   # lock files and a run's temporary trees (never /tmp)
 mkdir -p "$STATE"
 
@@ -282,9 +287,12 @@ cmd_clone() {
   exists "$src" || die "$src does not exist (scripts/prepared-db.sh build ${set#prep_})"
   [[ "$new" == prep_* || "$new" == insight || "$new" == insight_lab || "$new" == insight_server_1105* ]] && die "refusing to create $new"
   exists "$new" && die "$new exists already (scripts/prepared-db.sh drop $new)"
+  cmd_prune   # 2026-11-19: clones left behind filled the scratch server to 99 GB
+  local used; used=$(admin "SELECT sum(pg_database_size(datname)) / 1073741824 FROM pg_database")
+  (( ${used%.*} < CAP_GB )) || die "the scratch server holds ${used%.*} GB (cap ${CAP_GB}): drop your clones (scripts/prepared-db.sh clones)"
   local t0; t0=$(date +%s%N)
   create_from "$src" "$new"
-  admin "COMMENT ON DATABASE $new IS \$j\$$(python3 -c 'import json,sys; s=json.loads(sys.argv[1] or "{}"); print(json.dumps({"clone_of": sys.argv[2], "commit": s.get("commit"), "last_migration": s.get("last_migration")}))' "$(stamp_of "$src")" "$src")\$j\$"
+  admin "COMMENT ON DATABASE $new IS \$j\$$(python3 -c 'import json,sys; s=json.loads(sys.argv[1] or "{}"); print(json.dumps({"clone_of": sys.argv[2], "at": sys.argv[3], "commit": s.get("commit"), "last_migration": s.get("last_migration")}))' "$(stamp_of "$src")" "$src" "$(date -u +%s)")\$j\$"
   say "$new: a copy of $src in $(( ($(date +%s%N) - t0) / 1000000 )) ms"
   echo "$PG/$new"
 }
@@ -325,6 +333,24 @@ cmd_list() {
            FROM pg_database WHERE datname LIKE 'prep\\_%' ORDER BY 1" | python3 "$ROOT/scripts/prep/list.py"
 }
 
+cmd_clones() {   # every clone, its size and age (hours; ? = made before clones carried their time), the server's total
+  admin "SELECT datname || E'\t' || pg_size_pretty(pg_database_size(datname)) || E'\t' ||
+                coalesce(((extract(epoch FROM now()) - (shobj_description(oid, 'pg_database')::json->>'at')::numeric) / 3600)::int::text, '?')
+           FROM pg_database WHERE shobj_description(oid, 'pg_database') LIKE '{\"clone_of\"%' ORDER BY pg_database_size(datname) DESC"
+  admin "SELECT 'total' || E'\t' || pg_size_pretty(sum(pg_database_size(datname))) FROM pg_database"
+}
+
+cmd_prune() {   # drop the clones older than PRUNE_HOURS (or of unknown age) that nobody is connected to
+  local db
+  for db in $(admin "SELECT d.datname FROM pg_database d
+                      WHERE shobj_description(d.oid, 'pg_database') LIKE '{\"clone_of\"%'
+                        AND coalesce((shobj_description(d.oid, 'pg_database')::json->>'at')::numeric, 0)
+                            < extract(epoch FROM now()) - $PRUNE_HOURS * 3600
+                        AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)"); do
+    say "pruning $db (a clone older than ${PRUNE_HOURS} h, unused)"; admin "DROP DATABASE IF EXISTS $db"
+  done
+}
+
 cmd_stamp() {
   local db="$1"
   local c; c="$(stamp_of "$db")"; [ -n "$c" ] && echo "$c"
@@ -338,9 +364,11 @@ case "${1:-}" in
   build) shift; [ $# -ge 1 ] || die "build <set>"; cmd_build "$@";;
   refresh) shift; [ $# -ge 1 ] || die "refresh <set>"; cmd_refresh "$@";;
   clone) shift; [ $# -eq 2 ] || die "clone <set> <newdb>"; cmd_clone "$@";;
+  clones) cmd_clones;;
+  prune) cmd_prune;;
   drop) shift; [ $# -ge 1 ] || die "drop <db>"; cmd_drop "$@";;
   stamp) shift; [ $# -eq 1 ] || die "stamp <db>"; cmd_stamp "$1";;
   adopt) shift; [ $# -eq 2 ] || die "adopt <set> <db>"; cmd_adopt "$@";;
-  -h|--help|help|"") sed -n '2,31p' "$0";;
+  -h|--help|help|"") sed -n '2,34p' "$0";;
   *) die "unknown command $1";;
 esac
