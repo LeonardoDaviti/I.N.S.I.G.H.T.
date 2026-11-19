@@ -715,10 +715,12 @@ def _derived_sql(alias: str = "m") -> str:
     return f"({alias}.guide = '{DERIVED_GUIDE}' AND (" + " OR ".join(f"({p.format(a=alias)})" for p in parts) + "))"
 
 
-def _relation_scope(cur: Any, since: datetime) -> Set[str]:
+def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] = None) -> Set[str]:
     """The posts whose entities answer stating a relation is new since, and the evidence posts of the stated edges
-    whose side is no longer a root (merged since: they open again on the root)."""
+    whose side is no longer a root (merged since: they open again on the root). `counts` (v10.25, 0226): how many
+    posts each read found and its seconds (the run's `graph.relations.scope`; 0225 #16 is measured there first)."""
     from insight_core.markx import schemas
+    t0 = time.monotonic()
     cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
                     WHERE m.guide = ANY(%s) AND c.created_at >= %s
                       AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
@@ -727,11 +729,16 @@ def _relation_scope(cur: Any, since: datetime) -> Set[str]:
                                         AND x.a_kind = 'entity' AND x.evidence->'posts' ? m.post_id::text))""",
                 (schemas.mention_guides(), since, RULE_STATED))
     out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
+    t1 = time.monotonic()
     cur.execute("""SELECT DISTINCT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
                     WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
                       AND EXISTS (SELECT 1 FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.from_id IN (x.a, x.b))""",
                 (RULE_STATED,))
-    return out | {r[0] for r in cur.fetchall()}
+    merged = {r[0] for r in cur.fetchall()}
+    if counts is not None:
+        counts.update(since_posts=len(out), merged_posts=len(merged), since_seconds=round(t1 - t0, 3),
+                      merged_seconds=round(time.monotonic() - t1, 3))
+    return out | merged
 
 
 def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, deadline: Optional[float]) -> Dict[str, Any]:
@@ -1110,32 +1117,51 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     kept = repo.get_setting(cur, PENDING_KEY, default=None) or []
     linked = {str(p) for p in linked} | set(kept)
     out["linked"] = len(linked)
+    timing: Dict[str, float] = {}   # v10.25 (0226): each step's seconds (the server's stage: 6 s to 514 s a run)
+    mark = [t0]
+
+    def tick(step: str) -> None:
+        at = time.monotonic()
+        timing[step] = round(at - mark[0], 3)
+        mark[0] = at
     dirty = dirty_posts(cur, since)
     state = repo.get_setting(cur, BACKFILL_KEY, default=None) or {}
     if not (state.get("done") and state.get("version") == BACKFILL_VERSION):   # the backfill reads the rest itself
         after = state.get("after") if state.get("version") == BACKFILL_VERSION else None
         dirty = {p for p in dirty if after is not None and p <= after}
     out["links"] = dict(sync_links(cur, dirty, now=now, run_id=run_id))
+    tick("links")
     out["backfill"] = backfill(cur, now=now, run_id=run_id, deadline=deadline)
+    tick("backfill")
     t1 = time.monotonic()
     subjects = Subjects(cur)
     out["next_version"] = dict(sync_next_version(cur, subjects, now=now, run_id=run_id))
+    tick("next_version")
     # 0220: the relations posts state between entities (what changed since, then the backfill's share)
-    rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since) | linked, subjects.root, now=now,
+    scope: Dict[str, Any] = {}
+    rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since, scope) | linked, subjects.root, now=now,
                                                run_id=run_id))
+    rels["scope"] = scope
+    tick("relations")
     rels["backfill"] = _relations_backfill(cur, subjects.root, now=now, run_id=run_id,
                                            deadline=None if deadline is None else max(deadline, time.monotonic() + 5))
     out["relations"] = rels
+    tick("relations_backfill")
     relate: Dict[str, Any] = {"candidates": discover(cur, subjects, _subject_scope(cur, since) | linked)}
+    tick("discover")
     relate["backfill"] = _relate_backfill(cur, subjects, deadline=None if deadline is None else max(deadline, t1 + 5))
+    tick("relate_backfill")
     found = verdicts(cur, since=since)
     relate.update(apply_pairs(cur, list(found), now=now, run_id=run_id, found=found))
     relate["settled"] = len(found)
+    tick("verdicts")
     relate["planned"] = plan(cur, open_cap=open_cap, now=now)
+    tick("plan")
     out["relate"] = relate
     repo.set_setting(cur, SINCE_KEY, now.isoformat())
     if kept:
         repo.set_setting(cur, PENDING_KEY, [])
+    out["timing"] = timing
     out["seconds"] = round(time.monotonic() - t0, 3)
     return out
 
