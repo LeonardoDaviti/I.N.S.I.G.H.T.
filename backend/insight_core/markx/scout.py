@@ -7,11 +7,14 @@ automatic: the track names a sphere, the scout finds candidate sources for it, t
 one. Nothing is followed without the owner's tap; nothing read is a post.
 
 **When** (`start`): the owner's tap on the Topic view; and `weekly` (`due_weekly`, run by insight-ingestion's hook):
-a described track with fewer than WEEKLY_MIN items in or ✓ in 7 days, at most one scout a week.
+every described track once a week (0235: before, only one with fewer than WEEKLY_MIN items in or ✓ in 7 days, so a
+healthy track was never scouted for better sources); a starving one (fewer than WEEKLY_MIN) goes first. One weekly run
+is started a tick, none while another weekly run is open, so the tracks' runs follow each other.
 
 **Candidates, three finders** (no request):
   1. `match`: the link targets of the track's in and ✓ posts (quoted accounts are links too: a tweet's address is its
-     author's), by Discover's address key (0050): a site, a platform account, a code host's or model hub's owner
+     author's; 0235: so are the accounts an X or Bluesky post @mentions, post_links kind 'mention'), by Discover's
+     address key (0050): a site, a platform account, a code host's or model hub's owner
      (entity_originals.platform_thing); never one you follow, never a reference, app, archive, document or paper
      address (discover_rules.place_kind), never a key you answered "Not this one" for this track.
   2. `shape`: for the platform classes INSIGHT reads, addresses built from the track's words (0147's learned lexicon
@@ -236,7 +239,8 @@ def match_candidates(cur: Cursor, folder_id: str, *, skip: Iterable[str] = ()) -
     if not posts:
         return []
     cur.execute("""SELECT l.post_id::text, l.target_url FROM post_links l
-                    WHERE l.post_id = ANY(%s::uuid[]) AND NOT l.boilerplate AND l.kind = 'link'""", (posts,))
+                    WHERE l.post_id = ANY(%s::uuid[])
+                      AND ((NOT l.boilerplate AND l.kind = 'link') OR l.kind = 'mention')""", (posts,))
     rows = cur.fetchall()
     cur.execute("SELECT p.id::text, s.handle_or_url FROM posts p JOIN sources s ON s.id = p.source_id "
                 "WHERE p.id = ANY(%s::uuid[])", (posts,))
@@ -483,18 +487,27 @@ def _stats(cur: Cursor, run_id: str, **more: Any) -> None:
 
 
 def due_weekly(cur: Cursor, now: Optional[datetime] = None) -> List[str]:
-    """The described tracks with fewer than WEEKLY_MIN items in or ✓ in 7 days and no scout in the last WEEK."""
+    """The described tracks with no scout in the last WEEK (0235: every one, MAX_READS and the budgets a run as
+    before), those with fewer than WEEKLY_MIN items in or ✓ in 7 days (starving) first, then the longest unscouted."""
     from insight_core.markx import tracks
     now = now or _now()
     out = []
     for t in tracks.described(cur):
-        cur.execute("SELECT 1 FROM mx_scout_runs WHERE track_id = %s AND started_at > %s LIMIT 1",
-                    (t["folder_id"], now - WEEK))
-        if cur.fetchone():
+        cur.execute("SELECT max(started_at) FROM mx_scout_runs WHERE track_id = %s", (t["folder_id"],))
+        last = cur.fetchone()[0]
+        if last is not None and last > now - WEEK:
             continue
-        if len(in_posts(cur, t["folder_id"], limit=WEEKLY_MIN, since=now - WEEK)) < WEEKLY_MIN:
-            out.append(t["folder_id"])
-    return out
+        starving = len(in_posts(cur, t["folder_id"], limit=WEEKLY_MIN, since=now - WEEK)) < WEEKLY_MIN
+        out.append((not starving, last or datetime.min.replace(tzinfo=timezone.utc), t["folder_id"]))
+    return [folder_id for *_, folder_id in sorted(out)]
+
+
+def weekly_open(cur: Cursor, now: datetime) -> bool:
+    """0235: whether a weekly run started in the last WEEK is still open (running or waiting): the next track's waits
+    for it (an older one never holds the others)."""
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_scout_runs WHERE trigger = 'weekly' AND status IN ('running', 'waiting')
+                                     AND started_at > %s)""", (now - WEEK,))
+    return bool(cur.fetchone()[0])
 
 
 def claim(cur: Cursor, run_id: str, now: datetime) -> bool:
@@ -697,7 +710,8 @@ async def tick(db_url: str, *, reader: Optional[Any] = None, now: Optional[Calla
     out: Dict[str, Any] = {"started": [], "advanced": []}
     try:
         with database.transaction(db_url) as cur:
-            for folder_id in due_weekly(cur, clock()):
+            due = [] if weekly_open(cur, clock()) else due_weekly(cur, clock())   # 0235: one weekly run at a time
+            for folder_id in due[:1]:
                 out["started"].append(start(cur, folder_id, trigger="weekly", now=clock())["id"])
         with database.transaction(db_url) as cur:
             runs = [r for r in open_runs(cur) if needs_advance(cur, r)]
@@ -902,7 +916,7 @@ def not_this(cur: Cursor, candidate_id: str) -> Dict[str, Any]:
     return {"answer": "not"}
 
 
-__all__ = ["add_candidates", "advance", "after_answer", "after_judge", "due_weekly", "follow", "haiku_candidates",
+__all__ = ["add_candidates", "advance", "after_answer", "after_judge", "due_weekly", "weekly_open", "follow", "haiku_candidates",
            "judge_items", "match_candidates", "not_this", "page", "shape_candidates", "start", "suggestions", "tick"]
 
 

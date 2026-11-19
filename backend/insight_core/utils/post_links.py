@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import parse_qsl, urljoin, urlparse
 
-from insight_core.utils.addresses import PLATFORM_SITES, bare, host_of, is_tweet, publication_of, site_of
+from insight_core.utils.addresses import PLATFORM_SITES, bare, host_of, is_tweet, publication_of, site_of, tweet_author
 from insight_core.utils.url_normalization import has_query_mark, normalize_url
 
 HREF = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\']', re.I)
@@ -83,7 +83,9 @@ class PostLink:
     # 0126): a gift link opens the article with it. None otherwise.
     shared: Optional[str] = None
     # "reference": every place it is linked is inside the text's references or bibliography (issue 0137 B8);
-    # stored as boilerplate, so no story, News or Discover rule reads it. "link" otherwise.
+    # stored as boilerplate, so no story, News or Discover rule reads it. "mention" (0235): an @handle in an X or
+    # Bluesky post's text, as the account's address (`mentions`); stored as boilerplate too, read only by Discover and
+    # the scout's match finder (kind = 'mention'). "link" otherwise.
     kind: str = "link"
 
 
@@ -294,12 +296,80 @@ def is_search_link(url: str) -> bool:
     return not segments or bool(set(segments) & SEARCH_SEGMENTS)
 
 
-def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str) -> List[PostLink]:
-    """The outside links of one post, first seen first, each address once (its gift link kept, 0126).
-    Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
-    content_html = decoded_html(content_html)
-    if not content_html:
+# ---- @mentions (0235): an account named in an X or Bluesky post's text is a link to that account -----------------
+# An X handle: 1-15 letters, digits or _; a Bluesky handle: a domain (alice.bsky.social, example.com). Never one
+# running on into more of a handle, an address or a second @ (an email's, a fediverse handle's).
+X_HANDLE = re.compile(r"@([A-Za-z0-9_]{1,15})(?![A-Za-z0-9_@]|\.[A-Za-z0-9])")
+BSKY_HANDLE = re.compile(r"@((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])"
+                         r"(?![A-Za-z0-9_@-]|\.[A-Za-z0-9])")
+BSKY_HOSTS = frozenset({"bsky.app", "www.bsky.app"})
+# What may stand right before a mention in its word: nothing, or an opening mark (X's ".@name" is a public mention).
+MENTION_LEAD = re.compile(r"^[.(\[{\"'\u201c\u2018\u00ab]*$")
+LEADING_MENTIONS = re.compile(r"^\s*(?:@[\w.-]+[\s,:]*)+")   # a reply's run of @handles at its start
+_BLOCK = re.compile(r"<(?:br|/?p|/?div|/?blockquote|/?li|/?ul|/?ol|/?h[1-6])\b[^>]*>", re.I)
+
+
+def mention_platform(kind: str, post_url: Optional[str]) -> Optional[str]:
+    """"x" for an X post, "bluesky" for a Bluesky post (by its address: the kind reads it as a site), else None."""
+    if kind == "x":
+        return "x"
+    return "bluesky" if host_of(post_url) in BSKY_HOSTS else None
+
+
+def plain_text(content_html: Optional[str], content: Optional[str] = None) -> str:
+    """A post's words as the reader reads them: its HTML without tags (a block ends a word), else its plain text."""
+    if content_html:
+        return html.unescape(TAG.sub("", _BLOCK.sub(" ", content_html)))
+    return content or ""
+
+
+def mentions(text: str, platform: str, author: Optional[str] = None) -> List[str]:
+    """The accounts a post's text @mentions, as their addresses (x.com/<handle>, bsky.app/profile/<handle>), first seen
+    first, each once, lower case. Not the reply's leading run of @handles (who it answers), not the post's own author,
+    not an @ inside an address or an email (only an opening mark may stand before it in its word: `.@name` counts)."""
+    pattern = X_HANDLE if platform == "x" else BSKY_HANDLE if platform == "bluesky" else None
+    if pattern is None or "@" not in (text or ""):
         return []
+    lead = LEADING_MENTIONS.match(text)
+    start = lead.end() if lead else 0
+    own = (author or "").lower().lstrip("@")
+    out: List[str] = []
+    for m in pattern.finditer(text, start):
+        word_start = max(text.rfind(c, 0, m.start()) for c in " \t\n\r\u00a0") + 1
+        if not MENTION_LEAD.match(text[word_start:m.start()]):
+            continue
+        handle = m.group(1).lower()
+        if handle == own:
+            continue
+        if platform == "x":
+            from insight_core.utils.discover_rules import NOT_ACCOUNT   # discover_rules reads this module
+            if handle in NOT_ACCOUNT:
+                continue
+            url = "https://x.com/" + handle
+        else:
+            url = "https://bsky.app/profile/" + handle
+        if url not in out:
+            out.append(url)
+    return out
+
+
+def post_author(platform: str, post_url: Optional[str]) -> Optional[str]:
+    """The handle a post's own address names (a tweet's /<user>/status/<id>, a Bluesky /profile/<handle>/post/<rkey>)."""
+    if platform == "x":
+        return tweet_author(normalize_url(post_url) if post_url else None)
+    parts = bare(post_url or "").split("/")
+    return parts[2] if len(parts) > 2 and parts[1] == "profile" else None
+
+
+def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str,
+                  content: Optional[str] = None) -> List[PostLink]:
+    """The outside links of one post, first seen first, each address once (its gift link kept, 0126), then (0235) the
+    accounts an X or Bluesky post @mentions (`mentions`; from `content`, its plain text, when it has no HTML: a Bluesky
+    post's). Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
+    content_html = decoded_html(content_html)
+    platform = mention_platform(kind, post_url)
+    if not content_html:
+        return _with_mentions([], plain_text(None, content), platform, post_url)
     own = normalize_url(post_url) or ""
     # Its own publication (issue 0070: another publication on its site, a Substack writer another, is
     # cited), and where it was read from too: a tweet's address is x.com, but your Nitter's profiles
@@ -338,4 +408,18 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
         out.append(PostLink(url, site, len(out), _link_text(content_html, match.end()),
                             absolute if has_query_mark(absolute) else None,
                             "reference" if cited(match.start()) else "link"))
+    return _with_mentions(out, plain_text(content_html), platform, post_url)
+
+
+def _with_mentions(out: List[PostLink], text: str, platform: Optional[str], post_url: Optional[str]) -> List[PostLink]:
+    """The links, then each account the text mentions that no link already points to (kind "mention")."""
+    if platform is None:
+        return out
+    seen = {link.url for link in out}
+    for address in mentions(text, platform, post_author(platform, post_url)):
+        url = normalize_url(address) or address
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(PostLink(url, site_of(host_of(url)), len(out), "@" + url.rsplit("/", 1)[1], None, "mention"))
     return out

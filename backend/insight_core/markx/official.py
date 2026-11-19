@@ -770,65 +770,6 @@ def advance(db_url: str, now: datetime, counts: Counter, *, reads: int = READS_P
             log.exception("Official channels: the test read of %s failed", row["key"])
 
 
-SUGGESTIONS_PER_DAY = 10         # Discover's suggestions the worker checks a day (the pipeline's "checked" step)
-SUGGESTION_SCAN = 300             # the suggestions a pass looks at for its fit prior
-
-
-def to_check(suggestions: Sequence[Dict[str, Any]], read_most: Sequence[str], judged: Set[str],
-             limit: int) -> List[str]:
-    """Discover's suggestions to have the worker check: followable ones not judged lately, those linked by the sources
-    the reader reads most first (a fit prior from what the reader opens, not link volume), then by Discover's order.
-    Pure."""
-    from insight_core.markx import source_judge
-    from insight_core.utils.discover_rules import section
-    most = {n.casefold() for n in read_most}
-    pool = []
-    for i, sg in enumerate(suggestions[:SUGGESTION_SCAN]):
-        key = sg.get("key") or ""
-        if not key or section(sg) == 1 or source_judge.cache_key(key) in judged:
-            continue
-        prior = sum(1 for v in sg.get("voice_names") or [] if str(v).casefold() in most)
-        pool.append((-prior, i, key))
-    return [k for _, _, k in sorted(pool)[:limit]]
-
-
-def check_suggestions(db_url: str, now: datetime, counts: Counter, *, reader: Optional[Any] = None,
-                      limit: Optional[int] = None) -> None:
-    """The pipeline's "checked by the worker" step for Discover's suggestions (never an add: a suggestion is no
-    official channel): up to SUGGESTIONS_PER_DAY a day, one `source_judge` read and question each; Discover then ranks
-    by the answer's fit (stories_service._by_fit)."""
-    from insight_core.db import database
-    from insight_core.db.repo_discover import DiscoverRepository
-    from insight_core.markx import source_judge as SJ
-    with database.transaction(db_url) as cur:
-        cur.execute("""SELECT COALESCE(sum((counts->>'suggestions_judged')::int), 0) FROM mx_official_runs
-                        WHERE started_at > %s""", (now - timedelta(days=1),))
-        left = (SUGGESTIONS_PER_DAY if limit is None else limit) - int(cur.fetchone()[0])
-        if left <= 0:
-            return
-        found = DiscoverRepository.any_list(cur) or {}
-        cur.execute("SELECT DISTINCT key FROM mx_source_judgements WHERE asked_at > %s", (now - timedelta(days=SJ.CACHE_DAYS),))
-        judged = {r[0] for r in cur.fetchall()}
-        cur.execute("""SELECT COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)
-                         FROM post_interactions i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
-                        WHERE i.interaction_type = 'opened' AND i.created_at > %s
-                        GROUP BY 1 ORDER BY count(DISTINCT i.post_id) DESC LIMIT %s""",
-                    (now - timedelta(days=90), SJ.INTEREST_SOURCES))
-        most = [r[0] for r in cur.fetchall()]
-        keys = to_check(found.get("suggestions") or [], most, judged, left)
-        asked = []
-        for key in keys:
-            got = SJ.ask(cur, "https://" + key, now=now)
-            if got.get("needs_read"):
-                asked.append(got["id"])
-    for jid in asked:
-        try:
-            asyncio.run(SJ.read_and_ask(db_url, jid, reader=reader, priority=PRIORITY))
-        except Exception:  # noqa: BLE001 - the judgement says why
-            log.exception("Official channels: a suggestion's check failed")
-    counts["suggestions_judged"] += len(asked)
-
-
 def run(db_url: str, *, now: Optional[datetime] = None, reader: Optional[Any] = None,
         add: Optional[Callable[..., Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The jobs process's pass: plan (events, candidates, lookups), then advance (reads, judgements, decisions).
@@ -851,7 +792,10 @@ def run(db_url: str, *, now: Optional[datetime] = None, reader: Optional[Any] = 
                 return {"mode": m, "skipped": "another pass runs"}
             plan(cur, now, counts)
         advance(db_url, now, counts, reader=reader, add=add)
-        check_suggestions(db_url, now, counts, reader=reader)
+        # 0235: Discover's suggestions judged every day, the fastest growing first (source_judge owns it; was
+        # check_suggestions here: the first 300 rows by link volume)
+        from insight_core.markx import source_judge
+        counts["suggestions_judged"] += source_judge.daily(db_url, now, reader=reader)
     except Exception as exc:  # noqa: BLE001 - recorded; the next pass resumes from Postgres
         log.exception("Official channels: the pass failed")
         error = str(exc)[:300]

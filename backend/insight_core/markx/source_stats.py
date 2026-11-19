@@ -320,7 +320,8 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
 
     # links out of the window's posts
     cur.execute(f"""SELECT l.post_id::text, l.target_url, l.boilerplate FROM post_links l JOIN posts p ON p.id = l.post_id
-                     WHERE p.source_id = ANY(%s::uuid[]) AND {AT} >= %s""", (ids, since))
+                     WHERE p.source_id = ANY(%s::uuid[]) AND {AT} >= %s
+                       AND l.kind <> 'mention'""", (ids, since))   # 0235: a mention is no link of the post's
     links: Dict[str, List[Tuple[str, bool]]] = defaultdict(list)
     for pid, target, bp in cur.fetchall():
         links[pid].append((target, bool(bp)))

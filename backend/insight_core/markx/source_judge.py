@@ -1,4 +1,5 @@
-"""Is this worth it? (issue 0173, Stealth v10.15): a candidate source judged by the worker, on the owner's tap only.
+"""Is this worth it? (issue 0173, Stealth v10.15): a candidate source judged by the worker, on the owner's tap, and
+(0235) every day for the Discover suggestions growing fastest (`daily`).
 
 Owner decision 2026-11-12: no trial follow and no spend cap for a new source; instead the worker says, on request,
 whether the reader would care about it. Asked from Discover's rows (every section, its other channels and "The main
@@ -35,6 +36,12 @@ the rule that hides the builds (a release's tag is shown after its title; a rele
 items, the ones after ITEMS listed as OLDER TITLES for the filter only). Official channels (markx/official.py) ask it
 from the jobs process (`ask`, `read_and_ask`) and read the answer's `fits`, `verdict` and `filter`.
 
+**Every day** (0235, `daily`: the jobs process's official pass calls it, every OFFICIAL_EVERY): up to JUDGE_DAILY
+Discover suggestions not judged within CACHE_DAYS, the fastest growing first (discover_rules.growth: their linking
+sources mostly new), JUDGE_PASS a pass, through `ask` + `read_and_ask` as a tap, at DAILY_PRIORITY (a tap's PRIORITY
+still comes first). Before, the official pass checked 10 a day among the first 300 rows of Discover's order (link
+volume): a voice six of your sources had started linking sat at #4,000 of 4,349 and was never judged.
+
 **The cache**: an answered judgement is shown again for CACHE_DAYS (asking is free); one that could not be read, or
 whose question failed, is read again on the next tap (requests, no question). "Ask again" reads again; when the items
 read are the ones the last answer judged (`items_sig`), that answer stands (no question), else a new question.
@@ -68,6 +75,9 @@ PAGE_CHECKS = 2               # item pages read to tell full text from teasers (
 REPEAT_DAYS = 60
 LINK_DAYS = 90
 PRIORITY = -5                 # the owner is waiting: leased before the planners' questions
+JUDGE_DAILY = 15              # 0235: Discover's suggestions the worker judges a day (`daily`)
+JUDGE_PASS = 5                # 0235: of those, at most this many a pass (each a test read, in the pass's process)
+DAILY_PRIORITY = -2           # 0235: after the owner's taps (-5), with the official channels' (-2), before planners (0)
 CLAIM = timedelta(minutes=10)
 STUCK = timedelta(minutes=30)  # a read that never finished (a restart): read again on the next ask
 
@@ -158,10 +168,12 @@ def _stuck(row: Dict[str, Any], now: datetime) -> bool:
         row["busy_until"] is None or row["busy_until"] < now)
 
 
-def ask(cur: Cursor, address: str, *, again: bool = False, now: Optional[datetime] = None) -> Dict[str, Any]:
+def ask(cur: Cursor, address: str, *, again: bool = False, now: Optional[datetime] = None,
+        by: Optional[str] = None) -> Dict[str, Any]:
     """The owner's tap: the judgement of this address shown again while it is CACHE_DAYS fresh (or still being made),
     else a new one to read (`needs_read`). `again`: read again even when fresh (the earlier answer stands when the
-    items read are the same). ValueError: no address."""
+    items read are the same). `by`: who asked a new one (0235: "daily"; None, the owner or the official channels).
+    ValueError: no address."""
     now = now or _now()
     address = (address or "").strip()
     if not address.startswith(("http://", "https://")):
@@ -180,8 +192,8 @@ def ask(cur: Cursor, address: str, *, again: bool = False, now: Optional[datetim
         cur.execute("UPDATE mx_source_judgements SET status = 'failed', reason = 'the read never finished' WHERE id = %s",
                     (last["id"],))
     answered = _rows(cur, "key = %s AND status = 'answered' ORDER BY asked_at DESC, id LIMIT 1", (key,))
-    cur.execute("""INSERT INTO mx_source_judgements (key, address, asked_at, same_as) VALUES (%s, %s, %s, %s)
-                   RETURNING id::text""", (key, address, now, answered[0]["id"] if answered else None))
+    cur.execute("""INSERT INTO mx_source_judgements (key, address, asked_at, same_as, asked_by) VALUES (%s, %s, %s, %s, %s)
+                   RETURNING id::text""", (key, address, now, answered[0]["id"] if answered else None, by))
     return {**get(cur, cur.fetchone()[0]), "needs_read": True}
 
 
@@ -208,12 +220,12 @@ def _on_key(col: str) -> str:
 
 
 def linked(cur: Cursor, key: str, site: str, now: datetime) -> Dict[str, Any]:
-    """How many of your (on) sources' posts link the key's addresses: {sources, posts, recent, names}."""
+    """How many of your (on) sources' posts link (0235: or @mention) the key's addresses: {sources, posts, recent, names}."""
     cur.execute(f"""SELECT p.source_id::text, COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                            count(DISTINCT pl.post_id),
                            count(DISTINCT pl.post_id) FILTER (WHERE {pairing.ix_date('p')} > %(since)s)
                       FROM post_links pl JOIN posts p ON p.id = pl.post_id JOIN sources s ON s.id = p.source_id
-                     WHERE NOT pl.boilerplate AND {suggestable_sql("s.id")} AND pl.target_site = %(site)s AND {_on_key('pl.target_url')}
+                     WHERE (NOT pl.boilerplate OR pl.kind = 'mention') AND {suggestable_sql("s.id")} AND pl.target_site = %(site)s AND {_on_key('pl.target_url')}
                        AND NOT {_on_key('s.handle_or_url')}
                      GROUP BY 1, 2 ORDER BY 3 DESC, 2""",
                 {"key": key, "site": site, "since": now - timedelta(days=LINK_DAYS)})
@@ -683,6 +695,54 @@ def after_answer(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> i
                           answered_at = now() WHERE task_id = %s AND status = 'asked'""",
                 (json.dumps(answer), answer.get("verdict"), str(task["id"])))
     return cur.rowcount
+
+
+# ---- every day (0235) ----------------------------------------------------------------------------------------------
+
+def to_judge(suggestions: Sequence[Dict[str, Any]], judged: Sequence[str], limit: int) -> List[str]:
+    """The Discover suggestions to judge next: every one not judged lately (`judged`: cache keys) whose follow test does
+    not say it can't be followed as a feed, the fastest growing first (its `growth`, discover_rules.growth), then by
+    Discover's score, then its place in the list. Pure."""
+    from insight_core.utils.discover_rules import section
+    done = set(judged)
+    pool = []
+    for i, sg in enumerate(suggestions):
+        key = sg.get("key") or ""
+        if not key or section(sg) == 1 or sg.get("fit") or cache_key(key) in done:
+            continue
+        pool.append((-float(sg.get("growth") or 0.0), -float(sg.get("score") or 0.0), i, key))
+    return [k for *_, k in sorted(pool)[:max(0, limit)]]
+
+
+def daily(db_url: str, now: Optional[datetime] = None, *, reader: Optional[Any] = None,
+          per_day: int = JUDGE_DAILY, per_pass: int = JUDGE_PASS) -> int:
+    """0235: up to `per_day` Discover suggestions judged a day (the judgements `by` "daily" asked in the last 24 hours
+    count), `per_pass` a call, picked by `to_judge` from the list Discover kept last; each `ask` then `read_and_ask` at
+    DAILY_PRIORITY, as a tap is. Returns how many were asked. A judgement's failure is its own (it says why)."""
+    import asyncio
+    from insight_core.db import database
+    from insight_core.db.repo_discover import DiscoverRepository
+    now = now or _now()
+    with database.transaction(db_url) as cur:
+        cur.execute("SELECT count(*) FROM mx_source_judgements WHERE asked_by = 'daily' AND asked_at > %s",
+                    (now - timedelta(days=1),))
+        left = min(per_day - int(cur.fetchone()[0]), per_pass)
+        if left <= 0:
+            return 0
+        found = DiscoverRepository.any_list(cur) or {}
+        cur.execute("SELECT DISTINCT key FROM mx_source_judgements WHERE asked_at > %s", (now - timedelta(days=CACHE_DAYS),))
+        judged = [r[0] for r in cur.fetchall()]
+        asked = []
+        for key in to_judge(found.get("suggestions") or [], judged, left):
+            got = ask(cur, "https://" + key, now=now, by="daily")
+            if got.get("needs_read"):
+                asked.append(got["id"])
+    for jid in asked:
+        try:
+            asyncio.run(read_and_ask(db_url, jid, reader=reader, priority=DAILY_PRIORITY))
+        except Exception:  # noqa: BLE001 - the judgement says why
+            log.exception("Source judge: a daily judgement failed")
+    return len(asked)
 
 
 # ---- what the page shows ----------------------------------------------------------------------------------------

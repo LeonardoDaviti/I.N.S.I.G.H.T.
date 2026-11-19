@@ -281,15 +281,18 @@ class StoriesRepository:
                 ON CONFLICT (post_id, target_url) DO UPDATE
                     SET target_site = EXCLUDED.target_site, position = EXCLUDED.position, link_text = EXCLUDED.link_text,
                         shared_url = EXCLUDED.shared_url, kind = EXCLUDED.kind,
-                        -- A reference is boilerplate (issue 0137 B8); a link the signature pass marks.
-                        boilerplate = CASE WHEN EXCLUDED.kind = 'reference' THEN true
-                                           WHEN post_links.kind = 'reference' THEN false ELSE post_links.boilerplate END
+                        -- A reference is boilerplate (issue 0137 B8), so is a mention (0235); a link the signature
+                        -- pass marks.
+                        boilerplate = CASE WHEN EXCLUDED.kind IN ('reference', 'mention') THEN true
+                                           WHEN post_links.kind IN ('reference', 'mention') THEN false
+                                           ELSE post_links.boilerplate END
                     WHERE (post_links.target_site, post_links.position, post_links.link_text, post_links.shared_url,
                            post_links.kind)
                           IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text, EXCLUDED.shared_url,
                                             EXCLUDED.kind)
                 """,
-                [(post_id, link.url, link.site, link.position, link.text, link.shared, link.kind, link.kind == "reference")
+                [(post_id, link.url, link.site, link.position, link.text, link.shared, link.kind,
+                  link.kind in ("reference", "mention"))
                  for link in links],
             )
 
@@ -306,7 +309,7 @@ class StoriesRepository:
         if row is None:
             return
         url, content_html, platform, handle, content = row
-        self.write_links(cur, post_id, extract_links(content_html, url, source_kind(platform, handle)))
+        self.write_links(cur, post_id, extract_links(content_html, url, source_kind(platform, handle), content))
         PostRefsRepository.read_post(cur, post_id, url, content_html, content)   # issue 0125: every link, Connected's
         cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s AND links_scanned_at IS NULL", (post_id,))
 
@@ -326,12 +329,55 @@ class StoriesRepository:
         )
         rows = cur.fetchall()
         for post_id, url, content_html, platform, handle, content in rows:
-            self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle)))
+            self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle), content))
             PostRefsRepository.write(cur, str(post_id), refs_of(content_html, content, url))   # issue 0125
         if rows:
             cur.execute("UPDATE posts SET links_scanned_at = now(), refs_scanned_at = now() WHERE id = ANY(%s::uuid[])",
                         ([r[0] for r in rows],))
         return len(rows)
+
+    MENTIONS_KEY = "mentions_backfill"   # 0235: {"after": the last post read, "done"} (system_settings)
+
+    def fill_mentions(self, cur: Cursor, limit: int = LINKS_BATCH) -> int:
+        """0235's backfill, resumable: the next `limit` posts of X and Bluesky sources (by id, after the last one read)
+        whose text holds an @, their links read again as extract_links reads them now (the same rows, plus their
+        mentions). The step's place is kept in system_settings (MENTIONS_KEY); a post stored since reads its mentions
+        when it is saved. Returns how many posts were read (0: done)."""
+        cur.execute("SELECT value FROM system_settings WHERE key = %s", (self.MENTIONS_KEY,))
+        row = cur.fetchone()
+        state = row[0] if row and isinstance(row[0], dict) else {}
+        if state.get("done"):
+            return 0
+        cur.execute("SELECT id::text, platform, handle_or_url FROM sources")
+        ids = [i for i, platform, handle in cur.fetchall()
+               if source_kind(platform, handle) == "x" or (platform or "").lower() == "bluesky"]
+        cur.execute(
+            """
+            SELECT p.id, p.url, p.content_html, s.platform, s.handle_or_url, p.content
+            FROM posts p JOIN sources s ON s.id = p.source_id
+            WHERE p.source_id = ANY(%s::uuid[]) AND (%s::uuid IS NULL OR p.id > %s::uuid)
+              AND strpos(COALESCE(p.content_html, p.content, ''), '@') > 0
+            ORDER BY p.id
+            LIMIT %s
+            """,
+            (ids, state.get("after"), state.get("after"), limit),
+        )
+        rows = cur.fetchall()
+        for post_id, url, content_html, platform, handle, content in rows:
+            self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle), content))
+        done = len(rows) < limit
+        cur.execute("""INSERT INTO system_settings (key, value) VALUES (%s, %s::jsonb)
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
+                    (self.MENTIONS_KEY, json.dumps({"after": str(rows[-1][0]) if rows else state.get("after"),
+                                                    "done": done})))
+        return len(rows)
+
+    @staticmethod
+    def mentions_left(cur: Cursor) -> bool:
+        """Whether 0235's backfill has posts left to read (fill_mentions)."""
+        cur.execute("SELECT value FROM system_settings WHERE key = %s", (StoriesRepository.MENTIONS_KEY,))
+        row = cur.fetchone()
+        return not (row and isinstance(row[0], dict) and row[0].get("done"))
 
     @staticmethod
     def missing_links(cur: Cursor) -> bool:
@@ -361,8 +407,8 @@ class StoriesRepository:
             own AS (SELECT * FROM unnest(%(ids)s::uuid[], %(own)s::text[], %(by_host)s::bool[]) AS o(source_id, own, by_host)),
             want AS (
                 SELECT pl.post_id, pl.target_url,
-                       -- A reference is never an ordinary link (issue 0137 B8): always boilerplate.
-                       pl.kind = 'reference' OR (c.posts >= %(min_posts)s AND c.posts >= %(share)s * n.posts)
+                       -- A reference is never an ordinary link (issue 0137 B8), nor a mention (0235): always boilerplate.
+                       pl.kind IN ('reference', 'mention') OR (c.posts >= %(min_posts)s AND c.posts >= %(share)s * n.posts)
                        OR CASE WHEN own.by_host THEN substring(pl.target_url FROM '^[a-z]+://([^/?#:]+)') = own.own
                                ELSE pl.target_site = own.own END AS boilerplate
                 FROM post_links pl
