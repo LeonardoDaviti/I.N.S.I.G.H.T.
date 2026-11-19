@@ -534,11 +534,16 @@ def _iso(t: Optional[datetime]) -> Optional[str]:
 
 
 def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
-    """/markx's "Back in the news": {items [rows judged development, newest window first], counts, precision}. Each
-    row {id, story, headline, first_at, window_at, days_later, trig, posts [{id, n, title, source, at, trig,
+    """/markx's "Back in the news": {on, items [rows judged development, newest window first], counts, precision}.
+    Each row {id, story, headline, first_at, window_at, days_later, trig, posts [{id, n, title, source, at, trig,
     verdict}], old_thing, what_new [the development runs' words], runs, label}: the rows of the engine shown (0180:
-    anchors.shown, old by default; `engine` says which)."""
-    from insight_core.markx import anchors
+    anchors.shown, old by default; `engine` says which).
+
+    0233: shown only while its feature is on (markx/consumers.py `back`; off since 0210, its bar failed at 68%): off,
+    `on` is false and no row, count or precision is read (the rows stay, kept)."""
+    from insight_core.markx import anchors, consumers
+    if not consumers.states(cur)[KIND]:
+        return {"on": False, "items": [], "counts": {}, "precision": None, "measured": MEASURED, "engine": None}
     engine = anchors.shown(cur)
     cur.execute("""SELECT b.id::text, b.story::text, b.members::text[], b.first_at, b.window_at, b.trig,
                           b.posts::text[], b.post_trig, b.task_id::text
@@ -579,8 +584,8 @@ def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
                       "old_thing": next((a.get("old_thing") for a in dev if a.get("old_thing")), None),
                       "what_new": list(dict.fromkeys(str(a["what_new"]) for a in dev if a.get("what_new"))),
                       "runs": v["runs"], "label": marks.get(bid)})
-    return {"items": items, "counts": dict(counts), "precision": precision(cur, engine=engine), "measured": MEASURED,
-            "engine": engine}
+    return {"on": True, "items": items, "counts": dict(counts), "precision": precision(cur, engine=engine),
+            "measured": MEASURED, "engine": engine}
 
 
 def precision(cur: Any, *, engine: Optional[str] = None) -> Dict[str, Any]:

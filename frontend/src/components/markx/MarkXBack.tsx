@@ -77,12 +77,14 @@ function Row({ row }: { row: MarkxBackRow }) {
 
 /**
  * Back in the news (issue 0136, Shadow): old Mark IX stories with a fresh development, judged by Haiku three times.
- * Shown on /markx only, never in Mark IX's News; each row takes the owner's label, and the running precision is shown.
+ * Shown on /markx only, never in Mark IX's News, and only while its feature is on (0233: off, as its bar failed, it
+ * renders nothing); each row takes the owner's label, and the running precision is shown.
  */
 export default function MarkXBack() {
   const query = useQuery({ queryKey: ['markx-back'], queryFn: () => markxBackApi.list(), staleTime: 60_000 });
-  if (!query.data) return null;   // loading or failed: Mark X News below stands alone
-  const { items, precision, measured, counts } = query.data;
+  if (!query.data) return null;   // loading or failed: Mark X News stands alone
+  const { on, items, precision, measured, counts } = query.data;
+  if (!on || !precision) return null;   // 0233: its feature is off (its bar failed): not shown at all
   if (!items.length && !counts.candidates) return null;
   return (
     <section aria-label="Back in the news" className="mb-8">

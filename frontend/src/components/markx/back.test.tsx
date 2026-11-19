@@ -10,6 +10,7 @@ import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
 const PAGE: MarkxBack = {
+  on: true,
   items: [{
     id: 'b1', story: 's1', headline: 'Widget 4.1 preview', first_at: '2026-06-01T10:00:00+00:00',
     window_at: '2026-07-10T10:00:00+00:00', days_later: 39, trig: ['E'],
@@ -65,6 +66,16 @@ describe('Back in the news (0136)', () => {
     vi.spyOn(markxBackApi, 'list').mockResolvedValue({ ...PAGE, precision: { labelled: 4, development: 3, precision: 0.75 } });
     renderWithProviders(<MarkXBack />, { api: makeFakeApi({}) });
     expect(await screen.findByRole('region', { name: 'Back in the news' })).toHaveTextContent('your labels: 3 of 4 development (75%)');
+  });
+
+  it('shows nothing while its feature is off (0233)', async () => {
+    const list = vi.spyOn(markxBackApi, 'list').mockResolvedValue(
+      { ...PAGE, on: false, items: [], counts: {}, precision: null });
+    renderWithProviders(<MarkXBack />, { api: makeFakeApi({}) });
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));   // the query settles
+    expect(screen.queryByRole('region', { name: 'Back in the news' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/measured 87% precise/)).not.toBeInTheDocument();
   });
 
   it('shows nothing before the first candidate', async () => {

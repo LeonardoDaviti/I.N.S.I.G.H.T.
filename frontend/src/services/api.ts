@@ -1982,7 +1982,9 @@ export interface MarkxBackRow {
 }
 export interface MarkxBackPrecision { labelled: number; development: number; precision: number | null; }
 export interface MarkxBack {
-  items: MarkxBackRow[]; counts: Record<string, number>; precision: MarkxBackPrecision;
+  /** 0233: its feature's switch (markx/consumers.py `back`, off since its bar failed): off, nothing is shown. */
+  on: boolean;
+  items: MarkxBackRow[]; counts: Record<string, number>; precision: MarkxBackPrecision | null;
   measured: { precision: number; lo: number; hi: number; n: number; words: string };
 }
 export const markxBackApi = {
