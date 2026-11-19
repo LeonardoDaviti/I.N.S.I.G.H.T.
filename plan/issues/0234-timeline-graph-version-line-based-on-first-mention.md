@@ -48,6 +48,14 @@ panel's "X is the next version after Y" now needs both stops announced (or repor
 order; on the dev check it has fewer links and none wrong. That changes served edges without a fresh measure: the
 integrator's call (risk listed in the report).
 
+**Integrator's call (v10.25, 2026-11-19): ship the new line for `next_version`.** No switch: a second path to the old
+line would be a parallel path. The old line was 78.8-84.3% right; the new one was 143 right, 2 split, 0 wrong of 145 on the dev
+check (in sample) and only removes links. The risk is fewer "next version" links, not wrong ones. A fresh held-out measure is owed
+once real data is allowed again.
+
+**`derive.ask` on (v10.25 integrator).** It only asks questions (a few a day, 3 Haiku runs a pair). No edge is written while
+`derived.based_on` is off, and it collects the server's own pairs for the 36+ the bar needs.
+
 **Slice E's fix changes these numbers**: a family's members and name decide which versions share a line (the other
 makers' fine-tunes under a family, #3, are mostly cut by the maker rule already; Claude's tiers are separate families on
 the server today, so no grid appears for them until E puts them under one family).
