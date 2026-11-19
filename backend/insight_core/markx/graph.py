@@ -1495,12 +1495,14 @@ def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence
 
 
 def chain_config() -> Dict[str, Any]:
-    """entity_bands.json `chains`: `on` (the planner asks and syncs; the story page shows) and `shown` (the relations a
-    reader sees; the others are stored, not shown: they failed their bar)."""
+    """entity_bands.json `chains`: `on` (the planner asks and syncs; the story page shows), `shown` (the relations a
+    reader sees; the others are stored, not shown: they failed their bar) and `one_row` (0236: News makes the stories
+    a current same_release edge joins one row: `release_groups`)."""
     from insight_core.markx import identity as I
     got = I.bands().get("chains") or {}
     return {"on": bool(got.get("on", False)),
-            "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS)}
+            "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS),
+            "one_row": bool(got.get("one_row", False))}
 
 
 def chain_pairs(stops: Dict[str, Sequence[Tuple[datetime, str]]], fresh: Optional[Set[str]] = None,
@@ -1704,6 +1706,47 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
         out[side] = items[:shown]
         out[side + "_more"] = max(0, len(items) - shown)
     return out
+
+
+def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[List[str]]:
+    """0236: the one-release groups of these same_release edges [(a, b, thing)]: each story keeps only the edges of
+    its own release thing (the thing most of its edges are about, then the lowest id), so a group is one thing and a
+    story that is a stop of two things never chains them; each group 2+ stories, sorted. Pure."""
+    edges = sorted((str(a), str(b), str(t or "")) for a, b, t in edges if a != b)
+    by: Dict[str, Counter] = defaultdict(Counter)
+    for a, b, t in edges:
+        by[a][t] += 1
+        by[b][t] += 1
+    own = {s: min(c, key=lambda t: (-c[t], t)) for s, c in by.items()}
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+    for a, b, t in edges:
+        if own[a] == t and own[b] == t:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+    groups: Dict[str, List[str]] = defaultdict(list)
+    for s in sorted(by):
+        groups[find(s)].append(s)
+    return sorted(g for g in groups.values() if len(g) >= 2)
+
+
+def release_groups(cur: Any, story_ids: Iterable[str]) -> List[List[str]]:
+    """0236 (the one-release row, 0217's input): the groups of `story_ids` the current same_release chain edges join
+    (`release_components`: one thing a group); [] while chain_config's `one_row` is off. An edge is between two stops
+    of one exact thing (stop-v1 says each story is about it), so a story that only mentions the thing is in none (the
+    runaway guard). One read of the chain rows."""
+    ids = sorted({str(s) for s in story_ids if s})
+    if not ids or not chain_config().get("one_row"):
+        return []
+    cur.execute(f"""SELECT a::text, b::text, evidence->>'thing' FROM mx_connections
+                     WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
+                       AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])""", {"s": ids})
+    return release_components(cur.fetchall())
 
 
 # the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
