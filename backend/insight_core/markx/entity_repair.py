@@ -65,7 +65,8 @@ def config() -> Dict[str, Any]:
     got = I.bands().get("repairs") or {}
     return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
             "reparent": got.get("reparent", True),
-            "families": got.get("families", True), "shown": got.get("shown", True)}
+            "families": got.get("families", True), "shown": got.get("shown", True),
+            "family_home": got.get("family_home", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -374,6 +375,64 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
             book.kids()[fam].append(v.id)
             out["versions"] += 1
     out["families_made"] = len(w.made) - made_before
+    return dict(out)
+
+
+# ---- 2b. a version's family: its stem and its maker's (0230: identity's rule, for the versions made before it) -----
+
+def family_home(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = REPARENT_LIMIT) -> Dict[str, int]:
+    """0230: the versions linked before identity's family rule (identity.family_stem, other_maker): one whose parent is
+    a version of a family (a member's name taken as a family's) gets that family (mx_entity_fixes kind 'family_stem');
+    another maker's thing under a family (its stated maker none of the family's) becomes a thing of its own maker,
+    `based_on` the family (kind 'family_maker', the old level and parent kept). An org-like parent is reparent's.
+    Idempotent; `limit` changes a run."""
+    out = Counter({"stem": 0, "other_maker": 0, "edges": 0})
+    on = I.families_on()
+    if not (on["maker"] or on["stem"]):
+        return {**out, "off": True}
+    versions = _versions(book)
+    book.prime(ids={e.parent for e in versions})
+    parents = {book.root(e.parent) for e in versions}
+    book.prime_clusters(parents)
+    book.prime_sides(m for r in parents if r for m in book.cluster(r))
+    orgish: Dict[str, bool] = {}
+    for e in versions:
+        if out["stem"] + out["other_maker"] >= limit:
+            break
+        p = book.root(e.parent)
+        if p not in book.ents:
+            continue
+        fam = I.family_stem(book, p)
+        if fam not in orgish:
+            orgish[fam] = book.org_like(fam)
+        if orgish[fam]:
+            continue
+        old = {"level": e.level, "parent": e.parent}
+        if I.other_maker(book, fam, e.maker):
+            up = I._maker_entity(w, e.maker, e.first_seen) if N.key(e.maker) != e.key else None
+            cur.execute("UPDATE mx_entities SET level = 'thing', parent = %s WHERE id = %s", (up, e.id))
+            makers = I.family_makers(book, fam)
+            cur.execute("""INSERT INTO mx_entity_fixes (kind, entity_id, field, old, new, evidence, run_id)
+                           VALUES ('family_maker', %s, 'parent', %s::jsonb, %s::jsonb, %s::jsonb, %s)""",
+                        (e.id, json.dumps(old), json.dumps({"level": "thing", "parent": up}),
+                         json.dumps({"family": fam, "family_name": book.label(fam), "maker": e.maker,
+                                     "family_makers": makers}), run_id))
+            out["edges"] += I.based_on_family(cur, e.id, fam, maker=e.maker, makers=makers, run_id=run_id)
+            kids = book.kids().get(e.parent)
+            if kids and e.id in kids:
+                kids.remove(e.id)
+            e.level, e.parent = "thing", up
+            out["other_maker"] += 1
+        elif fam != p:
+            cur.execute("UPDATE mx_entities SET parent = %s WHERE id = %s", (fam, e.id))
+            cur.execute("""INSERT INTO mx_entity_fixes (kind, entity_id, field, old, new, evidence, run_id)
+                           VALUES ('family_stem', %s, 'parent', %s::jsonb, %s::jsonb, %s::jsonb, %s)""",
+                        (e.id, json.dumps(old["parent"]), json.dumps(fam),
+                         json.dumps({"was": book.label(p), "family": book.label(fam)}), run_id))
+            e.parent = fam
+            book.version_parents().add(fam)
+            book.kids()[fam].append(e.id)
+            out["stem"] += 1
     return dict(out)
 
 
@@ -747,7 +806,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-STEPS = ("org_family", "product_accounts", "reparent", "families")
+STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home")
 GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
 
 
@@ -764,7 +823,8 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
     steps = {"org_family": lambda: undo_org_family(cur, book, run_id=run_id),
              "product_accounts": lambda: product_accounts(cur, book, run_id=run_id),
              "reparent": lambda: reparent(cur, book, w, run_id=run_id),
-             "families": lambda: merge_families(cur, book, run_id=run_id)}
+             "families": lambda: merge_families(cur, book, run_id=run_id),
+             "family_home": lambda: family_home(cur, book, w, run_id=run_id)}
     last = last or {}
     took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
     start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0

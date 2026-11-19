@@ -58,6 +58,12 @@
     "derived": {"about": "0224 (graph.derived, plan/issues/0223 section 0224): read from ent-v5's own fields, no relation asked; each also needs its relation on above. Measured 2026-11-17 on frozen held-out sets of the 11-05 server copy (ent-v5 read by Haiku as the worker asks it; two blind labellers with 0220's guide, a referee on splits). released = the reading's subject (model, product, software) whose `maker` names an org or person the reading lists as subject or actor: held out 2 175/180 (97.2%, Wilson 93.7-98.8; random posts 36/36): on. (Any thing with its maker anywhere in the reading: held out 1 138/200, 69.0%.) based_on = the subject based on each `predecessor`: held out 1 20/33 (60.6%, 43.7-75.3): off (a predecessor is mostly what the subject replaces or is compared with).",
                 "released": true, "based_on": false}
   },
+  "families": {
+    "about": "0230 (markx/identity.py: family_makers, family_stem, namesakes; entity_repair.family_home for the data made before). maker: a versioned thing whose stated maker is none of its family's (the maker its members state most, and any a fifth of them state) is a thing of its own maker, based_on the family (edge rule family_maker), never a member. stem: a family key naming one of a family's versions or variants is that family. namesakes: a relation's side whose post gives it another maker than its entity's is no evidence. Built 2026-11-19, NOT measured on real data (the scratch server was wiped and real-data testing stopped that day): off until a frozen sample of >= 150 memberships passes 97% / Wilson 90%.",
+    "maker": false,
+    "stem": false,
+    "namesakes": false
+  },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},
     {"opinion": "first", "guard": "none", "band": "0.85-0.90", "auto": false, "right": 46, "n": 49},

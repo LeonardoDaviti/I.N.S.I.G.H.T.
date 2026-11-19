@@ -583,14 +583,15 @@ def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Di
         if at is not None:
             posts[pid].append({"name": name, "span": span, "type": typ, "role": role, "maker": maker, "eid": pin or eid})
             dates[pid] = at
-    out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
+    found = []
     for pid, ms in posts.items():
         for a, rel, b in derived(ms, on):
             if ms[a]["eid"] and ms[b]["eid"]:
                 ra, rb = root(ms[a]["eid"]), root(ms[b]["eid"])
                 if ra != rb:
-                    out[(ra, rb, rel)][pid] = dates[pid]
-    return out
+                    found.append(((ra, rb, rel), pid, dates[pid],
+                                  *[(x["eid"], x["maker"], x["type"], x["name"]) for x in (ms[a], ms[b])]))
+    return _same_makers(cur, found, root)
 
 
 def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
@@ -623,16 +624,16 @@ def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, 
         return {}
     cur.execute("""SELECT m.call_id::text, m.post_id::text, m.guide, m.n, m.name, m.span, m.entity_id::text, m.maker,
                           (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
-                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1)
+                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1), m.type
                      FROM mx_mentions_now m WHERE m.call_id = ANY(%s::uuid[]) ORDER BY m.call_id, m.n""", (sorted(calls),))
-    names: Dict[str, Dict[str, Tuple[str, Optional[str]]]] = defaultdict(dict)
-    for cid, _pid, _g, _n, name, span, eid, maker, pin in cur.fetchall():
+    names: Dict[str, Dict[str, Tuple[str, Optional[str], Optional[str], Optional[str]]]] = defaultdict(dict)
+    for cid, _pid, _g, _n, name, span, eid, maker, pin, typ in cur.fetchall():
         eid = pin or eid
         if eid:
             for k in (N.key(name), N.key(span)):
                 if k:
-                    names[cid].setdefault(k, (eid, maker))
-    out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
+                    names[cid].setdefault(k, (eid, maker, typ, name))
+    found = []
     for cid, (pid, rels, at) in calls.items():
         for r in rels if isinstance(rels, list) else []:
             if not isinstance(r, dict) or r.get("rel") not in on:
@@ -642,7 +643,21 @@ def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, 
                 continue
             ra, rb = root(a[0]), root(b[0])
             if ra != rb:
-                out[(ra, rb, r["rel"])][pid] = at
+                found.append(((ra, rb, r["rel"]), pid, at, a, b))
+    return _same_makers(cur, found, root)
+
+
+def _same_makers(cur: Any, found: Sequence[Tuple[Tuple[str, str, str], str, datetime, Tuple, Tuple]],
+                 root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
+    """0230: the relations found, each side's post about the entity's own maker (identity.namesakes: never another
+    maker's thing of the name): {(a root, b root, relation): {post: date}}. A side: (entity, maker, type, name)."""
+    from insight_core.markx import identity as I
+    sides = [(t[k], s[2], s[1], s[3]) for t, _p, _at, a, b in found for k, s in ((0, a), (1, b))]
+    bad = I.namesakes(cur, sides, root)
+    out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
+    for k, (t, pid, at, _a, _b) in enumerate(found):
+        if 2 * k not in bad and 2 * k + 1 not in bad:
+            out[t][pid] = at
     return out
 
 
@@ -766,14 +781,17 @@ def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, dead
 
 def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
     """The entity page's relations (0220): its current stated edges of the relations switched on, either side being
-    one of `members` (its cluster): [{relation, direction (out: it -> other; in), other (an id), since, posts}]."""
+    one of `members` (its cluster): [{relation, direction (out: it -> other; in), other (an id), since, posts}].
+    0230: and identity's based_on of another maker's thing made from a family (rule identity.FAMILY_RULE, no posts)."""
+    from insight_core.markx import identity as I
     on = sorted(relations_on())
     ids = sorted(set(members))
     if not on or not ids:
         return []
     cur.execute("""SELECT a::text, b::text, relation, evidence FROM mx_connections
-                    WHERE valid_to IS NULL AND rule = %s AND a_kind = 'entity' AND b_kind = 'entity'
-                      AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""", (RULE_STATED, on, ids, ids))
+                    WHERE valid_to IS NULL AND rule = ANY(%s) AND a_kind = 'entity' AND b_kind = 'entity'
+                      AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
+                ([RULE_STATED, I.FAMILY_RULE], on, ids, ids))
     mine = set(ids)
     out = []
     for a, b, rel, ev in cur.fetchall():
