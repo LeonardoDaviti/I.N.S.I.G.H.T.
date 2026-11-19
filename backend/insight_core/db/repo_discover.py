@@ -42,7 +42,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
@@ -72,6 +72,15 @@ DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read (system_settings, issue 0080)
 WORK_MEM = "48MB"
 
+
+
+def read_sql(alias: str = "") -> str:
+    """SQL: a post_links row Discover reads (0235): a kept link (not boilerplate), or an @mention (stored as boilerplate
+    so no story, News or Mark X rule reads it; Discover and the scout's match finder do)."""
+    a = alias + "." if alias else ""
+    return f"(NOT {a}boilerplate OR {a}kind = 'mention')"
+
+
 _COUNTS = """
 WITH src AS (
     SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[], %(accounts)s::text[], %(selves)s::text[])
@@ -86,31 +95,36 @@ reposted AS MATERIALIZED (        -- a post of a platform account at another acc
     WHERE (d.url IS NULL OR (d.platform AND d.key <> s.account))
       AND (%(keys)s::text[] IS NULL OR d.key = ANY(%(keys)s))   -- the keys asked (issue 0072: a story run's)
 ),
-kept_url AS MATERIALIZED (        -- each address a kept link points to, and what Discover reads of it
-    SELECT u.url, d.key COLLATE "C" AS key, d.site, d.platform, d.article, d.url IS NULL AS unknown
-    FROM (SELECT target_url COLLATE "C" AS url FROM post_links WHERE NOT boilerplate AND %(keys)s::text[] IS NULL
+mention_url AS MATERIALIZED (     -- 0235: the addresses posts @mention (an account's own; stored as boilerplate)
+    SELECT DISTINCT target_url COLLATE "C" AS url FROM post_links WHERE kind = 'mention'
+),
+kept_url AS MATERIALIZED (        -- each address a kept link (or a mention) points to, and what Discover reads of it
+    SELECT u.url, d.key COLLATE "C" AS key, d.site, d.platform, d.article, d.url IS NULL AS unknown,
+           u.url IN (SELECT url FROM mention_url) AS mentioned
+    FROM (SELECT target_url COLLATE "C" AS url FROM post_links WHERE """ + "{read}" + """ AND %(keys)s::text[] IS NULL
           UNION SELECT a.url COLLATE "C" FROM discover_addresses a      -- the keys asked: their linked addresses
                 WHERE a.key = ANY(%(keys)s) AND a.rules = %(rules)s
-                  AND EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = a.url AND NOT pl.boilerplate)
+                  AND EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = a.url AND """ + "{read_pl}" + """)
           UNION SELECT url FROM reposted WHERE NOT unknown) u
     LEFT JOIN discover_addresses d ON d.url = u.url AND d.rules = %(rules)s
 ),
 unknown AS (SELECT (SELECT count(*) FROM kept_url WHERE unknown) + (SELECT count(*) FROM reposted WHERE unknown) AS n),
 unfollowed AS MATERIALIZED (      -- those with a key, not a tweet mirror's other pages (issue 0067; one you
-    SELECT url, key, article FROM kept_url   -- follow or hid is left out when read: discover_open)
+    SELECT url, key, article, mentioned FROM kept_url   -- follow or hid is left out when read: discover_open)
     WHERE key IS NOT NULL AND (platform OR NOT key = ANY(%(mirrors)s))
 ),
-candidate AS MATERIALIZED (       -- keys with 2+ article-like addresses, 40%%+ of their addresses
+candidate AS MATERIALIZED (       -- keys with 2+ article-like addresses, 40%%+ of their addresses, or (0235) @mentioned
     SELECT key, count(*) FILTER (WHERE article) AS articles, count(*) AS links,
            COALESCE(array_agg(url) FILTER (WHERE url IN (SELECT target_url FROM classics)), '{}') AS classics
     FROM unfollowed GROUP BY key
-    HAVING count(*) FILTER (WHERE article) >= %(min_articles)s
-       AND count(*) FILTER (WHERE article) >= %(share)s::float8 * count(*)
+    HAVING (count(*) FILTER (WHERE article) >= %(min_articles)s
+            AND count(*) FILTER (WHERE article) >= %(share)s::float8 * count(*))
+        OR bool_or(mentioned)     -- an account named by posts needs no article, only its voices (0235)
 ),
 linked AS MATERIALIZED (          -- the kept links to those keys' addresses, but Saved's and a source's
     SELECT u.key, u.url, u.article, pl.post_id, p.source_id,   -- links to its own pages (issue 0080)
            COALESCE(s.kind, 'site') AS kind, COALESCE(s.own_site, '') AS own_site
-    FROM unfollowed u JOIN post_links pl ON pl.target_url = u.url AND NOT pl.boilerplate
+    FROM unfollowed u JOIN post_links pl ON pl.target_url = u.url AND """ + "{read_pl}" + """
     JOIN posts p ON p.id = pl.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE u.key IN (SELECT key FROM candidate) AND s.kind IS DISTINCT FROM 'saved'
       AND """ + suggestable_sql("p.source_id") + """   -- a source switched off links nothing (issue 0200)
@@ -166,6 +180,8 @@ UNION ALL   -- the unknown count also when nothing is kept
 SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, (SELECT n FROM unknown)
 """
 
+_COUNTS = _COUNTS.replace("{read_pl}", read_sql("pl")).replace("{read}", read_sql())
+
 # The hosts where tweets are found by shape (0066's TWEET_PATH in a link of a post's HTML): X and its
 # mirrors (nitter.net, xcancel.com, ...), found, never listed. Read once per post, after its links are
 # read (links_scanned_at): the kept hosts and the newest post read are kept with Discover's counts.
@@ -218,15 +234,20 @@ WHERE host IN (SELECT host FROM grouped, unnest(voices) v GROUP BY host
 """
 
 # Each suggestion's activity (issue 0080: Discover's order): when your sources last linked it, and how many
-# of the posts linking it you opened or read.
+# of the posts linking it you opened or read; 0235, in the same pass: how many of the sources linking it first did
+# since %(since)s (discover_rules.GROWTH_DAYS ago), and how many before (discover_rules.growth).
 _ACTIVITY = f"""
-SELECT d.key, max({pairing.ix_date('p')}),
-       count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
-           SELECT 1 FROM post_interactions i WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session')))
-FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND NOT pl.boilerplate
-JOIN posts p ON p.id = pl.post_id LEFT JOIN post_reader_state rs ON rs.post_id = p.id
-WHERE d.rules = %(rules)s AND d.key = ANY(%(keys)s) AND {suggestable_sql("p.source_id")}
-GROUP BY d.key
+SELECT key, max(last_at), sum(opened)::int, count(*) FILTER (WHERE first_at > %(since)s),
+       count(*) FILTER (WHERE first_at <= %(since)s)
+FROM (SELECT d.key, p.source_id, max({pairing.ix_date('p')}) AS last_at, min({pairing.ix_date('p')}) AS first_at,
+             count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
+                 SELECT 1 FROM post_interactions i WHERE i.post_id = p.id
+                    AND i.interaction_type IN ('opened', 'reading_session'))) AS opened
+      FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND {read_sql("pl")}
+      JOIN posts p ON p.id = pl.post_id LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+      WHERE d.rules = %(rules)s AND d.key = ANY(%(keys)s) AND {suggestable_sql("p.source_id")}
+      GROUP BY d.key, p.source_id) per_source
+GROUP BY key
 """
 
 # A website voice is named after the source of its first kept link in post order; asked only for
@@ -276,7 +297,7 @@ class DiscoverRepository:
         if urls is None:   # a story run's addresses are counted only while the rules hold (StoriesService._counted)
             cur.execute("DELETE FROM discover_addresses WHERE rules <> %s", (rules,))
         only = None if urls is None else sorted(set(urls))
-        cur.execute("SELECT url FROM (SELECT target_url AS url FROM post_links WHERE NOT boilerplate "
+        cur.execute("SELECT url FROM (SELECT target_url AS url FROM post_links WHERE " + read_sql() + " "
                     "AND (%(only)s::text[] IS NULL OR target_url = ANY(%(only)s)) "
                     "UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%(sources)s::uuid[]) "
                     "AND (%(only)s::text[] IS NULL OR COALESCE(normalized_url, url) = ANY(%(only)s))) a "
@@ -302,7 +323,7 @@ class DiscoverRepository:
         address, else at its address (COALESCE(normalized_url, url)), asked as the two indexed lookups (v10.22: the
         COALESCE has no index, so every call read every post: 2.3 s a story batch on the server, deleting none)."""
         cur.execute("DELETE FROM discover_addresses d WHERE (%(only)s::text[] IS NULL OR d.url = ANY(%(only)s)) "
-                    "AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
+                    "AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND " + read_sql("pl") + ") "
                     "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = d.url) "
                     "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = d.url AND p.normalized_url IS NULL)",
                     {"only": None if urls is None else list(urls)})
@@ -380,10 +401,14 @@ class DiscoverRepository:
         return find_platforms((host, tuple(segs), n, voices) for host, segs, n, voices in cur.fetchall())
 
     @staticmethod
-    def activity(cur: Cursor, keys: Iterable[str], platforms: Platforms = {}) -> Dict[str, Tuple[Optional[datetime], int]]:
-        """Each key's last link (its post's time) and the posts linking it you opened or read (issue 0080)."""
-        cur.execute(_ACTIVITY, {"rules": address_stamp(platforms), "keys": sorted(keys)})
-        return {key: (last, int(opened)) for key, last, opened in cur.fetchall()}
+    def activity(cur: Cursor, keys: Iterable[str], platforms: Platforms = {}, *, since: Optional[datetime] = None
+                 ) -> Dict[str, Tuple[Optional[datetime], int, int, int]]:
+        """Each key's last link (its post's time), the posts linking it you opened or read (issue 0080), and (0235) the
+        sources linking it that first did after `since` and those that did before (none counted without `since`)."""
+        cur.execute(_ACTIVITY, {"rules": address_stamp(platforms), "keys": sorted(keys),
+                                "since": since or datetime.max.replace(tzinfo=timezone.utc)})
+        return {key: (last, int(opened or 0), int(new) if since else 0, int(old) if since else 0)
+                for key, last, opened, new, old in cur.fetchall()}
 
     @staticmethod
     def mirrors(cur: Cursor, kept: Optional[Dict[str, Any]]) -> Tuple[List[str], Optional[str]]:
@@ -575,7 +600,7 @@ class DiscoverRepository:
         ids = sorted(post_ids)
         if not ids:
             return set()
-        cur.execute("""SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND NOT boilerplate
+        cur.execute("""SELECT target_url FROM post_links WHERE post_id = ANY(%(ids)s::uuid[]) AND """ + read_sql() + """
                        UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE id = ANY(%(ids)s::uuid[])""",
                     {"ids": ids})
         return DiscoverRepository.keys_of(cur, [r[0] for r in cur.fetchall() if r[0]], platforms)
@@ -754,4 +779,4 @@ def voice_source(voice: str, site_namers: Dict[str, str]) -> Optional[str]:
     return source_id if source_id is not None else site_namers.get(voice)
 
 
-__all__ = ["DiscoverRepository", "ADDRESS_RULES"]
+__all__ = ["DiscoverRepository", "ADDRESS_RULES", "read_sql"]

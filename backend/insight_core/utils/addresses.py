@@ -26,6 +26,7 @@ PLATFORM_SITES = {
     "x": frozenset({"x.com", "twitter.com"}),
     "telegram": frozenset({"t.me", "telegram.me", "telegram.org"}),
     "youtube": frozenset({"youtube.com", "youtu.be"}),
+    "bluesky": frozenset({"bsky.app"}),   # 0235: an account is bsky.app/profile/<handle> (account_key)
 }
 # A first path segment that names a kind of account, the account's name following it:
 # reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
@@ -106,7 +107,8 @@ def account_key(url: str) -> str:
     host, _, rest = bare(url).partition("/")
     segments = rest.split("?", 1)[0].split("/")
     first = segments[0].lower()
-    if first in ACCOUNT_NAMESPACES and len(segments) > 1 and segments[1]:
+    profile = first == "profile" and site_of(host) in PLATFORM_SITES["bluesky"]   # 0235: bsky.app/profile/<handle>
+    if (first in ACCOUNT_NAMESPACES or profile) and len(segments) > 1 and segments[1]:
         return f"{host.lower()}/{first}/{segments[1].lower()}"
     return f"{host.lower()}/{first}"
 

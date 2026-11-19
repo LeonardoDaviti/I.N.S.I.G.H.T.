@@ -58,7 +58,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               other_channel, owner_domain, place_kind, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
-from insight_core.utils.discover_rules import page_key_of, pages as pages_of
+from insight_core.utils.discover_rules import GROWTH_DAYS, growth, page_key_of, pages as pages_of
 from insight_core.utils.entity_originals import supplier_reason
 from insight_core.utils.originals_rules import SiteReads, site_reads_of, strip_access_tokens, tokened
 from insight_core.utils.tree_rules import _PAGE, slug_title
@@ -970,7 +970,10 @@ class StoriesService:
         """The list (`_discover_all`) with the rows read now: Mark X's originals (0138 D). Archive rows are read
         on each page (`_page`). Without `persist`, nothing is written (`_discover_all`)."""
         result = self._discover_all(persist=persist)
-        return self._from_originals(result)   # 0138 D: never kept with the list
+        result = self._from_originals(result)   # 0138 D: never kept with the list
+        # 0235: the worker's judgements order the whole answer, not only the page an open reads (the served answer is
+        # sliced in Postgres: a row judged "follow" at #4,000 never reached the first page's window)
+        return {**result, "suggestions": self._by_fit(result["suggestions"])}
 
     def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
               q: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
@@ -1127,12 +1130,13 @@ class StoriesService:
             held = self._held(cur, sources, roots, followed, platforms)
             started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]), platforms=platforms)
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
-            activity = DiscoverRepository.activity(cur, [s["key"] for s in counted["found"]], platforms)
+            activity = DiscoverRepository.activity(cur, [s["key"] for s in counted["found"]], platforms,   # 0235: growth
+                                                   since=self.clock() - timedelta(days=GROWTH_DAYS))
             reads = DiscoverRepository.reads(cur)
             title_of = self._title_map(cur, sources, counted, started, reads.get("titles", {}))
         now = self.clock()
         saved = set(sources.of_kind("saved"))
-        out, references, last, weight = [], {}, {}, {}
+        out, references, last, weight, grown = [], {}, {}, {}, {}
         linkers: Dict[str, Set[str]] = defaultdict(set)   # a key -> the sources whose posts link it (issue 0109)
         for s in counted["found"]:
             if not discover_open(s["key"], site_of(s["key"]), "/" in s["key"], followed=followed, hidden=hidden,
@@ -1141,7 +1145,8 @@ class StoriesService:
             names = {voice: sources.voice_name(voice, source_id or "") for voice, source_id in s["voices"]}
             linking = _linking(sources, ((v, i, v in s["roundups"]) for v, i in s["voices"]), s.get("sources", ()), saved)
             weight[s["key"]] = len(linking) - sum(1 for only, _ in linking if only) / 2
-            last[s["key"]] = activity.get(s["key"], (None, 0))[0]
+            last[s["key"]], _, new, old = activity.get(s["key"], (None, 0, 0, 0))
+            grown[s["key"]] = growth(new=new, old=old)   # 0235: its linking sources mostly new
             linkers[s["key"]].update(i for _, i in s["voices"] if i)
             suggestion = {
                 "key": s["key"],
@@ -1154,7 +1159,7 @@ class StoriesService:
                 "articles": [{"url": url, "title": title, "linked_by": sorted({names[v] for v in voices})}
                              for url, voices, title in s["articles"]],
                 "origins": 0,
-                "opened": activity.get(s["key"], (None, 0))[1],
+                "opened": activity.get(s["key"], (None, 0, 0, 0))[1],
             }
             kind = place_kind(s["key"], [a["url"] for a in suggestion["articles"]])
             if kind in REFERENCE_KINDS:   # help, docs, records and data (issue 0109): a quiet line
@@ -1195,8 +1200,9 @@ class StoriesService:
         follow = reads.get("follow", {})
         for s in out:
             days = (now - last[s["key"]]).total_seconds() / 86400 if last.get(s["key"]) else None
+            s["growth"] = round(grown.get(s["key"], 0.0), 3)   # 0235: the daily judge picks by it (source_judge.daily)
             s["score"] = round(score(origins=s["origins"], classics=s["classics"], opened=s["opened"],
-                                     voices=weight[s["key"]], days=days), 3)
+                                     voices=weight[s["key"]], days=days, grown=s["growth"]), 3)
             s["days"] = days
             test = follow.get(s["key"])
             if test:

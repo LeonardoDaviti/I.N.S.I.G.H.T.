@@ -280,13 +280,14 @@ class _Scout(_Api):
 
 
 class Triggers(_Scout):
-    def test_the_weekly_trigger_picks_a_quiet_track_once_a_week(self):
+    def test_the_weekly_trigger_picks_every_track_once_a_week(self):
         with self.conn.transaction():
             self.assertEqual(scout.due_weekly(self.cur, NOW), [self.folder])
         for k in range(5):
             self.in_post(f"part {k}", at=NOW - k * DAY)
         with self.conn.transaction():
-            self.assertEqual(scout.due_weekly(self.cur, NOW), [])            # 5 in in 7 days: not quiet
+            # 0235: 5 in in 7 days, not quiet, and still scouted weekly for better sources (was: never)
+            self.assertEqual(scout.due_weekly(self.cur, NOW), [self.folder])
         clear_tables(self.cur, "mx_track_items")
         reader = StubReader()
         with mock.patch.object(scout, "default_reader", return_value=reader), \
@@ -298,6 +299,28 @@ class Triggers(_Scout):
         with self.conn.transaction():
             self.assertEqual(scout.due_weekly(self.cur, NOW), [])            # scouted this week
             self.assertEqual(scout.due_weekly(self.cur, NOW + 8 * DAY), [self.folder])
+
+    def test_a_starving_track_goes_first_and_weekly_runs_follow_each_other(self):
+        # 0235: two described tracks: the healthy one (5 in this week) and a starving one (none)
+        for k in range(5):
+            self.in_post(f"part {k}", at=NOW - k * DAY)
+        self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id",
+                         (f"Quiet parts {uuid.uuid4().hex[:6]}",))
+        quiet = str(self.cur.fetchone()[0])
+        self.addCleanup(self.cur.execute, "DELETE FROM folders WHERE id = %s", (quiet,))
+        with self.conn.transaction():
+            tracks.set_topic(self.cur, quiet, description="Quiet parts: rarely posted printed parts", excludes=None)
+            self.assertEqual(scout.due_weekly(self.cur, NOW), [quiet, self.folder])
+        reader = StubReader()
+        with mock.patch.object(scout, "default_reader", return_value=reader), \
+                mock.patch.object(scout, "reads_allowed", return_value=True), \
+                mock.patch.object(scout, "advance", new=mock.AsyncMock(return_value={})):
+            first = asyncio.run(scout.tick(db_url()))
+            second = asyncio.run(scout.tick(db_url()))   # the first weekly run is still open: none starts
+        self.assertEqual(len(first["started"]), 1)
+        self.assertEqual(second["started"], [])
+        self.cur.execute("SELECT track_id::text FROM mx_scout_runs WHERE trigger = 'weekly'")
+        self.assertEqual([r[0] for r in self.cur.fetchall()], [quiet])
 
     def test_the_tap_starts_a_run_and_reads_in_the_background(self):
         self.in_post(links=["https://makers.example/blog/a-printed-hinge"])
@@ -337,6 +360,17 @@ class Finders(_Scout):
         self.assertNotIn("followed.example", keys)                             # followed
         self.assertNotIn("docs.makers.example", keys)                          # a reference place
         self.assertEqual(got[0]["finder"], "match")
+
+    def test_the_matches_read_the_accounts_posts_mention(self):
+        # 0235: an @mention (post_links kind 'mention', stored as boilerplate) is a link of the account it names
+        for k in range(2):
+            p = self.in_post(f"part {k}")
+            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, kind, boilerplate) "
+                             "VALUES (%s, 'https://x.com/hinge_maker', 'x.com', 0, 'mention', true)", (p,))
+        with self.conn.transaction():
+            got = {c["key"]: c for c in scout.match_candidates(self.cur, self.folder)}
+        self.assertEqual(got["x.com/hinge_maker"]["evidence"]["posts"], 2)
+        self.assertEqual(got["x.com/hinge_maker"]["platform"], "x")
 
     def test_the_run_holds_each_finder_and_the_scout_question(self):
         self.in_post(links=["https://makers.example/blog/a-printed-hinge"])

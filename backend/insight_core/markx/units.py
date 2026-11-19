@@ -640,6 +640,7 @@ def _basis(call: Optional[str], content_hash: str) -> str:
 def _inputs(cur: Any, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     cur.execute("""SELECT p.id::text, p.source_id::text, p.content_html, p.content, p.url, r.call_id::text, r.reading,
                           ARRAY(SELECT l.target_url FROM post_links l WHERE l.post_id = p.id AND l.boilerplate
+                                   AND l.kind <> 'mention'   -- 0235: no href of the text (a post's split stays)
                                  ORDER BY l.target_url)
                      FROM posts p LEFT JOIN LATERAL (
                           SELECT x.call_id, x.reading FROM mx_readings x WHERE x.post_id = p.id AND x.guide = ANY(%s)

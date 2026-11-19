@@ -414,11 +414,13 @@ class RankedByFit(unittest.TestCase):
                 {"key": "middle.example", "score": 5.0, "voices": 4}]
         self.assertEqual([r["key"] for r in order(rows)], ["x.com/practitioner", "middle.example", "big-news.example"])
 
-    def test_the_worker_checks_first_what_the_sources_you_read_most_link(self):
-        sgs = [{"key": "big-news.example", "voice_names": ["Wire A", "Wire B", "Wire C"]},
-               {"key": "x.com/practitioner", "voice_names": ["Read Most"]},
-               {"key": "judged.example", "voice_names": ["Read Most"]}]
-        self.assertEqual(O.to_check(sgs, ["Read Most"], {"judged.example"}, 2), ["x.com/practitioner", "big-news.example"])
+    def test_the_worker_checks_first_the_fastest_growing(self):
+        # 0235: source_judge.daily owns the pick (was official.to_check: the sources read most, in the first 300 rows)
+        from insight_core.markx import source_judge
+        sgs = [{"key": "big-news.example", "growth": 0.1, "score": 9.0},
+               {"key": "x.com/practitioner", "growth": 1.9, "score": 2.8},
+               {"key": "judged.example", "growth": 2.5, "score": 3.0}]
+        self.assertEqual(source_judge.to_judge(sgs, {"judged.example"}, 2), ["x.com/practitioner", "big-news.example"])
 
 
 class TheJob(unittest.TestCase):

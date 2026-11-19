@@ -24,10 +24,10 @@ DISCOVER_ARTICLE_SHARE = 0.4   # the prototype's, not measured
 # Telegram, YouTube) and the feed finder's platform feeds (GitHub, Medium). Measured on the
 # server's data, 2026-10-30: a test by "8+ first path segments" called 249 hosts platforms, split
 # publishers by year or section (nytimes.com/2026) and hid blogs whose posts sit at the root.
-DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube")))
+DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube", "bluesky")))
                                | {"github.com", "medium.com"})
 # Of those, the ones a source kind reads an account of (services/discover_reads.kind_source), issue 0172.
-KIND_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube"))))
+KIND_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube", "bluesky"))))
 # First path segments of a platform that name a kind of page, not an account.
 NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "search", "hashtag", "intent",
                          "share", "home", "explore", "wiki", "posts", "in"})
@@ -36,6 +36,7 @@ NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "se
 # elsewhere on a platform, /<account>/<number> (a Telegram post, t.me/<channel>/<id>).
 TWEET = TWEET_PATH
 PLATFORM_POST = re.compile(r"^/[^/?#]+/\d+(?:[?#]|$)")
+BSKY_POST = re.compile(r"^/profile/[^/?#]+/post/[a-z0-9]+(?:[/?#]|$)", re.I)   # 0235: a Bluesky post is its account's
 ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voices, the ones 0064 counted; not measured
 
 # ---- platforms from the data (issue 0080, measured on a copy of the lab: plan/research/0080-measure) ----
@@ -347,13 +348,27 @@ FIRST_PAGE = 30   # Discover's first page; the rest behind "More"
 CHECK_DAYS = 30   # a follow test, or a page's title, is read at most once in this many days
 
 
-def score(*, origins: int, classics: int, opened: int, voices: int, days: Optional[float]) -> float:
-    """3·ln(1+stories started) + 2·ln(1+classics) + 1.5·ln(1+posts you opened that link it) +
-    ln(1+sources linking it) + 1 when one linked it in the last RECENT_DAYS days, 0.5 in LATELY_DAYS.
+GROWTH_DAYS = 30    # 0235: a source that first linked a key this recently is a new one
+GROWTH_WEIGHT = 1.5  # 0235: NOT MEASURED YET (no real data allowed when it was written); 0235 says how to measure it
+
+
+def growth(*, new: int, old: int) -> float:
+    """0235: how much a key is growing among your sources: the share of its linking sources that first linked it in
+    the last GROWTH_DAYS, times ln(1+those new sources). A voice most of whose linkers are new (six sources this month,
+    none before) scores high; an outlet linked by 50 sources for years and 2 new ones scores near 0. Pure."""
+    total = new + old
+    return 0.0 if new <= 0 or total <= 0 else (new / total) * math.log1p(new)
+
+
+def score(*, origins: int, classics: int, opened: int, voices: float, days: Optional[float],
+          grown: float = 0.0) -> float:
+    """3*ln(1+stories started) + 2*ln(1+classics) + 1.5*ln(1+posts you opened that link it) +
+    ln(1+sources linking it) + 1 when one linked it in the last RECENT_DAYS days, 0.5 in LATELY_DAYS,
+    + GROWTH_WEIGHT*`grown` (0235: `growth`'s; its weight is not measured yet).
     Stories and classics carry it (recency is nearly flat and opens are sparse on the lab)."""
     recency = 0.0 if days is None else 1.0 if days <= RECENT_DAYS else 0.5 if days <= LATELY_DAYS else 0.0
     return (3 * math.log1p(origins) + 2 * math.log1p(classics) + 1.5 * math.log1p(opened)
-            + math.log1p(voices) + recency)
+            + math.log1p(voices) + recency + GROWTH_WEIGHT * grown)
 
 
 # ---- a followed source's other channels (issue 0109 W3 A, measured on the server's saved answer) -----
@@ -675,14 +690,21 @@ def follow_url(url: str, platforms: Platforms = {}) -> Optional[str]:
 FIT_ORDER = {"follow": 0, "maybe": 1, None: 1, "skip": 2, "not_fit": 3}
 
 
+def judged_follow(s: Mapping) -> bool:
+    """0235: the worker judged it worth following (its test read found something to follow and the reader would care),
+    and no follow test says it can't be followed as a feed: it goes before every section."""
+    return s.get("fit") == "follow" and section(s) != 1
+
+
 def order(found: Iterable[Mapping]) -> List[Mapping]:
     """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
-    untested suggestion): those tested followable first, then the section of those that can't be followed
-    as a feed, then the untested; each by score, ties by key, but one none of your sources links (Mark X's
-    originals rows, issue 0172 b4) after every linked one of its section. Each of the section says so
+    untested suggestion): those the worker judged "follow" first (0235: an untested one sat deep in a list of 4,349
+    for ever, the follow test reading only the first page), then those tested followable, then the section of those
+    that can't be followed as a feed, then the untested; each by score, ties by key, but one none of your sources
+    links (Mark X's originals rows, issue 0172 b4) after every linked one of its section. Each of the section says so
     (`section: "unfollowable"`)."""
-    out = sorted(found, key=lambda s: (section(s), FIT_ORDER.get(s.get("fit"), 1), not s.get("voices"), -s["score"],
-                                       s["key"]))
+    out = sorted(found, key=lambda s: (not judged_follow(s), section(s), FIT_ORDER.get(s.get("fit"), 1),
+                                       not s.get("voices"), -s["score"], s["key"]))
     for s in out:
         if section(s) == 1:
             s["section"] = "unfollowable"   # type: ignore[index]
@@ -732,7 +754,7 @@ def discover_article(url: str) -> bool:
     host, _, rest = bare(url).partition("/")
     path = "/" + rest
     return is_article(url) or bool(TWEET.match(path)) or (
-        site_of(host) in DISCOVER_PLATFORMS and bool(PLATFORM_POST.match(path)))
+        site_of(host) in DISCOVER_PLATFORMS and bool(PLATFORM_POST.match(path) or BSKY_POST.match(path)))
 
 
 def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hidden: Set[str],
@@ -745,7 +767,7 @@ def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hi
 
 def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], hidden: Set[str],
                 followed_accounts: Set[str] = frozenset(), mirrors: Set[str] = frozenset(),
-                platforms: Platforms = {}) -> List[Suggestion]:
+                platforms: Platforms = {}, mentioned: Set[str] = frozenset()) -> List[Suggestion]:
     """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
     links, that you don't follow and did not hide. On a platform the unit is the account: it is
     followed, or hidden, only as that account (`followed_accounts`, addresses.account_key), so
@@ -754,7 +776,9 @@ def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], h
     0067) are X's kinds of page, never a site. `links`: (voice, address, whether the linking post is
     a roundup) for every kept outside link, the voice None for a self-link (is_self_link) and Saved's;
     `platforms`: find_platforms'. Most voices first, a voice linking a key only in roundups counting
-    half (Suggestion.weight), then all voices."""
+    half (Suggestion.weight), then all voices.
+    0235: `mentioned`, the addresses posts @mention (post_links kind 'mention': an account's own address, so no
+    article): a key one of them is under needs no article-like pages, only its 3+ voices (mentions' and links')."""
     links = list(links)
     found: Dict[str, Tuple[Set[str], Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set(), set()))
     for voice, url, roundup in links:
@@ -773,8 +797,9 @@ def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], h
     out = [
         Suggestion(key, sorted(voices), sorted(articles), len(every), set(every), voices - ordinary)
         for key, (voices, articles, every, ordinary) in found.items()
-        if len(voices) >= DISCOVER_MIN_VOICES and len(articles) >= DISCOVER_MIN_ARTICLES
-        and len(articles) >= DISCOVER_ARTICLE_SHARE * len(every)
+        if len(voices) >= DISCOVER_MIN_VOICES and ((len(articles) >= DISCOVER_MIN_ARTICLES
+                                                    and len(articles) >= DISCOVER_ARTICLE_SHARE * len(every))
+                                                   or bool(every & set(mentioned)))
     ]
     return sorted(out, key=lambda s: (-s.weight, -len(s.voices), -len(s.articles), -s.links, s.key))
 
@@ -919,5 +944,5 @@ def address_stamp(platforms: Platforms) -> str:
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
            "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
-           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
+           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "growth", "judged_follow", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
            "Origin", "Origins", "origins", "address_rules", "ADDRESS_RULES"]

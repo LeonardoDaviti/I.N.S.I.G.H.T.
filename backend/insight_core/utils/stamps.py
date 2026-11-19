@@ -61,6 +61,9 @@ ADDRESSES = (
     "https://youtube.com/@samplechannel/videos",
     "https://github.com/sample-org/sample-repo/releases/tag/v1.2.0",
     "https://medium.com/@writer/a-long-title-about-models-and-data",
+    # 0235: a Bluesky account is bsky.app/profile/<handle>, its post one of its articles
+    "https://bsky.app/profile/writer.bsky.social",
+    "https://bsky.app/profile/writer.bsky.social/post/3kabc2xyz",
     # a hosting platform's subdomain is its own site (issue 0068); a co.uk-like ending keeps three labels
     "https://writer-one.github.io/2026/03/routing",
     "https://deep.writer-one.github.io/notes/on-sample-data",
