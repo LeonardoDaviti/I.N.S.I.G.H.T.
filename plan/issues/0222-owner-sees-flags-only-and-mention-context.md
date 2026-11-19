@@ -89,3 +89,10 @@ docstring; it is one read on the server, for the operator to run.
 
 Peak RSS of the process was 73-129 MB. `CONTEXT_WINDOW` (420) is the knob if the bytes matter. The entity list's
 newest posts carry no context, since that would read 600 bodies a request.
+
+## Bug (owner, 2026-11-17, v10.24 on the server): the context can't be told from the post's line
+On an entity page the post's line ("Цена будущего: простота ≠ эффективность · Все публикации подряд на Хабре ·
+Nov 17, 5:02 AM · source") and the sentences under it ("В январе 2026 года Anthropic опубликовала…") sit at the same
+indent, so the quote reads as another source. The owner: "please add one tab offset for the citation". Fix: the
+context indented one step under its line, styled as a quote (a left rule, the secondary text colour), the highlighted
+name kept. Backlog: 0225 #28.
