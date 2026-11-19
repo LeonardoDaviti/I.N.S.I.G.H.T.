@@ -17,6 +17,10 @@
 #                      read-only copy (a replay of a title change), no cases or invariants
 #   --keep             keep the scratch copies
 #   --no-cache         run the base side again even when its cached outputs match (and cache the new ones)
+#   --in-place <side>  one database only, never copied (owner 2026-11-19): <db> must be on the scratch Postgres and
+#                      is changed by the run. `base` runs the base side on <db> and keeps its outputs in STASH;
+#                      `head` runs the head side on <db> (restored again from the same export) and reports
+#                      against STASH. The caller restores <db> before each side and drops it after.
 #
 # Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
 # server; default scripts/scratch-db.sh's), SCRATCH_DB=0 (copies on PG_SRC), SCRATCH_A / SCRATCH_B (the
@@ -36,7 +40,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE=main; HEAD=""; IMAGE=""; IDENTITY=""; NOW=""; KEEP=0; TITLES_ONLY=0; NO_CACHE=0; ALLOW=()
+BASE=main; HEAD=""; IMAGE=""; IDENTITY=""; NOW=""; KEEP=0; TITLES_ONLY=0; NO_CACHE=0; ALLOW=(); IN_PLACE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="$2"; shift 2;;
@@ -47,6 +51,7 @@ while [ $# -gt 0 ]; do
     --now) NOW="$2"; shift 2;;
     --keep) KEEP=1; shift;;
     --no-cache) NO_CACHE=1; shift;;
+    --in-place) IN_PLACE="$2"; shift 2;;
     --titles-only) TITLES_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
     -*) echo "unknown option $1" >&2; exit 2;;
@@ -133,7 +138,30 @@ run_side() {   # run_side <side> <db> [env…]
     "$IMAGE" sh /app/insight_core/checks/side.sh "$PG/$db" "$side" "$NOW"
 }
 
-if [ "$TITLES_ONLY" = "1" ]; then
+if [ -n "$IN_PLACE" ]; then
+  # ---- one database, no copy: one side on <db> itself ------------------------------------------
+  STASH="${STASH:-$OUT/in-place/$DB}"
+  say "in place: the $IN_PLACE side on $DB itself (no copy); analyze first"
+  docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$DB"
+  case "$IN_PLACE" in
+    base)
+      run_side base "$DB" > "$WORK/base.log" 2>&1 || true
+      cat "$WORK/base.log"
+      grep -q "\] .* done$" "$WORK/base.log" && ! grep -q "FAILED" "$WORK/base.log" || { echo "the base side failed: nothing kept" >&2; exit 2; }
+      rm -rf "$STASH"; mkdir -p "$STASH"; cp -r "$WORK/base" "$STASH/base"; cp "$WORK/base.log" "$STASH/base.log"
+      echo "$BASE" > "$STASH/base-ref.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$STASH/at.txt"
+      say "base side kept in $STASH: restore $DB again, then --in-place head"
+      exit 0;;
+    head)
+      [ -d "$STASH/base" ] || { echo "no base side in $STASH: run --in-place base first" >&2; exit 2; }
+      [ "$(cat "$STASH/base-ref.txt")" = "$BASE" ] || { echo "$STASH holds base $(cat "$STASH/base-ref.txt"), not $BASE" >&2; exit 2; }
+      cp -r "$STASH/base/." "$WORK/base/"; cp "$STASH/base.log" "$WORK/base.log"
+      run_side head "$DB" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 || true
+      cat "$WORK/base.log" "$WORK/head.log"
+      CACHED="$STASH"; KEY="in-place";;
+    *) echo "--in-place base|head" >&2; exit 2;;
+  esac
+elif [ "$TITLES_ONLY" = "1" ]; then
   say "titles only: both versions read $DB (read-only), no story job"
   PG="$PG_SRC" run_side base "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
   PG="$PG_SRC" run_side head "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
