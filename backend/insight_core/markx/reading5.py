@@ -134,7 +134,6 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
     how many were added. No older post is planned (no archive re-read)."""
     if mode(cur) == "off":
         return 0
-    from insight_core.markx import folds
     since = tasks.fresh_since(now)
     rows = plan_marks.execute(cur,
         f"""SELECT p.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
@@ -149,6 +148,16 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
         {"now": now, "fresh": since, "kind": KIND, "guide": GUIDE, "limit": limit, "days": tasks.FRESH_DATED_DAYS})
     if not rows:
         return 0
+    added, passed = add_posts(cur, rows)
+    plan_marks.mark(cur, KIND, GUIDE, passed)
+    return added
+
+
+def add_posts(cur: Cursor, rows: Sequence[Any]) -> Any:
+    """`reading` tasks (a window each) for these posts, rows of (post id, priority, stamp): (how many were added, the
+    (post, SAME_INPUT, stamp) rows of the posts whose first input is another post's task). The one way a post's
+    reading is asked: the fresh lane (`plan`) and the last posts of a thin source (tasks.plan_last_posts, 0233)."""
+    from insight_core.markx import folds
     ids = [str(r[0]) for r in rows]
     posts = tasks.load_posts(cur, ids)
     extras = folds._extras(cur, list(posts))
@@ -164,8 +173,7 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
         added += int(first) + sum(1 for x in windows[1:] if tasks.add(cur, KIND, x, a=p.id, priority=age)[1])
         if not first:   # its input is another post's task (a repost, a media-only post): not read again
             passed.append((p.id, plan_marks.SAME_INPUT, stamp))
-    plan_marks.mark(cur, KIND, GUIDE, passed)
-    return added
+    return added, passed
 
 
 # ---- the one adapter -----------------------------------------------------------------------------------------------

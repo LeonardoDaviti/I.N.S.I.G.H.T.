@@ -121,19 +121,28 @@ class TheBeatsCarryTheNumbers(_Folder):
             "scheduler": {"age": 30.0, "rss_mb": 812.5, "hwm_mb": 1366.9, "cpu_s": 4021.3},
             "markx": {"age": 5.0}})
 
-    def test_an_old_api_beat_is_removed(self):
-        t = NOW.timestamp()
-        heartbeat.beat("api-41", now=t - 10, stats={"rss_mb": 140.0})
-        heartbeat.beat("api-7", now=t - heartbeat.API_GONE - 1, stats={"rss_mb": 300.0})
-        self.assertEqual(set(heartbeat.processes(t)), {"api-41"})
-        self.assertFalse(os.path.exists(os.path.join(heartbeat.folder(), "heartbeat-api-7")))
-
     def test_the_supervisor_beats_for_each_api_process(self):
         from insight_core.scripts import api_supervisor
         self.assertEqual(api_supervisor.beat_api_processes([os.getpid(), 2**22 + 12345]), 1, "a gone pid is skipped")
         p = heartbeat.processes()[f"api-{os.getpid()}"]
         self.assertGreater(p["rss_mb"], 1)
         self.assertIn("cpu_s", p)
+
+    def test_an_ended_api_process_is_listed_no_more(self):
+        """0233 (0225 #18): the supervisor's beat is the API processes alive now: a process that ended (a gone pid,
+        the previous container's, uvicorn's own before its workers) leaves the list at the next beat, not an hour
+        later; the loops' beats are not the supervisor's."""
+        from insight_core.scripts import api_supervisor
+        t = time.time()
+        heartbeat.beat("api-4000001", now=t - 5, stats={"rss_mb": 300.0})        # ended a moment ago
+        heartbeat.beat(f"api-{2**22 + 12345}", now=t - 5, stats={"rss_mb": 1.0})  # a pid now gone
+        heartbeat.beat("scheduler", now=t - 5, stats={"rss_mb": 800.0})
+        heartbeat.beat("markx", now=t - 5)
+        api_supervisor.beat_api_processes([os.getpid(), 2**22 + 12345])
+        self.assertEqual(set(heartbeat.processes()), {f"api-{os.getpid()}", "scheduler", "markx"})
+        self.assertFalse(os.path.exists(os.path.join(heartbeat.folder(), "heartbeat-api-4000001")))
+        self.assertEqual(heartbeat.only("api-", []), 1)
+        self.assertEqual(set(heartbeat.processes()), {"scheduler", "markx"})
 
     def test_the_processes_on_the_page(self):
         page = metrics.Page()
