@@ -367,9 +367,9 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
     accounts an X or Bluesky post @mentions (`mentions`; from `content`, its plain text, when it has no HTML: a Bluesky
     post's). Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
     content_html = decoded_html(content_html)
-    platform = mention_platform(kind, post_url)
+    mentioning = mention_platform(kind, post_url)   # 0235
     if not content_html:
-        return _with_mentions([], plain_text(None, content), platform, post_url)
+        return _with_mentions([], plain_text(None, content), mentioning, post_url)
     own = normalize_url(post_url) or ""
     # Its own publication (issue 0070: another publication on its site, a Substack writer another, is
     # cited), and where it was read from too: a tweet's address is x.com, but your Nitter's profiles
@@ -408,7 +408,7 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
         out.append(PostLink(url, site, len(out), _link_text(content_html, match.end()),
                             absolute if has_query_mark(absolute) else None,
                             "reference" if cited(match.start()) else "link"))
-    return _with_mentions(out, plain_text(content_html), platform, post_url)
+    return _with_mentions(out, plain_text(content_html), mentioning, post_url)
 
 
 def _with_mentions(out: List[PostLink], text: str, platform: Optional[str], post_url: Optional[str]) -> List[PostLink]:

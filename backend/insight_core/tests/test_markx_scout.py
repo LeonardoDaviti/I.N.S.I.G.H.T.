@@ -314,7 +314,7 @@ class Triggers(_Scout):
         reader = StubReader()
         with mock.patch.object(scout, "default_reader", return_value=reader), \
                 mock.patch.object(scout, "reads_allowed", return_value=True), \
-                mock.patch.object(scout, "advance", side_effect=lambda *a, **k: asyncio.sleep(0)):
+                mock.patch.object(scout, "advance", new=mock.AsyncMock(return_value={})):
             first = asyncio.run(scout.tick(db_url()))
             second = asyncio.run(scout.tick(db_url()))   # the first weekly run is still open: none starts
         self.assertEqual(len(first["started"]), 1)

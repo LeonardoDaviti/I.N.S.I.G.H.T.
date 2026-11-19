@@ -212,9 +212,8 @@ class DiscoverCountsTests(unittest.TestCase):
             html = f'submitted by &#32; <a href="https://www.reddit.com/user/{author}"> /u/{author} </a>'
             self._post(reddit, f"reddit.com", [(cited[0], "Story"), (cited[1], "")], html=html)
         # 0235: an account @mentioned (no link, no article) by 3 voices is suggested; by 2, not
-        for source, host, named in ((a, f"a-{m}.example", ("named", "twice")), (b, f"b-{m}.example", ("named", "twice")),
-                                    (c, f"c-{m}.example", ("named",))):
-            post = self._post(source, host, [])
+        for n, named in enumerate((("named", "twice"), ("named", "twice"), ("named",))):
+            post = self._post(self._source(f"Mentioner {n} {m}"), f"mentioner{n}-{m}.example", [])
             for k, who in enumerate(named):
                 self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, kind, boilerplate) "
                                  "VALUES (%s, %s, 'x.com', %s, 'mention', true)", (post, f"https://x.com/{who}{m}", k))
