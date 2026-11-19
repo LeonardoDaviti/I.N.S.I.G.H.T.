@@ -1,0 +1,54 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_1q2w3e",
+    "dist": 3,
+    "modhash": null,
+    "geo_filter": "",
+    "before": null,
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "examplesub",
+          "selftext": "I ran the 30B model on two cards. Numbers below.",
+          "selftext_html": "<!-- SC_OFF --><div class=\"md\"><p>I ran the 30B model on two cards. Numbers below.</p></div><!-- SC_ON -->",
+          "author": "bench_person",
+          "title": "Benchmarks: a 30B model on two consumer cards",
+          "link_flair_text": "Discussion",
+          "id": "1q2w3e",
+          "name": "t3_1q2w3e",
+          "permalink": "/r/examplesub/comments/1q2w3e/benchmarks_a_30b_model_on_two_consumer_cards/",
+          "url": "https://www.reddit.com/r/examplesub/comments/1q2w3e/benchmarks_a_30b_model_on_two_consumer_cards/",
+          "created_utc": 1795420800.0,
+          "is_self": true,
+          "num_comments": 12,
+          "score": 40
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "examplesub",
+          "selftext": "",
+          "selftext_html": null,
+          "author": "link_poster",
+          "title": "Example Lab releases its new open model",
+          "link_flair_text": null,
+          "id": "4r5t6y",
+          "name": "t3_4r5t6y",
+          "permalink": "/r/examplesub/comments/4r5t6y/example_lab_releases_its_new_open_model/",
+          "url": "https://lab.example/blog/new-open-model",
+          "created_utc": 1795417200.0,
+          "is_self": false,
+          "num_comments": 80,
+          "score": 300
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {"id": "c0mment", "body": "not a post"}
+      }
+    ]
+  }
+}

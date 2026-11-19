@@ -87,8 +87,35 @@ OVERVIEW_JOBS = 50
 
 
 def empty_health_summary() -> Dict[str, int]:
-    """Each status's count, and `silent` (issue 0178): sources silent far beyond their rhythm, not a status."""
-    return {**{key: 0 for key in HEALTH_SUMMARY_KEYS.values()}, "silent": 0}
+    """Each status's count, `silent` (issue 0178): sources silent far beyond their rhythm, and `stalled` (issue
+    0242): sources that stopped without anyone seeing; neither is a status."""
+    return {**{key: 0 for key in HEALTH_SUMMARY_KEYS.values()}, "silent": 0, "stalled": 0}
+
+
+# Issue 0242: a source on that has stopped, in front of the owner (the Sources page and the reader's nav). Its last
+# success (else the day it was added) is older than max(STALLED_FLOOR, STALLED_INTERVALS x its interval), or it
+# failed STALLED_FAILURES times in a row. Not measured: 5 intervals is a run of missed fetches no working source
+# has (the alert that fired every run was one failure each), and the 3-day floor keeps a source fetched every few
+# hours from flagging after one bad night. Deterministic, from the health row's own data.
+STALLED_FLOOR = timedelta(days=3)
+STALLED_INTERVALS = 5
+STALLED_FAILURES = 5
+
+
+def stalled_fields(source: Dict[str, Any], state: Optional[FetchStateRow], interval: timedelta, failures: int,
+                   enabled: bool, now: datetime) -> Optional[Dict[str, Any]]:
+    """{since, days, failures} for a source that stopped (issue 0242, the rule above): since its last success (None:
+    it never worked; days then count from when it was added). None when it is off, the owner's saved pages, or
+    working."""
+    if not enabled or source.get("platform") == SAVED_PLATFORM:
+        return None
+    last = state.last_success_at if state else None
+    since = last or source.get("created_at")
+    old = since is not None and now - since > max(STALLED_FLOOR, interval * STALLED_INTERVALS)
+    if not old and failures < STALLED_FAILURES:
+        return None
+    return {"since": iso(last), "days": int((now - since).total_seconds() // 86400) if since is not None else None,
+            "failures": failures}
 
 
 EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
@@ -287,6 +314,8 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         **_doctor_fields(state, source.get("handle_or_url")),
         # Silent far beyond its own rhythm (issue 0178), and where the doctor found it went; None otherwise.
         "silent": silent_fields(source, state, status, now),
+        # Stopped without anyone seeing (issue 0242): the flag on the Sources page and in the reader's nav.
+        "stalled": stalled_fields(source, state, decision.interval, failures, enabled, now),
     }
 
 
@@ -354,12 +383,18 @@ def _doctor_fields(state: Optional[FetchStateRow], address: Optional[str] = None
             or finding.get("working_again") or finding.get("server_error")
             # A fetch that stored nothing (issue 0135): nothing was looked for; last_error says why.
             or finding.get("empty_fetch")):
-        return {"doctor_looked_at": None, "replacement": None, "server_error": failing}
+        return {"doctor_looked_at": None, "replacement": None, "server_error": failing, "dead": None}
+    if finding.get("dead"):
+        # A dead host (issue 0242): switch it off or replace it; nothing was looked for.
+        return {"doctor_looked_at": None, "replacement": None, "server_error": None,
+                "dead": {"host": finding.get("host"), "since": finding.get("since"), "reason": finding.get("reason"),
+                         "checked_at": iso(state.doctor_checked_at)}}
     replacement = finding.get("replacement")
     # An offer stored before 0072 was never checked against the source's items: not offered.
     if isinstance(replacement, dict) and "shared" not in replacement:
         replacement = None
-    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement, "server_error": None}
+    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement, "server_error": None,
+            "dead": None}
 
 
 def _health_sort_key(row: Dict[str, Any]) -> tuple:
@@ -385,6 +420,8 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
             summary[HEALTH_SUMMARY_KEYS[HealthStatus.ERROR]] += 1
         if row.get("silent"):
             summary["silent"] += 1   # silent far beyond its rhythm (issue 0178), whatever its status
+        if row.get("stalled"):
+            summary["stalled"] += 1  # stopped without anyone seeing (issue 0242), whatever its status
     return summary
 
 

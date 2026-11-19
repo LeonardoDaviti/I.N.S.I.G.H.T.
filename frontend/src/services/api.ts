@@ -705,6 +705,29 @@ export interface SourceHealthRow {
   /** Silent far beyond its own rhythm (issue 0178): over max(5x its usual gap, 14 days) since its newest post, and
    *  where the source doctor found it went. null when it is not, or the owner said it stopped (until it posts). */
   silent?: SourceSilence | null;
+  /** Stopped without anyone seeing (issue 0242): on, and its last success (else the day it was added) older than
+   *  max(3 days, 5x its interval), or failing 5+ in a row. null when it works (absent from an older API). */
+  stalled?: SourceStalled | null;
+  /** The source doctor marked its host dead (issue 0242): no answer for 14+ days. Switch it off or replace it;
+   *  nothing is switched off by itself. */
+  dead?: SourceDeadHost | null;
+}
+
+/** A stopped source (issue 0242): since its last success (null: it never worked), days since then (or since it was
+ *  added), and its failures in a row. */
+export interface SourceStalled {
+  since: string | null;
+  days: number | null;
+  failures: number;
+}
+
+export interface SourceDeadHost {
+  host: string;
+  /** Its last success, else when it was added. */
+  since: string | null;
+  /** "does not resolve or has no route", "times out". */
+  reason: string;
+  checked_at: string | null;
 }
 
 /** A silent source (issue 0178): how long, against its usual gap, and the doctor's look (looked_at null: not yet). */
@@ -751,6 +774,8 @@ export interface SourceHealthSummary {
   errors: number;
   /** Sources silent far beyond their rhythm (issue 0178), whatever their status. */
   silent?: number;
+  /** Sources that stopped without anyone seeing (issue 0242), whatever their status. */
+  stalled?: number;
 }
 
 export interface SourcesHealthResponse {

@@ -131,6 +131,7 @@ class GenericRssKind(BaseKind):
         url = str(source["handle_or_url"])
         posts: List[Dict[str, Any]] = []
         failure: Optional[str] = None
+        warning: Optional[str] = None
         if memory is None:
             feed_text, _ = await self.http.get_text(url)
         else:
@@ -140,10 +141,12 @@ class GenericRssKind(BaseKind):
             # A feed with items none of which were read is an error, not "empty" (issue 0135); items
             # that would be stored as fewer posts than they are, a failure saying so (issue 0137 A1).
             parsed = parsing.parse_feed_posts(feed_text, url)
-            failure = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {}).failure
+            checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {})
+            failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning (0242)
             posts = await self._maybe_expand(source, parsed[:limit])
         result = FetchedPosts(await self._read_again(source, posts))
         result.failure = failure
+        result.warning = warning
         if feed_text is not None:
             from insight_core.ingestion.kinds import substack   # substack's module reads feeds through parsing too
 

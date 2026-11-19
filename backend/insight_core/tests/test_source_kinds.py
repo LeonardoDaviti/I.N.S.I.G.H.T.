@@ -79,9 +79,10 @@ PARITY_ROWS = [
     ("rss", "https://nitter.net/nn_teacher/rss", "nitter_rss"),
     ("reddit", "r/LocalLLaMA", "reddit_subreddit"),
     ("reddit", "https://www.reddit.com/r/LocalLLaMA/.rss", "reddit_subreddit"),
-    ("rss", "https://www.reddit.com/r/smartglasses/.rss", "generic_rss"),
+    # Reddit ended its subreddit feeds (issue 0242): a subreddit's old .rss address is read as the subreddit.
+    ("rss", "https://www.reddit.com/r/smartglasses/.rss", "reddit_subreddit"),
     ("rss", "https://old.reddit.com/r/smartglasses/", "reddit_subreddit"),
-    ("rss", "https://www.reddit.com/r/smartglasses/new.xml", "generic_rss"),
+    ("rss", "https://www.reddit.com/r/smartglasses/new.xml", "reddit_subreddit"),
     ("youtube", "UCoryWpk4QVYKFCJul9KBdyw", "youtube_channel"),
     ("youtube", "https://www.youtube.com/feeds/videos.xml?channel_id=UC1xcV34QaE2icXZ21eSvSSw", "youtube_channel"),
     ("rss", "https://www.youtube.com/feeds/videos.xml?channel_id=UCHkYOD-3fZbuGhwsADBd9ZQ", "youtube_channel"),
@@ -287,18 +288,23 @@ class FullTextTests(unittest.TestCase):
 
 
 class RedditKindTests(unittest.IsolatedAsyncioTestCase):
-    async def test_live_fetch_reads_the_new_rss_endpoint_not_json(self):
-        atom = """<?xml version="1.0" encoding="UTF-8"?>
-        <feed xmlns="http://www.w3.org/2005/Atom">
-          <entry><id>t3_abc</id><title>Hello</title>
-            <link href="https://www.reddit.com/r/x/comments/abc/hello/"/>
-            <updated>2026-03-11T18:01:01+00:00</updated><content type="html">&lt;p&gt;Body&lt;/p&gt;</content>
-          </entry>
-        </feed>"""
-        http = FakeHttp({"https://www.reddit.com/r/x/new/.rss": atom})
-        posts = await RedditKind(http).fetch_latest(_src("reddit", "r/x"), 10)
-        self.assertEqual(http.requests, ["https://www.reddit.com/r/x/new/.rss"])
-        self.assertFalse(any(".json" in url for url in http.requests))
+    async def test_live_fetch_reads_new_on_the_oauth_api_not_the_ended_rss(self):
+        # Issue 0242: the full OAuth behaviour is in test_ingestion_health_0242.
+        import json
+
+        from insight_core.ingestion.credentials import MappingCredentials
+        from insight_core.ingestion.kinds.reddit import OAUTH_BASE, TOKEN_URL
+
+        listing = json.dumps({"data": {"after": None, "children": [{"kind": "t3", "data": {
+            "id": "abc", "title": "Hello", "permalink": "/r/x/comments/abc/hello/", "selftext": "Body",
+            "created_utc": 1773252061}}]}})
+        http = FakeHttp({TOKEN_URL: {"access_token": "t", "expires_in": 3600},
+                         f"{OAUTH_BASE}/r/x/new?limit=10&raw_json=1": listing})
+        credentials = MappingCredentials({("reddit", "client_id"): "id-0123456789",
+                                          ("reddit", "client_secret"): "secret-0123456789",
+                                          ("reddit", "username"): "someone"})
+        posts = await RedditKind(http, credentials=credentials).fetch_latest(_src("reddit", "r/x"), 10)
+        self.assertFalse(any(url.endswith(".rss") or ".json" in url for url in http.requests))
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["external_id"], "abc")
         self.assertEqual(posts[0]["platform"], "reddit")

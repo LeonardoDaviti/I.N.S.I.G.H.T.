@@ -64,6 +64,7 @@ class FakeHttp(KindHttp):
         self.responses = responses if responses is not None else {}
         self.requests: list[str] = []
         self.request_headers: list[tuple[str, dict[str, str]]] = []
+        self.user_agents: list[tuple[str, str | None]] = []   # get_text's (url, user_agent)
         self.posts: list[tuple[str, dict]] = []
         self.redirects = dict(redirects or {})   # url -> the final URL get_start reports
         self.byte_caps: dict[str, int] = {}      # url -> the max_bytes get_start was asked for
@@ -87,6 +88,7 @@ class FakeHttp(KindHttp):
     ) -> tuple[str, dict[str, str]]:
         self.requests.append(url)
         self.request_headers.append((url, dict(headers or {})))
+        self.user_agents.append((url, user_agent))
         answer = self._answer(url)
         if isinstance(answer, tuple):
             return answer
@@ -135,6 +137,21 @@ class FakeHttp(KindHttp):
         self.posts.append((url, payload))
         answer = self._answer(url)
         return answer(payload) if callable(answer) else answer
+
+    async def post_form(
+        self,
+        url: str,
+        fields: dict,
+        *,
+        user_agent: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict:
+        """As post_json; the headers and the User-Agent are kept in request_headers (issue 0242's OAuth token)."""
+        self.requests.append(url)
+        self.posts.append((url, dict(fields)))
+        self.request_headers.append((url, {**(extra_headers or {}), "User-Agent": user_agent or ""}))
+        answer = self._answer(url)
+        return answer(fields) if callable(answer) else answer
 
 
 class FakeKind(BaseKind):

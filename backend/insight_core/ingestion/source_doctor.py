@@ -40,6 +40,12 @@ only its own address read as a page. The finding carries the candidate's latest 
 Nothing is re-fetched: the next fetch reads the new address, posts match by URL, and an
 archive brings the older ones.
 
+A dead host (issue 0242): a source whose host gives no answer (it does not resolve, refuses or has no route, or
+times out) and has not worked for DEAD_AFTER (since its last success, else since it was added) is marked dead
+({dead: True, host, since, reason}), any kind with an address, at most once a LOOK_EVERY, not again in a streak the
+owner dismissed. The mark suggests switching it off or replacing it; nothing is switched off, nothing deleted. Under
+DEAD_AFTER an unreachable host is an ordinary failure (FAILURES_BEFORE_LOOKING), so a DNS blip is no finding.
+
 A silent source (issue 0178): its fetches work, yet nothing new came for far longer than its own rhythm
 (silent_beyond_rhythm: over max(SILENT_GAPS x its measured mean gap, SILENT_FLOOR); a source whose cadence
 is not measured is never silent here: source hygiene's "quiet" mark covers it). A newsletter that moved
@@ -79,6 +85,9 @@ DOCTOR_KINDS = ("generic_rss", "page_watch")   # the kinds whose address can mov
 FAILURES_BEFORE_LOOKING = 3
 GONE_STATUSES = (404, 410)
 LOOK_EVERY = timedelta(days=1)
+# Issue 0242: a host with no answer this long is dead. Not measured: two weeks is past any outage a site comes back
+# from on its own (the two dead hosts on the server had been unreachable for weeks), and short of the owner's wait.
+DEAD_AFTER = timedelta(days=14)
 STORED_ITEMS = 50          # the source's latest stored posts a candidate is compared with; not measured
 LATEST_TITLES = 5          # the candidate's titles shown before Switch (page watching's preview has 5)
 
@@ -103,6 +112,8 @@ SERVER_ERROR: Dict[str, Any] = {"replacement": None, "dismissed": False, "server
 # The finding on a fetch that worked and stored nothing (issue 0135, kinds.base.EmptyFetch): the address
 # answers, so it is never "working again" and nothing replaces it; recorded with the fetch's reason (note).
 EMPTY_FETCH: Dict[str, Any] = {"replacement": None, "dismissed": False, "empty_fetch": True}
+# The finding on a dead host (issue 0242), with its host, since when and why; the owner switches it off or replaces it.
+DEAD: Dict[str, Any] = {"replacement": None, "dismissed": False, "dead": True}
 
 
 class DoctorStore(Protocol):
@@ -115,9 +126,12 @@ class DoctorStore(Protocol):
 
 def failure_signal(error: Optional[BaseException]) -> Optional[str]:
     """"gone" (HTTP 404/410), "server_error" (HTTP 5xx or a timeout), "not_feed" (the answer
-    does not parse as a feed), "empty" (it answered and nothing was stored, issue 0135), else None."""
+    does not parse as a feed), "empty" (it answered and nothing was stored, issue 0135), "unreachable" (the host
+    does not resolve or has no route, issue 0242), else None."""
     if isinstance(error, EmptyFetch):
         return "empty"
+    if isinstance(error, HttpError) and getattr(error, "unreachable", False):
+        return "unreachable"
     if isinstance(error, HttpError) and error.status in GONE_STATUSES:
         return "gone"
     if isinstance(error, HttpError) and error.their_trouble:
@@ -133,6 +147,33 @@ def should_look(kind_name: str, state: FetchStateRow, signal: Optional[str], now
     if state.doctor_checked_at is not None and now - state.doctor_checked_at < LOOK_EVERY:
         return False
     return signal is not None or state.consecutive_failures >= FAILURES_BEFORE_LOOKING
+
+
+def no_answer(error: Optional[BaseException]) -> Optional[str]:
+    """Why the host gave no answer (issue 0242): "does not resolve or has no route", "times out", else None."""
+    if not isinstance(error, HttpError):
+        return None
+    if getattr(error, "unreachable", False):
+        return "does not resolve or has no route"
+    return "times out" if error.timed_out else None
+
+
+def dead_finding(source: Mapping[str, Any], state: FetchStateRow, error: Optional[BaseException],
+                 now: datetime) -> Optional[Dict[str, Any]]:
+    """The dead-host finding (issue 0242) when the source's host gave no answer and the source has not worked for
+    DEAD_AFTER (since its last success, else since it was added), else None. Not in a streak the owner dismissed,
+    and at most once a LOOK_EVERY; a bare handle (no host) is never dead here."""
+    reason = no_answer(error)
+    address = str(source.get("handle_or_url") or "")
+    host = host_of(address) if "://" in address else ""
+    since = state.last_success_at or source.get("created_at")
+    if (reason is None or not host or since is None or now - since < DEAD_AFTER
+            or (state.doctor_finding or {}).get("dismissed")
+            or (state.doctor_checked_at is not None and now - state.doctor_checked_at < LOOK_EVERY)):
+        return None
+    days = int((now - since).total_seconds() // 86400)
+    return {**DEAD, "host": host, "since": iso(since), "reason": reason,
+            "note": f"{host} {reason} and nothing worked for {days} days: switch the source off, or replace it"}
 
 
 def short_address(url: str) -> str:
@@ -339,6 +380,14 @@ class SourceDoctor:
                                     finding={**EMPTY_FETCH, "note": str(error)})
             logger.info("Source doctor: %s: %s", source.get("handle_or_url"), error)
             return
+        dead = dead_finding(source, state, error, now) if state is not None else None
+        if dead is not None:
+            # Any kind with an address: switched off or replaced by the owner, never here (issue 0242).
+            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=dead)
+            logger.warning("Source doctor: %s is dead: %s", source.get("handle_or_url"), dead["note"])
+            return
+        if signal == "unreachable":
+            signal = None   # under DEAD_AFTER, an ordinary failure: looked at after FAILURES_BEFORE_LOOKING
         if state is None or source.get("platform") != "rss" or not should_look(kind.name, state, signal, now):
             return
         if signal == "server_error":
@@ -484,5 +533,5 @@ class DbDoctorStore:
             return [(str(url or ""), str(title)) for url, title in cur.fetchall()]
 
 
-__all__ = ["DbDoctorStore", "EMPTY_FETCH", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
+__all__ = ["DEAD", "DbDoctorStore", "EMPTY_FETCH", "dead_finding", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
            "shared", "should_look", "silent_beyond_rhythm", "where_it_went", "within_section"]

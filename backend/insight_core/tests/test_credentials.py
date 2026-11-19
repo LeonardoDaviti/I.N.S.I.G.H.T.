@@ -452,12 +452,30 @@ class CredentialsServiceTests(unittest.TestCase):
         return next(p for p in listing["providers"] if p["provider"] == provider)
 
     def test_listing_names_the_providers_with_something_to_add(self):
-        # Issue 0027: Reddit and YouTube read public feeds, so they have no row at all.
+        # YouTube reads public feeds, so it has no row; Reddit ended its feeds and needs an app (issue 0242).
         listing = self.service.list()
-        self.assertEqual([p["provider"] for p in listing["providers"]], ["substack", "telegram"])
+        self.assertEqual([p["provider"] for p in listing["providers"]], ["substack", "telegram", "reddit"])
         sid = self._field(self._provider(listing, "substack"), "sid")
         self.assertEqual((sid["set"], sid["source"], sid["last4"]), (False, "none", None))
         self.assertNotIn("env", sid)
+
+    def test_the_reddit_app_is_saved_and_tested_by_asking_a_token(self):
+        # Issue 0242: three fields; Test asks Reddit for an application-only token (FakeHttp, no network).
+        from insight_core.ingestion.kinds.reddit import REFUSED_CREDENTIALS, TOKEN_URL
+        from insight_core.ingestion.http import HttpError
+
+        answers = {TOKEN_URL: {"access_token": "t", "expires_in": 3600}}
+        service = self._service(reddit_http=FakeHttp(answers))
+        for key, value in (("client_id", "abcDEF123456"), ("client_secret", "s3cret-value-xyz"), ("username", "u/someone")):
+            service.put("reddit", key, value)
+        view = service.provider("reddit")
+        self.assertTrue(view["configured"])
+        self.assertEqual(service.credentials.get("reddit", "username"), "someone")
+        self.assertEqual(run(service.test("reddit"))["test"]["ok"], True)
+        answers[TOKEN_URL] = HttpError("HTTP 401 while posting to", status=401)
+        tested = run(service.test("reddit"))["test"]
+        self.assertEqual((tested["ok"], tested["message"]), (False, REFUSED_CREDENTIALS))
+        self.assertNotIn("s3cret-value-xyz", json.dumps(service.list()))
 
     def test_a_saved_value_is_encrypted_and_never_echoed(self):
         view = self.service.put("substack", "sid", f"substack.sid={SID}")
@@ -500,7 +518,7 @@ class CredentialsServiceTests(unittest.TestCase):
         with self.assertRaises(CredentialInvalid):
             self.service.put("telegram", "session", "1abc")
         with self.assertRaises(CredentialNotFound):
-            run(self.service.test("reddit"))
+            run(self.service.test("youtube"))
 
     def test_the_substack_test_is_recorded_and_a_new_value_clears_it(self):
         self.service.put("substack", "sid", "stale-cookie-value")

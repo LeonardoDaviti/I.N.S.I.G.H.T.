@@ -75,6 +75,21 @@ stored encrypted in the `credentials` table with the key in the `insight_secrets
   https://my.telegram.org, then sign in there with your phone number. The session is saved
   encrypted; until then those sources show as unavailable in the health table, not as failing.
 - **Substack** (paid posts in full, optional): the `substack.sid` cookie.
+- **Reddit** (subreddits; needed for any `r/<sub>` source): Reddit ended its subreddit RSS feeds and refuses
+  unregistered reads of its API, so INSIGHT reads subreddits through Reddit's OAuth API with an app you register
+  (issue 0242). Until it is added, Reddit sources show as unavailable ("Reddit closed its feeds: add Reddit
+  credentials in Sources → Connections"), not as failing, and nothing backs off.
+  1. Sign in to reddit.com with the account INSIGHT should name, open https://www.reddit.com/prefs/apps and
+     choose **create another app…** (Reddit may first ask you to accept its developer terms or to file an API
+     access request; follow what the page asks).
+  2. Name it (for example `insight-reader`), choose the type **script**, put any address you own (or
+     `http://localhost:8080`) as the redirect URI, and create it. INSIGHT uses application-only OAuth: it never
+     signs in as you and never needs your password.
+  3. In **Sources → Connections → Reddit** save the **client ID** (the string under the app's name), the
+     **secret**, and your **Reddit username** (it goes in the User-Agent, `server:insight-reader:1.0 (by /u/<you>)`,
+     as Reddit's API rules ask). **Test** asks Reddit for a token.
+  The next run reads every Reddit source again (its newest posts, and Archive pages the subreddit's top posts);
+  a source whose old `…/.rss` address was added as a plain feed is read as a subreddit now.
 
 Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` or `SUBSTACK_SID`?
 Copy them into the store once, then delete those lines from `.env`:

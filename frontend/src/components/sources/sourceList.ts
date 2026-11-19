@@ -55,9 +55,10 @@ export const DEFAULT_DIR: Record<SortBy, SortDir> = {
 };
 
 /** A status chip: one health status, `enabled` (every source that is on), `tidy` (Tidy up:
- *  the sources marked quiet or never opened, issue 0046) or `silent` (silent far beyond its rhythm, issue 0178). */
-export type StatusFilter = HealthStatus | 'enabled' | 'tidy' | 'silent';
-const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', 'silent', ...HEALTH_STATUS_ORDER];
+ *  the sources marked quiet or never opened, issue 0046), `silent` (silent far beyond its rhythm, issue 0178) or
+ *  `stalled` (stopped without anyone seeing, issue 0242). */
+export type StatusFilter = HealthStatus | 'enabled' | 'tidy' | 'silent' | 'stalled';
+const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', 'silent', 'stalled', ...HEALTH_STATUS_ORDER];
 
 export interface SourcesView {
   q: string;
@@ -133,6 +134,7 @@ export function filterByStatus(rows: readonly SourceHealthRow[], status: StatusF
   if (status === 'enabled') return rows.filter((row) => row.enabled);
   if (status === 'tidy') return rows.filter(isTidy);
   if (status === 'silent') return rows.filter((row) => Boolean(row.silent));
+  if (status === 'stalled') return rows.filter((row) => Boolean(row.stalled));
   return filterHealthRows(rows, status);
 }
 
@@ -260,7 +262,8 @@ export const STATUS_GLYPH: Record<HealthStatus, Status> = {
 
 /** The source doctor's finding in the list (issue 0036): null when it has not looked. A server error
  *  is no move (issue 0072 D3). */
-export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at' | 'server_error'>): string | null {
+export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at' | 'server_error' | 'dead'>): string | null {
+  if (row.dead) return `Dead host: ${row.dead.host} ${row.dead.reason}`;
   if (row.server_error) return 'Server failing: retrying';
   if (row.replacement) return 'Broken: replacement found';
   return row.doctor_looked_at ? 'Broken: no replacement found' : null;
@@ -304,10 +307,32 @@ export function tidyNotes(row: Pick<SourceHealthRow, 'quiet' | 'never_opened' | 
   return notes;
 }
 
+/** The URL of the Sources list narrowed to the stopped sources (issue 0242: the reader's nav links it). */
+export const STALLED_SOURCES_PATH = '/settings/sources?status=stalled';
+
+/**
+ * Why a source stopped (issue 0242), or null when it works: its kind's unavailable reason ("Reddit closed its
+ * feeds: add Reddit credentials in Sources → Connections"), its dead host, else "Stopped: nothing fetched for 4 days"
+ * / "Stopped: failed 6 times in a row" / "Stopped: never fetched (added 10 days ago)".
+ */
+export function stalledNote(row: Pick<SourceHealthRow, 'stalled' | 'dead' | 'status' | 'unavailable_reason'>): string | null {
+  const stalled = row.stalled;
+  if (!stalled) return null;
+  if (row.status === 'unavailable' && row.unavailable_reason) return `Stopped: ${row.unavailable_reason}`;
+  if (row.dead) return `Stopped: ${row.dead.host} ${row.dead.reason}; switch it off or replace it`;
+  if (stalled.since === null) return `Stopped: never fetched${stalled.days !== null ? ` (added ${plural(stalled.days, 'day')} ago)` : ''}`;
+  const days = stalled.days ? `nothing fetched for ${plural(stalled.days, 'day')}` : null;
+  const failed = stalled.failures ? `failed ${plural(stalled.failures, 'time')} in a row` : null;
+  return `Stopped: ${[days, failed].filter(Boolean).join(', ')}`;
+}
+
 /** The one fact a row shows on the right: what happens next, or what went wrong. */
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
   if (row.kind === 'saved') return 'pages you save';
+  // Stopped without anyone seeing (issue 0242): first, it is the one the owner must act on.
+  const stalled = stalledNote(row);
+  if (stalled) return stalled;
   // A source whose posts moved says so first (issue 0108): it also reads as quiet.
   const moved = movedNote(row);
   if (moved) return moved;
@@ -341,6 +366,7 @@ export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: b
   { value: 'deferred', label: 'Scheduled', secondary: true },
   { value: 'tidy', label: 'Tidy up', secondary: true },
   { value: 'silent', label: 'Silent', secondary: true },
+  { value: 'stalled', label: 'Stopped', secondary: true },
 ];
 
 /** Readable names for the backend's source kinds; an unknown kind falls back to the platform. */

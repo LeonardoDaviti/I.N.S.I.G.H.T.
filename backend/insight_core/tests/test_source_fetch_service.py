@@ -288,9 +288,17 @@ class ArchiveSupportTests(unittest.TestCase):
         self.assertFalse(support["unavailable"])
         self.assertEqual(support["reason"], "Reddit refuses archive requests for now.")
 
-    def test_the_reddit_kind_refuses_archives(self):
-        from insight_core.ingestion.kinds.reddit import RedditKind
-        self.assertTrue(RedditKind.archive_refused)
+    def test_the_reddit_kind_refuses_archives_only_without_credentials(self):
+        # Issue 0242: through its OAuth API with the owner's app, Reddit archives (top, by `after`).
+        from insight_core.ingestion.credentials import MappingCredentials
+        from insight_core.ingestion.kinds.reddit import NO_CREDENTIALS, RedditKind
+        from insight_core.tests._kind_fakes import FakeHttp
+
+        self.assertEqual(RedditKind(FakeHttp(), credentials=MappingCredentials()).archive_refused, NO_CREDENTIALS)
+        credentials = MappingCredentials({("reddit", "client_id"): "id-0123456789",
+                                          ("reddit", "client_secret"): "secret-0123456789",
+                                          ("reddit", "username"): "someone"})
+        self.assertIsNone(RedditKind(FakeHttp(), credentials=credentials).archive_refused)
 
     def test_an_unmeasured_feed_can_be_planned(self):
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50))

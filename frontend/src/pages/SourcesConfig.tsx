@@ -241,6 +241,7 @@ export default function SourcesConfig() {
     STATUS_FILTERS.forEach(({ value }) => { out[value] = filterByStatus(searched, value).length; });
     return { byStatus: out, total: searched.length };
   }, [allRows, view.q]);
+  const stalledCount = useMemo(() => allRows.filter((row) => row.stalled).length, [allRows]);
   const keys = useMemo(() => visibleRowKeys(groups, collapsed), [groups, collapsed]);
   const visibleIds = useMemo(() => new Set(rows.map((row) => row.source_id)), [rows]);
 
@@ -584,6 +585,16 @@ export default function SourcesConfig() {
             ) : null}
             {missingTrack ? (
               <Notice tone="status" title="That track no longer exists" action={{ label: 'Dismiss', onClick: () => dropParam('track') }} className="mb-3" />
+            ) : null}
+            {stalledCount && view.status !== 'stalled' ? (
+              // Issue 0242: sources that stopped without anyone seeing, in front of the owner (not only an alert row).
+              <Notice
+                tone="warning"
+                title={`${plural(stalledCount, 'source')} stopped`}
+                message="On, but nothing has worked for days, or failing again and again. Each says why."
+                action={{ label: 'Show them', onClick: () => setView({ ...view, status: 'stalled' }) }}
+                className="mb-3"
+              />
             ) : null}
             {allRows.length ? <SourcesToolbar ref={searchRef} view={view} counts={counts.byStatus} total={counts.total} onChange={setView} /> : null}
             {body}
