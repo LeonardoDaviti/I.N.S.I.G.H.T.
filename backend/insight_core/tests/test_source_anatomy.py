@@ -46,7 +46,7 @@ class KindTests(unittest.TestCase):
         cases = [
             ("https://simonwillison.net/atom/everything/", "rss", {}, "feed"),
             ("https://example.substack.com/feed", "rss", {}, "feed"),
-            ("https://www.reddit.com/r/LocalLLaMA/.rss", "rss", {}, "feed"),       # a feed of Reddit is a feed
+            ("https://www.reddit.com/r/LocalLLaMA/.rss", "rss", {}, "reddit"),     # 0242: an old .rss address of Reddit is read as its subreddit
             ("https://news.example.com/", "rss", {"page_watch": {"prefix": "/news/"}}, "page_watch"),
             ("https://gwern.net/", "rss", {}, "site_reader"),
             ("https://www.lesswrong.com/", "rss", {}, "site_reader"),
