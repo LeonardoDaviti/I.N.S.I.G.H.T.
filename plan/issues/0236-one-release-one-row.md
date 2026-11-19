@@ -1,6 +1,6 @@
 # 0236 — One release, one News row (Stealth v10.25, slice K; backlog #34)
 
-Status: **built; the join is OFF** (`entity_bands.json` → `chains.one_row: false`), the leak-lead title fix is ON.
+Status: **built and ON** (`entity_bands.json` → `chains.one_row: true`, after the owner's 2026-11-19 ruling that a maker's Q&A weeks later is in the row), the leak-lead title fix is ON.
 No real data was read (owner order for this slice: no server requests, no clones, no prepared databases). The
 re-score reads only 0219's stored labels and answers (`plan/research/0219-chains/`, private). No migration.
 
@@ -12,7 +12,7 @@ A model release showed as two Mark X News rows, both tagged SPLIT. Row A had a H
 type (model_release), and were hours apart. The owner's rule (2026-11-19, memory `one-release-one-row`): everything
 about one release of one exact thing (leak, teaser, preview, launch, availability, benchmarks, breakdowns) is one row,
 even across days, oldest first, named by the launch and never by a leak. same_event + same_release is one row. A
-maker's Q&A weeks later is still open; it is counted out here.
+maker's Q&A weeks later: in the row (owner, 2026-11-19, after this re-score; section 2's table counts it out, the last line counts it in).
 
 ## 2. 0219's chains re-scored under the owner's rules (no new labels, no new Haiku answers, the guide unchanged)
 
@@ -36,7 +36,9 @@ The disputed items are the both-runs `same_release` edges where the labellers' m
 | round 1 (old guide) | 55 / 55 | 100% | 93.5% | pass |
 | round 2 (final guide) | 95 / 98 | **96.9%** | 91.4% | **fail by one item** (96/98 is needed) |
 
-- If the owner rules that the maker's Q&A is in the row, round 2 is 97/98 = 99.0% [94.4]: a pass.
+- **The owner ruled (2026-11-19) that the maker's Q&A is in the row: round 2 is 97/98 = 99.0% [94.4]: a pass. The join is ON.**
+  Examples the ruling covers: a maker's launch, then 28 days later its product team's Reddit AMA about the model (and the
+  maker's own "AMA is starting now" posts). Each post in the row keeps its own read state on News.
 - Explored only, not claimed (a cap chosen after reading the set): with a 14-day cap, round 2 is 91/92 = 98.9% [94.1].
   The owner's "even across days" argues against a cap.
 - The re-score is of sets already read and labelled before these rules existed. The rules come from the owner, not
