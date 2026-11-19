@@ -396,7 +396,7 @@ class OneKeptPageServesEveryLimit(_World):
         EV.kept_entity_page(self.cur, self.acme)
         self.assertEqual(kept_pages.most_opened(self.cur, "entity", 5),
                          [f"{self.widget}?replies=0", f"{self.acme}?replies=0"])
-        with mock.patch.object(EV, "PAGE_SHAPE", "2"), \
+        with mock.patch.object(EV, "PAGE_SHAPE", EV.PAGE_SHAPE + "-next"), \
                 mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
             EV.kept_entity_page(self.cur, self.widget)
         self.assertEqual(built.call_count, 1)
@@ -504,7 +504,7 @@ class TheShapesAreNamed(_World):
         for i in range(4):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
-    FROZEN = {"news": ("1", "f66eae3282fc8ecf"), "entity": ("1", "838c166c26d40691"),
+    FROZEN = {"news": ("1", "f66eae3282fc8ecf"), "entity": ("2", "894f8df4804ab46a"),
               "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
 
     def shapes(self):

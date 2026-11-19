@@ -790,18 +790,18 @@ class PlanningInTheBackground(_Api):
 
     def test_the_slow_kinds_are_planned_here(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=n) for k, n in (("check", 7), ("cite", 2), ("track", 0), ("relate", 4), ("stop", 5), ("chain", 3))}
+        planners = {k: mock.Mock(return_value=n) for k, n in (("check", 7), ("cite", 2), ("track", 0), ("relate", 4), ("stop", 5), ("chain", 3), ("derive", 6))}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
         self.assertEqual({k: v["added"] for k, v in got.items() if k not in ("track_places", "not_asked")},
-                         {"check": 7, "cite": 2, "track": 0, "relate": 4, "stop": 5, "chain": 3})
+                         {"check": 7, "cite": 2, "track": 0, "relate": 4, "stop": 5, "chain": 3, "derive": 6})
         self.assertIn("placed", got["track_places"])   # issue 0195: the track placements kept after the planners
         self.assertEqual(got["not_asked"], {})          # 0210: nothing open of a kind no feature reads
 
     def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain")}
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: False), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
@@ -813,7 +813,7 @@ class PlanningInTheBackground(_Api):
         from insight_core.markx import tasks
         planners = {"check": mock.Mock(side_effect=RuntimeError("boom")), "cite": mock.Mock(return_value=3),
                     "track": mock.Mock(return_value=0), "relate": mock.Mock(return_value=0), "stop": mock.Mock(return_value=0),
-                    "chain": mock.Mock(return_value=0)}
+                    "chain": mock.Mock(return_value=0), "derive": mock.Mock(return_value=0)}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
@@ -822,7 +822,7 @@ class PlanningInTheBackground(_Api):
 
     def test_the_plan_job_records_its_run(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain")}
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             self.jobs_().plan()
@@ -832,7 +832,7 @@ class PlanningInTheBackground(_Api):
 
     def test_keeping_the_track_placements_never_fails_the_plan(self):
         from insight_core.markx import tasks, track_kept
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain")}
+        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners), \
                 mock.patch.object(track_kept, "refresh", mock.Mock(side_effect=RuntimeError("no places"))):
