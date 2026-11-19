@@ -101,6 +101,7 @@ SEED_RATE = 40.0            # v10.24 (0221): the full pass's seeds a second befo
                             # ~1,000 seeds in ~25 s, its nearest names read from a cold disk)
 SEED_MIN = 100              # v10.24: the smallest full-pass chunk worth starting (less time left: the next run's)
 PACE_MARGIN = 0.8           # v10.24: a chunk is sized to this share of the time left at the pace measured (it varies)
+PART_GUESS = 5.0            # v10.25 (0226): a plain linking part's seconds before a run measures one (`part_took`)
 COLLIDE_RATE = 0.002        # v10.24: the collisions' seconds a linked mention before a run measures its own (the
                             # server, v10.23: 0.91 s for 496 mentions)
 EMB_BAR, EMB_TOPK = 0.80, 10
@@ -2924,16 +2925,33 @@ def _savepoint(cur: Any, sql: str, params: Sequence[Any]) -> Optional[Any]:
 
 
 def queue_item(cur: Any, *, kind: str, a: str, b: Optional[str], proposal: str, reason: str, conf: Optional[float],
-               evidence: Dict[str, Any], call_id: Optional[str], run_id: Any) -> bool:
-    """An open review item, unless the pair has one open or answered (an answer is never asked again)."""
-    cur.execute("""SELECT 1 FROM mx_entity_queue WHERE kind = %s AND a = %s AND COALESCE(b, a) = COALESCE(%s::uuid, %s::uuid)
-                    AND (answer IS NOT NULL OR closed_at IS NULL) LIMIT 1""", (kind, a, b, a))
-    if cur.fetchone():
+               evidence: Dict[str, Any], call_id: Optional[str], run_id: Any, held: Optional[bool] = None) -> bool:
+    """An open review item, unless the pair has one open or answered (an answer is never asked again). `held`: whether
+    it has, as `queue_state` read it (v10.25: then not asked again here)."""
+    if held is None:
+        cur.execute("""SELECT 1 FROM mx_entity_queue WHERE kind = %s AND a = %s AND COALESCE(b, a) = COALESCE(%s::uuid, %s::uuid)
+                        AND (answer IS NOT NULL OR closed_at IS NULL) LIMIT 1""", (kind, a, b, a))
+        held = cur.fetchone() is not None
+    if held:
         return False
     got = _savepoint(cur, """INSERT INTO mx_entity_queue (kind, a, b, proposal, reason, confidence, evidence, call_id, run_id)
                              VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s) RETURNING id""",
                      (kind, a, b, proposal, reason, conf, json.dumps(evidence, default=str), call_id, run_id))
     return got is not None
+
+
+def queue_state(cur: Any, pairs: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], bool]:
+    """v10.25 (0226): the alias items of these pairs (a, b as given) that are open or answered, in one read: {pair:
+    open}. A pair absent has neither (queue_item may add one; close_queued and refresh_queued would change nothing)."""
+    ps = sorted(set(pairs))
+    if not ps:
+        return {}
+    cur.execute("""SELECT q.a::text, q.b::text, bool_or(q.answer IS NULL AND q.closed_at IS NULL)
+                     FROM unnest(%s::uuid[], %s::uuid[]) u(x, y)
+                     JOIN mx_entity_queue q ON q.kind = 'alias' AND q.a = u.x AND q.b = u.y
+                    WHERE q.answer IS NOT NULL OR q.closed_at IS NULL GROUP BY 1, 2""",
+                ([x for x, _ in ps], [y for _, y in ps]))
+    return {(a, b): bool(o) for a, b, o in cur.fetchall()}
 
 
 def close_queued(cur: Any, p: Tuple[str, str], note: Dict[str, Any]) -> int:
@@ -3112,7 +3130,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
           deadline: Optional[float] = None, chunk: int = SEED_CHUNK, link_after: Optional[str] = None,
           phase: Optional[str] = None, book: Optional[Book] = None, mention_chunk: Optional[int] = None,
           relink_page: Optional[int] = None, seed_rate: Optional[float] = None, keep: float = 0.0,
-          collide_rate: Optional[float] = None) -> Dict[str, Any]:
+          collide_rate: Optional[float] = None, part_took: Optional[float] = None) -> Dict[str, Any]:
     """The decision run's entities stage. `full`: the nightly pass (every mention relinked and checked, every entity
     pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts;
     `days` the days whose mentions it linked (the surges recount them), `posts_linked` the posts whose mentions it
@@ -3139,7 +3157,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         linked. The full pass stops `keep` seconds early: what the steps after it (entity_stage) are expected to
         take, so a pass that lasts days never starves them. (v10.22's LINK_SHARE split and v10.22.2's chunk
         every other run are gone: on the server the linking did 1 part of 13 a run for days and the stage ran
-        55-87 s against 45.)"""
+        55-87 s against 45.)
+      - v10.25 (0226): a part is expected to take the last plain part's seconds (`part_took`: a part that decided
+        only its own mentions' pairs), never the first part's when it also decided the answered pairs and the
+        backlog; the decisions' alias items are read in one go (queue_state) and written only where the pair has
+        one; the linking's counts carry its steps' seconds (`incremental.timing`)."""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -3255,6 +3277,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
          "added3": 0, "void_alias": 0, "void_alias2": 0, "void_alias3": 0}
     closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
 
+    wrote: Dict[str, str] = {}   # v10.25 (0226): the tier of the decision being written (its seconds, by tier)
     seeded: Set[str] = set()
     neared: Set[str] = set()   # v10.22 (0216): the seeds whose nearest names the run asked
     collided: Set[str] = set()
@@ -3309,6 +3332,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         pooled.update(pool.pairs)
         pairs = [p for p in sorted(pool.pairs.values(), key=lambda p: (p.a, p.b)) if (p.a, p.b) not in decided]
         pairs = pairs[:max(0, PAIR_LIMIT - n["pairs"])]
+        t = tick("pairs", t)   # v10.25 (0226): the pairs read (which a mention names), the answered ones' facts
         book.prime(ids={x for p in pairs for x in (p.a, p.b)})
         n["pairs"] += len(pairs)
         decided.update((p.a, p.b) for p in pairs)
@@ -3327,6 +3351,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     voided[k_][(p.a, p.b)] = void[task_[0]]
                     answers.pop(task_[0], None)
                     n["void_" + k_] += 1
+        t = tick("answers", t)   # v10.25 (0226): the pairs' questions, their answers and whether they still hold
         decisions: List[Decision] = []
         for p in pairs:
             if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
@@ -3338,7 +3363,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     closed["same_cluster"] += close_queued(cur, (p.a, p.b), {"closed_by": "same_cluster",
                                                                             "redecided": REDECIDE})
                 continue
+            r0 = _time.monotonic()
             auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
+            timing["decide.rules"] += _time.monotonic() - r0   # v10.25 (0226): inside `decide`
             judge = call = None
             task = got.alias.get((p.a, p.b))
             if task and answers.get(task[0]):
@@ -3405,11 +3432,20 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 asked_on(kind3, alias3_input(cur, book, guide, *d.pair, picked=picked), d, picked)
                 n["added3"] += 1
         t = tick("ask", t)
+        # v10.25 (0226): the decisions' pairs' alias items, in one read (open: closed or refreshed below; open or
+        # answered: never queued again). Was a statement or two for each decision, whether its pair had an item or
+        # not: a savepoint and an UPDATE for every pair kept apart (the server: 2.6k-15.5k a run)
+        items = queue_state(cur, [d.pair for d in decisions if d.tier in ("apart", "queue", "auto", "same_cluster")
+                                  or (d.tier == "ask" and d.pair in voided["alias"])])
         for d in decisions:
+            t = tick("write." + prev_tier, t) if (prev_tier := wrote.get("tier")) else t
+            wrote["tier"] = d.tier   # v10.25 (0226): the write's seconds by the decision's tier
             why_void = voided["alias"].get(d.pair)
+            is_open = items.get(d.pair) is True
             if why_void and d.tier == "ask":
                 # 0222: its open item showed an answer about other posts: closed (kept, with why); asked again above
-                closed["void"] += close_queued(cur, d.pair, {"closed_by": "void", "void": why_void, "redecided": REDECIDE})
+                closed["void"] += close_queued(cur, d.pair, {"closed_by": "void", "void": why_void,
+                                                             "redecided": REDECIDE}) if is_open else 0
                 continue
             if d.tier == "auto":
                 ev = {"rules": list(d.rules), "confidence": d.conf, "judge": d.judge}
@@ -3420,13 +3456,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if rid:
                     n["merged"] += 1
                     # the pair's open item, if any, is answered by the merge (kept, closed with why)
-                    got_ = close_queued(cur, d.pair, {"closed_by": d.reason, "redirect": rid, "redecided": REDECIDE})
+                    got_ = close_queued(cur, d.pair, {"closed_by": d.reason, "redirect": rid,
+                                                      "redecided": REDECIDE}) if is_open else 0
                     if d.reason == "second":
                         n["cleared"] += got_
                     else:
                         closed[d.reason] += got_
             elif d.tier == "same_cluster" and d.pair in again:
-                closed["same_cluster"] += close_queued(cur, d.pair, {"closed_by": "same_cluster", "redecided": REDECIDE})
+                closed["same_cluster"] += close_queued(cur, d.pair, {"closed_by": "same_cluster",
+                                                                     "redecided": REDECIDE}) if is_open else 0
+            elif d.tier == "apart" and not is_open:
+                closed["apart:" + d.reason] += 0   # no item to close (the counts keep the reason, as before)
             elif d.tier == "apart":
                 # v10.18: kept apart (Haiku's answer, or a version rule): an open item of the pair is closed, with why
                 closed["apart:" + d.reason] += close_queued(cur, d.pair, {
@@ -3442,10 +3482,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 if d.second is None and d.pair in voided["alias2"]:   # 0222: a void second opinion is not shown
                     ev.update(second=None, second_call=None, disagree=None)
                 if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
-                              evidence=ev, call_id=d.call_id, run_id=run_id):
+                              evidence=ev, call_id=d.call_id, run_id=run_id, held=d.pair in items):
                     n["queued"] += 1
-                elif refresh_queued(cur, d.pair, d, ev):
+                elif is_open and refresh_queued(cur, d.pair, d, ev):
                     n["marked" if d.second is not None else "refreshed"] += 1
+        t = tick("write." + wrote.pop("tier"), t) if wrote.get("tier") else t
         if first and again:
             stamp_backlog(cur, again)
         t = tick("write", t)
@@ -3473,7 +3514,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     linked_any = False   # the linking had mentions to link (then the full pass's first unit waits for time left)
     # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks
     if not full or resume:
-        at_start = clock()
+        at_start, timing0, read_start = clock(), Counter(timing), _book_reading(book)
+        part_s: List[float] = []   # v10.25 (0226): each part's seconds
         linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
         if book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet (first)
@@ -3492,7 +3534,16 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         parts = _parts(ms, mention_chunk)
         linked_seeds: Set[str] = set()
         done_parts = 0
-        took = 0.0   # the last part's seconds, as the next is expected to take (once-a-run reads left out)
+        # the seconds a part is expected to take: the last plain part's (once-a-run work left out). v10.25 (0226): a
+        # part is plain when it decides only its own mentions' pairs; the first part also decides the pairs answered
+        # since the last run and the open items' backlog, and asks their questions, once a run (on a server-shaped
+        # copy, cold: 2,379 such pairs, 2,106 questions, ~22 s of its 38.9 s, its own seeds' pairs 3), so it is
+        # plain only when there were none. v10.24 took the first part's seconds as the next one's: no second part
+        # fitted, and the linking did 1 part of 13 a run (5.5k mentions waiting). Before any plain part is
+        # measured: the last run's (`part_took`), else PART_GUESS.
+        known_once = bool(answered_pairs or again)
+        took = part_took if part_took is not None and part_took >= 0 else PART_GUESS
+        plain_took: Optional[float] = None
         # the collisions of what the parts link come after them (once an entity's mentions are all linked): a part
         # starts only when its seconds and its mentions' collisions (`collide_rate` a mention, the last run's) are left
         per = collide_rate if collide_rate is not None and collide_rate >= 0 else COLLIDE_RATE
@@ -3513,8 +3564,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             done_parts = k + 1
             n_linked += len(part)
             # the book's one read of the pool's indexes and the first part's facts of every post are once a run
-            took = max(0.0, clock() - began - (_book_reading(book) - read0)
-                       - (timing["facts"] - facts0 if k == 0 else 0.0))
+            if k > 0 or not known_once:
+                took = plain_took = max(0.0, clock() - began - (_book_reading(book) - read0)
+                                        - (timing["facts"] - facts0 if k == 0 else 0.0))
+            part_s.append(round(clock() - began, 2))
         # the collisions of the entities linked (once their chunks are all linked), and of the answers since
         began = clock()
         decide_collisions(linked_seeds | collide_since)
@@ -3524,7 +3577,15 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                               "seconds": round(clock() - at_start, 2),
                               # v10.24 (0221): the collisions' seconds a mention linked (the next run keeps them)
                               "collide_rate": (round(collide_s / n_linked, 5) if n_linked >= mention_chunk
-                                               else collide_rate)}
+                                               else collide_rate),
+                              # v10.25 (0226): where the linking's seconds went (its steps; `reading`: the pool's
+                              # indexes, inside `pool`), each part's seconds, and the pairs it decided
+                              "timing": {k_: round(v_ - timing0.get(k_, 0.0), 2) for k_, v_ in sorted(timing.items())
+                                         if v_ - timing0.get(k_, 0.0) >= 0.005},
+                              "reading": round(_book_reading(book) - read_start, 2), "part_seconds": part_s,
+                              "pairs": n["pairs"],
+                              # v10.25: a plain part's seconds (the next run's expectation until it measures one)
+                              "part_took": round(plain_took, 3) if plain_took is not None else part_took}
         stopped = linking_stopped   # the budget is spent: the full pass's pages or chunks are the next run's
     first_unit = not linked_any     # the full pass is the most urgent work pending: its first unit always goes
     full_at = clock()
@@ -3641,6 +3702,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                                                       guide, run_id=run_id)}
     out["entities_made"] = len(w.made)
     out["timing"] = {k: round(v, 2) for k, v in sorted(timing.items())}
+    out["timing"]["reading"] = round(_book_reading(book), 2)   # v10.25 (0226): the pool's indexes (inside `pool`)
     out["seconds"] = round(_time.monotonic() - t0, 3)
     out["days"] = sorted(d.isoformat() for d in touched_days)
     out["posts_linked"] = sorted(posts_linked)
