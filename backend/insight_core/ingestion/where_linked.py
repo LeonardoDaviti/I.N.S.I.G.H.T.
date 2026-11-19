@@ -33,6 +33,12 @@ normalized as post_links keeps them). With none, Follow behaves as before (issue
    /blog/<slug>), is offered its own section to follow (v10.13.5): the section page (/blog) and the
    blog or news pages the finder read under that same section, those with articles. A page under an
    account (huggingface.co/<org>) is never offered the site's blog that is another section.
+5. Scrape regardless of a feed (issue 0240, owner 2026-11-19): when nothing above is offered (no feed, or no feed
+   holding the linked articles, and no page), the pages that list the site's announcements are previewed one after
+   another (page_watch.list_offers: the linked articles' section, the page itself, its parent and section, its
+   sitemap's news / newsroom / press / blog sections, then those at the root), and the first that reads as a dated
+   stream (page_watch.dated_list) is offered. Beside a feed, only one holding linked articles. Not on a site that
+   rate-limits us. Cost: its sitemap (shared with the previews) and at most LIST_TRIES previews in LIST_BUDGET_S.
 """
 from __future__ import annotations
 
@@ -314,9 +320,28 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         # holding the most (a newspaper's tech feed and its feed of everything).
         found += _others(found, await feed_finder.page_feeds(http, address))
     feeds = [feed_row(feed) for feed in found]
+    move: Optional[Move] = None
     if articles:
         move = await where_moved(http, articles, found, pages)
         feeds, pages = rank(articles, found, pages, move)
+    # Issue 0240 (owner 2026-11-19: scrape regardless of a feed): no page offered and no feed, or none of the feeds
+    # holding the linked articles: the pages that list the site's announcements (page_watch.list_offers: the linked
+    # articles' section, the page itself, its section, its sitemap's news sections, /news, /newsroom, /press, /blog),
+    # the first that reads as a dated stream. Beside a feed, only one holding the linked articles. Never on a site
+    # that limits us.
+    other_feed = bool(feeds) and bool(articles) and not any(row.get("holds") for row in feeds)
+    if not pages and finding.reason != "rate-limited" and (finding.status == "none" or other_feed):
+        tried = [*([start] if start else []), *finding.pages, *(finding.menu if home else ())]
+        if not home and not start:
+            tried = own_section(finding.landed or address, finding.pages)
+        # The linked articles' section first: for a home page, or the page's own section (v10.13.5).
+        section = main_section(articles)
+        first = [f"{parsed.scheme}://{parsed.netloc}/{section[0]}" for parsed in [urllib.parse.urlparse(address)]
+                 if section and (home or feed_finder.section_of(address) == section[0].lower())]
+        listed = await page_watch.list_offers(http, finding.landed or address, tried, first)
+        if articles and listed:
+            _, listed = rank(articles, found, listed, move)
+        pages = [offer for offer in listed if not other_feed or offer.get("holds")]
     # Every feed found is the site's, not this page's (issue 0137 B2): the page itself, to follow.
     watch = None
     if found and all(feed.flag for feed in found) and finding.landed and not page_watch.is_home(finding.landed):

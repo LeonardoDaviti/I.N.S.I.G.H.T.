@@ -36,6 +36,11 @@ Its stored pages can be watched for changes (issue 0039, page_changes): page_pos
 again as a fetch does, and article_post keeps the date the page says it changed (metadata
 modified). A post found only in the sitemap is marked as backlog (repo_posts.BACKLOG_KEY): it is
 never "new to you", so a fetch reading the site's history does not fill the top of the feed.
+
+A news sitemap's <news:publication_date> is an entry's date before its lastmod (issue 0240). A site with no feed and
+no page offered is tried on the pages that list its announcements (issue 0240, `list_offers`, where_linked.follow's
+last step): the page, its section, its sitemap's news / newsroom / press / blog sections, those at its root; the first
+whose preview reads as a dated stream (`dated_list`) is offered.
 """
 from __future__ import annotations
 
@@ -528,7 +533,11 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
             if not root:
                 root = name
             elif event == "end" and name in ("url", "sitemap"):
-                locs.append((parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")))
+                # A news sitemap's <news:publication_date> (issue 0240) is the article's own date: before its
+                # lastmod, often a redeploy's.
+                published = next((parsing.child_text(child, "publication_date") for child in node
+                                  if parsing.local_name(child.tag) == "news"), None)
+                locs.append((parsing.child_text(node, "loc") or "", published or parsing.child_text(node, "lastmod")))
     except ET.ParseError:
         pass
     return root, locs
@@ -826,6 +835,103 @@ async def _previews(http: KindHttp, pages: Sequence[str], deadline: float,
     return found
 
 
+# Issue 0240 (owner 2026-11-19: "I don't care if something has feed, we should scrape it regardless"): a site with no
+# feed and no page offered is tried on the pages that list its announcements before it is called unfollowable.
+LIST_WORDS = frozenset({"news", "newsroom", "press", "blog"})   # what a site names its announcements' list pages
+ROOT_LISTS = ("news", "newsroom", "press", "blog")               # ... tried at its root, in this order
+LIST_SECTIONS = 2         # the sections its sitemap names by one of LIST_WORDS, the most addresses first
+LIST_DEPTH = 3            # how deep in an address such a section is looked for (/en/company/newsroom/)
+LIST_TRIES = 6            # list pages previewed a call, at most, one after another: the first dated one is offered
+LIST_BUDGET_S = 20.0      # the whole call: its sitemap read and its previews
+LIST_DATED = 2            # a list offered: this many of its preview's posts dated, and half of them or more
+
+
+def list_pages(address: str, sitemap: Sequence[str] = ()) -> List[str]:
+    """The pages that may list a site's announcements (issue 0240), in the order tried: the page itself, its parent
+    path (/en/news for /en/news/<slug>) and its first segment's page (/blog for /blog/<slug>); the sections of
+    `sitemap` (the site's addresses) whose segment is one of LIST_WORDS (/company/newsroom), the most addresses first;
+    then, for a home page (or a feed address that stands for its site), the site's root ones (ROOT_LISTS). A page under
+    a section or an account (huggingface.co/<org>: feed_finder.section_of) keeps to it (v10.13.5): only its sitemap
+    sections under that section, never the site's root lists. Never a home page, never a numbered page of a list;
+    each once."""
+    from insight_core.ingestion.feed_finder import section_of
+    origin = parsing.origin_from_source(address, "")
+    if not origin:
+        return []
+    segments = parsing.path_segments(address)
+    section = section_of(address)
+    own = ["/".join(segments), "/".join(segments[:-1]), segments[0]] if section else []
+    site = publication_of(host_of(address))
+    counts: Counter = Counter()
+    for url in sitemap:
+        parts = parsing.path_segments(url)
+        if publication_of(host_of(url)) != site or (section and (not parts or parts[0].lower() != section)):
+            continue
+        for depth in range(min(len(parts) - 1, LIST_DEPTH)):
+            if parts[depth].lower() in LIST_WORDS:
+                counts["/".join(parts[:depth + 1])] += 1
+                break
+    named = [path for path, _ in counts.most_common(LIST_SECTIONS)]
+    out: Dict[str, str] = {}
+    for path in (*own, *named, *(() if section else ROOT_LISTS)):
+        url = f"{origin}/{path}" if path else ""
+        if url and not pagination_page(url):
+            out.setdefault(url.rstrip("/").lower(), url)
+    return list(out.values())
+
+
+def dated_list(items: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a preview's posts are a dated stream (issue 0240): LIST_DATED or more of them dated by their own pages
+    (post_from: the page's markup, its address, its sitemap entry; never the time it was read), and half or more."""
+    dated = sum(1 for item in items if item.get("published_at"))
+    return dated >= LIST_DATED and 2 * dated >= len(items)
+
+
+async def list_offers(http: KindHttp, address: str, tried: Sequence[str] = (),
+                      first: Sequence[str] = ()) -> List[Dict[str, Any]]:
+    """Issue 0240: the first of a site's list pages (`first`, then list_pages; less `tried`, the pages already
+    previewed) whose preview is a dated stream (dated_list), as [{url, **preview}]; [] when none is. The site's
+    sitemap is read once (its sections named by a list word), and shared with the previews. At most LIST_TRIES
+    previews, one after another, within LIST_BUDGET_S. Never raises for a site's failure."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + LIST_BUDGET_S
+    reads: SiteReads = {}
+    origin = parsing.origin_from_source(address, "")
+    if not origin:
+        return []
+    try:
+        entries = await asyncio.wait_for(_sitemap_entries(http.get_start, http, f"{origin}/", "/", reads),
+                                         LIST_BUDGET_S / 2)
+    except Exception as exc:  # noqa: BLE001 - no sitemap: the pages the address and the root name
+        logger.debug("Page watch: %s sitemap not read for its lists (%s)", origin, type(exc).__name__)
+        entries = []
+    seen = {page.rstrip("/").lower() for page in tried}
+    pages = []
+    for page in (*first, *list_pages(address, [loc for loc, _ in entries])):
+        if page.rstrip("/").lower() not in seen:
+            seen.add(page.rstrip("/").lower())
+            pages.append(page)
+    try:
+        for page in pages[:LIST_TRIES]:
+            left = deadline - loop.time()
+            if left <= 0:
+                logger.info("Page watch: %s lists not all read (budget of %.0fs)", origin, LIST_BUDGET_S)
+                break
+            try:
+                offer = await asyncio.wait_for(preview(http, page, reads=reads), left)
+            except Exception as exc:  # noqa: BLE001 - a list page that can't be read is no list
+                logger.debug("Page watch: %s is no list (%s)", page, type(exc).__name__)
+                continue
+            if dated_list(offer["items"]):
+                logger.info("Page watch: %s has no feed; %s lists it, dated (issue 0240)", address, page)
+                return [{"url": page, **offer}]
+        return []
+    finally:
+        for read in reads.values():
+            if not read.done():
+                read.cancel()
+
+
 class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
     conditional = True                  # fetch_latest takes memory= (issue 0044)
@@ -950,4 +1056,4 @@ class PageWatchKind(BaseSourceAdapter):
 __all__ = ["Discovery", "PageWatchKind", "action_page", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
            "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
-           "read_page_post", "section_prefix", "sitemap_entries"]
+           "read_page_post", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]

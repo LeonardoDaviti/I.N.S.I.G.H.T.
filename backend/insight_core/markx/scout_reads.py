@@ -5,7 +5,7 @@ newest items kept in a scratch area, and its health. Nothing is followed, nothin
     got = await reader.read("https://example.org/blog/", limit=20)
     got.resolved   # {platform, handle_or_url, settings, via: kind | feed | page, title}, or None: can't read
     got.items      # [{url, title, text, published_at, lang, chars, transcript}], newest first
-    got.reason     # "" when read; else why not (the finder's reason: blocked, gone, no feed and no page to watch...)
+    got.reason     # "" when read; else why not (the finder's reason: blocked, gone, NOTHING: no feed and no dated list)
     health(got.items, now)   # {items, dated, median_chars, lang, per_week, newest_days, reads_well, reason, labels}
 
 **How it reads (the add path, no other):** an account INSIGHT reads by a source kind (an X account through the bridge,
@@ -14,6 +14,15 @@ where_linked.follow (the feed finder, then page watching): its first feed that i
 site's), else its first page to watch. A feed is parsed with the fetcher's own parser (parsing.parse_feed_posts); a
 watched page's articles are read one by one as page watching reads them (page_watch.post_from), never dated "now":
 an article with no date of its own stays undated, so an undated source shows as one.
+
+**Scrape regardless of a feed** (issue 0240, owner 2026-11-19): this is the one test read of the scout, the daily judge,
+a tap's judgement and the official channels (through source_judge), and Discover's follow test takes the same
+where_linked.follow. When the finder finds no feed and no page, follow previews the pages that list the site's
+announcements (page_watch.list_offers: the page itself, its section, its sitemap's news sections, /news, /newsroom,
+/press, /blog) and offers the first dated one; only when that fails too is the source unreadable (NOTHING). A feed
+whose items are undated or titles only is read from its items' own pages (`_from_pages`, at most DATE_PAGES): the date
+each page states (page_watch.page_dating: markup, address, then body), the article text; so a titles-only feed dated
+by its article pages is a dated stream. Still reading badly, the page offered beside it is read instead when better.
 
 **Health** (0135's silent failures, 0149's classes, measured on the item list alone): no items; undated (fewer than half
 the items carry a date); titles only (the median text under NO_TEXT_CHARS); stopped (the newest item older than
@@ -44,6 +53,9 @@ STOPPED_DAYS = 120               # the newest item older than this: stopped
 DATED_SHARE = 0.5                # fewer than this share dated: undated
 PAGE_GAP_S = 1.0                 # between two article pages of one watched page
 PAGE_SKIPS = 5                   # article pages that are no post, read at most besides the items
+DATE_PAGES = 10                  # 0240: a feed's undated or titles-only items read from their own pages, at most
+# Every way in failed (0240): the feed finder, page watching on the page, its section and the site's list pages.
+NOTHING = "no feed, and no page that lists dated articles: the page, its section, its news, blog and press pages"
 
 
 @dataclass
@@ -147,6 +159,12 @@ def health(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> D
             "newest_days": newest_days, "reads_well": not reason, "reason": reason, "labels": labels}
 
 
+def _better(a: Sequence[Dict[str, Any]], b: Sequence[Dict[str, Any]]) -> bool:
+    """Whether items a read better than items b (0240): reads well first, then the more dated items."""
+    ha, hb = health(a), health(b)
+    return (ha["reads_well"], ha["dated"]) > (hb["reads_well"], hb["dated"])
+
+
 def cadence_words(per_week: Optional[float]) -> str:
     """"3 a week", "2 a month", "less than one a month"."""
     if per_week is None:
@@ -207,22 +225,65 @@ class Reader:
         from insight_core.ingestion import where_linked
         from insight_core.ingestion.kinds import parsing
         found = await where_linked.follow(client, self.registry, address, list(linked))
+        pages = [p for p in found.get("pages") or [] if p.get("items")]
         if found.get("status") == "direct":
             source = {"platform": "rss", "handle_or_url": address}
-            return await self._kind(source, limit, via="kind")
+            got = await self._kind(source, limit, via="kind")
+            await self._from_pages(client, got)
+            return got
         feeds = list(found.get("feeds") or [])
         feeds.sort(key=lambda f: bool(f.get("not_this_page")))
         if feeds:
             feed = feeds[0]
             text, _ = await client.get_text(feed["url"])
             items = [i for i in (item_of(p) for p in parsing.parse_feed_posts(text, feed["url"])) if i][:limit]
-            return ReadResult(resolved={"platform": "rss", "handle_or_url": feed["url"], "settings": {}, "via": "feed",
-                                        "title": feed.get("title") or ""}, items=items)
-        pages = [p for p in found.get("pages") or [] if p.get("items")]
+            got = ReadResult(resolved={"platform": "rss", "handle_or_url": feed["url"], "settings": {}, "via": "feed",
+                                       "title": feed.get("title") or ""}, items=items)
+            await self._from_pages(client, got)
+            if pages and not health(got.items)["reads_well"]:
+                # The feed reads badly even from its pages (0240): the page offered beside it, when it reads better.
+                other = await self._page(client, pages[0], limit)
+                if _better(other.items, got.items):
+                    return other
+            return got
         if pages:
             return await self._page(client, pages[0], limit)
-        reason = found.get("refused") or found.get("reason") or "no feed and no page to watch"
-        return ReadResult(reason=reason)
+        from insight_core.ingestion.feed_finder import NONE_FOUND
+        reason = found.get("refused") or found.get("reason") or NOTHING
+        return ReadResult(reason=NOTHING if reason == NONE_FOUND else reason)
+
+    async def _from_pages(self, client: Counting, got: ReadResult) -> None:
+        """Issue 0240: a feed read whose items are undated or titles only (health) is read from its items' own pages,
+        at most DATE_PAGES of them, the newest first: each undated item takes the date its page states
+        (page_watch.page_dating: its markup, then its address's day, only then its byline or one written date; one
+        the address contradicts is held), each titles-only item the page's article text. `got.resolved["from_pages"]`:
+        how many items a page dated or filled. A page that can't be read is skipped."""
+        from insight_core.ingestion.kinds import page_watch
+        why = health(got.items)["reason"]
+        if not got.items or not why.startswith(("undated", "titles only")):
+            return
+        thin = [i for i in got.items if i.get("published_at") is None or int(i.get("chars") or 0) < NO_TEXT_CHARS]
+        filled = 0
+        for n, item in enumerate(thin[:DATE_PAGES]):
+            if n and self.page_gap:
+                await asyncio.sleep(self.page_gap)
+            try:
+                page, _ = await client.get_text(item["url"])
+            except Exception:  # noqa: BLE001 - one unreadable article page stays as the feed gave it
+                continue
+            changed = False
+            if item.get("published_at") is None:
+                date, _how = page_watch.page_dating(page, item["url"])
+                if date is not None:
+                    item["published_at"], changed = date, True
+            if int(item.get("chars") or 0) < NO_TEXT_CHARS:
+                post = page_watch.article_post(page, item["url"], item["url"], None, adapter=page_watch.PageWatchKind.adapter_type)
+                text = str((post or {}).get("content") or "").strip()
+                if len(text) >= NO_TEXT_CHARS:
+                    item["text"], item["chars"], changed = text[:TEXT_CHARS], len(text), True
+            filled += changed
+        if filled and got.resolved is not None:
+            got.resolved["from_pages"] = filled
 
     async def _page(self, client: Counting, offer: Dict[str, Any], limit: int) -> ReadResult:
         from insight_core.ingestion.kinds import page_watch

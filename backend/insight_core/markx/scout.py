@@ -28,7 +28,8 @@ is started a tick, none while another weekly run is open, so the tracks' runs fo
 **The test read** (scout_reads.Reader, the server's fetcher): at most MAX_READS candidates a run, in finder order with
 each finder's share (READ_SHARE, the rest refilled from the others), up to 20 newest items each into mx_scout_items.
 Its health (scout_reads.health): a candidate that reads empty, undated, titles only or stopped is "can't read well:
-<why>", never suggested.
+<why>", never suggested. 0240: the read scrapes regardless of a feed (the site's list pages when it has none; a feed's
+undated or titles-only items read from their own pages), so this is only what scraping also fails on.
 
 **The judge**: each item a `track` task (0145's guide track-v1, subject 'scout_item', a = the item), at most
 MAX_JUDGEMENTS a run; an answer is copied to the item (`after_judge`). Precision = in / judged.

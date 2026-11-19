@@ -375,7 +375,9 @@ class FollowTheBlogTests(unittest.TestCase):
         responses = {**dated_section("/blog", 2), f"{SHOP}/": page(body='<a href="/news">News</a>'), **dated_section("/news", 5)}
         responses[f"{SHOP}/blog"] = responses[f"{SHOP}/blog"].replace("<main>", '<main><a href="/news">News</a>')
         body = self.ask(responses, f"{SHOP}/blog")
-        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", False, []))
+        # Issue 0240: the section itself is offered (its own dated list), never the /news it links.
+        self.assertEqual((body["status"], body["homepage"]), ("none", False))
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/blog"])
 
     def test_a_feed_found_is_unchanged(self):
         body = self.ask({f"{SHOP}/": page(body='<a href="/blog">Blog</a>'), f"{SHOP}/blog": page(),
