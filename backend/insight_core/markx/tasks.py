@@ -1142,20 +1142,31 @@ def last_posts_on() -> bool:   # 0132 C1
 
 
 def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:   # 0132 C1
-    """`read` or `entities` tasks for the last LAST_POSTS posts, whatever their date, of every source with fewer than
-    LAST_POSTS_BELOW posts read under the kind's guide (a reading, or an answered entities task), only while
-    INSIGHT_MARKX_READ_LAST20 is on; priority the post's age in days, as plan_posts. It fills the role card's "too few
-    to tell". How many were added."""
-    if not last_posts_on():
+    """Tasks of `kind` for the last LAST_POSTS posts, whatever their date, of every source with fewer than
+    LAST_POSTS_BELOW posts read, only while INSIGHT_MARKX_READ_LAST20 is on; priority the post's age in days, as
+    plan_posts. It fills the role card's "too few to tell". How many were added.
+
+    0233 (0225 #17): only the kinds the current reading uses. While ent-v5 is on (reading5.is_on) a post's one reading
+    is `reading` (read, read3 and entities are not asked for it): `read` and `entities` plan nothing here, and
+    `reading` asks a thin source's last posts that no guide the pickers read has read yet (reading5.guides: no post
+    read before is read again), through reading5.add_posts. While it is off or in Shadow, `read` (a reading under its
+    guide) and `entities` (an answered entities task) as before, and `reading` nothing."""
+    from insight_core.markx import reading5   # reading5 imports this module
+    if not last_posts_on() or (kind == reading5.KIND) != reading5.is_on(cur):
         return 0
-    guide = schemas.guide_of(cur, kind)   # 0133
-    done = ("SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.guide = %(guide)s" if kind == "read" else
-            "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id "
-            "AND t.status = 'answered'")
+    if kind == reading5.KIND:
+        guide = reading5.GUIDE
+        read = "SELECT 1 FROM mx_readings r WHERE r.post_id = {post} AND r.guide = ANY(%(read)s)"
+    else:
+        guide = schemas.guide_of(cur, kind)   # 0133
+        read = ("SELECT 1 FROM mx_readings r WHERE r.post_id = {post} AND r.guide = %(guide)s" if kind == "read" else
+                "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = {post} "
+                "AND t.status = 'answered'")
     cur.execute(
         f"""WITH few AS (SELECT s.id FROM sources s
                           WHERE s.platform <> 'saved'
-                            AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id AND EXISTS ({done})) < %(below)s),
+                            AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id
+                                    AND EXISTS ({read.format(post="p.id")})) < %(below)s),
                  last AS (SELECT p.id, {pairing.ordinary_date('p')} AS at,
                                  row_number() OVER (PARTITION BY p.source_id ORDER BY
                                                     {pairing.ordinary_date('p')} DESC, p.id DESC) AS k
@@ -1164,10 +1175,14 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
               FROM last l
              WHERE l.k <= %(last)s
                AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = l.id)
+               AND NOT EXISTS ({read.format(post="l.id")})
              ORDER BY 2, l.id
              LIMIT %(limit)s""",
-        {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit})
+        {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit,
+         "read": reading5.guides(cur, "read-v3", "read-v2")})
     rows = cur.fetchall()
+    if kind == reading5.KIND:
+        return reading5.add_posts(cur, [(pid, age, None) for pid, age in rows])[0]
     posts = load_posts(cur, [r[0] for r in rows])
     render = _render(cur, kind)   # 0133
     added = 0
@@ -1275,8 +1290,8 @@ def _plan_reading(cur: Cursor, **kw: Any) -> int:   # 0212: ent-v5, new posts on
     return reading5.plan(cur, **kw)
 
 
-PLANNERS["reading"] = _plan_reading
-FRESH_PLANNERS["reading"] = _plan_reading
+PLANNERS["reading"] = _with_last_posts("reading", _plan_reading)   # 0233: a thin source's last posts, ent-v5 on
+FRESH_PLANNERS["reading"] = _with_last_posts("reading", _plan_reading)   # 0233: a thin source's last posts, ent-v5 on
 
 
 def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second question, cue posts only (ent42.plan)
@@ -1346,3 +1361,4 @@ def _plan_news_place(cur: Cursor, **kw: Any) -> int:   # 0197: the rows added si
 
 
 PLANNERS["news_place"] = _plan_news_place                                  # 0197
+

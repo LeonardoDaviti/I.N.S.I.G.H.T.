@@ -450,6 +450,34 @@ class Stance(_World):
                          (self.thin,))
         self.assertEqual(self.cur.fetchone()[0], 20)      # never more
 
+    def test_last_posts_ask_only_the_current_readings_kind(self):
+        """0233 (0225 #17): with ent-v5 on, a thin source's last posts get `reading` tasks, never read or entities;
+        off, `reading` plans nothing here."""
+        from insight_core.markx import reading5
+        for i in range(25):
+            self.add(self.thin, url=f"https://thin.example-thin.invalid/v{i}", at=NOW - (400 + i) * D)
+        old = os.environ.get(tasks.LAST_POSTS_SWITCH)
+        os.environ[tasks.LAST_POSTS_SWITCH] = "on"
+        self.addCleanup(lambda: os.environ.__setitem__(tasks.LAST_POSTS_SWITCH, old) if old is not None
+                        else os.environ.pop(tasks.LAST_POSTS_SWITCH, None))
+
+        def count(kind):
+            self.cur.execute("SELECT count(DISTINCT t.a) FROM mx_tasks t JOIN posts p ON p.id = t.a "
+                             "WHERE t.kind = %s AND p.source_id = %s", (kind, self.thin))
+            return self.cur.fetchone()[0]
+        with self.conn.transaction():
+            self.assertEqual(tasks.plan_last_posts(self.cur, "reading"), 0)   # off: not the current reading
+            reading5.set_mode(self.cur, "on")
+        self.addCleanup(lambda: reading5.set_mode(self.cur, "off"))
+        with self.conn.transaction():
+            self.assertEqual(tasks.plan_last_posts(self.cur, "read"), 0)
+            self.assertEqual(tasks.plan_last_posts(self.cur, "entities"), 0)
+            tasks.plan_last_posts(self.cur, "reading")
+        self.assertEqual((count("read"), count("entities"), count("reading")), (0, 0, 20))
+        with self.conn.transaction():
+            tasks._with_last_posts("reading", tasks._plan_reading)(self.cur)   # PLANNERS["reading"] (emptied here)
+        self.assertEqual(count("reading"), 20)            # never more, through the planner too
+
 
 if __name__ == "__main__":
     unittest.main()
