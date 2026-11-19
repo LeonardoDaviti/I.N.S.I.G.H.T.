@@ -225,12 +225,19 @@ class SourceFacts:
             return site
         return ""
 
-    def followed(self) -> Set[str]:
+    def followed(self, publications_on: Iterable[str] = ()) -> Set[str]:
         """The sites you follow: each source's own site, and the site of its address. A source that
         isn't the publisher of its posts' addresses (NOT_PUBLISHERS: Hacker News, Saved) follows no
-        site by them (issue 0080: an aggregator's most linked site was "followed")."""
-        own = (s for i, s in self.site.items() if self.kind.get(i) not in NOT_PUBLISHERS)
-        return {s for s in (*own, *self.handle_site.values()) if s}
+        site by them (issue 0080: an aggregator's most linked site was "followed").
+        0239: on a site of publications (`publications_on`: a publishing platform's, discover_rules.site_unit) a source
+        follows its publication, not the platform (one newsletter followed had hidden every other one there)."""
+        on = set(publications_on)
+
+        def unit(site: str, host: str) -> str:
+            return host if site in on and host else site
+        own = (unit(s, self.host.get(i, "")) for i, s in self.site.items() if self.kind.get(i) not in NOT_PUBLISHERS)
+        handles = (unit(s, self.handle_host.get(i, "")) for i, s in self.handle_site.items())
+        return {s for s in (*own, *handles) if s}
 
     def selves(self, source_id: str) -> Set[str]:
         """A source's own names (issue 0080), as an address names it on a platform: its account's

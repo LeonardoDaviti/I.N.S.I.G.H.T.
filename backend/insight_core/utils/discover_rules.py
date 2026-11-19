@@ -599,10 +599,24 @@ def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional
     return None if site in set(federations) else site
 
 
+def announcing_place(s: Mapping) -> bool:
+    """0239 (0237 #2): a card's place that is the company's announcing section: a host label below its site (newsroom.,
+    news., blog., press.) or the path its follow test found its own pages under (`url`, b7: amd.com's /newsroom/), that
+    official channels' one rule for an announcing section (markx/official.ANNOUNCING) reads as one. Pure."""
+    from insight_core.markx.official import ANNOUNCING   # one rule for "the company's news section" (0237 #2, #4)
+    key = s["key"]
+    host = key.split("/", 1)[0].removeprefix("www.")
+    labels = host[: -len(site_of(host))].rstrip(".").split(".") if host != site_of(host) else []
+    path = bare(s.get("url") or "").partition("/")[2].split("?", 1)[0]
+    return any(ANNOUNCING.search(label) for label in labels if label) or bool(path and ANNOUNCING.search(path))
+
+
 def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] = frozenset()) -> List[Dict]:
-    """The suggestions with one owner domain's hosts as one card (owner_domain): led by the best (score, then
-    voices, then key), `places` its hosts (the lead first, then by score), its voices, articles, classics,
-    stories and opens together, its score at least its lead's (its stories and sources added up)."""
+    """The suggestions with one owner domain's hosts as one card (owner_domain): led by its announcing section
+    (announcing_place, 0239: an investor-relations host with the most links had led a company's card, and the judge read
+    it, not its newsroom) when one of its places is one, else by the best; the best by score, then voices, then key.
+    `places` its hosts (the lead first, then by score), its voices, articles, classics, stories and opens together, its
+    score at least its best place's (its stories and sources added up). The judge (markx/source_judge) reads the lead's key."""
     federations = set(federations)
     groups: Dict[str, List[Dict]] = defaultdict(list)
     out: List[Dict] = []
@@ -614,6 +628,9 @@ def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] 
             groups[domain].append(dict(s))
     for members in groups.values():
         members.sort(key=lambda s: (-s["score"], -s["voices"], s["key"]))
+        if len(members) > 1:
+            lead_at = next((i for i, s in enumerate(members) if announcing_place(s)), 0)
+            members.insert(0, members.pop(lead_at))
         lead = members[0]
         if len(members) == 1:
             out.append(lead)
@@ -634,7 +651,7 @@ def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] 
         if stories:
             card["origin_stories"] = sorted(stories.values(), key=lambda o: -o.get("voices", 0))[:3]
         days = min((s["days"] for s in members if s.get("days") is not None), default=None)
-        card["score"] = max(lead["score"], round(score(origins=card["origins"], classics=card["classics"], opened=card["opened"],
+        card["score"] = max(max(m["score"] for m in members), round(score(origins=card["origins"], classics=card["classics"], opened=card["opened"],
                                                        voices=len(names), days=days), 3))
         out.append(card)
     return out
@@ -696,15 +713,42 @@ def judged_follow(s: Mapping) -> bool:
     return s.get("fit") == "follow" and section(s) != 1
 
 
-def order(found: Iterable[Mapping]) -> List[Mapping]:
+# 0239 (0237 #5): a cheap fit with the reader for the rows the worker has not judged (15 a day of ~4,300): the share of
+# a row's linking sources you read (`reader_fit`), weighing its score. A judgement, so behind a switch, off
+# (INSIGHT_DISCOVER_READER_FIT=1 turns it on); READER_FIT_WEIGHT is NOT MEASURED (0239 says how to measure both).
+READER_FIT_WEIGHT = 1.0
+
+
+def reader_fit(linkers: Iterable[str], read: Iterable[str]) -> float:
+    """0239: of the sources linking a suggestion (`linkers`), the share you read (`read`: a post of theirs opened or read
+    lately, DiscoverRepository.read_sources); 0 when none links it. Pure."""
+    linkers = set(linkers)
+    return round(len(linkers & set(read)) / len(linkers), 3) if linkers else 0.0
+
+
+def reader_fit_on() -> bool:
+    import os
+    return os.getenv("INSIGHT_DISCOVER_READER_FIT", "0") == "1"
+
+
+def fit_score(s: Mapping, *, on: bool) -> float:
+    """What a suggestion is ranked by within its section and judgement: its score; switched on (0239), an unjudged
+    one's score times 1 + READER_FIT_WEIGHT * its reader_fit (a judged one keeps its score: the judge's fit stands)."""
+    if not on or s.get("fit") is not None:
+        return s["score"]
+    return s["score"] * (1 + READER_FIT_WEIGHT * float(s.get("reader_fit") or 0.0))
+
+
+def order(found: Iterable[Mapping], *, reader: Optional[bool] = None) -> List[Mapping]:
     """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
     untested suggestion): those the worker judged "follow" first (0235: an untested one sat deep in a list of 4,349
     for ever, the follow test reading only the first page), then those tested followable, then the section of those
-    that can't be followed as a feed, then the untested; each by score, ties by key, but one none of your sources
-    links (Mark X's originals rows, issue 0172 b4) after every linked one of its section. Each of the section says so
-    (`section: "unfollowable"`)."""
+    that can't be followed as a feed, then the untested; each by score (0239: by fit_score, with `reader`, default the
+    switch INSIGHT_DISCOVER_READER_FIT, off), ties by key, but one none of your sources links (Mark X's originals rows,
+    issue 0172 b4) after every linked one of its section. Each of the section says so (`section: "unfollowable"`)."""
+    on = reader_fit_on() if reader is None else reader
     out = sorted(found, key=lambda s: (not judged_follow(s), section(s), FIT_ORDER.get(s.get("fit"), 1),
-                                       not s.get("voices"), -s["score"], s["key"]))
+                                       not s.get("voices"), -fit_score(s, on=on), s["key"]))
     for s in out:
         if section(s) == 1:
             s["section"] = "unfollowable"   # type: ignore[index]
@@ -728,13 +772,19 @@ class Suggestion:
         return len(self.voices) - len(self.roundups) / 2
 
 
-def discover_address(url: str, platforms: Platforms = {}) -> Tuple[Optional[str], str, bool]:
+def discover_address(url: str, platforms: Platforms = {},
+                     channels: Mapping[str, str] = {}) -> Tuple[Optional[str], str, bool]:
     """What Discover reads of one address: (its key, its site, whether the site is a platform).
     On a platform the key is the account (account_key), none when the first path segment names a
     kind of page (NOT_ACCOUNT); a tweet, on any host, is its author's (x.com/<user>, TWEET); on a
     platform the data finds (`platforms`: find_platforms, issue 0080) its owner (platform_key);
     elsewhere it is the host. A function of the address and the platforms, so the database keeps it
-    once per address (repo_discover, issue 0062)."""
+    once per address (repo_discover, issue 0062).
+    0239 (0237 #5): a video (youtube.com/watch?v=<id>, as the normaliser writes every form of one) is its channel's
+    when Discover read which (`channels`: video address -> channel key, services/discover_reads.read_videos; a read
+    that never changes, so the addresses' rules need not name it), else it names no account."""
+    if url in channels:
+        return channels[url], "youtube.com", True
     host, _, rest = bare(url).partition("/")
     tweet = TWEET.match("/" + rest)
     if tweet:
@@ -757,12 +807,22 @@ def discover_article(url: str) -> bool:
         site_of(host) in DISCOVER_PLATFORMS and bool(PLATFORM_POST.match(path) or BSKY_POST.match(path)))
 
 
+def site_unit(host: str, publication_sites: Iterable[str] = frozenset()) -> str:
+    """0239 (0237 #5): what following a host follows: its site (site_of), but on a site of publications (a publishing
+    platform's: SourceFacts.shared_sites, or a federation by the data, `federation`) its publication, so one newsletter
+    followed on a platform hides none of the platform's others. `host` may be a key (its host is read)."""
+    host = publication_of(host.split("/", 1)[0])
+    site = site_of(host)
+    return host if site in set(publication_sites) else site
+
+
 def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hidden: Set[str],
-                  followed_accounts: Set[str]) -> bool:
-    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site."""
+                  followed_accounts: Set[str], publication_sites: Iterable[str] = frozenset()) -> bool:
+    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site (site_unit: on a site of
+    publications, `publication_sites`, its publication; `followed` then holds those, SourceFacts.followed)."""
     if platform:
         return not (key in followed_accounts or key in hidden)
-    return not (site in followed or key in hidden or site in hidden)
+    return not (site_unit(key, publication_sites) in followed or key in hidden or site in hidden)
 
 
 def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], hidden: Set[str],
@@ -835,16 +895,17 @@ class Origins:
     references: Dict[str, List[Origin]] = field(default_factory=lambda: defaultdict(list))   # docs.example.com -> them
 
 
-def discover_place(url: str, platforms: Platforms = {}) -> Optional[str]:
+def discover_place(url: str, platforms: Platforms = {}, channels: Mapping[str, str] = {}) -> Optional[str]:
     """Where an address is, as a source holds it: on a platform its account (None for a page that
     names none), elsewhere its host and section (anthropic.com/news; the host alone at the root)."""
-    key, _, platform = discover_address(url, platforms)
+    key, _, platform = discover_address(url, platforms, channels)
     section = "" if platform else section_of(url)
     return f"{key}/{section}" if key and section else key
 
 
 def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str],
-            mirrors: Set[str] = frozenset(), platforms: Platforms = {}) -> Origins:
+            mirrors: Set[str] = frozenset(), platforms: Platforms = {},
+            publication_sites: Iterable[str] = frozenset(), channels: Mapping[str, str] = {}) -> Origins:
     """Where your stories start, each story once:
     - at its own source's site (Origin.own), or at a place one of your sources holds (`held`:
       discover_place -> that source): nothing to suggest; a story the
@@ -854,14 +915,18 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
     - on a site you follow, elsewhere than the places your sources hold: never suggested (issue 0080),
       a story the site's source misses (the source holding the site's first place in `held`);
     - on a platform's page that names no account (youtube.com/watch?v=...), or a tweet mirror's page
-      that is not a tweet (`mirrors`, issue 0067: nitter.net/i/article/...): only listed."""
+      that is not a tweet (`mirrors`, issue 0067: nitter.net/i/article/...): only listed.
+    A site you follow is followed as site_unit reads it (0239: on a site of publications, `publication_sites`, the
+    publication); a video whose channel Discover read (`channels`, discover_address) is its channel's."""
     out = Origins()
+    pubs = frozenset(publication_sites)
     followers: Dict[str, str] = {}   # a followed site -> a source holding a place of it
     for place, source_id in sorted(held.items()):
-        followers.setdefault(site_of(place.split("/", 1)[0]), source_id)
+        followers.setdefault(site_unit(place, pubs), source_id)
     for root in roots:
-        key, site, platform = discover_address(root.url, platforms)
-        place = discover_place(root.url, platforms)
+        key, site, platform = discover_address(root.url, platforms, channels)
+        place = discover_place(root.url, platforms, channels)
+        unit = site_unit(key or bare(root.url), pubs) if not platform else site
         if root.own:
             continue
         if key is not None and place not in held and reference_address(root.url):
@@ -873,10 +938,10 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
         elif place in held:
             if not root.stored:
                 out.missing[held[place]].append(root)
-        elif platform or site not in followed:
+        elif platform or unit not in followed:
             out.suggest[key].append(root)
-        elif not root.stored and site in followers:
-            out.missing[followers[site]].append(root)
+        elif not root.stored and unit in followers:
+            out.missing[followers[unit]].append(root)
     return out
 
 
@@ -944,5 +1009,5 @@ def address_stamp(platforms: Platforms) -> str:
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
            "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
-           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "growth", "judged_follow", "order", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
+           "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "growth", "judged_follow", "order", "announcing_place", "site_unit", "reader_fit", "reader_fit_on", "fit_score", "READER_FIT_WEIGHT", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
            "Origin", "Origins", "origins", "address_rules", "ADDRESS_RULES"]

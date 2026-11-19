@@ -10,6 +10,10 @@ For each suggestion on the first page (StoriesService.discover, FIRST_PAGE), at 
   subreddit, a YouTube channel: `kind_source`, issue 0109) is tested through that kind instead: one
   read of the address the kind reads, "feed" when it answers with posts. A test made by older rules
   (FOLLOW_TEST) is made again wherever its suggestion is listed;
+- **the channels of linked videos** (0239, 0237 #5: 12 of 12 channels the reader wanted were never suggested, their
+  videos an "unnamed" place): YouTube's oEmbed answer for a video address names its channel (author_url), VIDEOS_PER_PASS
+  a pass, the videos most sources link first; a channel found is never asked again, a failure after CHECK_DAYS. Each
+  video is then its channel's address (StoriesService.map_videos), so a channel 3+ voices link is a suggestion;
 - **the titles** of the pages it lists that have none (no stored post, no evidence: services/page_titles.py),
   its articles' and the stories they started, and the archive rows' lines (issue 0106); and Classics'
   untitled pages: the page's own title, as page watching reads one (page_watch.page_title), from the
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import logging
 import os
 import re
@@ -56,6 +61,8 @@ KIND_POSTS = 3           # the posts a platform account's kind is asked for
 # after this, not after CHECK_DAYS (a bridge's hiccup had labelled an X account "headlines" for 30 days).
 TRANSIENT_HOURS = 6
 SECTIONS_TRIED = 2       # b7: the sections of a site's own linked pages its test tries when its home page gives none
+VIDEOS_PER_PASS = 25     # 0239: the videos whose channel a pass reads (one oEmbed request each); not measured
+OEMBED = "https://www.youtube.com/oembed?format=json&url={}"
 _ACCOUNT = re.compile(r"^[\w.@-]+$")
 _ADDRESS = re.compile(r"^\s*(?:https?://\S+|[\w-]+(?:\.[\w-]+)+/\S*)\s*$")
 
@@ -316,6 +323,44 @@ async def read_title(polite: Polite, url: str) -> Optional[str]:
     return page_title(body.decode("utf-8", "replace"), here)
 
 
+def channel_key(author_url: str) -> Optional[str]:
+    """0239: the Discover key of the channel an oEmbed answer names (youtube.com/@<handle>, discover_address's account
+    of the normalised address), None when it names no YouTube account."""
+    from insight_core.utils.discover_rules import discover_address
+    from insight_core.utils.url_normalization import normalize_url
+    url = normalize_url(author_url or "") or ""
+    key, site, platform = discover_address(url) if url else (None, "", False)
+    return key if key and platform and site in PLATFORM_SITES["youtube"] else None
+
+
+async def read_video(polite: "Polite", url: str) -> Dict[str, Any]:
+    """0239: a video's channel as YouTube's oEmbed names it: {channel: key or None, transient?}."""
+    from urllib.parse import quote
+    try:
+        body, _ = await polite.get_text(OEMBED.format(quote(url, safe="")))
+        data = json.loads(body)
+    except HttpError as exc:
+        return {"channel": None, **({"transient": True} if exc.their_trouble or exc.limiting else {})}
+    except Exception:  # noqa: BLE001 - an answer that is no JSON names no channel
+        return {"channel": None}
+    return {"channel": channel_key(str((data or {}).get("author_url") or "")) if isinstance(data, dict) else None}
+
+
+def videos_due(linked: Sequence[Any], reads: Dict[str, Any], now: datetime, *,
+               limit: int = VIDEOS_PER_PASS) -> List[str]:
+    """0239: the linked videos (`linked`: (address, sources linking it), the most first) whose channel is read this pass:
+    never read, or read without a channel and `due`; at most `limit`."""
+    videos = reads.get("videos", {})
+    out = []
+    for url, _ in linked:
+        read = videos.get(url)
+        if read is None or (not read.get("channel") and due(read, now)):
+            out.append(url)
+            if len(out) >= limit:
+                break
+    return out
+
+
 def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) -> bool:
     """Never read, or read CHECK_DAYS ago or more (TRANSIENT_HOURS for one that failed for a passing reason, issue
     0172 b6); a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
@@ -364,9 +409,11 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     answer = await asyncio.to_thread(stories.discover_kept)   # v10.22.2: the answer served, not built again
     classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
-        todo = work(to_read(answer), DiscoverRepository.reads(cur), clock(),
+        reads = DiscoverRepository.reads(cur)
+        todo = work(to_read(answer), reads, clock(),
                     archives=answer.get("archives", ()), classics=classics, listed=answer["suggestions"][FIRST_PAGE:])
-    if not todo["follow"] and not todo["titles"]:
+        todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, clock())   # 0239
+    if not todo["follow"] and not todo["titles"] and not todo["videos"]:
         return {"follow": 0, "titles": 0}
     gate = asyncio.Semaphore(FAN_OUT)
     limiter = HostLimiter()
@@ -382,17 +429,26 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
         async with gate:
             return url, {"title": await read_title(polite, url), "at": clock().isoformat()}
 
+    async def video(url: str):
+        async with gate:
+            return url, {**await read_video(polite, url), "at": clock().isoformat()}
+
     tested = dict(await asyncio.gather(*map(test, todo["follow"])))
     titled = dict(await asyncio.gather(*map(title, todo["titles"])))
+    channeled = dict(await asyncio.gather(*map(video, todo["videos"])))
     with db.transaction(stories.db_url) as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('insight.discover_reads'))")
         reads = DiscoverRepository.reads(cur)
         reads["follow"] = {**reads.get("follow", {}), **tested}
         reads["titles"] = {**reads.get("titles", {}), **titled}
+        reads["videos"] = {**reads.get("videos", {}), **channeled}
         DiscoverRepository.keep_reads(cur, reads)
-    logger.info("Discover: %d follow tests, %d page titles read", len(tested), len(titled))
+    found = {url: r["channel"] for url, r in channeled.items() if r.get("channel")}
+    moved = await asyncio.to_thread(stories.map_videos, found) if found else 0   # 0239: videos to their channels
+    logger.info("Discover: %d follow tests, %d page titles, %d videos read (%d to a channel, %d addresses moved)",
+                len(tested), len(titled), len(channeled), len(found), moved)
     await asyncio.to_thread(stories.refresh)   # the answer served, made with the answers (issue 0172 c1)
-    return {"follow": len(tested), "titles": len(titled)}
+    return {"follow": len(tested), "titles": len(titled), **({"videos": len(channeled)} if channeled else {})}
 
 
 def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = None) -> Dict[str, Any]:
@@ -419,5 +475,5 @@ def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = 
     return out
 
 
-__all__ = ["read_first_page", "keep", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
+__all__ = ["read_first_page", "keep", "read_video", "videos_due", "channel_key", "VIDEOS_PER_PASS", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
            "FOLLOW_TEST", "enabled"]
