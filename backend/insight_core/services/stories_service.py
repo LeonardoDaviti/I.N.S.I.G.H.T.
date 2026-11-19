@@ -34,7 +34,7 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
@@ -55,7 +55,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               PAGES_WITHIN_DAYS, UNFOLLOWABLE, Origin,
                                               REFERENCE_KINDS, channel_names, discover_address, discover_open, discover_place,
                                               federation, follow_url, not_channel, one_card_per_domain, order, origins,
-                                              other_channel, owner_domain, place_kind, score)
+                                              other_channel, owner_domain, place_kind, reader_fit, score, site_unit)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
 from insight_core.utils.discover_rules import GROWTH_DAYS, growth, page_key_of, pages as pages_of
@@ -95,6 +95,8 @@ STOPPED_DAYS = 183            # an archive row's source whose newest post is thi
 # inputs hold between story runs, but Mark X's originals rows (0138 D) are read off entities that move meanwhile.
 REFRESH_AFTER = timedelta(minutes=30)
 READS_EVERY = timedelta(hours=1)   # issue 0206: a first page asks the jobs process for its web reads at most this often
+REPO_MIN_VOICES = 2   # 0239 (0237 #5): a repository this many voices link is suggested as its releases (the owner's bar)
+READ_DAYS = 90        # 0239: the sources you read (opened or read a post of) in this long: discover_rules.reader_fit
 
 
 class StoriesService:
@@ -779,6 +781,18 @@ class StoriesService:
             logger.exception("Stories: Discover's addresses were not filled")
             return 0
 
+    def map_videos(self, channels: Dict[str, str]) -> int:
+        """0239 (0237 #5): videos whose channel Discover's reads found (services/discover_reads.read_videos) are their
+        channels' addresses (DiscoverRepository.map_videos), and those channels' counts are made again (`_counted`'s
+        `moved`), in one transaction. Returns how many addresses moved."""
+        if not channels:
+            return 0
+        with db.transaction(self.db_url) as cur:
+            moved = DiscoverRepository.map_videos(cur, channels)
+            if moved:
+                self._counted(cur, SourceFacts(cur), moved=moved)
+        return len(moved)
+
     def _discover_step(self, cur: Any, sources: SourceFacts, urls: Any) -> None:
         """After a batch, on its transaction: Discover's addresses and counts for the addresses its posts
         link and are at (issue 0072 A), or every one ("all": a rule change done). Never raises: a
@@ -796,7 +810,7 @@ class StoriesService:
 
     @staticmethod
     def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None, *, keep: bool = True,
-                 kept: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                 kept: Optional[Dict[str, Any]] = None, moved: Sequence[str] = ()) -> Dict[str, Any]:
         """Discover's counts by links (issue 0062), grouped and counted in the database: the kept ones
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules, the
@@ -807,7 +821,9 @@ class StoriesService:
         {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}.
         Without `keep` (a read of Discover, v10.16: the checks read it in a read-only transaction) nothing is
         written: counts made now are not kept, and addresses no story run has worked out are not filled (counted
-        as the job left them; the next story run fills them). `kept`: the kept counts as the caller read them."""
+        as the job left them; the next story run fills them). `kept`: the kept counts as the caller read them.
+        `moved` (0239): addresses whose key a read moved (a video to its channel, DiscoverRepository.map_videos): their
+        keys are counted again as a run's are, though nothing the stamp reads changed."""
         accounts = sources.platform_accounts()
         own_sites = {i: sources.publication(i) for i in sources.kind}
         selves = {i: sorted(sources.selves(i)) for i in sources.kind}
@@ -817,12 +833,14 @@ class StoriesService:
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
         tags = DiscoverRepository.tags(cur)
         kept = DiscoverRepository.kept(cur) if kept is None else kept   # v10.22.2: the caller's, read once
-        if kept and kept["stamp"] == stamp and kept.get("tags") == tags:
+        if kept and kept["stamp"] == stamp and kept.get("tags") == tags and not moved:
             return kept
         # v10.22: the posts whose round-up tag moved (a decision run's) count again only the keys they link
         retagged = DiscoverRepository.retagged(cur, kept, tags)
         if urls is None and kept and kept["stamp"] == stamp and retagged is not None:
             urls = []   # nothing else moved since the kept counts
+        if urls is not None and moved:
+            urls = list(urls) + [u for u in moved if u not in set(urls)]
         mirrors, scanned_to = DiscoverRepository.mirrors(cur, kept)
         off = sorted(sources.off)   # issue 0200: a source switched off or on moves every key it linked, not a run's
         if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept
@@ -1049,7 +1067,8 @@ class StoriesService:
         except Exception:  # noqa: BLE001 - Discover's own list stands without them
             logger.exception("Discover: the originals' rows were not read")
             return result
-        followed = sources.followed() | sources.followed_accounts()
+        pubs = set(result.get("publication_sites") or sources.shared_sites)   # 0239: the sites of publications
+        followed = sources.followed(pubs) | sources.followed_accounts()
         ranked = [dict(s) for s in result["suggestions"]]
         by_key = {s["key"]: s for s in ranked}
         # Issue 0172 b9: a host of a domain already on a card (a section host, the bare host) is one of its places,
@@ -1057,7 +1076,7 @@ class StoriesService:
         cards: Dict[str, Dict[str, Any]] = {}
         for s in ranked:
             for place in s.get("places") or [s["key"]]:
-                domain = owner_domain(place, sources.shared_sites)
+                domain = owner_domain(place, pubs)
                 if domain:
                     cards.setdefault(domain, s)
         elsewhere = {a["key"] for a in result.get("also", ())}
@@ -1069,7 +1088,7 @@ class StoriesService:
 
         def card_of(key: str) -> Optional[Dict[str, Any]]:
             s = by_key.get(key)
-            domain = owner_domain(key, sources.shared_sites) if s is None else None
+            domain = owner_domain(key, pubs) if s is None else None
             if s is None and domain in cards:
                 s = by_key[key] = cards[domain]
                 s["places"] = list(dict.fromkeys([*(s.get("places") or [s["key"]]), key]))
@@ -1088,7 +1107,7 @@ class StoriesService:
                                                               for u in got["urls"][:DISCOVER_ARTICLES_SHOWN]],
                                    "score": round(score(origins=got["n"], classics=0, opened=0, voices=0, days=None), 3)}
                 ranked.append(s)
-                cards.setdefault(owner_domain(key, sources.shared_sites) or key, s)
+                cards.setdefault(owner_domain(key, pubs) or key, s)
             s["originals"] = got["n"]
             s["originals_reason"] = supplier_reason(got["n"])
         for key, got in cited.items():   # 0138 F3: the sites the long-reads you opened cite
@@ -1104,7 +1123,7 @@ class StoriesService:
                                    "score": round(score(origins=0, classics=0, opened=got["n"], voices=got["posts"],
                                                         days=None), 3)}
                 ranked.append(s)
-                cards.setdefault(owner_domain(key, sources.shared_sites) or key, s)
+                cards.setdefault(owner_domain(key, pubs) or key, s)
             s["cited_by_longreads"] = got["n"]
         return {**result, "suggestions": order(ranked), "pages": pages, "supplied": supplied, "worlds": worlds}
 
@@ -1124,15 +1143,22 @@ class StoriesService:
             sources = SourceFacts(cur)
             counted = self._counted(cur, sources, keep=persist)
             platforms = _platforms(counted)
-            followed, hidden, classics = sources.followed(), self.repo.hidden(cur), set(self.news.classic_urls(cur))
+            reads = DiscoverRepository.reads(cur)
+            channels = DiscoverRepository.video_channels(cur, reads)   # 0239: videos read to their channels
+            # 0239: a publishing platform's hosts are sites of their own, for the fold and for what you follow
+            publication_sites = self._publication_sites(cur, sources, counted["found"])
+            followed = sources.followed(publication_sites)
+            hidden, classics = self.repo.hidden(cur), set(self.news.classic_urls(cur))
             roots = DiscoverRepository.story_origins(cur, kinds=sources.kind,
                                                      own_sites={i: sources.publication(i) for i in sources.kind})
-            held = self._held(cur, sources, roots, followed, platforms)
-            started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]), platforms=platforms)
+            held = self._held(cur, sources, roots, followed, platforms, publication_sites)
+            started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]), platforms=platforms,
+                              publication_sites=publication_sites, channels=channels)
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
+            repos = self._repos(cur, sources)   # 0239: repositories 2+ voices link, as their releases
             activity = DiscoverRepository.activity(cur, [s["key"] for s in counted["found"]], platforms,   # 0235: growth
                                                    since=self.clock() - timedelta(days=GROWTH_DAYS))
-            reads = DiscoverRepository.reads(cur)
+            read_sources = DiscoverRepository.read_sources(cur, self.clock() - timedelta(days=READ_DAYS))
             title_of = self._title_map(cur, sources, counted, started, reads.get("titles", {}))
         now = self.clock()
         saved = set(sources.of_kind("saved"))
@@ -1140,7 +1166,7 @@ class StoriesService:
         linkers: Dict[str, Set[str]] = defaultdict(set)   # a key -> the sources whose posts link it (issue 0109)
         for s in counted["found"]:
             if not discover_open(s["key"], site_of(s["key"]), "/" in s["key"], followed=followed, hidden=hidden,
-                                 followed_accounts=sources.followed_accounts()):
+                                 followed_accounts=sources.followed_accounts(), publication_sites=publication_sites):
                 continue   # followed or hidden (a platform's key is its account, x.com/nn_teacher; a site's its host)
             names = {voice: sources.voice_name(voice, source_id or "") for voice, source_id in s["voices"]}
             linking = _linking(sources, ((v, i, v in s["roundups"]) for v, i in s["voices"]), s.get("sources", ()), saved)
@@ -1168,6 +1194,22 @@ class StoriesService:
             if kind is None:
                 out.append(suggestion)
         by_key = {s["key"]: s for s in out}
+        for r in repos:   # 0239: a repository's releases, a row of its own (its owner's card, if any, stays)
+            key = r["key"]
+            if key in by_key or not discover_open(key, "github.com", True, followed=followed, hidden=hidden,
+                                                  followed_accounts=sources.followed_accounts()):
+                continue
+            linking = _linking(sources, ((v, i, False) for v, i in r["voices"]), (), saved)
+            if len(linking) < REPO_MIN_VOICES:
+                continue
+            weight[key] = len(linking)
+            last[key] = r["last_at"]
+            linkers[key].update(r["sources"])
+            out.append(by_key.setdefault(key, {
+                "key": key, "url": r["url"], "voices": len(linking), "voice_names": [n for _, n in linking],
+                "article_count": len(r["urls"]), "link_count": len(r["urls"]), "classics": 0, "opened": 0, "origins": 0,
+                "releases": True,
+                "articles": [{"url": u, "title": None, "linked_by": []} for u in r["urls"][:DISCOVER_ARTICLES_SHOWN]]}))
         for key, stories in started.references.items():
             references.setdefault(key, len({v for root in stories for v in root.voices}))
         for key, stories in started.suggest.items():
@@ -1230,19 +1272,16 @@ class StoriesService:
             else:
                 kept_out.append(s)
         out = kept_out
-        # One card per owner domain (issue 0109): its hosts its places, outside a domain of many owners.
-        multi = Counter(owner_domain(s["key"]) for s in out)
-        candidates = {site for site, n in multi.items() if site and n > 1}
-        with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            spread = DiscoverRepository.site_hosts(cur, candidates)
-        federations = set(sources.shared_sites) | {site for site, (hosts, posts) in spread.items()
-                                                    if federation(hosts=hosts, posts=posts)}
-        out = one_card_per_domain(out, federations=federations)
+        # One card per owner domain (issue 0109): its hosts its places, outside a domain of many owners (0239: the
+        # sites of publications, found once before what you follow was read).
+        out = one_card_per_domain(out, federations=publication_sites)
         for s in out:
             for place in s.get("places", ()):
                 if place != s["key"]:
                     linkers[s["key"]] |= linkers.get(place, set())
             s.pop("days", None)
+            # 0239 (0237 #5): the share of its linking sources you read (READ_DAYS), order's reader-fit term (a switch)
+            s["reader_fit"] = reader_fit(linkers.get(s["key"], set()), read_sources)
         out, also = self._other_channels(sources, out, linkers)
         also = sorted(also + moved, key=lambda s: (-s["score"], s["key"]))
         # The most stories started there, classics, posts you opened, sources and the newest links first
@@ -1283,7 +1322,7 @@ class StoriesService:
             "stories": [_story(root, title_of) for root in _first(roots)[:ORIGIN_STORIES_SHOWN]],
         } for url, roots, video in page_list]
         result = {"success": True, "suggestions": out, "also": also, "archives": archives, "unnamed": unnamed,
-                  "pages": page_rows,
+                  "pages": page_rows, "publication_sites": sorted(publication_sites),
                   "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],
                   "first_page": FIRST_PAGE}
         if persist:
@@ -1349,18 +1388,54 @@ class StoriesService:
         return title_of
 
     @staticmethod
+    def _publication_sites(cur: Any, sources: SourceFacts, found: Iterable[Dict[str, Any]]) -> Set[str]:
+        """0239 (0237 #5): the sites of publications, where each host is a site of its own for the card fold and for what
+        you follow (discover_rules.site_unit): the sites your website sources publish on at 2+ hosts (shared_sites,
+        issue 0070), and the federations by the data (discover_rules.federation, issue 0109) among the sites of 2+
+        suggested hosts or of a site you follow with another host linked (one newsletter followed on a platform had
+        hidden the platform's every other one: it was asked only after that site was taken out)."""
+        hosts = [s["key"] for s in found if "/" not in s["key"]]
+        multi = Counter(site_of(h) for h in hosts)
+        followed = sources.followed()
+        candidates = {site for site, n in multi.items() if n > 1 or site in followed} - set(sources.shared_sites)
+        spread = DiscoverRepository.site_hosts(cur, candidates)
+        return set(sources.shared_sites) | {site for site, (n, posts) in spread.items() if federation(hosts=n, posts=posts)}
+
+    def _repos(self, cur: Any, sources: SourceFacts) -> List[Dict[str, Any]]:
+        """0239 (0237 #5): the code repositories REPO_MIN_VOICES+ voices link, each as the channel official channels read
+        one by (markx/official.channel: its releases feed, never an org's page), not those whose releases a source of
+        yours reads: [{key, url, voices: [(voice, its source)], sources, last_at, urls}]."""
+        from insight_core.markx import official
+        own_sites = {i: sources.publication(i) for i in sources.kind}
+        got = DiscoverRepository.repos(cur, kinds=sources.kind, own_sites=own_sites,
+                                       selves={i: sorted(sources.selves(i)) for i in sources.kind},
+                                       min_voices=REPO_MIN_VOICES, shown=DISCOVER_ARTICLES_SHOWN)
+        if not got:
+            return []
+        followed = official._releases_followed(cur)   # the one reading of "a source follows this repository's releases"
+        out = []
+        for r in got:
+            ch = official.channel("https://github.com/" + r["repo"])
+            if ch is None or ch.kind != "releases" or ch.key in followed:
+                continue
+            DiscoverRepository.name_voices(cur, [r], sources.kind, own_sites)
+            out.append({**r, "key": ch.key, "url": ch.address})
+        return out
+
+    @staticmethod
     def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str],
-              platforms: Optional[Dict[str, Tuple[str, ...]]] = None) -> Dict[str, str]:
+              platforms: Optional[Dict[str, Tuple[str, ...]]] = None,
+              publication_sites: Iterable[str] = frozenset()) -> Dict[str, str]:
         """The places your sources hold (discover_rules.discover_place -> a source): the platform
-        accounts they follow, and on the sites you follow where stories start, the sections their
-        own posts are in (the source with the most posts there)."""
+        accounts they follow, and on the sites you follow where stories start (followed as site_unit reads them,
+        0239), the sections their own posts are in (the source with the most posts there)."""
         platforms = platforms or {}
         held = {account: source_id for source_id, account in sorted(sources.platform_accounts().items())}
         hosts = set()
         for root in roots:
             key, site, platform = discover_address(root.url, platforms)
             root.own = root.stored and sources.home_site(root.source_id) == site
-            if key and not platform and site in followed and not root.own:
+            if key and not platform and site_unit(key, publication_sites) in followed and not root.own:
                 hosts.add(host_of(root.url))
         posts: Counter = Counter()
         for source_id, url in DiscoverRepository.posts_on(cur, hosts):

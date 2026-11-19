@@ -70,6 +70,7 @@ SERVED_KEY = "discover_served"   # the answer Discover's page serves, built in t
 # When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
 DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read (system_settings, issue 0080)
+VIDEO_LIKE = "https://youtube.com/watch?v=%"   # 0239: a video's one address (url_normalization writes every form so)
 WORK_MEM = "48MB"
 
 
@@ -250,6 +251,33 @@ FROM (SELECT d.key, p.source_id, max({pairing.ix_date('p')}) AS last_at, min({pa
 GROUP BY key
 """
 
+# 0239 (0237 #5): the code repositories your sources link (github.com/<owner>/<repo>/..., every page of one), each with
+# its voices (a website's publication, else its source: platform_rows' voices), the sources linking it, its last link
+# and its most linked pages. Not Saved's, not a switched-off source's, not a source's link under its own name (its
+# owner segment one of the source's selves, as the counts read a self-link).
+_REPOS = f"""
+WITH src AS (
+    SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[], %(selves)s::text[]) AS s(id, kind, own_site, selves)
+),
+link AS MATERIALIZED (
+    SELECT lower(m[1] || '/' || regexp_replace(m[2], '[.]git$', '')) COLLATE "C" AS repo, lower(m[1]) AS owner,
+           pl.target_url AS url, p.source_id, COALESCE(s.selves, '') AS selves,
+           {voice_keys.source_key_sql("COALESCE(s.kind, 'site')", "COALESCE(s.own_site, '')", "p.source_id")} AS voice,
+           {pairing.ix_date('p')} AS at
+    FROM post_links pl JOIN posts p ON p.id = pl.post_id LEFT JOIN src s ON s.id = p.source_id,
+         regexp_match(pl.target_url, '^https://github[.]com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)') m
+    WHERE {read_sql("pl")} AND pl.target_url LIKE 'https://github.com/%%/%%' AND s.kind IS DISTINCT FROM 'saved'
+      AND {suggestable_sql("p.source_id")}
+),
+kept AS MATERIALIZED (
+    SELECT * FROM link WHERE NOT (selves <> '' AND owner = ANY(string_to_array(selves, ' ')))
+)
+SELECT repo, array_agg(DISTINCT voice), array_agg(DISTINCT source_id::text), max(at),
+       (SELECT json_agg(u) FROM (SELECT url AS u FROM kept k2 WHERE k2.repo = k.repo
+                                 GROUP BY url ORDER BY count(DISTINCT voice) DESC, url LIMIT %(shown)s) top)
+FROM kept k GROUP BY repo HAVING count(DISTINCT voice) >= %(min_voices)s
+"""
+
 # A website voice is named after the source of its first kept link in post order; asked only for
 # the sites more than one website source shares (the others have one source).
 _SITE_NAMERS = """
@@ -310,10 +338,11 @@ class DiscoverRepository:
                 DiscoverRepository._drop_unlinked(cur, only)
             return 0
         cur.execute("DELETE FROM discover_addresses WHERE url = ANY(%s)", (found,))   # an older rules' row
+        channels = DiscoverRepository.video_channels(cur)   # 0239: a video read is its channel's
         with cur.copy("COPY discover_addresses (url, key, site, platform, article, rules) FROM STDIN") as copy:
             for url in found:
-                key, site, platform = discover_address(url, platforms)
-                copy.write_row((url, key, site, platform, discover_article(url), rules))
+                key, site, platform = discover_address(url, platforms, channels)
+                copy.write_row((url, key, site, platform, url in channels or discover_article(url), rules))
         DiscoverRepository._drop_unlinked(cur, only)
         return len(found)
 
@@ -409,6 +438,30 @@ class DiscoverRepository:
                                 "since": since or datetime.max.replace(tzinfo=timezone.utc)})
         return {key: (last, int(opened or 0), int(new) if since else 0, int(old) if since else 0)
                 for key, last, opened, new, old in cur.fetchall()}
+
+    @staticmethod
+    def read_sources(cur: Cursor, since: datetime) -> Set[str]:
+        """0239 (0237 #5): the sources you read since `since`: a post of theirs opened, read in a session or marked read
+        (the opens Discover's activity counts, `_ACTIVITY`)."""
+        cur.execute("""SELECT DISTINCT p.source_id::text FROM post_interactions i JOIN posts p ON p.id = i.post_id
+                        WHERE i.interaction_type IN ('opened', 'reading_session') AND i.created_at > %(since)s
+                       UNION
+                       SELECT DISTINCT p.source_id::text FROM post_reader_state rs JOIN posts p ON p.id = rs.post_id
+                        WHERE rs.read_at > %(since)s""", {"since": since})
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def repos(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str], selves: Dict[str, Iterable[str]],
+              min_voices: int, shown: int) -> List[Dict[str, Any]]:
+        """0239 (0237 #5): the code repositories `min_voices`+ of your voices link (_REPOS), unordered:
+        [{repo: <owner>/<repo>, voices: [voice], sources: [source id], last_at, urls: [its most linked pages]}].
+        Which of them are a repository's releases (not an org's page) is markx/official.channel's (Python)."""
+        ids = sorted(kinds)
+        cur.execute(_REPOS, {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
+                             "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "min_voices": min_voices,
+                             "shown": shown})
+        return [{"repo": repo, "voices": list(voices), "sources": [s for s in sources if s], "last_at": last_at,
+                 "urls": list(urls or [])} for repo, voices, sources, last_at, urls in cur.fetchall()]
 
     @staticmethod
     def mirrors(cur: Cursor, kept: Optional[Dict[str, Any]]) -> Tuple[List[str], Optional[str]]:
@@ -553,6 +606,34 @@ class DiscoverRepository:
     @staticmethod
     def keep_reads(cur: Cursor, reads: Dict[str, Any]) -> None:
         SystemSettingsRepository.upsert(cur, READS_KEY, reads)
+
+    @staticmethod
+    def video_channels(cur: Cursor, reads: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """0239 (0237 #5): each video address whose channel Discover read (reads' `videos`: {address: {channel, at}},
+        services/discover_reads.read_video), and that channel's key (youtube.com/@<handle>)."""
+        videos = (DiscoverRepository.reads(cur) if reads is None else reads).get("videos") or {}
+        return {url: v["channel"] for url, v in videos.items() if isinstance(v, dict) and v.get("channel")}
+
+    @staticmethod
+    def linked_videos(cur: Cursor) -> List[Tuple[str, int]]:
+        """0239: the video addresses kept links point to (youtube.com/watch?v=<id>, the normaliser's one form of every
+        video address), each with how many sources link it, the most first: the order their channels are read in."""
+        cur.execute("SELECT pl.target_url, count(DISTINCT p.source_id) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
+                    "WHERE " + read_sql("pl") + " AND pl.target_url LIKE %s AND " + suggestable_sql("p.source_id") + " "
+                    "GROUP BY 1 ORDER BY 2 DESC, 1", (VIDEO_LIKE,))
+        return [(url, int(n)) for url, n in cur.fetchall()]
+
+    @staticmethod
+    def map_videos(cur: Cursor, channels: Dict[str, str]) -> List[str]:
+        """0239: these videos' addresses are their channels' in discover_addresses (discover_address with `channels`),
+        whatever rules wrote them (a refill reads the same channels: fill_addresses). Returns the addresses moved."""
+        moved = []
+        for url, key in sorted(channels.items()):
+            cur.execute("UPDATE discover_addresses SET key = %s, site = 'youtube.com', platform = true, article = true "
+                        "WHERE url = %s AND key IS DISTINCT FROM %s", (key, url, key))
+            if cur.rowcount:
+                moved.append(url)
+        return moved
 
     @staticmethod
     def base(cur: Cursor) -> str:
