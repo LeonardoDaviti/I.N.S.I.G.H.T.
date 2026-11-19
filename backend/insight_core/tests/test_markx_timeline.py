@@ -691,6 +691,24 @@ class ThingLinks(_Db):
         self.assertEqual(len(closed), 1)
         self.assertIsNotNone(closed[0][6])
 
+    @mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
+    def test_a_relation_never_crosses_two_makers_namesakes(self):
+        """0230: "Orbit" the exchange (an org in its post) is linked to Vantor's model Orbit by its name: the post's
+        "Orbit released Orbit dollar" is not the model's (its maker is Vantor, the post's Orbit its own maker)."""
+        model = self.post_at(0, T0 - 10 * D, "Vantor ships Orbit")
+        self.mentions(model, ("Orbit", "model", "subject", "Vantor"), ("Vantor", "org", "actor"))
+        self.state(model, [{"a": "Vantor", "rel": "released", "b": "Orbit"}])
+        self.stage()                                                             # the model first: the name is its
+        coin = self.post_at(1, T0 - 5 * D, "The Orbit exchange launches the Orbit dollar")
+        self.mentions(coin, ("Orbit", "org", "actor", None, None, "Orbit exchange"),
+                      ("Orbit dollar", "product", "subject", "Orbit"))
+        self.state(coin, [{"a": "Orbit", "rel": "released", "b": "Orbit dollar"}])
+        self.stage()
+        self.graph()
+        self.assertEqual(self.entity_of(coin), self.entity_of(model))          # one entity by the name (identity's)
+        got = {(a, b, rel) for a, b, rel, *_ in self.edges()}
+        self.assertEqual(got, {(self.entity_of(model, 1), self.entity_of(model), "released")})
+
 
 class DerivedRelations(unittest.TestCase):
     """0224 (no database): the relations ent-v5's own fields say (graph.derived), no relation asked."""

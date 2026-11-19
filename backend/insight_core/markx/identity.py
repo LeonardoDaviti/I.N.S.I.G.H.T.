@@ -34,7 +34,13 @@ entity_id only:
      Every merge is a redirect (by its rule, Haiku or the owner) and can be undone (`undo`). A pair the owner
      answered, or a merge the owner undid, is never merged again by a rule or Haiku.
   4. **Collisions:** a key whose mentions differ in type or (stated) maker gets the collision judge (`collide`),
-     asked COLLIDE_RUNS times; a split two of the runs make is queued as a proposal, never applied.
+     asked COLLIDE_RUNS times; a split two of the runs make is queued as a proposal, never applied. 0230: its sample
+     shows the mentions that may be another maker's namesake and the oldest post first, and a name whose posts now go
+     back before the oldest its question showed is asked again.
+
+0230 (switched off: entity_bands.json `families`): a version's family is its maker's (`other_maker`: another maker's
+thing is a thing of its own maker, `based_on` the family) and its stem (`family_stem`: a member's name is never a
+family); a relation never crosses two makers' namesakes (`namesakes`, read by markx/graph.py).
 
 v10.18 (issue 0201): **Haiku decides the queue.** A name rule's `same` across two types (or an org and a product
 family) is no longer queued on the rule alone (right ~30% on the server): Haiku is asked as for any pair; `different`
@@ -1652,7 +1658,15 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     fam_key = hk[0] if N.has_version(hk) and hk[0] else pk[0]
     parent = None
     if fam_key and fam_key != key:
-        parent = w.book.root(w.book.by_key(fam_key))
+        parent = family_stem(w.book, w.book.by_key(fam_key))   # 0230: a member's name is never a family's
+        if parent is not None and not w.book.org_like(parent) and other_maker(w.book, parent, maker):
+            # 0230: another maker's thing made from the family: a thing of its own maker, based on the family
+            up = _maker_entity(w, maker, first) if N.key(maker) != key else None
+            eid = w.entity(type_=m.type, name=m.name, key=key, level="thing", parent=up, maker=maker,
+                           fields=dict(m.fields) if N.has_version(hk) else dict(N.parse(m.name, m.type, m.maker)),
+                           first_seen=first)
+            based_on_family(w.cur, eid, parent, maker=maker, makers=family_makers(w.book, parent), run_id=w.run_id)
+            return eid
         if parent is not None and w.book.org_like(parent):
             # 0164: an org (or person) is never a version's family: the family entity of that name under it
             parent = family_under(w, parent, fam_key, m.type, maker, first,
@@ -1727,6 +1741,151 @@ def family_under(w: Writer, org: str, fam_key: str, type_: Optional[str], maker:
     t = type_ if schemas_type(type_) not in ORGISH else "model"
     return w.entity(type_=t, name=fam_name, key=fam_key, level="family", parent=org, maker=maker or o.name,
                     fields=dict(N.NONE), first_seen=first)
+
+
+# ---- 0230: a family is its maker's, and its stem ----------------------------------------------------------------
+# A version's family (its parent) is (1) the stem its name shares with the family's other members, never one member's
+# own name: a family key that names one of a family's versions or variants ("Orbit Argon", a variant of Orbit, as
+# the family of "Orbit Argon 3"; "Lumen 11", a version of Lumen, as the family of "Lumen 11 24H2") is that
+# family's; and (2) its maker's: a thing whose stated maker is none of the family's makers (a community quantisation,
+# merge or fine-tune of Orbit by another account; "Zentra Orbit 5" under Orbit; a thermostat "KX368" by Kestrel under
+# "Kx") is not a member: it is a thing of its own maker, `based_on` the family (an edge, rule FAMILY_RULE). The
+# family's makers: the maker its members (and its own names) state most, and any other a FAMILY_MAKER_SHARE of them state (a lab
+# beside its company); two stated makers are one when they are one cluster, one's words are in the other's ("Vantor" /
+# "Vantor Labs", "Zentra" / "Zentra Cloud"), or one names the family itself ("Orbit Team" of Orbit).
+
+def families_on() -> Dict[str, bool]:
+    """0230's switches (entity_bands.json `families`): `maker` (another maker's thing leaves the family), `stem` (a
+    member's name is never a family), `namesakes` (a relation never crosses two makers' namesakes). Off until the
+    labelled sample passes the bar."""
+    got = bands().get("families") or {}
+    return {k: bool(got.get(k, False)) for k in ("maker", "stem", "namesakes")}
+
+
+FAMILY_RULE = "family_maker"     # the based_on edge of a thing another maker made from a family
+FAMILY_MAKER_SHARE = 0.2         # a maker this share of a family's stated makers name is one of its makers
+FAMILY_MAKER_MIN = 3             # a family judged by its makers needs this many stated makers (fewer: one maker unknown)
+STEM_DEPTH = 3                   # a parent that is a version is climbed at most this many times to its family
+
+
+def _words_in(a: str, b: str) -> bool:
+    """a's words, in order, are words of b ("vantor" in "vantor labs", "labs" in "vantor labs")."""
+    wa, wb = a.split(), b.split()
+    return bool(wa) and any(wb[i:i + len(wa)] == wa for i in range(len(wb) - len(wa) + 1))
+
+
+def maker_fits(book: Book, x: Optional[str], y: Optional[str], family: Optional[str] = None) -> bool:
+    """0230: whether two stated makers can be one maker (either unstated: they can). `family`: the family's key (a
+    maker naming the family, "Orbit Team" of Orbit, is its own)."""
+    kx, ky = N.key(x), N.key(y)
+    if not kx or not ky or kx == ky:
+        return True
+    if _words_in(kx, ky) or _words_in(ky, kx):
+        return True
+    if family and any(k == family or k.startswith(family + " ") for k in (kx, ky)):
+        return True
+    return same_maker(book, x, y)
+
+
+def family_members(book: Book, root: str) -> List[str]:
+    """The versions, variants and checkpoints naming one of a family cluster's names as their parent."""
+    kids = book.kids()
+    return [k for m in book.cluster(root) for k in kids.get(m, ()) if k in book.ents]
+
+
+def family_makers(book: Book, root: str) -> Optional[List[str]]:
+    """0230: a family's makers as stated (above), the top first; None when fewer than FAMILY_MAKER_MIN of its members
+    and names state one (too few to tell another maker's thing from its own)."""
+    cache = book.__dict__.setdefault("_family_makers", {})
+    if root in cache:
+        return cache[root]
+    ms = family_members(book, root)
+    book.prime(ids=ms)
+    names = [x for x in book.cluster(root) if book.ents[x].level not in VERSION_LEVELS]
+    fam = book.ents[root].key
+    votes = Counter((book.ents[x].maker or "").strip() for x in ms + names if x in book.ents)
+    votes.pop("", None)
+    groups: List[List[Any]] = []
+    for name, n in sorted(votes.items(), key=lambda kv: (-kv[1], kv[0])):
+        g = next((g for g in groups if maker_fits(book, name, g[0], fam)), None)
+        if g is None:
+            groups.append([name, n])
+        else:
+            g[1] += n
+    total = sum(votes.values())
+    got = None if total < FAMILY_MAKER_MIN else \
+        [g[0] for k, g in enumerate(groups) if k == 0 or g[1] >= FAMILY_MAKER_SHARE * total]
+    cache[root] = got
+    return got
+
+
+def family_stem(book: Book, parent: Optional[str]) -> Optional[str]:
+    """0230: the family a parent stands for: itself, or, when it is a version, variant or checkpoint of a family (a
+    family key naming one member), that family (climbed STEM_DEPTH times at most)."""
+    r = book.root(parent) if parent else None
+    for _ in range(STEM_DEPTH if families_on()["stem"] else 0):
+        e = book.ents.get(r) if r else None
+        if e is None or e.level not in VERSION_LEVELS or not e.parent:
+            break
+        up = book.root(e.parent)
+        if up is None or up == r or up not in book.ents:
+            break
+        r = up
+    return r
+
+
+def other_maker(book: Book, family: Optional[str], maker: Optional[str]) -> bool:
+    """0230: a thing stating `maker` is another maker's than the family's (so never its member)."""
+    if not family or not (maker or "").strip() or family not in book.ents or not families_on()["maker"]:
+        return False
+    makers = family_makers(book, family)
+    fam = book.ents[family].key
+    return makers is not None and not any(maker_fits(book, maker, m, fam) for m in makers)
+
+
+def namesakes(cur: Any, sides: Sequence[Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]],
+              root: Any) -> Set[int]:
+    """0230: of a post's relation sides [(the entity root a mention links to, the mention's type, its stated maker,
+    its name)], the indexes whose mention is about another maker's namesake of the entity, so no evidence of the
+    entity's relations: the maker the post gives the mention (an org or person mention is its own maker; a thing's,
+    its stated maker) and the entity's (an org or person entity is its own; a thing's, its stated maker) both known,
+    and not one maker (`maker_fits`, or their names alias one cluster). "Orbit" the exchange, an org in its post,
+    linked to Vantor's Orbit (a model by Vantor): its "Orbit released Orbit dollar" is not Vantor's model's.
+    `root`: an entity id -> its cluster's root. One read of the entities, one of the makers' aliases."""
+    ids = sorted({s[0] for s in sides if s[0]})
+    if not ids or not families_on()["namesakes"]:
+        return set()
+    cur.execute("SELECT id::text, type, name, maker FROM mx_entities WHERE id = ANY(%s::uuid[])", (ids,))
+    ents = {i: (t, n, mk) for i, t, n, mk in cur.fetchall()}
+
+    def own(type_: Optional[str], name: Optional[str], maker: Optional[str]) -> str:
+        return N.key(name) if schemas_type(type_) in ORGISH else N.key(maker)
+    pairs: Dict[int, Tuple[str, str]] = {}
+    for i, (eid, mtype, mmaker, mname) in enumerate(sides):
+        if eid not in ents:
+            continue
+        said, have = own(mtype, mname, mmaker), own(*ents[eid])
+        if said and have and said != have and not (_words_in(said, have) or _words_in(have, said)):
+            pairs[i] = (said, have)
+    if not pairs:
+        return set()
+    keys = sorted({k for p in pairs.values() for k in p})
+    cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE key = ANY(%s)", (keys,))
+    where = {k: root(e) for k, e in cur.fetchall()}
+    return {i for i, (said, have) in pairs.items()
+            if where.get(said) is None or where.get(have) is None or where[said] != where[have]}
+
+
+def based_on_family(cur: Any, thing: str, family: str, *, maker: Optional[str], makers: Optional[Sequence[str]],
+                    run_id: Any) -> int:
+    """0230: the edge of another maker's thing made from a family: thing `based_on` family (mx_connections, rule
+    FAMILY_RULE; one current edge a pair, kept)."""
+    cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, run_id, evidence)
+                   VALUES ('entity', %s, 'entity', %s, 'based_on', 1.0, %s, %s, %s::jsonb)
+                   ON CONFLICT (a_kind, a, b_kind, b, relation) WHERE valid_to IS NULL DO NOTHING""",
+                (thing, family, FAMILY_RULE, run_id,
+                 json.dumps({"maker": maker, "family_makers": list(makers or [])})))
+    return cur.rowcount
 
 
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:
@@ -2815,21 +2974,36 @@ def opinion_report(cur: Any, *, examples: int = 20) -> Dict[str, Any]:
                       "by_why": dict(Counter(void[tid] for _q, tid, _k, _h in items if tid in void))}}
 
 
-def collide_sample(eid: str, ms: Sequence[Tuple]) -> List[Tuple]:
-    """Up to COLLIDE_MENTIONS mentions from distinct posts ((post, span, type, maker[, at])): one per (type, maker)
-    first, then (0220) one per year the posts span, the oldest years first (an archive post may be another thing of
-    the name), then the rest (the lab's sample, seeded by the entity)."""
+def collide_sample(eid: str, ms: Sequence[Tuple], suspect: Any = None) -> List[Tuple]:
+    """Up to COLLIDE_MENTIONS mentions from distinct posts ((post, span, type, maker[, at])): 0230: first, up to half
+    of them, one per (type, maker) of the mentions `suspect` calls another maker's namesake (`suspect_mention`), and
+    the oldest post's (an archive post may be another thing of the name: before 0230 a name with more (type, maker)
+    pairs than the sample's places never showed one); then one per (type, maker), then (0220) one per year the posts
+    span, the oldest years first, then the rest (the lab's sample, seeded by the entity)."""
     rnd = random.Random(int(hashlib.md5(eid.encode()).hexdigest(), 16) % 100000)
     ms = sorted(ms, key=lambda m: tuple("" if x is None else str(x) for x in m))
     rnd.shuffle(ms)
     pick, seen = [], set()
+    if suspect is not None:
+        for m in ms:
+            if len(pick) >= COLLIDE_MENTIONS // 2:
+                break
+            if (m[2], m[3]) not in seen and suspect(m):
+                seen.add((m[2], m[3]))
+                pick.append(m)
+    dated = sorted((m for m in ms if len(m) > 4 and m[4] is not None), key=lambda m: m[4])
+    if dated and dated[0] not in pick and len(pick) < COLLIDE_MENTIONS:
+        pick.append(dated[0])
+        seen.add((dated[0][2], dated[0][3]))
     for m in ms:
+        if len(pick) >= COLLIDE_MENTIONS:
+            break
         g = (m[2], m[3])
         if g not in seen:
             seen.add(g)
             pick.append(m)
     years = {m[4].year for m in pick if len(m) > 4 and m[4] is not None}
-    for m in sorted((m for m in ms if len(m) > 4 and m[4] is not None), key=lambda m: m[4]):
+    for m in dated:
         if len(pick) >= COLLIDE_MENTIONS:
             break
         if m[4].year not in years and m not in pick:
@@ -2843,6 +3017,28 @@ def collide_sample(eid: str, ms: Sequence[Tuple]) -> List[Tuple]:
     pick = pick[:COLLIDE_MENTIONS]
     rnd.shuffle(pick)
     return pick
+
+
+def suspect_mention(book: Book, e: Ent) -> Any:
+    """0230: (mention (post, span, type, maker, ...) -> bool) whether a mention of `e` may be another maker's namesake:
+    an org or person mention of a thing, a thing mention of an org or person, or a stated maker that is not the
+    thing's (`maker_fits`)."""
+    org = schemas_type(e.type) in ORGISH
+
+    def suspect(m: Tuple) -> bool:
+        if (schemas_type(m[2]) in ORGISH) != org and m[2] not in (None, "other"):
+            return True
+        return not org and bool(e.maker) and not maker_fits(book, m[3], e.maker, e.key)
+    return suspect
+
+
+_COLLIDE_YEAR = re.compile(r"^\s+\[[^\]\n]*, (\d{4})-\d\d-\d\d\] ", re.M)
+
+
+def asked_from(text: str) -> Optional[int]:
+    """0230: the oldest year a collision question's sample showed (None: none read)."""
+    years = [int(y) for y in _COLLIDE_YEAR.findall(text or "")]
+    return min(years) if years else None
 
 
 def collide_input(e: Ent, n_posts: int, pick: Sequence[Tuple], posts: Dict[str, Any]) -> str:
@@ -3730,15 +3926,17 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
                                 WHERE m.guide = ANY(%(g)s) AND m.entity_id IS NOT NULL
                                  {"AND m.entity_id = ANY(%(s)s::uuid[])" if seeds is not None else ""}
                                 ORDER BY m.entity_id, m.post_id, m.n)
-                     SELECT entity_id::text FROM f GROUP BY entity_id
+                     SELECT entity_id::text{", min(at)" if span else ""} FROM f GROUP BY entity_id
                      HAVING count(*) >= 2 AND (count(DISTINCT type) + max(CASE WHEN type IS NULL THEN 1 ELSE 0 END) > 1
                                                OR count(DISTINCT maker) > 1 OR entity_id = ANY(%(x)s::uuid[])
                                                {"OR max(at) - min(at) >= make_interval(days => %(d)s)" if span else ""})
                       ORDER BY 1""", {"g": guide, "s": sorted(seeds) if seeds is not None else None, "x": sorted(extra),
                                       "d": COLLIDE_SPAN_DAYS})
-    out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")})
+    out: Counter = Counter({k: 0 for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued", "older")})
     facts_on = entity_facts.on()
-    odd = [eid for (eid,) in cur.fetchall()]
+    rows = cur.fetchall()
+    odd = [r[0] for r in rows]
+    oldest = {r[0]: r[1] for r in rows if span and r[1] is not None}   # 0230: each one's oldest post
     book.prime(ids=odd)
     want = sorted(eid for eid in odd if book.ents.get(eid) and book.ents[eid].status != "not_entity")
     out["odd"] = len(want)
@@ -3754,6 +3952,14 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         calls = answers.get(tid) or []
         if status != "answered" or not calls:
             out["waiting"] += 1
+            continue
+        # 0230: a name whose posts now go back before the oldest its question showed (an archive collected since: the
+        # exchange "Orbit" of 2018, a code tool's 2021 model of the same name) is asked again, its sample with the
+        # oldest post
+        shown = asked_from(text)
+        if eid in oldest and shown is not None and oldest[eid].year < shown:
+            new.append(eid)
+            out["older"] += 1
             continue
         from insight_core.markx import validate
         n = validate.collide_mentions(text)
@@ -3787,7 +3993,8 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             out["queued"] += 1
     if new:
         new = new[:max(0, COLLIDE_CAP - ask.added["collide"])]
-        picks = {eid: collide_sample(eid, ms) for eid, ms in _first_mentions(cur, guide, new).items()}
+        picks = {eid: collide_sample(eid, ms, suspect_mention(book, book.ents[eid]))
+                 for eid, ms in _first_mentions(cur, guide, new).items()}
         posts = tasks.load_posts(cur, {m[0] for pick in picks.values() for m in pick})
         nposts = counts_of(cur, guide, list(picks))
         for eid, pick in picks.items():
