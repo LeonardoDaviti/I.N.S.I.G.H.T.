@@ -40,6 +40,7 @@ incremental-run bug (`counts.check`). The first run after deploying 0169 is full
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import logging
 from collections import defaultdict
@@ -62,7 +63,12 @@ HUB, HUB_MIN = 0.25, 40                                            # a closure o
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
 TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
-STALE_PAGE = 500     # v10.22: a render's text load also reads this many of the reading's stale posts not read yet
+# v10.25 (0227): a reading holds at most TEXT_KEEP texts (and as many readings) at once, the least recently used let
+# go (read again from the run's one snapshot when used again). The posts read again (State.stale) are read ahead in the
+# order the questions show them (`prefetch`), TEXT_PAGE at a time; all at once when they fit in a page (an incremental
+# run). Before, a full reading kept every text and reading it rendered: the first full run after a deploy peaked at
+# ~1.1 GB on the server in "questions and decisions" (787 MB on the server-shaped clone, 321 MB before the questions).
+TEXT_KEEP = 3 * TEXT_PAGE
 # The modules whose code makes what the state keeps, by the part of it they make (0215; before, one stamp of all of
 # them: any change made the next run full, a full reading of the window: 92-93 s on the server after each deploy):
 #   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
@@ -215,7 +221,7 @@ class State:
     kinds: Dict[str, Any] = field(default_factory=dict)            # post -> its reading's kind (read posts only)
     events: Dict[str, Any] = field(default_factory=dict)           # post -> its reading's events
     texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post, as read this run
-    stale: List[str] = field(default_factory=list)                 # v10.22: the posts read again this run (their texts next)
+    stale: Set[str] = field(default_factory=set)                   # v10.22: the posts read again this run (their texts next)
     readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading, as read this run
     # the kept results, by the content they were made from
     inputs_kept: Dict[str, str] = field(default_factory=dict)      # render key -> input hash (the last run's)
@@ -433,7 +439,7 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
             state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
         state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
-    state.stale = [pid for pid in stale if pid in rules]
+    state.stale = {pid for pid in stale if pid in rules}
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
     from insight_core.markx import reading5
     order = reading5.guides(cur, GUIDE)   # 0212: as tasks.readings(ids): ent-v5's first while its switch is on
@@ -462,31 +468,25 @@ class LazyTexts(Mapping):
         self.cur, self.state = cur, state
 
     def load(self, ids: Iterable[str]) -> Dict[str, Any]:
-        """The texts of `ids`, read when first used. v10.22: a read also takes the next STALE_PAGE posts the reading
-        read again (`State.stale`: changed or new, so their questions' inputs are rendered again) whose texts are not
-        read yet, in the same query: a run's renders read their texts a page at a time, not a render at a time (the
-        server: ~62k loads of ~8 posts in 104 minutes, each its own planned statements). The same texts."""
+        """The texts of `ids`, read when first used (those not held, in one query), held as the most recently used.
+        v10.22: the reading's renders read their texts a page at a time, not a render at a time (the server: ~62k
+        loads of ~8 posts in 104 minutes, each its own planned statements); v10.25 (0227): read ahead by `prefetch`,
+        in the order the questions show them, and at most TEXT_KEEP held (`_hold`)."""
         from insight_core.markx import tasks
         s = self.state
-        ids = list(ids)
-        missing = sorted({i for i in ids if i not in s.texts})
+        ids = list(dict.fromkeys(ids))
+        missing = sorted(i for i in ids if i not in s.texts)
         if missing:
-            want = set(missing)
-            while s.stale and len(want) < len(missing) + STALE_PAGE:
-                pid = s.stale.pop()
-                if pid not in s.texts:
-                    want.add(pid)
-            got = tasks.load_posts(self.cur, sorted(want))
+            got = tasks.load_posts(self.cur, missing)
             s.texts.update(got)
             s.report["texts_loaded"] = s.report.get("texts_loaded", 0) + len(got)
+        _hold(s.texts, ids)
         return {i: s.texts[i] for i in ids if i in s.texts}
 
     def __getitem__(self, pid: str) -> Any:
         if pid not in self.state.rules:
             raise KeyError(pid)
-        if pid not in self.state.texts:
-            self.load([pid])
-        return self.state.texts[pid]
+        return self.load([pid])[pid]
 
     def __contains__(self, pid: object) -> bool:
         return pid in self.state.rules
@@ -497,9 +497,36 @@ class LazyTexts(Mapping):
     def __len__(self) -> int:
         return len(self.state.rules)
 
-    def items(self):   # every text: read at once
-        self.load(self.state.rules)
-        return [(i, self.state.texts[i]) for i in self.state.rules if i in self.state.texts]
+    def items(self):   # every text, a page at a time (v10.25: never all of them held at once)
+        ids = list(self.state.rules)
+        for k in range(0, len(ids), TEXT_PAGE):
+            yield from self.load(ids[k:k + TEXT_PAGE]).items()
+
+
+def _hold(cache: Dict[str, Any], ids: Sequence[str]) -> None:
+    """v10.25 (0227): `ids` of the cache (a reading's texts or readings) made its most recently used (its end); past
+    TEXT_KEEP, the least recently used let go, never one of `ids`."""
+    for i in ids:
+        if i in cache:
+            cache[i] = cache.pop(i)
+    over = len(cache) - TEXT_KEEP
+    if over > 0:
+        mine = set(ids)
+        for k in [k for k in itertools.islice(cache, over + len(mine)) if k not in mine][:over]:
+            del cache[k]
+
+
+def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], ids: Iterable[str]) -> None:
+    """v10.25 (0227): of `ids` (the posts the next questions show, in the order they are asked), the texts (and with
+    `readings`, the readings) of those the reading read again (State.stale: their questions' inputs are rendered
+    again) read in one query each when not held, and the held ones kept: the renders that follow find them. When the
+    posts read again fit in a page (an incremental run), all of them at once, as the first render did before."""
+    s = texts.state
+    ids = list(dict.fromkeys(ids))
+    few = sorted(s.stale) if len(s.stale) <= TEXT_PAGE else []
+    texts.load([i for i in itertools.chain(ids, few) if i in s.stale or i in s.texts])
+    if readings is not None:
+        readings.prefetch([i for i in itertools.chain(ids, few) if i in s.stale or i in s.readings])
 
 
 def release(state: State) -> None:
@@ -517,7 +544,7 @@ def release(state: State) -> None:
     state.read_stamp.clear()
     state.kinds.clear()
     state.events.clear()
-    state.stale = []
+    state.stale = set()
     state.rules = dict.fromkeys(state.rules)
 
 
@@ -528,17 +555,20 @@ class LazyReadings(Mapping):
         self.cur, self.state = cur, state
 
     def prefetch(self, ids: Iterable[str]) -> None:
+        """The readings of `ids` read when not held (one query), held as the most recently used (v10.25: at most
+        TEXT_KEEP, `_hold`)."""
         from insight_core.markx import tasks
         s = self.state
-        missing = sorted({i for i in ids if i in s.kinds and i not in s.readings})
+        ids = [i for i in dict.fromkeys(ids) if i in s.kinds]
+        missing = sorted(i for i in ids if i not in s.readings)
         if missing:
             s.readings.update(tasks.readings(self.cur, missing))   # 0212: the preferred reading
+        _hold(s.readings, ids)
 
     def __getitem__(self, pid: str) -> dict:
         if pid not in self.state.kinds:
             raise KeyError(pid)
-        if pid not in self.state.readings:
-            self.prefetch([pid])
+        self.prefetch([pid])
         return self.state.readings[pid]
 
     def __contains__(self, pid: object) -> bool:
@@ -600,7 +630,7 @@ def ahead(state: State, ids: Iterable[str]) -> None:
     ahead with a render's miss; a post no question shows is read only if something asks for it (no text more is kept
     than before: a full run on the mxreal copy 164 MB either way)."""
     keep = set(ids)
-    state.stale = [pid for pid in state.stale if pid in keep]
+    state.stale = {pid for pid in state.stale if pid in keep}
 
 
 def rendered(state: Optional[State], kind: str, ids: Sequence[str], render: Callable[[], str], *, reads: bool = False,
