@@ -141,8 +141,9 @@ def reference_discover(url: str):
         weight = len(units) - sum(units.values()) / 2
         days = (now - last[s.key]).total_seconds() / 86400 if last[s.key] else None
         since = now - timedelta(days=GROWTH_DAYS)
-        grown = round(growth(new=sum(1 for t in first_by[s.key].values() if t > since),
-                             old=sum(1 for t in first_by[s.key].values() if t <= since)), 3)
+        half = weight / len(units) if units else 1.0   # a round-up voice weighs half in the growth too
+        grown = round(growth(new=half * sum(1 for t in first_by[s.key].values() if t > since),
+                             old=half * sum(1 for t in first_by[s.key].values() if t <= since)), 3)
         out.append(({
             "key": s.key, "url": "https://" + s.key, "voices": len(units),
             "voice_names": [names[u] for u in sorted(units, key=lambda u: (units[u], names[u]))],

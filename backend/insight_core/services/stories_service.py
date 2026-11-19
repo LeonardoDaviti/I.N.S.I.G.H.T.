@@ -1146,7 +1146,8 @@ class StoriesService:
             linking = _linking(sources, ((v, i, v in s["roundups"]) for v, i in s["voices"]), s.get("sources", ()), saved)
             weight[s["key"]] = len(linking) - sum(1 for only, _ in linking if only) / 2
             last[s["key"]], _, new, old = activity.get(s["key"], (None, 0, 0, 0))
-            grown[s["key"]] = growth(new=new, old=old)   # 0235: its linking sources mostly new
+            half = weight[s["key"]] / len(linking) if linking else 1.0   # a round-up voice weighs half here too
+            grown[s["key"]] = growth(new=new * half, old=old * half)   # 0235: its linking sources mostly new
             linkers[s["key"]].update(i for _, i in s["voices"] if i)
             suggestion = {
                 "key": s["key"],

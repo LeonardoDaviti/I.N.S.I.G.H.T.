@@ -352,7 +352,7 @@ GROWTH_DAYS = 30    # 0235: a source that first linked a key this recently is a 
 GROWTH_WEIGHT = 1.5  # 0235: NOT MEASURED YET (no real data allowed when it was written); 0235 says how to measure it
 
 
-def growth(*, new: int, old: int) -> float:
+def growth(*, new: float, old: float) -> float:
     """0235: how much a key is growing among your sources: the share of its linking sources that first linked it in
     the last GROWTH_DAYS, times ln(1+those new sources). A voice most of whose linkers are new (six sources this month,
     none before) scores high; an outlet linked by 50 sources for years and 2 new ones scores near 0. Pure."""
