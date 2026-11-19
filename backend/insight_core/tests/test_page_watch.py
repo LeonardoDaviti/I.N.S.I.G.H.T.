@@ -555,6 +555,55 @@ class AddressAndFutureDateTests(unittest.TestCase):
         self.assertEqual(page_date(page, "https://blog.example/2025/Nov/5/a/").date().isoformat(), "2025-11-06")
 
 
+class BodyDateTrustTests(unittest.TestCase):
+    """v10.25 (issue 0228): the page's markup, then its address's day, and only then a date read from its body; a
+    body date its address contradicts, or one before the web began, is held (no date), not guessed."""
+
+    @staticmethod
+    def page(body: str, tags: str = "") -> str:
+        return (f'<html><head><title>x</title><meta property="og:type" content="article">{tags}</head><body><article>'
+                f"<h1>A worked example</h1>{PARAGRAPH}{body}</article></body></html>")
+
+    QUOTED = "<p>The example asks: what was the subscriber base on the precise date of May 31, 2020?</p>"
+
+    def test_a_date_quoted_in_the_body_never_beats_the_addresss_day(self):
+        from insight_core.ingestion.kinds.page_watch import DATED_BY_ADDRESS, page_dating
+        got = page_dating(self.page(self.QUOTED), "https://blog.example/2024/Aug/30/a-tutorial/")
+        self.assertEqual(got, (day(2024, 8, 30), DATED_BY_ADDRESS))
+
+    def test_the_pages_markup_beats_both(self):
+        from insight_core.ingestion.kinds.page_watch import DATED_BY_PAGE, page_dating
+        tags = '<meta property="article:published_time" content="2024-08-31T10:00:00Z">'
+        got = page_dating(self.page(self.QUOTED, tags), "https://blog.example/2024/Aug/30/a-tutorial/")
+        self.assertEqual(got, (datetime(2024, 8, 31, 10, tzinfo=timezone.utc), DATED_BY_PAGE))
+
+    def test_a_body_date_outside_the_addresss_month_is_held(self):
+        from insight_core.ingestion.kinds import page_watch
+        got = page_watch.page_dating(self.page(self.QUOTED), "https://blog.example/2024/08/a-tutorial/")
+        self.assertEqual(got, (None, page_watch.DATE_HELD))
+        # held, the archive's page sorts at its address's month (older_date), never at the quoted day
+        post = page_watch.post_from(self.page(self.QUOTED), "https://blog.example", "https://blog.example/2024/08/a-tutorial/", None)
+        self.assertEqual(post["date"], day(2024, 8, 1))
+
+    def test_a_body_date_inside_the_addresss_month_is_its_day(self):
+        from insight_core.ingestion.kinds.page_watch import DATED_BY_BODY, page_dating
+        got = page_dating(self.page("<p>Posted August 12, 2024.</p>"), "https://blog.example/2024/08/a-note/")
+        self.assertEqual(got, (day(2024, 8, 12), DATED_BY_BODY))
+
+    def test_a_body_date_with_no_address_date_is_kept(self):
+        from insight_core.ingestion.kinds.page_watch import DATED_BY_BODY, page_dating
+        self.assertEqual(page_dating(self.page(self.QUOTED), "https://blog.example/a-tutorial/"),
+                         (day(2020, 5, 31), DATED_BY_BODY))
+
+    def test_a_body_date_before_the_web_is_held(self):
+        from insight_core.ingestion.kinds.page_watch import DATE_HELD, page_dating
+        got = page_dating(self.page("<p>The landing was on July 20, 1969.</p>"), "https://blog.example/a-history/")
+        self.assertEqual(got, (None, DATE_HELD))
+        # in the markup, an older date is the page's own (a scanned paper's)
+        tags = '<meta name="citation_publication_date" content="1969/07/20">'
+        self.assertEqual(page_dating(self.page("", tags), "https://blog.example/a-paper/")[0], day(1969, 7, 20))
+
+
 class ScholarlyDateTests(unittest.TestCase):
     """A paper's scholarly meta tags (Highwire / Google Scholar, Dublin Core, PRISM) date its page."""
 
