@@ -618,7 +618,7 @@ class DiscoverRepository:
     def linked_videos(cur: Cursor) -> List[Tuple[str, int]]:
         """0239: the video addresses kept links point to (youtube.com/watch?v=<id>, the normaliser's one form of every
         video address), each with how many sources link it, the most first: the order their channels are read in."""
-        cur.execute("SELECT pl.target_url, count(DISTINCT p.source_id) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
+        cur.execute("SELECT pl.target_url, " + voice_keys.count_sql("p.source_id") + " FROM post_links pl JOIN posts p ON p.id = pl.post_id "
                     "WHERE " + read_sql("pl") + " AND pl.target_url LIKE %s AND " + suggestable_sql("p.source_id") + " "
                     "GROUP BY 1 ORDER BY 2 DESC, 1", (VIDEO_LIKE,))
         return [(url, int(n)) for url, n in cur.fetchall()]
