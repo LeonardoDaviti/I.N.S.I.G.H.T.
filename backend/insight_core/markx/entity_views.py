@@ -15,6 +15,7 @@ an answer in the queue shows at once.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -45,22 +46,28 @@ def _guide() -> List[str]:
 
 def _rows(cur: Any, guide: List[str], since: Optional[datetime], entity_ids: Optional[Iterable[str]] = None):
     """Current mentions with their post's time, source and read state: (post, n, role, entity, at, source id, read,
-    guide)."""
+    guide). 0232: of `entity_ids`, the mentions linked to them (by the entity index) and, apart, the ones pinned to
+    them linked elsewhere: one OR of the two read every mention (a sequential scan of mx_mentions, 1.5M rows on the
+    server-shaped clone: 0.65 s for any page, the largest entity's or one of 5 posts)."""
     where, params = ["m.guide = ANY(%s)", "m.entity_id IS NOT NULL"], [guide]
     if since is not None:
         where.append(pairing.post_date_within("p", "%s::timestamptz"))
         params += [since, since]
-    if entity_ids is not None:
-        where.append("(m.entity_id = ANY(%s::uuid[]) OR (m.post_id, m.guide, m.n) IN "
-                     "(SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[])))")
-        ids = sorted(set(entity_ids))
-        params += [ids, ids]
-    cur.execute(f"""SELECT m.post_id::text, m.n, m.role, m.entity_id::text,
-                           {pairing.post_date('p')}, p.source_id::text,
-                           rs.read_at IS NOT NULL, m.guide
-                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                      LEFT JOIN post_reader_state rs ON rs.post_id = m.post_id
-                     WHERE {' AND '.join(where)}""", params)
+    sql = f"""SELECT m.post_id::text, m.n, m.role, m.entity_id::text,
+                     {pairing.post_date('p')}, p.source_id::text,
+                     rs.read_at IS NOT NULL, m.guide
+                FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+                LEFT JOIN post_reader_state rs ON rs.post_id = m.post_id
+               WHERE {' AND '.join(where)}"""
+    if entity_ids is None:
+        cur.execute(sql, params)
+        return cur.fetchall()
+    ids = sorted(set(entity_ids))
+    cur.execute(f"""{sql} AND m.entity_id = ANY(%s::uuid[])
+                    UNION ALL
+                    {sql} AND m.entity_id <> ALL(%s::uuid[]) AND (m.post_id, m.guide, m.n) IN
+                          (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[]))""",
+                [*params, ids, *params, ids, ids])
     return cur.fetchall()
 
 
@@ -345,6 +352,59 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
 
 ENTITY_PAGES = 300   # the kept entity pages: the newest built stay (a cache: the rest are built again when opened)
+# 0232: a request's limits are capped (out of range: clamped) and one kept page an entity serves them all, built at
+# the caps and cut to each request's limits (`_cut`). Before, a page asked with its own limits was built every time
+# (Qwen's page with ?stories_limit=5&loose_limit=10: 7.4 s each request), and nothing capped them.
+STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more at a time)
+LOOSE_CAP = 500       # posts in no story listed at most
+BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
+DEFAULTS = {"by": 50, "stories": 50, "loose": 100}   # the route's defaults (PP.BY_LIMIT; issue 0195)
+PAGE_SHAPE = "1"      # 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+#                       bump it): a page kept by the previous code is sent only while its shape is this one
+HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
+HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
+
+
+def limits(by_limit: Optional[int] = None, stories_limit: Optional[int] = None,
+           loose_limit: Optional[int] = None) -> Tuple[int, int, int]:
+    """0232: a request's (by, stories, loose) limits: None the route's default, each clamped into its range (by
+    0..BY_CAP, stories 1..STORIES_CAP, loose 1..LOOSE_CAP)."""
+    def clamp(v: Optional[int], default: int, low: int, cap: int) -> int:
+        return default if v is None else max(low, min(cap, int(v)))
+    return (clamp(by_limit, DEFAULTS["by"], 0, BY_CAP), clamp(stories_limit, DEFAULTS["stories"], 1, STORIES_CAP),
+            clamp(loose_limit, DEFAULTS["loose"], 1, LOOSE_CAP))
+
+
+def _page_key(entity_id: str, replies: bool) -> str:
+    """The key an entity's page is opened by (mx_page_opens) and, with PAGE_SHAPE, kept by."""
+    return f"{entity_id}?replies={int(bool(replies))}"
+
+
+def _full(cur: Any, entity_id: str, *, now: datetime, replies: bool):
+    """(`_entity_page` every request's limits are cut from (`_cut`), its `until`), or None: the story blocks up to
+    STORIES_CAP, the by posts up to BY_CAP and the loose posts up to LOOSE_CAP + BY_CAP (what a request listing fewer
+    by posts reads further down)."""
+    return _entity_page(cur, entity_id, now=now, by_limit=BY_CAP, offer_sample=True, replies=replies,
+                        stories_limit=STORIES_CAP, loose_limit=LOOSE_CAP + BY_CAP)
+
+
+def _cut(full: Dict[str, Any], by: int, stories: int, loose: int) -> Dict[str, Any]:
+    """`entity_page` at these limits (by <= BY_CAP, stories <= STORIES_CAP, loose <= LOOSE_CAP) from `_full`'s
+    answer: its first `stories` blocks; its loose posts without the by posts past `by`, the first `loose` of them;
+    loose_total as the build counts it (every loose post but the by posts past `by`)."""
+    from insight_core.markx import person_page as PP
+    seen, kept = 0, []
+    for ln in full["loose"]:
+        if len(kept) >= loose:
+            break
+        if PP.loose_order(set(ln.get("roles") or ())) == 1:
+            seen += 1
+            if seen > by:
+                continue
+        kept.append(ln)
+    counts = full["loose_counts"]
+    return {**full, "stories": full["stories"][:stories], "loose": kept,
+            "loose_total": sum(counts.values()) - counts["by"] + min(counts["by"], by)}
 
 
 def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[Any]]]:
@@ -381,24 +441,38 @@ def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[
 def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None, replies: bool = False,
                      stories_limit: Optional[int] = None, loose_limit: Optional[int] = None,
                      now: Optional[datetime] = None) -> Optional[bytes]:
-    """GET /api/markx/entities/{id}: the page's bytes (kept_pages.encode of `entity_page` with its sample offered),
-    the kept ones while its inputs (`page_inputs`) and its clock (`until`) are the same, else built as before and kept
-    (the newest ENTITY_PAGES pages stay). Kept only when the inputs read after the build are the ones read before
-    (but the offers it made itself): a page built while an input changed is answered, not kept. None: no such
-    entity."""
+    """GET /api/markx/entities/{id}: the page's bytes (kept_pages.encode of `entity_page` with its sample offered, at
+    the request's `limits`), cut from the entity's one kept page (`kept_full`); the open counted (the jobs process
+    builds the most opened pages before anyone asks: `keep_pages`). None: no such entity."""
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    by, stories, loose = limits(by_limit, stories_limit, loose_limit)
+    body = kept_full(cur, entity_id, replies=replies, now=now, any_code=True)
+    if body is None:
+        return None
+    kept_pages.opened(cur, "entity", _page_key(entity_id, replies))
+    return kept_pages.recut(body, lambda full: _cut(full, by, stories, loose))
+
+
+def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[datetime] = None,
+              any_code: bool = False) -> Optional[bytes]:
+    """The bytes of the entity's `_full` page: the kept ones while its inputs (`page_inputs`) and its clock (`until`)
+    are the same (0232, `any_code`: kept by the previous code too, in the same shape), else built and kept (the
+    newest ENTITY_PAGES pages stay). Kept only when the inputs read after the build are the ones read before (but the
+    offers it made itself): a page built while an input changed is answered, not kept. None: no such entity."""
     import logging
     import time
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
-    key = f"{entity_id}?by={by_limit}&replies={int(bool(replies))}&stories={stories_limit}&loose={loose_limit}"
+    key = kept_pages.shaped(_page_key(entity_id, replies), PAGE_SHAPE)
     run, parts = page_inputs(cur, entity_id)
     if parts is not None:
-        got = kept_pages.get(cur, "entity", key, run, kept_pages.stamp("entity", key, parts), now=now)
+        got = kept_pages.get(cur, "entity", key, run, kept_pages.stamp("entity", key, parts), now=now,
+                             any_code=any_code)
         if got is not None:
             return got
     t0 = time.monotonic()
-    built = _entity_page(cur, entity_id, now=now, by_limit=by_limit, offer_sample=True, replies=replies,
-                         stories_limit=stories_limit, loose_limit=loose_limit)
+    built = _full(cur, entity_id, now=now, replies=replies)
     if built is None:
         return None
     page, until = built
@@ -415,6 +489,167 @@ def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None
             except Exception:   # noqa: BLE001 - a cache: the page is answered all the same
                 logging.getLogger(__name__).exception("Mark X: keeping the entity page %s failed", entity_id)
     return body
+
+
+# ---- the list, the queue's first page and the most opened pages, kept by the jobs process (0216 item 5, 0232) ------
+# The list (3.6-4 s on the server) and the queue's first page (2.7 s) were built on every open; an entity's page at its
+# first open after each decision run and after each deploy (4-7.5 s). The jobs process (jobs.KEPT_VIEWS "entities")
+# builds them after each decision run and first after a deploy, and the routes send what it kept (kept_or_build: built
+# as before when nothing is kept for their inputs).
+#   - The list and the queue are stamped by what changes them: the run (everything the entities and surges stages
+#     write), the owner's marks (labels, merges, pins, sources, handles, fixes), the mentions' current sets (a worker's
+#     entities answer), the queue's rows (answers, flags and their notes, closings); the list may lag behind the
+#     posts' titles and read flags (the loose part) within KEPT_LAG, and its clock ("N days ago", the window's edge).
+#   - Any other queue page is built live, as before.
+
+LIST_SHAPE = "1"                    # the list's answer's shape, in its key (see PAGE_SHAPE)
+QUEUE_SHAPE = "1"                   # the queue's
+QUEUE_KEPT = {"limit": 50, "offset": 0, "view": "flagged"}   # the queue's page kept: the page's first, by default
+KEPT_LAG = timedelta(minutes=15)    # the list is sent at most this old (its titles, read flags and window's edge)
+KEPT_GAP = 60.0                     # the jobs process builds the list and the queue again at most this often
+
+
+def _list_key() -> str:
+    from insight_core.markx import kept_pages
+    return kept_pages.shaped("list", LIST_SHAPE)
+
+
+def _queue_key() -> str:
+    from insight_core.markx import kept_pages
+    return kept_pages.shaped("limit={limit}&offset={offset}&view={view}".format(**QUEUE_KEPT), QUEUE_SHAPE)
+
+
+def _queue_marks(cur: Any) -> List[Any]:
+    """What the owner's, Claude's and the runs' writes of mx_entity_queue change: the open, answered, closed and
+    flagged counts, their newest times, and the open flagged items' notes."""
+    cur.execute("""SELECT count(*), count(answer), count(closed_at), max(created_at), max(answered_at), max(closed_at),
+                          count(*) FILTER (WHERE flagged_at IS NOT NULL AND answer IS NULL AND closed_at IS NULL),
+                          max(flagged_at),
+                          md5(string_agg(id::text || ':' || COALESCE(flag_note, '') || ':' || COALESCE(flagged_by, ''),
+                                         ',' ORDER BY id) FILTER (WHERE flagged_at IS NOT NULL))
+                     FROM mx_entity_queue""")
+    return list(cur.fetchone())
+
+
+def kept_inputs(cur: Any, *, queue_page: bool = False) -> Any:
+    """The list's (or the queue's first page's) kept_pages.Inputs: strict, the newest run, the owner's marks, the
+    mentions' current sets and the queue's rows; loose (the list only), the posts' and read state's kept inputs."""
+    from insight_core.markx import kept_pages, repo
+    last = repo.last_run(cur)
+    cur.execute("SELECT count(*), max(at) FROM mx_mention_sets")
+    sets = list(cur.fetchone())
+    strict = [str(last["id"]) if last else None, kept_pages.owner_marks(cur), sets, _queue_marks(cur)]
+    if queue_page:
+        return kept_pages.Inputs(strict, None)
+    return kept_pages.Inputs(strict, json.dumps(kept_pages.changes(cur, ["posts", "reads"]), separators=(",", ":")))
+
+
+def _list_until(now: datetime) -> datetime:
+    day = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    return min(day, now + KEPT_LAG)
+
+
+def kept_list(cur: Any, *, now: Optional[datetime] = None) -> bytes:
+    """GET /api/markx/entities: the kept list's bytes (by this code or, its inputs the same, the code before a
+    deploy), else `entity_list` built and kept."""
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    return kept_pages.kept_or_build(cur, "entities", _list_key(), lambda: kept_inputs(cur),
+                                    lambda: entity_list(cur, now=now), until=_list_until(now), now=now, any_code=True)
+
+
+def kept_queue(cur: Any, *, limit: int, offset: int, view: str) -> Any:
+    """GET /api/markx/entities/queue: the kept first page's bytes for QUEUE_KEPT's parameters, else `queue` (any other
+    page is built live, as before)."""
+    from insight_core.markx import kept_pages
+    if {"limit": limit, "offset": offset, "view": view} != QUEUE_KEPT:
+        return queue(cur, limit=limit, offset=offset, view=view)
+    return kept_pages.kept_or_build(cur, "entity_queue", _queue_key(), lambda: kept_inputs(cur, queue_page=True),
+                                    lambda: queue(cur, **QUEUE_KEPT), any_code=True)
+
+
+def _hot(cur: Any) -> List[Tuple[str, bool]]:
+    """The most opened entity pages (HOT_PAGES): (entity id, replies)."""
+    from insight_core.markx import kept_pages
+    out = []
+    for key in kept_pages.most_opened(cur, "entity", HOT_PAGES):
+        eid, _, rest = key.partition("?replies=")
+        if I._UUID.match(eid):
+            out.append((eid, rest == "1"))
+    return out
+
+
+def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
+    """The jobs process's look: whether the list or the queue's first page is not kept for its inputs now by this
+    code (or lags past its loose part, or ends its KEPT_LAG before the next looks), or a most opened page has no row
+    of the newest run by this code (a run or a deploy since; a page an owner's mark made stale between runs is built
+    when opened, as before). Before any decision run, nothing (as News: nothing to keep)."""
+    from insight_core.markx import kept_pages, repo
+    now = now or datetime.now(timezone.utc)
+    last = repo.last_run(cur)
+    if last is None:
+        return False
+    lst = kept_inputs(cur)   # the queue's strict part is the list's
+    if not kept_pages.has(cur, "entities", _list_key(), kept_pages.NO_RUN,
+                          kept_pages.stamp("entities", _list_key(), lst.strict), loose=lst.loose,
+                          until_after=now + timedelta(seconds=2 * KEPT_GAP)):
+        return True
+    if not kept_pages.has(cur, "entity_queue", _queue_key(), kept_pages.NO_RUN,
+                          kept_pages.stamp("entity_queue", _queue_key(), lst.strict)):
+        return True
+    hot = _hot(cur)
+    if not hot:
+        return False
+    keys = [kept_pages.shaped(_page_key(e, r), PAGE_SHAPE) for e, r in hot]
+    cur.execute("""SELECT count(DISTINCT key) FROM mx_kept_pages WHERE page = 'entity' AND key = ANY(%s)
+                      AND run_id = %s AND code = %s AND (until IS NULL OR until > %s)""",
+                (keys, last["id"], kept_pages.code_stamp(), now + timedelta(seconds=2 * KEPT_GAP)))
+    return cur.fetchone()[0] < len(keys)
+
+
+def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_SECONDS) -> Dict[str, Any]:
+    """In the jobs process (jobs.Jobs.entities), in one snapshot: the list and the queue's first page when not kept
+    for their inputs, then the most opened entity pages not kept for theirs (most opened first, within `budget`
+    seconds: the rest are built when opened or at the next build). Each by the routes' own path (`entity_list`,
+    `queue`, `kept_full`), kept as the routes keep them."""
+    import time
+    from insight_core.markx import kept_pages
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, Any] = {"built": [], "bytes": {}, "build_seconds": {}}
+    for page, key, inputs, build, until in (
+            ("entities", _list_key(), lambda: kept_inputs(cur), lambda: entity_list(cur, now=now), _list_until(now)),
+            ("entity_queue", _queue_key(), lambda: kept_inputs(cur, queue_page=True),
+             lambda: queue(cur, **QUEUE_KEPT), None)):
+        got = inputs()
+        st = kept_pages.stamp(page, key, got.strict)
+        if kept_pages.has(cur, page, key, kept_pages.NO_RUN, st, loose=got.loose,
+                          until_after=now + timedelta(seconds=2 * KEPT_GAP) if until else None):
+            continue
+        t0 = time.monotonic()
+        body = kept_pages.encode(build())
+        seconds = round(time.monotonic() - t0, 2)
+        kept_pages.put(cur, page, key, kept_pages.NO_RUN, st, body, seconds=seconds, until=until, loose=got.loose)
+        out["built"].append(page)
+        out["bytes"][page], out["build_seconds"][page] = len(body), seconds
+    t_hot = time.monotonic()
+    hot = {"pages": 0, "left": 0, "failed": 0, "slowest": 0.0}
+    for eid, replies in _hot(cur):
+        if time.monotonic() - t_hot > budget:
+            hot["left"] += 1
+            continue
+        t0 = time.monotonic()
+        try:
+            with cur.connection.transaction():   # a page that fails is left for its next open; the others go on
+                kept_full(cur, eid, replies=replies, now=now)
+        except Exception:   # noqa: BLE001 - a cache: the page is built when opened
+            import logging
+            logging.getLogger(__name__).exception("Mark X: building the opened entity page %s failed", eid)
+            hot["failed"] += 1
+            continue
+        hot["pages"] += 1
+        hot["slowest"] = max(hot["slowest"], round(time.monotonic() - t0, 2))
+    out["hot"] = {**hot, "seconds": round(time.monotonic() - t_hot, 2)}
+    return out
 
 
 def _until(now: datetime, every: Sequence[Dict[str, Any]], offer_sample: bool) -> datetime:
