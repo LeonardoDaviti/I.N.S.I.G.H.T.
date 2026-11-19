@@ -23,6 +23,18 @@ the links its posts carry that are that thing's page, by these rules in this ord
 A paper or a release page is the **original**; a code repository and a demo are kept as its links (the post that
 gave the paper by rule 1 gives them, when it links one of each).
 
+**Cited, not its own (v10.25, 0229).** A match by rule 1 or 2 is evidence that the post CITES a page, not that the page
+IS the entity: an org's report whose posts link a paper the report cites got that paper as its Original; a model whose
+posts link a third party's dashboard titled with its name got the dashboard. Such a page is kept as kind `cited`
+(never an original, an address, a work or a site; the entity's page lists it apart, as what its posts cite):
+  - rule 1's paper is the entity's own only when the mention carries the identifier itself (its ref, or an id in its
+    span or name: it names that paper), or the paper's read title names the entity (`paper_names_it`: rule 2's title
+    keys, or the head before its colon); the one paper a post links beside its only document is otherwise cited, and
+    so are the code and demo links that come with it;
+  - rule 2's release page of a model, product or software is its own only on its own or its maker's site
+    (`own_site`); a document's page titled with its name is the document (a filing, a report) wherever it is.
+With no own page the entity shows no Original rather than a page its posts cite.
+
 **B. The trigger.** The entity is the `subject` of posts from 2+ voices in 7 days, or of 1 voice's post that leads a
 News row. Roles `source` and `recommended` never count (0133: evidence, not news).
 
@@ -46,6 +58,7 @@ from insight_core.utils.post_links import is_home
 from insight_core.utils.url_normalization import normalize_url
 
 PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE = "paper", "code", "demo", "release", "work", "package"
+CITED = "cited"                    # 0229: a page the posts cite, not the entity's own: never an original or an address
 KINDS = (PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE)
 ORIGINAL_KINDS = (PAPER, RELEASE, WORK)
 IDENTIFIER, TITLE, MAKER, SITE, LOOKUP, REPO = "identifier", "title", "maker", "site", "lookup", "repo"
@@ -152,6 +165,89 @@ def by_identifier(*, ref: Optional[str], span_ids: Sequence[str], links: Sequenc
     if len(refs) != 1:
         return None
     return paper_page(refs.pop(), links)
+
+
+def carries_id(ref: Optional[str], span_ids: Sequence[str]) -> bool:
+    """0229: the mention carries an identifier itself (its ref, an id in its span or name): it names that paper."""
+    return any(r and (r.startswith("arXiv:") or r.startswith("doi:")) for r in [ref, *span_ids])
+
+
+def paper_names_it(title: Optional[str], names: Iterable[str], key) -> bool:
+    """0229: a paper's read title names the entity: rule 2's title keys, or the head before its colon ("Nimbus:
+    Proving a Hypothesis with Lattices" names Nimbus)."""
+    names = {n for n in names if len(n) >= NAME_MIN}
+    if not title or not names:
+        return False
+    heads = {key(t.split(":", 1)[0]) for t in (title, _LEADING_ID.sub("", title)) if ":" in t}
+    return bool(names & (title_keys(title, key) | heads))
+
+
+# link words that say what kind of page a link is, not what it is ("Paper", "[link]", "статья"): no evidence either way
+LINK_LABELS = frozenset({
+    "abstract", "arxiv", "article", "doi", "full", "here", "link", "paper", "pdf", "preprint", "read", "source", "text",
+    "the", "this", "здесь", "препринт", "ссылка", "ссылке", "статье", "статьи", "статью", "статья", "тут"})
+_AUTHOR_YEAR = re.compile(r"\bet\s+al\b|\bи\s+др\b|\(?(?:19|20)\d{2}[a-z]?\)?\s*$", re.I)
+
+
+def link_names(words: Optional[str], url: str) -> Optional[str]:
+    """0229: what a link's own words name, when they name a thing: None for no words, an address, an identifier
+    ("arXiv:2507.02825"), page-kind labels only (LINK_LABELS) and an author-year citation ("Baker et al., 2025": whose
+    work it is, not which); else the words."""
+    w = " ".join((words or "").split())
+    if not w or "://" in w or w.startswith("www.") or bare(url).split("/", 1)[0] in w.lower():
+        return None
+    from insight_core.markx.citations import ids_in
+    if ids_in(w) or _AUTHOR_YEAR.search(w):
+        return None
+    tokens = re.findall(r"[^\W\d_]+", w.lower())
+    return w if tokens and not all(t in LINK_LABELS for t in tokens) else None
+
+
+def paper_is_its_own(*, carried: bool, title: Optional[str], words: Optional[str], url: str, names: Iterable[str],
+                     key) -> bool:
+    """0229: rule 1's paper is the entity's own when the mention carries its identifier (`carries_id`), or what
+    names the page names the entity: its read title, else the link's own words (`link_names`), naming it when it is
+    the entity's name by paper_names_it or one's words are a run of the other's. A read title or link words naming
+    another thing make it a paper the post cites. With neither (a bare link, "Paper"), the post's only document and
+    its one paper stay its own (0138's rule 1)."""
+    from insight_core.markx.names import word_contains
+    if carried:
+        return True
+    said = title or link_names(words, url)
+    if not said:
+        return True
+    names = set(names)
+    k = key(said)
+    return paper_names_it(said, names, key) or any(word_contains(n, k) for n in names if n)
+
+
+def own_site(url: str, words: Iterable[str], squash) -> bool:
+    """0229: a page of the thing on its own site, its maker's, or a platform's (a model hub, a code host: its page
+    there, whoever's): a label of the host (blog.example.com: blog, example; an ending of 3 letters or fewer is
+    none), the site's word or its whole registrable
+    address run together (z.example: zexample) is a name or maker key of it run together, one word of one (3+
+    characters, not a number), or a maker's initials (Black Forest Labs: bfl)."""
+    host = host_of(url)
+    site = site_of(host)
+    if site in MODEL_HUBS or site in CODE_SITES or host.split(".", 1)[0] in _CODE_WORDS:
+        return True
+    labels = [x for x in host.lower().split(".") if x and x != "www"]
+    if labels and len(labels[-1]) <= 3:   # a short ending (com, org, dev) is nobody's word; a brand's (google) is
+        labels = labels[:-1]
+    forms = {re.sub(r"[^0-9a-z]+", "", x) for x in labels + [site_word(url), site.lower()]}
+    want: Set[str] = set()
+    for w in words:
+        if not w:
+            continue
+        parts = [p for p in w.split() if not re.fullmatch(r"[\d.]+", p)]
+        want.add(squash(w))
+        want.update(squash(p) for p in parts)
+        if len(parts) >= 3:
+            want.add("".join(p[0] for p in parts))
+    return bool({f for f in forms if len(f) >= 3} & {w for w in want if len(w) >= 3})
+
+
+_CODE_WORDS = frozenset(s.split(".", 1)[0] for s in CODE_SITES)   # a code host's own install (gitlab.<org>.example)
 
 
 def title_keys(title: Optional[str], key) -> Set[str]:
@@ -321,6 +417,7 @@ def pick(addresses: Iterable[Tuple[str, str, str, Any]]) -> Dict[str, Tuple[str,
     first found, then the address."""
     order = {r: n for n, r in enumerate(RULE_ORDER)}
     out: Dict[str, Tuple[str, str, Any]] = {}
+    addresses = [a for a in addresses if a[0] != CITED]   # 0229: a page its posts cite is no address of it
     for kind, url, rule, at in sorted(addresses, key=lambda a: (order.get(a[2], 9), a[3] is None, a[3].timestamp() if a[3] else 0.0, a[1])):
         out.setdefault(kind, (url, rule, at))
     return out
@@ -449,6 +546,7 @@ __all__ = [
     "BACKFILL_PER_RUN", "CLASSICS_DAILY", "NEVER_FRONT_TYPES", "PAGE_DELAY_S", "SITE", "WORK", "WORK_PAGES_MAX",
     "by_site", "front_page", "site_word", "work_front_allowed",
     "MODEL_HUBS", "PACKAGE", "PACKAGE_SITES", "PLATFORM_SECTIONS", "REPO", "by_repo", "one_owner", "owner_agrees", "platform_thing",
+    "CITED", "LINK_LABELS", "carries_id", "link_names", "own_site", "paper_is_its_own", "paper_names_it",
     "CODE", "DEMO", "IDENTIFIER", "KINDS", "LOOKUP", "MAKER", "MAKER_TYPES", "PAPER", "RELEASE", "TITLE",
     "not_a_release", "address_kind", "arxiv_query", "by_identifier", "by_maker", "by_names", "by_title", "credit_cap", "crossref_query",
     "lookup_match", "original_of", "paper_page", "paper_ref", "parse_arxiv", "parse_crossref", "pick", "ref_page",

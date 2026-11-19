@@ -109,6 +109,41 @@ class Rules(unittest.TestCase):
                          ("release", "https://c.example/r"))
         self.assertIsNone(E.original_of({"code": (CODE, E.IDENTIFIER, t)}), "a repository alone is no original")
 
+    def test_rule_1s_paper_is_its_own_only_with_evidence_it_is_the_entity(self):
+        """0229: the post's one paper beside its only document is a paper it cites when what names the page (its read
+        title, else the link's words) names another thing; a bare link or a page-kind label is no evidence."""
+        names = {N.key("Nimbus Lattices"), N.key("The Nimbus Lattice Paper")}
+        own = lambda **kw: E.paper_is_its_own(**{"carried": False, "title": None, "words": None, "url": PAPER,  # noqa: E731
+                                                "names": names, "key": N.key, **kw})
+        self.assertTrue(own(carried=True, title="A Different Paper Entirely"), "the mention carries the id itself")
+        self.assertTrue(own(title="Nimbus Lattices: Proving a Hypothesis with Lattices"), "the head before the colon")
+        self.assertTrue(own(title="[2611.01234] The Nimbus Lattice Paper"))
+        self.assertFalse(own(title="Sleeping Kestrels: Training Models that Hide"), "a read title naming another")
+        self.assertFalse(own(words="Gradual Kestrel Drift"), "link words naming another work")
+        self.assertFalse(own(words="things like Kestrel"), "link words in prose name what they say")
+        self.assertTrue(own(words="the Nimbus Lattices paper"), "its name's words in the link's")
+        for words in (None, "", PAPER, "arxiv.org/abs/2611.01234", "Paper", "[link]", "Статья", "arXiv:2611.01234",
+                      "Kestrel et al., 2025", "Varga and Kestrel (2024)"):
+            self.assertTrue(own(words=words), f"no evidence either way: {words!r}")
+        self.assertTrue(own(title="Nimbus Lattices", words="Gradual Kestrel Drift"), "the read title first")
+
+    def test_rule_2s_page_of_a_thing_is_its_own_on_its_own_its_makers_or_a_platforms_site(self):
+        words = {N.key("Nimbus 4"), N.key("Acme Labs"), N.key("Black Forest Kilns")}
+        for url in ("https://acmelabs.example/news/nimbus-4", "https://nimbus.example/release",
+                    "https://blog.acme.example/nimbus-4", "https://bfk.example/blog/nimbus-4",
+                    "https://huggingface.co/collections/acme/nimbus-4", "https://github.com/acme/nimbus/tree/main",
+                    "https://gitlab.acme-tools.example/acme/nimbus"):
+            self.assertTrue(E.own_site(url, words, N.squash), url)
+        for url in ("https://dashboards.example/dashboard/1f2e", "https://en.encyclopedia.example/wiki/Nimbus_4",
+                    "https://router.example/acme/nimbus-4", "https://paste.example/view/x"):
+            self.assertFalse(E.own_site(url, words, N.squash), url)
+
+    def test_a_cited_page_is_no_address_of_it(self):
+        t = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        picked = E.pick([(E.CITED, PAPER, E.IDENTIFIER, t), ("release", "https://c.example/r", E.TITLE, t + H)])
+        self.assertEqual(set(picked), {"release"})
+        self.assertIsNone(E.original_of(E.pick([(E.CITED, PAPER, E.IDENTIFIER, t)])))
+
     def test_the_trigger(self):
         self.assertTrue(E.triggered(2, False))
         self.assertTrue(E.triggered(1, True), "one voice's News lead")
@@ -273,6 +308,54 @@ class Addresses(_AddressCase):
         page = entity_views.entity_page(self.cur, y, now=T0 + D)
         self.assertEqual(page["original"]["url"], PAPER, "the merged one's page shows the target's original")
         self.assertEqual(page["original"]["kind"], "paper")
+
+    def test_a_paper_a_reports_post_cites_is_cited_never_its_original(self):
+        """0229: an org's report whose post links a paper the report cites (its link names that paper) has no
+        Original; the page lists the paper, its code and its demo apart, as cited."""
+        a = self.post(0, T0, text="Acme's report on Nimbus is out.", links=[PAPER, CODE, DEMO])
+        self.link_text(a, PAPER, "Sleeping Kestrels: Training Models that Hide")
+        self.say(a, m("Acme report on the Nimbus risk"))
+        out = self.stage()
+        root = self.root(a)
+        self.assertEqual(self.addresses(root), {})
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertIsNone(page["original"])
+        self.assertEqual(sorted((c["kind"], c["url"], c["rule"]) for c in page["cited"]),
+                         sorted([("paper", PAPER, "identifier"), ("code", CODE, "identifier"),
+                                 ("demo", DEMO, "identifier")]))
+        self.assertEqual(out["addresses"]["added"], 3)
+
+    def test_a_third_partys_page_titled_with_a_models_name_is_cited(self):
+        own, other = "https://acmelabs.example/blog/nimbus-4", "https://dashboards.example/dashboard/1f2e"
+        a = self.post(0, T0, links=[other, own])
+        self.link_text(a, other, "Nimbus 4")
+        self.link_text(a, own, "Nimbus 4")
+        self.say(a, m("Nimbus 4", type_="model", maker="Acme Labs"))
+        self.stage()
+        root = self.root(a)
+        self.assertEqual(self.addresses(root), {"release": (own, "title")})
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertEqual(page["original"]["url"], own)
+        self.assertEqual([(c["url"], c["kind"]) for c in page["cited"]], [(other, "release")])
+
+    def test_a_row_an_older_rule_took_follows_its_posts_reading_on_the_sweep(self):
+        """0229: a row written as the entity's paper becomes cited when the sweep reads its post again; a post that
+        gives it as its own turns it back."""
+        a = self.post(0, T0, links=[PAPER])
+        self.link_text(a, PAPER, "Sleeping Kestrels: Training Models that Hide")
+        self.say(a, m("Acme report on the Nimbus risk"))
+        self.stage()
+        root = self.root(a)
+        self.cur.execute("UPDATE mx_entity_addresses SET kind = 'paper' WHERE url = %s", (PAPER,))   # as v10.24 wrote it
+        self.assertEqual(self.addresses(root), {"paper": (PAPER, "identifier")})
+        got = EA.stage(self.cur, now=T0 + D, since=None, full=True)
+        self.assertEqual((got["added"], got["changed"]), (0, 1))
+        self.assertEqual(self.addresses(root), {})
+        b = self.post(1, T0 + H, links=[PAPER])
+        self.say(b, m("Acme report on the Nimbus risk", ref="arXiv:2611.01234"))
+        self.stage(full=True)
+        self.assertEqual(self.root(b), root)
+        self.assertEqual(self.addresses(self.root(b)), {"paper": (PAPER, "identifier")}, "named as its own: its own")
 
     def test_an_address_counts_only_while_its_post_names_the_entity_now(self):
         a = self.post(0, T0, links=[PAPER])

@@ -468,6 +468,8 @@ export interface MarkxEntityPage {
   /** 0138 A: its original (a paper or release page its posts link, found by rules), stored or not, and its other pages. */
   original?: MarkxOriginal | null;
   addresses?: { kind: 'paper' | 'code' | 'demo' | 'release' | 'package'; url: string; rule: string }[];
+  /** 0229: the papers and pages its posts cite (found by an identifier or a title, not its own page): never its original. */
+  cited?: { kind: 'paper' | 'code' | 'demo' | 'release'; url: string; rule: string }[];
   /** 0138: false when no post's current reading names it; `older` then lists the posts an earlier guide named it in. */
   current?: boolean;
   older?: MarkxOlderPost[];

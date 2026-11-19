@@ -282,17 +282,18 @@ def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any
 def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
     """0138: the entity's original and its other addresses (markx/entity_addresses.py): {original: {url, kind, rule,
     post: {id, title} when stored, collected: when Collect originals stored it} or None, addresses: [{kind, url,
-    rule}]}."""
+    rule}], cited: the pages its posts cite (0229: [{url, kind, rule}], never its original)}."""
     from insight_core.markx import entity_addresses as EA
     from insight_core.utils import entity_originals as R
     from insight_core.utils.url_normalization import normalize_url
-    picked = EA.of_root(cur, book, root)
+    picked, cited = EA.page(cur, book, root)
+    cited = [{k: c[k] for k in ("url", "kind", "rule")} for c in cited]
     got = R.original_of({k: (v["url"], v["rule"], v["first_at"]) for k, v in picked.items()})
     addresses = [{"kind": k, "url": v["url"], "rule": v["rule"], "owner": v.get("owner")}
                  for k, v in sorted(picked.items(), key=lambda kv: R.KINDS.index(kv[0]))]
     makers = maker_candidates(book, root, [v.get("owner") for v in picked.values()])
     if not got:
-        return {"original": None, "addresses": addresses, "maker_candidates": makers}
+        return {"original": None, "addresses": addresses, "maker_candidates": makers, "cited": cited}
     kind, url = got
     cur.execute("SELECT id::text, title, metadata ? 'collected_original' FROM posts WHERE normalized_url = %s LIMIT 1",
                 (normalize_url(url) or url,))
@@ -303,7 +304,7 @@ def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
     return {"original": {"url": url, "kind": kind, "rule": picked[kind]["rule"], "owner": picked[kind].get("owner"),
                          "post": {"id": row[0], "title": row[1], "collected": bool(row[2])} if row else None,
                          "asked": {"outcome": asked[0], "at": asked[1]} if asked else None},
-            "addresses": [a for a in addresses if a["url"] != url], "maker_candidates": makers}
+            "addresses": [a for a in addresses if a["url"] != url], "maker_candidates": makers, "cited": cited}
 
 
 def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -> List[Dict[str, Any]]:
