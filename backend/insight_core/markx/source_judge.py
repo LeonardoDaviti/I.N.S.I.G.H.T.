@@ -701,7 +701,8 @@ def after_answer(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> i
 
 def to_judge(suggestions: Sequence[Dict[str, Any]], judged: Sequence[str], limit: int) -> List[str]:
     """The Discover suggestions to judge next: every one not judged lately (`judged`: cache keys) whose follow test does
-    not say it can't be followed as a feed, the fastest growing first (its `growth`, discover_rules.growth), then by
+    not say it can't be followed (0240: that test scrapes regardless of a feed, its list pages too, so the section
+    skipped is only what scraping also failed on), the fastest growing first (its `growth`, discover_rules.growth), then by
     Discover's score, then its place in the list. Pure."""
     from insight_core.utils.discover_rules import section
     done = set(judged)

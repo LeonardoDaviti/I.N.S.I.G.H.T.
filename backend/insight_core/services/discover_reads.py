@@ -49,8 +49,12 @@ BLOCKED = (401, 403)
 LABELS = ("feed", "page", "headlines", "blocked", "other_feed")
 # The rules a follow test is made by (issue 0109: platform accounts through their kind): a stored test
 # by other rules is due again.
-FOLLOW_TEST = 4   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages;
+FOLLOW_TEST = 5   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages;
 #                   4 (issue 0172): where it landed (moved_to), its own pages' sections, its declared account, transient
+#                   5 (issue 0240): no feed and no page: the site's list pages (where_linked.follow, step 5)
+# Rules whose followable tests still stand under FOLLOW_TEST (0240 only adds ways in for the unfollowable): only the
+# unfollowable ones they made are due again, not every suggestion ever tested.
+FOLLOWABLE_STANDS = frozenset({4})
 KIND_POSTS = 3           # the posts a platform account's kind is asked for
 # Issue 0172 b6: a test that failed for a passing reason (a bridge's error, a timeout, a 5xx, a 429) is asked again
 # after this, not after CHECK_DAYS (a bridge's hiccup had labelled an X account "headlines" for 30 days).
@@ -321,8 +325,9 @@ def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) ->
     0172 b6); a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
     try:
         again = timedelta(hours=TRANSIENT_HOURS) if read and read.get("transient") else timedelta(days=CHECK_DAYS)
-        return (read is None or (test and read.get("test") != FOLLOW_TEST)
-                or now - datetime.fromisoformat(read["at"]) >= again)
+        older = test and read is not None and read.get("test") != FOLLOW_TEST and not (
+            read.get("test") in FOLLOWABLE_STANDS and read.get("label") in FOLLOWABLE)
+        return read is None or older or now - datetime.fromisoformat(read["at"]) >= again
     except (AttributeError, KeyError, TypeError, ValueError):
         return True
 
