@@ -1,6 +1,6 @@
 # 0229: An entity's Original is its own page, never a page its posts cite (Stealth v10.25, slice D)
 
-Status: **built, not measured blind**. Backlog 0225 #26 and #27 (the Original half). Migration 0159. Branch
+Status: **built, not measured blind**. Backlog 0225 #26 and #27 (the Original half). Migration 0157. Branch
 `worktree-agent-a095ed3b9c559dc23`. Private rows: the main checkout's `plan/research/v1025/d/` (gitignored).
 
 ## What was wrong

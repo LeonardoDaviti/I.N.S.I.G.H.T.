@@ -1,6 +1,6 @@
 # 0228 — An archive date taken from the article's text (0225 #2)
 
-Status: **built on branch (v10.25 slice C)**, 2026-11-19. Migration `0158_body_dates_against_their_address.sql`.
+Status: **built on branch (v10.25 slice C)**, 2026-11-19. Migration `0156_body_dates_against_their_address.sql`.
 Private rows (real names, ids, addresses): the main checkout's `plan/research/v1025/0228-dates.md`.
 
 ## What was wrong
@@ -32,7 +32,7 @@ Two posts the owner named. Their causes were found on the server (three read-onl
 - **`saved_service.first_linked`**: a linking post counts from `GREATEST(published_at, metadata.modified)`
   (`LINKED_SINCE`), because a page edited later shows its links only from that edit. This is a small edit outside
   ingestion/: the decision is made there and no other slice owns it.
-- **Migration 0158**, following the pattern of 0099 and 0101, makes two repairs:
+- **Migration 0156**, following the pattern of 0099 and 0101, makes two repairs:
   - **A.** An own-site post (or a saved one) stored as a whole UTC day, whose body writes that day ("May 31, 2020",
     "Sept. 3, 2025"), and whose address names a different day (more than a day off) or a different month. It takes
     the address's day, or the 1st of the address's month, with precision `date`, and is sorted again.

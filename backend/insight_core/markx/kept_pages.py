@@ -26,7 +26,7 @@ Issue 0206 (wave 2: the topic tracks' pages, the unread counts, the sources' ana
     source: 17-20 s on the server), sent with when it was built while the jobs process builds it again.
 
 Issue 0232 (v10.25):
-  - **The code apart from the inputs** (migration 0162, mx_kept_pages.code): a row's stamp is its inputs' alone and
+  - **The code apart from the inputs** (migration 0158, mx_kept_pages.code): a row's stamp is its inputs' alone and
     its `code` the code stamp it was built with. `get` and `has` want the current code's row; a page whose module
     says so (`get(..., any_code=True)`: News, the entity list and queue, an entity's page) is sent from the previous
     code's row while its inputs are the same, until the jobs process builds it again after the deploy (before, every

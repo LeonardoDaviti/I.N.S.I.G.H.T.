@@ -1,4 +1,4 @@
--- 0158_body_dates_against_their_address.sql (Stealth v10.25, issue 0228: a date from the article's text)
+-- 0156_body_dates_against_their_address.sql (Stealth v10.25, issue 0228: a date from the article's text)
 --
 -- Two ways an older page took a date that was not its publication's (issue 0225 #2):
 --   A. Before v10.13.7 the page reader ranked the one date written in a page's body above the day its address names:

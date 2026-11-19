@@ -1,4 +1,4 @@
--- 0163_markx_task_inputs_spent.sql (Stealth v10.25, issue 0233; 0216 item 1, never built in v10.22).
+-- 0159_markx_task_inputs_spent.sql (Stealth v10.25, issue 0233; 0216 item 1, never built in v10.22).
 --
 -- An answered task's input may be spent: markx/tasks.py `spend` (the scheduler's daily work) sets mx_tasks.input to
 -- NULL for the kinds nothing reads once answered (tasks.SPENDS), 14 days after the answer. The input's hash stays:

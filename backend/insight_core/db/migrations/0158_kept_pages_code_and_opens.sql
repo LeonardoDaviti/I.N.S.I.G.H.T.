@@ -1,4 +1,4 @@
--- 0162_kept_pages_code_and_opens.sql (Stealth v10.25, issue 0232: pages kept across a deploy, opened pages built first)
+-- 0158_kept_pages_code_and_opens.sql (Stealth v10.25, issue 0232: pages kept across a deploy, opened pages built first)
 --
 -- mx_kept_pages.code: the code stamp a row was built with (kept_pages.code_stamp), apart from its input stamp. Before,
 -- the code was hashed into the stamp, so every deploy made every kept page cold (Qwen's page 7.5 s, News 6.9 s after

@@ -297,11 +297,11 @@ class StoredBacklogTests(unittest.TestCase):
         self.assertEqual(asyncio.run(service.collect_for_source(http, missed, self.source))["status"], "collected")
         self.assertEqual(self._row(missed)[0], later)
 
-    def test_0158_repairs_body_dates_against_their_address_and_old_first_links(self):
+    def test_0156_repairs_body_dates_against_their_address_and_old_first_links(self):
         site = f"https://own-{self.mark}.example"
         fetched = datetime(2026, 11, 10, 7, 55, tzinfo=timezone.utc)
         quoted = "<p>What was the subscriber base on the precise date of May 31, 2020?</p>"
-        rows = {  # url -> (published_at, its body, the date 0158 leaves)
+        rows = {  # url -> (published_at, its body, the date 0156 leaves)
             f"{site}/2024/Aug/30/a-tutorial/": (day(2020, 5, 31), quoted, day(2024, 8, 30)),
             f"{site}/2024/08/30/same-in-numbers/": (day(2020, 5, 31), quoted.replace("May", "May."), day(2024, 8, 30)),
             f"{site}/2024/08/a-month-alone/": (day(2020, 5, 31), quoted, day(2024, 8, 1)),
@@ -315,7 +315,7 @@ class StoredBacklogTests(unittest.TestCase):
         elsewhere = f"https://elsewhere-{self.mark}.example/2024/08/30/a-link/"   # a feed's item on another site
         missed, essay_day = f"{site}/a-new-model", datetime(2023, 3, 31, tzinfo=timezone.utc)
         note_at = datetime(2026, 9, 22, 16, 35, tzinfo=timezone.utc)
-        sql = (BACKEND_DIR / "insight_core/db/migrations/0158_body_dates_against_their_address.sql").read_text()
+        sql = (BACKEND_DIR / "insight_core/db/migrations/0156_body_dates_against_their_address.sql").read_text()
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for url, (published, body, _) in rows.items():
                 insert_post(cur, self.source, url, at=published, content=body)

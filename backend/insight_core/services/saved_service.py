@@ -61,7 +61,7 @@ RUNNING_WITHIN = timedelta(hours=1)
 FETCH_JOB = "ingestion_run"
 _NAME = "COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)"
 # Since when a linking post p shows its links (first_linked): its date, or the later change its page says it had
-# (metadata.modified, an ISO time: parsing.page_modified). Migration 0158 repairs with the same expression.
+# (metadata.modified, an ISO time: parsing.page_modified). Migration 0156 repairs with the same expression.
 LINKED_SINCE = ("GREATEST(p.published_at, CASE WHEN p.metadata->>'modified' ~ '^\\d{4}-\\d\\d-\\d\\dT'"
                 " THEN (p.metadata->>'modified')::timestamptz END)")
 
