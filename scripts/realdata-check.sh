@@ -147,7 +147,7 @@ if [ -n "$IN_PLACE" ]; then
     base)
       run_side base "$DB" > "$WORK/base.log" 2>&1 || true
       cat "$WORK/base.log"
-      grep -q "\] .* done$" "$WORK/base.log" && ! grep -q "FAILED" "$WORK/base.log" || { echo "the base side failed: nothing kept" >&2; exit 2; }
+      grep -q "\] .* done$" "$WORK/base.log" && ! grep -q "FAILED" "$WORK/base.log" || { tail -n 40 "$WORK"/base/*.log >&2 2>/dev/null; echo "the base side failed: nothing kept" >&2; exit 2; }
       rm -rf "$STASH"; mkdir -p "$STASH"; cp -r "$WORK/base" "$STASH/base"; cp "$WORK/base.log" "$STASH/base.log"
       echo "$BASE" > "$STASH/base-ref.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$STASH/at.txt"
       say "base side kept in $STASH: restore $DB again, then --in-place head"
