@@ -53,6 +53,7 @@ CONSUMER: Dict[str, str] = {
     "embed": "embeddings", "embed_name": "embeddings", "alias": "entities", "alias2": "entities", "alias3": "entities",
     "alias4": "entities", "collide": "entities", "rename": "entities", "perspective": "perspectives",
     "sheet": "perspectives", "read3": "news", "relate": "graph", "chain": "graph",   # 0219: story chains
+    "derive": "graph",   # 0234: based_on from new posts
     "stance": "sources", "back": "back", "cite": "entities",
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",

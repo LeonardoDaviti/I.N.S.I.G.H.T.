@@ -25,7 +25,9 @@ valid_to, never deleted):
   3. **next_version from entity identity** (no model; the judge's next_version calls were 1 of 4 right as a type):
      the newer post's subject is the version right after the older post's subject on its family's version line
      (timeline.version_lines, 0220: a letter starts its own line, another maker's thing, a version named once and a
-     build number are off it), the older post GAP_DAYS back or more; the previous stop's earliest NEXT_VERSION_POSTS
+     build number are off it; 0234: a product line of its own, a version its maker never announced (or, the maker
+     silent here, fewer than two voices report) is off, the line in release order), the older post GAP_DAYS back or
+     more; the previous stop's earliest NEXT_VERSION_POSTS
      posts. rule `entity_next_version`,
      evidence both entity keys. It replaces any judge call of next_version on that pair.
 
@@ -424,12 +426,12 @@ def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Di
     # (posts naming each, about each) by the database, one row a version
     cur.execute("""SELECT id::text, parent::text, version_key, key, name, maker, variant, size, build FROM mx_entities
                     WHERE level = 'version' AND parent IS NOT NULL AND status <> 'not_entity'""")
-    fams: Dict[str, List[Tuple[str, str, Any, Optional[str]]]] = defaultdict(list)
+    fams: Dict[str, List[Tuple[str, str, Any, Optional[str], Optional[str]]]] = defaultdict(list)
     keys: Dict[str, Tuple[str, str]] = {}
     for eid, parent, vkey, key, name, maker, variant, size, build in cur.fetchall():
-        if variant or size or build or subjects.root(eid) != eid or TL.line_key(vkey) is None:
+        if size or build or subjects.root(eid) != eid or TL.line_key(vkey) is None:   # 0234: a variant's own line
             continue
-        fams[subjects.root(parent)].append((eid, name, vkey, maker))
+        fams[subjects.root(parent)].append((eid, name, vkey, maker, variant))
         keys[eid] = (key, name)
     fams = {f: rows for f, rows in fams.items() if len(rows) >= 2}
     if not fams:
@@ -555,11 +557,11 @@ def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released",
                       and mentions[i].get("role") in MAKER_ROLES), None)
             if a is not None:
                 out.append((a, "released", b))
-    if "based_on" in on:
+    if "based_on" in on:   # 0234: both in one window (`call`, when given): a long post's items are not each other's
         things = [i for i, m in enumerate(mentions) if m.get("type") in THING_TYPES]
         for a in (i for i in things if mentions[i].get("role") == "subject"):
             for b in (j for j in things if mentions[j].get("role") == "predecessor"):
-                if own[a] != own[b]:
+                if own[a] != own[b] and mentions[a].get("call") == mentions[b].get("call"):
                     out.append((a, "based_on", b))
     seen: Set[Tuple[str, str, str]] = set()
     uniq = []
@@ -571,17 +573,19 @@ def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released",
 
 
 def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
-    """`derived` over these posts' current ent-v5 mentions (pins read): {(a root, b root, relation): {post: date}}."""
+    """`derived` over these posts' current ent-v5 mentions (pins read): {(a root, b root, relation): {post: date}}.
+    0234: a `based_on` pair stands only when its check (kind `derive`) settled `derived`."""
     cur.execute(f"""SELECT m.post_id::text, m.name, m.span, m.type, m.role, m.maker, m.entity_id::text, {_date()},
                           (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
-                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1)
+                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1), m.call_id::text
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                     WHERE m.post_id = ANY(%s::uuid[]) AND m.guide = %s ORDER BY m.post_id, m.n""", (list(ids), DERIVED_GUIDE))
     posts: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     dates: Dict[str, datetime] = {}
-    for pid, name, span, typ, role, maker, eid, at, pin in cur.fetchall():
+    for pid, name, span, typ, role, maker, eid, at, pin, call in cur.fetchall():
         if at is not None:
-            posts[pid].append({"name": name, "span": span, "type": typ, "role": role, "maker": maker, "eid": pin or eid})
+            posts[pid].append({"name": name, "span": span, "type": typ, "role": role, "maker": maker, "eid": pin or eid,
+                               "call": call})
             dates[pid] = at
     out: Dict[Tuple[str, str, str], Dict[str, datetime]] = defaultdict(dict)
     for pid, ms in posts.items():
@@ -590,6 +594,200 @@ def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Di
                 ra, rb = root(ms[a]["eid"]), root(ms[b]["eid"])
                 if ra != rb:
                     out[(ra, rb, rel)][pid] = dates[pid]
+    based = [t for t in out if t[2] == "based_on"]
+    if based:
+        said = derive_verdicts(cur, [(a, b) for a, b, _ in based], root)
+        for t in based:
+            if (said.get((t[0], t[1])) or {}).get("relation") != DERIVE_YES:
+                del out[t]
+    return out
+
+
+# ---- 0234: based_on from new posts, checked by a small question of its own ------------------------------------------
+# ent-v5's `predecessor` is a candidate, not a relation (0224: the subject based_on each predecessor was 20/33 right: a
+# predecessor is mostly what the subject replaces or is compared with). Each (subject, predecessor) pair one post's
+# reading names in one window is asked once (kind `derive`, guide derive-v1, a = the subject's root, b = the
+# predecessor's): that window's text and the two names; `derived` (made from it) is the only answer that makes the edge.
+# The jobs process plans it (tasks.BACKGROUND_PLANNED, like the chains); the decision run's graph stage writes the edges
+# (`stated` reads the settled verdicts; `_relation_scope` reads again the posts of the pairs answered since). Measured on
+# a frozen held-out base-cue set (plan/issues/0234).
+DERIVE_KIND, DERIVE_GUIDE = "derive", "derive-v1"
+DERIVE_YES = "derived"
+DERIVE_RUNS = 3                        # answers a pair is asked for; an edge needs all of them to say derived
+DERIVE_PLAN_MAX = 200                  # new questions a pass, at most
+DERIVE_MARK = "derive_planned"         # mx_settings: the last pass's clock (the readings since are read)
+DERIVE_CHARS = 3500                    # the window's text a question shows, at most (its head and both names' places)
+DERIVE_AROUND = 600
+
+
+def derive_config() -> Dict[str, Any]:
+    """entity_bands.json `relations.derive`: `ask` (the planner asks the checks; off: nothing is asked) and `runs`."""
+    from insight_core.markx import identity as I
+    got = (I.bands().get("relations") or {}).get("derive") or {}
+    return {"ask": bool(got.get("ask", False)), "runs": max(1, int(got.get("runs", DERIVE_RUNS)))}
+
+
+def _excerpt(text: str, spans: Sequence[Optional[str]], limit: int = DERIVE_CHARS, around: int = DERIVE_AROUND) -> str:
+    """The window's text as a question shows it (pure): the whole when short; else its head and the place of each name
+    (`spans`, the first time each is written), cut marks between."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    head = max(limit - 2 * (2 * around), limit // 3)
+    cover = [(0, head)]
+    for s in spans:
+        i = text.find(s) if s else -1
+        if i < 0 or any(lo <= i < hi for lo, hi in cover):
+            continue
+        cover.append((max(0, i - around), min(len(text), i + len(s) + around)))
+    cover.sort()
+    out, end = [], 0
+    for lo, hi in cover:
+        lo = max(lo, end)
+        if hi <= lo:
+            continue
+        out.append(("" if lo == 0 else " [...] ") + text[lo:hi])
+        end = hi
+    return "".join(out) + (" [...]" if end < len(text) else "")
+
+
+def derive_question(a: Dict[str, Any], b: Dict[str, Any], window: str) -> str:
+    """One derive item (pure): A and B (each its name, type and how the post writes it) and the POST (the reading's own
+    window: its header lines and its text, cut around both names)."""
+    from insight_core.markx import names as N
+    head, _, text = (window or "").partition("\nText: ")
+
+    def side(tag: str, m: Dict[str, Any]) -> str:
+        shown = f' (written "{m["span"]}")' if m.get("span") and N.key(m["span"]) != N.key(m.get("name")) else ""
+        return f'{tag}: "{m.get("name")}" ({m.get("type") or "thing"}){shown}'
+    return "\n".join([side("A", a), side("B", b), "POST:", head, "Text: " + _excerpt(text, [a.get("span"), b.get("span")])])
+
+
+def derive_verdict(answers: Sequence[Tuple[str, Dict[str, Any]]], runs: int = DERIVE_RUNS) -> Optional[Dict[str, Any]]:
+    """A pair's settled verdict from its first `runs` valid answers [(call id, answer)], oldest first: the relation all
+    of them give, "unknown" when they differ; None until `runs` came. Pure."""
+    got = list(answers)[:runs]
+    if len(got) < runs:
+        return None
+    rels = [str(x.get("relation")) for _, x in got]
+    return {"relation": rels[0] if len(set(rels)) == 1 else UNKNOWN, "call": got[0][0], "runs": rels}
+
+
+def derive_after_answer(cur: Any, task: Dict[str, Any]) -> bool:
+    """A derive task's valid answer (tasks.record): open again until it has the configured runs."""
+    cur.execute("SELECT count(*) FROM mx_calls WHERE task_id = %s AND valid", (task["id"],))
+    if cur.fetchone()[0] >= derive_config()["runs"]:
+        return False
+    cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL WHERE id = %s", (task["id"],))
+    return cur.rowcount == 1
+
+
+def derive_verdicts(cur: Any, pairs: Sequence[Tuple[str, str]], root: Any) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """{(a root, b root): the settled verdict} of the asked pairs among `pairs` (each side's root now: a merge after the
+    ask keeps the answer); the newest task of a pair decides."""
+    want = {(a, b) for a, b in pairs}
+    if not want:
+        return {}
+    cur.execute("""SELECT t.id::text, t.a::text, t.b::text FROM mx_tasks t
+                    WHERE t.kind = %s AND t.status = 'answered' AND t.b = ANY(%s::uuid[])
+                       OR t.kind = %s AND t.status = 'answered' AND t.b IN (
+                          SELECT r.from_id FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.to_id = ANY(%s::uuid[]))
+                    ORDER BY t.created_at, t.id""",
+                (DERIVE_KIND, sorted({b for _, b in want}), DERIVE_KIND, sorted({b for _, b in want})))
+    tasks_of: Dict[Tuple[str, str], str] = {}
+    for tid, a, b in cur.fetchall():
+        k = (root(a), root(b))
+        if k in want:
+            tasks_of[k] = tid
+    if not tasks_of:
+        return {}
+    cur.execute("""SELECT task_id::text, id::text, answer FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
+                    ORDER BY created_at, ctid""", (sorted(set(tasks_of.values())),))
+    calls: Dict[str, List[Tuple[str, Dict[str, Any]]]] = defaultdict(list)
+    for tid, cid, ans in cur.fetchall():
+        calls[tid].append((cid, ans or {}))
+    runs = derive_config()["runs"]
+    out = {}
+    for k, tid in tasks_of.items():
+        v = derive_verdict(calls.get(tid) or [], runs)
+        if v:
+            out[k] = v
+    return out
+
+
+def derive_candidates(cur: Any, *, since: Optional[datetime], limit: int) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
+    """The (subject, predecessor) pairs of the ent-v5 readings made since `since` (every one when None), oldest call
+    first, at most `limit` calls: [{post, a, b (their mentions: name, span, type, eid), window}] and the newest call's
+    time read (None: every call since was read)."""
+    cur.execute(f"""SELECT c.id::text, c.created_at FROM mx_calls c
+                     WHERE c.valid AND (%s::timestamptz IS NULL OR c.created_at >= %s) AND EXISTS (
+                           SELECT 1 FROM mx_mentions_now m WHERE m.call_id = c.id AND m.guide = %s AND m.role = 'predecessor'
+                              AND m.type = ANY(%s))
+                     ORDER BY c.created_at, c.id LIMIT %s""", (since, since, DERIVED_GUIDE, list(THING_TYPES), limit + 1))
+    rows = cur.fetchall()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    if not rows:
+        return [], None
+    cur.execute("""SELECT m.call_id::text, m.post_id::text, m.n, m.name, m.span, m.type, m.role, m.maker, m.entity_id::text,
+                          (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
+                              AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1), t.input
+                     FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id JOIN mx_tasks t ON t.id = c.task_id
+                    WHERE m.call_id = ANY(%s::uuid[]) AND m.guide = %s ORDER BY m.call_id, m.n""",
+                ([r[0] for r in rows], DERIVED_GUIDE))
+    calls: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    window: Dict[str, Tuple[str, str]] = {}
+    for cid, pid, _n, name, span, typ, role, maker, eid, pin, inp in cur.fetchall():
+        calls[cid].append({"name": name, "span": span, "type": typ, "role": role, "maker": maker, "eid": pin or eid,
+                           "call": cid})
+        window[cid] = (pid, inp or "")
+    out = []
+    for cid, _at in rows:
+        ms = calls.get(cid) or []
+        for a, _rel, b in derived(ms, ("based_on",)):
+            if ms[a]["eid"] and ms[b]["eid"]:
+                out.append({"post": window[cid][0], "a": ms[a], "b": ms[b], "window": window[cid][1]})
+    return out, (rows[-1][1] if more else None)
+
+
+def plan_derive(cur: Any, *, now: Optional[datetime] = None, limit: int = DERIVE_PLAN_MAX) -> Dict[str, int]:
+    """The jobs process's plan job (tasks.BACKGROUND_PLANNED): the (subject, predecessor) pairs of the readings made
+    since the last pass (mx_settings DERIVE_MARK), each pair of roots asked once (a = the subject, b = the
+    predecessor), at most `limit` new questions a pass; the mark moves to where it stopped. {pairs, asked, again}."""
+    from insight_core.markx import identity as I, repo, tasks
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, int] = {"pairs": 0, "asked": 0, "again": 0}
+    if not derive_config()["ask"] or "based_on" not in relations_on():
+        return out
+    mark = repo.get_setting(cur, DERIVE_MARK, default=None) or {}
+    since = datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") else None
+    cands, stopped = derive_candidates(cur, since=since, limit=limit * 4)
+    book = I.lazy_book(cur)
+    book.ents.want({m["eid"] for c in cands for m in (c["a"], c["b"])})
+    pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for c in cands:
+        if c["a"]["eid"] in book.ents and c["b"]["eid"] in book.ents:
+            k = (book.root(c["a"]["eid"]), book.root(c["b"]["eid"]))
+            if k[0] != k[1]:
+                pairs.setdefault(k, c)
+    out["pairs"] = len(pairs)
+    if pairs:
+        keys = sorted(pairs)
+        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s
+                        AND (a, b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[]))""",
+                    (DERIVE_KIND, [k[0] for k in keys], [k[1] for k in keys]))
+        asked = {tuple(r) for r in cur.fetchall()}
+        for k in keys:
+            if k in asked:
+                out["again"] += 1
+                continue
+            if out["asked"] >= limit:
+                break
+            c = pairs[k]
+            _tid, new = tasks.add(cur, DERIVE_KIND, derive_question(c["a"], c["b"], c["window"]), a=k[0], b=k[1])
+            out["asked"] += bool(new)
+    if out["asked"] < limit:
+        repo.set_setting(cur, DERIVE_MARK, {"at": (stopped or now).isoformat()})
     return out
 
 
@@ -726,6 +924,13 @@ def _relation_scope(cur: Any, since: datetime) -> Set[str]:
                                         AND x.a_kind = 'entity' AND x.evidence->'posts' ? m.post_id::text))""",
                 (schemas.mention_guides(), since, RULE_STATED))
     out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
+    if "based_on" in derived_on():   # 0234: the posts naming a predecessor whose pair's check was answered since
+        cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_tasks t
+                         JOIN mx_mentions_now m ON m.guide = %s AND m.role = 'predecessor' AND (m.entity_id = t.b
+                              OR m.entity_id IN (SELECT r.from_id FROM mx_entity_redirects r
+                                                  WHERE r.undone_at IS NULL AND r.to_id = t.b))
+                        WHERE t.kind = %s AND t.answered_at >= %s""", (DERIVED_GUIDE, DERIVE_KIND, since))
+        out |= {r[0] for r in cur.fetchall()}
     cur.execute("""SELECT DISTINCT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
                     WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
                       AND EXISTS (SELECT 1 FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.from_id IN (x.a, x.b))""",
