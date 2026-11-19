@@ -419,10 +419,12 @@ def _discover_untested(run: Run):
 # (job_checks.markx_unchanged). A version before the mx_* tables can't be asked: "not measurable".
 
 def _markx_calls_valid(run: Run):
-    """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse."""
+    """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse.
+    0233: the calls whose task still has its input: every kept kind, and the last tasks.SPEND_AFTER of the spent
+    ones (markx/tasks.py SPENDS; nothing reads a spent input, so there is nothing to check it against)."""
     from insight_core.markx import validate
     run.cur.execute("""SELECT c.id::text, t.kind, t.input, c.answer, t.guide FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
-                        WHERE c.valid AND t.kind <> 'embed'""")
+                        WHERE c.valid AND t.kind <> 'embed' AND t.input IS NOT NULL""")
     rows = run.cur.fetchall()
     return [cid for cid, kind, text, answer, guide in rows                 # 0133: an entities arm's own schema
             if validate.check(kind, answer, text, guide)[1] is not None], len(rows)

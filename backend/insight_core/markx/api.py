@@ -360,6 +360,9 @@ def store_answers(cur, *, executor: str, model: str, answers: List[Answer]) -> D
         if task is None:
             invalid.append({"task_id": a.task_id, "error": "no such task"})
             continue
+        if task["input"] is None:   # 0233: answered long ago, its input spent (tasks.spend): a repeat, not checked
+            repeated += 1
+            continue
         answer, error = validate.check(task["kind"], a.answer, task["input"], task.get("guide"))
         call_id = repo.add_call(cur, task_id=task_id, executor=executor, model=model, valid=error is None,
                                 answer=answer, error=error, tokens_in=a.tokens_in, tokens_out=a.tokens_out, ms=a.ms,

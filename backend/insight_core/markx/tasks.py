@@ -1362,3 +1362,57 @@ def _plan_news_place(cur: Cursor, **kw: Any) -> int:   # 0197: the rows added si
 
 PLANNERS["news_place"] = _plan_news_place                                  # 0197
 
+
+# ---- 0216 item 1, built in 0233: a task's input lifetime --------------------------------------------------------
+# An answered task's input is kept only where something reads it after the answer. SPENDS names the kinds whose input
+# nothing reads once answered (each reader checked: tests/test_markx_spend.py's scan lists every reader of
+# mx_tasks.input with the kinds it reads; a new reader fails it until it is placed). Opt-in, so a new kind keeps its
+# input until it is placed here. Kept: every kind asked again (join, pair, merge, check, perspective, collide, relate,
+# chain, back), read back after the answer (stance, subtopics, subtopic_place, rename, alias* through the opinions'
+# derive_inputs), and every other kind by default. Within SPENDS two inputs are kept as well:
+#   - an embed input of embed.SCAN_CHARS or less (embed.set_aside reads the short ones);
+#   - a later window of a long post's entities or reading (ent42.after_cite tells window 1 from the rest by its input:
+#     a spent input of these kinds is a first window).
+# The hash stays (input_hash): the dedupe, mx_inc_inputs and every hash reader are unchanged, and a planner rendering
+# the same question again finds the answered task by it and never asks it again. Nothing is rebuilt from a NULL.
+SPENDS = ("cite", "embed", "embed_name", "entities", "read", "read3", "reading", "track")
+SPEND_AFTER = timedelta(days=14)   # the invariant, the worker's same-cycle re-asks (0214) and debugging keep these
+SPEND_BATCH = 20000
+WINDOW_RE = r"\nWindow: \d+ of \d+ "   # a later window's input (window_input), as Postgres reads it
+
+
+def spend(cur: Cursor, *, now: Optional[datetime] = None, older: timedelta = SPEND_AFTER, batch: int = SPEND_BATCH,
+          after: Optional[str] = None) -> Tuple[int, Optional[str]]:
+    """One batch: the inputs of answered SPENDS tasks answered more than `older` ago set to NULL, `batch` rows looked
+    at in id order from `after` (keyset: the batches are one pass over the table). (How many were spent, the last id
+    looked at, or None when the pass is done.)"""
+    from insight_core.markx import embed   # embed imports this module
+    cur.execute("""WITH look AS (SELECT id, kind, status, answered_at, input FROM mx_tasks
+                                  WHERE (%(after)s::uuid IS NULL OR id > %(after)s::uuid)
+                                  ORDER BY id LIMIT %(batch)s),
+                        spent AS (UPDATE mx_tasks t SET input = NULL FROM look l
+                                   WHERE t.id = l.id AND l.status = 'answered' AND l.input IS NOT NULL
+                                     AND l.kind = ANY(%(kinds)s)
+                                     AND l.answered_at < COALESCE(%(now)s::timestamptz, now()) - %(older)s
+                                     AND NOT (l.kind = 'embed' AND length(l.input) <= %(short)s)
+                                     AND NOT (l.kind IN ('entities', 'reading') AND l.input ~ %(window)s)
+                                  RETURNING 1)
+                   SELECT (SELECT count(*) FROM spent), (SELECT id::text FROM look ORDER BY id DESC LIMIT 1),
+                          (SELECT count(*) FROM look)""",
+                {"after": after, "batch": batch, "kinds": list(SPENDS), "now": now, "older": older,
+                 "short": embed.SCAN_CHARS, "window": WINDOW_RE})
+    n, last, looked = cur.fetchone()
+    return int(n), (last if looked >= batch else None)
+
+
+def spend_all(db_url: str, *, now: Optional[datetime] = None, batch: int = SPEND_BATCH) -> int:
+    """The daily pass (run_scheduler's daily work): `spend` batch after batch, one transaction each (a lease or an
+    answer never waits long on these rows). How many inputs were spent."""
+    from insight_core.db import database
+    total, after = 0, None
+    while True:
+        with database.connection(db_url) as conn, conn.cursor() as cur:
+            n, after = spend(cur, now=now, after=after, batch=batch)
+        total += n
+        if after is None:
+            return total

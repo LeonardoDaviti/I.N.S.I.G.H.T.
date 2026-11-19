@@ -455,6 +455,16 @@ keeps 4 old files (`log.jsonl.1` ... `.4`); two worker processes can share it.
 
 **Turning it off:** `INSIGHT_MARKX=off` (or remove the line) and `./update`. Every Mark X job stops and the page hides; its tables stay as they are (keep everything).
 
+**Answered questions' inputs (v10.25, issue 0233):** once a day the scheduler sets the input text of answered
+questions nothing reads again (`markx/tasks.py` `SPENDS`: entities, reading, read, read3, cite, track, embed,
+embed_name) to NULL, 14 days after the answer; the input's hash stays, so no question is asked twice. The space is
+reused inside `mx_tasks` at once; to give it back to the disk, after the first daily pass (the scheduler's log says
+"Spent N answered Mark X task inputs"), once, at a quiet hour:
+```bash
+sudo docker exec insight-db psql -U insight -d insight -c "VACUUM (FULL, ANALYZE) mx_tasks"
+```
+It takes minutes, locks `mx_tasks` meanwhile (the worker's leases wait) and needs free disk the size of the new table.
+
 **Updating to v10.0.2 (issue 0112 Decided 10-13):** `./update` rebuilds both images; migration 0070 adds `mx_jobs`, `mx_candidate_posts` and `mx_workers` (Mark X tables only). Mark X's jobs move to `insight-ingestion` by themselves; nothing to set. Remove `API_WORKERS=1` from `.env` if it is there, so the API runs its two processes.
 
 ## Health, timeouts, memory and logs (issue 0188)

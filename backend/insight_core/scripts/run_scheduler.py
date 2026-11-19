@@ -217,6 +217,16 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
     except Exception:  # noqa: BLE001
         logger.exception("job_runs prune failed (continuing with the daily work)")
 
+    # 0233 (0216 item 1): the inputs of answered Mark X questions nothing reads again, spent 14 days after the answer
+    from insight_core.markx import api as markx_api
+    if markx_api.enabled():
+        try:
+            from insight_core.markx import tasks as markx_tasks
+            spent = await asyncio.to_thread(markx_tasks.spend_all, db_url)
+            logger.info("Spent %s answered Mark X task inputs", spent)
+        except Exception:  # noqa: BLE001
+            logger.exception("Spending Mark X task inputs failed (continuing with the daily work)")
+
     # Once a day: new sources leave probation and mean gaps follow the posts.
     try:
         refreshed = await asyncio.to_thread(DbFetchStateStore(db_url).refresh_cadence)
