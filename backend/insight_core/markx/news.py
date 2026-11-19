@@ -128,14 +128,29 @@ def window_posts(cur: Any, since: datetime) -> Set[str]:
     return {r[0] for r in cur.fetchall()}
 
 
+def release_keys(joins: Iterable[Sequence[str]], stories: Iterable[str]) -> Dict[str, str]:
+    """0236: {story: its one-release group's key (the group's lowest story id)} for the stories of `stories` in a
+    group with another of them. Pure."""
+    have = set(stories)
+    out: Dict[str, str] = {}
+    for g in joins:
+        present = sorted({str(s) for s in g} & have)
+        if len(present) >= 2:
+            for s in present:
+                out[s] = present[0]
+    return out
+
+
 def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
-            first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None) -> List[Dict[str, Any]]:
+            first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None,
+            joins: Optional[Sequence[Sequence[str]]] = None) -> List[Dict[str, Any]]:
     """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
     story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
     rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
     story touching them, and a set closed under rows, stories, mentions and surges. `first` gets each story's
-    first_at."""
+    first_at. `joins` (0236, the one-release row: graph.release_groups, read here when None): each group's stories
+    are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own."""
     from insight_core.services.news_service import NewsService
     from insight_core.utils.story_rules import Story, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
@@ -143,26 +158,49 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     if only is not None:
         every &= only
     sp = _story_posts(cur, every, sources)
+    stored = sorted(sid for sid in stories if not sid.startswith(("one:", "new:")))   # a stored story's id only
+    if joins is None:
+        from insight_core.markx import graph
+        joins = graph.release_groups(cur, stored)
+    key_of = release_keys(joins, stories)
+    parts: Dict[str, List[str]] = defaultdict(list)
+    for sid in sorted(stories):
+        parts[key_of.get(sid, sid)].append(sid)
     built = []
-    story_of: Dict[str, str] = {}
-    for sid, (members, mentions) in sorted(stories.items()):
-        ps = [sp[p] for p in members if p in sp]
-        if not ps or (len(ps) < 2 and not sid.startswith("one:")):
+    made_of: Set[str] = set()
+    for key, sids in sorted(parts.items()):
+        seen: Set[str] = set()
+        ps, mentions = [], set()
+        for sid in sids:
+            for p in stories[sid][0]:
+                if p in sp and p not in seen:
+                    seen.add(p)
+                    ps.append(sp[p])
+            mentions |= set(stories[sid][1])
+        if not ps or (len(ps) < 2 and not key.startswith("one:")):
             continue
         times = story_times(ps)
         ps.sort(key=lambda p: (times[p.id], not p.date_only, p.t, p.id))
-        built.append(Story(id=sid, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
-                           mentions=set(mentions)))
+        built.append(Story(id=key, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
+                           mentions=mentions - seen))
+        made_of |= set(sids)
         if first is not None:
-            first[sid] = times[ps[0].id]
-        for p in ps:
-            if not sid.startswith("one:"):
-                story_of.setdefault(p.id, sid)
+            for sid in sids:
+                own = [times[p] for p in stories[sid][0] if p in times]
+                if own:
+                    first[sid] = min(own)
+    story_of: Dict[str, str] = {}
+    for sid, (members, _m) in sorted(stories.items()):   # each post names its own story (the lowest id of several)
+        if sid in made_of and not sid.startswith("one:"):
+            for p in members:
+                if p in sp:
+                    story_of.setdefault(p, sid)
     from insight_core.markx import incremental
     found = incremental.surges(cur, memo)
     from insight_core.markx import built as mx_built   # 0203: the judge's story connections guard two large stories
-    # a stored story's id only: a dry reading's new stories are "new:..." and a post of no story "one:..."
-    judged = mx_built._connected(cur, sorted(sid for sid in stories if not sid.startswith(("one:", "new:"))))
+    # a joined story's connections are its group's (a pair inside one group is no pair)
+    judged = {frozenset(key_of.get(s, s) for s in pair) for pair in mx_built._connected(cur, stored)}
+    judged = {pair for pair in judged if len(pair) == 2}
     made = NewsService.rows(posts=list(sp.values()), stories=built, found=found, since=since, judged=judged)
     out = []
     for s in made:
@@ -191,14 +229,27 @@ def last_written(cur: Any) -> Optional[str]:
 
 def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
                   last: Dict[str, Any], window: Set[str], memo: Any = None, extra: Iterable[str] = (),
-                  sources: Any = None) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
+                  sources: Any = None, joins: Sequence[Sequence[str]] = ()
+                  ) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
     """0116: the last run's rows, with only those its changed stories reach made again (as Mark IX's incremental News,
     0072 A). The seeds: the posts of every story whose members or mentions changed (now and before), the posts that
-    came into or left the window, and the stories whose start left it. The group: the seeds with every row, story
-    (members and mentions) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
+    came into or left the window, the stories whose start left it, and (0236) the stories of a one-release group
+    that came or went. The group: the seeds with every row, story (members and mentions), one-release group (now and
+    before) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
     from insight_core.markx import incremental
     stories = {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}
     seeds: Set[str] = set(window ^ last["window"]) | set(extra)   # 0177: `extra`, the posts whose StoryPost changed
+    now_joins = {tuple(sorted(g)) for g in joins}
+    was_joins = {tuple(sorted(g)) for g in last.get("joins") or ()}
+    partners: Dict[str, Set[str]] = defaultdict(set)
+    for g in now_joins | was_joins:
+        for sid in g:
+            partners[sid] |= set(g)
+    for g in now_joins ^ was_joins:
+        for sid in g:
+            for book in (stories, last["stories"]):
+                if sid in book:
+                    seeds |= set(book[sid][0]) | set(book[sid][1])
     for sid in set(stories) | set(last["stories"]):
         now_, was = stories.get(sid), last["stories"].get(sid)
         if now_ != was:
@@ -229,7 +280,7 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
         for pid in frontier:
             for n in rows_of_post.get(pid, ()):
                 more |= {p["post_id"] for p in last["rows"][n]["posts"]}
-            for sid in stories_of_post.get(pid, ()):
+            for sid in {x for s in stories_of_post.get(pid, ()) for x in partners.get(s, {s})}:
                 for book in (stories, last["stories"]):
                     if sid in book:
                         more |= set(book[sid][0]) | set(book[sid][1])
@@ -240,7 +291,7 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
     touching = {sid: (sorted(v[0]), set(v[1])) for sid, v in stories.items() if (v[0] | v[1]) & group}
     first = {sid: at for sid, at in last["first"].items() if sid in stories and sid not in touching}
     made = rows_of(cur, touching, since, only=group, window=window, first=first, memo=memo,
-                   sources=sources) if group else []
+                   sources=sources, joins=[g for g in now_joins if set(g) & set(touching)]) if group else []
     kept = [r for r in last["rows"] if not any(p["post_id"] in group for p in r["posts"])]
     return sorted(kept + made, key=lambda r: (r["first_at"], str(r["id"]))), group, first
 
@@ -344,6 +395,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
             stories[f"one:{key}"] = (ms, set(world.ix_mentions[key]) - set(ms))
     memo = getattr(world, "memo", None)
     window = window_posts(cur, since)
+    from insight_core.markx import graph   # 0236: the one-release groups ([] while chains.one_row is off)
+    joins = graph.release_groups(cur, [sid for sid in stories if not sid.startswith(("one:", "new:"))])
     how, group = "full", None
     first: Dict[str, Any] = {}
     sources = inputs = last_inputs = None
@@ -358,14 +411,14 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     if state and memo.news is not None and last_inputs is not None and last_inputs["facts"] == inputs["facts"]:
         # 0177: Mark IX's tables changed or not (ingestion: almost every run), the posts whose StoryPost changed seed it
         rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo,
-                                           extra=changed_posts(last_inputs, inputs), sources=sources)
+                                           extra=changed_posts(last_inputs, inputs), sources=sources, joins=joins)
         how = "incremental"
     elif (not state and memo is not None and memo.news is not None
           and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
-        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo)   # 0116's in-process memo
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo, joins=joins)   # 0116: in-process
         how = "incremental"
     else:
-        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo, sources=sources)
+        rows = rows_of(cur, stories, since, window=window, first=first, memo=memo, sources=sources, joins=joins)
     ix_of, ix_rows = _ix_news(cur, since)
     x_of = {p["post_id"]: r["id"] for r in rows for p in r["posts"]}
     for r in rows:
@@ -374,7 +427,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     if memo is not None:
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
                      "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()},
-                     "inputs": inputs, "code": incremental.news_stamp()}   # 0215: the code that made them
+                     "inputs": inputs, "code": incremental.news_stamp(),   # 0215: the code that made them
+                     "joins": [list(g) for g in joins]}
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
         made["row_headlines"] = ask_row_headlines(cur, rows, ask, headed=set(headed or ()),
@@ -444,17 +498,61 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in cur.fetchall()}
 
 
+def launch_order(facts: Dict[str, Dict[str, Any]]) -> List[str]:
+    """0236: the stories a row's headline is taken from, in order, by the owner's rule (a release is named by its
+    launch, never by a leak): those holding the maker's own post, then the others of a news type, each the newest
+    (its release) first; a story of leaks never. `facts`: {story: {maker, type, at}} (`_story_facts`). Pure."""
+    from insight_core.markx import event_types
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+
+    def newest(sids: Iterable[str]) -> List[str]:
+        return sorted(sids, key=lambda s: (facts[s].get("at") or floor, s), reverse=True)
+    makers = [s for s, f in facts.items() if f.get("maker") and f.get("type") != event_types.LEAK]
+    news_ = [s for s, f in facts.items() if s not in makers and f.get("type") in event_types.NEWS_TYPES]
+    return newest(makers) + newest(news_)
+
+
+def _story_facts(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{story: {maker (its original is the maker's own post), post (that post), type (its event type), at (its
+    release)}} by how the story is built (built.build: read-v3's types, the maker by identity)."""
+    from insight_core.markx import built
+    got = built.build(cur, sorted(set(story_ids)))
+    out = {}
+    for sid, b in got.items():
+        o = b.get("original") or {}
+        out[sid] = {"maker": o.get("how") == "maker", "post": o.get("post") if o.get("how") == "maker" else None,
+                    "type": b.get("event_type"), "at": b.get("release_at")}
+    return out
+
+
+def _row_stories(row: Dict[str, Any]) -> List[str]:
+    return sorted({str(p["story"]) for p in row.get("posts") or [] if p.get("story")})
+
+
 def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Each row's headline (0121 Decided 2): its main story's Haiku headline (F4; `main_story`, the story holding most
     of its voices, not its first post's), else the row's own headline answer (`ask_row_headlines`, found by its
-    input), else its lead's title."""
-    from insight_core.markx import repo, schemas
+    input), else its lead's title. 0236: a one-release row (2+ of its stories in one graph.release_groups group) is
+    named by its launch (`launch_order`: the maker's own story, else the newest story of a news type, never a leak
+    story); a lead title that is a leak's, in a row holding the maker's own post, is that post's title instead."""
+    from insight_core.markx import event_types, graph, repo, schemas
     mains = {str(r["id"]): main_story(r) for r in rows}
-    sids = sorted({s for s in mains.values() if s})
+    groups = graph.release_groups(cur, {s for r in rows for s in _row_stories(r)})
+    in_group = {s: n for n, g in enumerate(groups) for s in g}
+    released = {str(r["id"]): ss for r in rows
+                if len(ss := [s for s in _row_stories(r) if s in in_group]) >= 2
+                and len({in_group[s] for s in ss}) < len(ss)}
+    leads = _posts(cur, [str(r["id"]) for r in rows])
+    facts = _story_facts(cur, {s for ss in released.values() for s in ss}) if released else {}
+    sids = sorted({s for s in mains.values() if s} | set(facts))
     heads: Dict[str, str] = {}
     if sids:
         cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND headline IS NOT NULL", (sids,))
         heads = dict(cur.fetchall())
+    for rid, ss in released.items():
+        named = [s for s in launch_order({s: facts[s] for s in ss if s in facts}) if heads.get(s)]
+        if named:
+            mains[rid] = named[0]
     rest = [r for r in rows if not heads.get(mains[str(r["id"])] or "")]
     own: Dict[str, str] = {}
     if rest:
@@ -471,7 +569,22 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
             words = ((call or {}).get("answer") or {}).get("headline_en") or ""
             if words.strip():
                 own[str(r["id"])] = words.strip()
-    leads = _posts(cur, [str(r["id"]) for r in rows])
+    untitled = [r for r in rows if not heads.get(mains[str(r["id"])] or "") and not own.get(str(r["id"]))]
+    makers: Dict[str, str] = {}   # 0236: an untitled row led by a leak: the maker's own post in it, if any
+    if untitled:
+        types = event_types.types_of(cur, [str(r["id"]) for r in untitled])
+        leaked = [r for r in untitled if types.get(str(r["id"]), (None, None))[0] == event_types.LEAK]
+        more = _story_facts(cur, {s for r in leaked for s in _row_stories(r)} - set(facts)) if leaked else {}
+        facts.update(more)
+        for r in leaked:
+            ids = {p["post_id"] for p in r["posts"]}
+            mine = {s: facts[s] for s in _row_stories(r) if s in facts}
+            order = launch_order(mine)
+            got = [facts[s]["post"] for s in order + sorted(set(mine) - set(order)) if facts[s].get("post") in ids]
+            if got:
+                makers[str(r["id"])] = got[0]
+    titles = _posts(cur, sorted(set(makers.values()) - set(leads))) if makers else {}
+    titles.update(leads)
     out = {}
     for r in rows:
         rid = str(r["id"])
@@ -479,6 +592,8 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
             out[rid] = {"text": heads[mains[rid]], "from": "haiku"}
         elif own.get(rid):
             out[rid] = {"text": own[rid], "from": "haiku"}
+        elif (titles.get(makers.get(rid) or "") or {}).get("title"):
+            out[rid] = {"text": titles[makers[rid]]["title"], "from": "maker title"}
         else:
             out[rid] = {"text": (leads.get(rid) or {}).get("title") or "", "from": "lead title"}
     return out

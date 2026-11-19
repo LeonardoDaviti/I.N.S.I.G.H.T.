@@ -82,7 +82,7 @@ export interface MarkxLeftOut {
 export interface MarkxRow {
   id: string;
   tag: MarkxTag;
-  headline: { text: string; from: 'haiku' | 'lead title' };
+  headline: { text: string; from: 'haiku' | 'lead title' | 'maker title' };
   first_at: string;
   voices: number;
   reports: number;
