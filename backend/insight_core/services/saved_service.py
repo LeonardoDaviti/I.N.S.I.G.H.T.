@@ -60,6 +60,10 @@ REFETCH_WITHIN = timedelta(minutes=15)
 RUNNING_WITHIN = timedelta(hours=1)
 FETCH_JOB = "ingestion_run"
 _NAME = "COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)"
+# Since when a linking post p shows its links (first_linked): its date, or the later change its page says it had
+# (metadata.modified, an ISO time: parsing.page_modified). Migration 0156 repairs with the same expression.
+LINKED_SINCE = ("GREATEST(p.published_at, CASE WHEN p.metadata->>'modified' ~ '^\\d{4}-\\d\\d-\\d\\dT'"
+                " THEN (p.metadata->>'modified')::timestamptz END)")
 
 # The API's fetch of one source for a save: its job id, or None when none started.
 StartFetch = Callable[[str], Awaitable[Optional[str]]]
@@ -349,10 +353,13 @@ class SavedService:
 
     def first_linked(self, urls: List[str], saved_at: datetime) -> Optional[datetime]:
         """When the first stored post linking one of these addresses was published (its published date: v10.13.9,
-        never an undated post's fetch time), never later than the save; None when no dated post links it."""
+        never an undated post's fetch time), never later than the save; None when no dated post links it. A linking
+        page that says it changed after it was published (metadata.modified, a page read again: issue 0039) shows
+        the link only from that change on (v10.25, issue 0228: a 2023 essay edited in 2026 to link a 2026 page
+        dated that page 2023)."""
         normalized = sorted({n for n in map(normalize_url, urls) if n})
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            cur.execute("SELECT min(p.published_at) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
+            cur.execute(f"SELECT min({LINKED_SINCE}) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
                         "WHERE pl.target_url = ANY(%s)", (normalized,))
             (first,) = cur.fetchone()
         return min(first, saved_at) if first is not None else None

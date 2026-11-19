@@ -34,7 +34,7 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 from insight_core.markx import identity as I
@@ -132,12 +132,17 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
     out = Lines()
     if not ids:
         return out
-    cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
-                          {pairing.post_date('p')}, p.source_id::text, p.url
-                     FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                    WHERE m.guide = ANY(%s) AND (m.entity_id = ANY(%s::uuid[]) OR (m.post_id, m.guide, m.n) IN
-                          (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[])))""",
-                (schemas.mention_guides(), ids, ids))
+    # 0232: the linked mentions by the entity index, the pinned ones apart (one OR read all of mx_mentions: 0.75 s)
+    sql = f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
+                     {pairing.post_date('p')}, p.source_id::text, p.url
+                FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+               WHERE m.guide = ANY(%s)"""
+    guides = schemas.mention_guides()
+    cur.execute(f"""{sql} AND m.entity_id = ANY(%s::uuid[])
+                    UNION ALL
+                    {sql} AND (m.entity_id IS NULL OR m.entity_id <> ALL(%s::uuid[])) AND (m.post_id, m.guide, m.n) IN
+                          (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[]))""",
+                (guides, ids, guides, ids, ids))
     want = set(ids)
     for pid, g, n, eid, role, at, src, url in cur.fetchall():
         e = book.pins.get((pid, g, n), eid)
@@ -195,6 +200,33 @@ def named_only(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, D
             rows[p]["roles"] = (rows[p]["roles"] - set(ABOUT)) | {"named"}
             out.add(p)
     return out
+
+
+FIRST_CHUNK = 50      # outside posts read at a time while looking for the first one about the thing
+
+
+def _first_about(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]],
+                 order: List[str]) -> Optional[str]:
+    """0234 (#5): the first outside mention, of `order` (oldest first): a post linking back to its posts, or one whose
+    main subject is the thing: the thing is its `subject` (an actor is in it, not what it is about) and its reading
+    says so (about_by_reading: no round-up, its main event names the thing; a post with no reading keeps its role).
+    A post about another thing that names this one as a subject (a method shown on another maker's model) is never
+    it. The readings are read a chunk at a time, oldest first, until one is found."""
+    from insight_core.markx import reading5
+    forms: Optional[Set[str]] = None
+    cand = [p for p in order if "links" in rows[p]["roles"] or "subject" in rows[p]["roles"]]
+    for k in range(0, len(cand), FIRST_CHUNK):
+        part = cand[k:k + FIRST_CHUNK]
+        need = [p for p in part if "links" not in rows[p]["roles"]]
+        got = reading5.pick(cur, need, ("read-v3", "read-v2")) if need else {}
+        if forms is None:
+            forms = name_forms(book, members)
+        for p in part:
+            r = got.get(p)
+            if "links" in rows[p]["roles"] or not r or about_by_reading(r.get("kind"), r.get("reading"),
+                                                                        r.get("headline"), forms):
+                return p
+    return None
 
 
 def _maker_sources(cur: Any, book: I.Book, maker: Optional[str]) -> Set[str]:
@@ -290,7 +322,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         # 0165 v10.23: the first outside post about it (subject or actor) or linking back to its posts; a post that
         # only names it is counted in its month, never marked first
         firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"})]
-        p0 = firsts[0] if firsts else None
+        p0 = _first_about(cur, book, members, rows, firsts)   # 0234: its main subject, never a post about another
         if p0 is not None:
             out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
         months: Dict[str, List[str]] = defaultdict(list)
@@ -554,20 +586,44 @@ def _stops_before(cur: Any, book: I.Book, root: str, post_id: str, at: datetime,
                    stop=got[sid].stop if on["stop_types"] else None, stop_by="asked") for sid, first, head in rows[-limit:]]
 
 
-# ---- 0220: the version line ---------------------------------------------------------------------------------------
-# A family's versions on one line ("Orbit 2 -> Orbit 2.5 -> Orbit 3"), the order graph.next_version_edges joins posts by.
-# Measured on the server's families (plan/issues/0220): what failed was a class each, kept off here:
+# ---- 0220 / 0234: the version line ----------------------------------------------------------------------------------
+# A family's versions on lines ("Orbit 2 -> Orbit 2.5 -> Orbit 3"; a product line of its own each: "Orbit Coder 2 ->
+# Orbit Coder 3"), the order graph.next_version_edges joins posts by. What failed was a class each (0220 on the
+# server's families, then the owner's review of 2026-11-17, 0234):
 #   - two lines told apart by a letter (DeepSeek-style R1 / V3, MiniMax-style M3 / H3) read as one: the letter is the
 #     line (`line_key`); a number written without its letter joins the only lettered line that has it, unless the
 #     family's unlettered numbers are a line of their own;
+#   - product lines inside a family (a maker's Max / Plus / Coder / VL, or tiers Opus / Sonnet / Haiku): the version's
+#     line word (`line_word`: its variant without a stage word such as preview or instruct) is a line of its own; a
+#     line word one number ever has, that the plain line also has, is that number's code name ("Orbit 10.12 Sierra" is
+#     10.12): its stop's other name, not a line;
 #   - another maker's thing filed under the family's name ("Zentra Orbit 5" under Vantor's Orbit): its stated maker;
-#   - a version named once, or never the subject of a post (a typo, a guess at a future number): LINE_POSTS, LINE_ABOUT;
-#   - a build or date number in a family numbered 1, 2, 3 (2512, 407): BUILD_FROM; a dot left out (46 for 4.6) is the
-#     dotted version's stop;
+#   - a rumoured version shown as real (a guess at the next number, a leak, one account's many posts): a stop is real
+#     only when its maker announced it (a post about it whose reading's origin is the maker, never a leak) or, when
+#     the maker never speaks for itself here, RELEASE_VOICES independent voices report its release (a release-typed,
+#     never leak_rumour, post about it: one voice a source however many posts it writes). Once the maker speaks here,
+#     a version it never announced is no stop (a nickname the community gave it, a rumour), unless it is older than
+#     the maker's first post here;
+#   - a stop's date from a sighting (any post naming it) or an archive's wrong date: the maker's first announcement,
+#     else its first release report;
+#   - year-named versions ordered by their numbers (95, 98 after 10): a line is ordered by its stops' release dates;
+#   - a series or a phrase read as a version ("Orbit 40 Series", "Orbit 4 in Copilot"): `name_shape`;
+#   - a build or date number in a family numbered 1, 2, 3 (2512, 407): BUILD_FROM (a year, 1980-2039, is a name);
+#     a dot left out (46 for 4.6) is the dotted version's stop;
 #   - a one-letter family ("X-33", "X-45" under "x"): no line.
-LINE_POSTS = 4        # posts naming a version (any role), at least (dev: 2 or 3 were guesses and slips, 0220)
 LINE_ABOUT = 1        # posts whose subject or actor it is, at least
+LINE_POSTS = 4        # 0220: posts naming a name before it may date its stop (a stray name filed under the number never)
+RELEASE_VOICES = 2    # independent voices reporting its release, when its maker never speaks here
 BUILD_FROM = 100      # a first number this big is a build or a date when the family's other numbers are small
+YEARS = (1980, 2039)  # a four-digit first number in this range is a year-name (Windows 2000), never a build
+RELEASE_TYPES = ("model_release", "product_release")   # the release-typed readings (schemas.EVENT_TYPES)
+LEAK_TYPE = "leak_rumour"
+# words that make a variant a stage of one version, not a product line (each generic: a release stage or a tuning)
+STAGE_WORDS = frozenset({"preview", "exp", "experimental", "thinking", "instruct", "chat", "base", "beta", "alpha",
+                         "latest", "it", "rc", "release", "stable", "early", "access", "update", "new"})
+SERIES_WORDS = frozenset({"series", "serie", "family", "lineup", "generation", "gen", "models", "lineups"})
+PHRASE_WORDS = frozenset({"in", "for", "on", "with", "vs", "versus", "and", "or", "via", "at", "to", "of", "by", "from",
+                          "&", "+", "x"})
 
 
 @dataclass(frozen=True)
@@ -581,16 +637,25 @@ class Version:
     about: int                       # posts whose subject or actor it is
     first: Optional[datetime]        # its first post about it
     first_post: Optional[str]
+    variant: Optional[str] = None    # its variant field (the line word comes from it)
+    maker_first: Optional[datetime] = None   # its maker's first post about it (origin maker, never a leak)
+    maker_post: Optional[str] = None
+    release_first: Optional[datetime] = None  # its first release report about it (release-typed, never a leak)
+    release_post: Optional[str] = None
+    voices: FrozenSet[str] = frozenset()      # the sources reporting its release (one voice each)
 
 
 @dataclass
 class LineStop:
     key: Tuple[str, Tuple[int, ...]]
     versions: List[Version]          # the most named first
-    first: Optional[datetime] = None
+    first: Optional[datetime] = None          # its release date (the maker's first post, else its first report)
     first_post: Optional[str] = None
     posts: int = 0
     about: int = 0
+    word: str = ""                            # its product line's word ("" the plain line)
+    by: Optional[str] = None                  # what dates it: "maker" or "voices"
+    voices: int = 0
 
 
 def line_key(t: Any) -> Optional[Tuple[str, Tuple[int, ...]]]:
@@ -609,6 +674,25 @@ def line_key(t: Any) -> Optional[Tuple[str, Tuple[int, ...]]]:
     return prefix, t
 
 
+def line_word(variant: Optional[str]) -> str:
+    """A version's product line from its variant (pure): its words without the stage words ("Pro Preview" -> "pro",
+    "Instruct" -> ""); "" for the plain line."""
+    words = [w for w in N.key(variant).split() if w not in STAGE_WORDS]
+    return " ".join(words)
+
+
+def name_shape(name: Optional[str], variant: Optional[str]) -> str:
+    """'version', 'series' (a product generation: "Orbit 40 Series") or 'phrase' (a feature, a comparison, a version
+    named with something else: "Orbit 4 in Copilot", "Orbit 4 vs Lumen 2") (pure)."""
+    words = set(N.key(name).split()) | set(N.key(variant).split())
+    if words & SERIES_WORDS:
+        return "series"
+    vw = N.key(variant).split()
+    if set(vw) & PHRASE_WORDS or len([w for w in vw if w not in STAGE_WORDS]) > 2:
+        return "phrase"
+    return "version"
+
+
 def _lettered(k: Optional[Tuple[str, Tuple[int, ...]]], name: Optional[str]) -> Optional[Tuple[str, Tuple[int, ...]]]:
     """A version whose fields lost its letter ("Kite K2.6" read as version 2.6) takes the letter its name writes right
     before the number (never `v`: "V3" is 3, as names.vt reads it)."""
@@ -619,18 +703,40 @@ def _lettered(k: Optional[Tuple[str, Tuple[int, ...]]], name: Optional[str]) -> 
     return (m.group(1), k[1]) if m else k
 
 
-def _stop(key: Tuple[str, Tuple[int, ...]], vs: List[Version]) -> LineStop:
-    vs = sorted(vs, key=lambda v: (-v.posts, -v.about, line_key(v.key) != key, v.name, v.id))   # as its line writes it
-    # its date: the first post about it under a name that is on the line by itself (a stray one-post name filed under
-    # the number never dates it: 0220 dev, 20 of 60 such names were another thing)
-    dated = sorted((v.first, v.first_post or "") for n, v in enumerate(vs)
-                   if v.first is not None and (n == 0 or v.posts >= LINE_POSTS))
-    return LineStop(key, vs, dated[0][0] if dated else None, (dated[0][1] or None) if dated else None,
-                    sum(v.posts for v in vs), sum(v.about for v in vs))
+def _stop(key: Tuple[str, Tuple[int, ...]], vs: List[Version], word: str = "") -> LineStop:
+    vs = sorted(vs, key=lambda v: (line_word(v.variant) != word, -v.posts, -v.about, line_key(v.key) != key, v.name, v.id))
+    # its date: the maker's first post about it, else its first release report; a stray name (fewer than LINE_POSTS
+    # posts, not the stop's own name) never dates it (0220 dev: a third of such names were another thing)
+    own = [v for n, v in enumerate(vs) if n == 0 or v.posts >= LINE_POSTS]
+    maker = sorted((v.maker_first, v.maker_post or "") for v in own if v.maker_first is not None)
+    report = sorted((v.release_first, v.release_post or "") for v in own if v.release_first is not None)
+    voices = len(frozenset().union(*(v.voices for v in own)))
+    if maker:
+        first, post, by = maker[0][0], maker[0][1] or None, "maker"
+    elif report:
+        first, post, by = report[0][0], report[0][1] or None, "voices"
+    else:
+        first, post, by = None, None, None
+    return LineStop(key, vs, first, post, sum(v.posts for v in vs), sum(v.about for v in vs), word, by, voices)
 
 
-def _on_line(s: LineStop) -> bool:
-    return s.posts >= LINE_POSTS and s.about >= LINE_ABOUT
+def _maker_since(stops: Iterable[LineStop]) -> Optional[datetime]:
+    """The maker's first post about any of the family's versions (None: it never speaks for itself here)."""
+    got = [s.first for s in stops if s.by == "maker" and s.first is not None]
+    return min(got) if got else None
+
+
+def _released(s: LineStop, maker_since: Optional[datetime]) -> bool:
+    """A real, released stop: about it at least LINE_ABOUT posts, and its maker announced it; or the maker does not
+    speak here (or not yet when it came: its first report is older than the maker's first post here) and
+    RELEASE_VOICES voices report its release."""
+    if s.about < LINE_ABOUT or s.first is None:
+        return False
+    if s.by == "maker":
+        return True
+    if maker_since is not None and s.first >= maker_since:
+        return False
+    return s.voices >= RELEASE_VOICES
 
 
 def _line_maker(vs: List[Version], same_maker: Any) -> Optional[str]:
@@ -644,44 +750,58 @@ def _line_maker(vs: List[Version], same_maker: Any) -> Optional[str]:
     return best
 
 
+def _build(k: Tuple[str, Tuple[int, ...]]) -> bool:
+    return k[1][0] >= BUILD_FROM and not (len(k[1]) == 1 and YEARS[0] <= k[1][0] <= YEARS[1])
+
+
 def version_lines(versions: Iterable[Version], *, family_name: Optional[str], family_maker: Optional[str],
                   same_maker: Any) -> List[List[LineStop]]:
-    """A family's lines (pure): each its stops oldest version first, the longest line first; a line of one stop is no
-    line. A version whose stated maker is not the one most of its family's posts state (else `family_maker`) is off.
-    `same_maker(a, b)`: two stated makers name one maker."""
+    """A family's lines (pure): each its released stops in release order (ties by number), the longest line first; a
+    line of one stop is no line. A version whose stated maker is not the one most of its family's posts state (else
+    `family_maker`) is off; a series or a phrase is no version. `same_maker(a, b)`: two stated makers name one maker."""
     if len(N.squash(N.key(family_name))) < 2:
         return []
-    keyed = [(_lettered(line_key(v.key), v.name), v) for v in versions]
+    keyed = [(_lettered(line_key(v.key), v.name), v) for v in versions if name_shape(v.name, v.variant) == "version"]
     keyed = [(k, v) for k, v in keyed if k is not None]
     maker = _line_maker([v for _, v in keyed], same_maker) or family_maker
     cand = [(k, v) for k, v in keyed if not (maker and v.maker and not same_maker(v.maker, maker))]
-    if any(k[1][0] < BUILD_FROM for k, _ in cand):
-        cand = [(k, v) for k, v in cand if k[1][0] < BUILD_FROM]
-    groups: Dict[Tuple[str, Tuple[int, ...]], List[Version]] = defaultdict(list)
+    if any(not _build(k) for k, _ in cand):
+        cand = [(k, v) for k, v in cand if not _build(k)]
+    groups: Dict[Tuple[str, str, Tuple[int, ...]], List[Version]] = defaultdict(list)
     for k, v in cand:
-        groups[k].append(v)
+        groups[(line_word(v.variant), k[0], k[1])].append(v)
+    # a line word one number ever has, that the plain line has too: that number's code name, not a line of its own
+    words = defaultdict(set)
+    for w, p, num in groups:
+        words[(w, p)].add(num)
+    for (w, p), nums in sorted(words.items()):
+        if w and len(nums) == 1 and ("", p, next(iter(nums))) in groups:
+            groups[("", p, next(iter(nums)))] += groups.pop((w, p, next(iter(nums))))
     # a dot left out: a number whose digits are another stop's of the same line run together is that stop, when that
     # stop is the better named (the slip is the rarer spelling: "Orbit 46" for 4.6, never "Orbit 11" into a 1.1)
-    for k in sorted(groups):
-        if len(k[1]) == 1 and k[1][0] >= 10:
-            hit = [o for o in groups if o[0] == k[0] and len(o[1]) > 1 and "".join(map(str, o[1])) == str(k[1][0])]
-            if len(hit) == 1 and sum(v.posts for v in groups[hit[0]]) > sum(v.posts for v in groups[k]):
-                groups[hit[0]] += groups.pop(k)
-    # a number written without its letter: the only lettered line that has it, unless the unlettered numbers with no
-    # lettered twin are a line of their own (two stops or more)
-    letters = {k[0] for k in groups if k[0]}
-    twin = {k: [p for p in sorted(letters) if (p, k[1]) in groups] for k in groups if k[0] == ""}
-    own = [k for k, ps in twin.items() if len(ps) != 1 and _on_line(_stop(k, groups[k]))]
-    if len(own) < 2:
-        for k, ps in twin.items():
-            if len(ps) == 1:
-                groups[(ps[0], k[1])] += groups.pop(k)
-    lines: Dict[str, List[LineStop]] = defaultdict(list)
-    for k in sorted(groups, key=lambda k: (k[0], k[1])):
-        s = _stop(k, groups[k])
-        if _on_line(s):
-            lines[k[0]].append(s)
-    return sorted((ln for ln in lines.values() if len(ln) >= 2), key=lambda ln: (-len(ln), ln[0].key[0]))
+    for g in sorted(groups):
+        if g in groups and len(g[2]) == 1 and g[2][0] >= 10:
+            hit = [o for o in groups if o[:2] == g[:2] and len(o[2]) > 1 and "".join(map(str, o[2])) == str(g[2][0])]
+            if len(hit) == 1 and sum(v.posts for v in groups[hit[0]]) > sum(v.posts for v in groups[g]):
+                groups[hit[0]] += groups.pop(g)
+    # a number written without its letter: the only lettered line (of its word) that has it, unless the unlettered
+    # numbers with no lettered twin are a line of their own (two stops or more)
+    for w in sorted({g[0] for g in groups}):
+        letters = {g[1] for g in groups if g[0] == w and g[1]}
+        twin = {g: [p for p in sorted(letters) if (w, p, g[2]) in groups] for g in groups if g[0] == w and g[1] == ""}
+        own = [g for g, ps in twin.items() if len(ps) != 1 and _stop((g[1], g[2]), groups[g], w).about >= LINE_ABOUT]
+        if len(own) < 2:
+            for g, ps in twin.items():
+                if len(ps) == 1:
+                    groups[(w, ps[0], g[2])] += groups.pop(g)
+    stops = {g: _stop((g[1], g[2]), vs, g[0]) for g, vs in groups.items()}
+    since = _maker_since(stops.values())
+    lines: Dict[Tuple[str, str], List[LineStop]] = defaultdict(list)
+    for g in sorted(stops):
+        if _released(stops[g], since):
+            lines[g[:2]].append(stops[g])
+    out = [sorted(ln, key=lambda s: (s.first, s.key[1])) for ln in lines.values() if len(ln) >= 2]
+    return sorted(out, key=lambda ln: (-len(ln), ln[0].word, ln[0].key[0]))
 
 
 def maker_word(m: Optional[str]) -> str:
@@ -696,51 +816,78 @@ def same_maker(a: Optional[str], b: Optional[str]) -> bool:
     return bool(maker_word(a)) and maker_word(a) == maker_word(b)
 
 
-def version_counts(cur: Any, members: Dict[str, Iterable[str]]) -> Dict[str, Tuple[int, int, Optional[datetime], Optional[str]]]:
-    """{version root: (posts naming it, posts about it (subject or actor), its first post about it, that post)} over
-    its cluster's ids (`members`), counted by the database (one row an id; nothing per post comes back)."""
-    from insight_core.markx import schemas
+Counts = Tuple[int, int, Optional[datetime], Optional[str], Optional[datetime], Optional[str], Optional[datetime],
+               Optional[str], FrozenSet[str]]
+
+
+def version_counts(cur: Any, members: Dict[str, Iterable[str]]) -> Dict[str, Counts]:
+    """{version root: (posts naming it, posts about it (subject or actor), its first post about it, that post, its
+    maker's first post about it (the post's reading says its origin is the maker; never a leak), that post, its first
+    release report about it (a release-typed reading, never a leak), that post, the sources reporting its release)}
+    over its cluster's ids (`members`), counted by the database (one row an id; nothing per post comes back). The
+    reading of a post is the one event_types reads first (its type guides)."""
+    from insight_core.markx import event_types, schemas
     of = {m: r for r, ms in members.items() for m in ms}
     if not of:
         return {}
-    cur.execute(f"""SELECT m.entity_id::text, count(DISTINCT m.post_id),
-                           count(DISTINCT m.post_id) FILTER (WHERE m.role IN ('subject', 'actor')),
-                           (array_agg(m.post_id::text ORDER BY {pairing.post_date('p')}, m.post_id)
-                              FILTER (WHERE m.role IN ('subject', 'actor') AND {pairing.post_date('p')} IS NOT NULL))[1],
-                           min({pairing.post_date('p')}) FILTER (WHERE m.role IN ('subject', 'actor'))
-                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
-                     WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[]) GROUP BY m.entity_id""",
-                (schemas.mention_guides(), sorted(of)))
+    at = pairing.post_date('p')
+    about = "m.role IN ('subject', 'actor')"
+    maker = f"{about} AND rd.origin = 'maker' AND rd.typ IS DISTINCT FROM '{LEAK_TYPE}'"
+    release = f"{about} AND rd.typ = ANY(%(rel)s) AND s.platform IS DISTINCT FROM 'saved'"
+    cur.execute(f"""SELECT m.entity_id::text, count(DISTINCT m.post_id), count(DISTINCT m.post_id) FILTER (WHERE {about}),
+                           (array_agg(m.post_id::text ORDER BY {at}, m.post_id) FILTER (WHERE {about} AND {at} IS NOT NULL))[1],
+                           min({at}) FILTER (WHERE {about}),
+                           (array_agg(m.post_id::text ORDER BY {at}, m.post_id) FILTER (WHERE {maker} AND {at} IS NOT NULL))[1],
+                           min({at}) FILTER (WHERE {maker}),
+                           (array_agg(m.post_id::text ORDER BY {at}, m.post_id) FILTER (WHERE {release} AND {at} IS NOT NULL))[1],
+                           min({at}) FILTER (WHERE {release}),
+                           array_agg(DISTINCT p.source_id::text) FILTER (WHERE {release})
+                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id LEFT JOIN sources s ON s.id = p.source_id
+                      LEFT JOIN LATERAL (SELECT r.reading->>'event_type' AS typ, r.reading->>'origin' AS origin
+                                           FROM mx_readings r WHERE r.post_id = m.post_id AND r.guide = ANY(%(tg)s)
+                                          ORDER BY array_position(%(tg)s, r.guide) LIMIT 1) rd ON m.role IN ('subject', 'actor')
+                     WHERE m.guide = ANY(%(g)s) AND m.entity_id = ANY(%(ids)s::uuid[]) GROUP BY m.entity_id""",
+                {"g": schemas.mention_guides(), "ids": sorted(of), "tg": event_types.type_guides(cur),
+                 "rel": list(RELEASE_TYPES)})
     out: Dict[str, List[Any]] = {}
-    for eid, n, about, post, first in cur.fetchall():
-        r = out.setdefault(of[eid], [0, 0, None, None])
+    for eid, n, ab, post, first, mpost, mfirst, rpost, rfirst, srcs in cur.fetchall():
+        r = out.setdefault(of[eid], [0, 0, None, None, None, None, None, None, frozenset()])
         r[0] += n
-        r[1] += about
-        if first is not None and (r[2] is None or first < r[2]):
-            r[2], r[3] = first, post
+        r[1] += ab
+        for i, (when, pid) in ((2, (first, post)), (4, (mfirst, mpost)), (6, (rfirst, rpost))):
+            if when is not None and (r[i] is None or when < r[i]):
+                r[i], r[i + 1] = when, pid
+        r[8] = r[8] | frozenset(srcs or ())
     return {r: tuple(x) for r, x in out.items()}
 
 
-def line_versions(rows: Iterable[Tuple[str, str, Any, Optional[str]]],
-                  counts: Dict[str, Tuple[int, int, Optional[datetime], Optional[str]]]) -> List[Version]:
-    """Versions from (root, name, version tuple, stated maker) rows and their `version_counts`."""
-    return [Version(r, name, tuple(key) if key else None, maker, *(counts.get(r) or (0, 0, None, None)))
-            for r, name, key, maker in rows]
+def line_versions(rows: Iterable[Tuple[Any, ...]], counts: Dict[str, Counts]) -> List[Version]:
+    """Versions from (root, name, version tuple, stated maker[, variant]) rows and their `version_counts`."""
+    out = []
+    for row in rows:
+        r, name, key, maker = row[:4]
+        c = tuple(counts.get(r) or ()) + (0, 0, None, None, None, None, None, None, frozenset())[len(counts.get(r) or ()):]
+        out.append(Version(r, name, tuple(key) if key else None, maker, c[0], c[1], c[2], c[3],
+                           variant=row[4] if len(row) > 4 else None, maker_first=c[4], maker_post=c[5],
+                           release_first=c[6], release_post=c[7], voices=frozenset(c[8])))
+    return out
 
 
 def version_line(cur: Any, book: I.Book, root: str) -> Optional[Dict[str, Any]]:
-    """The entity page's version line (0220): the lines of its family (the entity's own family, or itself when it is
-    one), the one holding this entity first. {family {id, name}, lines: [[{id, name, version, first, posts, current}]]}
-    (each stop by the name most posts use; the other names filed under its number are not shown: 0220 dev, a third of
-    them were another thing); None when the family has no line."""
+    """The entity page's version line (0220, 0234): the lines of its family (the entity's own family, or itself when it
+    is one), the one holding this entity first. {family {id, name}, lines: [[{id, name, version, first, by, posts,
+    current}]], words: [each line's product line word, "" the plain line], grid} (each stop by the name most posts
+    use; the other names filed under its number are not shown: 0220 dev, a third of them were another thing); `grid`:
+    when two product lines or more share two numbers or more (tiers of one maker's generations), {tiers, rows:
+    [{generation, cells: {tier: stop id}}]} in release order. None when the family has no line."""
     e = book.ents[root]
     fam = root if e.level in ("family", "thing") else (book.root(e.parent) if e.parent and e.level in I.VERSION_LEVELS else None)
     if not fam or fam not in book.ents:
         return None
     kids = sorted({book.root(x) for x in book.with_parent_in(fam)})
-    rows = [(k, book.label(k), book.ents[k].version_key, book.ents[k].maker) for k in kids
+    rows = [(k, book.label(k), book.ents[k].version_key, book.ents[k].maker, book.ents[k].variant) for k in kids
             if k in book.ents and book.ents[k].level == "version" and book.ents[k].status != "not_entity"
-            and not (book.ents[k].variant or book.ents[k].size or book.ents[k].build)]
+            and not (book.ents[k].size or book.ents[k].build)]
     if len(rows) < 2:
         return None
     counts = version_counts(cur, {k: book.cluster(k) for k, *_ in rows})
@@ -753,9 +900,29 @@ def version_line(cur: Any, book: I.Book, root: str) -> Optional[Dict[str, Any]]:
     lines.sort(key=lambda ln: not any(v.id == mine for s in ln for v in s.versions))
     return {"family": {"id": fam, "name": book.label(fam)},
             "lines": [[{"id": s.versions[0].id, "name": s.versions[0].name, "version": book.ents[s.versions[0].id].version,
-                        "first": s.first, "posts": s.posts, "current": any(v.id == mine for v in s.versions)}
-                       for s in ln] for ln in lines]}
+                        "first": s.first, "by": s.by, "posts": s.posts,
+                        "current": any(v.id == mine for v in s.versions)} for s in ln] for ln in lines],
+            "words": [ln[0].word for ln in lines], "grid": grid(lines)}
 
 
-__all__ = ["LineStop", "Version", "before_post", "events", "line_key", "of_entity", "same_maker", "version_counts",
-           "version_line", "version_lines"]
+def grid(lines: List[List[LineStop]]) -> Optional[Dict[str, Any]]:
+    """Generation x tier (pure): the product lines (a word each) sharing two numbers or more, {tiers (the lines' words,
+    the longest line first), rows: [{generation (its numbers dotted), cells {tier: the stop's first version id}}] in
+    release order (a generation's first stop)}; None when fewer than two lines share two numbers."""
+    tiers = [ln for ln in lines if ln[0].word]
+    nums: Dict[Tuple[int, ...], Dict[str, LineStop]] = defaultdict(dict)
+    for ln in tiers:
+        for s in ln:
+            nums[s.key[1]].setdefault(ln[0].word, s)
+    shared = {k: v for k, v in nums.items() if len(v) >= 2}
+    if len(shared) < 2:
+        return None
+    words = [ln[0].word for ln in tiers if any(ln[0].word in v for v in shared.values())]
+    order = sorted(nums, key=lambda k: (min(s.first for s in nums[k].values()), k))
+    return {"tiers": words, "rows": [{"generation": ".".join(map(str, k)),
+                                      "cells": {w: s.versions[0].id for w, s in nums[k].items() if w in words}}
+                                     for k in order if set(nums[k]) & set(words)]}
+
+
+__all__ = ["LineStop", "Version", "before_post", "events", "grid", "line_key", "line_word", "name_shape", "of_entity",
+           "same_maker", "version_counts", "version_line", "version_lines"]

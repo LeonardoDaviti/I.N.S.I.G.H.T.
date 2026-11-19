@@ -44,6 +44,10 @@ BLOG_FEED = f"{BLOG}/rss/"
 MIGRATION = BACKEND_DIR / "insight_core/db/migrations/0101_older_pages_dated_now.sql"
 
 
+def day(year: int, month: int, date: int) -> datetime:
+    return datetime(year, month, date, tzinfo=timezone.utc)
+
+
 def rss(items, *, link=None) -> str:
     entries = "".join(f"<item><title>t{n}</title><link>{url}</link><guid>{url}</guid>"
                       f"<pubDate>Mon, 0{n + 1} Nov 2026 00:00:00 GMT</pubDate><description>A link.</description></item>"
@@ -276,6 +280,65 @@ class StoredBacklogTests(unittest.TestCase):
         self.assertLess(surfaced_at, self.oldest)
         asyncio.run(service.collect_for_source(http, monthly, self.source))
         self.assertEqual(self._row(monthly)[0], datetime(2003, 7, 1, tzinfo=timezone.utc))
+
+    def test_a_linker_edited_later_dates_a_missed_page_from_its_change(self):
+        """v10.25 (issue 0228): a 2023 essay edited in 2026 to link a 2026 page is no sign the page existed in 2023."""
+        site = f"https://own-{self.mark}.example"
+        missed = f"{site}/a-new-model"
+        edited, later = datetime(2023, 3, 31, tzinfo=timezone.utc), datetime(2026, 9, 22, 16, 35, tzinfo=timezone.utc)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            essay = insert_post(cur, self.source, f"{site}/an-old-essay", at=edited, links=[missed])
+            cur.execute("""UPDATE posts SET metadata = jsonb_build_object('modified', '2026-10-15T06:03:26+00:00')
+                            WHERE id = %s""", (essay,))
+            insert_post(cur, self.source, f"{site}/a-note-on-it", at=later, links=[missed])
+            conn.commit()
+        http = FakeHttp({missed: article("a new model", None)})
+        service = SavedService(db_url(), sources=None, source_config_sync=None, kinds=None)
+        self.assertEqual(asyncio.run(service.collect_for_source(http, missed, self.source))["status"], "collected")
+        self.assertEqual(self._row(missed)[0], later)
+
+    def test_0156_repairs_body_dates_against_their_address_and_old_first_links(self):
+        site = f"https://own-{self.mark}.example"
+        fetched = datetime(2026, 11, 10, 7, 55, tzinfo=timezone.utc)
+        quoted = "<p>What was the subscriber base on the precise date of May 31, 2020?</p>"
+        rows = {  # url -> (published_at, its body, the date 0156 leaves)
+            f"{site}/2024/Aug/30/a-tutorial/": (day(2020, 5, 31), quoted, day(2024, 8, 30)),
+            f"{site}/2024/08/30/same-in-numbers/": (day(2020, 5, 31), quoted.replace("May", "May."), day(2024, 8, 30)),
+            f"{site}/2024/08/a-month-alone/": (day(2020, 5, 31), quoted, day(2024, 8, 1)),
+            f"{site}/2024/08/in-its-month/": (day(2024, 8, 12), "<p>Posted August 12, 2024.</p>", day(2024, 8, 12)),
+            f"{site}/2024/08/30/a-feeds-time/": (datetime(2020, 5, 31, 9, tzinfo=timezone.utc), quoted,
+                                                 datetime(2020, 5, 31, 9, tzinfo=timezone.utc)),
+            f"{site}/2024/08/30/not-written/": (day(2020, 5, 31), "<p>No date here.</p>", day(2020, 5, 31)),
+            f"{site}/2024/08/31/a-day-off/": (day(2024, 8, 30), "<p>August 30, 2024</p>", day(2024, 8, 30)),
+            f"{site}/2024/a-year-alone/": (day(2020, 5, 31), quoted, day(2020, 5, 31)),
+        }
+        elsewhere = f"https://elsewhere-{self.mark}.example/2024/08/30/a-link/"   # a feed's item on another site
+        missed, essay_day = f"{site}/a-new-model", datetime(2023, 3, 31, tzinfo=timezone.utc)
+        note_at = datetime(2026, 9, 22, 16, 35, tzinfo=timezone.utc)
+        sql = (BACKEND_DIR / "insight_core/db/migrations/0156_body_dates_against_their_address.sql").read_text()
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            for url, (published, body, _) in rows.items():
+                insert_post(cur, self.source, url, at=published, content=body)
+            insert_post(cur, self.source, elsewhere, at=day(2020, 5, 31), content=quoted)
+            essay = insert_post(cur, self.source, f"{site}/an-old-essay", at=essay_day, links=[missed])
+            cur.execute("UPDATE posts SET metadata = '{\"modified\": \"2026-10-15T06:03:26+00:00\"}' WHERE id = %s",
+                        (essay,))
+            insert_post(cur, self.source, f"{site}/a-note", at=note_at, links=[missed])
+            page = insert_post(cur, self.source, missed, at=essay_day)
+            cur.execute("""UPDATE posts SET fetched_at = %s, metadata = jsonb_build_object('missed_by_feed', %s::text)
+                            WHERE id = %s""", (fetched, fetched.isoformat(), page))
+            for _ in range(2):   # a second run changes nothing more
+                cur.execute(sql)
+            cur.execute("SELECT url, published_at, published_precision FROM posts WHERE url LIKE %s OR url = %s",
+                        (f"{site}/%", elsewhere))
+            got = {url: (published, precision) for url, published, precision in cur.fetchall()}
+            conn.rollback()
+        for url, (published, _, expected) in rows.items():
+            self.assertEqual(got[url][0], expected, url)
+            if expected != published:
+                self.assertEqual(got[url][1], "date", url)
+        self.assertEqual(got[elsewhere][0], day(2020, 5, 31), "another site's page is its feed's item, dated by it")
+        self.assertEqual(got[missed], (note_at, "exact"))
 
     def test_0101_dates_the_posts_stored_at_their_fetch_by_their_address(self):
         site = f"https://dated-{self.mark}.example"

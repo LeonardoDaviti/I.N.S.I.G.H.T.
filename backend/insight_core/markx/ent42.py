@@ -379,8 +379,9 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     # 0212: the cite answer is merged into each set whose first window is answered: ent-v4.2's (kind entities) and
     # ent-v5's (kind reading, which keeps `cite` as its own question)
     for kind, guide in (("entities", GUIDE), ("reading", V5_GUIDE)):
+        # 0176: window 1 (0233: a spent input is a first window's: tasks.spend keeps the later windows')
         cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = %s AND guide = %s AND a = %s AND status = 'answered'
-                          AND input !~ %s LIMIT 1""", (kind, guide, pid, r"\nWindow: \d+ of \d+ "))   # 0176: window 1
+                          AND (input IS NULL OR input !~ %s) LIMIT 1""", (kind, guide, pid, tasks.WINDOW_RE))
         if cur.fetchone() is None:
             continue
         have = repo.mentions(cur, pid, guide)

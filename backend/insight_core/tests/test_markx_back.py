@@ -353,6 +353,25 @@ class TheQuestions(_Back):
         self.assertEqual(call("POST", "/api/markx/labels/back", body={"row": row, "answer": "maybe"})[0], 400)
         self.assertEqual(call("POST", "/api/markx/labels/back", body={"row": str(uuid.uuid4()), "answer": "retold"})[0], 404)
 
+    def test_off_is_not_shown(self):
+        """0233: its feature off (the default since 0210: the bar failed), the page shows no row, count or precision;
+        the rows stay. On again, the same row is back."""
+        from insight_core.markx import consumers
+        self.candidate()
+        for _ in range(3):
+            _, body = self.lease("back")
+            self.answer((body["tasks"][0]["id"], ans("development")))
+        self.assertEqual(len(call("GET", "/api/markx/back")[1]["items"]), 1)
+        consumers.set_on(self.cur, "back", False)
+        status, page = call("GET", "/api/markx/back")
+        self.assertEqual((status, page["on"], page["items"], page["counts"], page["precision"]),
+                         (200, False, [], {}, None))
+        self.cur.execute("SELECT count(*) FROM mx_back")
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        consumers.set_on(self.cur, "back", True)
+        status, page = call("GET", "/api/markx/back")
+        self.assertEqual((page["on"], len(page["items"])), (True, 1))
+
     def test_mark_ix_is_only_read(self):
         self.old()
         self.new(2, self.third), self.new(1, self.fourth)

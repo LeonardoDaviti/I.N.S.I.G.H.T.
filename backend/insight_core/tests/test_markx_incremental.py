@@ -172,6 +172,35 @@ class Incremental(unittest.TestCase):
         self.assertEqual(rows[0], rows[1])
         self.assertTrue(rows[0][0])
 
+    def test_a_reading_holds_at_most_text_keep_texts_and_decides_the_same(self):
+        """0227: a reading holds at most TEXT_KEEP texts and readings at once (the least recently used let go, read
+        again when shown again; one render's posts are never let go), on a full run and an incremental one, and decides
+        the same whatever TEXT_KEEP: a full run with 2 kept and with every text kept writes the same rows and tasks."""
+        self.scene()
+        held, asked = [0], [0]
+        hold = I._hold
+
+        def counting(cache, ids):
+            hold(cache, ids)
+            held[0], asked[0] = max(held[0], len(cache)), max(asked[0], len(set(ids)))
+        rows = []
+        for keep in (2, 10_000):
+            self.cur.execute("SAVEPOINT keep")
+            held[0] = asked[0] = 0
+            with unittest.mock.patch.object(I, "TEXT_KEEP", keep), unittest.mock.patch.object(I, "_hold", counting):
+                out = self.go(full=True)
+                again = self.go()
+            if keep == 2:
+                self.assertLessEqual(held[0], max(keep, asked[0]))
+                self.assertGreater(out["run"]["texts_loaded"], 0)
+            self.assertEqual(again["run"]["kind"], "incremental")
+            self.cur.execute("""SELECT post_id::text, role, reason FROM mx_story_posts WHERE valid_to IS NULL
+                                 ORDER BY 1, 2, 3""")
+            rows.append((self.cur.fetchall(), out["tasks_added"], again["tasks_added"]))
+            self.cur.execute("ROLLBACK TO SAVEPOINT keep")
+        self.assertEqual(rows[0], rows[1])
+        self.assertTrue(rows[0][0])
+
     def test_the_dirty_set_is_the_tasks_answered_since_and_the_closure_their_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()

@@ -39,6 +39,11 @@ the shown names and types (`shown`: the run's touched clusters, then the sweep o
 the next run's. On the server (v10.23) the repairs ran first in a quarter of the budget and overran it (13.8-17.0 s),
 the linking then did 1 part of 13, and the stage ran 55-87 s against its 45.
 0164 C: the invariants (`invariants.family_org`: the clusters holding a family and an org, 0 after the repair).
+
+v10.25 (0226): a linking part is expected to take a plain part's seconds (identity.stage `part_took`, the last run's
+until this run measures one), not the first part's, which also decides the pairs answered since and the open items'
+backlog once a run; the counts say where the linking's seconds went (`incremental.timing`, `reading`,
+`part_seconds`, `pairs`).
 """
 from __future__ import annotations
 
@@ -134,12 +139,13 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
                          after=left.get("after") if left else None, link_after=left.get("link_after") if left else None,
                          phase=left.get("phase") if left else None, deadline=deadline, chunk=chunk, book=book,
                          seed_rate=rate, keep=sum(kept),
-                         collide_rate=last_inc.get("collide_rate") if isinstance(last_inc, dict) else None)
+                         collide_rate=last_inc.get("collide_rate") if isinstance(last_inc, dict) else None,
+                         part_took=last_inc.get("part_took") if isinstance(last_inc, dict) else None)
     if left and "full" in out:
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
-    linked = out.pop("posts_linked", [])
+    linked = out.get("posts_linked", [])   # v10.25 (0227): left in the counts: decide.run hands it to the graph stage
     # v10.24 (0221): then the repairs (a step at a time, from where the last run's stopped) and the sweeps, with what
     # is left (0164: they ran first, in a quarter of the budget they overran); each leaves the next its expected time
     out["repair"], book = repairs(cur, book, run_id=run_id, full=whole, last=_last(cur, "repair"),

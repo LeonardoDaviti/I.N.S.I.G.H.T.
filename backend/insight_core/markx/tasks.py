@@ -782,7 +782,8 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
 # current edge and same-subject candidate on every lease while its queue ran below the lease's size (the worker drains it
 # all day: 63 runs in 104 minutes on the server, 0.6 s each); the decision run's graph stage plans it too.
 BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop",   # 0165 C: stop (stops.plan, no declared inputs)
-                      "chain")                                       # 0219: story chains (graph.plan_chains, after stop)
+                      "chain",                                       # 0219: story chains (graph.plan_chains, after stop)
+                      "derive")                                      # 0234: based_on checks (graph.plan_derive)
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:
@@ -915,7 +916,8 @@ PLANNERS = {"read": lambda cur, **kw: plan_posts(cur, "read", **kw),
             "relate": lambda cur, **kw: _plan_relate(cur),                  # 0131
             "back": lambda cur, **kw: _plan_back(cur),                      # 0136
             "stop": lambda cur, **kw: _plan_stops(cur),                     # 0165 C
-            "chain": lambda cur, **kw: _plan_chains(cur)}                   # 0219
+            "chain": lambda cur, **kw: _plan_chains(cur),                   # 0219
+            "derive": lambda cur, **kw: _plan_derive(cur)}                  # 0234
 
 
 def _plan_back(cur: Cursor) -> int:   # 0136: back in the news (back.plan), capped like the decision run's
@@ -932,6 +934,11 @@ def _plan_stops(cur: Cursor) -> int:   # 0165 C: a thing's stop in each story ab
 def _plan_chains(cur: Cursor) -> int:   # 0219: the settled chain answers made edges, then new pairs of stops asked
     from insight_core.markx import graph   # graph imports this module
     return graph.plan_chains(cur)["asked"]
+
+
+def _plan_derive(cur: Cursor) -> int:   # 0234: a (thing, predecessor) pair's based_on check, once a pair
+    from insight_core.markx import graph   # graph imports this module
+    return graph.plan_derive(cur)["asked"]
 
 
 def _plan_relate(cur: Cursor) -> int:   # 0131: Stalker's questions (graph.plan), capped like the decision run's
@@ -1001,6 +1008,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "chain":                  # 0219: asked until it has graph.CHAIN_RUNS valid answers
         from insight_core.markx import graph
         graph.chain_after_answer(cur, task)
+    elif task["kind"] == "derive":                 # 0234: asked until it has graph.DERIVE_RUNS valid answers
+        from insight_core.markx import graph
+        graph.derive_after_answer(cur, task)
     elif task["kind"] == "back":                   # 0136: asked until it has back.RUNS valid answers
         from insight_core.markx import back
         back.after_answer(cur, task)
@@ -1142,20 +1152,31 @@ def last_posts_on() -> bool:   # 0132 C1
 
 
 def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:   # 0132 C1
-    """`read` or `entities` tasks for the last LAST_POSTS posts, whatever their date, of every source with fewer than
-    LAST_POSTS_BELOW posts read under the kind's guide (a reading, or an answered entities task), only while
-    INSIGHT_MARKX_READ_LAST20 is on; priority the post's age in days, as plan_posts. It fills the role card's "too few
-    to tell". How many were added."""
-    if not last_posts_on():
+    """Tasks of `kind` for the last LAST_POSTS posts, whatever their date, of every source with fewer than
+    LAST_POSTS_BELOW posts read, only while INSIGHT_MARKX_READ_LAST20 is on; priority the post's age in days, as
+    plan_posts. It fills the role card's "too few to tell". How many were added.
+
+    0233 (0225 #17): only the kinds the current reading uses. While ent-v5 is on (reading5.is_on) a post's one reading
+    is `reading` (read, read3 and entities are not asked for it): `read` and `entities` plan nothing here, and
+    `reading` asks a thin source's last posts that no guide the pickers read has read yet (reading5.guides: no post
+    read before is read again), through reading5.add_posts. While it is off or in Shadow, `read` (a reading under its
+    guide) and `entities` (an answered entities task) as before, and `reading` nothing."""
+    from insight_core.markx import reading5   # reading5 imports this module
+    if not last_posts_on() or (kind == reading5.KIND) != reading5.is_on(cur):
         return 0
-    guide = schemas.guide_of(cur, kind)   # 0133
-    done = ("SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.guide = %(guide)s" if kind == "read" else
-            "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id "
-            "AND t.status = 'answered'")
+    if kind == reading5.KIND:
+        guide = reading5.GUIDE
+        read = "SELECT 1 FROM mx_readings r WHERE r.post_id = {post} AND r.guide = ANY(%(read)s)"
+    else:
+        guide = schemas.guide_of(cur, kind)   # 0133
+        read = ("SELECT 1 FROM mx_readings r WHERE r.post_id = {post} AND r.guide = %(guide)s" if kind == "read" else
+                "SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = {post} "
+                "AND t.status = 'answered'")
     cur.execute(
         f"""WITH few AS (SELECT s.id FROM sources s
                           WHERE s.platform <> 'saved'
-                            AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id AND EXISTS ({done})) < %(below)s),
+                            AND (SELECT count(*) FROM posts p WHERE p.source_id = s.id
+                                    AND EXISTS ({read.format(post="p.id")})) < %(below)s),
                  last AS (SELECT p.id, {pairing.ordinary_date('p')} AS at,
                                  row_number() OVER (PARTITION BY p.source_id ORDER BY
                                                     {pairing.ordinary_date('p')} DESC, p.id DESC) AS k
@@ -1164,10 +1185,14 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
               FROM last l
              WHERE l.k <= %(last)s
                AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = l.id)
+               AND NOT EXISTS ({read.format(post="l.id")})
              ORDER BY 2, l.id
              LIMIT %(limit)s""",
-        {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit})
+        {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit,
+         "read": reading5.guides(cur, "read-v3", "read-v2")})
     rows = cur.fetchall()
+    if kind == reading5.KIND:
+        return reading5.add_posts(cur, [(pid, age, None) for pid, age in rows])[0]
     posts = load_posts(cur, [r[0] for r in rows])
     render = _render(cur, kind)   # 0133
     added = 0
@@ -1275,8 +1300,8 @@ def _plan_reading(cur: Cursor, **kw: Any) -> int:   # 0212: ent-v5, new posts on
     return reading5.plan(cur, **kw)
 
 
-PLANNERS["reading"] = _plan_reading
-FRESH_PLANNERS["reading"] = _plan_reading
+PLANNERS["reading"] = _with_last_posts("reading", _plan_reading)   # 0233: a thin source's last posts, ent-v5 on
+FRESH_PLANNERS["reading"] = _with_last_posts("reading", _plan_reading)   # 0233: a thin source's last posts, ent-v5 on
 
 
 def _plan_cite(cur: Cursor, **kw: Any) -> int:   # 0133 v4.2: ent-v4.2's second question, cue posts only (ent42.plan)
@@ -1346,3 +1371,58 @@ def _plan_news_place(cur: Cursor, **kw: Any) -> int:   # 0197: the rows added si
 
 
 PLANNERS["news_place"] = _plan_news_place                                  # 0197
+
+
+# ---- 0216 item 1, built in 0233: a task's input lifetime --------------------------------------------------------
+# An answered task's input is kept only where something reads it after the answer. SPENDS names the kinds whose input
+# nothing reads once answered (each reader checked: tests/test_markx_spend.py's scan lists every reader of
+# mx_tasks.input with the kinds it reads; a new reader fails it until it is placed). Opt-in, so a new kind keeps its
+# input until it is placed here. Kept: every kind asked again (join, pair, merge, check, perspective, collide, relate,
+# chain, back), read back after the answer (stance, subtopics, subtopic_place, rename, alias* through the opinions'
+# derive_inputs), and every other kind by default. Within SPENDS two inputs are kept as well:
+#   - an embed input of embed.SCAN_CHARS or less (embed.set_aside reads the short ones);
+#   - a later window of a long post's entities or reading (ent42.after_cite tells window 1 from the rest by its input:
+#     a spent input of these kinds is a first window).
+# The hash stays (input_hash): the dedupe, mx_inc_inputs and every hash reader are unchanged, and a planner rendering
+# the same question again finds the answered task by it and never asks it again. Nothing is rebuilt from a NULL.
+SPENDS = ("cite", "embed", "embed_name", "entities", "read", "read3", "reading", "track")
+SPEND_AFTER = timedelta(days=14)   # the invariant, the worker's same-cycle re-asks (0214) and debugging keep these
+SPEND_BATCH = 20000
+WINDOW_RE = r"\nWindow: \d+ of \d+ "   # a later window's input (window_input), as Postgres reads it
+
+
+def spend(cur: Cursor, *, now: Optional[datetime] = None, older: timedelta = SPEND_AFTER, batch: int = SPEND_BATCH,
+          after: Optional[str] = None) -> Tuple[int, Optional[str]]:
+    """One batch: the inputs of answered SPENDS tasks answered more than `older` ago set to NULL, `batch` rows looked
+    at in id order from `after` (keyset: the batches are one pass over the table). (How many were spent, the last id
+    looked at, or None when the pass is done.)"""
+    from insight_core.markx import embed   # embed imports this module
+    cur.execute("""WITH look AS (SELECT id, kind, status, answered_at, input FROM mx_tasks
+                                  WHERE (%(after)s::uuid IS NULL OR id > %(after)s::uuid)
+                                  ORDER BY id LIMIT %(batch)s),
+                        spent AS (UPDATE mx_tasks t SET input = NULL FROM look l
+                                   WHERE t.id = l.id AND l.status = 'answered' AND l.input IS NOT NULL
+                                     AND l.kind = ANY(%(kinds)s)
+                                     AND l.answered_at < COALESCE(%(now)s::timestamptz, now()) - %(older)s
+                                     AND NOT (l.kind = 'embed' AND length(l.input) <= %(short)s)
+                                     AND NOT (l.kind IN ('entities', 'reading') AND l.input ~ %(window)s)
+                                  RETURNING 1)
+                   SELECT (SELECT count(*) FROM spent), (SELECT id::text FROM look ORDER BY id DESC LIMIT 1),
+                          (SELECT count(*) FROM look)""",
+                {"after": after, "batch": batch, "kinds": list(SPENDS), "now": now, "older": older,
+                 "short": embed.SCAN_CHARS, "window": WINDOW_RE})
+    n, last, looked = cur.fetchone()
+    return int(n), (last if looked >= batch else None)
+
+
+def spend_all(db_url: str, *, now: Optional[datetime] = None, batch: int = SPEND_BATCH) -> int:
+    """The daily pass (run_scheduler's daily work): `spend` batch after batch, one transaction each (a lease or an
+    answer never waits long on these rows). How many inputs were spent."""
+    from insight_core.db import database
+    total, after = 0, None
+    while True:
+        with database.connection(db_url) as conn, conn.cursor() as cur:
+            n, after = spend(cur, now=now, after=after, batch=batch)
+        total += n
+        if after is None:
+            return total

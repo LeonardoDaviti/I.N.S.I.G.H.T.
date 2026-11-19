@@ -225,6 +225,15 @@ class TheJudge(_Graph):
                                          "role": role}])
             self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, post))
 
+    def maker_said(self, post):
+        """0234: the post's reading says its maker tells it (a version on the line is one its maker announced)."""
+        with self.conn.transaction():
+            tid, _ = tasks.add(self.cur, "read3", f"read {post}", a=post)
+            call_id = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="m", valid=True, answer={})
+            repo.add_reading(self.cur, post_id=post, guide="read-v3", call_id=call_id, kind="report", events="one",
+                             lang="en", headline="out", reading={"kind": "report", "event_type": "model_release",
+                                                                 "origin": "maker", "main": {"object": "Widget"}})
+
     def vector(self, post, v):
         repo.put_embedding(self.cur, post_id=post, model="bge-m3", text_hash=uuid.uuid4().hex, vector=v)
 
@@ -296,6 +305,35 @@ class TheJudge(_Graph):
         self.assertEqual(self.edges(), [])
         self.assertEqual(out["relate"]["settled"], 1)
 
+    def test_a_post_linked_after_its_answer_aged_is_read_through_the_hand_off(self):
+        """0227: a post whose mentions are linked later than its answer came (a linking backlog, runs more than an
+        hour apart) is past the stage's look-back by its answer's time: the run hands the posts it linked over
+        (`linked`), and a run whose graph stage did not run keeps them for the next one (`defer`)."""
+        newer, older = self.same_subject()
+        self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (newer,))
+        entity = self.cur.fetchone()[0]
+        with self.conn.transaction():   # not linked yet; both answers three days old
+            self.cur.execute("UPDATE mx_mentions SET entity_id = NULL WHERE post_id = %s", (newer,))
+            self.cur.execute("""UPDATE mx_calls SET created_at = created_at - interval '3 days'
+                                 WHERE id IN (SELECT call_id FROM mx_mentions WHERE post_id = ANY(%s::uuid[]))""",
+                             ([newer, older],))
+        first = self.stage()             # the relate backfill reads every subject post once: the newer one has none
+        self.assertEqual(first["relate"]["candidates"] + first["relate"]["backfill"].get("candidates", 0), 0)
+        with self.conn.transaction():   # the entities stage links it (a later run)
+            self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, newer))
+        self.assertEqual(self.stage()["relate"]["candidates"], 0)   # by the answer's time alone: missed
+        got = self.stage(linked=[newer])
+        self.assertEqual((got["linked"], got["relate"]["candidates"]), (1, 1))
+        # deferred: kept for the next stage, read once, then let go
+        with self.conn.transaction():
+            self.cur.execute("DELETE FROM mx_candidates WHERE kind = 'relate'")
+            graph.defer(self.cur, [newer])
+        self.assertEqual(repo.get_setting(self.cur, graph.PENDING_KEY), [newer])
+        got = self.stage()
+        self.assertEqual((got["linked"], got["relate"]["candidates"]), (1, 1))
+        self.assertEqual(repo.get_setting(self.cur, graph.PENDING_KEY), [])
+        self.assertEqual(self.stage()["linked"], 0)
+
     def test_no_candidate_outside_the_window_or_below_the_cosine(self):
         self.same_subject(days=200)
         self.same_subject(days=20)
@@ -356,6 +394,8 @@ class TheJudge(_Graph):
             self.subject(self.post(source=self.other, at=self.at(5 + k)), v5, "Widget 5", role="mention")
         self.subject(new5, v5, "Widget 5")
         self.subject(soon5, v5, "Widget 5")
+        for p in (old4[-1], old41, soon5):                        # 0234: each announced by its maker
+            self.maker_said(p)
         # a judge's next_version on the pair first
         with self.conn.transaction():
             tid, _ = tasks.add(self.cur, "relate", "a question", a=new5, b=old41)
@@ -382,6 +422,8 @@ class TheJudge(_Graph):
         self.subject(new, v2, "Gadget 2")
         for k in range(3):                  # 0220: named by 4+ posts (a mention is never an edge's side)
             self.subject(self.post(at=self.at(1 + k)), v2, "Gadget 2", role="mention")
+        for p in (olds[-1], new):           # 0234: each announced by its maker
+            self.maker_said(p)
         self.stage()
         got = sorted(b for a, b, rel, rule, *_ in self.edges() if rule == "entity_next_version")
         self.assertEqual(got, sorted(olds[2:]))                       # the 3 earliest (102-104 days back)

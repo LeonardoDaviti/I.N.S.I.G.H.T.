@@ -54,19 +54,21 @@ BEAT_EVERY = 30.0          # 0216: each API process's numbers written this often
 
 
 def beat_api_processes(pids: Sequence[int]) -> int:
-    """0216: each API process's {rss_mb, hwm_mb, cpu_s} as its heartbeat "api-<pid>". The beats written. Never
-    raises."""
+    """0216: each API process's {rss_mb, hwm_mb, cpu_s} as its heartbeat "api-<pid>". 0233: and every other API
+    beat removed, a process that ended (heartbeat.only): the beats are the processes alive now. The beats written.
+    Never raises."""
     from insight_core.utils import heartbeat, peak
-    n = 0
+    written = []
     for pid in pids:
         try:
             stats = peak.of(pid)
             if stats["rss_mb"] is not None:
                 heartbeat.beat(f"api-{pid}", stats=stats)
-                n += 1
+                written.append(f"api-{pid}")
         except Exception:  # noqa: BLE001 - never stops the API
             logger.exception("Could not write API process %s's numbers", pid)
-    return n
+    heartbeat.only("api-", written)
+    return len(written)
 
 
 def raise_open_files(get: Optional[Callable[[], tuple]] = None, set_: Optional[Callable[[int, int], None]] = None,

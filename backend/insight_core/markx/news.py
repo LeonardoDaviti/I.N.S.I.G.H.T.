@@ -624,7 +624,9 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
 
 VIEWS = {"differences": True, "all": False}   # the kept views: key -> only_differences
-KEEP_RUNS = 3                                  # the newest runs whose kept views stay (a cache: pruned)
+SHAPE = "1"   # 0232: the answer's shape, in the kept keys (a field the frontend reads added, renamed or gone: bump it):
+#               a view kept by an older code is sent only while its shape is this one
+KEEP_RUNS = 3                                 # the newest runs whose kept views stay (a cache: pruned)
 RECENT = timedelta(hours=48)                   # rank_key's "last 48 hours first"
 
 
@@ -674,23 +676,36 @@ def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
                                              ranked)
 
 
+def _key(view: str) -> str:
+    """A view's kept key (0232: with the answer's SHAPE)."""
+    from insight_core.markx import kept_pages
+    return kept_pages.shaped(view, SHAPE)
+
+
 def _view_key(only_differences: bool) -> str:
-    return "differences" if only_differences else "all"
+    return _key("differences" if only_differences else "all")
 
 
 def kept_page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = None) -> Optional[bytes]:
-    """The page's kept answer (the bytes `page` would answer now), or None: none kept for these inputs yet (the first
-    start, a run whose views are being built, an input changed since): the caller builds the page then."""
+    """The page's kept answer: the bytes `page` would answer now (0232: kept by this code or, its inputs the same, by
+    the code before a deploy), else the newest view kept (an input changed since, a run whose views are being built:
+    the jobs process builds the next one, News is never built in a request; before, 11 s); None only when no view of
+    this shape was ever kept (the first start): the caller builds the page then."""
     from insight_core.markx import kept_pages
+    key = _view_key(only_differences)
     run, st = page_inputs(cur, now or datetime.now(timezone.utc))
-    return kept_pages.get(cur, "news", _view_key(only_differences), run, st)
+    got = kept_pages.get(cur, "news", key, run, st, any_code=True)
+    if got is not None:
+        return got
+    newest = kept_pages.newest(cur, "news", key)
+    return newest[0] if newest else None
 
 
 def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
-    """Whether a view has no kept answer for its inputs now (the jobs process builds them then)."""
+    """Whether a view has no kept answer for its inputs now, by this code (the jobs process builds them then)."""
     from insight_core.markx import kept_pages
     run, st = page_inputs(cur, now or datetime.now(timezone.utc))
-    return any(not kept_pages.has(cur, "news", key, run, st) for key in VIEWS)
+    return any(not kept_pages.has(cur, "news", _key(view), run, st) for view in VIEWS)
 
 
 # 0215: what the News page doesn't read of `page` (components/markx/MarkXNews.tsx, MarkXFolds.tsx, MarkXBuilt.tsx,
@@ -760,7 +775,8 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         return {"run": None, "built": []}
     out: Dict[str, Any] = {"run": run, "built": [], "bytes": {}, "build_seconds": {}}
     ranked = False
-    for key, only in VIEWS.items():
+    for view, only in VIEWS.items():
+        key = _key(view)
         if kept_pages.has(cur, "news", key, run, st):
             continue
         if not ranked:   # 0208: the rows ranked and kept first (their inputs are in the stamp), once a build
@@ -772,8 +788,8 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         body = kept_pages.encode(reader_view(page(cur, only_differences=only, now=now)))
         seconds = round(time.monotonic() - t0, 2)
         kept_pages.put(cur, "news", key, run, st, body, seconds=seconds)
-        out["built"].append(key)
-        out["bytes"][key], out["build_seconds"][key] = len(body), seconds
+        out["built"].append(view)
+        out["bytes"][view], out["build_seconds"][view] = len(body), seconds
     out["pruned"] = kept_pages.prune_runs(cur, "news", KEEP_RUNS)
     return out
 

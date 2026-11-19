@@ -262,12 +262,30 @@ class Timeline(_Db):
         self.assertEqual(len(top), 8)
         self.assertIn(10, top)                                                        # the birth, though last
 
-    def reading(self, pid, kind, obj, headline, event_type="product_release"):
+    def reading(self, pid, kind, obj, headline, event_type="product_release", origin="other"):
         task_id, _ = tasks.add(self.cur, "read3", f"read {pid}", a=pid)
         call = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True, answer={})
         repo.add_reading(self.cur, post_id=pid, guide="read-v3", call_id=call, kind=kind, events="one", lang="en",
-                         headline=headline, reading={"kind": kind, "event_type": event_type, "origin": "other",
+                         headline=headline, reading={"kind": kind, "event_type": event_type, "origin": origin,
                                                      "main": {"object": obj, "actors": [], "headline_en": headline}})
+
+    def test_the_first_outside_mention_is_about_the_thing(self):
+        """0234 (#5): a post about another thing (a method shown on another maker's model) that the extractor marks as
+        about this one, or one where it is only an actor, is never its first outside mention, the switch by_reading
+        off; the first post whose reading's main event is the thing is."""
+        birth = self.post_at(0, T0 - 200 * D, "Introducing Acme Kite", url="https://dev.acme.example/blog/k1")
+        self.mentions(birth, ("Acme Kite", "software", "subject", "Acme", soft()))
+        method = self.post_at(2, T0 - 150 * D, "A pruning method for Zentra 5")
+        self.mentions(method, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(method, "report", "pruning method", "A pruning method shrinks Zentra 5")
+        actor = self.post_at(3, T0 - 120 * D, "Ten agents compared")
+        self.mentions(actor, ("Acme Kite", "software", "actor", "Acme", soft()))
+        review = self.post_at(2, T0 - 100 * D, "Acme Kite, reviewed")
+        self.mentions(review, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(review, "commentary", "Acme Kite", "A review of Acme Kite")
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
+        self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [review])
 
     def test_a_round_up_or_a_post_about_another_thing_only_names_it(self):
         """0220: the extractor marks the thing subject of a digest naming everything, or of a post about another
@@ -335,16 +353,23 @@ class Timeline(_Db):
         self.assertTrue(TL.about_by_reading("report", {}, "Zentra 5", set()))         # nothing to tell by: kept
 
     def test_the_entity_pages_version_line(self):
-        """0220: the family's versions on one line, the page's own version marked; a version few posts name is off."""
+        """0220, 0234: the family's versions on one line, the page's own version marked, each at its maker's first post
+        about it; a version its maker only teased (a leak) is off, however many post about it."""
         ids = {}
         for k, (name, version) in enumerate([("Orbit 2", "2"), ("Orbit 2.5", "2.5"), ("Orbit 3", "3")]):
             for n in range(4):
                 p = self.post_at(n % 4, T0 - (300 - 100 * k - n) * D, f"{name} is out ({n})")
                 self.mentions(p, (name, "model", "subject" if n < 2 else "mention", "Vantor",
                                   soft(family="Orbit", version=version)))
+                if n < 2:
+                    self.reading(p, "report", name, f"{name} is out", event_type="model_release",
+                                 origin="maker" if n == 1 else "other")
                 ids[name] = p
-        guess = self.post_at(1, T0 - D, "Orbit 9 next year?")
-        self.mentions(guess, ("Orbit 9", "model", "subject", "Vantor", soft(family="Orbit", version="9")))
+        for n in range(3):
+            guess = self.post_at(n, T0 - (3 - n) * D, f"Orbit 9 next year? ({n})")
+            self.mentions(guess, ("Orbit 9", "model", "subject", "Vantor", soft(family="Orbit", version="9")))
+            self.reading(guess, "report", "Orbit 9", "Orbit 9 teased", event_type="leak_rumour",
+                         origin="maker" if n == 0 else "other")
         self.stage()
         from insight_core.markx import stops as ST
         self.assertFalse(ST.config()["version_line"])                                   # off: under its bar
@@ -358,7 +383,9 @@ class Timeline(_Db):
         line = page["version_line"]
         self.assertEqual([[s["name"] for s in ln] for ln in line["lines"]], [["Orbit 2", "Orbit 2.5", "Orbit 3"]])
         self.assertEqual([s["current"] for s in line["lines"][0]], [False, True, False])
-        self.assertEqual(line["lines"][0][0]["first"], T0 - 300 * D)                  # its first post about it
+        self.assertEqual(line["lines"][0][0]["first"], T0 - 299 * D)                  # its maker's first post about it
+        self.assertEqual(line["lines"][0][0]["by"], "maker")
+        self.assertEqual((line["words"], line["grid"]), ([""], None))
         self.assertEqual(line["lines"][0][0]["posts"], 4)
         self.assertEqual(line["family"]["name"], "Orbit")
         fam = entity_views.entity_page(self.cur, line["family"]["id"], now=T0 + 2 * D)["version_line"]
@@ -556,13 +583,17 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def ver(id_, name, key, *, posts=5, about=2, maker=None, first=None):
+def ver(id_, name, key, *, posts=5, about=2, maker=None, first=None, variant=None, said=True, voices=(), report=None):
+    """A version as the line reads it; `said`: its maker announced it at `first` (else `voices` report it at `report`)."""
     from insight_core.markx import timeline as TL
-    return TL.Version(id_, name, key, maker, posts, about, first or T0, None)
+    first = first or T0
+    return TL.Version(id_, name, key, maker, posts, about, first, None, variant=variant,
+                      maker_first=first if said else None, release_first=report if voices else None,
+                      voices=frozenset(voices))
 
 
 class VersionLineRules(unittest.TestCase):
-    """0220, no database: a family's versions on one line (invented names), and what keeps a version off it."""
+    """0220, 0234, no database: a family's versions on lines (invented names), and what keeps a version off them."""
 
     def line(self, vs, family="Orbit", maker=None):
         return TL.version_lines(vs, family_name=family, family_maker=maker, same_maker=lambda a, b: a == b)
@@ -570,55 +601,101 @@ class VersionLineRules(unittest.TestCase):
     def names(self, lines):
         return [[s.versions[0].name for s in ln] for ln in lines]
 
-    def test_versions_in_number_order_one_stop_a_version(self):
+    def test_versions_in_release_order_one_stop_a_version(self):
         got = self.line([ver("c", "Orbit 3", (3,), first=T0 + 9 * D), ver("a", "Orbit 2", (2,)),
-                         ver("b", "Orbit 2.5", (2, 5), first=T0 + 3 * D), ver("d", "Orbit 3.0", (3, 0), posts=4)])
+                         ver("b", "Orbit 2.5", (2, 5), first=T0 + 3 * D), ver("d", "Orbit 3.0", (3, 0), posts=4,
+                                                                            first=T0 + 8 * D)])
         self.assertEqual(self.names(got), [["Orbit 2", "Orbit 2.5", "Orbit 3"]])
         three = got[0][2]
         self.assertEqual([v.id for v in three.versions], ["c", "d"])          # 3.0 is 3: one stop, the most named first
-        self.assertEqual(three.first, T0)                                        # its first post about either
+        self.assertEqual((three.first, three.by), (T0 + 8 * D, "maker"))       # the maker's first post about either
         self.assertEqual(TL.line_key((3, 0)), ("", (3,)))
         self.assertIsNone(TL.line_key((3, "x")))                                  # "3.x" is no version
+        years = self.line([ver("w7", "Orbit 7", (7,), first=T0 + 900 * D), ver("w95", "Orbit 95", (95,), first=T0),
+                           ver("w2k", "Orbit 2000", (2000,), first=T0 + 300 * D), ver("w10", "Orbit 10", (10,), first=T0 + 1200 * D),
+                           ver("w98", "Orbit 98", (98,), first=T0 + 100 * D)])
+        self.assertEqual(self.names(years), [["Orbit 95", "Orbit 98", "Orbit 2000", "Orbit 7", "Orbit 10"]])   # by date
+
+    def test_a_rumour_or_a_nickname_is_no_stop_once_the_maker_speaks(self):
+        got = self.line([ver("a", "Orbit 4", (4,), first=T0 + 10 * D), ver("b", "Orbit 4.5", (4, 5), first=T0 + 50 * D),
+                         ver("n", "Orbit 4.6", (4, 6), posts=60, said=False, voices=("s1", "s2", "s3"), report=T0 + 60 * D),
+                         ver("g", "Orbit 7", (7,), posts=20, said=False)])
+        self.assertEqual(self.names(got), [["Orbit 4", "Orbit 4.5"]])           # never announced by its maker: off
+        old = self.line([ver("o", "Orbit 1", (1,), said=False, voices=("s1", "s2"), report=T0 - 900 * D),
+                         ver("a", "Orbit 4", (4,), first=T0), ver("b", "Orbit 5", (5,), first=T0 + 90 * D)])
+        self.assertEqual(self.names(old), [["Orbit 1", "Orbit 4", "Orbit 5"]])   # older than the maker's first post here
+        silent = self.line([ver("a", "Lumen 2", (2,), said=False, voices=("s1", "s2"), report=T0),
+                            ver("b", "Lumen 3", (3,), said=False, voices=("s1", "s3", "s4"), report=T0 + 40 * D),
+                            ver("c", "Lumen 4", (4,), posts=62, said=False, voices=("s1",), report=T0 + 80 * D)],
+                           family="Lumen")
+        self.assertEqual(self.names(silent), [["Lumen 2", "Lumen 3"]])           # one account's many posts: one voice
+        self.assertEqual((silent[0][1].first, silent[0][1].by, silent[0][1].voices), (T0 + 40 * D, "voices", 3))
+
+    def test_a_series_or_a_phrase_is_no_version(self):
+        got = self.line([ver("a", "Orbit 40", (40,)), ver("s", "Orbit 40 Series", (40,), posts=90, variant="series"),
+                         ver("t", "Orbit 50 Series", (50,), variant="Series"), ver("b", "Orbit 50", (50,), first=T0 + D),
+                         ver("p", "Orbit 50 in Copilot", (50,), posts=99, variant="in copilot", first=T0 - D)])
+        self.assertEqual(self.names(got), [["Orbit 40", "Orbit 50"]])
+        self.assertEqual([v.id for s in got[0] for v in s.versions], ["a", "b"])
+        self.assertEqual(TL.name_shape("Orbit 4 vs Lumen 2", "vs lumen 2"), "phrase")
+        self.assertEqual(TL.name_shape("Orbit 4 Pro Max", "pro max"), "version")
+
+    def test_product_lines_a_code_name_and_the_tier_grid(self):
+        got = self.line([ver("k2", "Kite 2", (2,)), ver("k3", "Kite 3", (3,), first=T0 + 100 * D),
+                         ver("c2", "Kite Coder 2", (2,), variant="Coder", first=T0 + 20 * D),
+                         ver("c3", "Kite Coder 3", (3,), variant="Coder", first=T0 + 120 * D),
+                         ver("p3", "Kite 3 Preview", (3,), variant="Preview", posts=3, first=T0 + 90 * D),
+                         ver("s3", "Kite 3 Sierra", (3,), variant="Sierra", posts=2, first=T0 + 95 * D)], family="Kite")
+        self.assertEqual(self.names(got), [["Kite 2", "Kite 3"], ["Kite Coder 2", "Kite Coder 3"]])
+        self.assertEqual(sorted(v.id for v in got[0][1].versions), ["k3", "p3", "s3"])   # a stage, a code name: 3's
+        self.assertEqual([ln[0].word for ln in got], ["", "coder"])
+        tiers = self.line([ver(f"{t}{n}", f"Orbit {t.title()} {n}", tuple(int(x) for x in n.split(".")), variant=t,
+                               first=T0 + (10 * k + j) * D)
+                           for k, n in enumerate(["3", "4", "4.5"]) for j, t in enumerate(["opus", "sonnet"])]
+                          + [ver("h45", "Orbit Haiku 4.5", (4, 5), variant="haiku", first=T0 + 22 * D)])
+        g = TL.grid(tiers)
+        self.assertEqual(g["tiers"], ["opus", "sonnet"])                        # haiku: one stop, no line
+        self.assertEqual([(r["generation"], sorted(r["cells"])) for r in g["rows"]],
+                         [("3", ["opus", "sonnet"]), ("4", ["opus", "sonnet"]), ("4.5", ["opus", "sonnet"])])
+        self.assertIsNone(TL.grid(got))                                          # one product line: no grid
 
     def test_a_letter_starts_its_own_line_and_a_number_written_without_it_joins_it(self):
-        got = self.line([ver("k2", "Kite K2", ("k", 2)), ver("k25", "Kite K2.5", ("k", 2, 5)),
-                         ver("k3", "Kite K3", ("k", 3)), ver("x3", "Kite 3", (3,), posts=2),
-                         ver("s4", "Kite S4", ("s", 4)), ver("s5", "Kite S5", ("s", 5))], family="Kite")
+        got = self.line([ver("k2", "Kite K2", ("k", 2)), ver("k25", "Kite K2.5", ("k", 2, 5), first=T0 + D),
+                         ver("k3", "Kite K3", ("k", 3), first=T0 + 2 * D), ver("x3", "Kite 3", (3,), posts=2, first=T0 + 2 * D),
+                         ver("s4", "Kite S4", ("s", 4)), ver("s5", "Kite S5", ("s", 5), first=T0 + D)], family="Kite")
         self.assertEqual(self.names(got), [["Kite K2", "Kite K2.5", "Kite K3"], ["Kite S4", "Kite S5"]])
         self.assertEqual([v.id for v in got[0][2].versions], ["k3", "x3"])      # "Kite 3" is K3 (no other line has 3)
         both = self.line([ver("k3", "Kite K3", ("k", 3)), ver("s3", "Kite S3", ("s", 3)), ver("x3", "Kite 3", (3,)),
-                          ver("x4", "Kite 4", (4,)), ver("k4", "Kite K4", ("k", 4))], family="Kite")
+                          ver("x4", "Kite 4", (4,), first=T0 + D), ver("k4", "Kite K4", ("k", 4), first=T0 + D)], family="Kite")
         self.assertEqual(self.names(both), [["Kite K3", "Kite K4"]])   # 4 is only K's; 3 is K's and S's: left alone
         self.assertEqual([v.id for v in both[0][1].versions], ["k4", "x4"])
-        lost = self.line([ver("k2", "Kite K2", ("k", 2)), ver("k26", "Kite K2.6", (2, 6)), ver("k27", "Kite K2.7", (2, 7)),
-                          ver("k3", "Kite K3", ("k", 3)), ver("v2", "Kite V2.5", (2, 5)), ver("v3", "Kite V3", (3,)),
-                          ver("v4", "Kite V4", (4,))], family="Kite")
-        self.assertEqual(self.names(lost), [["Kite K2", "Kite K2.6", "Kite K2.7", "Kite K3"],
-                                            ["Kite V2.5", "Kite V3", "Kite V4"]])
-        own = self.line([ver("r1", "Kite R1", ("r", 1)), ver("r2", "Kite R2", ("r", 2)), ver("v2", "Kite V2", (2,)),
-                         ver("v3", "Kite V3", (3,)), ver("v4", "Kite V4", (4,))], family="Kite")
+        own = self.line([ver("r1", "Kite R1", ("r", 1)), ver("r2", "Kite R2", ("r", 2), first=T0 + D),
+                         ver("v2", "Kite V2", (2,)), ver("v3", "Kite V3", (3,), first=T0 + D),
+                         ver("v4", "Kite V4", (4,), first=T0 + 2 * D)], family="Kite")
         self.assertEqual(self.names(own), [["Kite V2", "Kite V3", "Kite V4"], ["Kite R1", "Kite R2"]])   # a line of its own
 
     def test_another_makers_version_is_off_the_line(self):
-        got = self.line([ver("a", "Orbit 4", (4,), maker="Vantor"), ver("b", "Orbit 5", (5,), maker="Vantor"),
-                         ver("y", "Zentra Orbit 5", (5,), maker="Zentra", posts=5), ver("c", "Orbit 6", (6,))],
+        got = self.line([ver("a", "Orbit 4", (4,), maker="Vantor"), ver("b", "Orbit 5", (5,), maker="Vantor", first=T0 + D),
+                         ver("y", "Zentra Orbit 5", (5,), maker="Zentra", posts=5), ver("c", "Orbit 6", (6,), first=T0 + 2 * D)],
                         maker="Wrongco")                       # the family's own field was wrong: its posts decide
         self.assertEqual(self.names(got), [["Orbit 4", "Orbit 5", "Orbit 6"]])
         self.assertEqual([v.id for v in got[0][1].versions], ["b"])
 
-    def test_a_version_few_posts_name_or_none_is_about_is_off(self):
-        got = self.line([ver("a", "Orbit 2", (2,)), ver("b", "Orbit 3", (3,)), ver("z", "Orbit 81", (81,), posts=3, about=1),
-                         ver("y", "Orbit 9", (9,), posts=5, about=0)])
+    def test_a_version_none_is_about_is_off(self):
+        got = self.line([ver("a", "Orbit 2", (2,)), ver("b", "Orbit 3", (3,), first=T0 + D),
+                         ver("y", "Orbit 9", (9,), posts=5, about=0, first=T0 + 2 * D)])
         self.assertEqual(self.names(got), [["Orbit 2", "Orbit 3"]])
 
     def test_a_build_number_or_a_dot_left_out_is_not_a_new_version(self):
-        got = self.line([ver("a", "Orbit 4", (4,)), ver("b", "Orbit 4.6", (4, 6)), ver("c", "Orbit 46", (46,), posts=2),
-                         ver("d", "Orbit 2512", (2512,), posts=8), ver("e", "Orbit 5", (5,))])
+        got = self.line([ver("a", "Orbit 4", (4,)), ver("b", "Orbit 4.6", (4, 6), first=T0 + D),
+                         ver("c", "Orbit 46", (46,), posts=2, first=T0 + D),
+                         ver("d", "Orbit 2512", (2512,), posts=8), ver("e", "Orbit 5", (5,), first=T0 + 2 * D)])
         self.assertEqual(self.names(got), [["Orbit 4", "Orbit 4.6", "Orbit 5"]])
         self.assertEqual([v.id for v in got[0][1].versions], ["b", "c"])          # 46 is 4.6 written without its dot
-        eleven = self.line([ver("a", "Orbit 1.1", (1, 1), posts=4), ver("b", "Orbit 3", (3,)), ver("c", "Orbit 11", (11,), posts=40)])
+        eleven = self.line([ver("a", "Orbit 1.1", (1, 1), posts=4), ver("b", "Orbit 3", (3,), first=T0 + D),
+                            ver("c", "Orbit 11", (11,), posts=40, first=T0 + 2 * D)])
         self.assertEqual(self.names(eleven), [["Orbit 1.1", "Orbit 3", "Orbit 11"]])   # 11 is the better named: its own
-        dated = self.line([ver("a", "Orbit 2407", (2407,)), ver("b", "Orbit 2512", (2512,))])
+        dated = self.line([ver("a", "Orbit 2407", (2407,)), ver("b", "Orbit 2512", (2512,), first=T0 + D)])
         self.assertEqual(self.names(dated), [["Orbit 2407", "Orbit 2512"]])      # one numbering: a line still
 
     def test_no_line_for_a_one_letter_family_or_one_stop(self):
@@ -691,6 +768,24 @@ class ThingLinks(_Db):
         self.assertEqual(len(closed), 1)
         self.assertIsNotNone(closed[0][6])
 
+    @mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
+    def test_a_relation_never_crosses_two_makers_namesakes(self):
+        """0230: "Orbit" the exchange (an org in its post) is linked to Vantor's model Orbit by its name: the post's
+        "Orbit released Orbit dollar" is not the model's (its maker is Vantor, the post's Orbit its own maker)."""
+        model = self.post_at(0, T0 - 10 * D, "Vantor ships Orbit")
+        self.mentions(model, ("Orbit", "model", "subject", "Vantor"), ("Vantor", "org", "actor"))
+        self.state(model, [{"a": "Vantor", "rel": "released", "b": "Orbit"}])
+        self.stage()                                                             # the model first: the name is its
+        coin = self.post_at(1, T0 - 5 * D, "The Orbit exchange launches the Orbit dollar")
+        self.mentions(coin, ("Orbit", "org", "actor", None, None, "Orbit exchange"),
+                      ("Orbit dollar", "product", "subject", "Orbit"))
+        self.state(coin, [{"a": "Orbit", "rel": "released", "b": "Orbit dollar"}])
+        self.stage()
+        self.graph()
+        self.assertEqual(self.entity_of(coin), self.entity_of(model))          # one entity by the name (identity's)
+        got = {(a, b, rel) for a, b, rel, *_ in self.edges()}
+        self.assertEqual(got, {(self.entity_of(model, 1), self.entity_of(model), "released")})
+
 
 class DerivedRelations(unittest.TestCase):
     """0224 (no database): the relations ent-v5's own fields say (graph.derived), no relation asked."""
@@ -726,6 +821,21 @@ class DerivedRelations(unittest.TestCase):
               self.m("Sabi 2", "model", "subject", span="Sabi-2")]                                    # the same name: once
         self.assertEqual(graph.derived(ms, on=("based_on",)), [(0, "based_on", 1)])
         self.assertEqual(graph.derived(ms), [(0, "based_on", 1)])                # Orbit 3 is not the subject
+        apart = [dict(ms[0], call="w1"), dict(ms[1], call="w2")]
+        self.assertEqual(graph.derived(apart, on=("based_on",)), [])            # 0234: never across two windows
+
+    def test_the_based_on_question_and_its_verdict(self):
+        from insight_core.markx import graph
+        window = "Platform: site | Source: Lab\nTitle: Sabi 2\nText: " + "x" * 5000 + " Sabi-2 is a fine-tune of Orbit 3. " + "y" * 5000
+        q = graph.derive_question(self.m("Sabi 2", "model", "subject", span="Sabi-2"),
+                                  self.m("Orbit 3", "model", "predecessor"), window)
+        self.assertTrue(q.startswith('A: "Sabi 2" (model)\nB: "Orbit 3" (model)\nPOST:\n'))  # its span keys as its name
+        self.assertIn("Sabi-2 is a fine-tune of Orbit 3.", q)
+        self.assertLess(len(q), graph.DERIVE_CHARS + 400)                     # the window cut around both names
+        said = lambda *rels: [(f"c{k}", {"relation": r}) for k, r in enumerate(rels)]
+        self.assertIsNone(graph.derive_verdict(said("derived"), runs=2))
+        self.assertEqual(graph.derive_verdict(said("derived", "derived"), runs=2)["relation"], "derived")
+        self.assertEqual(graph.derive_verdict(said("derived", "replaces"), runs=2)["relation"], "unknown")
 
 
 @base.requires_test_db
@@ -745,6 +855,7 @@ class DerivedLinks(_Db):
         from insight_core.markx import graph
         bands = json.loads(json.dumps(I.bands()))
         bands["relations"]["derived"] = {r: True for r in derived}
+        bands["relations"]["derive"] = {"ask": True, "runs": 1}   # 0234: one answer settles a pair here
         run = repo.start_run(self.cur, code_version="test", config={})
         with mock.patch.object(I, "bands", return_value=bands):
             return graph.stage(self.cur, now=now, run_id=run, budget=None)
@@ -769,9 +880,41 @@ class DerivedLinks(_Db):
         self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # switched on: the backfill reads them
         self.assertEqual(self.edges()[(vantor, orbit, "released")]["posts"], [launch])
         self.graph(derived=("released", "based_on"), now=T0 + 4 * D)
+        self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # 0234: based_on waits for its check
+        self.check_based_on(tune, sabi, orbit, vantor)
+
+    def check_based_on(self, tune, sabi, orbit, vantor):
+        """0234: the (subject, predecessor) pair asked once (kind derive); `replaces` makes no edge, `derived` does."""
+        from insight_core.markx import graph
+        bands = json.loads(json.dumps(I.bands()))
+        bands["relations"]["derive"] = {"ask": True, "runs": 1}
+        with mock.patch.object(I, "bands", return_value=bands):
+            self.assertEqual(graph.plan_derive(self.cur, now=T0 + 4 * D)["asked"], 1)
+            self.assertEqual(graph.plan_derive(self.cur, now=T0 + 4 * D)["asked"], 0)   # asked once a pair
+        self.cur.execute("SELECT a::text, b::text, input FROM mx_tasks WHERE kind = 'derive'")
+        (a, b, text), = self.cur.fetchall()
+        self.assertEqual((a, b), (sabi, orbit))
+        self.assertIn('A: "Sabi 2" (model)', text)
+        self.assertIn('B: "Orbit 3" (model)', text)
+        tid, = self.answer_task("derive", {"reason": "It only follows Orbit 3.", "relation": "replaces"}, a=sabi)
+        self.graph(derived=("released", "based_on"), now=T0 + 5 * D)
+        self.assertNotIn((sabi, orbit, "based_on"), self.edges())
+        self.cur.execute("UPDATE mx_calls SET answer = %s::jsonb WHERE task_id = %s",
+                         (json.dumps({"reason": "A fine-tune of Orbit 3.", "relation": "derived"}), tid))
+        self.cur.execute("UPDATE mx_tasks SET answered_at = %s WHERE id = %s", (T0 + 5 * D + H, tid))   # since the last run
+        self.graph(derived=("released", "based_on"), now=T0 + 6 * D)
         got = self.edges()
         self.assertEqual(set(got), {(vantor, orbit, "released"), (sabi, orbit, "based_on")})
         self.assertEqual(got[(sabi, orbit, "based_on")]["posts"], [tune])
+
+    def test_a_predecessor_in_another_window_is_no_candidate(self):
+        from insight_core.markx import graph
+        long = self.post_at(1, T0 - 2 * D, "This week in models")
+        self.v5_mentions(long, ("Sabi 2", "model", "subject"))
+        self.v5_mentions(long, ("Orbit 3", "model", "predecessor", "Vantor"))   # another window: another call
+        self.stage()
+        cands, _ = graph.derive_candidates(self.cur, since=None, limit=10)
+        self.assertEqual(cands, [])
 
     def test_a_new_answer_is_read_by_the_next_run(self):
         self.stage()

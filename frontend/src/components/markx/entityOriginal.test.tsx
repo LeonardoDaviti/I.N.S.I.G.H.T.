@@ -48,6 +48,18 @@ describe('the entity page (issue 0138)', () => {
     expect(within(section).getByText(/not collected yet/)).toBeInTheDocument();
   });
 
+  it('lists the pages its posts cite apart, never as its original (0229)', async () => {
+    open({ ...base, original: null, addresses: [],
+      cited: [{ kind: 'paper', url: 'https://arxiv.org/abs/2611.05555', rule: 'identifier' },
+        { kind: 'release', url: 'https://dashboards.example/d/1', rule: 'title' }] });
+    const section = await screen.findByRole('region', { name: 'Original' });
+    expect(within(section).getByText('No original page found yet.')).toBeInTheDocument();
+    const cited = within(section).getByLabelText('Cited');
+    expect(within(cited).getByRole('link', { name: 'https://arxiv.org/abs/2611.05555' })).toBeInTheDocument();
+    expect(within(cited).getByText(/paper, found by its identifier/)).toBeInTheDocument();
+    expect(within(cited).getByText(/release page, found by its title/)).toBeInTheDocument();
+  });
+
   it('an entity only an earlier guide named lists those posts and what each names now', async () => {
     open({ ...base, posts: 0, voices: 0, loose: [], current: false, original: null, addresses: [],
       older: [{ id: 'p9', title: 'A post about a saga', source: 'Channel B', at: now, url: null, guide: 'ent-v3', span: 'Kestrel Gadget',

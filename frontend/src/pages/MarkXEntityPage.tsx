@@ -94,10 +94,13 @@ const RULES: Record<string, string> = {
 };
 const KINDS: Record<string, string> = { paper: 'paper', release: 'release page', code: 'code', demo: 'demo', package: 'package' };
 
-/** 0138: the entity's original first: the stored post when INSIGHT has it, else the page with how it was found. */
+/**
+ * 0138: the entity's original first: the stored post when INSIGHT has it, else the page with how it was found.
+ * 0229: then, apart, the papers and pages its posts cite (never its original).
+ */
 export function Original({ d }: { d: EntityPageData }) {
   const o = d.original;
-  if (!o && !d.addresses?.length) return null;
+  if (!o && !d.addresses?.length && !d.cited?.length) return null;
   return (
     <section aria-label="Original">
       <h2 className={H2}>Original</h2>
@@ -116,6 +119,20 @@ export function Original({ d }: { d: EntityPageData }) {
         <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem]">
           {d.addresses.map((a) => <li key={a.url}><ExternalLink href={a.url}>{KINDS[a.kind] ?? a.kind}</ExternalLink></li>)}
         </ul>
+      ) : null}
+      {!o ? <p className="mt-2 text-[0.8125rem] text-fg-3">No original page found yet.</p> : null}
+      {d.cited?.length ? (
+        <div aria-label="Cited">
+          <h3 className="mt-3 text-[0.8125rem] font-medium text-fg-2">Cited · what its posts cite, not its own page</h3>
+          <ul className="mt-1 space-y-1 text-[0.8125rem] text-fg-2">
+            {d.cited.map((c) => (
+              <li key={c.url}>
+                <ExternalLink href={c.url}>{c.url}</ExternalLink>
+                <span className="text-fg-3">{` · ${KINDS[c.kind] ?? c.kind}, found ${RULES[c.rule] ?? c.rule}`}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </section>
   );

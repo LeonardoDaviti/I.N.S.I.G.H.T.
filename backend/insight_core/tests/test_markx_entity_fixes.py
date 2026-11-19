@@ -20,6 +20,11 @@ def v(family, version, variant=None):
     return {"family": family, "version": version, "variant": variant, "size": None, "build": None}
 
 
+def base_on():
+    """0230's switches on (entity_bands.json `families`: off until measured)."""
+    return mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
+
+
 class Guards(unittest.TestCase):
     """No database: the org-family guard, the family_version rule, the shown name's choice."""
     ent, book, same = base.Rules.ent, base.Rules.book, base.Rules.same
@@ -368,7 +373,7 @@ class Fixes(base._Db):
         """v10.24 (0221): the repairs run with what the stage's budget has left; a step starts only when the seconds
         it took the last time are left, and the next run begins at the first step this one could not start."""
         z, vela, zv, v5 = self._org_and_family()
-        took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0}
+        took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0}
         clock = Tick()
         with mock.patch.object(R, "time", clock):
             first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 6.5,
@@ -379,7 +384,7 @@ class Fixes(base._Db):
         self.assertEqual(set(first["took"]), set(R.STEPS))                       # the steps not run keep their seconds
         second = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=first)
         self.assertEqual((second["done"], second["next"]), (True, None))
-        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families"})   # resumed where the first stopped
+        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families", "family_home"})   # resumed where the first stopped
         third = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=second)
         self.assertEqual(set(third) & set(R.STEPS), set(R.STEPS))                # done: a new round from the first
         self.assertEqual(third["product_accounts"]["merged"], 0)                 # idempotent
@@ -397,6 +402,113 @@ class Fixes(base._Db):
             "shown": {"done": False, "after": "x", "steps": 3, "seconds": 6.0},
             "invariants": {"family_org": {"count": 0}, "seconds": 0.5}}})
         self.assertEqual(entity_stage.after_pass(self.cur), (4.0, 2.0, 0.5))
+
+    # ---- 0230: a family is its maker's, and its stem ------------------------------------------------------------
+
+    def _orbit(self):
+        """Vantor's family Orbit (three versions and a variant, Orbit Argon) as linked before 0230."""
+        ps = [self.post(n % 5, T0 + n * H) for n in range(4)]
+        for p, (name, f) in zip(ps, [("Orbit 3", v("Orbit", "3")), ("Orbit 4", v("Orbit", "4")),
+                                     ("Orbit 5", v("Orbit", "5")), ("Orbit Argon", v("Orbit", None, "Argon"))]):
+            self.mentions(p, (name, "model", "subject", "Vantor", f))
+        self.linked()
+        return {x: self.ent_named(x) for x in ("Orbit 3", "Orbit 4", "Orbit 5", "Orbit Argon")}
+
+    def edges(self):
+        self.cur.execute("""SELECT a::text, b::text, relation FROM mx_connections WHERE a_kind = 'entity'
+                             AND rule = %s AND valid_to IS NULL""", (I.FAMILY_RULE,))
+        return set(self.cur.fetchall())
+
+    @base_on()
+    def test_0230_another_makers_thing_is_based_on_the_family_never_its_member(self):
+        got = self._orbit()
+        fam = self.book().ents[got["Orbit 3"]].parent
+        p = self.post(0, T0 + 9 * H)
+        self.mentions(p, ("Orbit 4 Abliterated GGUF", "model", "subject", "Kestrel", v("Orbit", "4", "Abliterated GGUF")),
+                      ("Orbit 6", "model", "mention", "Vantor AI", v("Orbit", "6")))
+        self.linked(since=self.since)
+        book = self.book()
+        tune, six = self.entity_of(p), self.entity_of(p, 1)
+        self.assertEqual(book.ents[six].parent, fam)                            # its maker's ("Vantor AI" is Vantor)
+        e = book.ents[tune]
+        self.assertEqual((e.level, book.ents[e.parent].name), ("thing", "Kestrel"))   # a thing of its own maker
+        self.assertEqual(self.edges(), {(tune, fam, "based_on")})
+        page = entity_views.entity_page(self.cur, tune, now=T0 + 2 * D)
+        self.assertEqual([(r["relation"], r["direction"], r["other"]["id"]) for r in page["relations"]],
+                         [("based_on", "out", fam)])
+
+    def test_0230_off_by_default_nothing_changes(self):
+        got = self._orbit()
+        fam = self.book().ents[got["Orbit 3"]].parent
+        p = self.post(0, T0 + 9 * H)
+        self.mentions(p, ("Orbit 4 Abliterated GGUF", "model", "subject", "Kestrel", v("Orbit", "4", "Abliterated GGUF")))
+        self.linked(since=self.since)
+        self.assertEqual(self.book().ents[self.entity_of(p)].parent, fam)       # a member, as before 0230
+        self.assertEqual(self.edges(), set())
+        self.assertTrue(self.stage(since=self.since)["repair"]["family_home"]["off"])
+
+    @base_on()
+    def test_0230_a_family_with_too_few_stated_makers_keeps_its_members(self):
+        a, b = self.post(0, T0), self.post(1, T0 + H)
+        self.mentions(a, ("Lumo 2", "model", "subject", "Vantor", v("Lumo", "2")))
+        self.mentions(b, ("Lumo 3", "model", "subject", "Kestrel", v("Lumo", "3")))
+        self.linked()
+        book = self.book()
+        self.assertEqual(book.ents[self.entity_of(b)].parent, book.ents[self.entity_of(a)].parent)
+        self.assertEqual(self.edges(), set())
+
+    @base_on()
+    def test_0230_a_members_name_is_never_a_family(self):
+        got = self._orbit()
+        fam = self.book().ents[got["Orbit 3"]].parent
+        p = self.post(0, T0 + 9 * H)
+        self.mentions(p, ("Orbit Argon 2", "model", "subject", "Vantor", v("Orbit Argon", "2")))
+        self.linked(since=self.since)
+        book = self.book()
+        self.assertEqual(book.ents[self.entity_of(p)].parent, fam)              # the stem, not the variant Orbit Argon
+
+    @base_on()
+    def test_0230_the_repair_rehomes_what_was_linked_before(self):
+        got = self._orbit()
+        fam = self.book().ents[got["Orbit 3"]].parent
+        p, q = self.post(0, T0 + 9 * H), self.post(1, T0 + 10 * H)
+        self.mentions(p, ("Orbit Argon 2", "model", "subject", "Vantor", v("Orbit Argon", "2")))
+        self.mentions(q, ("Orbit 5 Uncensored", "model", "subject", "Kestrel", v("Orbit", "5", "Uncensored")))
+        self.linked(since=self.since)
+        a2, tune = self.entity_of(p), self.entity_of(q)
+        # as linked before 0230: under the variant, and under the family
+        self.cur.execute("UPDATE mx_entities SET parent = %s, level = 'version' WHERE id = %s", (got["Orbit Argon"], a2))
+        self.cur.execute("UPDATE mx_entities SET parent = %s, level = 'variant' WHERE id = %s", (fam, tune))
+        self.cur.execute("DELETE FROM mx_connections WHERE rule = %s", (I.FAMILY_RULE,))
+        out = self.stage(since=self.since)
+        self.assertEqual(out["repair"]["family_home"], {"stem": 1, "other_maker": 1, "edges": 1})
+        book = self.book()
+        self.assertEqual(book.ents[a2].parent, fam)
+        self.assertEqual(book.ents[tune].level, "thing")
+        self.assertEqual(self.edges(), {(tune, fam, "based_on")})
+        self.cur.execute("SELECT kind, entity_id::text, old FROM mx_entity_fixes WHERE kind LIKE 'family_%%' ORDER BY kind")
+        self.assertEqual(self.cur.fetchall(), [("family_maker", tune, {"level": "variant", "parent": fam}),
+                                               ("family_stem", a2, got["Orbit Argon"])])
+        self.assertEqual(self.stage(since=self.since)["repair"]["family_home"],
+                         {"stem": 0, "other_maker": 0, "edges": 0})              # idempotent
+
+
+class Namesakes(unittest.TestCase):
+    """0230 (no database): the collision question's sample and when it is asked again."""
+
+    def test_the_sample_shows_the_suspects_and_the_oldest_post_first(self):
+        from datetime import datetime, timezone
+        at = lambda y: datetime(y, 6, 1, tzinfo=timezone.utc)   # noqa: E731
+        ms = [(f"p{k}", "Orbit", "model", mk, at(2024 + k % 3)) for k, mk in enumerate(
+            ["Vantor", "Vantor AI", "Vantor Labs", "Vantor Cloud", "Vantor Inc", "Vantor Research", "Vantor X", "VT"] * 2)]
+        ms += [("old", "Orbit exchange", "org", None, at(2018)), ("odd", "Orbit", "model", "Kestrel", at(2025))]
+        e = I.Ent("e", "model", "Orbit", "orbit", maker="Vantor")
+        pick = I.collide_sample("e", ms, I.suspect_mention(I.Book(), e))
+        self.assertIn("old", [m[0] for m in pick])                       # the oldest, an org: another thing?
+        self.assertIn("odd", [m[0] for m in pick])                       # another maker
+        self.assertLessEqual(len(pick), I.COLLIDE_MENTIONS)
+        self.assertEqual(I.asked_from('NAME "Orbit"\n1. written "Orbit" | type org | maker guess none\n'
+                                      '   [site, 2018-09-11] "A title" … text'), 2018)
 
 
 if __name__ == "__main__":

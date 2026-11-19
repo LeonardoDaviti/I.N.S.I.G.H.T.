@@ -428,10 +428,56 @@ class BothPassesKeepToTheBudget(_Db):
         n = self.names()
         with mock.patch.object(I, "MENTION_CHUNK", 1):
             out = self.run_stage(budget=None)
-        for k in ("seconds", "collide_rate"):   # v10.24: durations
+        for k in ("seconds", "collide_rate", "timing", "reading", "part_seconds", "part_took"):   # durations
             out["incremental"].pop(k)
+        self.assertEqual(out["incremental"].pop("pairs"), n)                 # v10.25: the pairs the parts decided
         self.assertEqual(out["incremental"], {"done": True, "parts": 2 * n, "of": 2 * n, "left": 0})
         self.assertEqual((out["link"]["linked"], out["merged"], self.unlinked()), (2 * n, n, 0))
+
+    def last_part_took(self, seconds):
+        """The last finished run measured a plain linking part at `seconds`."""
+        self.cur.execute("""UPDATE mx_runs SET counts = jsonb_set(counts, '{entities,incremental}', %s::jsonb)
+                             WHERE id = (SELECT id FROM mx_runs WHERE finished_at IS NOT NULL
+                                          ORDER BY finished_at DESC, started_at DESC LIMIT 1)""",
+                         (json.dumps({"done": True, "part_took": seconds, "collide_rate": 0.0}),))
+
+    def backlog_item(self):
+        """An open alias item not decided again by this rule set: the next run's first part decides it (once a run)."""
+        self.cur.execute("SELECT id::text FROM mx_entities ORDER BY id LIMIT 2")
+        a, b = (r[0] for r in self.cur.fetchall())
+        self.cur.execute("INSERT INTO mx_entity_queue (kind, a, b, proposal, reason) VALUES ('alias', %s, %s, 'same', 'test')",
+                         (a, b))
+
+    def test_a_part_is_expected_to_take_a_plain_parts_seconds(self):
+        """v10.25 (0226): the first part also decides the pairs answered since the last run and the open items'
+        backlog (once a run), so its seconds are not what the next part is expected to take: the last plain part's
+        are (this run's, else the last run's `part_took`). v10.24 took the first part's: on the server no second
+        part fitted, and the linking did 1 part of 13 a run."""
+        self.nights_pass_done()
+        self.names()
+        self.stage()                                        # linked, merged
+        self.backlog_item()
+        for k in range(3):                                  # three new mentions: three parts of one
+            self.mentions(self.post(k, T0 + 10 * H + k * H), (f"Vela Atlas {k}", "product", "subject"))
+        with mock.patch.object(I, "MENTION_CHUNK", 1):
+            self.last_part_took(1e6)                        # a plain part takes "forever": only the first part goes
+            self.cur.execute("SAVEPOINT parts")
+            out = self.run_stage(budget=600)
+            self.assertEqual((out["incremental"]["parts"], out["incremental"]["of"]), (1, 3))
+            self.assertEqual(out["incremental"]["part_took"], 1e6)   # none measured: the last run's kept
+            self.assertEqual(out["queue"]["again"], 1)
+            self.cur.execute("ROLLBACK TO SAVEPOINT parts")
+            self.last_part_took(0.0)                        # a plain part takes no time: every part goes
+            out = self.run_stage(budget=600)
+            self.assertEqual((out["incremental"]["parts"], out["incremental"]["done"]), (3, True))
+            self.assertLess(out["incremental"]["part_took"], 60)       # measured on a plain part (the second, third)
+            # no backlog nor answers since: the first part is plain, its own seconds are the measure
+            for k in range(3, 6):
+                self.mentions(self.post(k % 5, T0 + 20 * H + k * H), (f"Vela Atlas {k}", "product", "subject"))
+            self.last_part_took(1e6)
+            out = self.run_stage(budget=600)
+            self.assertEqual(out["queue"]["again"], 0)
+            self.assertEqual((out["incremental"]["parts"], out["incremental"]["done"]), (3, True))
 
     def test_the_relinking_stops_between_pages_and_the_pass_resumes_there(self):
         n = self.names()
@@ -490,6 +536,33 @@ class BothPassesKeepToTheBudget(_Db):
         out = self.run_stage(budget=None)
         self.assertEqual((out["kind"], out["full"]["resumed"], out["full"]["done"]), ("full", True, True))
         self.assertNotIn("check", out)                               # its relinking was done
+
+
+class QueueState(_Db):
+    """v10.25 (0226): the decisions' pairs' alias items read in one go: an item closed or refreshed only where the pair
+    has one open, a new one only where it has none open or answered (was a statement or two a decision)."""
+
+    names = TheStagesOwnBudget.names
+
+    def test_open_answered_and_closed_items(self):
+        self.names()
+        self.stage()
+        self.cur.execute("SELECT id::text FROM mx_entities ORDER BY id LIMIT 5")
+        e = [r[0] for r in self.cur.fetchall()]
+        self.cur.execute("DELETE FROM mx_entity_queue")
+        rows = [(e[0], e[1], None, None), (e[0], e[2], "different", None), (e[0], e[3], None, "now"),
+                (e[1], e[2], None, None)]
+        for a, b, answer, closed in rows:
+            self.cur.execute("""INSERT INTO mx_entity_queue (kind, a, b, proposal, reason, answer, closed_at)
+                                VALUES ('alias', %s, %s, 'same', 'test', %s, %s::timestamptz)""", (a, b, answer, closed))
+        got = I.queue_state(self.cur, [(e[0], e[1]), (e[0], e[2]), (e[0], e[3]), (e[0], e[4]), (e[2], e[1])])
+        self.assertEqual(got, {(e[0], e[1]): True, (e[0], e[2]): False})   # closed, none, the other order: absent
+        self.assertEqual(I.queue_state(self.cur, []), {})
+        self.assertFalse(I.queue_item(self.cur, kind="alias", a=e[0], b=e[2], proposal="same", reason="x", conf=None,
+                                      evidence={}, call_id=None, run_id=None, held=True))
+        self.assertTrue(I.queue_item(self.cur, kind="alias", a=e[0], b=e[4], proposal="same", reason="x", conf=None,
+                                     evidence={}, call_id=None, run_id=None, held=False))
+        self.assertEqual(I.queue_state(self.cur, [(e[0], e[4])]), {(e[0], e[4]): True})
 
 
 class PublishedIndexed(unittest.TestCase):
@@ -618,7 +691,7 @@ class TheRunsBook(_Db):
         self.assertEqual(out["kind"], "incremental")
         for k in ("seconds", "timing"):
             out.pop(k, None)
-        for part, keys in (("repair", ("seconds", "took")), ("incremental", ("seconds", "collide_rate")),
+        for part, keys in (("repair", ("seconds", "took")), ("incremental", ("seconds", "collide_rate", "timing", "reading", "part_seconds", "part_took")),
                            ("shown", ("seconds",))):
             for k in keys:
                 (out.get(part) or {}).pop(k, None)

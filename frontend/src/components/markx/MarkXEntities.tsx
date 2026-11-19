@@ -39,13 +39,17 @@ export function SurgeMark({ surges }: { surges: MarkxSurge[] }) {
 
 /** 0222: the sentences of a post around its mention of the entity, the mentions marked (the search snippet's style:
  *  weight and the full tone, never a fill). */
+/** 0222: the sentences around a post's mention. 0233 (0225 #28): a quote, one step in under the post's line (a left
+ *  rule, the secondary colour), so it never reads as another source's line; the entity's name stays marked. */
 export function MentionContext({ parts }: { parts: NonNullable<MarkxEntityPost['context']> }) {
   return (
-    <p dir="auto" data-context className="mt-0.5 line-clamp-3 whitespace-normal text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
-      {parts.map((part, index) => (part.m
-        ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.t}</mark>
-        : <Fragment key={index}>{part.t}</Fragment>))}
-    </p>
+    <blockquote data-context className="ml-4 mt-0.5 border-l-2 border-line-strong pl-2">
+      <p dir="auto" className="line-clamp-3 whitespace-normal text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+        {parts.map((part, index) => (part.m
+          ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.t}</mark>
+          : <Fragment key={index}>{part.t}</Fragment>))}
+      </p>
+    </blockquote>
   );
 }
 

@@ -1288,6 +1288,26 @@ class TestChain0219(unittest.TestCase):
         self.assertIn("reason", W.rule_error("chain", dict(ok, reason="  "), "THING: x", "chain-v1") or "")
 
 
+class TestDerive0234(unittest.TestCase):
+    """0234: the based_on check (a thing and its predecessor in one post), asked as it was measured (Haiku, effort low,
+    10 a call), after chain; the server's rules accept a reason and a relation of its four, refuse an empty reason."""
+
+    def test_the_derive_kind_is_asked_with_the_measured_settings(self):
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds.index("derive"), kinds.index("chain") + 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["derive"], 10)
+        self.assertEqual(W.effort_arg(W.EFFORT)["derive"], "low")
+
+    def test_the_answer_passes_the_workers_checks(self):
+        rules = W.server_rules()
+        schema = rules.schemas.DERIVE_SCHEMA
+        ok = {"reason": "The post says A is a fine-tune of B.", "relation": "derived", "confidence": 90}
+        self.assertIsNone(W.check_answer(schema, ok))
+        self.assertIsNone(W.rule_error("derive", ok, "A: x", "derive-v1"))
+        self.assertIsNotNone(W.check_answer(schema, dict(ok, relation="based_on")))
+        self.assertIn("reason", W.rule_error("derive", dict(ok, reason="  "), "A: x", "derive-v1") or "")
+
+
 class TestReading0212(unittest.TestCase):
     """0212: ent-v5's kind `reading`, asked with the settings it was measured at (d7), checked by the server's rules."""
     WINDOW = ("Platform: site | Source: Example\nTitle: T\nWindow: 2 of 3 of the post's text (characters 5,801-11,800 "
