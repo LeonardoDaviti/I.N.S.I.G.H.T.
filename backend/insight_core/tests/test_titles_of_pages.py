@@ -118,6 +118,43 @@ class PaperOnePageInStoriesTests(unittest.TestCase):
         self.assertEqual(group([a, b, c]), [])
 
 
+class EvidenceKeptSmallTests(unittest.TestCase):
+    """0231: a linking post is kept as the asked pages' evidence only (page_titles._as_evidence); every title
+    origin_title gives of those pages is the one the whole post gives."""
+    A, B, C = "https://a.example/one-launch", "https://b.example/post", "https://c.example/other"
+
+    def posts(self):
+        roundup = post("r", "s1", links=[(self.A, None), (self.C, None), (f"{self.C}/2", None), (self.A, None)],
+                       texts={self.A: "A launch", self.C: "other"}, quoted_words={self.C: "Quoted other"})
+        share = post("h", "hn", kind="hn", hours=1, title="A launch, shared", words=3, links=[(self.A, None)])
+        share_more = post("h2", "hn2", kind="hn", hours=2, title="Two links", words=3,
+                          links=[(self.B, None), (self.C, None)])
+        share_b = post("h3", "hn3", kind="hn", hours=3, title="B alone", words=3, links=[(self.B, None), (self.B, None)])
+        quoting = post("q", "s2", hours=4, links=[(self.B, None)], texts={self.B: "B post"},
+                       quoted_words={self.B: "The B page's words"})
+        return [roundup, share, share_more, share_b, quoting]
+
+    def test_each_asked_page_is_titled_as_by_the_whole_posts(self):
+        from insight_core.services.page_titles import _as_evidence
+        from insight_core.utils.tree_rules import origin_title
+        whole = self.posts()
+        for wanted in ({self.A}, {self.B}, {self.A, self.B}, {self.A, self.B, self.C}):
+            kept = [_as_evidence(p, wanted) for p in whole]
+            for url in wanted:
+                linking = [p for p in whole if any(t == url for t, _ in p.links)]
+                slim = [p for p in kept if any(t == url for t, _ in p.links)]
+                self.assertEqual([p.id for p in slim], [p.id for p in linking])
+                self.assertEqual(origin_title(url, slim, slug=False), origin_title(url, linking, slug=False), (wanted, url))
+
+    def test_a_roundups_other_links_are_let_go(self):
+        from insight_core.services.page_titles import _as_evidence
+        roundup = self.posts()[0]
+        kept = _as_evidence(roundup, {self.A})
+        self.assertEqual(kept.links, [(self.A, None), (self.A, None), (self.C, None)], "the page's, and one other")
+        self.assertEqual((kept.link_texts, kept.quoted_words), ({self.A: "A launch"}, {}))
+        self.assertIs(_as_evidence(roundup, {self.A, self.C, f"{self.C}/2"}), roundup, "nothing to let go")
+
+
 class WorkTests(unittest.TestCase):
     def test_the_reads_include_origin_and_archive_lines_and_classics(self):
         first = [{"key": "a.example", "articles": [{"url": "https://a.example/1", "title": None}],
@@ -272,6 +309,22 @@ class DiscoverTitleMapTests(unittest.TestCase):
         self.assertEqual({a["url"]: a["title"] for a in s["articles"]}[pages[1]], "Read 0")
         [missing] = [a for a in result["archives"] if a["source_id"] == feed]
         self.assertEqual({o["url"]: o["title"] for o in missing["origin_stories"]}[older[1]], "Read 1")
+
+    def test_the_evidence_read_in_batches_titles_as_read_at_once(self):
+        """0231: the linking posts read a batch at a time (page_titles.LOAD_BATCH) give every page the title one read
+        of them all gives."""
+        from insight_core.services import page_titles
+        m = self.mark
+        voices = self._voices(3)
+        pages = [f"https://batch-{m}.example/2026/launch-{n}" for n in range(3)]
+        self._cite(voices, pages[0], "A launch the voices name")
+        self._cite(voices, pages[1], "Another launch")
+        self._cite(voices, pages[2])
+        sources = SourceFacts(self.cur)
+        whole = page_titles.evidence(self.cur, sources, pages)
+        self.assertEqual(whole[pages[0]], "A launch the voices name")
+        with mock.patch.object(page_titles, "LOAD_BATCH", 1):
+            self.assertEqual(page_titles.evidence(self.cur, sources, pages), whole)
 
     def test_a_read_batch_keeps_the_list_for_the_next_process(self):
         """0080 cold open: the reads change Discover's inputs; the batch keeps the list it changed, so a fresh

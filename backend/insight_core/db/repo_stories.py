@@ -388,10 +388,9 @@ class StoriesRepository:
     # ---- the story job ----------------------------------------------------------------
 
     @staticmethod
-    def load_posts(cur: Cursor, sources: SourceFacts, ids: Optional[Iterable[str]] = None, *,
-                   linking: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
-        """The posts the job groups: every post, or those of `ids`; with `linking`, only those with a
-        kept link to one of these addresses (Discover's articles, issue 0070). Each with its kept links,
+    def load_posts(cur: Cursor, sources: SourceFacts, ids: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+        """The posts the job groups: every post, or those of `ids` (the posts linking a page: `linking_posts`, read
+        in batches for issue 0070's evidence, 0231). Each with its kept links,
         in order, and the stored post each link is, if any. Its parts (issue 0076, post_parts: a post not
         parsed yet is parsed first): the title every page shows, the account a reply answers, the tweet it
         quotes, the words of the pages it quotes, Reddit's poster and its words; those of its HTML only
@@ -408,11 +407,8 @@ class StoriesRepository:
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE {ix_date("p")} IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
-              AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
-                                                         WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
             """,
-            {"html": sources.html_sources(), "ids": None if ids is None else list(ids),
-             "linking": None if linking is None else list(linking), "moved": MOVED_KEY},
+            {"html": sources.html_sources(), "ids": None if ids is None else list(ids), "moved": MOVED_KEY},
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
@@ -437,6 +433,14 @@ class StoriesRepository:
             if text:
                 by_id[str(post_id)]["link_texts"][target] = text
         return posts
+
+    @staticmethod
+    def linking_posts(cur: Cursor, urls: Sequence[str]) -> List[str]:
+        """The posts with a kept link to one of these addresses (Discover's articles, issue 0070), by id: their
+        evidence is read in batches (services/page_titles.evidence, 0231)."""
+        cur.execute("SELECT DISTINCT post_id::text FROM post_links WHERE NOT boilerplate AND target_url = ANY(%s) "
+                    "ORDER BY 1", (list(urls),))
+        return [r[0] for r in cur.fetchall()]
 
     @staticmethod
     def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Optional[Sequence[str]] = None,

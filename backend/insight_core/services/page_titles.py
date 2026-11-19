@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any, Dict, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.db.repo_discover import DiscoverRepository
@@ -22,6 +23,8 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.utils.addresses import host_of, is_tweet, publication_of
 from insight_core.utils.story_rules import StoryPost, one_page
 from insight_core.utils.tree_rules import origin_title
+
+LOAD_BATCH = 2000   # linking posts read at a time (`evidence`)
 
 
 def evidence(cur: Any, sources: SourceFacts, urls: Sequence[str], *,
@@ -36,23 +39,45 @@ def evidence(cur: Any, sources: SourceFacts, urls: Sequence[str], *,
     every = sorted(wanted | {alias for alias, named in aliases.items() if named in wanted})
     if not every:
         return {}
+    # v10.25 (0231): the linking posts read LOAD_BATCH at a time, each kept only as these pages' evidence
+    # (`_as_evidence`). Was: every linking post whole at once, with every link it holds (Discover's 13.5k articles on the server-shaped
+    # copy: 17.9k posts holding 359k links), the job's peak (Discover 553-561 MB on the server).
     linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
-    rows = StoriesRepository.load_posts(cur, sources, linking=every)
-    # In time order, as a story's are (issue 0071: link words written two ways as often are a tie the
-    # first one wins, and the database returns rows in any order).
-    for row in sorted(rows, key=lambda row: (row["t"], row["id"])):
-        post = one_page(StoriesService._story_post(row, sources), aliases)
-        for target, _ in post.links:
-            linking[target][post.id] = post
+    ids = StoriesRepository.linking_posts(cur, every)
+    for start in range(0, len(ids), LOAD_BATCH):
+        for row in StoriesRepository.load_posts(cur, sources, ids[start:start + LOAD_BATCH]):
+            post = _as_evidence(one_page(StoriesService._story_post(row, sources), aliases), wanted)
+            for target, _ in post.links:
+                if target in wanted:
+                    linking[target][post.id] = post
     stored = DiscoverRepository.stored_titles(cur, urls)
 
     def title(url: str) -> Optional[str]:
-        posts = list(linking[url].values())
+        # In time order, as a story's are (issue 0071: link words written two ways as often are a tie the
+        # first one wins, and the database returns rows in any order).
+        posts = sorted(linking[url].values(), key=lambda p: (p.t, p.id))
         if is_tweet(url):
             posts = [p for p in posts if p.quoted_words.get(url)]
         return stored.get(url) or origin_title(url, posts, slug=False)
 
     return {url: title(url) for url in urls}
+
+
+def _as_evidence(post: StoryPost, wanted: Set[str]) -> StoryPost:
+    """A linking post as tree_rules.origin_title reads it for the `wanted` pages, nothing else held (0231): its links,
+    link words and quoted words of those pages; of its other links only the first, so that "this link alone" (a share's
+    title, origin_title 4) is what it is of the whole post. A roundup's hundred other links are let go."""
+    links, other = [], None
+    for target, stored_post in post.links:
+        if target in wanted:
+            links.append((target, stored_post))
+        elif other is None:
+            other = (target, stored_post)
+    if other is None and len(links) == len(post.links):
+        return post
+    return replace(post, links=links + ([other] if other else []),
+                   link_texts={t: w for t, w in post.link_texts.items() if t in wanted},
+                   quoted_words={t: w for t, w in post.quoted_words.items() if t in wanted})
 
 
 def shared_titles(reads: Mapping[str, Any]) -> Set[Tuple[str, str]]:

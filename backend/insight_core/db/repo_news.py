@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
 
@@ -45,9 +45,12 @@ class NewsRepository:
     # ---- the job: names ---------------------------------------------------------------
 
     @staticmethod
-    def load_titles(cur: Cursor, since: Optional[datetime]) -> List[Dict[str, Any]]:
+    def load_titles(cur: Cursor, since: Optional[datetime]) -> Iterator[Dict[str, Any]]:
         """The titles the name rule reads: every titled post posted since `since` (every one when None), each
-        as every page shows it, or its opening when its stored title said more (post_parts, issue 0076)."""
+        as every page shows it, or its opening when its stored title said more (post_parts, issue 0076).
+        v10.25 (0231): one row at a time off the cursor, for the caller to keep what it needs (NewsService._titled:
+        a rule change's names step held every post's tuple, its dict and its StoryPost at once: 100 -> 314 MB on the
+        server-shaped copy's 148k posts); read it before the cursor runs another query."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
@@ -56,7 +59,7 @@ class NewsRepository:
             """,
             {"since": since},
         )
-        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
+        return ({"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur)
 
     @staticmethod
     def followed_since(cur: Cursor) -> Dict[str, datetime]:
