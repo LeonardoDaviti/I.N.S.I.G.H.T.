@@ -18,7 +18,8 @@ page per archive page so the host gate spaces them.
 
 An article page is read with the full-text reader (extract_article_html). Its date is the
 page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>, a
-paper's scholarly meta date: citation_publication_date and the like, its one written date), else
+paper's scholarly meta date: citation_publication_date and the like, its address's day, its byline or one written
+date unless its address contradicts it: page_dating, issue 0228), else
 the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
 publication's. A page with no article body, or with neither a date nor og:type article (a
 category page), is not a post. A live fetch remembers the pages it skipped for the process's
@@ -536,11 +537,28 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
 FUTURE_SLACK = timedelta(days=1)   # v10.13.7: a page date past now + this is no post's date (an event, a sponsor)
 
 
+# How page_dating dated a page (v10.25, issue 0228), in the order of trust: the page's own markup, its address's day,
+# a date read from its body; HELD a body date that the address (or the web's age) contradicts: no date, not a guess.
+DATED_BY_PAGE, DATED_BY_ADDRESS, DATED_BY_BODY, DATE_HELD = "page", "address", "body", "held"
+# No page was published before the first web page (1991-08-06): a body date before it is one the text names.
+WEB_BEGAN = datetime(1991, 8, 6, tzinfo=timezone.utc)
+
+
 def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
-    """The page's own publication date: meta article:published_time, JSON-LD datePublished,
-    meta date, then a <time datetime>, then a paper's scholarly meta date (SCHOLARLY_DATES, the
-    first publication first), then a date written on the page; the <time> and the written date
-    only when the page has one (a tag or category page lists many)."""
+    """The page's own publication date (page_dating's), or None."""
+    return page_dating(page, url)[0]
+
+
+def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime], Optional[str]]:
+    """(the page's publication date, how it was read: DATED_BY_*), or (None, DATE_HELD | None). In the order of trust:
+      1. the page's markup: meta article:published_time, JSON-LD datePublished, meta date, its one <time datetime>,
+         then a paper's scholarly meta date (SCHOLARLY_DATES, the first publication first);
+      2. the day its address names (/2026/10/21/, /2008/Jul/7/: v10.13.7);
+      3. only then its body: the byline under its title (v10.15), else its one written date. A body date is the
+         weakest: an article quotes dates ("subscribers on May 31, 2020"), so it is held (v10.25, issue 0228) when
+         its address names a month it is not in, or when it is before the web began (WEB_BEGAN).
+    The <time> and the written date count only when the page has one (a tag or category page lists many); no date
+    more than FUTURE_SLACK ahead is taken."""
     json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
     one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
@@ -548,20 +566,24 @@ def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
     latest = datetime.now(timezone.utc) + FUTURE_SLACK
     for value in values:
         if value and (date := parsing.parse_datetime_value(value.strip())) is not None and date <= latest:
-            return date
+            return date, DATED_BY_PAGE
     for name in SCHOLARLY_DATES:
         if (date := scholarly_date(parsing.meta_content(page, name))) is not None and date <= latest:
-            return date
-    if url:   # v10.13.7: the day the address names (/2008/Jul/7/) before a date written somewhere on the page
-        from insight_core.utils.originals_rules import address_day
-        if (date := address_day(url)) is not None and date <= latest:
-            return date
+            return date, DATED_BY_PAGE
+    from insight_core.utils.originals_rules import address_day, address_month
+    if url and (date := address_day(url)) is not None and date <= latest:
+        return date, DATED_BY_ADDRESS
     visible = SCRIPT_STYLE_RE.sub(" ", page)
-    if (date := byline_date(visible)) is not None and date <= latest:
-        return date
-    written = set(TEXT_DATE_RE.findall(parsing.strip_html(visible)))
-    date = _written_date(written.pop()) if len(written) == 1 else None
-    return date if date is not None and date <= latest else None
+    date = byline_date(visible)
+    if date is None:
+        written = set(TEXT_DATE_RE.findall(parsing.strip_html(visible)))
+        date = _written_date(written.pop()) if len(written) == 1 else None
+    if date is None or date > latest:
+        return None, None
+    month = address_month(url) if url else None
+    if date < WEB_BEGAN or (month is not None and (date.year, date.month) != (month.year, month.month)):
+        return None, DATE_HELD
+    return date, DATED_BY_BODY
 
 
 BYLINE_CHARS = 80   # v10.15 item 5: how near its one <h1> a page's byline date is written
@@ -927,5 +949,5 @@ class PageWatchKind(BaseSourceAdapter):
 
 __all__ = ["Discovery", "PageWatchKind", "action_page", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
-           "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_title", "preview",
+           "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
            "read_page_post", "section_prefix", "sitemap_entries"]
