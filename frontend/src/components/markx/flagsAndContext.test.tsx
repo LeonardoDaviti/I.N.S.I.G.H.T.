@@ -74,6 +74,11 @@ describe('a post shows its mention in context (issue 0222)', () => {
     const mark = within(context as HTMLElement).getByText('Kestrel Coder');
     expect(mark.tagName).toBe('MARK');
     expect(screen.getByRole('link', { name: 'Weekly notes' })).toBeInTheDocument();
+    // 0233 (0225 #28): a quote one step in under the post's line, never at the line's own indent
+    const quote = context?.closest('[data-context]');
+    expect(quote?.tagName).toBe('BLOCKQUOTE');
+    expect(quote).toHaveClass('ml-4', 'border-l-2', 'pl-2');
+    expect(quote?.contains(screen.getByRole('link', { name: 'Weekly notes' }))).toBe(false);
   });
 
   it('shows the title alone when only the title names it', () => {
