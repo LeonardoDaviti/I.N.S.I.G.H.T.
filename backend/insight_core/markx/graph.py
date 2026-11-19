@@ -74,6 +74,7 @@ BACKFILL_VERSION = 1          # a bump re-runs the backfill
 BACKFILL_KEY = "graph_backfill"
 SINCE_KEY = "graph_since"     # the last run's clock: what changed since is read again
 MARGIN = timedelta(hours=1)   # read again a bit before it (a transaction that committed after the last snapshot)
+PENDING_KEY = "graph_pending"   # v10.25 (0227): the posts a run linked while its graph stage did not run (`defer`)
 BEFORE_SHOWN = 10
 EXCERPT = 1100                # G2's render: 1,100 characters a post
 ANCHOR = 300
@@ -1078,17 +1079,37 @@ def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float],
     return {"done": state["done"], "candidates": added}
 
 
+def defer(cur: Any, linked: Iterable[str]) -> None:
+    """v10.25 (0227): the posts a run's entities stage linked while its graph stage did not run (deferred by a
+    concurrent update, or skipped): kept for the next graph stage, which reads them with its own (`stage`'s `linked`).
+    Their answers may be older than the next stage's look-back (MARGIN), so without this their edges would wait for a
+    backfill."""
+    from insight_core.markx import repo
+    ids = {str(p) for p in linked}
+    if ids:
+        repo.set_setting(cur, PENDING_KEY, sorted(ids | set(repo.get_setting(cur, PENDING_KEY, default=None) or [])))
+
+
 def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
-          budget: Optional[float] = BACKFILL_SECONDS) -> Dict[str, Any]:
-    """The decision run's graph, in its `connections` stage: the author-link edges of what changed since the last run,
+          budget: Optional[float] = BACKFILL_SECONDS, linked: Iterable[str] = ()) -> Dict[str, Any]:
+    """The decision run's graph, after its entities stage: the author-link edges of what changed since the last run,
     the backfill's next share (`budget` seconds), the identity next_version edges, the relations posts state between
     entities (0220), the same-subject candidates, the settled verdicts applied, and the relate questions planned. Its
-    counts."""
+    counts.
+
+    v10.25 (0227): `linked` is the posts whose mentions the run's entities stage linked (or linked otherwise), and the
+    ones a run before kept for it (`defer`): their relations and same-subject candidates are read again whatever their
+    answers' age. The scopes by an answer's time (since the last stage, less MARGIN) miss a post whose mentions were
+    linked later than its answer came (a linking backlog, runs more than MARGIN apart); before, the stage also ran
+    before the entities stage, so a new post's edges waited for the next run."""
     from insight_core.markx import repo
     t0 = time.monotonic()
     deadline = None if budget is None else t0 + budget
     since = _since(cur, now)
     out: Dict[str, Any] = {"since": since.isoformat()}
+    kept = repo.get_setting(cur, PENDING_KEY, default=None) or []
+    linked = {str(p) for p in linked} | set(kept)
+    out["linked"] = len(linked)
     dirty = dirty_posts(cur, since)
     state = repo.get_setting(cur, BACKFILL_KEY, default=None) or {}
     if not (state.get("done") and state.get("version") == BACKFILL_VERSION):   # the backfill reads the rest itself
@@ -1100,11 +1121,12 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     subjects = Subjects(cur)
     out["next_version"] = dict(sync_next_version(cur, subjects, now=now, run_id=run_id))
     # 0220: the relations posts state between entities (what changed since, then the backfill's share)
-    rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since), subjects.root, now=now, run_id=run_id))
+    rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since) | linked, subjects.root, now=now,
+                                               run_id=run_id))
     rels["backfill"] = _relations_backfill(cur, subjects.root, now=now, run_id=run_id,
                                            deadline=None if deadline is None else max(deadline, time.monotonic() + 5))
     out["relations"] = rels
-    relate: Dict[str, Any] = {"candidates": discover(cur, subjects, _subject_scope(cur, since))}
+    relate: Dict[str, Any] = {"candidates": discover(cur, subjects, _subject_scope(cur, since) | linked)}
     relate["backfill"] = _relate_backfill(cur, subjects, deadline=None if deadline is None else max(deadline, t1 + 5))
     found = verdicts(cur, since=since)
     relate.update(apply_pairs(cur, list(found), now=now, run_id=run_id, found=found))
@@ -1112,6 +1134,8 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     relate["planned"] = plan(cur, open_cap=open_cap, now=now)
     out["relate"] = relate
     repo.set_setting(cur, SINCE_KEY, now.isoformat())
+    if kept:
+        repo.set_setting(cur, PENDING_KEY, [])
     out["seconds"] = round(time.monotonic() - t0, 3)
     return out
 

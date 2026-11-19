@@ -139,7 +139,7 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
-    linked = out.pop("posts_linked", [])
+    linked = out.get("posts_linked", [])   # v10.25 (0227): left in the counts: decide.run hands it to the graph stage
     # v10.24 (0221): then the repairs (a step at a time, from where the last run's stopped) and the sweeps, with what
     # is left (0164: they ran first, in a quarter of the budget they overran); each leaves the next its expected time
     out["repair"], book = repairs(cur, book, run_id=run_id, full=whole, last=_last(cur, "repair"),
