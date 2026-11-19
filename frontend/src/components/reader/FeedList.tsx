@@ -16,6 +16,7 @@ import { feedDayHeading, feedDayKey } from '../../lib/dates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 import FeedItem from './FeedItem';
 import { feedItemDomId } from '../../lib/feedItem';
+import { newsReadState } from '../../lib/story';
 import { recallSelection, rememberSelection } from '../../lib/readerSelection';
 import FeedGroup from './FeedGroup';
 import { useAnnounce } from './LiveRegion';
@@ -75,7 +76,13 @@ export interface PostListProps extends Omit<FeedListProps, 'fixture'> {
    * `sectionOf` names (not days); each row shows its date and opens on its own (no feed
    * context), and Shift+A does not mark through.
    */
-  ranked?: { name: string; sectionOf: (item: FeedItemData) => string; storyLine: (item: FeedItemData) => string | undefined };
+  ranked?: {
+    name: string; sectionOf: (item: FeedItemData) => string; storyLine: (item: FeedItemData) => string | undefined;
+    /** Issue 0238 (News): a row is read when every post of it is; `m` and opening its lead mark them all. */
+    rows?: boolean;
+    /** Issue 0238: Shift+A asks to mark the whole list read (News: "Mark all News read"). */
+    markAll?: () => void;
+  };
 }
 
 /** The reader list (spec §F.3, §F.5, §F.6): FeedList loads the feed; the search page hands its results to PostList. */
@@ -146,7 +153,38 @@ function PostListBody({
   const itemHref = useCallback((item: FeedItemData) => postHref(item.id, contextFor(item)), [contextFor]);
 
   // ---- actions ----
+  const rows = Boolean(ranked?.rows);
   const toggleRead = useCallback((item: FeedItemData) => {
+    if (rows) {
+      // Issue 0238: a News row's every post, one request; Undo restores each post as it was.
+      const read = !newsReadState(item).read;
+      mutations.setRowRead(item, read).then(
+        (changed) => {
+          const message = `Marked ${plural(changed.length, 'post')} as ${read ? 'read' : 'unread'}`;
+          announce(message);
+          toast.success(message, {
+            duration: UNDO_MS,
+            action: changed.length ? {
+              label: 'Undo',
+              onClick: () => {
+                mutations.markIds(changed, !read).then(
+                  () => announce(`Restored ${plural(changed.length, 'post')}`),
+                  (error: unknown) => {
+                    announce(errorMessage(error));
+                    toast.error(errorMessage(error));
+                  },
+                );
+              },
+            } : undefined,
+          });
+        },
+        (error: unknown) => {
+          announce(errorMessage(error));
+          toast.error(errorMessage(error));
+        },
+      );
+      return;
+    }
     const read = !item.read_at;
     mutations.setRead(item, read).then(
       () => announce(read ? 'Marked as read' : 'Marked as unread'),
@@ -155,7 +193,7 @@ function PostListBody({
         toast.error(errorMessage(error));
       },
     );
-  }, [announce, mutations]);
+  }, [announce, mutations, rows]);
 
   const toggleStar = useCallback((item: FeedItemData) => {
     const starred = !item.starred_at;
@@ -184,13 +222,20 @@ function PostListBody({
     rememberSelection(item.id);
     if (!item.read_at) {
       // Opening is not finishing: a post in Later stays there (issue 0022).
-      mutations.setRead(item, true, { keepLater: true }).catch(() => {
+      // Issue 0238: a News row read for the first time is read whole (its lines with it), so a post that joins it
+      // later is what shows as new; a lead already read leaves its new lines unread.
+      (rows ? mutations.setRowRead(item, true) : mutations.setRead(item, true, { keepLater: true })).catch(() => {
         // Opening the post records the open (and sets read_at) server-side as well.
       });
     }
-  }, [mutations]);
+  }, [mutations, rows]);
 
+  const markAll = ranked?.markAll;
   const askMarkThrough = useCallback((item: FeedItemData) => {
+    if (markAll) {
+      markAll();
+      return;
+    }
     if (view === 'by_source' || filter === 'later' || filter === 'history' || search || ranked) {
       // Later, History (by when you opened it), a search and News are not in the feed's order:
       // "up to here" would mean something else.
@@ -211,7 +256,7 @@ function PostListBody({
       return;
     }
     setConfirm({ through: item, count });
-  }, [announce, filter, ranked, search, view]);
+  }, [announce, filter, markAll, ranked, search, view]);
 
   const confirmMarkThrough = useCallback(async () => {
     const pending = confirm;

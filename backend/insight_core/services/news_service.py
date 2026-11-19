@@ -224,7 +224,8 @@ class NewsService:
     # ---- News ---------------------------------------------------------------------------
 
     def news(self, scope: str | None = None, *, limit: Optional[int] = None,
-             cursor: Optional[str] = None, mark: str = "main", order: Optional[str] = None) -> Dict[str, Any]:
+             cursor: Optional[str] = None, mark: str = "main", order: Optional[str] = None,
+             unread: bool = False) -> Dict[str, Any]:
         """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
         begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
         source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
@@ -239,11 +240,16 @@ class NewsService:
         the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix").
 
         Issue 0208: Mark X's rows in the order the switch says (`order`: "ranked", News ranked for the reader with the
-        Notable lane first, or "coverage", the score's order), or as `order` asks; Mark IX's keep the score's."""
+        Notable lane first, or "coverage", the score's order), or as `order` asks; Mark IX's keep the score's.
+
+        Issue 0238: each row's `news.unread` (its posts unread: the lead and its lines, the per-post read state), the
+        answer's `rows` and `unread_rows` (rows with an unread post) over the whole scope, and with `unread` only the
+        rows with an unread post (News's Unread view), in the same order."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             run, note = self.rows_of(cur, mark)
             answer = {**self.news_on(cur, scope, mx_run=run, order=order), "mark": "x" if run else "ix",
                       "fallback": note is not None, "note": note}
+        answer = read_state(answer, unread)
         if limit is None:
             return answer
         items, next_cursor = page_of(answer["items"], limit, cursor)   # issue 0195: News in pages
@@ -251,6 +257,13 @@ class NewsService:
 
     MARKX_EMPTY = "Mark X has no News yet (a new install, or its worker has not run): this is the older News."
     MARKX_OFF = "Mark X is off on this install: this is the older News."
+
+    def post_ids(self, scope: str | None = None, mark: str = "main") -> List[str]:
+        """Issue 0238: every post of every News row the scope lists (as `news` lists them: each row's lead and its
+        lines), for "Mark all News read"."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            run, _ = self.rows_of(cur, mark)
+            return row_post_ids(self.news_on(cur, scope, mx_run=run)["items"])
 
     def rows_of(self, cur: Any, mark: str = "main") -> Tuple[Optional[str], Optional[str]]:
         """(the Mark X run whose rows News reads, or None for Mark IX's; the note when main fell back to Mark IX).
@@ -311,6 +324,7 @@ class NewsService:
                 "part": "recent" if head["_first_at"] >= now - NEWS_RECENT else "earlier",
                 "first_at": head["_first_at"], "reports": head["_reports"], "shares": head["_shares"],
                 "mentions": head["_mentions"], "score": head["_score"],
+                "unread": len(unread_posts(item)),   # 0238: the row's posts unread (its lead and its lines)
             }
             if one_source:
                 # "Started it" only when first (issue 0082): the row's first post, the origin of its 0050
@@ -467,6 +481,31 @@ class NewsService:
 # answer: each story post's address, source id, date, platform and repost, the sources' `with`, the rank's parts.
 STORY_POST_DROPPED = ("url", "source_id", "published_at", "platform", "repost")
 RANK_KEPT = ("event", "usable")
+
+
+def row_posts(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Issue 0238: a News row's posts, as the reader sees them: its lead (the item) and its lines (`story.posts`). A row
+    is read when every one is read; marking a row marks them all."""
+    return [item, *((item.get("story") or {}).get("posts") or [])]
+
+
+def unread_posts(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [p for p in row_posts(item) if not p.get("read_at")]
+
+
+def row_post_ids(items: Iterable[Dict[str, Any]]) -> List[str]:
+    """Every post id of these rows, each once, in the rows' order."""
+    return list(dict.fromkeys(p["id"] for item in items for p in row_posts(item)))
+
+
+def read_state(answer: Dict[str, Any], unread: bool = False) -> Dict[str, Any]:
+    """Issue 0238: News's answer with its `rows` and `unread_rows` (rows with an unread post), and with `unread` only
+    those rows (the Unread view), in the answer's order."""
+    items = answer.get("items") or []
+    unread_rows = sum(1 for item in items if item["news"]["unread"])
+    if unread:
+        items = [item for item in items if item["news"]["unread"]]
+    return {**answer, "items": items, "rows": len(answer.get("items") or []), "unread_rows": unread_rows}
 
 
 def reader_view(answer: Dict[str, Any]) -> Dict[str, Any]:

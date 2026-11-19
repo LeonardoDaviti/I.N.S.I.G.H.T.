@@ -168,6 +168,8 @@ export interface NewsScore {
   notable?: boolean;
   /** Issue 0208: its expert breakdowns (at most 2), shown apart from its reports, when Analysis is on. */
   analysis?: { id: string; title: string; source: string; author: string }[];
+  /** Issue 0238: the row's posts unread (its lead and its lines) when the API answered. */
+  unread?: number;
 }
 /** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface Classic {
@@ -259,6 +261,9 @@ export interface NewsPage extends FeedPage {
   mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null;
   /** Issue 0208: the order of Mark X's rows: ranked for the reader (the Notable lane first) or by coverage (the score). */
   order?: NewsOrder;
+  /** Issue 0238: the scope's News rows, and those with an unread post, over every page (not only this one). */
+  rows?: number;
+  unread_rows?: number;
 }
 export type NewsMark = 'main' | 'ix';
 export type NewsOrder = 'ranked' | 'coverage';
@@ -1434,8 +1439,11 @@ export function createApi() {
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
     /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0205: Mark X's rows
      *  (`mark` main, falling back to Mark IX's when it has none) or the older News (`mark` ix). */
-    getNews: ({ scope, cursor, signal, mark = 'main', order }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark; order?: NewsOrder }) =>
-      request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}${order ? `&order=${order}` : ''}`, { signal }),
+    getNews: ({ scope, cursor, signal, mark = 'main', order, unread = false }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark; order?: NewsOrder; unread?: boolean }) =>
+      request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}${order ? `&order=${order}` : ''}${unread ? '&unread=true' : ''}`, { signal }),
+    /** Issue 0238: "Mark all News read": every post of every News row the scope lists, read only (Later kept). Its ids undo it. */
+    markAllNewsRead: (scope: string, mark: NewsMark = 'main') =>
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: mark === 'ix' ? { scope, news: true, mark } : { scope, news: true } }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
     getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
       request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),

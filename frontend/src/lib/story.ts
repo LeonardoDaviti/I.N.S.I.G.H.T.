@@ -1,4 +1,4 @@
-import type { FeedStory, StoryOrigin, StoryPost, SuggestedSource } from '../services/api';
+import type { FeedItem, FeedStory, StoryOrigin, StoryPost, SuggestedSource } from '../services/api';
 import { plural } from './format.ts';
 import { sourceLabel } from './sourceLabel.ts';
 import { bareAddress, publicationOf } from './addresses.ts';
@@ -147,4 +147,21 @@ export function suggestionReason(s: SuggestedSource): string {
   const who = `${names.slice(0, VOICES_SHOWN).join(', ')}${more > 0 ? `, +${more}` : ''}`;
   const classics = s.classics ? ` · ${plural(s.classics, 'classic')}` : '';
   return `linked by ${s.voices} of your sources (${who}) · ${plural(s.article_count, 'article')}${classics}`;
+}
+
+/** Issue 0238: a News row's posts as the reader sees them: its lead and its lines, each once. */
+export function rowPosts(item: Pick<FeedItem, 'id' | 'source_id' | 'read_at' | 'story'>): Pick<StoryPost, 'id' | 'source_id' | 'read_at'>[] {
+  const seen = new Set<string>();
+  return [item, ...(item.story?.posts ?? [])].filter((post) => !seen.has(post.id) && Boolean(seen.add(post.id)));
+}
+
+/**
+ * Issue 0238: a News row's read state from its posts' own read state. The row is read when every post is;
+ * `fresh` ("N new") counts the unread posts of a row with at least one read post (posts that joined it after
+ * the reader read it); 0 when none is read or every one is.
+ */
+export function newsReadState(item: Pick<FeedItem, 'id' | 'source_id' | 'read_at' | 'story'>): { read: boolean; unread: number; fresh: number } {
+  const posts = rowPosts(item);
+  const unread = posts.filter((post) => !post.read_at).length;
+  return { read: unread === 0, unread, fresh: unread > 0 && unread < posts.length ? unread : 0 };
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 
@@ -12,7 +12,7 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import { healthResponse } from '../components/ops/fixtures';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
-import type { Api, Classic, FeedItem, NewsScore } from '../services/api';
+import type { Api, Classic, FeedItem, NewsScore, StoryPost } from '../services/api';
 
 // News and Classics (issue 0051): two views next to the Main feed, of the Main feed or a track.
 
@@ -82,8 +82,9 @@ describe('News (issue 0051)', () => {
     expect(screen.getByText('Last 48 hours')).toBeInTheDocument();
     expect(screen.getByText('This week')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /4 sources \(1 share\) · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
-    // News is not the unread feed: no Show, no Posts, no unread count.
-    expect(screen.queryByRole('radiogroup', { name: 'Show' })).not.toBeInTheDocument();
+    // News is not the unread feed: its own Show (All / Unread, issue 0238), no Posts, no unread count.
+    expect(within(screen.getByRole('radiogroup', { name: 'Show' })).getAllByRole('radio').map((radio) => radio.textContent))
+      .toEqual(['All', 'Unread']);
     expect(screen.queryByRole('radiogroup', { name: 'Posts' })).not.toBeInTheDocument();
     expect(screen.queryByText('4 unread')).not.toBeInTheDocument();
   });
@@ -185,6 +186,100 @@ describe('News (issue 0051)', () => {
     expect(link).toHaveAttribute('href', `/posts/${ID(1)}`);
     await user.click(link);
     await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1)], true, { keepLater: true }));
+  });
+});
+
+describe('News read state (issue 0238)', () => {
+  const READ = '2026-11-18T10:00:00Z';
+  const line = (id: string, title: string, readAt: string | null): StoryPost => ({
+    id, title, url: `https://example.test/${id}`, source_id: `src-${id}`, source_display_name: `Source ${id.slice(-1)}`,
+    platform: 'rss', sort_at: new Date().toISOString(), published_at: null, read_at: readAt, role: 'report',
+  });
+  /** A row: its lead (read or not) and its lines. */
+  const row = (lead: string, leadRead: string | null, lines: StoryPost[], news: Partial<NewsScore> = {}): FeedItem => {
+    const item = story(lead, `Story ${lead.slice(-1)}`, news, ['A', 'B']);
+    return { ...item, read_at: leadRead, story: { ...item.story!, posts: lines } };
+  };
+  /** The Undo of the toast this title is in (toasts of earlier tests may still be on screen). */
+  const undoOf = (title: HTMLElement) => within(title.closest('li')!).getByRole('button', { name: 'Undo' });
+  const answer = (items: FeedItem[], unreadRows: number) => ({ ...feedPage(items), mark: 'ix' as const, rows: items.length, unread_rows: unreadRows });
+
+  it('a read row a new post joined is bold again with "N new"; its folded list shows the new post unread', async () => {
+    const user = userEvent.setup();
+    render(base({ getNews: vi.fn().mockResolvedValue(answer([
+      row(ID(1), READ, [line(ID(2), 'Read before', READ), line(ID(3), 'Joined later', null)], { unread: 1 }),
+      row(ID(4), READ, [line(ID(5), 'All read', READ)], { unread: 0 }),
+    ], 1)) }), '/?view=news');
+    const feed = await screen.findByRole('feed', { name: 'News' });
+    const [fresh, read] = within(feed).getAllByRole('article');
+    expect(fresh).toHaveAttribute('data-read', 'false');
+    expect(within(fresh).getByText(/1 new/)).toBeInTheDocument();
+    expect(read).toHaveAttribute('data-read', 'true');
+    expect(within(read).queryByText(/new/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('news-unread')).toHaveTextContent('1 story with unread posts');
+    await user.click(within(fresh).getByRole('button', { name: /2 sources/ }));
+    const later = within(fresh).getByRole('link', { name: 'Joined later' }).closest('li')!;
+    expect(within(later).getByText('Unread')).toBeInTheDocument();
+    expect(within(within(fresh).getByRole('link', { name: 'Read before' }).closest('li')!).queryByText('Unread')).not.toBeInTheDocument();
+  });
+
+  it('m marks every post of the row in one request; Undo restores each post as it was', async () => {
+    const user = userEvent.setup();
+    const setPostsRead = vi.fn().mockImplementation((ids: string[]) => Promise.resolve({ success: true, updated: ids.length, ids }));
+    render(base({ setPostsRead, getNews: vi.fn().mockResolvedValue(answer([
+      row(ID(1), null, [line(ID(2), 'Read before', READ), line(ID(3), 'Unread line', null)], { unread: 2 }),
+    ], 1)) }), '/?view=news');
+    const [article] = within(await screen.findByRole('feed', { name: 'News' })).getAllByRole('article');
+    await user.click(within(article).getByRole('button', { name: 'Mark read' }));
+    await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1), ID(3)], true, { keepLater: true }));
+    expect(setPostsRead).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(article).toHaveAttribute('data-read', 'true'));
+    expect(screen.getByTestId('news-unread')).toHaveTextContent('Every story read');
+    fireEvent.click(undoOf(await screen.findByText('Marked 2 posts as read', { selector: '[data-title]' })));
+    await waitFor(() => expect(setPostsRead).toHaveBeenLastCalledWith([ID(1), ID(3)], false));
+    await waitFor(() => expect(article).toHaveAttribute('data-read', 'false'));
+    // The line read before stays read: Undo is exact, not "everything unread".
+    await user.click(within(article).getByRole('button', { name: /2 sources/ }));
+    expect(within(within(article).getByRole('link', { name: 'Read before' }).closest('li')!).queryByText('Unread')).not.toBeInTheDocument();
+  });
+
+  it('opening an unread row reads it whole, so only later posts show as new', async () => {
+    const user = userEvent.setup();
+    const setPostsRead = vi.fn().mockImplementation((ids: string[]) => Promise.resolve({ success: true, updated: ids.length, ids }));
+    render(base({ setPostsRead, getNews: vi.fn().mockResolvedValue(answer([
+      row(ID(1), null, [line(ID(2), 'A line', null)], { unread: 2 }),
+    ], 1)) }), '/?view=news');
+    await user.click(await screen.findByRole('link', { name: 'Story 1' }));
+    await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1), ID(2)], true, { keepLater: true }));
+  });
+
+  it('Mark all News read asks first, marks the scope\'s every row, and Undo puts them back', async () => {
+    const user = userEvent.setup();
+    const markAllNewsRead = vi.fn().mockResolvedValue({ success: true, updated: 3, ids: [ID(1), ID(2), ID(7)] });
+    const setPostsRead = vi.fn().mockResolvedValue({ success: true, updated: 3, ids: [] });
+    render(base({ markAllNewsRead, setPostsRead, getNews: vi.fn().mockResolvedValue(answer([
+      row(ID(1), null, [line(ID(2), 'A line', null)], { unread: 2 }),
+    ], 5)) }), `/read/folder/${FOLDER}?view=news`);
+    expect(await screen.findByTestId('news-unread')).toHaveTextContent('5 stories with unread posts');
+    await user.click(screen.getByRole('button', { name: 'Mark all News read' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Every post of the 5 stories with unread posts');
+    expect(markAllNewsRead).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Mark read' }));
+    await waitFor(() => expect(markAllNewsRead).toHaveBeenCalledWith(`folder:${FOLDER}`, 'main'));
+    await waitFor(() => expect(within(screen.getByRole('feed', { name: 'News' })).getByRole('article')).toHaveAttribute('data-read', 'true'));
+    fireEvent.click(undoOf(await screen.findByText('Marked 3 posts as read', { selector: '[data-title]' })));
+    await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1), ID(2), ID(7)], false));
+  });
+
+  it("Show Unread asks News for the rows with an unread post", async () => {
+    const user = userEvent.setup();
+    const getNews = vi.fn().mockResolvedValue(answer([], 0));
+    render(base({ getNews }), '/?view=news');
+    const show = await screen.findByRole('radiogroup', { name: 'Show' });
+    await user.click(within(show).getByRole('radio', { name: 'Unread' }));
+    await waitFor(() => expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ unread: true })));
+    expect(await screen.findByText('No unread News')).toBeInTheDocument();
   });
 });
 

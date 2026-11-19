@@ -16,7 +16,7 @@ import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
 import {
-  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, storyTree, type StoryLine,
+  coveredBy, LINE_NAME, LINE_TITLE, newsReadState, originHref, originLabel, repostedBy, storyTree, type StoryLine,
 } from '../../lib/story';
 import { bylineName, carried, carriedLine } from '../../lib/byline';
 import { TextLink } from '../ui/TextLink';
@@ -207,7 +207,10 @@ function FeedItem({
   snippet, snippetFrom, storyLine,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
-  const isRead = Boolean(item.read_at);
+  // A News row (issue 0238) is read when every post of it is: a read row a new post joined is bold again, "N new".
+  const row = item.news ? newsReadState(item) : null;
+  const isRead = row ? row.read : Boolean(item.read_at);
+  const fresh = row?.fresh ?? 0;
   const isStarred = Boolean(item.starred_at);
   const isLater = Boolean(item.later_at);
   // Unread: "I want this, not now" (Later); read: "this mattered" (Keep).
@@ -306,6 +309,7 @@ function FeedItem({
         <p className="flex min-w-0 items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums max-sm:col-start-1 max-sm:row-start-2 max-sm:block">
           <span className={META_LINE}>
             {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
+            {fresh ? <span data-news-new className="shrink-0 font-medium text-fg">{fresh} new{showSource ? ' ·' : ''}</span> : null}
             {isLater ? <Clock aria-hidden="true" className="h-3 w-3 shrink-0 text-fg" /> : null}
             {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
             {showSource ? (
@@ -413,7 +417,7 @@ function FeedItem({
         <button
           type="button"
           aria-label={isRead ? 'Mark unread' : 'Mark read'}
-          title={isRead ? 'Mark unread (m)' : 'Mark read (m)'}
+          title={row ? (isRead ? 'Mark the story unread: every post (m)' : 'Mark the story read: every post (m)') : isRead ? 'Mark unread (m)' : 'Mark read (m)'}
           onClick={() => onToggleRead(item)}
           className={ICON_BUTTON}
         >

@@ -2,7 +2,8 @@ import { useCallback, useMemo } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
-import type { FeedItem, SourcesHealthResponse, UnreadCounts } from '../services/api';
+import type { FeedItem, NewsMark, SourcesHealthResponse, UnreadCounts } from '../services/api';
+import { rowPosts } from '../lib/story';
 import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 import { feedCursorFor } from '../lib/feedContext';
 import { FEED_ROOT_KEY, UNREAD_COUNTS_KEY, type AnyFeedPage, type FeedData } from './useFeed';
@@ -10,8 +11,17 @@ import { FEED_ROOT_KEY, UNREAD_COUNTS_KEY, type AnyFeedPage, type FeedData } fro
 /** The most ids one PUT /api/feed/read takes (the backend's MAX_READ_BATCH). */
 export const READ_BATCH = 500;
 
+/** A row's story lines carry their own read state (issue 0238: a News row is read when every post is): a read
+ *  patch reaches them too. */
+function patchLines(item: FeedItem, ids: ReadonlySet<string>, patch: Partial<FeedItem>): FeedItem {
+  const story = item.story;
+  if (!story?.posts || !('read_at' in patch) || !story.posts.some((post) => ids.has(post.id))) return item;
+  const readAt = patch.read_at ?? null;
+  return { ...item, story: { ...story, posts: story.posts.map((post) => (ids.has(post.id) ? { ...post, read_at: readAt } : post)) } };
+}
+
 function patchPage(page: AnyFeedPage, ids: ReadonlySet<string>, patch: Partial<FeedItem>): AnyFeedPage {
-  const patchItems = (items: FeedItem[]) => items.map((item) => (ids.has(item.id) ? { ...item, ...patch } : item));
+  const patchItems = (items: FeedItem[]) => items.map((item) => patchLines(ids.has(item.id) ? { ...item, ...patch } : item, ids, patch));
   if ('groups' in page) return { ...page, groups: page.groups.map((group) => ({ ...group, items: patchItems(group.items) })) };
   return { ...page, items: patchItems(page.items) };
 }
@@ -23,6 +33,9 @@ export function patchFeeds(queryClient: QueryClient, ids: ReadonlySet<string>, p
   ));
 }
 
+/** What a read change reads of a post: a feed row, or a story's line (issue 0238). */
+export type ReadTarget = Pick<FeedItem, 'id' | 'source_id' | 'read_at'> & { later_at?: string | null };
+
 /** The cached copy of each post, from whichever feed holds it. */
 export function findFeedItems(queryClient: QueryClient, ids: readonly string[]): Map<string, FeedItem> {
   const wanted = new Set(ids);
@@ -33,6 +46,23 @@ export function findFeedItems(queryClient: QueryClient, ids: readonly string[]):
       for (const item of items) if (wanted.has(item.id) && !found.has(item.id)) found.set(item.id, item);
     }
   }
+  return found;
+}
+
+/** What a read change of these posts moves in the cache: each one's row, else a row's story line (issue 0238). */
+function findReadTargets(queryClient: QueryClient, ids: readonly string[]): Map<string, ReadTarget> {
+  const found: Map<string, ReadTarget> = findFeedItems(queryClient, ids);
+  const wanted = new Set(ids);
+  const lines = new Map<string, ReadTarget>();
+  for (const [, data] of queryClient.getQueriesData<FeedData>({ queryKey: [...FEED_ROOT_KEY] })) {
+    for (const page of data?.pages ?? []) {
+      const items = 'groups' in page ? page.groups.flatMap((group) => group.items) : page.items;
+      for (const item of items) {
+        for (const line of item.story?.posts ?? []) if (wanted.has(line.id) && !lines.has(line.id)) lines.set(line.id, line);
+      }
+    }
+  }
+  for (const [id, line] of lines) if (!found.has(id)) found.set(id, line);
   return found;
 }
 
@@ -149,7 +179,7 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
 
   /** Mark `items` read or unread in the cache; resolves the undo for exactly this change.
    *  `finish`: the read is an explicit mark read, which also takes the posts out of Later. */
-  const applyRead = useCallback((items: FeedItem[], read: boolean, finish = false) => {
+  const applyRead = useCallback((items: ReadTarget[], read: boolean, finish = false) => {
     const deltas = readDeltas(items, read);
     const previous = items.map((item) => [item.id, { read_at: item.read_at ?? null, later_at: item.later_at ?? null }] as const);
     const patch: Partial<FeedItem> = { read_at: read ? new Date().toISOString() : null };
@@ -213,21 +243,22 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
         : await api.markReadThrough(scope, feedCursorFor(through), feedCursorFor(newest));
       ids = result.ids ?? [];
     }
-    applyRead([...findFeedItems(queryClient, ids).values()], true);
+    applyRead([...findReadTargets(queryClient, ids).values()], true);
     refreshCounts();
     return ids;
   }, [api, applyRead, dryRun, queryClient, refreshCounts]);
 
-  /** The Undo of a mark-through: back to unread. A mark-through has no size limit but
-   *  PUT /api/feed/read takes at most READ_BATCH ids, so a big undo goes in batches, one
-   *  after another; a failed batch undoes the whole local change. */
-  const markUnread = useCallback(async (ids: string[]) => {
+  /** These posts read or unread, Later kept (the Undo of a mark-through or a News mark, issue 0238).
+   *  PUT /api/feed/read takes at most READ_BATCH ids, so a big change goes in batches, one after another;
+   *  a failed batch undoes the whole local change. */
+  const markIds = useCallback(async (ids: string[], read: boolean) => {
     if (!ids.length) return;
-    const undo = applyRead([...findFeedItems(queryClient, ids).values()], false);
+    const undo = applyRead([...findReadTargets(queryClient, ids).values()], read);
     try {
       if (!dryRun) {
         for (let start = 0; start < ids.length; start += READ_BATCH) {
-          await api.setPostsRead(ids.slice(start, start + READ_BATCH), false);
+          const batch = ids.slice(start, start + READ_BATCH);
+          await (read ? api.setPostsRead(batch, true, { keepLater: true }) : api.setPostsRead(batch, false));
         }
       }
     } catch (error) {
@@ -238,9 +269,51 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
     }
   }, [api, applyRead, dryRun, queryClient, refreshCounts]);
 
+  /** The Undo of a mark-through (and of a News mark): back to unread. A mark-through has no size limit. */
+  const markUnread = useCallback((ids: string[]) => markIds(ids, false), [markIds]);
+
+  /** Issue 0238: a News row read or unread: every post of it (its lead and its lines) in one request, Later kept,
+   *  so its Undo (`markIds(ids, !read)`) restores exactly the state before. Resolves the ids the server changed
+   *  (with the shares it marks with their story, issue 0050). */
+  const setRowRead = useCallback(async (item: FeedItem, read: boolean): Promise<string[]> => {
+    const posts = rowPosts(item);
+    const ids = posts.filter((post) => read !== Boolean(post.read_at)).map((post) => post.id);
+    if (!ids.length) return [];
+    const undo = applyRead(posts, read);
+    try {
+      if (dryRun) return ids;
+      let changed: string[] = [];
+      for (let start = 0; start < ids.length; start += READ_BATCH) {
+        const batch = ids.slice(start, start + READ_BATCH);
+        const result = await (read ? api.setPostsRead(batch, true, { keepLater: true }) : api.setPostsRead(batch, false));
+        changed = changed.concat(result.ids ?? []);
+      }
+      // A share the server marked with its story is in the cache too.
+      const more = changed.filter((id) => !ids.includes(id));
+      if (more.length) applyRead([...findReadTargets(queryClient, more).values()], read);
+      return changed;
+    } catch (error) {
+      undo();
+      throw error;
+    } finally {
+      refreshCounts();
+    }
+  }, [api, applyRead, dryRun, queryClient, refreshCounts]);
+
+  /** Issue 0238: "Mark all News read" of a scope (every row it lists, not only the loaded ones). Resolves the ids
+   *  marked, which `markUnread` undoes. */
+  const markAllNewsRead = useCallback(async (scope: string, mark: NewsMark, loaded: FeedItem[]): Promise<string[]> => {
+    const ids = dryRun
+      ? loaded.flatMap((item) => rowPosts(item)).filter((post) => !post.read_at).map((post) => post.id)
+      : (await api.markAllNewsRead(scope, mark)).ids ?? [];
+    applyRead([...findReadTargets(queryClient, ids).values()], true);
+    refreshCounts();
+    return ids;
+  }, [api, applyRead, dryRun, queryClient, refreshCounts]);
+
   /** The post page recorded an open (the server marks the post read): mirror it in the cache. */
   const noteOpened = useCallback((postId: string) => {
-    const item = findFeedItems(queryClient, [postId]).get(postId);
+    const item = findReadTargets(queryClient, [postId]).get(postId);
     if (item && !item.read_at) applyRead([item], true);
     refreshCounts();
   }, [applyRead, queryClient, refreshCounts]);
@@ -248,7 +321,7 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
   // A stable object: the list's toggle handlers depend on it, and a new one per
   // render would re-render every memoised row on each key press.
   return useMemo(
-    () => ({ setRead, setStarred, setLater, markReadThrough, markUnread, noteOpened }),
-    [setRead, setStarred, setLater, markReadThrough, markUnread, noteOpened],
+    () => ({ setRead, setStarred, setLater, markReadThrough, markUnread, markIds, setRowRead, markAllNewsRead, noteOpened }),
+    [setRead, setStarred, setLater, markReadThrough, markUnread, markIds, setRowRead, markAllNewsRead, noteOpened],
   );
 }

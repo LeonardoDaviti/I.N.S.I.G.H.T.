@@ -19,6 +19,12 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
 ];
 /** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };
+/** Issue 0238: News's own Show: every row, or only the rows with an unread post. */
+export type NewsShow = 'all' | 'unread';
+const NEWS_SHOW: ReadonlyArray<{ value: NewsShow; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'unread', label: 'Unread' },
+];
 /** News and Classics are views next to the feed (issue 0051), of the Main feed, a track or one source (0077). */
 const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
   { value: 'stream', label: 'Stream' },
@@ -63,6 +69,8 @@ export interface FeedToolbarProps {
   topic?: boolean;
   /** A topic track's reading views (v10.12.1): its items only, or, switched on, every post of its sources. */
   allSources?: { on: boolean; onChange: (on: boolean) => void } | null;
+  /** Issue 0238: News's Show (All / Unread), offered in the News view. */
+  newsShow?: { value: NewsShow; onChange: (value: NewsShow) => void } | null;
 }
 
 /**
@@ -77,9 +85,11 @@ export interface FeedToolbarProps {
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
   onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false, topic = false, allSources = null,
+  newsShow = null,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
-  // News and Classics rank stories and pages: Show (a read-state filter) and Posts say nothing there.
+  // News and Classics rank stories and pages: the feed's Show (a read-state filter) and Posts say nothing there;
+  // News has a Show of its own (issue 0238: its rows with an unread post).
   const ranked = view === 'news' || view === 'classics' || view === 'topic';
   const views = oneSource ? SOURCE_VIEWS : topic ? [...VIEWS, TOPIC] : VIEWS;
   return (
@@ -93,6 +103,7 @@ export default function FeedToolbar({
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
         {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
+        {view === 'news' && newsShow ? <SlashChoice label="Show" value={newsShow.value} options={NEWS_SHOW} onChange={newsShow.onChange} /> : null}
         <SlashChoice label="View" value={view} options={views} onChange={onViewChange} />
         {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
         {allSources && !ranked ? (

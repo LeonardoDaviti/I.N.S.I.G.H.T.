@@ -142,6 +142,8 @@ function Reader({ scope }: { scope: string }) {
   const readerView: ReaderView = urlView ?? defaultView;
   const ranked = readerView === 'news' || readerView === 'classics' || readerView === 'topic';
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
+  // Issue 0238: News's Unread view (`?news=unread`): its rows with an unread post. News opens on every row.
+  const newsUnread = readerView === 'news' && params.get('news') === 'unread';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
   const [navOpen, setNavOpen] = useState(false);
@@ -284,6 +286,7 @@ function Reader({ scope }: { scope: string }) {
             oneSource={oneSource}
             topic={oneTrack && (markxOn || readerView === 'topic')}
             allSources={topicTrack ? { on: allSources, onChange: (on) => setParam('all_sources', on ? '1' : null) } : null}
+            newsShow={{ value: newsUnread ? 'unread' : 'all', onChange: (value) => setParam('news', value === 'unread' ? 'unread' : null) }}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
             // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
@@ -316,7 +319,7 @@ function Reader({ scope }: { scope: string }) {
               ) : null}
               {viewPending ? <LoadingState label="Loading" rows={6} /> : readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
-                  <NewsList scope={scope} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
+                  <NewsList scope={scope} unread={newsUnread} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
                 </Suspense>
               ) : readerView === 'topic' ? (
                 <Suspense fallback={<LoadingState label="Loading the topic" rows={6} />}>

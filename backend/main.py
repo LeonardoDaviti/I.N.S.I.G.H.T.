@@ -385,6 +385,8 @@ class ReadStateRequest(BaseModel):
     through_cursor: str | None = None
     newest_cursor: str | None = None
     all_sources: bool = False   # a topic track's mark-through over every post of its sources (v10.12.1)
+    news: bool = False   # 0238: mark read every post of every News row of `scope` (its `mark`'s rows)
+    mark: str = "main"
 
 
 class LaterRequest(BaseModel):
@@ -823,7 +825,22 @@ def set_read_state(request: ReadStateRequest):
     - {ids, read}: one post or many (at most 500), read or unread; marking read also takes
       them out of Later, unless keep_later (the read is only an open);
     - {scope, through_cursor, newest_cursor}: mark read every unread post in scope from
-      newest down to through, bounded by the unread window. The answer's ids undo it."""
+      newest down to through, bounded by the unread window. The answer's ids undo it;
+    - {scope, news: true, mark}: "Mark all News read" (issue 0238): every post of every News row the
+      scope lists (each row's lead and lines), read only; Later and where a post was left are kept,
+      so the answer's ids undo it exactly."""
+    if request.news:
+        if request.ids is not None or request.through_cursor is not None or request.newest_cursor is not None:
+            raise ValueError("send news or ids or through_cursor, not more than one")
+        if not request.read:
+            raise ValueError("mark all News read only marks read")
+        if request.mark not in ("main", "ix"):
+            raise ValueError("mark is main or ix")
+        FeedScope.parse(request.scope)
+        ids = services().news.post_ids(request.scope, request.mark)
+        if not ids:
+            return {"success": True, "updated": 0, "ids": []}
+        return services().reader.set_read(ids, True, keep_later=True)
     if request.through_cursor is not None or request.newest_cursor is not None:
         if request.ids is not None:
             raise ValueError("send ids or through_cursor, not both")
@@ -1120,7 +1137,8 @@ NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top row
 @error_detail("load News")
 async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None,
                    mark: str = Query("main", pattern="^(main|ix)$"),
-                   order: str | None = Query(None, pattern="^(ranked|coverage)$")):
+                   order: str | None = Query(None, pattern="^(ranked|coverage)$"),
+                   unread: bool = False):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
     counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
@@ -1131,10 +1149,12 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     Issue 0205: Mark X's rows are the main News (`mark` "x"), Mark IX's when Mark X has none (`fallback`, `note`);
     `mark=ix` asks for the older News (Mark IX's rows).
     Issue 0208: Mark X's rows are ranked for the reader (significance, coverage) with a "Notable for you" lane first
-    (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score."""
+    (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score.
+    Issue 0238: each row's `news.unread` (its posts unread), `rows` and `unread_rows` over the scope; `unread=true`
+    lists only the rows with an unread post (News's Unread view)."""
     from insight_core.services.news_service import reader_view   # 0215: the fields the page reads
     return reader_view(await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark,
-                                               order=order))
+                                               order=order, unread=unread))
 
 
 @app.get("/api/classics")
