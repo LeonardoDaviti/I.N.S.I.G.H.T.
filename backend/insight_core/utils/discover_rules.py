@@ -602,13 +602,12 @@ def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional
 def announcing_place(s: Mapping) -> bool:
     """0239 (0237 #2): a card's place that is the company's announcing section: a host label below its site (newsroom.,
     news., blog., press.) or the path its follow test found its own pages under (`url`, b7: amd.com's /newsroom/), that
-    official channels' one rule for an announcing section (markx/official.ANNOUNCING) reads as one. Pure."""
-    from insight_core.markx.official import ANNOUNCING   # one rule for "the company's news section" (0237 #2, #4)
-    key = s["key"]
-    host = key.split("/", 1)[0].removeprefix("www.")
-    labels = host[: -len(site_of(host))].rstrip(".").split(".") if host != site_of(host) else []
-    path = bare(s.get("url") or "").partition("/")[2].split("?", 1)[0]
-    return any(ANNOUNCING.search(label) for label in labels if label) or bool(path and ANNOUNCING.search(path))
+    official channels' one rule for an announcing section reads as one (0241: discover_main_source.announcing, a
+    newsroom's rank; an investor-relations section never leads). Pure."""
+    # one rule for "the company's news section" (0237 #2, #4); imported here: that module imports this one
+    from insight_core.services.discover_main_source import NEWSROOM, announcing
+    url = s.get("url") or ""
+    return announcing("https://" + s["key"]) == NEWSROOM or bool(url and announcing(url) == NEWSROOM)
 
 
 def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] = frozenset()) -> List[Dict]:

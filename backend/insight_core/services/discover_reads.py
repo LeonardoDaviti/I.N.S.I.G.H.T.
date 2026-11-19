@@ -40,8 +40,6 @@ from insight_core.ingestion import where_linked
 from insight_core.ingestion.gates import HostLimiter
 from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.kinds import page_watch, parsing
-from insight_core.ingestion.kinds.nitter_rss import NITTER_BASE_URL
-from insight_core.ingestion.kinds.parsing import TELEGRAM_BASE_URL
 from insight_core.utils.addresses import ACCOUNT_NAMESPACES, PLATFORM_SITES, host_of, is_tweet, publication_of, site_of
 from insight_core.utils.discover_rules import CHECK_DAYS, FIRST_PAGE, FOLLOWABLE, UNFOLLOWABLE
 
@@ -169,10 +167,16 @@ def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
     if not segments or not all(_ACCOUNT.match(s) for s in segments):
         return None
     source: Optional[Dict[str, str]] = None
-    if site in PLATFORM_SITES["x"] and len(segments) == 1:
-        source = {"platform": "rss", "handle_or_url": f"{NITTER_BASE_URL}/{segments[0].lstrip('@')}/rss"}
-    elif site in PLATFORM_SITES["telegram"] and site != "telegram.org" and len(segments) == 1:
-        source = {"platform": "rss", "handle_or_url": f"{TELEGRAM_BASE_URL}/rss/{segments[0]}?limit=50"}
+    if (site in PLATFORM_SITES["x"] or (site in PLATFORM_SITES["telegram"] and site != "telegram.org")) \
+            and len(segments) == 1:
+        # 0241: through the bridge the add path follows it through (feed_finder.bridge_feed: NITTER_HOSTS' first, the
+        # Telegram bridge's origin), never a fixed nitter.local / telegram.local: a test read through another host
+        # than the add's reads another bridge (or none). No bridge set: no kind reads it.
+        from insight_core.ingestion.feed_finder import bridge_feed
+        got = bridge_feed(f"https://{host}/{segments[0]}")
+        if got is None or not got[1]:
+            return None
+        source = {"platform": "rss", "handle_or_url": got[1] + ("?limit=50" if got[0] == "telegram" else "")}
     elif site in PLATFORM_SITES["reddit"] and len(segments) == 2 and segments[0] == "r":
         source = {"platform": "reddit", "handle_or_url": f"r/{segments[1]}"}
     elif site in PLATFORM_SITES["youtube"] and ((len(segments) == 1 and segments[0].startswith("@"))

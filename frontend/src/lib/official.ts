@@ -22,11 +22,16 @@ export const OFFICIAL_GROUPS: OfficialGroup[] = [
   { id: 'undone', title: 'Undone', states: ['undone'], collapsed: true, noun: 'undone' },
 ];
 
-/** The rows of each group, in the groups' order; empty groups are left out. */
-export function groupRows(rows: OfficialRow[]): { group: OfficialGroup; rows: OfficialRow[] }[] {
+/**
+ * The rows of each group, in the groups' order; empty groups are left out. Issue 0241: a group the page holds no
+ * rows of, but the server counts rows in (`counts`), is kept: its rows are a "Show more" away.
+ */
+export function groupRows(
+  rows: OfficialRow[], counts?: Record<string, number>,
+): { group: OfficialGroup; rows: OfficialRow[] }[] {
   return OFFICIAL_GROUPS
     .map((group) => ({ group, rows: rows.filter((row) => group.states.includes(row.state)) }))
-    .filter((entry) => entry.rows.length > 0);
+    .filter((entry) => entry.rows.length > 0 || groupCount(entry.group, counts, 0) > 0);
 }
 
 /** The job's mode in words. */
@@ -52,6 +57,7 @@ export function kindLabel(kind: OfficialKind | string): string {
 
 const FROM_LABELS: Record<OfficialFrom, string> = {
   own_page: 'its own page in a story',
+  site_section: "its site's news section",
   code_address: 'its code repository',
   handle: 'its handle',
   web_search: 'a web search',
@@ -66,7 +72,18 @@ export function fromLine(from: OfficialFrom | string | null | undefined): string
 /** "12 dated items read via feed; holds 2 of the event's pages". */
 export function proofLine(proof: OfficialProof | null | undefined): string | null {
   if (!proof) return null;
-  return `${plural(proof.dated, 'dated item')} read via ${proof.via}; holds ${formatCount(proof.holds)} of the event's pages`;
+  if (proof.retry) return 'The bridge could not read it; it is read again';
+  const line = `${plural(proof.dated, 'dated item')} read via ${proof.via}; holds ${formatCount(proof.holds)} of the event's pages`;
+  if (proof.announces === undefined) return line;
+  const announces = proof.announces === 'path' ? 'announces by its address'
+    : proof.announces === 'stream' ? 'announces by what it publishes' : 'announces nothing';
+  return `${line}; ${announces}`;
+}
+
+/** How many rows a group holds: every row of its states (the server's counts), never fewer than those shown. */
+export function groupCount(group: OfficialGroup, counts: Record<string, number> | undefined, shown: number): number {
+  const total = group.states.reduce((sum, state) => sum + (counts?.[state] ?? 0), 0);
+  return Math.max(total, shown);
 }
 
 /** "Worker: follow · fits your topics: yes · reason one; reason two". */

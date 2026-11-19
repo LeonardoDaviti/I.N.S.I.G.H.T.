@@ -91,6 +91,32 @@ describe('OfficialChannels (issue 0196)', () => {
     await waitFor(() => expect(getOfficial).toHaveBeenCalledTimes(2));
   });
 
+  it('issue 0241: a group counts every row of its states and pages through the rest', async () => {
+    const first = row({ id: 'r1', key: 'x.com/acme-one', kind: 'x', state: 'refused', proof: null });
+    const next = [row({ id: 'r2', key: 'x.com/acme-two', kind: 'x', state: 'refused', proof: null }),
+      row({ id: 'r3', key: 'x.com/acme-three', kind: 'x', state: 'refused', proof: null })];
+    const getOfficial = vi.fn().mockImplementation((_signal, page) => Promise.resolve(page?.states
+      ? answer(next, { counts: { refused: 3, would_add: 1 } })
+      : answer([row({ id: 'w1', key: 't.me/acme', kind: 'telegram', state: 'would_add' }), first],
+        { counts: { refused: 3, would_add: 1 } })));
+    renderWithProviders(<OfficialChannels />, { api: makeFakeApi({ getOfficial }) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 3 refused' }));
+    expect(screen.getByText('x.com/acme-one')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }));
+    expect(await screen.findByText('x.com/acme-three')).toBeInTheDocument();
+    expect(getOfficial).toHaveBeenLastCalledWith(undefined, { states: ['refused'], offset: 1, limit: 50 });
+    expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument();
+  });
+
+  it('issue 0241: says how a section announces, and that an account the bridge could not read is read again', () => {
+    expect(proofLine({ ...base.proof!, announces: 'stream' }))
+      .toBe("12 dated items read via feed; holds 2 of the event's pages; announces by what it publishes");
+    expect(proofLine({ ...base.proof!, announces: null }))
+      .toBe("12 dated items read via feed; holds 2 of the event's pages; announces nothing");
+    expect(proofLine({ ...base.proof!, retry: true })).toBe('The bridge could not read it; it is read again');
+    expect(fromLine('site_section')).toBe("Found from its site's news section");
+  });
+
   it('shows nothing when there are no rows', async () => {
     const { getOfficial } = setup([]);
     await waitFor(() => expect(getOfficial).toHaveBeenCalled());

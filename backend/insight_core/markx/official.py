@@ -38,8 +38,12 @@ hub's page that is no account, help, docs, CDN and file hosts, a forum thread (d
      the actor's; a repository the search names when the post links another of the same name is refused;
   2. a dated stream: the add path's test read (source_judge's: the feed finder, then page watching; an account through
      its kind) gives MIN_DATED+ dated items;
-  3. announcements: a releases feed, an account, a section whose read holds the event's own page or a page your
-     sources link, or whose path is an announcing one (ANNOUNCING).
+  3. announcements: a releases feed, an account, a section that announces by its host or path or by the dated
+     stream its read returned (discover_main_source.announcing, 0241); the event's own page in its read is no proof
+     (a product's page sits under its product section).
+0241: a section candidate's site gives its news section too (site_sections: the announcing sections your posts link
+there, a newsroom before an investor-relations section), and a section there that announces less is dropped. An
+account the bridge could not read is read again after RETRY_DAYS (RETRIES times), never refused as "gone".
 Plus **not covered**: an enabled source on the channel that carries the page means the gap is a join, a section or a
 backfill: `covered`, never a new source.
 
@@ -89,11 +93,14 @@ PRIORITY = -2                     # the worker's questions: after the owner's ta
 LOOKUP_GUIDE = "websearch-official-v1"
 LOOKUP_KIND = "websearch"
 LOOKUP_SEARCHES = 4
+RETRY_DAYS = 3                    # 0241: an account the bridge could not read is read again after this,
+RETRIES = 5                       #       this many times, then refused for REFUSED_DAYS
+REREAD_MARK = "official_reread_v1026"   # mx_settings: the first v10.26 pass's time (the rows refused before it)
+REREAD_WHY = "read again: scraping regardless of a feed (v10.26)"
+SITE_SECTION_POSTS = 2            # 0241: an announcing section of the actor's site: this many of your posts link it
 STATES = ("candidate", "proven", "would_add", "added", "undone", "refused", "covered")
-# A section's path that announces (a blog, a newsroom, releases, changelogs): its read need not hold the event's page.
-ANNOUNCING = re.compile(r"(^|/)(news|newsroom|blog|blogs|press|press-releases|pressroom|announcements?|releases?|"
-                        r"updates?|changelog|changes|whats-new|what-s-new|research|engineering|stories|posts|articles|"
-                        r"insights|media)(/|$)", re.I)
+# The view's order (0241): what waits for the owner first, then the rest.
+VIEW_ORDER = ("would_add", "added", "candidate", "proven", "covered", "refused", "undone")
 _GITHUB_REPO = re.compile(r"^https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", re.I)
 _NOT_REPO = frozenset({"orgs", "topics", "sponsors", "features", "marketplace", "settings", "about", "pricing",
                        "collections", "trending", "apps", "login", "join", "explore", "enterprise", "security"})
@@ -167,8 +174,8 @@ def channel(url: str) -> Optional[Chan]:
     if ch.platform == "telegram":
         c = ch.key.split("/", 1)[1]
         return Chan(ch.key, "telegram", ch.url, c, "t.me")
-    if not ch.prefix or ch.prefix == "/":
-        return None                          # a site's root says who, not where
+    if not ch.prefix or (ch.prefix == "/" and not D.announcing(ch.url)):
+        return None                          # a site's root says who, not where (0241: but newsroom.<site>'s root)
     return Chan(ch.key, "section", ch.url, (site_of(host_of(ch.url)) or "").split(".")[0], ch.site, ch.prefix)
 
 
@@ -287,14 +294,25 @@ def _shown(r: Dict[str, Any]) -> Dict[str, Any]:
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None}
 
 
-def view(cur: Any, *, limit: int = 200) -> Dict[str, Any]:
-    """The review view: the channel book's rows by state (added and would_add first), with why, from where, how;
-    the day's adds and the cap; the mode."""
-    order = {"added": 0, "would_add": 1, "candidate": 2, "proven": 2, "covered": 3, "refused": 4, "undone": 5}
-    rows = _rows(cur, "TRUE ORDER BY COALESCE(decided_at, created_at) DESC LIMIT %s", (limit,))
-    rows.sort(key=lambda r: order.get(r["state"], 9))
+VIEW_LIMIT = 100                  # the view's page (0241: was the newest 200 rows, the would_add ones not among them)
+VIEW_MAX = 500
+
+
+def view(cur: Any, *, offset: int = 0, limit: int = VIEW_LIMIT, states: Sequence[str] = ()) -> Dict[str, Any]:
+    """The review view: the channel book's rows a page at a time (`offset`, `limit`; `states`: only these), in
+    VIEW_ORDER (what waits for the owner first: would_add, added, candidate; then the rest), the newest first within
+    a state; with why, from where, how; `counts` by state over every row (not the page's), `total` the rows `states`
+    selects; the day's adds and the cap; the mode."""
+    states = [s for s in states if s in STATES]
+    offset, limit = max(0, int(offset)), max(1, min(int(limit), VIEW_MAX))
+    rank = "CASE state " + " ".join(f"WHEN '{s}' THEN {i}" for i, s in enumerate(VIEW_ORDER)) + " ELSE 99 END"
+    where = "state = ANY(%s)" if states else "TRUE"
+    params: List[Any] = [states] if states else []
+    rows = _rows(cur, f"{where} ORDER BY {rank}, COALESCE(decided_at, created_at) DESC, id LIMIT %s OFFSET %s",
+                 (*params, limit, offset))
     cur.execute("SELECT state, count(*) FROM mx_official_channels WHERE superseded_at IS NULL GROUP BY 1")
-    counts = dict(cur.fetchall())
+    counts = {k: int(v) for k, v in cur.fetchall()}
+    total = sum(n for k, n in counts.items() if not states or k in states)
     cur.execute("SELECT outcome, count(*) FROM mx_official_events GROUP BY 1")
     events = dict(cur.fetchall())
     hidden = {}
@@ -308,7 +326,8 @@ def view(cur: Any, *, limit: int = 200) -> Dict[str, Any]:
         s["hidden_items"] = hidden.get(r["source_id"] or "", 0)
         shown.append(s)
     return {"mode": mode(), "cap": adds_per_day(), "added_today": added_today(cur), "counts": counts,
-            "events": events, "rows": shown}
+            "events": events, "rows": shown, "total": total, "offset": offset, "limit": limit,
+            "states": states or None}
 
 
 def added_today(cur: Any, now: Optional[datetime] = None) -> int:
@@ -405,10 +424,20 @@ class Cand:
     pages: List[str] = field(default_factory=list)   # the event's own pages on it
 
 
-def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Optional[Dict[str, Any]] = None
-               ) -> Tuple[List[Cand], List[Dict[str, Any]]]:
+SiteSections = Callable[[str], Sequence[Tuple[Chan, int, int]]]
+
+
+def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Optional[Dict[str, Any]] = None,
+               site_sections: Optional[SiteSections] = None) -> Tuple[List[Cand], List[Dict[str, Any]]]:
     """(the event's owned candidates, the ones refused by ownership with why). Pure. In order: its own pages'
-    channels, its things' code addresses, the actor's handles, then (only when those give none) the web search's."""
+    channels, its things' code addresses, the actor's handles, then (only when those give none) the web search's.
+
+    0241, the company's news section: a section candidate's site is the actor's, and that site's announcing sections
+    (`site_sections(site)`: [(channel, discover_main_source.announcing rank, posts linking it)], the best first) are
+    candidates too. A section on the site that announces less than the site's best (a plans or docs page under which
+    the event's page sits; an investor-relations section beside a newsroom) is no candidate then: refused with why.
+    A section that announces nothing and has no announcing section beside it stays a candidate: its read must show
+    an announcing stream (_proof)."""
     out: Dict[str, Cand] = {}
     refused: List[Dict[str, Any]] = []
     code_repos = sorted({(channel(u).site if channel(u) else "") for us in ev.addresses.values() for u in us} - {""})
@@ -434,6 +463,7 @@ def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Opti
             if ch and ch.key not in out:
                 out[ch.key] = Cand(ch, "handle", "its handle (confirmed by you, or its own source's account)")
     if out or not lookup:
+        _site_sections(ev, out, refused, [ev.actor_name] if ev.actor_name else [], [], site_sections)
         return list(out.values()), refused
     names = [n for n in [((lookup.get("actor") or {}).get("name")), ev.actor_name] if n]
     sites = [s for s in [((lookup.get("actor") or {}).get("site"))] if s]
@@ -460,7 +490,67 @@ def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Opti
         got = out.setdefault(ch.key, Cand(ch, origin, why + f"; the web search: {said}"[:200]))
         if origin == "web_announcement":
             got.pages.append(url)
+    _site_sections(ev, out, refused, names, sites, site_sections)
     return list(out.values()), refused
+
+
+def _site_sections(ev: Any, out: Dict[str, Cand], refused: List[Dict[str, Any]], names: Sequence[str],
+                   sites: Sequence[str], site_sections: Optional[SiteSections]) -> None:
+    """candidates' last step (0241): each section candidate's site (and the web search's actor's site) gives its best
+    announcing section, owned by the actor's name or site (never a third party's site an own page sits on); the
+    sections there that announce less are dropped, with why."""
+    from insight_core.services import discover_main_source as D
+    from insight_core.utils.addresses import site_of, host_of
+    if site_sections is None:
+        return
+    wanted = [c.chan.site for c in out.values() if c.chan.kind == "section"]
+    wanted += [site_of(host_of(s if "://" in s else "https://" + s)) for s in sites if s]
+    for site in dict.fromkeys(w for w in wanted if w):
+        best = list(site_sections(site) or [])
+        if not best:
+            continue
+        ch, rank, posts = best[0]
+        if ch.key not in out:
+            why = owned(ch, mk=ev.mk, actor=ev.actor or None, names=names, sites=sites)
+            if not why:
+                continue
+            out[ch.key] = Cand(ch, "site_section", f"{why}; its site's news section ({posts} links from your posts)")
+        for key, c in list(out.items()):
+            if c.chan.kind != "section" or c.chan.site != site or key == ch.key:
+                continue
+            if D.announcing(c.chan.address) < rank:
+                del out[key]
+                refused.append({"url": c.chan.address, "why": f"its site's news section {ch.key} is tried instead"})
+
+
+def site_sections(cur: Any, sites: Iterable[str], *, min_posts: int = SITE_SECTION_POSTS
+                  ) -> Dict[str, List[Tuple[Chan, int, int]]]:
+    """{site: [(an announcing section of the site, its discover_main_source.announcing rank, your posts' links into
+    it)]}, the best first (the rank, then the links), from the pages your sources link (post_links, one query for
+    the sites of a pass). Sections of min_posts links or more."""
+    from insight_core.services import discover_main_source as D
+    sites = sorted({s for s in sites if s})
+    if not sites:
+        return {}
+    cur.execute("""SELECT target_site, substring(target_url FROM '^(?:[a-z]+://)?(?:www[.])?([^/?#]+(?:/[^/?#]+){0,3})'),
+                          count(DISTINCT post_id)
+                     FROM post_links WHERE NOT boilerplate AND target_site = ANY(%s) GROUP BY 1, 2""", (sites,))
+    posts: Dict[Tuple[str, str], int] = Counter()
+    chans: Dict[str, Chan] = {}
+    for site, head, n in cur.fetchall():
+        ch = channel("https://" + head) if head else None
+        if ch is None or ch.kind != "section" or ch.site != site:
+            continue
+        chans[ch.key] = ch
+        posts[(site, ch.key)] += int(n)
+    out: Dict[str, List[Tuple[Chan, int, int]]] = defaultdict(list)
+    for (site, key), n in posts.items():
+        rank = D.announcing(chans[key].address)
+        if rank and n >= min_posts:
+            out[site].append((chans[key], rank, n))
+    for site in out:
+        out[site].sort(key=lambda t: (-t[1], -t[2], t[0].key))
+    return dict(out)
 
 
 # ---- the web search (the `websearch` kind, guide websearch-official-v1) ------------------------------------------
@@ -540,6 +630,18 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
     releases = _releases_followed(cur)
     book = identity.lazy_book(cur)
     asked = 0
+    # 0241: the sites' announcing sections, one query for the own pages' sites of the pass (a web search's actor's
+    # site not among them: one query more)
+    first = {c.site for ev in evs[:events_per_run] for c in (channel(o.url) for o in ev.pages)
+             if c is not None and c.kind == "section"}
+    by_site: Dict[str, List[Tuple[Chan, int, int]]] = {s: [] for s in first}
+    by_site.update(site_sections(cur, first))
+
+    def sections_of(site: str) -> Sequence[Tuple[Chan, int, int]]:
+        if site not in by_site:
+            by_site[site] = site_sections(cur, [site]).get(site, [])
+        return by_site[site]
+
     for ev in evs[:events_per_run]:
         if ev.member_sources & ev.actor_sources:
             _event_outcome(cur, ev, "held", {"why": "the actor's own post is in the story"})
@@ -555,7 +657,8 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
                 log.exception("Official channels: the handles of %s could not be read", ev.actor)
         key = lookup_key(ev)
         status, answer = lookup_answer(cur, key)
-        cands, refused = candidates(ev, handles=hs, lookup=answer if status == "answered" else None)
+        cands, refused = candidates(ev, handles=hs, lookup=answer if status == "answered" else None,
+                                    site_sections=sections_of)
         if status == "answered" and answer:
             thing = ev.things[0] if ev.things else None
             if thing and answer.get("thing_maker"):
@@ -597,7 +700,8 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
                     cur.execute("UPDATE mx_official_channels SET events = %s, evidence = %s::jsonb WHERE id = %s",
                                 (ev_rows, json.dumps(evidence, default=str), before["id"]))
                 continue
-            cov = (releases.get(c.chan.site) if c.chan.kind == "releases" else coverage(c.chan, c.pages, sources))
+            probe = c.pages or ([c.chan.address.rstrip("/") + "/-"] if c.origin == "site_section" else [])
+            cov = (releases.get(c.chan.site) if c.chan.kind == "releases" else coverage(c.chan, probe, sources))
             evidence = {"from": c.origin, "owned": c.owned, "pages": c.pages[:5], "events_shown": [shown_event],
                         "actor_events": by_actor.get(ev.actor, 1) if ev.actor else 1, "voices": ev.voices,
                         "refused_proposals": refused[:4], "lookup": key if status == "answered" else None}
@@ -616,7 +720,13 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
 
 
 def _proof(row: Dict[str, Any], j: Dict[str, Any]) -> Tuple[Optional[str], Dict[str, Any]]:
-    """(why it is no proven channel, or None; the proof as shown) from the judgement's test read."""
+    """(why it is no proven channel, or None; the proof as shown) from the judgement's test read.
+
+    0241: a section is proven by its path or by the stream its read returned (discover_main_source.announcing), never
+    by the event's page sitting in its read (`holds` is shown, not proof: a product's page sits under its product
+    section). An account the read could not reach (a bridge's failure: the bridge answers 404 for an account it could
+    not load) is no dead account: `retry`, read again after RETRY_DAYS, never "gone" for REFUSED_DAYS."""
+    from insight_core.services import discover_main_source as D
     sig = j.get("signals") or {}
     rate = sig.get("rate") or {}
     resolved = j.get("resolved") or {}
@@ -628,13 +738,26 @@ def _proof(row: Dict[str, Any], j: Dict[str, Any]) -> Tuple[Optional[str], Dict[
     proof = {"via": resolved.get("via"), "address": resolved.get("handle_or_url"), "items": len(items),
              "dated": dated, "holds": holds, "linked": linked, "newest_days": rate.get("newest_days")}
     if j.get("status") in ("unreadable", "failed"):
-        return f"no dated stream: {j.get('reason') or 'could not be read'}", proof
+        reason = j.get("reason") or "could not be read"
+        if row["kind"] in ("x", "telegram") and not items:
+            tries = int((((row.get("evidence") or {}).get("proof") or {}).get("tries") or 0)) + 1
+            proof["tries"] = tries
+            if tries <= RETRIES:
+                proof["retry"] = True
+                return f"not read: the bridge could not read it ({reason}); read again in {RETRY_DAYS} days", proof
+            return f"not read: the bridge could not read it {tries} times ({reason})", proof
+        return f"no dated stream: {reason}", proof
     if dated < MIN_DATED:
         return f"no dated stream: {dated} dated items read", proof
     if row["kind"] == "section":
-        prefix = (row.get("page_watch") or {}).get("prefix") or ""
-        if not (holds or ANNOUNCING.search(prefix)):   # pages your sources link (a benchmark's data pages) are no
-            return "no announcements: its read holds none of the event's pages and its path announces nothing", proof
+        follow = row.get("follow") or ""
+        dated_pages = [i.get("url") or "" for i in items if i.get("published_at")]
+        by_path = D.announcing(follow)
+        by_stream = by_path or D.announcing(follow, address=resolved.get("handle_or_url"), items=dated_pages,
+                                            via=resolved.get("via"))
+        proof["announces"] = "path" if by_path else "stream" if by_stream else None
+        if not by_stream:
+            return "no announcements: neither its path nor the stream its read returned announces", proof
     return None, proof
 
 
@@ -733,23 +856,40 @@ def advance(db_url: str, now: datetime, counts: Counter, *, reads: int = READS_P
     answered ones decided. Each candidate in a short transaction of its own; the reads outside them."""
     from insight_core.db import database
     from insight_core.markx import source_judge as SJ
+    from insight_core.markx import repo
     with database.transaction(db_url) as cur:
         waiting = _rows(cur, "state = 'candidate' ORDER BY created_at")
-        stale = _rows(cur, "state = 'refused' AND decided_at < %s ORDER BY decided_at LIMIT 20",
-                      (now - timedelta(days=REFUSED_DAYS),))
+        # 0241: an account the bridge could not read again after RETRY_DAYS (and the accounts refused before as
+        # "no dated stream" for the same failure). 0240/0241, once: the rows refused before the v10.26 rules
+        # (REREAD_MARK, the first pass's time) as "no dated stream" (scraping regardless may read them now: read
+        # again, the cached judgement not reused) or "no announcements" (the news-section rule: decided again on
+        # the judgement's read). A row decided again is past the mark: never twice.
+        mark = repo.get_setting(cur, REREAD_MARK)
+        if mark is None:
+            mark = now.isoformat()
+            repo.set_setting(cur, REREAD_MARK, mark)
+        retry = now - timedelta(days=RETRY_DAYS)
+        stale = _rows(cur, "state = 'refused' AND (decided_at < %s OR (decided_at < %s AND ("
+                           "evidence->'proof'->>'retry' = 'true' OR (kind IN ('x', 'telegram') "
+                           "AND why LIKE 'no dated stream: %%'))) OR (decided_at < %s::timestamptz AND "
+                           "(why LIKE 'no dated stream%%' OR why LIKE 'no announcements%%'))) "
+                           "ORDER BY decided_at LIMIT 20",
+                      (now - timedelta(days=REFUSED_DAYS), retry, mark))
     to_read: List[Tuple[Dict[str, Any], str]] = []
     for row in waiting + stale:
         with database.transaction(db_url) as cur:
             if row["state"] == "refused":
-                row = dict(row, id=put(cur, row["key"], row["kind"], "candidate", why="looked at again", before=row),
-                           state="candidate", judge_id=None)
+                again = (row.get("why") or "").startswith("no dated stream")
+                row = dict(row, id=put(cur, row["key"], row["kind"], "candidate", before=row,
+                                       why=REREAD_WHY if again else "looked at again"),
+                           state="candidate", judge_id=None, why=REREAD_WHY if again else "looked at again")
             j = SJ.get(cur, row["judge_id"]) if row.get("judge_id") else None
             if j is not None and j["status"] == "asked" and j.get("task_id"):
                 j = SJ.latest(cur, j["address"]) or j
             if j is None:
                 if len(to_read) >= reads:
                     continue
-                got = SJ.ask(cur, row["follow"], now=now)
+                got = SJ.ask(cur, row["follow"], now=now, again=row.get("why") == REREAD_WHY)
                 cur.execute("UPDATE mx_official_channels SET judge_id = %s WHERE id = %s", (got["id"], row["id"]))
                 if got.get("needs_read"):
                     to_read.append((row, got["id"]))
@@ -868,4 +1008,4 @@ def pages_wanted(cur: Any, now: datetime, *, limit: int = 40,
 
 
 __all__ = ["Chan", "MODES", "add_source", "advance", "book", "candidates", "channel", "decide", "mode", "owned",
-           "pages_wanted", "plan", "run", "undo", "view"]
+           "pages_wanted", "plan", "run", "site_sections", "undo", "view"]

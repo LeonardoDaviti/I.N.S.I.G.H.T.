@@ -146,6 +146,72 @@ def section_of(url: str) -> str:
     return "/"
 
 
+# ---- the company's news section (0241: one rule; official channels' candidates and proof, Discover's card lead) ----
+
+# A path segment, or one of its words (news-events, press_all), that announces: a newsroom, news, a blog, press,
+# releases, changelogs, an agency's alerts. Segments that start with news or press (newsevents, pressreleases) too.
+ANNOUNCING_WORDS = frozenset({
+    "news", "newsroom", "blog", "blogs", "press", "pressroom", "announcement", "announcements", "release", "releases",
+    "update", "updates", "changelog", "changes", "whats", "research", "engineering", "stories", "posts", "articles",
+    "insights", "media", "advisories", "alerts", "bulletins", "statements"})
+# A host's first label that announces by itself (newsroom.<site>, blog.<site>): its root is the section.
+ANNOUNCING_HOSTS = frozenset({"news", "newsroom", "press", "pressroom", "blog", "blogs", "stories", "engineering",
+                              "updates", "changelog"})
+# An investor-relations host or section: its news announces, but the newsroom beside it comes first.
+IR_WORDS = frozenset({"ir", "investor", "investors", "investorrelations", "investor-relations"})
+NEWSROOM, INVESTORS, NOTHING = 2, 1, 0
+
+
+def _seg_announces(seg: str) -> bool:
+    s = seg.lower()
+    words = [w for w in re.split(r"[-_.+]+", s) if w]
+    return any(w in ANNOUNCING_WORDS for w in words) or s.startswith(("news", "press")) or s == "what-s-new"
+
+
+def _says(url: str, *, whole: bool) -> Tuple[bool, bool]:
+    """(it announces, it is investor relations) by its host's first label and its path: the whole path (a section's or
+    a feed's own address), or only the section a page sits in (an item's page: its slug says nothing)."""
+    full = _full(url) or ""
+    host = host_of(full).removeprefix("www.")
+    label = host.split(".")[0] if host and host != site_of(host) else ""   # a site called newsroom.<tld> is no section
+    segs = [s.lower() for s in segments(full)]
+    if not whole:
+        prefix = section_of(full)
+        segs = [s for s in prefix.split("/") if s] if prefix != "/" else []
+    ir = label in IR_WORDS or any(s in IR_WORDS or s.startswith("investor") for s in segs)
+    ann = label in ANNOUNCING_HOSTS or any(_seg_announces(s) for s in segs if not LANGUAGE.match(s))
+    return ann, ir
+
+
+def announcing(url: str, *, address: Optional[str] = None, items: Sequence[str] = (), via: Optional[str] = None) -> int:
+    """How a site's section announces: NEWSROOM (2) a newsroom, news, blog, press, releases or changelog section by
+    its host or its path; INVESTORS (1) the same of an investor-relations host or section (a company's newsroom beside
+    it comes first); NOTHING (0) a section that announces nothing (a plans, prompts, solutions, docs, resources page,
+    a shop's category). The one rule for "the company's news section" (official channels' candidates and proof;
+    Discover's card lead reads it the same way: `announcing(url)`).
+
+    A section whose path says nothing announces by the dated stream its test read returned (`address`: the address
+    the read resolved, `items`: its dated items' pages, `via`: feed | page | kind): the address announces by its path
+    (a press-releases feed, a newsroom page), or half its items or more sit in an announcing section, or it is a feed
+    whose items sit under the section itself (a site's /p/ posts). The event's own page under a section is no proof:
+    a product's page sits under its product section. Pure."""
+    ann, ir = _says(url, whole=True)
+    if not ann and address:
+        a_ann, a_ir = _says(address, whole=True)
+        ann, ir = a_ann, ir or (a_ann and a_ir)
+    if not ann and items:
+        under = sum(1 for i in items if _says(i, whole=False)[0])
+        ann = under * 2 >= len(items)
+        if not ann and via == "feed":
+            own = _full(url) or ""
+            pre = host_of(own).removeprefix("www.") + _path(own)
+            ann = sum(1 for i in items if (host_of(_full(i) or "").removeprefix("www.") + _path(_full(i) or "")
+                                           ).startswith(pre)) * 2 >= len(items) and _path(own) != "/"
+    if not ann:
+        return NOTHING
+    return INVESTORS if ir else NEWSROOM
+
+
 def channel_of(url: str) -> Optional[Channel]:
     """The channel a page of an actor's is published in, or None (a home page, a platform's page, a paper, code or a
     model hub)."""

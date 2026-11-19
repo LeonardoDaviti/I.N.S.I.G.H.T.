@@ -8,8 +8,9 @@ import { Button, ExternalLink, TextLink } from '../ui';
 import { FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import {
-  filterLine, fromLine, groupRows, judgeLine, kindLabel, modeLine, proofLine, showLabel, type OfficialGroup,
+  filterLine, fromLine, groupCount, groupRows, judgeLine, kindLabel, modeLine, proofLine, showLabel, type OfficialGroup,
 } from '../../lib/official';
+import { formatCount } from '../../lib/format';
 
 export const OFFICIAL_KEY = ['official-channels'] as const;
 
@@ -63,11 +64,37 @@ function Row({ row, onUndo, undoing }: { row: OfficialRow; onUndo: (row: Officia
   );
 }
 
-/** A group of rows; a collapsed group shows a "Show N …" button first. */
-function Group({ group, rows, onUndo, undoingId }: {
-  group: OfficialGroup; rows: OfficialRow[]; onUndo: (row: OfficialRow) => void; undoingId: string | null;
+/** The rows a "Show more" asks for at once. */
+export const OFFICIAL_PAGE = 50;
+
+/**
+ * A group of rows; a collapsed group shows a "Show N …" button first. Issue 0241: the view sends a page of rows (what
+ * waits for you first), so a group may hold more than it shows (`count`, from the server's counts): "Show N more"
+ * asks for the next ones of its states.
+ */
+function Group({ group, rows, count, onUndo, undoingId }: {
+  group: OfficialGroup; rows: OfficialRow[]; count: number; onUndo: (row: OfficialRow) => void; undoingId: string | null;
 }) {
+  const api = useApi();
   const [open, setOpen] = useState(!group.collapsed);
+  const [more, setMore] = useState<OfficialRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const seen = new Set(rows.map((row) => row.id));
+  const shown = [...rows, ...more.filter((row) => !seen.has(row.id))];
+  const left = Math.max(0, count - shown.length);
+  const loadMore = async () => {
+    setLoading(true);
+    setFailed(null);
+    try {
+      const page = await api.getOfficial(undefined, { states: group.states, offset: shown.length, limit: OFFICIAL_PAGE });
+      setMore((before) => [...before, ...page.rows]);
+    } catch (error: unknown) {
+      setFailed(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
   const listId = `official-${group.id}`;
   return (
     <div className="mt-2">
@@ -80,14 +107,26 @@ function Group({ group, rows, onUndo, undoingId }: {
           onClick={() => setOpen((value) => !value)}
           className={`-ml-1 rounded-sm px-1 text-left text-[0.8125rem] leading-5 text-fg-2 hover:text-fg ${FOCUS_RING}`}
         >
-          {open ? `Hide ${group.noun}` : showLabel(group, rows.length)}
+          {open ? `Hide ${group.noun}` : showLabel(group, count)}
         </button>
       ) : null}
       {open ? (
         <ul id={listId}>
-          {rows.map((row) => <Row key={row.id} row={row} onUndo={onUndo} undoing={undoingId === row.id} />)}
+          {shown.map((row) => <Row key={row.id} row={row} onUndo={onUndo} undoing={undoingId === row.id} />)}
         </ul>
       ) : null}
+      {open && left > 0 ? (
+        <button
+          type="button"
+          disabled={loading}
+          aria-busy={loading}
+          onClick={() => { void loadMore(); }}
+          className={`-ml-1 rounded-sm px-1 text-left text-[0.8125rem] leading-5 text-fg-2 hover:text-fg ${FOCUS_RING}`}
+        >
+          {loading ? 'Loading…' : `Show ${formatCount(Math.min(left, OFFICIAL_PAGE))} more`}
+        </button>
+      ) : null}
+      {failed ? <p role="alert" className="text-[0.8125rem] leading-5 text-fg-3">Could not load more: {failed}</p> : null}
     </div>
   );
 }
@@ -121,8 +160,15 @@ export default function OfficialChannels() {
     <section aria-label="Official channels" className="mb-2">
       <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Official channels</h2>
       <p className="text-[0.75rem] text-fg-3">{modeLine(data)}</p>
-      {groupRows(rows).map(({ group, rows: groupRowsList }) => (
-        <Group key={group.id} group={group} rows={groupRowsList} onUndo={(row) => undo.mutate(row)} undoingId={undoingId} />
+      {groupRows(rows, data.counts).map(({ group, rows: groupRowsList }) => (
+        <Group
+          key={group.id}
+          group={group}
+          rows={groupRowsList}
+          count={groupCount(group, data.counts, groupRowsList.length)}
+          onUndo={(row) => undo.mutate(row)}
+          undoingId={undoingId}
+        />
       ))}
     </section>
   );

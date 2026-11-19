@@ -1062,7 +1062,7 @@ export interface MainSourceResponse {
 /** Issue 0196: an official channel the official-channels job found, and where it stands. */
 export type OfficialKind = 'x' | 'telegram' | 'youtube' | 'section' | 'releases';
 export type OfficialState = 'candidate' | 'proven' | 'would_add' | 'added' | 'undone' | 'refused' | 'covered';
-export type OfficialFrom = 'own_page' | 'code_address' | 'handle' | 'web_search' | 'web_announcement';
+export type OfficialFrom = 'own_page' | 'site_section' | 'code_address' | 'handle' | 'web_search' | 'web_announcement';
 export interface OfficialProof {
   via: string;
   address: string;
@@ -1071,6 +1071,10 @@ export interface OfficialProof {
   holds: number;
   linked: number;
   newest_days: number | null;
+  /** Issue 0241: how a site section announces (its path, or the stream its read returned); null: it doesn't. */
+  announces?: 'path' | 'stream' | null;
+  /** Issue 0241: the bridge could not read the account; it is read again. */
+  retry?: boolean;
 }
 export interface OfficialJudge {
   verdict: 'follow' | 'maybe' | 'skip' | null;
@@ -1109,9 +1113,21 @@ export interface OfficialResponse {
   mode: 'off' | 'shadow' | 'on';
   cap: number;
   added_today: number;
+  /** Every row's state, not only the page's. */
   counts: Record<string, number>;
   events: Record<string, number>;
+  /** Issue 0241: a page of rows (would_add, added, candidate first); `total` the rows the asked states hold. */
   rows: OfficialRow[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  states?: OfficialState[] | null;
+}
+/** Issue 0241: a page of the official channels' view, optionally of some states only. */
+export interface OfficialPage {
+  offset?: number;
+  limit?: number;
+  states?: OfficialState[];
 }
 /** A source's item filter (issue 0196): which of its items are hidden, and by whom. */
 export interface ItemFilterResponse {
@@ -1423,8 +1439,14 @@ export function createApi() {
     getMainSourceMissing: (signal?: AbortSignal) =>
       request<MainSourceResponse>('/api/discover/main-source', { signal }),
     /** Official channels (issue 0196): what the official-channels job found, why, from where and how it was checked. */
-    getOfficial: (signal?: AbortSignal) =>
-      request<OfficialResponse>('/api/official', { signal }),
+    getOfficial: (signal?: AbortSignal, page: OfficialPage = {}) => {
+      const qs = new URLSearchParams();
+      if (page.offset) qs.set('offset', String(page.offset));
+      if (page.limit) qs.set('limit', String(page.limit));
+      if (page.states?.length) qs.set('state', page.states.join(','));
+      const query = qs.toString();
+      return request<OfficialResponse>(`/api/official${query ? `?${query}` : ''}`, { signal });
+    },
     /** Undo an official channel added automatically: its source stops and it is not added again. */
     undoOfficial: (id: string) =>
       request<{ success: true; id: string; state: 'undone'; source_id: string | null }>(

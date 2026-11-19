@@ -1,11 +1,15 @@
 """Official channels' routes (issue 0196): an APIRouter, included by main.py in one line. Reads only, but Undo and the
 owner's item filter; the decisions are markx/official.py's, made in the jobs process.
 
-GET  /api/official                       the review view: {mode off|shadow|on, cap, added_today, counts {state: n},
-                                         events {outcome: n}, rows [{id, key, kind x|telegram|youtube|section|releases,
+GET  /api/official?offset=&limit=&state=  the review view, a page at a time (0241: limit 1-500, default 100; state:
+                                         a comma list), would_add, added, candidate first: {mode off|shadow|on, cap,
+                                         added_today, counts {state: n} (every row), total (the rows `state` selects),
+                                         offset, limit, states, events {outcome: n},
+                                         rows [{id, key, kind x|telegram|youtube|section|releases,
                                          state candidate|would_add|added|undone|refused|covered, why, actor {id, name},
-                                         follow, from (own_page|code_address|handle|web_search|web_announcement), owned,
-                                         proof {via, address, items, dated, holds, linked}, judge {verdict, fits,
+                                         follow, from (own_page|site_section|code_address|handle|web_search|
+                                         web_announcement), owned, proof {via, address, items, dated, holds, linked,
+                                         announces path|stream|null, retry}, judge {verdict, fits,
                                          original, reasons}, filter, source_id, hidden_items, events [{story, headline,
                                          voices, first_at}], decided_at, created_at}]}
 POST /api/official/{id}/undo             {id, state: undone, source_id}: the source switched off (posts kept), the
@@ -20,7 +24,7 @@ import asyncio
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 router = APIRouter(tags=["discover"])
@@ -39,13 +43,17 @@ def _uuid(value: str) -> str:
 
 
 @router.get("/api/official")
-async def get_official():
+async def get_official(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
+                       state: Optional[str] = None):
     from insight_core.db import database
     from insight_core.markx import official
+    states = [s.strip() for s in (state or "").split(",") if s.strip()]
+    if any(s not in official.STATES for s in states):
+        raise HTTPException(status_code=400, detail="No such state")
 
     def read() -> Dict[str, Any]:
         with database.connection(_db()) as conn, conn.cursor() as cur:
-            return official.view(cur)
+            return official.view(cur, offset=offset, limit=limit, states=states)
     return {"success": True, **await asyncio.to_thread(read)}
 
 
