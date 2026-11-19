@@ -297,7 +297,7 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
         """generic_rss on www.reddit.com and reddit_subreddit r/x both get 8s; tg RSS 5s; others 0."""
         registry = KindRegistry.default(KindHttp(), object())
         cases = [
-            (_source("https://www.reddit.com/r/x/.rss"), "generic_rss", 8.0),
+            (_source("https://www.reddit.com/r/x/.rss"), "reddit_subreddit", 8.0),   # 0242: an old .rss address is read as its subreddit,
             (_source("r/x", platform="reddit"), "reddit_subreddit", 8.0),
             (_source("https://tg.i-c-a.su/rss/chan?limit=50"), "telegram_rss", 5.0),
             (_source("https://unlisted.example.com/feed"), "generic_rss", None),

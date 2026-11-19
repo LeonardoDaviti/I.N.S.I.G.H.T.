@@ -994,12 +994,12 @@ class StoriesService:
         return {**result, "suggestions": self._by_fit(result["suggestions"])}
 
     def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
-              q: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
+              q: Optional[str] = None, total: Optional[int] = None, ordered: bool = False) -> Dict[str, Any]:
         """One page of the answer. `total` (0206): `result`'s suggestions are already the page's (sliced in Postgres,
         DiscoverRepository.served_window) out of `total`."""
         if total is not None:
             got = self._page({**result, "suggestions": [None] * offset + result["suggestions"]}, offset=offset,
-                             limit=limit)
+                             limit=limit, ordered=True)
             end = offset + max(0, limit or 0)
             return {**got, "total": total, "more": end < total}
         if result["archives"]:   # each archive row follows its source's archive, read now (it runs on its own)
@@ -1007,7 +1007,8 @@ class StoriesService:
                 states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
             result = {**result, "archives": _archive_rows(result["archives"], states, self.clock())}
         ranked, also = result["suggestions"], result.get("also", [])
-        ranked = self._by_fit(ranked)   # 0196: the worker's judgement of the reader's fit first, then link volume
+        if not ordered:   # a served window (sliced in Postgres, padded) is in _fresh's fit order already
+            ranked = self._by_fit(ranked)   # 0196: the worker's judgement of the reader's fit first, then link volume
         if q:
             words = q.casefold().split()
             ranked = [s for s in ranked if all(w in _words(s) for w in words)]
