@@ -92,11 +92,17 @@ done, and prefer one shared prepared copy to several private snapshots.
 ## The real-data check: the base side is cached
 
 `scripts/realdata-check.sh <db>` reads `<db>` on insight-db (one pg_dump) and makes its scratch copies on the
-scratch server. It keeps the base side's outputs (story job, snapshot, invariants, cases, job checks) in
-`plan/research/lab/checks/base-cache/`, keyed by the base's backend tree, the copy's content (its dump restored as
-SQL, hashed), the checks' code, the cases file, the image and `--now`. A second check against the same base and copy
-runs only the head side. `--no-cache` runs the base again (and replaces the entry). The report says when the base
-came from the cache.
+scratch server. `--in-place <export.zip> <db>` (owner 2026-11-19: one copy of the server's data, never cloned) makes
+`<db>` on the scratch server from the export instead, once for each side it runs, and drops it at the end.
+
+Both modes keep a side's outputs (story job, snapshot, invariants, cases, job checks) in
+`plan/research/lab/checks/base-cache/` (0253: one cache), keyed by the content of the code the side ran (its
+backend tree with the checks package over it), the data (the dump as SQL, or the export zip, hashed), the cases and
+journeys files, the image and `--now`. A cached base side is not run again: the run restores once and runs only
+the head side. The head side is kept too (with no `--identity`), so the next release over the same export, whose
+base is this head merged (same backend tree), runs only its head. Run the release's check with `--head <ref>` (a
+committed tree) so the next base matches it. `--no-cache` runs the base again (and replaces the entry). The report
+says when the base came from the cache, and whose side it was.
 
 ### The jobs' resources (0218)
 

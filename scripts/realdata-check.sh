@@ -17,26 +17,30 @@
 #                      read-only copy (a replay of a title change), no cases or invariants
 #   --keep             keep the scratch copies
 #   --no-cache         run the base side again even when its cached outputs match (and cache the new ones)
-#   --in-place <side>  one database only, never copied (owner 2026-11-19): <db> must be on the scratch Postgres and
-#                      is changed by the run. `base` runs the base side on <db> and keeps its outputs in STASH;
-#                      `head` runs the head side on <db> (restored again from the same export) and reports
-#                      against STASH. The caller restores <db> before each side and drops it after.
+#   --in-place <zip>   one database only, never copied (owner 2026-11-19): <db> is made on the scratch Postgres from the
+#                      export <zip> (db/import_export.py, at the export's migrations; each side migrates) and changed
+#                      by the run. The base side runs only when the cache lacks it: restore, base side, restore again,
+#                      head side; else one restore, the head side. <db> is dropped at the end (--keep keeps it).
 #
 # Env: CASES (plan/research/lab/cases.json), JOURNEYS (plan/research/lab/journeys.json, 0250), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
 # server; default scripts/scratch-db.sh's), SCRATCH_DB=0 (copies on PG_SRC), SCRATCH_A / SCRATCH_B (the
 # scratch copies' names: <db>_check_<pid>_a / _b, one pair per run),
-# NETWORK (insight_insight-network), RESOURCE_BUDGETS (JSON: the jobs' budgets for this run, checks/resources.py).
+# NETWORK (insight_insight-network), RESOURCE_BUDGETS (JSON: the jobs' budgets for this run, checks/resources.py),
+# CACHE_KEEP (the cache entries kept, newest first: 8).
 #
 # Each version's code runs over its own scratch copy (one pg_restore of the dump, then a template copy of it), in a
 # container of its own, both at once: first what a deploy's first start runs (the incremental job to the end, a
 # rule change's rebuild when the copy's rows are of other rules: issue 0110), then the full job. Nothing is fetched or downloaded. The report (it names the owner's
 # posts) goes to $OUT/<head>-<date>.md, private; its path goes in the merge notes. Exit 1: don't merge.
 #
-# The base side's cache (v10.17): the base side's outputs (job, snapshot, invariants, cases, job checks) are kept in
-# $OUT/base-cache/<key>, the key the base's backend tree, the copy's content (its dump restored as SQL, hashed),
-# the checks' code (the checks package, check_cases.py, check_invariants.py, side.sh: what runs inside the side), the cases file,
-# the image and --now. A run whose key is cached runs only the head side (one scratch copy); --no-cache runs the
-# base again and replaces the entry. A base side that failed is never cached. Not used with --titles-only.
+# The sides' cache (v10.17; one cache for both modes, 0253): a side's outputs (job, snapshot, invariants, cases, job
+# checks) are kept in $OUT/base-cache/<key>, the key what they depend on: the code that ran (the side's backend tree
+# as it ran, with this checkout's checks package and scripts over it: the content of its files, hashed), the data
+# (the dump restored as SQL, hashed; or the export zip's sha256), the cases and journeys files, the image, --now and
+# how the copy is prepared. The base side is looked up; when cached, only the head side runs (one copy, one
+# restore). A side that ended and failed no step is kept: the base's, and the head's too (with no --identity), so the
+# next release, whose base is this head merged, runs only its head over the same export. --no-cache runs the base
+# again and replaces the entry. Not used with --titles-only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,7 +57,7 @@ while [ $# -gt 0 ]; do
     --no-cache) NO_CACHE=1; shift;;
     --in-place) IN_PLACE="$2"; shift 2;;
     --titles-only) TITLES_ONLY=1; shift;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0;;
+    -h|--help) sed -n '2,43p' "$0"; exit 0;;
     -*) echo "unknown option $1" >&2; exit 2;;
     *) DB="$1"; shift;;
   esac
@@ -105,11 +109,14 @@ fi
 
 cleanup() {
   docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" "$RUN_ID-hash" "$RUN_ID-analyze" >/dev/null 2>&1 || true   # by name only
-  if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ]; then
+  if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ] && [ -z "$IN_PLACE" ]; then
     # detached when it can be: a DROP DATABASE waits for a checkpoint (minutes on a busy disk), and nothing waits on it
     docker exec -d "${PGCONTAINER:-insight-db}" psql -q -U insight -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH_A WITH (FORCE)" \
         -c "DROP DATABASE IF EXISTS $SCRATCH_B WITH (FORCE)" >/dev/null 2>&1 \
       || { psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" >/dev/null 2>&1; psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B" >/dev/null 2>&1; } || true
+  fi
+  if [ -n "$IN_PLACE" ] && [ "$KEEP" != "1" ]; then   # the one copy, made from the export: dropped when the run ends
+    docker exec -d "${PGCONTAINER:-insight-db}" psql -q -U insight -d postgres -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null 2>&1 || true
   fi
   rm -rf "$WORK" || echo "left $WORK (remove it by hand)" >&2
 }
@@ -140,29 +147,81 @@ run_side() {   # run_side <side> <db> [env…]
     "$IMAGE" sh /app/insight_core/checks/side.sh "$PG/$db" "$side" "$NOW"
 }
 
+# ---- the sides' cache (one for both modes, 0253) -----------------------------------------------
+CACHE_DIR="$OUT/base-cache"
+CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
+JOURNEYS_SHA="$( [ -f "$WORK/journeys-set.json" ] && sha256sum < "$WORK/journeys-set.json" | cut -c1-64 || echo none)"
+IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
+DATA_SHA=""; COPY_PREP=""   # set by the mode: what the copy holds, and how it was prepared (a change there is a new key)
+tree_sha() {   # tree_sha <side>: the content of the code the side runs (its files, the checks over them), hashed
+  (cd "$WORK/trees/$1/backend" && find . -type f ! -path '*/__pycache__/*' ! -name '*.pyc' ! -path './logs/*' \
+     ! -path './insight_core/logs/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) | sha256sum | cut -c1-64
+}
+key_text() {   # key_text <side>: what the side's outputs depend on
+  echo "code=$(tree_sha "$1") data=$DATA_SHA cases=$CASES_SHA journeys=$JOURNEYS_SHA image=$IMAGE_ID now=$NOW copy=$COPY_PREP"
+}
+key_of() { echo "$1" | sha256sum | cut -c1-24; }
+side_ok() {    # side_ok <side>: the side ended and failed no step
+  grep -q "\] .* done$" "$WORK/$1.log" && ! grep -q "FAILED" "$WORK/$1.log"
+}
+cache_put() {  # cache_put <side> <ref>: the side's outputs kept under its key; the newest CACHE_KEEP entries kept
+  local text key tmp
+  text="$(key_text "$1")"; key="$(key_of "$text")"
+  mkdir -p "$CACHE_DIR"
+  tmp="$(mktemp -d "$CACHE_DIR/.new.XXXXXX")"
+  cp -r "$WORK/$1" "$tmp/base"; cp "$WORK/$1.log" "$tmp/base.log"
+  echo "$text" > "$tmp/key.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp/at.txt"; echo "$2" > "$tmp/base-ref.txt"; echo "$1" > "$tmp/side.txt"
+  rm -rf "${CACHE_DIR:?}/$key"; mv "$tmp" "$CACHE_DIR/$key"
+  say "the $1 side ($2) cached as $key"
+  find "$CACHE_DIR" -mindepth 2 -maxdepth 2 -name key.txt -printf '%T@ %h\n' | sort -rn | tail -n +$(( ${CACHE_KEEP:-8} + 1 )) \
+    | cut -d' ' -f2- | while read -r old; do rm -rf "$old"; done
+}
+cache_lookup() {   # sets KEY and CACHED (the base side's entry, or "")
+  KEY_TEXT="$(key_text base)"; KEY="$(key_of "$KEY_TEXT")"; CACHED=""
+  if [ "$NO_CACHE" != "1" ] && [ -f "$CACHE_DIR/$KEY/key.txt" ] && [ -d "$CACHE_DIR/$KEY/base" ]; then
+    CACHED="$CACHE_DIR/$KEY"
+    CACHED_FROM="the $(cat "$CACHED/side.txt" 2>/dev/null || echo base) side of $(cat "$CACHED/base-ref.txt"), made $(cat "$CACHED/at.txt")"
+    say "base side cached ($KEY, $CACHED_FROM): only the head side runs"
+    cp -r "$CACHED/base/." "$WORK/base/"; cp "$CACHED/base.log" "$WORK/base.log"
+  fi
+}
+head_kept() {   # the head side kept for the next release (its base), unless a non-default identity check ran
+  if [ -z "$IDENTITY" ] && side_ok head; then cache_put head "$HEAD_LABEL"; fi
+}
+
 if [ -n "$IN_PLACE" ]; then
-  # ---- one database, no copy: one side on <db> itself ------------------------------------------
-  STASH="${STASH:-$OUT/in-place/$DB}"
-  say "in place: the $IN_PLACE side on $DB itself (no copy); analyze first"
-  docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$DB"
-  case "$IN_PLACE" in
-    base)
-      run_side base "$DB" > "$WORK/base.log" 2>&1 || true
-      cat "$WORK/base.log"
-      grep -q "\] .* done$" "$WORK/base.log" && ! grep -q "FAILED" "$WORK/base.log" || { tail -n 40 "$WORK"/base/*.log >&2 2>/dev/null; echo "the base side failed: nothing kept" >&2; exit 2; }
-      rm -rf "$STASH"; mkdir -p "$STASH"; cp -r "$WORK/base" "$STASH/base"; cp "$WORK/base.log" "$STASH/base.log"
-      echo "$BASE" > "$STASH/base-ref.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$STASH/at.txt"
-      say "base side kept in $STASH: restore $DB again, then --in-place head"
-      exit 0;;
-    head)
-      [ -d "$STASH/base" ] || { echo "no base side in $STASH: run --in-place base first" >&2; exit 2; }
-      [ "$(cat "$STASH/base-ref.txt")" = "$BASE" ] || { echo "$STASH holds base $(cat "$STASH/base-ref.txt"), not $BASE" >&2; exit 2; }
-      cp -r "$STASH/base/." "$WORK/base/"; cp "$STASH/base.log" "$WORK/base.log"
-      run_side head "$DB" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 || true
-      cat "$WORK/base.log" "$WORK/head.log"
-      CACHED="$STASH"; KEY="in-place";;
-    *) echo "--in-place base|head" >&2; exit 2;;
-  esac
+  # ---- one database, no copy: <db> made from the export for each side that runs ------------------
+  EXPORT="$IN_PLACE"
+  [ -f "$EXPORT" ] || { echo "--in-place: no export $EXPORT" >&2; exit 2; }
+  [ "${SCRATCH_DB:-1}" = "1" ] || { echo "--in-place: <db> is made on the scratch Postgres (not with SCRATCH_DB=0)" >&2; exit 2; }
+  case "$DB" in insight|insight_lab|insight_preview|insight_server_copy|postgres|template*) echo "refusing to remake $DB" >&2; exit 2;; esac
+  say "in place: $DB from $(basename "$EXPORT") (no copy); the export's sha256"
+  DATA_SHA="export:$(sha256sum < "$EXPORT" | cut -c1-64)"; COPY_PREP="import_export-analyzed-v1"
+  restore_in_place() {   # <db> made again from the export, at its migrations (each side migrates), then analyzed
+    say "restore $DB from the export"
+    psql_admin "DROP DATABASE IF EXISTS $DB WITH (FORCE)"; psql_admin "CREATE DATABASE $DB"
+    docker run --rm --name "$RUN_ID-restore" --network "$NETWORK" -v "$WORK/trees/head/backend:/app:ro" \
+      -v "$(realpath "$EXPORT"):/work-export.zip:ro" -w /tmp --user "$(id -u):$(id -g)" -e HOME=/tmp -e PYTHONPATH=/app \
+      -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python -c 'import sys, time; from insight_core.db.import_export import restore
+t = time.monotonic(); n = restore(sys.argv[1], sys.argv[2]); print(f"restored {len(n)} tables, {sum(n.values())} rows in {time.monotonic() - t:.0f} s")' \
+      /work-export.zip "$PG/$DB" > "$WORK/restore.log" 2>&1 || { tail -n 20 "$WORK/restore.log" >&2; echo "restore failed" >&2; exit 2; }
+    tail -n 2 "$WORK/restore.log"
+    say "analyze $DB"
+    docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$DB"
+  }
+  cache_lookup
+  if [ -z "$CACHED" ]; then
+    restore_in_place
+    say "the base version on $DB: migrate, full story job, snapshot, invariants, cases, job checks"
+    run_side base "$DB" > "$WORK/base.log" 2>&1 || true
+    side_ok base || { cat "$WORK/base.log"; tail -n 40 "$WORK"/base/*.log >&2 2>/dev/null; echo "the base side failed: nothing kept" >&2; exit 2; }
+    cache_put base "$BASE"
+  fi
+  restore_in_place
+  say "the head version on $DB: migrate, full story job, snapshot, invariants, cases, job checks"
+  run_side head "$DB" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 || true
+  cat "$WORK/base.log" "$WORK/head.log"
+  head_kept
 elif [ "$TITLES_ONLY" = "1" ]; then
   say "titles only: both versions read $DB (read-only), no story job"
   PG="$PG_SRC" run_side base "$DB" -e NO_JOB=1 -e PARTS=posts,links -e PARTS_ONLY=1 &
@@ -194,25 +253,10 @@ else
   say "analyze $SCRATCH_B"
   docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$SCRATCH_B"
   rm -f "$WORK/copy.dump"
-
-  # the base side's cache key: what its outputs depend on
-  CACHE_DIR="$OUT/base-cache"
-  BASE_TREE="$(git -C "$ROOT" rev-parse "$BASE^{commit}:backend")"
-  CHECKS_SHA="$( (cd "$ROOT" && tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --exclude='__pycache__' -cf - \
-                   backend/insight_core/checks backend/insight_core/scripts/check_cases.py \
-                   backend/insight_core/scripts/check_invariants.py) | sha256sum | cut -c1-64)"
-  CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
-  JOURNEYS_SHA="$( [ -f "$WORK/journeys-set.json" ] && sha256sum < "$WORK/journeys-set.json" | cut -c1-64 || echo none)"
-  IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
-  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA journeys=$JOURNEYS_SHA image=$IMAGE_ID now=$NOW copy=analyzed-v1"   # copy: how the copies are prepared (a change there is a new key)
-  KEY="$(echo "$KEY_TEXT" | sha256sum | cut -c1-24)"
-  CACHED=""
-  if [ "$NO_CACHE" != "1" ] && [ -f "$CACHE_DIR/$KEY/key.txt" ] && [ -d "$CACHE_DIR/$KEY/base" ]; then CACHED="$CACHE_DIR/$KEY"; fi
+  DATA_SHA="dump:$(cat "$WORK/dump.sha")"; COPY_PREP="analyzed-v1"
+  cache_lookup
 
   if [ -n "$CACHED" ]; then
-    say "base side cached ($KEY, from $(cat "$CACHED/at.txt")): only the head side runs"
-    cp -r "$CACHED/base/." "$WORK/base/"
-    cp "$CACHED/base.log" "$WORK/base.log"
     say "the head version: migrate, full story job, snapshot, invariants, cases, job checks"
     run_side head "$SCRATCH_B" ${IDENTITY:+-e IDENTITY="$IDENTITY"} > "$WORK/head.log" 2>&1 || true
     cat "$WORK/base.log" "$WORK/head.log"
@@ -230,16 +274,9 @@ else
     wait $pid_base || base_ok=0
     wait $pid_head || true
     cat "$WORK/base.log" "$WORK/head.log"
-    # a base side that ended and failed no step is cached (its outputs, its log)
-    if [ "$base_ok" = 1 ] && ! grep -q "FAILED" "$WORK/base.log" && grep -q "\] .* done$" "$WORK/base.log"; then
-      mkdir -p "$CACHE_DIR"
-      tmp="$(mktemp -d "$CACHE_DIR/.new.XXXXXX")"
-      cp -r "$WORK/base" "$tmp/base"; cp "$WORK/base.log" "$tmp/base.log"
-      echo "$KEY_TEXT" > "$tmp/key.txt"; date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp/at.txt"; echo "$BASE" > "$tmp/base-ref.txt"
-      rm -rf "$CACHE_DIR/$KEY"; mv "$tmp" "$CACHE_DIR/$KEY"
-      say "base side cached as $KEY"
-    fi
+    if [ "$base_ok" = 1 ] && side_ok base; then cache_put base "$BASE"; fi
   fi
+  head_kept
 fi
 
 say "report"
@@ -252,7 +289,7 @@ verdict=$?
 set -e
 elapsed=$(( $(date +%s) - started ))
 cache_note=""
-[ -n "${CACHED:-}" ] && cache_note=" The base side's outputs came from the cache ($KEY, made $(cat "$CACHED/at.txt"))."
+[ -n "${CACHED:-}" ] && cache_note=" The base side's outputs came from the cache ($KEY: $CACHED_FROM)."
 { cat "$WORK/report.md"; echo; echo "Took ${elapsed} s ($(( elapsed / 60 )) min $(( elapsed % 60 )) s), image $IMAGE.$cache_note"; } > "$REPORT"
 mkdir -p "${REPORT%.md}"
 for side in base head; do
