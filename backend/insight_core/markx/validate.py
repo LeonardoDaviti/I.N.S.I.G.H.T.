@@ -242,6 +242,9 @@ DROPPED = "dropped"
 def salvage(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Any:
     """The answer with its bad list entries dropped (each kept under "dropped" with why), for a kind in SALVAGE. Any
     other answer, or a list that is not a list of objects, is left as it is (`check` refuses it as before)."""
+    if kind == "track_things" and isinstance(answer, dict):   # 0245: value by value (track_things.salvage)
+        from insight_core.markx import track_things
+        return track_things.salvage(answer, input or "")
     lists = SALVAGE.get(kind)
     if not lists or not isinstance(answer, dict):
         return answer
@@ -550,6 +553,34 @@ def _digest(a: Dict[str, Any], input: str) -> Optional[str]:
             if not 1 <= c <= n:
                 return f"point {k} cites post {c}, not one of 1-{n}"
     return None
+
+
+def _digest_rows(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0245 (digest-v2, a track brief): each point one line, citing only the question's rows [1..n], and every figure
+    it gives is one of the rows it cites."""
+    rows = {int(n): line for n, line in re.findall(r"^\[(\d{1,3})\] (.*)$", input or "", re.M)}
+    for k, p in enumerate(a["points"], 1):
+        if "\n" in p["text"].strip():
+            return f"point {k}: one line"
+        for c in p["cites"]:
+            if c not in rows:
+                return f"point {k} cites row {c}, not one of 1-{len(rows)}"
+        have = set(figures(" ".join(rows[c] for c in p["cites"])))
+        missing = [f for f in figures(p["text"]) if f not in have]
+        if missing:
+            return f"point {k}: {missing[0]} is in none of the rows it cites"
+    return None
+
+
+def _track_schema(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0245 (track-schema-v1): kinds and fields named once, each kind's first field its name (a text key)."""
+    from insight_core.markx import track_things
+    return track_things.schema_error(a)
+
+
+def _track_same(a: Dict[str, Any], _input: str) -> Optional[str]:
+    """0245 (track-same-v1): the reason is one line."""
+    return "why: one line" if "\n" in a["why"].strip() else None
 
 
 def _probes(a: Dict[str, Any], _input: str) -> Optional[str]:
@@ -862,11 +893,13 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "unit_types": _unit_types,                  # 0181
           "significance": _significance,              # 0208
           "reading": _reading5,                       # 0212
+          "track_schema": _track_schema, "track_same": _track_same,   # 0245 (track_things: its salvage checks it)
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 
 # 0196: a guide variant's own checks (schemas.GUIDE_VARIANTS), in place of its kind's.
-GUIDE_CHECKS = {"websearch-official-v1": _websearch_official}
+GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
+                "digest-v2": _digest_rows}   # 0245: a track brief's points cite its rows
 
 
 def unwrap(kind: str, answer: Any) -> Any:

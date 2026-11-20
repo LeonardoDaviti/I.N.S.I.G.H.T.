@@ -166,8 +166,8 @@ def _entities_missing(cur: Any, now: datetime) -> bool:
 
 
 def _tracks_missing(cur: Any, now: datetime) -> bool:
-    from insight_core.markx import tracks
-    return tracks.kept_missing(cur, now)
+    from insight_core.markx import track_brief, tracks
+    return tracks.kept_missing(cur, now) or track_brief.missing(cur, now)   # 0245: and a closed week's issue
 
 
 def _unread_missing(cur: Any, now: datetime) -> bool:
@@ -687,8 +687,27 @@ class Jobs:
         from insight_core.markx import tracks as mx_tracks
         self._keep_track_places()
         subtopics = self._keep_track_subtopics()
+        briefs = self._keep_track_briefs()
         out = self._keep("tracks", lambda cur: mx_tracks.keep_pages(cur, now=self.clock()))
-        return None if out is None else {**out, "subtopics": subtopics}
+        return None if out is None else {**out, "subtopics": subtopics, "briefs": briefs}
+
+    def _keep_track_briefs(self) -> Dict[str, Any]:
+        """0245: the things of each topic track joined by the entities they name (track_things.refresh), then the
+        closed weeks' issues not kept for their inputs built and kept (track_brief.keep_issues), in a transaction of
+        its own. Nothing while entity_bands.json `tracks.briefs` is off. A failure is logged and recorded as `failed`,
+        never failing the pages."""
+        from insight_core.markx import track_brief, track_things
+        if not track_things.on():
+            return {"off": True}
+        t = time.monotonic()
+        try:
+            with self._tx() as cur:
+                joined = track_things.refresh(cur)
+                kept = track_brief.keep_issues(cur, now=self.clock())
+        except Exception as exc:  # noqa: BLE001 - derived; the issues kept stay as they were
+            log.exception("Mark X jobs: the track briefs failed")
+            return {"failed": str(exc)[:300]}
+        return {"joined": joined, "built": kept["built"], "seconds": round(time.monotonic() - t, 1)}
 
     def _keep_track_subtopics(self) -> Dict[str, Any]:
         """0207: the topic tracks whose posts in the track changed clustered into their sub-topics again

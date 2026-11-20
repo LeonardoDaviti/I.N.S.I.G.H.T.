@@ -34,6 +34,7 @@ READERS = {
     "markx/ent42.py": ("window", ()),
     "markx/source_stats.py": ("after", ("stance",)),
     "markx/track_subtopics.py": ("after", ("subtopics", "subtopic_place")),
+    "markx/track_things.py": ("after", ("track_schema", "track_things")),   # 0245: the version line, the window
     "markx/rename.py": ("after", ("rename",)),
     "markx/graph.py": ("after", ("relate", "chain")),
     "markx/identity.py": ("after", ("alias", "alias2", "alias3", "alias4", "collide")),
