@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
@@ -1380,16 +1380,125 @@ def repaired_xml(text: str) -> str:
     return CONTROL_CHARS_RE.sub("", BARE_AMPERSAND_RE.sub("&amp;", text))
 
 
-def feed_root(feed_text: str) -> ET.Element:
-    """The feed's root element. A document a strict parser refuses is read again repaired
-    (repaired_xml); when that fails too, the first error is raised (the parser's own message)."""
+# One broken item never fails the whole feed (issue 0254: one item's unclosed CDATA stopped a feed for 12 days). A
+# document the parser refuses, repaired or not, is cut into its items (each from one item's start to the next's);
+# each is parsed alone with the root's namespaces. One that fails is joined to the next ones that fail too (an item
+# whose text holds "<item", MAX_JOINED pieces at most); what still fails is skipped and reported. The rest is read
+# when the error was in an item, at most BROKEN_ITEMS_SHARE of the items are broken and every other item is read
+# back; otherwise the parser's first error. A document that parses but holds more item starts than items read (a
+# CDATA left open runs into the next item and hides it) is cut the same way, and read so when an item was broken.
+BROKEN_ITEMS_SHARE = 0.5
+MAX_JOINED = 4
+_ITEM_START_RE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(?:item|entry)(?=[\s>/])")
+_ITEM_END_RE = re.compile(r"</(?:[A-Za-z_][\w.-]*:)?(?:item|entry)\s*>")
+_FEED_END_RE = re.compile(r"</(?:[A-Za-z_][\w.-]*:)?(?:channel|feed|RDF)\s*>")
+_ROOT_TAG_RE = re.compile(r"<(?![?!])[^>]*>")
+_XMLNS_RE = re.compile(r"""\sxmlns(?::[A-Za-z_][\w.-]*)?\s*=\s*(?:"[^"]*"|'[^']*')""")
+_ITEM_TITLE_RE = re.compile(r"(?s)<(?:[\w.-]+:)?title[^>]*>(?:\s*<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</(?:[\w.-]+:)?title>")
+
+
+class FeedRead(NamedTuple):
+    root: ET.Element
+    broken: List[str]      # the items skipped: 'the item "Title" (line 2189): unclosed CDATA section'
+
+
+class FeedPosts(list):
+    """parse_feed_posts' drafts, a plain list to every caller; `broken`: the items skipped as broken (read_feed)."""
+    broken: List[str] = []
+
+
+def _items_read(root: ET.Element) -> int:
+    return sum(1 for node in root.iter() if local_name(node.tag).lower() in ("item", "entry"))
+
+
+def _item_error(chunk: str, namespaces: str) -> Optional[ET.ParseError]:
     try:
-        return ET.fromstring(feed_text)
+        ET.fromstring(f"<insight-item{namespaces}>{chunk}</insight-item>")
+        return None
+    except ET.ParseError as error:
+        return error
+
+
+def _broken_line(chunk: str, error: ET.ParseError, line: int) -> str:
+    """'the item "Title" (line 2189): unclosed CDATA section': its title, its line in the document, the parser's
+    message."""
+    title = _ITEM_TITLE_RE.search(chunk)
+    name = " ".join(strip_html(title.group(1)).split())[:80] if title else ""
+    who = f'the item "{name}"' if name else "an item"
+    at = line + (error.position[0] - 1 if error.position else 0)
+    return f"{who} (line {at}): {str(error).split(':', 1)[0]}"
+
+
+def _without_broken_items(text: str) -> Optional[FeedRead]:
+    """The document read with its broken items cut (the rule above), else None."""
+    starts = [match.start() for match in _ITEM_START_RE.finditer(text)]
+    ends = list(_FEED_END_RE.finditer(text))
+    if not starts or not ends or ends[-1].start() < starts[-1]:
+        return None
+    end = ends[-1].start()
+    root_tag = _ROOT_TAG_RE.search(text)
+    namespaces = "".join(_XMLNS_RE.findall(root_tag.group(0))) if root_tag else ""
+    bounds = list(zip(starts, starts[1:] + [end]))
+    kept: List[str] = [text[:starts[0]]]
+    broken: List[str] = []
+    items = 0
+    at = 0
+    while at < len(bounds):
+        start, stop = bounds[at]
+        error = _item_error(text[start:stop], namespaces)
+        joined = at
+        while error is not None and joined + 1 < min(len(bounds), at + MAX_JOINED):
+            if _item_error(text[bounds[joined + 1][0]:bounds[joined + 1][1]], namespaces) is None:
+                break                   # the next piece is an item of its own: this one is broken
+            joined += 1
+            if _item_error(text[start:bounds[joined][1]], namespaces) is None:
+                error = None
+        if error is None:
+            kept.append(text[start:bounds[joined][1]])
+            items += 1
+            at = joined + 1
+        else:
+            chunk = text[start:stop]
+            closes = list(_ITEM_END_RE.finditer(chunk))
+            if closes and _item_error(chunk[:closes[-1].end()], namespaces) is None:
+                return None             # the item is whole: the error is in the feed around it
+            broken.append(_broken_line(chunk, error, text.count("\n", 0, start) + 1))
+            at += 1
+    if not broken or len(broken) > len(bounds) * BROKEN_ITEMS_SHARE:
+        return None
+    try:
+        root = ET.fromstring("".join(kept) + text[end:])
+    except ET.ParseError:
+        return None
+    return FeedRead(root, broken) if _items_read(root) == items else None
+
+
+def read_feed(feed_text: str) -> FeedRead:
+    """The feed's root and its broken items (the rule above). A document a strict parser refuses is read again
+    repaired (repaired_xml), then without its broken items; when that fails too, the first error is raised (the
+    parser's own message)."""
+    try:
+        root = ET.fromstring(feed_text)
     except ET.ParseError as first:
+        repaired = repaired_xml(feed_text)
         try:
-            return ET.fromstring(repaired_xml(feed_text))
+            return FeedRead(ET.fromstring(repaired), [])
         except ET.ParseError:
+            pass
+        cut = _without_broken_items(repaired)
+        if cut is None:
             raise first from None
+        return cut
+    if sum(1 for _ in _ITEM_START_RE.finditer(feed_text)) > _items_read(root):
+        cut = _without_broken_items(feed_text)
+        if cut is not None:
+            return cut
+    return FeedRead(root, [])
+
+
+def feed_root(feed_text: str) -> ET.Element:
+    """The feed's root element (read_feed: repaired, its broken items skipped), else the parser's first error."""
+    return read_feed(feed_text).root
 
 
 def feed_items(feed_text: str) -> int:
@@ -1444,13 +1553,29 @@ def _address_key(value: Optional[str]) -> Optional[str]:
     return (normalize_url(value) or value) if _is_address(value) else None
 
 
+def _guid(draft: Dict[str, Any]) -> Optional[str]:
+    """The draft's guid as its identity: None when other items with another title have it too (_identities)."""
+    return draft["_guid"] if "_guid" in draft else draft.get("guid")
+
+
 def _identities(drafts: List[Dict[str, Any]], source_url: str) -> None:
     """Each draft's url and title, in place, from its identity (item_identity); the candidates go. An address is
     shared when SHARED_LINK_ITEMS items with other identities have it as posts are matched (issue 0242: links that
-    differ only by a fragment are one address), whether as their link or as their guid."""
+    differ only by a fragment are one address), whether as their link or as their guid. When most items link one
+    page (a changelog, a news page), each still has an address of its own: the feed's with its guid, else its title
+    and date, as its token (item_address), the same at every fetch."""
+    # A guid other items have too, with another title or date, names no item (issue 0254: a news feed whose every
+    # item's guid is its home page): such an item is known by its enclosure, else its title and date.
+    titles: Dict[str, set] = {}
+    for draft in drafts:
+        if draft.get("guid"):
+            titles.setdefault(draft["guid"], set()).add(draft.get("_title_date"))
+    for draft in drafts:
+        if len(titles.get(draft.get("guid"), ())) > 1:
+            draft["_guid"] = None
     others: Dict[str, set] = {}
     for draft in drafts:
-        identity = (draft.get("guid"), draft.get("_enclosure"), draft.get("_title_date"))
+        identity = (_guid(draft), draft.get("_enclosure"), draft.get("_title_date"))
         for value in {_address_key(draft.get("_link")), _address_key(draft.get("guid"))} - {None}:
             others.setdefault(value, set()).add(identity)
 
@@ -1460,8 +1585,10 @@ def _identities(drafts: List[Dict[str, Any]], source_url: str) -> None:
 
     for draft in drafts:
         link = draft.pop("_link", None)
-        url = item_identity(link, draft.get("guid"), draft.pop("_enclosure", None), draft.pop("_title_date", None),
-                            source_url, shared=bool(link) and shared(link), guid_shared=shared(draft.get("guid")))
+        guid = _guid(draft)
+        draft.pop("_guid", None)
+        url = item_identity(link, guid, draft.pop("_enclosure", None), draft.pop("_title_date", None),
+                            source_url, shared=bool(link) and shared(link), guid_shared=shared(guid))
         draft["url"] = normalize_feed_urls(url)
         draft["title"] = readable_title(draft["title"], draft["url"])
 
@@ -1603,9 +1730,11 @@ def feed_channel_title(feed_text: str) -> Optional[str]:
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
     """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first. A document a
     strict parser refuses is read repaired (feed_root, issue 0137 B4); each item's address is its
-    identity (item_identity, B1); an undated item is "seen" (B9)."""
-    root = feed_root(feed_text)
-    posts: List[Dict[str, Any]] = []
+    identity (item_identity, B1); an undated item is "seen" (B9). An item that does not parse is skipped, the rest
+    read (read_feed, issue 0254): the list's `broken` says which."""
+    root, broken = read_feed(feed_text)
+    posts = FeedPosts()
+    posts.broken = broken
 
     if local_name(root.tag) == "rss":
         channel = next((child for child in root if local_name(child.tag) == "channel"), None)

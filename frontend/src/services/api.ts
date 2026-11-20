@@ -719,6 +719,10 @@ export interface SourceStalled {
   since: string | null;
   days: number | null;
   failures: number;
+  /** The posts it holds (issue 0254): an archive may have brought them while its live fetch never worked. */
+  posts?: number;
+  /** Its last attempt's error, when that attempt failed. */
+  reason?: string | null;
 }
 
 export interface SourceDeadHost {
@@ -940,6 +944,8 @@ export interface NewSource {
 
 export interface AddSourceResponse extends Envelope {
   source_id?: string;
+  /** Added, but its test read failed for a reason that may pass (issue 0254): the reason. */
+  warning?: string;
 }
 
 export interface FoundFeed {

@@ -263,7 +263,8 @@ class StalledTests(unittest.TestCase):
     def test_last_success_older_than_three_days_or_five_intervals(self):
         self.assertIsNone(self._flag(success_ago=timedelta(days=2)))
         flag = self._flag(success_ago=timedelta(days=4), failures=2)
-        self.assertEqual(flag, {"since": (NOW - timedelta(days=4)).isoformat(), "days": 4, "failures": 2})
+        self.assertEqual(flag, {"since": (NOW - timedelta(days=4)).isoformat(), "days": 4, "failures": 2,
+                                "posts": 0, "reason": None})
         # A daily source: 5 intervals is 5 days, past the 3-day floor.
         self.assertIsNone(self._flag(success_ago=timedelta(days=4), interval=timedelta(days=1)))
         self.assertIsNotNone(self._flag(success_ago=timedelta(days=6), interval=timedelta(days=1)))

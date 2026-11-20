@@ -154,13 +154,17 @@ class ParseWhatIsOfferedTests(unittest.TestCase):
                          ["Rates & prices", "Two"])
 
     def test_a_feed_the_parser_refuses_is_never_offered_and_says_why(self):
-        broken = BARE_AMP.replace("</channel>", "<item><title>x</titel></item></channel>")
+        # Broken outside its items (issue 0254: one broken item is skipped, the rest offered).
+        broken = BARE_AMP.replace("</channel>", "<image><title>a < b</title></image></channel>")
         page = '<html><head><link rel="alternate" type="application/rss+xml" href="/rss.xml"></head></html>'
         finding, _ = finder({"https://bank.example/": page, "https://bank.example/rss.xml": broken}, "https://bank.example/")
         self.assertEqual((finding.status, finding.feeds), ("none", ()))
         # The parser's own message, as the fetcher would fail with it.
         self.assertRegex(finding.refused, r"^the feed can't be read: not well-formed \(invalid token\): line 1, column \d+$")
         finding, _ = finder({"https://bank.example/": page, "https://bank.example/rss.xml": BARE_AMP}, "https://bank.example/")
+        self.assertEqual(finding.feeds[0].url, "https://bank.example/rss.xml")
+        one_item = BARE_AMP.replace("</channel>", "<item><title>x</titel></item></channel>")
+        finding, _ = finder({"https://bank.example/": page, "https://bank.example/rss.xml": one_item}, "https://bank.example/")
         self.assertEqual(finding.feeds[0].url, "https://bank.example/rss.xml")
 
 

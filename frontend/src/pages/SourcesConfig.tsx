@@ -406,6 +406,7 @@ export default function SourcesConfig() {
     const r = await api.addSource({ platform: 'rss', ...data });
     setShowAddSource(false);
     if (!r.success) setError(r.error || 'Could not add the source');
+    else if (r.warning) setError(`Added, but its test read failed: ${r.warning}`);
     invalidate();
     // A new source is read right away, not at the next scheduler tick.
     if (r.success && r.source_id) {
