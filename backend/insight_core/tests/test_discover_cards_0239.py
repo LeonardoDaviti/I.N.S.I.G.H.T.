@@ -60,6 +60,13 @@ class CardLead(unittest.TestCase):
         found = [row("ir.acme.example", 6.0, ["a"]), row("acme.example", 4.0, ["b"], url="https://acme.example/en/newsroom/")]
         self.assertEqual(R.one_card_per_domain(found)[0]["key"], "acme.example")
 
+    def test_the_site_itself_the_best_keeps_the_lead(self):
+        """0248: a publisher's own host with the most links leads its card over its old blogs. host."""
+        found = [row("press.example", 9.0, ["a", "b", "c"]), row("blogs.press.example", 2.0, ["d"])]
+        [card] = R.one_card_per_domain(found)
+        self.assertEqual(card["key"], "press.example")
+        self.assertEqual(card["places"], ["press.example", "blogs.press.example"])
+
     def test_without_an_announcing_place_the_best_leads_as_before(self):
         found = [row("ir.acme.example", 6.0, ["a"]), row("acme.example", 4.0, ["b"]), row("shop.acme.example", 5.0, ["c"])]
         self.assertEqual(R.one_card_per_domain(found)[0]["places"], ["ir.acme.example", "shop.acme.example", "acme.example"])
@@ -237,13 +244,31 @@ class EndToEnd(unittest.TestCase):
 
     def test_a_newsletter_on_a_platform_you_follow_two_of_is_suggested(self):
         platform = f"letters{self.m}.example"
-        for k, pub in enumerate(("one", "uno")):   # two publications followed there: a site of publications
+        for k, pub in enumerate(("one", "uno")):   # two publications followed there
             self._source(10 + k, [], host=f"{pub}.{platform}")
+        # 0248: and a site of many owners by the data (discover_rules.federation): your sources link 10+ of its hosts
+        self._source(20, [f"https://w{n}.{platform}/p/a-post" for n in range(10)])
         other = [f"https://two.{platform}/p/a-long-post-slug-{n}" for n in range(2)]
         for k in range(3):
             self._source(k, other)
+        self.cur.execute("UPDATE post_links SET target_site = %s WHERE target_url LIKE %s", (platform, f"%.{platform}/%"))
         self.conn.commit()
         self.assertIn(f"two.{platform}", self._listed())
+
+    def test_a_company_you_follow_two_sections_of_is_followed(self):
+        """0248: two followed hosts of one company (its newsroom, its engineering blog) are one owner's site, not a
+        site of publications: its other hosts and the company itself are followed, never suggested."""
+        company = f"maker{self.m}.example"
+        self._source(10, [], host=f"newsroom.{company}")
+        self._source(11, [], host=f"engineering.blogs.{company}")
+        for k in range(3):
+            self._source(k, [f"https://lists.{company}/archives/2007/msg-{n}.html" for n in range(2)]
+                         + [f"https://{company}/en/newsroom/press-releases/a-long-release-{n}.html" for n in range(2)])
+        self.cur.execute("UPDATE post_links SET target_site = %s WHERE target_url LIKE %s", (company, f"%{company}/%"))
+        self.conn.commit()
+        listed = self._listed()
+        self.assertNotIn(f"lists.{company}", listed)
+        self.assertNotIn(company, listed)
 
 
 if __name__ == "__main__":

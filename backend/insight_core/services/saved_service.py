@@ -62,8 +62,13 @@ FETCH_JOB = "ingestion_run"
 _NAME = "COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)"
 # Since when a linking post p shows its links (first_linked): its date, or the later change its page says it had
 # (metadata.modified, an ISO time: parsing.page_modified). Migration 0156 repairs with the same expression.
-LINKED_SINCE = ("GREATEST(p.published_at, CASE WHEN p.metadata->>'modified' ~ '^\\d{4}-\\d\\d-\\d\\dT'"
-                " THEN (p.metadata->>'modified')::timestamptz END)")
+# 0248: a change within a day of its publication is the same piece corrected (a news report updated that afternoon, a
+# page tidied minutes after it went up), its links there from the start; only a later one (an essay edited months on)
+# shows a link from the change. Measured on the server's copy: of the 47 collected pages 0156 B redated, 24 moved by
+# such a same-day edit (a filing cited by a report at 11:40, its page edited at 15:42, dated 14:01 by another report).
+LINKED_SINCE = ("(CASE WHEN p.metadata->>'modified' ~ '^\\d{4}-\\d\\d-\\d\\dT'"
+                " AND (p.published_at IS NULL OR (p.metadata->>'modified')::timestamptz > p.published_at + interval '1 day')"
+                " THEN (p.metadata->>'modified')::timestamptz ELSE p.published_at END)")
 
 # The API's fetch of one source for a save: its job id, or None when none started.
 StartFetch = Callable[[str], Awaitable[Optional[str]]]
@@ -356,7 +361,8 @@ class SavedService:
         never an undated post's fetch time), never later than the save; None when no dated post links it. A linking
         page that says it changed after it was published (metadata.modified, a page read again: issue 0039) shows
         the link only from that change on (v10.25, issue 0228: a 2023 essay edited in 2026 to link a 2026 page
-        dated that page 2023)."""
+        dated that page 2023); a change within a day of its publication does not count (0248: the same piece corrected,
+        its links there from the start)."""
         normalized = sorted({n for n in map(normalize_url, urls) if n})
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(f"SELECT min({LINKED_SINCE}) FROM post_links pl JOIN posts p ON p.id = pl.post_id "

@@ -271,11 +271,21 @@ link AS MATERIALIZED (
 ),
 kept AS MATERIALIZED (
     SELECT * FROM link WHERE NOT (selves <> '' AND owner = ANY(string_to_array(selves, ' ')))
+),
+-- 0248: each repository's most linked pages in one grouped pass (was a subquery per repository over every kept link:
+-- 4.4 s of Discover's 20 s build on the server's copy)
+page AS (
+    SELECT repo, url, row_number() OVER (PARTITION BY repo ORDER BY count(DISTINCT voice) DESC, url) AS n
+    FROM kept GROUP BY repo, url
+),
+top AS (
+    SELECT repo, json_agg(url ORDER BY n) AS urls FROM page WHERE n <= %(shown)s GROUP BY repo
+),
+repos AS (
+    SELECT repo, array_agg(DISTINCT voice) AS voices, array_agg(DISTINCT source_id::text) AS sources, max(at) AS last_at
+    FROM kept GROUP BY repo HAVING count(DISTINCT voice) >= %(min_voices)s
 )
-SELECT repo, array_agg(DISTINCT voice), array_agg(DISTINCT source_id::text), max(at),
-       (SELECT json_agg(u) FROM (SELECT url AS u FROM kept k2 WHERE k2.repo = k.repo
-                                 GROUP BY url ORDER BY count(DISTINCT voice) DESC, url LIMIT %(shown)s) top)
-FROM kept k GROUP BY repo HAVING count(DISTINCT voice) >= %(min_voices)s
+SELECT r.repo, r.voices, r.sources, r.last_at, t.urls FROM repos r LEFT JOIN top t ON t.repo = r.repo
 """
 
 # A website voice is named after the source of its first kept link in post order; asked only for

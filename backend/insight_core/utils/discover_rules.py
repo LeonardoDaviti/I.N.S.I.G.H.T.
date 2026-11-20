@@ -613,7 +613,8 @@ def announcing_place(s: Mapping) -> bool:
 def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] = frozenset()) -> List[Dict]:
     """The suggestions with one owner domain's hosts as one card (owner_domain): led by its announcing section
     (announcing_place, 0239: an investor-relations host with the most links had led a company's card, and the judge read
-    it, not its newsroom) when one of its places is one, else by the best; the best by score, then voices, then key.
+    it, not its newsroom) when one of its places is one and the best is not the site's own host (0248), else by the
+    best; the best by score, then voices, then key.
     `places` its hosts (the lead first, then by score), its voices, articles, classics, stories and opens together, its
     score at least its best place's (its stories and sources added up). The judge (markx/source_judge) reads the lead's key."""
     federations = set(federations)
@@ -625,9 +626,12 @@ def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] 
             out.append(dict(s))
         else:
             groups[domain].append(dict(s))
-    for members in groups.values():
+    for domain, members in groups.items():
         members.sort(key=lambda s: (-s["score"], -s["voices"], s["key"]))
-        if len(members) > 1:
+        # 0248: the announcing section leads over a best that is another section (an investor-relations host), never
+        # over the site itself (its own host the best: a publisher's reuters.com had given way to its old blogs. host,
+        # the real-data check of v10.26: the suggestion the reader knows gone, the judge reading a dead blog)
+        if len(members) > 1 and members[0]["key"].removeprefix("www.") != domain:
             lead_at = next((i for i, s in enumerate(members) if announcing_place(s)), 0)
             members.insert(0, members.pop(lead_at))
         lead = members[0]

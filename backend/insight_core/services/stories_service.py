@@ -1394,13 +1394,18 @@ class StoriesService:
         you follow (discover_rules.site_unit): the sites your website sources publish on at 2+ hosts (shared_sites,
         issue 0070), and the federations by the data (discover_rules.federation, issue 0109) among the sites of 2+
         suggested hosts or of a site you follow with another host linked (one newsletter followed on a platform had
-        hidden the platform's every other one: it was asked only after that site was taken out)."""
+        hidden the platform's every other one: it was asked only after that site was taken out).
+        0248: a site your sources publish on at 2+ hosts is one of publications only when the data says so too (the
+        federation test): two followed sections of one company (its newsroom and its engineering blog's hosts) are one
+        owner's site, so following them follows the company (the real-data check of v10.26: the company's other hosts
+        and the company itself suggested); a publishing platform's 2+ writers pass the test (a newsletter host: 1,668
+        hosts at 2.6 posts each on the server's copy)."""
         hosts = [s["key"] for s in found if "/" not in s["key"]]
         multi = Counter(site_of(h) for h in hosts)
         followed = sources.followed()
-        candidates = {site for site, n in multi.items() if n > 1 or site in followed} - set(sources.shared_sites)
+        candidates = {site for site, n in multi.items() if n > 1 or site in followed} | set(sources.shared_sites)
         spread = DiscoverRepository.site_hosts(cur, candidates)
-        return set(sources.shared_sites) | {site for site, (n, posts) in spread.items() if federation(hosts=n, posts=posts)}
+        return {site for site, (n, posts) in spread.items() if federation(hosts=n, posts=posts)}
 
     def _repos(self, cur: Any, sources: SourceFacts) -> List[Dict[str, Any]]:
         """0239 (0237 #5): the code repositories REPO_MIN_VOICES+ voices link, each as the channel official channels read

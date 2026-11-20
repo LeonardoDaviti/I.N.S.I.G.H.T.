@@ -10,7 +10,8 @@
 --      address's day, or its month's 1st, as 0099 and 0101 date such pages (precision "date", sorted again).
 --   B. A page its feed missed was dated by the first stored post linking it (saved_service.first_linked), even a
 --      linking page edited later to add the link: a 2023 essay edited in 2026 dated a 2026 page 2023. v10.25 counts
---      such a linker from the change its page says it had (metadata.modified). Repaired here: a collected page whose
+--      such a linker from the change its page says it had (metadata.modified), when that change is more than a day
+--      after it was published (0248: a same-day correction is the same piece). Repaired here: a collected page whose
 --      date is the old first link, and the new rule gives a later one, takes the new one (never after it was
 --      collected).
 -- A year alone is no date (no guess); an invalid day (Feb 31) is never built. Run twice, it changes nothing more: a
@@ -65,9 +66,11 @@ WITH collected AS (
      AND (p.metadata ? 'missed_by_feed' OR p.metadata ? 'collected_original')
 ), linked AS (
   SELECT c.id, c.published_at, c.saved_at, min(l.published_at) AS old_first,
-         -- saved_service.LINKED_SINCE
-         min(GREATEST(l.published_at, CASE WHEN l.metadata->>'modified' ~ '^\d{4}-\d\d-\d\dT'
-                                           THEN (l.metadata->>'modified')::timestamptz END)) AS new_first
+         -- saved_service.LINKED_SINCE (0248: a change within a day of the linker's publication does not count)
+         min(CASE WHEN l.metadata->>'modified' ~ '^\d{4}-\d\d-\d\dT'
+                       AND (l.published_at IS NULL
+                            OR (l.metadata->>'modified')::timestamptz > l.published_at + interval '1 day')
+                  THEN (l.metadata->>'modified')::timestamptz ELSE l.published_at END) AS new_first
     FROM collected c
     JOIN post_links pl ON pl.target_url = c.normalized_url
     JOIN posts l ON l.id = pl.post_id AND l.id <> c.id
