@@ -73,17 +73,33 @@ def incremental_identity(db_url: str, now: datetime, spec: str = IDENTITY) -> Fo
                  examples[:EXAMPLES], round(time.monotonic() - started, 1), note=json.dumps({"by_table": differing, "same": result.get("same")}))
 
 
-def table_checksums(cur: Any) -> Dict[str, tuple]:
-    """{table: (rows, md5 of its rows' md5s)} of every table but Mark X's mx_* (0079's per-table checksum)."""
+CHECKSUM_WORKERS = 8   # 0253: the tables hashed at once, a connection each (Postgres does the work)
+
+
+def _checksum(cur: Any, table: str) -> tuple:
     from psycopg import sql
+    cur.execute(sql.SQL("SELECT count(*), md5(coalesce(string_agg(h, '' ORDER BY h), '')) "
+                        "FROM (SELECT md5(x::text) h FROM {} x) s").format(sql.Identifier(table)))
+    return tuple(cur.fetchone())
+
+
+def table_checksums(cur: Any, db_url: Optional[str] = None, workers: int = CHECKSUM_WORKERS) -> Dict[str, tuple]:
+    """{table: (rows, md5 of its rows' md5s)} of every table but Mark X's mx_* (0079's per-table checksum). With
+    `db_url`, `workers` tables at once, each on a connection of its own, the largest first (0253: the same sums; the
+    server's copy has ~45 such tables, posts and story_keys most of the time)."""
     cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' "
-                "AND relname NOT LIKE 'mx\\_%' ORDER BY 1")
-    out = {}
-    for (table,) in cur.fetchall():
-        cur.execute(sql.SQL("SELECT count(*), md5(coalesce(string_agg(h, '' ORDER BY h), '')) "
-                            "FROM (SELECT md5(x::text) h FROM {} x) s").format(sql.Identifier(table)))
-        out[table] = tuple(cur.fetchone())
-    return out
+                "AND relname NOT LIKE 'mx\\_%' ORDER BY pg_relation_size(oid) DESC, relname")
+    tables = [t for (t,) in cur.fetchall()]
+    if not db_url or workers <= 1:
+        return {t: _checksum(cur, t) for t in sorted(tables)}
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(table: str) -> tuple:
+        with open_copy(db_url, writable=True) as conn, conn.cursor() as c:
+            return _checksum(c, table)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        sums = dict(zip(tables, pool.map(one, tables)))
+    return {t: sums[t] for t in sorted(tables)}
 
 
 def _mx_rows(cur: Any) -> int:
@@ -115,17 +131,36 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
         from insight_core.markx.jobs import reader_rows, readers
     except ImportError:
         reader_rows, readers = (lambda cur: 0), (lambda job: False)
-    with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
-        before, mx_before, reader_before = table_checksums(cur), _mx_rows(cur), reader_rows(cur)
-    old = os.environ.get("INSIGHT_MARKX")
+    took: Dict[str, float] = {}     # 0253: each part's seconds, in the note
     started = time.monotonic()
+    with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
+        before, mx_before, reader_before = table_checksums(cur, db_url), _mx_rows(cur), reader_rows(cur)
+    took["checksums_before"] = round(time.monotonic() - started, 1)
+    old = os.environ.get("INSIGHT_MARKX")
     try:
         os.environ["INSIGHT_MARKX"] = "off"
         try:   # 0112 Decided 10: insight-ingestion's runner (markx/jobs.py); a version before has decide.Scheduler
+            from insight_core.markx import jobs as J
             from insight_core.markx.jobs import Runner
-            off = Runner(db_url, spawn=False).tick()
+            # 0253: a check reads no web (as resources.py runs the story job): the story run's originals and scouts
+            # fetched pages into posts, post_parts and story_originals here (+11 posts on the server's copy), which
+            # this invariant then counted as Mark IX tables changed, on both sides, whatever the code
+            after_stories, reads = getattr(J.Jobs, "after_stories", None), os.environ.get("INSIGHT_DISCOVER_READS")
+            if after_stories is not None:
+                J.Jobs.after_stories = lambda self: {"ok": True, "skipped": "the real-data check reads no web"}
+            os.environ["INSIGHT_DISCOVER_READS"] = "0"
+            try:
+                off = Runner(db_url, spawn=False).tick()
+            finally:
+                if after_stories is not None:
+                    J.Jobs.after_stories = after_stories
+                if reads is None:
+                    os.environ.pop("INSIGHT_DISCOVER_READS", None)
+                else:
+                    os.environ["INSIGHT_DISCOVER_READS"] = reads
         except ImportError:
             off = decide.Scheduler(debounce=None, every=None).run_now()
+        took["off"] = round(time.monotonic() - started - sum(took.values()), 1)
         with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
             reader_written = reader_rows(cur) - reader_before
             off_rows = _mx_rows(cur) - mx_before - reader_written
@@ -134,19 +169,22 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
         for _ in range(2):
             with open_copy(db_url, writable=True) as conn, conn.cursor() as cur, conn.transaction():
                 runs.append(decide.run(cur, now=now))
+            took[f"run_{len(runs)}"] = round(time.monotonic() - started - sum(took.values()), 1)
     finally:
         if old is None:
             os.environ.pop("INSIGHT_MARKX", None)
         else:
             os.environ["INSIGHT_MARKX"] = old
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
-        after = table_checksums(cur)
+        after = table_checksums(cur, db_url)
+        took["checksums_after"] = round(time.monotonic() - started - sum(took.values()), 1)
         run = invariants.Run(db_url, cur, now)
         # as run_all asks them: an invariant this version's schema can't answer (the checks package is the head's,
         # run over the base's code too: 0119's mx_entity* tables on main) is not measured, never a failed job check
         mx = [f for f in invariants.run_all(run, only=[i.name for i in invariants.INVARIANTS
                                                        if i.name.startswith("markx.")]) if f.count >= 0]
     seconds = round(time.monotonic() - started, 1)
+    took["invariants"] = round(seconds - sum(took.values()), 1)
     changed = sorted(t for t in set(before) | set(after) if before.get(t) != after.get(t))
     first, second = runs
     markx_ran = off is not None and not readers(off)
@@ -154,7 +192,8 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
                     "reader_rows_written": reader_written},
             "first_run": {k: first.get(k) for k in ("stories", "posts", "questions", "answered", "changes", "news", "tasks_added")},
             "second_run": {"memberships": second.get("memberships"), "news_written": (second.get("news") or {}).get("written"),
-                           "tasks_added": second.get("tasks_added")}}
+                           "tasks_added": second.get("tasks_added")},
+            "seconds": took}
     out = [Found("markx.ix_unchanged", "mark x", what, len(changed) + (1 if off_rows else 0) + (1 if markx_ran else 0),
                  len(before), [f"{t}: {before.get(t)} -> {after.get(t)}" for t in changed][:EXAMPLES],
                  seconds, note=json.dumps(note, default=str))]

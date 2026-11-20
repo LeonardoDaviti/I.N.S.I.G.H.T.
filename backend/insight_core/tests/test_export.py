@@ -216,6 +216,20 @@ class ExportRoundTripTests(unittest.TestCase):
             disabled = conn.execute("SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'D'").fetchone()[0]
         self.assertEqual(disabled, 0)
 
+    def test_the_restored_database_has_the_same_keys_and_indexes(self):
+        """0253: the keys come off for the load and back after it; the restored schema is the same, every key valid."""
+        def schema(url: str):
+            with psycopg.connect(url) as conn:
+                keys = conn.execute("SELECT conrelid::regclass::text, conname, contype, pg_get_constraintdef(oid), convalidated, "
+                                    "condeferrable, condeferred FROM pg_constraint WHERE connamespace = current_schema()::regnamespace "
+                                    "ORDER BY 1, 2").fetchall()
+                indexes = conn.execute("SELECT indexrelid::regclass::text, pg_get_indexdef(indexrelid) FROM pg_index i "
+                                       "JOIN pg_class c ON c.oid = i.indexrelid "
+                                       "WHERE c.relnamespace = current_schema()::regnamespace ORDER BY 1").fetchall()
+            return keys, indexes
+        self.restore(self.export(include_logins=False), self.target)
+        self.assertEqual(schema(self.target), schema(self.url))
+
     def test_refuses_a_database_with_data(self):
         path = self.export(include_logins=False)
         with self.assertRaisesRegex(ValueError, "not empty"):
