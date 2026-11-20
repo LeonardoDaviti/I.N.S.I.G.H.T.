@@ -1,7 +1,10 @@
 """v10.12.1: the reader's sidebar count for a track that is a topic (0145). Shadow; 404 when Mark X is off, as every
 /api/markx path. Read-only: no row is written.
 
-GET /api/markx/tracks/counts   {by_track: {folder_id: {unread, discover, count, waiting}}}, topic tracks only
+GET /api/markx/tracks/counts   {by_track: {folder_id: {unread, discover, count, waiting[, things]}}}, topic tracks only
+
+`things` (0245; only while entity_bands.json tracks.briefs is on): the things found since the reader's last look at
+the track (track_brief.new_count; 0 when never opened, or not for 30 days): the rail's "N new things".
 
 A topic track's count is its unread track items (in the track or joined by INSIGHT, whose post is unread; counted as
 its Stream lists them, a story with unread posts once, v10.12.1) plus its Discover suggestions (not labelled: a label
@@ -19,7 +22,7 @@ from fastapi import APIRouter
 from psycopg import Cursor
 
 from insight_core.db.repo_reader import FeedScope, ReaderRepository
-from insight_core.markx import track_feed, tracks
+from insight_core.markx import track_brief, track_feed, track_things, tracks
 
 router = APIRouter()
 
@@ -42,6 +45,8 @@ def topic_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
         unread = reader.scope_unread(cur, FeedScope("folder", t["folder_id"], tuple(inside))) if inside else 0
         out[t["folder_id"]] = {"unread": unread, "discover": discover, "count": unread + discover,
                                "waiting": track_feed.waiting(cur, t)}
+        if track_things.on():
+            out[t["folder_id"]]["things"] = track_brief.new_count(cur, t["folder_id"])
     return out
 
 

@@ -118,3 +118,44 @@ look. Updated: `test_markx_validate`, `test_markx_storage`, `test_markx_spend`, 
 - A field type under its bar is not yet hidden per type (needs the measure to say which).
 - The owner's "wrong" tap on a fact (a label) is not built.
 - Questions in words (0098) are later, after the tables.
+
+## Frontend built (v10.28)
+
+Built behind the same switch: every view reads `on` from the API and shows nothing while it is off (the track page
+is then as before). Generic: no track, kind or field is named; every rule is about a type. Not measured on real data;
+no real data read.
+
+- **Where**: `frontend/src/components/tracks/` — `TrackBrief.tsx` (the quick look, "what changed", things as tables
+  or cards, the weekly issue, the tables), `TrackSchemaEditor.tsx` (in the track sheet), `briefWords.ts` (days,
+  weeks, names and facts, cite numbers, filter chips, sorting; pure), `TrackTopic.tsx` (three tabs `latest / issues /
+  tables` when the switch is on and the track has a schema), `TrackSheet.tsx` (+ the editor);
+  `services/tracks.ts` (`briefApi` and the shapes); the rail in `components/reader/ReaderNavRail.tsx`. Page doc:
+  `design/docs/pages/reader.md` ("View topic, the briefer").
+- **Quick look** (latest): `since Tue · N new`, "what changed" (at most 4 points, superscript numbers linking to the
+  post each cited row came from, the title on hover), new things by kind (one line each: name, 2-3 facts, link-field
+  hosts, ↗ to the post's original; `see all ›` opens the kind's table), "Also in the track", then the topic as
+  before. It counts from the look *before* this visit (the open records a look; never looked: Monday of this week).
+  `Nothing new since Tue · the issue of 9 Nov ›` when empty. Points older than a find or a post since (`stale`)
+  leave the top and follow the sub-topics, `What changed · as of Tue` (0002).
+- **Issues**: Monday-Sunday, opens on the last closed week; date strip `‹ 2 Nov 9 Nov 16 Nov ›`; `so far` for the
+  open week; a quiet `updated` chip; a kind as a table at `sm` (640px) and up, bordered cards below; "Also in the
+  track".
+- **Tables**: kind chips, filter chips from the typed fields (number/money split at a round middle, money in its most
+  common currency only; enum values OR-ed; link `has <field>`; text none, 0098 later), sent to the API's filters;
+  headers sort (asc, desc, newest first again).
+- **Schema editor** (the sheet's "Kinds and fields"): rename in place, remove (not the name field), add with a type
+  (a unit, or enum values); the practice kind shown, never sent; Save is a PUT (a new version, re-read).
+- **Rail**: `3 new things` before a topic track's count, `9+` cap, silent at 0.
+
+**Backend changes the UI needed (minimal):** `track_brief.quick_look` answers `weeks` (the issue strip, Mondays newest
+first; the off shape `[]`); `track_brief.new_count` (current things found since the last look; 0 when never opened,
+not opened for 30 days, or off) and `GET /api/markx/tracks/counts` adds `things` per topic track **only while the
+switch is on** (the off shape is unchanged). Tested in `test_track_briefer_0245` (the quick-look test).
+
+**Tests**: `frontend/src/components/tracks/briefer.test.tsx` (12: three invented tracks of different kinds — garden
+tools, board games, bread — the words, off shows nothing, the quick look, nothing new, stale points after the posts,
+the issue and its strip, the tables' chips and sorting, the schema editor, the rail). `npx tsc --noEmit`, the whole
+vitest suite (1011) and the backend modules `test_track_briefer_0245` + `test_markx_track_counts` pass.
+
+**Not done**: a row opening "its thing" (every report, each fact's post): the ↗ opens the newest post; the "wrong"
+tap on a fact; hiding a field type under its bar (needs the measure); checked on a phone in a real browser.

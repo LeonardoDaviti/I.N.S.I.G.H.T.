@@ -413,7 +413,7 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
                ) -> Dict[str, Any]:
     """What is new since `since` (None: the week in progress): {on, track, since, sections (new things by kind),
     points (the newest brief's that cite a new thing; as_of, stale), also (posts joined since with no row), counts,
-    nothing_new, last_issue}. KeyError: not a topic track."""
+    nothing_new, last_issue, weeks (the issue strip: its Mondays, newest first)}. KeyError: not a topic track."""
     now = now or datetime.now(timezone.utc)
     t = _track(cur, folder_id)
     tid = t["folder_id"]
@@ -423,7 +423,7 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     closed = [w for w in weeks if bounds(date.fromisoformat(w))[1] <= now]
     if not TT.on():
         return {**base, "sections": [], "points": [], "as_of": None, "stale": False, "also": [],
-                "counts": {"things": 0, "also": 0}, "nothing_new": True, "last_issue": None}
+                "counts": {"things": 0, "also": 0}, "nothing_new": True, "last_issue": None, "weeks": []}
     kinds = TT._kinds(cur, tid)
     rows = [dict(x, new=True) for x in TT.current(cur, tid) if x["found_at"] > since and x["kind"] in kinds]
     rs = TT.reports(cur, tid, [x["id"] for x in rows])
@@ -441,7 +441,29 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     return {**base, "sections": sections, "points": pts, "as_of": _iso(got["at"]) if pts else None,
             "stale": bool(pts) and any(x["found_at"] > got["at"] for x in rows),
             "also": [posts[p] for p in also if p in posts], "counts": {"things": len(rows), "also": len(also)},
-            "nothing_new": not rows and not also, "last_issue": closed[0] if closed else None}
+            "nothing_new": not rows and not also, "last_issue": closed[0] if closed else None, "weeks": weeks}
+
+
+RAIL_QUIET = timedelta(days=30)   # a track not opened for this long shows no count in the rail (0245's UX)
+
+
+def new_count(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> int:
+    """The rail's count (0245): the track's current things found since the reader's last look at it; 0 when it was
+    never opened, or not for RAIL_QUIET, or the briefer is off. One indexed count."""
+    from insight_core.markx import track_subtopics
+    if not TT.on():
+        return 0
+    now = now or datetime.now(timezone.utc)
+    look = track_subtopics.seen(cur, folder_id)["track"]
+    if not look:
+        return 0
+    at = datetime.fromisoformat(look)
+    if now - at > RAIL_QUIET:
+        return 0
+    kinds = list(TT._kinds(cur, str(folder_id)))
+    cur.execute("""SELECT count(*) FROM mx_track_things WHERE track_id = %s AND status = 'current' AND created_at > %s
+                      AND kind = ANY(%s)""", (str(folder_id), at, kinds))
+    return int(cur.fetchone()[0])
 
 
 # ---- the tables ------------------------------------------------------------------------------------------------

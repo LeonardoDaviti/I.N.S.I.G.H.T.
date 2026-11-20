@@ -538,6 +538,14 @@ class Flow(_Briefer):
         self.assertFalse(look["nothing_new"])
         self.assertEqual([t["fields"]["dish"]["value"] for s in look["sections"] for t in s["things"]], ["tomato soup"])
         self.assertEqual(look["points"], [], "last week's points cite none of the new things")
+        self.assertEqual(look["weeks"], [TB.monday(now).isoformat(), last.isoformat()], "the issue strip, newest first")
+        # the rail's count (v10.28): things since the look; none for a track not opened in 30 days
+        counts = call("GET", "/api/markx/tracks/counts")[1]["by_track"]
+        self.assertEqual(counts[f]["things"], 1)
+        self.assertEqual(TB.new_count(self.cur, f, now=now + timedelta(days=31)), 0)
+        self.switch(False)
+        self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f], "off: the shape as before")
+        self.switch(True)
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"since": "yesterday"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"week": "soon"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)

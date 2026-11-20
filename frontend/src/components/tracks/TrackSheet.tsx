@@ -7,6 +7,7 @@ import { Button, Field, Input, Sheet, SheetContent, Textarea, TextLink } from '.
 import { FOLDERS_KEY } from '../../hooks/useReaderDirectory';
 import { trackSettingsHref } from '../../lib/feedContext';
 import { errorMessage } from '../../lib/apiError';
+import TrackSchemaEditor from './TrackSchemaEditor';
 
 const topicKey = (id: string) => ['markx-track', id] as const;
 
@@ -142,6 +143,7 @@ export default function TrackSheet({ open, onOpenChange, page }: { open: boolean
             </ul>
           </section>
         ) : null}
+        {t.topic ? <TrackSchemaEditor trackId={t.id} /> : null}
       </SheetContent>
     </Sheet>
   );
