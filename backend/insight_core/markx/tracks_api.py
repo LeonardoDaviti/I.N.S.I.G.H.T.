@@ -12,6 +12,10 @@ POST /api/markx/tracks/{id}/sources/{source}   make a suggested passive source a
 GET  /api/markx/tracks/{id}/why?post=<id or address>   where one post stands and why (markx/track_why, 0185)
 GET  /api/markx/tracks/{id}/seen                 {track, subtopics: {id: ISO}} the last looks (0207)
 POST /api/markx/tracks/{id}/seen                 {subtopic?} the reader looked now -> {before, now} (0207)
+GET  /api/markx/tracks/{id}/schema               the track's kinds and fields (0245)
+PUT  /api/markx/tracks/{id}/schema               {kinds} the owner's, a new version (0245)
+GET  /api/markx/tracks/{id}/brief?week=<date>    the week's issue, kept (0245); ?since=seen|<ISO>: the quick look
+GET  /api/markx/tracks/{id}/things?kind=&<field>.min=...   a kind's table, filtered by its fields (0245)
 
 Every item a track page shows carries its `byline` (issue 0185: who wrote it, via whom).
 """
@@ -19,11 +23,11 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from insight_core.markx import track_subtopics, track_why, tracks
+from insight_core.markx import track_brief, track_subtopics, track_things, track_why, tracks
 
 router = APIRouter()
 
@@ -170,6 +174,86 @@ def mx_track_look(track_id: str, body: LookIn):
             return track_subtopics.look(cur, tid, sub)
         except KeyError:
             raise HTTPException(status_code=404, detail="No such track or sub-topic")
+
+
+# ---- 0245: the general track briefer (markx/track_things.py, markx/track_brief.py; entity_bands.json tracks.briefs) ----
+
+class SchemaIn(BaseModel):
+    kinds: List[Any] = []
+
+
+@router.get("/tracks/{track_id}/schema")
+def mx_track_schema(track_id: str):
+    """0245: the track's kinds and fields (its newest version): {on, version, by, track_version, stale, schema}."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        try:
+            return track_things.schema_view(cur, tid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
+@router.put("/tracks/{track_id}/schema")
+def mx_track_schema_edit(track_id: str, body: SchemaIn):
+    """0245: the owner's kinds and fields, a new version (the general practice kind is added by code); its posts are
+    read again under it."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        try:
+            return track_things.set_schema(cur, tid, body.kinds)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
+@router.get("/tracks/{track_id}/brief")
+def mx_track_brief(track_id: str, week: Optional[str] = None, since: Optional[str] = None):
+    """0245: ?week=<a day of it> the week's issue (kept, built by the jobs process); ?since=seen (the reader's last
+    look) or ?since=<ISO time> the quick look; neither: the quick look since the last look."""
+    from datetime import datetime
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        try:
+            if week:
+                try:
+                    w = track_brief.parse_week(week)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="week: a date, YYYY-MM-DD")
+                return Response(track_brief.kept_issue(cur, tid, w), media_type="application/json")
+            at = None
+            if since and since != "seen":
+                try:
+                    at = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="since: seen or an ISO time")
+                if at.tzinfo is None:
+                    raise HTTPException(status_code=400, detail="since: an ISO time with its zone")
+            else:
+                look = track_subtopics.seen(cur, tid)["track"]
+                at = datetime.fromisoformat(look) if look else None
+            return track_brief.quick_look(cur, tid, at)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
+@router.get("/tracks/{track_id}/things")
+def mx_track_things(track_id: str, request: Request, kind: str = "", limit: int = 100, offset: int = 0):
+    """0245: a kind's table, filtered by its own fields (<number|money field>.min / .max, <money field>.currency,
+    <enum field>=a,b, <text field>=words, <link field>=any)."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    filters = {k: v for k, v in request.query_params.items() if k not in ("kind", "limit", "offset")}
+    with transaction() as cur:
+        try:
+            return track_brief.table(cur, tid, kind, filters, limit=max(1, min(limit, 500)), offset=max(0, offset))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
 
 
 @router.post("/tracks/{track_id}/sources/{source_id}")

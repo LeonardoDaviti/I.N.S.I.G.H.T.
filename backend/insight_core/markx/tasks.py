@@ -1046,6 +1046,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
         if task["kind"] == "track":                 # 0148: a scout's test-read item shares the judge (scratch rows)
             from insight_core.markx import scout
             scout.after_judge(cur, task, answer)
+    elif task["kind"] in ("track_schema", "track_things", "track_same"):   # 0245: a track's things (track_things)
+        from insight_core.markx import track_things
+        track_things.after_answer(cur, task, call_id, answer)
     elif task["kind"] == "probes":                  # 0147: a track's example posts
         from insight_core.markx import finders
         finders.after_answer(cur, task, call_id, answer)
@@ -1330,8 +1333,16 @@ def _plan_place(cur: Cursor, **kw: Any) -> int:   # 0207: the track's posts plac
 
 
 def _plan_digests(cur: Cursor, **kw: Any) -> int:   # 0207: a digest for each sub-topic whose newest members changed
-    from insight_core.markx import track_subtopics
-    return track_subtopics.plan_digests(cur, **kw)
+    from insight_core.markx import track_brief, track_subtopics   # 0245: and a track brief's "what changed" (digest-v2)
+    return track_subtopics.plan_digests(cur, **kw) + track_brief.plan(cur, **kw)
+
+
+def _plan_track_things(kind: str) -> Any:   # 0245: a track's schema, its posts' things, the same-claim questions
+    def plan(cur: Cursor, **kw: Any) -> int:
+        from insight_core.markx import track_things
+        return {"track_schema": track_things.plan_schemas, "track_things": track_things.plan_things,
+                "track_same": track_things.plan_same}[kind](cur, **kw)
+    return plan
 
 
 
@@ -1354,6 +1365,8 @@ PLANNERS["subtopics"] = _plan_subtopics                                    # 014
 PLANNERS["digest"] = _plan_digests                                         # 0207
 PLANNERS["subtopic_place"] = _plan_place                                   # 0207
 PLANNERS["probes"] = _plan_probes                                          # 0147
+for _kind in ("track_schema", "track_things", "track_same"):                # 0245
+    PLANNERS[_kind] = _plan_track_things(_kind)
 PLANNERS["embed"] = _with_track_vectors(PLANNERS["embed"])                 # 0145
 
 

@@ -830,9 +830,29 @@ class TestTracks(Base):
 
     def test_track_and_subtopics_are_default_kinds_with_their_call_sizes(self):
         kinds = W.DEFAULT_KINDS.split(",")
-        self.assertEqual(kinds[-4:], ["track", "subtopics", "subtopic_place", "digest"])   # 0207: + placement, digest
+        self.assertEqual(kinds[-7:-3], ["track", "subtopics", "subtopic_place", "digest"])   # 0207: + placement, digest
         per = W.per_call_arg(W.PER_CALL)
         self.assertEqual((per["track"], per["subtopics"], per["subtopic_place"], per["digest"]), (10, 1, 1, 1))
+
+    def test_the_track_briefer_kinds_are_default_kinds_with_their_call_sizes(self):
+        """0245: a track's schema and a post window's things one a call, five same-claim pairs a call."""
+        kinds = W.DEFAULT_KINDS.split(",")
+        self.assertEqual(kinds[-3:], ["track_schema", "track_things", "track_same"])
+        per = W.per_call_arg(W.PER_CALL)
+        self.assertEqual((per["track_schema"], per["track_things"], per["track_same"]), (1, 1, 5))
+
+    def test_the_worker_salvages_a_things_answer_as_the_server_does(self):
+        """0245: a value whose number is not in its quote is dropped (kept under "dropped"), the rest stays."""
+        kinds = {"kinds": [{"kind": "recipe", "fields": [{"name": "name", "type": "text", "key": True},
+                                                        {"name": "time", "type": "number"}]}]}
+        text = ("SCHEMA: t v1\nTRACK: T\nBelongs: b\nExcludes: (none)\nKINDS: " + json.dumps(kinds)
+                + "\n\nPOST\nTitle: x\nText: A lentil soup that takes 40 minutes.")
+        answer = {"things": [{"kind": "recipe", "fields": {
+            "name": {"value": "Lentil soup", "quote": "A lentil soup"},
+            "time": {"value": {"number": 45, "unit": "minutes"}, "quote": "takes 40 minutes"}}}]}
+        got, dropped = W.salvage("track_things", answer, text, "track-things-v1")
+        self.assertEqual(dropped, 1)
+        self.assertEqual(list(got["things"][0]["fields"]), ["name"])
 
     def test_tracks_asked_ten_a_call_subtopics_one(self):
         self.stub.add("track", 25, start=1)

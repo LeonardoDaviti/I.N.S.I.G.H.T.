@@ -422,6 +422,43 @@ DIGEST_SCHEMA = {
         "properties": {"text": {"type": "string", "minLength": 1, "maxLength": DIGEST_POINT_CHARS},
                        "cites": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}}}}}},
 }
+# 0245 (built 0249, the general track briefer): a track's kinds of thing proposed from its description
+# (track-schema-v1: 1-3 kinds, up to 8 fields each, typed; code adds `practice_or_claim`), the things one post (or one
+# window of it) describes (track-things-v1: each value with its quote; numbers and money typed; checked value by value
+# in code, markx/track_things.salvage: a bad value is dropped with its reason, never the answer), and whether two
+# practices that share an entity are one claim (track-same-v1). The brief's "what changed" is the `digest` kind's
+# second guide (digest-v2, DIGEST_SCHEMA: its cites are the question's rows [n]).
+THING_TYPES = ["text", "number", "money", "link", "enum"]
+THING_NAME = "^[a-z][a-z0-9_]{0,39}$"
+THING_KINDS, THING_FIELDS, THING_ENUM = (1, 3), 8, (2, 10)
+TRACK_SCHEMA_SCHEMA = {
+    "type": "object",
+    "required": ["kinds"],
+    "properties": {"kinds": {"type": "array", "minItems": THING_KINDS[0], "maxItems": THING_KINDS[1], "items": {
+        "type": "object", "required": ["kind", "fields"],
+        "properties": {"kind": {"type": "string", "pattern": THING_NAME},
+                       "about": _STR_OR_NULL,
+                       "fields": {"type": "array", "minItems": 1, "maxItems": THING_FIELDS, "items": {
+                           "type": "object", "required": ["name", "type"],
+                           "properties": {"name": {"type": "string", "pattern": THING_NAME},
+                                          "type": {"enum": THING_TYPES},
+                                          "unit": _STR_OR_NULL,
+                                          "values": {"type": "array", "maxItems": THING_ENUM[1],
+                                                     "items": {"type": "string", "minLength": 1, "maxLength": 40}},
+                                          "key": {"type": "boolean"},
+                                          "about": _STR_OR_NULL}}}}}}},
+}
+THINGS_PER_ANSWER = 20
+TRACK_THINGS_SCHEMA = {
+    "type": "object",
+    "required": ["things"],
+    "properties": {"things": {"type": "array", "items": {"type": "object"}}},
+}
+TRACK_SAME_SCHEMA = {
+    "type": "object",
+    "required": ["same", "why"],
+    "properties": {"same": {"type": "boolean"}, "why": {"type": "string", "minLength": 1, "maxLength": 300}},
+}
 # 0147 (track recall): a track's example posts (probes-v1): 12-20 that belong, up to 4 near-misses that don't.
 PROBES_MIN, PROBES_MAX, NEAR_MAX, PROBE_CHARS = 12, 20, 4, 300
 PROBES_SCHEMA = {
@@ -657,6 +694,9 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # 0208: a News row's significance,
                                                                                 # its breakdowns (v2; v1 rows kept)
     Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
+    Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
+    Kind("track_things", "track-things-v1", "post_track", TRACK_THINGS_SCHEMA),   # 0245: the things of a post
+    Kind("track_same", "track-same-v1", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two practices, one claim?
 )}
 
 
@@ -727,6 +767,7 @@ def guide_of(cur, kind: str) -> Optional[str]:
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
     "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
+    "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
 }
 
 

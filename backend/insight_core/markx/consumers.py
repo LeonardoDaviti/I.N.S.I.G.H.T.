@@ -58,6 +58,7 @@ CONSUMER: Dict[str, str] = {
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
     "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",   # 0165 C: the timeline stops
+    "track_schema": "tracks", "track_things": "tracks", "track_same": "tracks",   # 0245 (behind tracks.briefs too)
     "reading": "news",   # 0212: ent-v5 (planned only while its own switch is shadow or on)
 }
 
