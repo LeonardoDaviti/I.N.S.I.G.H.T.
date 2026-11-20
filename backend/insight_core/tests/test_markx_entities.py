@@ -1173,6 +1173,49 @@ class Collisions(_Db):
         self.cur.execute("SELECT e.key FROM mx_tasks t JOIN mx_entities e ON e.id = t.a WHERE t.kind = 'collide'")
         self.assertEqual([r[0] for r in self.cur.fetchall()], ["kora"])
 
+    def test_the_new_questions_are_the_same_a_page_of_entities_at_a_time(self):
+        """v10.28 (0251): the new collision questions are rendered COLLIDE_PAGE entities at a time (each page's
+        mentions and texts let go before the next): the same questions, in the same order, whatever the page."""
+        names = ["Luma", "Kora", "Vexa", "Tamo", "Pela"]
+        for k, name in enumerate(names):
+            a, b = (self.post(k, T0 + (2 * k + j) * H, title=f"{name} news {j}") for j in range(2))
+            self.mentions(a, (name, "model", "subject", "Acme"))
+            self.mentions(b, (name, "product", "subject", "Orbit"))
+        with mock.patch.object(I, "COLLIDE_CAP", 0):   # linked, none asked yet (each sample is seeded by its entity)
+            self.stage()
+        run = repo.start_run(self.cur, code_version="test", config={})
+        got = []
+        for page in (1, 2, 1000):
+            self.cur.execute("SAVEPOINT page")
+            with mock.patch.object(I, "COLLIDE_PAGE", page):
+                out = I.collisions(self.cur, self.book(), ask=decide.Ask(self.cur, T0), guide=schemas.mention_guides(),
+                                   run_id=run, got=I.asked(self.cur), seeds=None)
+            self.cur.execute("""SELECT e.id::text, e.key, t.input FROM mx_tasks t JOIN mx_entities e ON e.id = t.a
+                                 WHERE t.kind = 'collide' ORDER BY t.ctid""")
+            rows = self.cur.fetchall()
+            self.assertEqual([r[0] for r in rows], sorted(r[0] for r in rows))   # asked in the entities' order
+            got.append((out["asked"], rows))
+            self.cur.execute("ROLLBACK TO SAVEPOINT page")
+        self.assertEqual(got[0][0], len(names))
+        self.assertEqual(sorted(k for _i, k, _t in got[0][1]), sorted(n.lower() for n in names))
+        self.assertEqual(got[0], got[1])
+        self.assertEqual(got[0], got[2])
+
+    def test_a_split_finds_its_posts_by_their_date_and_title(self):
+        """v10.28 (0251): match_pick reads each post's date and title (tasks.heads), as load_posts shows them."""
+        ps = [self.post(n, T0 + n * H, title=f"Luma  {t}\nnews {n}") for n, t in enumerate(["model", "model", "agent"])]
+        heads = tasks.heads(self.cur, ps + [str(uuid.uuid4())])
+        whole = tasks.load_posts(self.cur, ps)
+        self.assertEqual(heads, {i: (p.iso, p.title) for i, p in whole.items()})
+        self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[1], ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[2], ("Luma", "product", "subject", "Orbit"))
+        self.stage()
+        self.cur.execute("SELECT input FROM mx_tasks WHERE kind = 'collide'")
+        text, = self.cur.fetchone()
+        found = I.match_pick(self.cur, schemas.mention_guides(), self.entity_of(ps[0]), text)
+        self.assertEqual(sorted(pid for hits in found.values() for pid, _n in hits), sorted(ps))
+
     def test_one_run_alone_never_splits(self):
         ps = [self.post(n, T0 + n * H) for n in range(2)]
         self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))

@@ -228,6 +228,10 @@ class State:
     inputs: Dict[str, Tuple[str, str]] = field(default_factory=dict)   # render key -> (kind, input hash) (this run's)
     copies_kept: Dict[str, frozenset] = field(default_factory=dict)
     copies: Dict[str, frozenset] = field(default_factory=dict)
+    # v10.28 (0251): what `save` writes of the inputs, near-copies and tasks, taken by `release` (`_pending`): the
+    # dicts above are let go then (the judge tasks' index, the kept and this run's inputs: ~140 MB of objects at the
+    # server's size, held beside the entity book to the run's end for the few rows save writes)
+    pending: Optional[Dict[str, Any]] = None
 
     @property
     def kept(self) -> bool:
@@ -368,6 +372,35 @@ def _read_calls(cur: Any, state: State, ids: Sequence[str]) -> None:
         state.calls[tid] = got.get(tid, [])
         for _a, cid in state.calls[tid]:
             state.call_task[cid] = tid
+
+
+def task_of(cur: Any, state: State, kind: str, h: str) -> Optional[Tuple[str, str]]:
+    """(id, status) of the judge task asking the input of hash `h` under `kind` (any guide, as `refresh` indexes them),
+    or None: from the index while the reading holds it, after `release` by query (the run's snapshot and its own
+    writes: the index's view, which follows the tasks the run adds and asks again)."""
+    if state.pending is None:
+        got = state.tasks.get((kind, h))
+        return None if got is None else (got[0], got[1])
+    cur.execute("""SELECT id::text, status FROM mx_tasks WHERE kind = %s AND input_hash = %s
+                    ORDER BY ctid DESC LIMIT 1""", (kind, h))
+    row = cur.fetchone()
+    return None if row is None else (row[0], row[1])
+
+
+def task_added(state: State, kind: str, h: str, tid: str) -> None:
+    """A task the run added: open, unanswered (the next run reads it as seen, `save`)."""
+    if state.pending is None:
+        state.tasks[(kind, h)] = (tid, "open", 0)
+        state.keys[tid] = (kind, h)
+    else:
+        state.pending["tasks"][tid] = ("open", 0)
+
+
+def task_reopened(state: State, tid: str) -> None:
+    """A task of the index the run asked again: open once more, its calls kept (Ask.reopen, before `release`)."""
+    if state.pending is None and tid in state.keys:
+        key = state.keys[tid]
+        state.tasks[key] = (tid, "open", state.tasks[key][2])
 
 
 def calls_of(cur: Any, state: State, tid: str) -> List[Tuple[Dict[str, Any], str]]:
@@ -535,7 +568,18 @@ def release(state: State) -> None:
     used after is read again, from the run's one snapshot. v10.23 (0218): and the answers it read (every kept question's
     calls: ~63k answers a run on the server), read again on use (`calls_of`; Ask.later reads them by query); and what
     only the renders read of each post (its text and reading stamps, its reading's kind and events: no render follows
-    News, the briefing's input is its own text); of the world's posts, `save` reads only which they are."""
+    News, the briefing's input is its own text); of the world's posts, `save` reads only which they are.
+    v10.28 (0251): and the judge tasks' index and the inputs and near-copies, kept (`pending`) as the rows `save` writes
+    of them: no render follows; a question asked after (the briefing) finds its task by query (`task_of`), and a task it
+    adds is one more row of `pending` (`task_added`)."""
+    state.pending = _pending(state)
+    state.tasks.clear()
+    state.keys.clear()
+    state.was.clear()
+    state.inputs_kept.clear()
+    state.inputs.clear()
+    state.copies_kept.clear()
+    state.copies.clear()
     state.texts.clear()
     state.readings.clear()
     state.calls.clear()
@@ -712,29 +756,25 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
                               kind = EXCLUDED.kind, at = EXCLUDED.at, words = EXCLUDED.words""",
                     tuple(list(col) for col in zip(*rows)))
     out["posts_written"] = len(rows)
-    for table, kept, now_ in (("mx_inc_inputs", state.inputs_kept, state.inputs),
-                              ("mx_inc_copies", state.copies_kept, state.copies)):
+    pending = _pending(state)
+    for table, part in (("mx_inc_inputs", "inputs"), ("mx_inc_copies", "copies")):
+        gone, new = pending[part]
         if state.full:
             cur.execute(f"DELETE FROM {table}")
-            gone = []
-        else:
-            gone = sorted(set(kept) - set(now_))
-            if gone:
-                cur.execute(f"DELETE FROM {table} WHERE key = ANY(%s)", (gone,))
+        elif gone:
+            cur.execute(f"DELETE FROM {table} WHERE key = ANY(%s)", (gone,))
         if table == "mx_inc_inputs":
-            new = [(k, kind, h) for k, (kind, h) in now_.items() if state.full or kept.get(k) != h]
             if new:
                 cur.execute("""INSERT INTO mx_inc_inputs (key, kind, input_hash)
                                SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
                                ON CONFLICT (key) DO UPDATE SET kind = EXCLUDED.kind, input_hash = EXCLUDED.input_hash""",
                             tuple(list(col) for col in zip(*new)))
         else:
-            new = [(k, sorted(v)) for k, v in now_.items() if state.full or kept.get(k) != v]
             if new:
                 cur.executemany("""INSERT INTO mx_inc_copies (key, copies) VALUES (%s, %s)
                                    ON CONFLICT (key) DO UPDATE SET copies = EXCLUDED.copies""", new)
         out[table[7:] + "_written"], out[table[7:] + "_dropped"] = len(new), len(gone)
-    seen = [(tid, status, n) for (_k, (tid, status, n)) in state.tasks.items() if state.was.get(tid) != (status, n)]
+    seen = [(tid, status, n) for tid, (status, n) in pending["tasks"].items()]
     if seen:
         cur.execute("""INSERT INTO mx_inc_tasks (task_id, status, n)
                        SELECT * FROM unnest(%s::uuid[], %s::text[], %s::int[])
@@ -746,6 +786,25 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
                    ON CONFLICT (name) DO UPDATE SET run_id = EXCLUDED.run_id, key = EXCLUDED.key, stamps = EXCLUDED.stamps,
                           news = EXCLUDED.news, want = EXCLUDED.want, saved_at = EXCLUDED.saved_at""",
                 (NAME, str(run_id), state.key, encode(state.stamps), encode(state.news), encode(want)))
+    return out
+
+
+def _pending(state: State) -> Dict[str, Any]:
+    """What `save` writes of the inputs and near-copies ({part: (keys gone, rows new)}) and of the judge tasks
+    ({"tasks": {id: (status, valid calls)}}: those not as the last run saw them), from the dicts the reading holds; once
+    `release` took it, as it took it (and the tasks added since)."""
+    if state.pending is not None:
+        return state.pending
+    out: Dict[str, Any] = {}
+    for part, kept, now_ in (("inputs", state.inputs_kept, state.inputs), ("copies", state.copies_kept, state.copies)):
+        gone = [] if state.full else sorted(set(kept) - set(now_))
+        if part == "inputs":
+            new = [(k, kind, h) for k, (kind, h) in now_.items() if state.full or kept.get(k) != h]
+        else:
+            new = [(k, sorted(v)) for k, v in now_.items() if state.full or kept.get(k) != v]
+        out[part] = (gone, new)
+    out["tasks"] = {tid: (status, n) for (_k, (tid, status, n)) in state.tasks.items()
+                    if state.was.get(tid) != (status, n)}
     return out
 
 

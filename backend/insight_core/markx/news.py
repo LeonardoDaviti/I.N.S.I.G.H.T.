@@ -94,13 +94,20 @@ def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
     from insight_core.markx import incremental
     ids = sorted(set(ids))
     stamps = incremental.stamps_of(cur, memo, ids)
-    cur.execute("""SELECT pl.post_id::text, string_agg(pl.target_url || ' ' || COALESCE(t.id::text, '-'), ' '
-                                                       ORDER BY pl.position, pl.target_url)
-                     FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
-                                                           ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
-                    WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
-    links = dict(cur.fetchall())
-    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}".encode()).hexdigest()[:16] for i in ids if i in stamps}
+
+    def digest(i: str, links: str) -> str:
+        return hashlib.sha1(f"{stamps[i]}\x1f{links}".encode()).hexdigest()[:16]
+    # v10.28 (0251): each post's links digested as they stream (the same query, its rows read one at a time): every
+    # post's links, joined into one string a post, were held at once for the window's posts
+    got: Dict[str, str] = {}
+    for i, links in cur.stream("""SELECT pl.post_id::text, string_agg(pl.target_url || ' ' || COALESCE(t.id::text, '-'), ' '
+                                                         ORDER BY pl.position, pl.target_url)
+                       FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
+                                                             ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
+                      WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,)):
+        if i in stamps:
+            got[i] = digest(i, links)
+    return {i: got[i] if i in got else digest(i, "") for i in ids if i in stamps}
 
 
 def surge_keys(found: Iterable[Any]) -> List[List[Any]]:

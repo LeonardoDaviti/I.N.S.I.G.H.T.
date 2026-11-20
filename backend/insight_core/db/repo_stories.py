@@ -126,22 +126,32 @@ class SourceFacts:
         places = {i: "https://" + (self.publication(i) if kind == "site" else (self.account.get(i) or "")).lower()
                   for i, kind, *_ in self._channels()}
         linking = sorted({a for a, _ in asks})
-        cur.execute("SELECT p.source_id::text, pl.target_url FROM posts p JOIN post_links pl ON pl.post_id = p.id "
-                    "AND NOT pl.boilerplate WHERE p.source_id = ANY(%s::uuid[])", (linking,))
-        targets: Dict[str, Set[str]] = defaultdict(set)
-        for source_id, target in cur.fetchall():
-            targets[source_id].add(target)
         cur.execute("SELECT source_id::text, normalized_url FROM posts WHERE source_id = ANY(%s::uuid[]) "
                     "AND normalized_url IS NOT NULL", (sorted({b for _, b in asks}),))
         pages: Dict[str, Set[str]] = defaultdict(set)
         for source_id, url in cur.fetchall():
             pages[source_id].add(url)
-
-        def links(a: str, b: str) -> bool:
-            place = places[b]
-            return bool(targets[a] & pages[b]) or any(
-                (low := t.lower()) == place or low.startswith(place + "/") for t in targets[a])
-        return [(a, b) for a, b in asks if links(a, b)]
+        # v10.28 (0251): the linking sources' links tested as they stream (a link to one of b's pages, or to b's own
+        # place), never held: every link of theirs was read into sets at once (366k on the server's copy: +190 MB, the
+        # decision run's News stage's peak, and every other reader of SourceFacts')
+        ask_of: Dict[str, List[str]] = defaultdict(list)
+        for a, b in asks:
+            ask_of[a].append(b)
+        found: Set[Tuple[str, str]] = set()
+        for a, t in cur.stream("SELECT p.source_id::text, pl.target_url FROM posts p JOIN post_links pl "
+                               "ON pl.post_id = p.id AND NOT pl.boilerplate WHERE p.source_id = ANY(%s::uuid[])",
+                               (linking,)):
+            low = None
+            for b in ask_of[a]:
+                if (a, b) in found:
+                    continue
+                if t in pages[b]:
+                    found.add((a, b))
+                    continue
+                low = t.lower() if low is None else low
+                if low == places[b] or low.startswith(places[b] + "/"):
+                    found.add((a, b))
+        return [(a, b) for a, b in asks if (a, b) in found]
 
     def _own(self, linked: Iterable[Tuple[str, str]]) -> None:
         """Who owns each channel (issue 0111: News counts a voice by owner): `owner` (source -> its owner's first

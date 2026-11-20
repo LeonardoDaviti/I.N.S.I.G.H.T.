@@ -1026,5 +1026,60 @@ class NewsRouteTests(unittest.TestCase):
         self.assertEqual((status, body["url"]), (200, self.url))
 
 
+@requires_test_db
+class SourceLinksTests(unittest.TestCase):
+    """v10.28 (0251): SourceFacts._linked tests the linking sources' links as they stream, never holding them: the
+    same pairs as reading every link into sets (the code it replaced, kept here as the reference)."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(self.conn.rollback)
+
+    @staticmethod
+    def _reference(cur, asks, places):
+        from collections import defaultdict
+        cur.execute("SELECT p.source_id::text, pl.target_url FROM posts p JOIN post_links pl ON pl.post_id = p.id "
+                    "AND NOT pl.boilerplate WHERE p.source_id = ANY(%s::uuid[])", (sorted({a for a, _ in asks}),))
+        targets = defaultdict(set)
+        for s, t in cur.fetchall():
+            targets[s].add(t)
+        cur.execute("SELECT source_id::text, normalized_url FROM posts WHERE source_id = ANY(%s::uuid[]) "
+                    "AND normalized_url IS NOT NULL", (sorted({b for _, b in asks}),))
+        pages = defaultdict(set)
+        for s, u in cur.fetchall():
+            pages[s].add(u)
+        return [(a, b) for a, b in asks if targets[a] & pages[b] or any(
+            (low := t.lower()) == places[b] or low.startswith(places[b] + "/") for t in targets[a])]
+
+    def test_the_streamed_links_find_the_pairs_every_link_read_found(self):
+        from unittest import mock
+        from insight_core.db import repo_stories as R
+        mark = uuid.uuid4().hex[:8]
+        a = insert_source(self.cur, "Alpha", handle=f"https://alpha{mark}.example/feed")
+        b = insert_source(self.cur, "Beta", handle=f"https://beta{mark}.example/feed")
+        c = insert_source(self.cur, "Gamma", handle=f"https://gamma{mark}.example/feed")
+        page = insert_post(self.cur, b, f"https://beta{mark}.example/posts/one", title="Beta's post")
+        self.cur.execute("SELECT normalized_url FROM posts WHERE id = %s", (page,))
+        url, = self.cur.fetchone()
+        insert_post(self.cur, a, f"https://alpha{mark}.example/p/1", title="Alpha links Beta's page", links=[url])
+        insert_post(self.cur, c, f"https://gamma{mark}.example/p/1", title="Gamma links Alpha's site",
+                    links=[f"HTTPS://ALPHA{mark}.EXAMPLE/about", "https://elsewhere.example/x"])
+        insert_post(self.cur, b, f"https://beta{mark}.example/p/2", title="Beta links a look-alike host",
+                    links=[f"https://alpha{mark}.examplenot/x"])
+        pairs = {(x, y): "name" for x, y in ((a, b), (a, c), (b, c))}
+        with mock.patch.object(R, "owner_pairs", lambda *a_, **k: pairs):
+            facts = R.SourceFacts(self.cur)
+            got = facts._linked(self.cur)
+        places = {i: "https://" + (facts.publication(i) if kind == "site" else (facts.account.get(i) or "")).lower()
+                  for i, kind, *_ in facts._channels()}
+        asks = [(x, y) for (p, q), why in pairs.items() if why == "name" for x, y in ((p, q), (q, p))]
+        self.assertEqual(got, self._reference(self.cur, asks, places))
+        self.assertIn((a, b), got)        # a link to one of b's pages
+        self.assertIn((c, a), got)        # a link under a's own place, whatever its case
+        self.assertNotIn((b, a), got)     # a host that only starts like a's
+
+
 if __name__ == "__main__":
     unittest.main()
