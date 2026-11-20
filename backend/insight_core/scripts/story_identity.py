@@ -9,8 +9,11 @@ It changes the database it is given, so only a copy: it refuses the live and the
 2. A full run builds the state.
 3. They come back in `batches` "fetches", the oldest stored first (posts and links, one transaction
    each), with an incremental run after each, the clock `hours` on each time (News's window moves).
-4. Every derived table is read (`snapshot`), a full run at the last clock rebuilds over the same
-   posts, and the tables are read again and compared row by row (`compare`).
+4. Every derived table is kept in the copy (`keep`: one unlogged table each, its rows and each row's
+   md5 of its text), a full run at the last clock rebuilds over the same posts, the tables are kept
+   again, and the two are compared row by row in SQL (`compare_kept`, 0253): only the differing rows
+   come to Python, as `compare` shows them. `snapshot` and `compare` hold every row as JSON text in
+   Python (4M rows at the server's size, twice): `same_rows` (two databases) still uses them.
 `run(mode, clock)` runs a job ("full" or "incremental"): in this process unless the caller times
 it in its own (the lab's measurements did).
 """
@@ -61,6 +64,66 @@ def compare(a: Dict[str, Set[str]], b: Dict[str, Set[str]], shown: int = 5) -> D
             for name in TABLES}
 
 
+KEPT = "identity_kept"          # identity_kept_<state>_<table>: unlogged tables in the copy, dropped after
+
+
+def _kept(state: str, name: str) -> str:
+    return f"{KEPT}_{state}_{name}"
+
+
+def keep(cur: Any, state: str) -> None:
+    """Every table the story job derives (TABLES' queries), kept in the copy as it is now: per table an unlogged table
+    of its rows and `h`, the md5 of the row's text. Nothing comes to Python."""
+    from psycopg import sql as q
+    for name, query in TABLES.items():
+        table = q.Identifier(_kept(state, name))
+        cur.execute(q.SQL("DROP TABLE IF EXISTS {}").format(table))
+        cur.execute(q.SQL("CREATE UNLOGGED TABLE {} AS SELECT r.*, md5(r::text) AS h FROM ({}) r").format(table, q.SQL(query)))
+
+
+def drop_kept(cur: Any, states=("first", "second")) -> None:
+    from psycopg import sql as q
+    for state in states:
+        for name in TABLES:
+            cur.execute(q.SQL("DROP TABLE IF EXISTS {}").format(q.Identifier(_kept(state, name))))
+
+
+def _only(cur: Any, mine: str, other: str, shown: int) -> "tuple[int, List[str]]":
+    """The rows of `mine` (a kept table) that `other` lacks, as `compare` counts them (distinct) and the first `shown`
+    of them as `compare` shows them: JSON text, sorted. Streamed: a few rows held, however many differ."""
+    import heapq
+    from psycopg import sql as q
+    a, b = q.Identifier(mine), q.Identifier(other)
+    cur.execute(q.SQL("SELECT count(*) FROM (SELECT h FROM {} EXCEPT SELECT h FROM {}) d").format(a, b))
+    count = cur.fetchone()[0]
+    if not count:
+        return 0, []
+    # each differing row once (DISTINCT ON its text's hash), streamed: the smallest few kept, however many differ
+    with cur.connection.transaction(), cur.connection.cursor(name="identity_only") as named:
+        named.itersize = 5000
+        named.execute(q.SQL("SELECT DISTINCT ON (h) * FROM {} WHERE h IN (SELECT h FROM {} EXCEPT SELECT h FROM {})")
+                      .format(a, a, b))
+        at = [c.name for c in named.description].index("h")
+        texts = (json.dumps(row[:at] + row[at + 1:], default=str, sort_keys=True) for row in named)
+        return count, sorted(set(heapq.nsmallest(shown * 2, texts)))[:shown]
+
+
+def compare_kept(cur: Any, first: str = "first", second: str = "second", shown: int = 5) -> Dict[str, Dict[str, Any]]:
+    """`compare` of two kept states, in SQL: per table its distinct rows in `second`, how many rows are in one state
+    only, and a few of each side's (JSON text, sorted, as `compare` shows them). Rows are compared by their text (its
+    md5): what the JSON of `snapshot` tells apart, the row text does too."""
+    from psycopg import sql as q
+    out = {}
+    for name in TABLES:
+        a, b = _kept(first, name), _kept(second, name)
+        cur.execute(q.SQL("SELECT count(DISTINCT h) FROM {}").format(q.Identifier(b)))
+        rows = cur.fetchone()[0]
+        n_first, only_first = _only(cur, a, b, shown)
+        n_second, only_second = _only(cur, b, a, shown)
+        out[name] = {"rows": rows, "differing": n_first + n_second, "only_first": only_first, "only_second": only_second}
+    return out
+
+
 def same_rows(a: Any, b: Any) -> Dict[str, Any]:
     """Every table the story job derives, compared row by row between two databases (each a URL or an
     open connection): {"same", "tables"}. Read only."""
@@ -107,13 +170,16 @@ def check(db_url: str, *, held: int = 30, batches: int = 3, hours: float = 2.0, 
             cur.execute("INSERT INTO post_links SELECT * FROM identity_held_links WHERE post_id = ANY(%s)", (chunk,))
         clock += timedelta(hours=hours)
         runs.append(run("incremental", clock))
-    with psycopg.connect(db_url) as conn, conn.cursor() as cur:
-        incremental = snapshot(cur)
+    with psycopg.connect(db_url, autocommit=True) as conn, conn.cursor() as cur:
+        keep(cur, "first")                       # the incremental job's rows
     runs.append(run("full", clock))
-    with psycopg.connect(db_url) as conn, conn.cursor() as cur:
-        full = snapshot(cur)
-        cur.execute("DROP TABLE IF EXISTS identity_held_posts, identity_held_links")
-    tables = compare(incremental, full)
+    with psycopg.connect(db_url, autocommit=True) as conn, conn.cursor() as cur:
+        keep(cur, "second")                      # the full rebuild's
+        try:
+            tables = compare_kept(cur)
+        finally:
+            drop_kept(cur)
+            cur.execute("DROP TABLE IF EXISTS identity_held_posts, identity_held_links")
     return {"same": all(t["differing"] == 0 for t in tables.values()), "tables": tables, "runs": runs}
 
 

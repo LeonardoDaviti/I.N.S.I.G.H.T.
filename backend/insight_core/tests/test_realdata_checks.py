@@ -505,6 +505,31 @@ class RefsAndStoriesTests(unittest.TestCase):
         row = snapshot._news_rows(self.cur, [nid])[nid]
         self.assertEqual(row, {"names": ["model 2"], "origins": [self.a, self.c], "row_first": self.b})
 
+    def test_the_identity_compare_in_sql_is_the_python_compare(self):
+        """0253: story_identity keeps both states in the copy and compares them in SQL; what it reports (rows,
+        differing, the examples each side shows) is what holding both as JSON text in Python reported."""
+        from insight_core.scripts import story_identity as si
+        first = si.snapshot(self.cur)
+        si.keep(self.cur, "first")
+        self.cur.execute("UPDATE stories SET voices = voices + 5 WHERE id = %s", (self.c,))
+        self.cur.execute("DELETE FROM story_posts WHERE post_id = %s", (self.b,))
+        self.cur.execute("INSERT INTO story_keys (key, post_id) VALUES (%s, %s), (%s, %s)",
+                         (f"k1-{self.mark}", self.a, f"k2-{self.mark}", self.c))
+        second = si.snapshot(self.cur)
+        si.keep(self.cur, "second")
+        got = si.compare_kept(self.cur)
+        self.assertEqual(got, si.compare(first, second))
+        self.assertEqual({t: v["differing"] for t, v in got.items() if v["differing"]},
+                         {"stories": 2, "story_posts": 1, "story_keys": 2})
+        si.drop_kept(self.cur)
+
+    def test_the_checksums_at_once_are_the_checksums_one_by_one(self):
+        """0253: the tables hashed on connections of their own sum the same as one by one (committed rows: the
+        test's uncommitted ones are its connection's alone)."""
+        from insight_core.checks import job_checks
+        with psycopg.connect(db_url(), autocommit=True) as conn, conn.cursor() as cur:
+            self.assertEqual(job_checks.table_checksums(cur, db_url(), workers=4), job_checks.table_checksums(cur))
+
     def test_together_apart_and_via(self):
         together = {"on": "stories", "together": [f"https://a-{self.mark}.test/2026/one/", f"https://b-{self.mark}.test/two"]}
         self.assertTrue(cases.check(self.ctx, together)[0])
