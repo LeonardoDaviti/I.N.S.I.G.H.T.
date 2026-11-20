@@ -119,6 +119,7 @@ MAX_CLUSTER = 6
 ALIAS_CAP, COLLIDE_CAP = 10000, 1000   # new questions a run adds of each (a pair over it waits for the nightly pass)
 COLLIDE_RUNS = 3
 COLLIDE_MENTIONS = 8
+COLLIDE_PAGE = 50          # v10.28 (0251): the new collision questions rendered a page of entities at a time
 COLLIDE_SPAN_DAYS = 365   # 0220: a name whose posts span a year or more is asked whether it is one thing
 QUEUE_ONLY = {"paren", "handle_extra_word", "maker_unstated", "fields_parser"}
 TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
@@ -4512,16 +4513,21 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         if queue_item(cur, kind="collision", a=eid, b=None, proposal="split", reason="collision",
                       conf=None, evidence=prop, call_id=calls[0][0], run_id=run_id):
             out["queued"] += 1
-    if new:
-        new = new[:max(0, COLLIDE_CAP - ask.added["collide"])]
+    new = new[:max(0, COLLIDE_CAP - ask.added["collide"])]
+    # v10.28 (0251): the new questions COLLIDE_PAGE entities at a time, each page's mentions and posts let go before the
+    # next (the same questions, in the same order): up to COLLIDE_CAP entities' every first mention and the whole texts
+    # of their samples (~8,000 posts) were held at once, the entities stage's peak (+200 MB on the server-sized copy)
+    for k in range(0, len(new), COLLIDE_PAGE):
+        page = new[k:k + COLLIDE_PAGE]
         picks = {eid: collide_sample(eid, ms, suspect_mention(book, book.ents[eid]))
-                 for eid, ms in _first_mentions(cur, guide, new).items()}
+                 for eid, ms in _first_mentions(cur, guide, page).items()}
         posts = tasks.load_posts(cur, {m[0] for pick in picks.values() for m in pick})
         nposts = counts_of(cur, guide, list(picks))
         for eid, pick in picks.items():
             known = entity_facts.known_block(cur, eid) if facts_on else ""
             ask.answer("collide", known + collide_input(book.ents[eid], nposts.get(eid, len(pick)), pick, posts), a=eid)
             out["asked"] += 1
+        del picks, posts
     return dict(out)
 
 
@@ -4552,7 +4558,9 @@ def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tupl
     cur.execute("SELECT post_id::text, n, span, type, maker FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = %s",
                 (guide, eid))
     rows = cur.fetchall()
-    posts = tasks.load_posts(cur, {r[0] for r in rows})
+    # v10.28 (0251): each post's date and title only (tasks.heads, as load_posts' Post shows them): every post of the
+    # entity was read whole (its text, links and linked page) to compare those two, thousands for a name much written
+    posts = tasks.heads(cur, {r[0] for r in rows})
     blocks = re.split(r"\n(?=\d+\. written )", text)
     out: Dict[int, List[Tuple[str, int]]] = {}
     for block in blocks[1:]:
@@ -4564,7 +4572,7 @@ def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tupl
         maker = None if maker == "none" else maker
         hits = [(pid, n) for pid, n, s, t, mk in rows
                 if (s or "") == span and str(t) == type_ and (mk or None) == maker and pid in posts
-                and posts[pid].iso[:10] == day and posts[pid].title[:110] == title]
+                and posts[pid][0][:10] == day and posts[pid][1][:110] == title]
         if hits:
             out[int(num)] = hits
     return out

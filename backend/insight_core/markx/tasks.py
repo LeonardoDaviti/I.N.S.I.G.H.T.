@@ -160,6 +160,19 @@ def _squash(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
+def heads(cur: Cursor, ids: Iterable[Any]) -> Dict[str, Tuple[str, str]]:
+    """v10.28 (0251): {id: (iso, title)} of the posts load_posts would return, as its Post's `iso` and `title` (the
+    same date and title, the same posts): for a caller that matches a post by its date and title only, without its
+    text, links and linked page (identity.match_pick read every post of an entity whole to compare those two)."""
+    ids = [str(i) for i in ids]
+    if not ids:
+        return {}
+    cur.execute(f"""SELECT p.id::text, {pairing.ordinary_date('p')}, COALESCE(pp.title, p.title)
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    return {pid: (at.astimezone(timezone.utc).isoformat(), _squash(title)) for pid, at, title in cur.fetchall()}
+
+
 def load_posts(cur: Cursor, ids: Iterable[Any], *, linked: bool = True) -> Dict[str, Post]:
     """{id: Post} for the posts that exist (markx text v1: post_parts' title and text, kept links in order).
 

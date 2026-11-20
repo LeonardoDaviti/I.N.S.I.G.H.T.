@@ -201,6 +201,59 @@ class Incremental(unittest.TestCase):
         self.assertEqual(rows[0], rows[1])
         self.assertTrue(rows[0][0])
 
+    def test_release_lets_the_index_go_and_the_run_leaves_the_same_state(self):
+        """v10.28 (0251): `release` lets the judge tasks' index and the inputs and near-copies go before the entity
+        stages, keeping only what `save` writes of them: a full run, an answer, then an incremental run leave the same
+        state (mx_inc_*), memberships and tasks as runs whose reading keeps them all to the end."""
+        a, b, c, d, e, f, g, h, k = self.scene()
+        released = []
+
+        def watching(state):
+            release(state)
+            released.append((len(state.tasks), len(state.inputs), len(state.inputs_kept), state.pending is not None))
+        release = I.release
+        got = []
+        for patch in (watching, lambda state: None):   # v10.28's release, and a reading that keeps everything
+            self.cur.execute("SAVEPOINT rel")
+            with unittest.mock.patch.object(I, "release", patch):
+                self.go(full=True)
+                self.answer("check", lambda x, y: {"relation": "different", "confidence": 95})
+                out = self.go()
+            self.assertEqual(out["run"]["kind"], "incremental")
+            rows = []
+            for table, cols in (("mx_inc_inputs", "key, kind, input_hash"), ("mx_inc_copies", "key, copies::text"),
+                                ("mx_inc_tasks s JOIN mx_tasks t ON t.id = s.task_id", "t.kind, t.input_hash, s.status, s.n"),
+                                ("mx_inc_posts", "post_id::text, stamp"),
+                                ("mx_tasks", "kind, input_hash, status"),
+                                ("mx_story_posts", "post_id::text, role, reason")):
+                self.cur.execute(f"SELECT {cols} FROM {table} ORDER BY {', '.join(str(n + 1) for n in range(cols.count(',') + 1))}")
+                rows.append(self.cur.fetchall())
+            got.append((rows, out["tasks_added"], out["run"]["state"]))
+            self.cur.execute("ROLLBACK TO SAVEPOINT rel")
+        self.assertEqual(released, [(0, 0, 0, True), (0, 0, 0, True)])
+        self.assertEqual(got[0], got[1])
+        self.assertTrue(got[0][0][2] and got[0][0][0])
+
+    def test_a_question_asked_after_release_finds_its_task_and_adds_to_what_save_writes(self):
+        """v10.28 (0251): after `release` (the briefing's question, after the entity stages) a task is found by query
+        as the index found it, and one the run adds is written as seen by `save`."""
+        tid, _new = tasks.add(self.cur, "briefing", "the day's briefing input")
+        self.cur.execute("SELECT input_hash FROM mx_tasks WHERE id = %s", (tid,))
+        h, = self.cur.fetchone()
+        state = I.State(db="test", key="k", full=True)
+        I.refresh(self.cur, state)
+        held = I.task_of(self.cur, state, "briefing", h)
+        self.assertEqual(held, (str(tid), "open"))
+        self.assertEqual(I.task_of(self.cur, state, "briefing", "no such hash"), None)
+        I.release(state)
+        self.assertEqual(state.tasks, {})
+        self.assertEqual(I.task_of(self.cur, state, "briefing", h), held)
+        self.assertEqual(I.task_of(self.cur, state, "briefing", "no such hash"), None)
+        self.assertIn(str(tid), state.pending["tasks"])               # never seen by a run: written as seen
+        other, _new = tasks.add(self.cur, "briefing", "another day's briefing input")
+        I.task_added(state, "briefing", "h2", str(other))
+        self.assertEqual(state.pending["tasks"][str(other)], ("open", 0))
+
     def test_the_dirty_set_is_the_tasks_answered_since_and_the_closure_their_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()
