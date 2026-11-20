@@ -27,7 +27,7 @@ export function rankWords(item: TrackItem): string {
 
 const FINDER_WORDS: Record<string, string> = {
   probe: 'example post', entity: 'entity', domain: 'domain', word: 'words', source: 'source', story: 'story',
-  classifier: 'classifier',
+  classifier: 'classifier', tool: 'tool in use', linked: 'linked by its sources',
 };
 
 /** 0147: "found by: example post, entity, domain" (null for an active source's item, which every post is). */
@@ -124,7 +124,10 @@ export function whyLine(w: TrackWhy): string {
       return (w.label === 'out' ? 'Out: your ✗' : `Out: Haiku says it doesn’t belong${conf}${said}`) + older;
     case 'waiting':
       return 'Asked, waiting for Haiku’s answer';
+    case 'invalid':
+      return 'Asked, but Haiku’s answers named nothing of the post (asked twice): not judged';
     default:
+      if (w.reason === 'not_planned' && w.found_by?.length) return `Not asked yet: ${foundByLine(w)} — Haiku asks it at the next run`;
       if (w.reason === 'outside_window') return `Not asked: its source is in this track, but it is older than the reading window (${plural(w.days ?? 0, 'day')})`;
       if (w.reason === 'below_bar') return `Not asked: its source is not in this track, and the finders did not put it up${w.bar != null ? ` (bar ${w.bar.toFixed(2)})` : ''}`;
       return `Not asked: ${NOT_ASKED[w.reason ?? ''] ?? 'never judged for this track'}`;

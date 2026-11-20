@@ -492,8 +492,8 @@ def _back(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
-def _track(a: Dict[str, Any], _input: str) -> Optional[str]:
-    """0145: `why` is one line, at most TRACK_WHY_CHARS; a post judged in may name its sub-topic."""
+def _one_line_why(a: Dict[str, Any]) -> Optional[str]:
+    """`why` is one line, at most TRACK_WHY_CHARS."""
     why = a["why"].strip()
     if not why:
         return "why: empty"
@@ -502,6 +502,73 @@ def _track(a: Dict[str, Any], _input: str) -> Optional[str]:
     if len(why) > schemas.TRACK_WHY_CHARS:
         return f"why: at most {schemas.TRACK_WHY_CHARS} characters"
     return None
+
+
+# 0252: a track verdict is a judgement of ONE post (the guide: `confidence` "how sure you are of your `in`", `why`
+# "what the post is, and why ..."). An answer with confidence 0 judged nothing, and a why that names nothing of the post
+# ("Not applicable to this track.") could be said of any post: neither is a verdict, and stored they read as "out".
+# A word cites the post when the post's own text has it (its title, text, links, quote; never its platform or source
+# line: the post's content, not its source) and it is none of the question's own words (the guide's, the track's
+# header) nor a function word. Compared by a 5-letter stem, folded; a word of 4+ letters or with a digit. A post with
+# fewer than CITE_MIN_WORDS Latin-script words of its own is not checked for a citation (an English why of a post in
+# another script may name nothing in its letters).
+POST_MARK = "\n\nPOST\n"
+CITE_MIN_WORDS = 5
+_CITE_WORD = re.compile(r"\w+")
+_LATIN = re.compile(r"[a-z]")
+_FUNCTION_WORDS = frozenset("""about above after again against also among another anything because been before being
+below between both could does doing down during each either else even every from further have having here hers herself
+himself into itself just like more most much must neither none nothing only other ours ourselves over same should some
+such than that their theirs them themselves then there these they this those through under until upon very what when
+where which while whom whose will with within without would your yours yourself https http html www""".split())
+
+
+def _stem(w: str) -> str:
+    return w[:5]
+
+
+def _cite_words(text: str) -> set:
+    return {_stem(w) for w in _CITE_WORD.findall(fold(text))
+            if len(w) >= 4 or (len(w) >= 2 and any(c.isdigit() for c in w))}
+
+
+@lru_cache(maxsize=4)
+def _guide_words(kind: str) -> frozenset:
+    """The words of every guide of `kind` (its own and its variants): an answer that repeats them cites no post."""
+    out: set = set()
+    for gid, k in schemas.guide_ids().items():
+        if k == kind:
+            out |= _cite_words(schemas.guide_body(gid))
+    return frozenset(out | {_stem(w) for w in _FUNCTION_WORDS})
+
+
+def _post_words(input: str) -> Tuple[set, set]:
+    """(the post's own words, the question's other words) of a track question (tracks.track_input)."""
+    head, _, post = input.partition(POST_MARK)
+    own = "\n".join(line for line in post.splitlines()
+                     if not line.startswith(("Platform:", "Author:")))
+    return _cite_words(own), _cite_words(head)
+
+
+def track_verdict_error(a: Dict[str, Any], input: Optional[str]) -> Optional[str]:
+    """0252: why a `track` answer is no verdict of its post (None: it is one). See POST_MARK's note."""
+    if float(a.get("confidence") or 0) <= 0:
+        return "confidence: 0 judges nothing; say how sure you are of `in` (above 0)"
+    if not input or POST_MARK not in input:
+        return None
+    own, asked = _post_words(input)
+    own -= asked | _guide_words("track")
+    if sum(1 for w in own if _LATIN.search(w)) < CITE_MIN_WORDS:
+        return None
+    if not (_cite_words(a.get("why") or "") & own):
+        return "why: it names nothing of this post; say what the post is (its subject, in its words)"
+    return None
+
+
+def _track(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0145: `why` is one line, at most TRACK_WHY_CHARS; a post judged in may name its sub-topic. 0252: and the answer
+    is a verdict of its post (track_verdict_error)."""
+    return _one_line_why(a) or track_verdict_error(a, input)
 
 
 def _subtopics(a: Dict[str, Any], input: str) -> Optional[str]:
@@ -625,7 +692,7 @@ def _scout(a: Dict[str, Any], _input: str) -> Optional[str]:
 
 def _identity(a: Dict[str, Any], input: str) -> Optional[str]:
     """0162: `why` is one line, at most TRACK_WHY_CHARS (the evidence, not an essay)."""
-    return _track(a, input)
+    return _one_line_why(a)
 
 
 def _websearch(a: Dict[str, Any], _input: str) -> Optional[str]:

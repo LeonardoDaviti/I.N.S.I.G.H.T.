@@ -264,7 +264,7 @@ class _Briefer(Switch, _Tracks):
         p = self.post(title=title, text=text, source=self.sources[f], at=at, links=links)
         self.plan(days=None)
         self.cur.execute("SELECT task_id FROM mx_track_items WHERE track_id = %s AND post_id = %s", (f, p))
-        status, body = self.answer((self.cur.fetchone()[0], verdict(why="Belongs.")))
+        status, body = self.answer((self.cur.fetchone()[0], verdict(why=f"{title}: {text}"[:200])))
         self.assertEqual((status, body["valid"]), (200, 1), body)
         return p
 

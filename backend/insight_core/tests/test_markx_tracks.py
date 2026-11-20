@@ -36,7 +36,7 @@ def b64(v):
     return base64.b64encode(struct.pack(f"<{len(v)}e", *v)).decode("ascii")
 
 
-def verdict(inside=True, conf=0.9, sub="storage and organisers", why="A wall storage system to print: modular, cheap."):
+def verdict(inside=True, conf=0.9, sub="storage and organisers", why="Acme's Widget release: a wall storage system to print, modular, cheap."):
     return {"id": "x", "in": inside, "confidence": conf, "subtopic": sub if inside else None, "why": why}
 
 

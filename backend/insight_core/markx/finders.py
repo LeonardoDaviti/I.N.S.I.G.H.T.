@@ -24,6 +24,13 @@ finder is one signal; none decides alone (the owner's ensemble rule): each only 
      in (`taught`: Haiku's in at TEACH_CONF or more from its sources, or joined), not only the owner's ✓: a track the
      owner never labelled learned nothing. The words stay the ✓'s alone (taught, they were the sources' language).
      Measured on held-out tool posts the owner never named: recall 72.5% -> 80% (issue 0207).
+  5. **source** (0252): a post from a source tied to the track: a passive source the track suggests (tracks.
+     suggestions: SUGGEST_MIN+ of its posts in within SUGGEST_DAYS, at least SUGGEST_SHARE of them). Always asked,
+     whatever its probe score, with or without a vector.
+  6. **linked** (0252): a post that LINK_MIN+ of the track's sources (its active ones and the tied ones, never the
+     post's own) link to (post_links to its address). Always asked, as 5.
+  The two are ALWAYS: they put a post up by who stands behind it, not by its words, and come first in the union's
+  order (`order_key`). A methods post from a tied source was never asked at probe bar 0.49 (issue 0252).
 Dropped in v10.18 (0203): the entity finder, the source and story priors and the classifier, never adopted (0147's
 held-out recall on the server copy: entity and story added none, the source prior -2 / +3, the classifier as the order
 -21 points on one track at 30%; the owner's labels, 7, never opened the classifier's gate of 30). mx_track_models keeps
@@ -58,10 +65,14 @@ log = logging.getLogger(__name__)
 KIND = "probes"
 EMBED_SUBJECT = "track_probe"
 MODEL = "bge-m3"
-FINDERS = ("probe", "domain", "word", "tool")
+FINDERS = ("probe", "domain", "word", "tool", "source", "linked")
+ALWAYS = ("source", "linked")   # 0252: always asked, whatever the probe score
+LINK_MIN = 2                    # 0252: the track's sources linking a post that put it up
 FINDERS_ENV = "INSIGHT_TRACK_FINDERS"
-ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall; 0207: tool
-SHOWN = {"probe": "example post", "domain": "domain", "word": "words", "tool": "tool in use"}
+ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall; 0207: tool;
+                    # 0252: source and linked
+SHOWN = {"probe": "example post", "domain": "domain", "word": "words", "tool": "tool in use", "source": "tied source",
+         "linked": "linked by its sources"}
 TEACH_CONF = 0.8    # 0207: the track's own posts in (Haiku's in at this confidence or more, active or joined) teach ...
 TEACH_MAX = 200     # ... the domain finder, the newest this many, with the owner's ✓ (the words, units and bar: the ✓ only)
 NEAR_PULL = 1.0
@@ -501,10 +512,20 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
 # plan pass was ~2.3M of its 3.7M buffers on the scale clone). The post's row now carries the vector itself: the cast to
 # vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is exact), in a subquery the
 # planner keeps (OFFSET 0), so it is made once a post.
+# 0252: how many of the track's sources (`linkers`) link a post (its address), never the post's own source.
+LINKED_SQL = """(SELECT count(DISTINCT q.source_id) FROM post_links l JOIN posts q ON q.id = l.post_id
+                  WHERE l.target_url = {url} AND NOT l.boilerplate AND q.source_id = ANY({linkers}::uuid[])
+                    AND q.source_id <> {source})"""
+# 0252: a post with no vector is scored too when an ALWAYS finder can fire for it (from a tied source, or linked by
+# LINK_MIN+ of the track's sources); it has no probe score.
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
-ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector
-         FROM posts p JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
+ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector,
+              p.source_id = ANY(%(tied)s::uuid[]) AS tied,
+              CASE WHEN cardinality(%(linkers)s::uuid[]) = 0 OR p.normalized_url IS NULL THEN 0
+                   ELSE {LINKED_SQL.format(url='p.normalized_url', linkers='%(linkers)s', source='p.source_id')} END
+                AS linkers
+         FROM posts p LEFT JOIN mx_embeddings e ON e.post_id = p.id AND e.model = %(model)s
         WHERE {{where}}
           AND (NOT %(passive)s OR (p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
                                    AND {{suggestable}}))
@@ -523,13 +544,16 @@ SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
                   = 'array' THEN r.reading->'main'->'numbers' ELSE '[]'::jsonb END) n
             WHERE r.post_id = ps.id AND n ~* %(units)s),
        cardinality(%(tools)s::uuid[]) > 0 AND EXISTS (
-           SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.entity_id = ANY(%(tools)s::uuid[]))
+           SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.entity_id = ANY(%(tools)s::uuid[])),
+       ps.v IS NOT NULL, ps.tied, ps.linkers
   FROM ps
   CROSS JOIN LATERAL (SELECT max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g IN ('desc', 'probe', 'profile')) AS pos,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'near') AS near,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'desc') AS descr FROM pr) s
+ WHERE ps.v IS NOT NULL OR ps.tied OR ps.linkers >= %(link_min)s
 """
-ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit", "tool")
+ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit", "tool", "embedded",
+       "tied", "linkers")
 
 
 def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Optional[datetime] = None,
@@ -549,7 +573,11 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
               "t": str(track["folder_id"]), "since": since, "until": until, "ids": list(ids or []),
               "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
               "units": units_regex(learned["units"]), "passive": passive,
-              "tools": list(learned.get("tools") or []) if "tool" in set(prep.get("on") or FINDERS) else []}
+              "tools": list(learned.get("tools") or []) if "tool" in set(prep.get("on") or FINDERS) else [],
+              # 0252: the ALWAYS finders' sources (none when switched off)
+              "tied": list(learned.get("tied") or []) if "source" in set(prep.get("on") or FINDERS) else [],
+              "linkers": list(learned.get("linkers") or []) if "linked" in set(prep.get("on") or FINDERS) else [],
+              "link_min": LINK_MIN}
     from insight_core.db.repo_stories import suggestable_sql
     # issue 0200: a passive post of a source switched off is never asked (it could only become a suggestion)
     cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
@@ -559,6 +587,7 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
         for k in ("probe_pos", "near", "desc"):
             d[k] = None if d[k] is None else float(d[k])
         d["words"] = int(d["words"] or 0) + (1 if d["unit"] else 0)
+        d["linkers"] = int(d["linkers"] or 0)
         d["probe"] = probe_score(d["probe_pos"], d["near"])
         out.append(d)
     for d in out:
@@ -580,6 +609,10 @@ def fire(d: Dict[str, Any], prep: Dict[str, Any]) -> List[str]:
         fired.append("word")
     if d.get("tool") and "tool" in on:
         fired.append("tool")
+    if d.get("tied") and "source" in on:
+        fired.append("source")
+    if (d.get("linkers") or 0) >= LINK_MIN and "linked" in on:
+        fired.append("linked")
     d["fired"] = fired
     return fired
 
@@ -589,9 +622,12 @@ def labelled(prep: Dict[str, Any]) -> set:
     return set(prep.get("learned", {}).get("pos") or []) | set(prep.get("neg") or [])
 
 
-def order_key(d: Dict[str, Any]) -> Tuple[float, float]:
-    """The union's order (highest first): how many finders fired, then the probe score."""
-    return (float(len(d.get("fired") or [])), d.get("probe") if d.get("probe") is not None else -1.0)
+def order_key(d: Dict[str, Any]) -> Tuple[float, float, float]:
+    """The union's order (highest first): 0252: an ALWAYS finder fired first; then how many finders fired, then the
+    probe score."""
+    fired = d.get("fired") or []
+    return (float(any(f in ALWAYS for f in fired)), float(len(fired)),
+            d.get("probe") if d.get("probe") is not None else -1.0)
 
 
 def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> float:
@@ -609,7 +645,7 @@ def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> floa
 
 def _other_hit(d: Dict[str, Any]) -> bool:
     """A finder other than the probes fired."""
-    return any(f in (d.get("fired") or []) for f in ("domain", "word", "tool"))
+    return any(f in (d.get("fired") or []) for f in ("domain", "word", "tool") + ALWAYS)
 
 
 # ---- preparing a track ---------------------------------------------------------------------------------
@@ -659,6 +695,27 @@ def taught(placed: Sequence[Dict[str, Any]], neg: Sequence[str] = ()) -> List[st
     return [it["post_id"] for it in got[:TEACH_MAX]]
 
 
+def tie(cur: Cursor, track: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, List[str]]:
+    """0252: {tied: the passive sources the track suggests (tracks.suggestions, the share rule), linkers: the track's
+    sources, its active ones and the tied ones}: the ALWAYS finders read them."""
+    from insight_core.markx import tracks
+    if not track.get("folder_id") or not track.get("version"):
+        return {"tied": [], "linkers": []}
+    tied = sorted({s["source_id"] for s in tracks.suggestions(cur, track["folder_id"], now=now)})
+    active = [s["id"] for s in tracks.active_sources(cur, track["folder_id"])]
+    return {"tied": tied, "linkers": sorted(set(active) | set(tied))}
+
+
+def linked_by(cur: Cursor, post_id: str, linkers: Sequence[str]) -> int:
+    """0252: how many of `linkers` (the track's sources) link the post, never its own source (LINKED_SQL)."""
+    if not linkers:
+        return 0
+    cur.execute(f"SELECT {LINKED_SQL.format(url='p.normalized_url', linkers='%s', source='p.source_id')} "
+                "FROM posts p WHERE p.id = %s AND p.normalized_url IS NOT NULL", (list(linkers), post_id))
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
 def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now: Optional[datetime] = None,
             share: Optional[float] = None, cap: Optional[float] = None,
             on: Optional[Sequence[str]] = None, cache: Optional[Dict[Any, int]] = None) -> Dict[str, Any]:
@@ -688,6 +745,7 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
         learned["domains"] = domain_set([], {}, 1, (track.get("name") or "") + " " + (track.get("description") or ""))
     from insight_core.markx import track_tools
     learned["tools"] = track_tools.finder_ids(cur, placed, now=now) if placed else []
+    learned.update(tie(cur, track, now=now))   # 0252: the ALWAYS finders' sources
     prep: Dict[str, Any] = {"vectors": vectors, "learned": learned, "bar": cap, "neg": neg, "now": now,
                             "cache": cache, "on": tuple(on) if on is not None else active(),
                             "ready": any(g in ("desc", "probe", "profile") for _, g in vectors)}
@@ -696,7 +754,8 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     if len(pos) >= tracks.MIN_EXAMPLES:
         prep["bar"] = tracks.threshold_for(example_scores(cur, track, prep, pos, neg), default=cap)
     else:
-        rows = score(cur, track, prep, since=_since(now, tracks.SHARE_DAYS), until=now)
+        # the bar's share is of the embedded posts (0252: a tied source's post with no vector is scored, never counted)
+        rows = [d for d in score(cur, track, prep, since=_since(now, tracks.SHARE_DAYS), until=now) if d["embedded"]]
         if len(rows) >= tracks.SHARE_MIN_POSTS:
             prep["bar"] = budget_bar(rows, share, cap)
     return prep

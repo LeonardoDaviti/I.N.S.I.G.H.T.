@@ -95,7 +95,7 @@ class _Subtopics(_Tracks):
             ps.append(p)
         self.plan(days=None)
         for k, p in enumerate(ps):
-            self.judge(p, verdict(sub=f"group {axis}", why=f"About thing {axis}, number {k}."))
+            self.judge(p, verdict(sub=f"group {axis}", why=f"About thing {axis}: the Widget release, number {k}."))
         return ps
 
     def page(self):
@@ -362,7 +362,7 @@ class Teaching(_Subtopics):
             ps.append(p)
         self.plan(days=None)
         for p in ps:
-            self.judge(p, verdict(conf=0.9))
+            self.judge(p, verdict(conf=0.9, why="A zorbulator harness setup with hooks and skills."))
         rest = [self.post(title=f"Something else entirely {k}", source=self.other) for k in range(80)]
         self.cur.execute("UPDATE posts SET search_vector = to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(content,'')) "
                          "WHERE id = ANY(%s::uuid[])", (ps + rest,))

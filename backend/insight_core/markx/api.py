@@ -376,7 +376,7 @@ def store_answers(cur, *, executor: str, model: str, answers: List[Answer]) -> D
                 repeated += 1
         else:
             invalid.append({"task_id": str(task_id), "error": error})
-            if repo.fail_attempt(cur, task_id, error) is None:
+            if repo.fail_attempt(cur, task_id, error, repo.max_attempts(task["kind"])) is None:
                 repeated += 1
     return {"stored": stored, "valid": valid, "invalid": invalid, "repeated": repeated}
 
