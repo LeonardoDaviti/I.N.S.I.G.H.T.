@@ -13,10 +13,11 @@ manifest.json; README.txt. The restore:
   2. creates the database if it doesn't exist, and refuses one that has a table of its own:
      a restore never replaces data;
   3. in one transaction: the export's migrations (only those), every table emptied (a
-     migration may seed rows), each CSV loaded with `COPY … FROM STDIN` in the order the
-     foreign keys need, with the tables' own triggers off while it loads (the rows come back
-     as they were: nothing queued, nothing refilled), each count checked against the
-     manifest, the sequences set;
+     migration may seed rows), the keys and the indexes no constraint owns taken off, each
+     CSV loaded with `COPY … FROM STDIN (FREEZE)` in the order the foreign keys need, with the
+     tables' own triggers off while it loads (the rows come back as they were: nothing queued,
+     nothing refilled), each count checked against the manifest, then the keys, the indexes
+     and the foreign keys (each checked by one join) made again, the sequences set;
   4. then the normal migrations (migrate.py) bring it up to this version.
 A failure before the commit leaves the database empty. Logins left out of the export are
 re-entered in Sources → Connections; included ones read only with the same secret key.
@@ -74,6 +75,19 @@ def sequences(cur: psycopg.Cursor) -> Dict[str, int]:
     cur.execute("SELECT sequencename, last_value FROM pg_sequences "
                 "WHERE schemaname = current_schema() AND last_value IS NOT NULL ORDER BY 1")
     return {name: int(value) for name, value in cur.fetchall()}
+
+
+def _load_constraints(cur: psycopg.Cursor) -> List[tuple]:
+    """(table, name, definition, kind) of the constraints a restore takes off for the load and adds back after it: the
+    valid foreign keys (kind 'f'), then the primary and unique keys whose index has the constraint's name (adding the
+    constraint makes that index again). The foreign keys come first: they are dropped before the keys they need."""
+    cur.execute(
+        """SELECT k.conrelid::regclass::text, k.conname, pg_get_constraintdef(k.oid), k.contype FROM pg_constraint k
+            WHERE k.connamespace = current_schema()::regnamespace
+              AND ((k.contype = 'f' AND k.convalidated)
+                   OR (k.contype IN ('p', 'u') AND k.conname = (SELECT relname FROM pg_class WHERE oid = k.conindid)))
+            ORDER BY k.contype <> 'f', k.conrelid::regclass::text, k.conname""")
+    return [tuple(row) for row in cur.fetchall()]
 
 
 def read_manifest(archive: zipfile.ZipFile) -> Dict[str, Any]:
@@ -156,6 +170,14 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 cur.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(sql.Identifier(table)))
             if order:
                 cur.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(map(sql.Identifier, order))))
+            # The keys come off for the load and back after it, as pg_restore does (0253): a foreign key checked
+            # row by row (2.3M story_keys rows: 59 s on the server's export) is one join when added after it, and a
+            # primary or unique key's index is built once, not kept up row by row in the CSV's order. Foreign keys
+            # first (they need the keys), then the keys whose index is their own name (pg_get_constraintdef makes
+            # the same constraint and index again). A NOT VALID foreign key stays: it checks new rows as it did.
+            constraints = _load_constraints(cur)
+            for table, name, _definition, _kind in constraints:
+                cur.execute(sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(sql.SQL(table), sql.Identifier(name)))
             # Indexes no constraint owns are built once after the load, as pg_restore does: the
             # lab's posts load in 53 s with the search index kept up row by row.
             cur.execute("""SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i
@@ -172,7 +194,7 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 file = expected[table]["file"]
                 columns = sql.SQL(", ").join(map(sql.Identifier, _columns(archive, file)))
                 with archive.open(file) as source, cur.copy(
-                        sql.SQL("COPY {} ({}) FROM STDIN (FORMAT csv, HEADER)").format(sql.Identifier(table), columns)) as copy:
+                        sql.SQL("COPY {} ({}) FROM STDIN (FORMAT csv, HEADER, FREEZE)").format(sql.Identifier(table), columns)) as copy:
                     while chunk := source.read(CHUNK):
                         copy.write(chunk)
                 loaded[table] = cur.rowcount
@@ -181,10 +203,22 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 print(f"  {table}: {loaded[table]} rows, {time.monotonic() - started:.1f} s", flush=True)
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")   # the deferred foreign keys, checked before the indexes and triggers
             started = time.monotonic()
-            cur.execute("SET LOCAL maintenance_work_mem = '256MB'")
+            # 256 MB for the sorts, or the server's own setting when larger (0253: the scratch server's 2 GB)
+            cur.execute("SELECT greatest(setting::bigint, 262144) FROM pg_settings WHERE name = 'maintenance_work_mem'")
+            cur.execute(f"SET LOCAL maintenance_work_mem = '{int(cur.fetchone()[0])}kB'")
+            for table, name, definition, kind in constraints:
+                if kind != "f":
+                    cur.execute(sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} ").format(sql.SQL(table), sql.Identifier(name))
+                                + sql.SQL(definition))
+            print(f"  {sum(c[3] != 'f' for c in constraints)} keys built, {time.monotonic() - started:.1f} s", flush=True)
             for _index, definition in indexes:
                 cur.execute(definition)
             print(f"  {len(indexes)} indexes built, {time.monotonic() - started:.1f} s", flush=True)
+            for table, name, definition, kind in constraints:
+                if kind == "f":
+                    cur.execute(sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} ").format(sql.SQL(table), sql.Identifier(name))
+                                + sql.SQL(definition))
+            print(f"  {sum(c[3] == 'f' for c in constraints)} foreign keys checked, {time.monotonic() - started:.1f} s", flush=True)
             for table in order:
                 cur.execute(sql.SQL("ALTER TABLE {} ENABLE TRIGGER USER").format(sql.Identifier(table)))
             for sequence, value in manifest.get("sequences", {}).items():
