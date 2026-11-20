@@ -99,6 +99,11 @@ MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 HISTORY_PRIORITY = 1000        # history tasks come after the new posts' (priority = this + age in days)
 REASK_DAYS = 90                # 0252: a guide change re-asks the verdicts of posts this recent ...
 REASK_PER_DAY = 300            # ... at most this many a track a day (the re-ask's tasks: HISTORY_PRIORITY + age)
+CHECK_GUIDE = "track-check-v1"   # 0256: the blind check of a passive `in` (the `track` kind's second guide)
+CHECK_SUBJECT = "post_track_check"
+CHECK_JOIN = 0.85              # 0256: a passive `in` the check says in at this confidence or more joins the track
+CHECK_OPEN = 300               # check tasks open at once, across tracks (their own cap)
+CHECK_SWITCH = ("tracks", "checked_join")
 RECENT_DAYS = 7                # the passive scan of new posts reads this far back each call
 TEXT_CHARS = 1200              # the post's text a question shows
 LINKS = 3
@@ -637,8 +642,9 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     cap = tasks_per_run() if cap is None else cap
     room = cap - open_tasks(cur)
     ts = described(cur)
+    checked = plan_checks(cur, ts, now=now) if ts else 0   # 0256: its own cap, never the judge's
     if room <= 0 or not ts:
-        return 0
+        return checked
     if days is tasks.SETTING:
         days = tasks.reading_window(cur)
     added = 0
@@ -721,7 +727,7 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
         cur.execute("UPDATE mx_tracks SET stats = %s::jsonb WHERE folder_id = %s",
                     (json.dumps(new), t["folder_id"]))
         log.info("track %s: %s", t["folder_id"], s)
-    return added
+    return added + checked
 
 
 # ---- answers -----------------------------------------------------------------------------------------
@@ -729,7 +735,9 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
 def after_answer(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> None:
     """tasks.record's part: a track verdict fills its items (every post sharing the task); a sub-topics naming answer
     goes to track_subtopics."""
-    if task["kind"] == KIND:
+    if task["kind"] == KIND and task.get("guide") == CHECK_GUIDE:   # 0256: a blind check's answer
+        _fill_check(cur, task["id"], answer)
+    elif task["kind"] == KIND:
         _fill(cur, "task_id = %s", (task["id"],), call_id, answer)
     elif task["kind"] in (SUB_KIND, DIGEST_KIND, PLACE_KIND):
         from insight_core.markx import track_subtopics
@@ -751,6 +759,70 @@ def edit_subtopics(cur: Cursor, folder_id: Any, **edit: Any) -> List[Dict[str, A
 
 
 # ---- where each item goes: precision, ranking, auto-join -----------------------------------------------
+
+def checks_on() -> bool:
+    """entity_bands.json `tracks.checked_join` (0256): a passive `in` joins on its blind check (default on: measured)."""
+    from insight_core.markx import identity
+    return bool((identity.bands().get(CHECK_SWITCH[0]) or {}).get(CHECK_SWITCH[1], True))
+
+
+def checked_in(it: Dict[str, Any]) -> bool:
+    """0256: the blind check said in at CHECK_JOIN or more (and the switch is on)."""
+    return bool(it.get("check_in")) and (it.get("check_confidence") or 0) >= CHECK_JOIN - 1e-9 and checks_on()
+
+
+def plan_checks(cur: Cursor, ts: Sequence[Dict[str, Any]], *, now: Optional[datetime] = None) -> int:
+    """0256: a blind check (`track` kind, guide CHECK_GUIDE, subject CHECK_SUBJECT) for each passive `in` of a track's
+    current description not checked yet and not labelled by the owner, newest first, while fewer than CHECK_OPEN are
+    open (shared among the tracks). The row names the task; a question asked before (a repost's) gives its answer at
+    once. How many tasks were added."""
+    if not checks_on():
+        return 0
+    now = now or datetime.now(timezone.utc)
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND subject_kind = %s AND status IN ('open', 'leased')",
+                (KIND, CHECK_SUBJECT))
+    room = CHECK_OPEN - cur.fetchone()[0]
+    added = 0
+    for k, t in enumerate(ts):
+        budget = -(-(room - added) // max(1, len(ts) - k)) if room - added > 0 else 0
+        if budget <= 0:
+            break
+        cur.execute(f"""SELECT i.post_id::text, {_date()} FROM mx_track_items i JOIN posts p ON p.id = i.post_id
+                         WHERE i.track_id = %(t)s AND i.version = %(v)s AND i.verdict AND i.check_task_id IS NULL
+                           AND p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
+                           AND NOT EXISTS (SELECT 1 FROM mx_labels l WHERE l.item_kind = %(k)s AND l.labeller = 'owner'
+                                              AND l.b = %(t)s AND l.a = i.post_id)
+                         ORDER BY {_date()} DESC, p.id DESC LIMIT %(n)s""",
+                    {"t": t["folder_id"], "v": t["version"], "k": ITEM_KIND, "n": budget})
+        rows = cur.fetchall()
+        if not rows:
+            continue
+        head = header(cur, t)
+        posts = tasks.load_posts(cur, [r[0] for r in rows])
+        for pid, at in rows:
+            p = posts.get(pid)
+            if p is None:
+                continue
+            task_id, new = repo.add_task(cur, kind=KIND, guide=CHECK_GUIDE, subject_kind=CHECK_SUBJECT,
+                                         input=track_input(head, p), a=p.id, b=t["folder_id"], priority=_age(at, now))
+            cur.execute("""UPDATE mx_track_items SET check_task_id = %s
+                            WHERE track_id = %s AND post_id = %s AND version = %s""",
+                        (task_id, t["folder_id"], pid, t["version"]))
+            added += new
+            if not new:
+                got = _answered_verdict(cur, task_id)
+                if got:
+                    _fill_check(cur, task_id, got[1])
+    return added
+
+
+def _fill_check(cur: Cursor, task_id: Any, answer: Dict[str, Any]) -> int:
+    cur.execute("""UPDATE mx_track_items SET check_in = %s, check_confidence = %s, check_why = %s, checked_at = now()
+                    WHERE check_task_id = %s AND check_in IS NULL""",
+                (bool(answer.get("in")), float(answer.get("confidence") or 0),
+                 _clean(answer.get("why"), schemas.TRACK_WHY_CHARS), task_id))
+    return cur.rowcount
+
 
 def wilson(k: int, n: int) -> float:
     from insight_core.markx.labels import wilson as _w
@@ -814,20 +886,21 @@ def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str,
     quarter of the time (the scale copy)."""
     if not shown:
         cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, p.source_id::text,
-                               {_date()}
+                               {_date()}, i.check_in, i.check_confidence
                           FROM mx_track_items i JOIN posts p ON p.id = i.post_id
                          WHERE i.track_id = %s AND i.verdict IS NOT NULL
                          ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
-        return [dict(zip(("post_id", "verdict", "confidence", "source_id", "at"), r)) for r in cur.fetchall()]
+        return [dict(zip(("post_id", "verdict", "confidence", "source_id", "at", "check_in", "check_confidence"), r))
+                for r in cur.fetchall()]
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, i.subtopic, i.why, i.origin,
                            i.cos, i.answered_at, i.version, i.found_by, p.title, p.url, {_date()}, p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
-                                    s.handle_or_url)
+                                    s.handle_or_url), i.check_in, i.check_confidence
                       FROM mx_track_items i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
                      WHERE i.track_id = %s AND i.verdict IS NOT NULL
                      ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
     cols = ("post_id", "verdict", "confidence", "subtopic", "why", "origin", "cos", "answered_at", "version", "found_by",
-            "title", "url", "at", "source_id", "source")
+            "title", "url", "at", "source_id", "source", "check_in", "check_confidence")
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
@@ -863,7 +936,8 @@ def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[st
         elif it["verdict"] and it["source_id"] in off:
             it["place"] = "off"
         elif it["verdict"]:
-            joins = cal["join_edge"] is not None and (it["confidence"] or 0) >= cal["join_edge"] - 1e-9
+            joins = (cal["join_edge"] is not None and (it["confidence"] or 0) >= cal["join_edge"] - 1e-9) \
+                or checked_in(it)
             it["place"] = "joined" if joins else "discover"
         else:
             it["place"] = "out"

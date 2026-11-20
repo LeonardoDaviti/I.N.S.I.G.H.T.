@@ -211,6 +211,8 @@ export interface Thing {
   posts: ThingPost[];
   first_at: string | null; last_at: string | null; found_at: string | null;
   new?: boolean;
+  /** v10.29: how many independent sources reported it (the brief ranks by it). */
+  sources?: number;
   /** v10.29: the practices from the post that gave this thing, shown inside it. */
   practices?: Thing[];
 }

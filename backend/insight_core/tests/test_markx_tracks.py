@@ -377,6 +377,34 @@ class Routing(_Tracks):
         self.assertIsNone(body["calibration"]["join_edge"])
         self.assertEqual(sorted(it["post_id"] for it in body["discover"]), sorted(posts[22:]))
 
+    def test_a_passive_in_joins_on_its_blind_check(self):
+        """0256: a passive `in` is checked blind (the track kind's second guide); in at CHECK_JOIN+ joins the track,
+        under it or out stays in Discover; the owner's label wins and is never checked; an active post never is."""
+        sure, unsure, no, mine = (self.passive(t) for t in ("sure", "unsure", "no", "mine"))
+        act = self.post(title="active")
+        self.plan()
+        for p in (sure, unsure, no, mine, act):
+            self.judge(p, verdict(conf=0.8))
+        self.label(mine, "in")
+        self.assertEqual(self.plan(), 3, "the three unlabelled passive ins")
+        self.cur.execute("""SELECT i.post_id::text, k.id, k.guide, k.subject_kind FROM mx_track_items i
+                              JOIN mx_tasks k ON k.id = i.check_task_id WHERE i.track_id = %s""", (self.folder,))
+        checks = {p: (t, g, sk) for p, t, g, sk in self.cur.fetchall()}
+        self.assertEqual(set(checks), {sure, unsure, no})
+        self.assertEqual({(g, sk) for _, g, sk in checks.values()}, {(tracks.CHECK_GUIDE, tracks.CHECK_SUBJECT)})
+        self.assertEqual(self.plan(), 0, "asked once")
+        for p, ans in ((sure, verdict(conf=0.9)), (unsure, verdict(conf=0.7)), (no, verdict(False, 0.9))):
+            status, body = self.answer((checks[p][0], ans))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        body = self.page()
+        places = {it["post_id"]: it["place"] for s in body["sections"] for it in s["items"]}
+        self.assertEqual(places.get(sure), "joined")
+        self.assertEqual(sorted(it["post_id"] for it in body["discover"]), sorted([unsure, no]))
+        self.cur.execute("SELECT verdict FROM mx_track_items WHERE post_id = %s", (no,))
+        self.assertTrue(self.cur.fetchone()[0], "the judge's verdict is kept as it was")
+        self.label(sure, "out")                                             # the owner's label wins
+        self.assertNotIn(sure, [it["post_id"] for s in self.page()["sections"] for it in s["items"]])
+
     def test_labels_become_examples(self):
         a = self.passive("A printable cable organiser for a desk")
         b = self.passive("A sale on filament")

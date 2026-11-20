@@ -200,12 +200,18 @@ def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, A
     from insight_core.markx import tracks
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.title, p.url, {tracks._date()},
+    cur.execute(f"""SELECT p.id::text, p.title, p.url, {tracks._date()}, p.source_id::text,
                            (SELECT i.why FROM mx_track_items i WHERE i.track_id = %s AND i.post_id = p.id
                              AND i.verdict IS NOT NULL ORDER BY i.version DESC LIMIT 1)
                       FROM posts p WHERE p.id = ANY(%s::uuid[])""", (track_id, list(ids)))
     return {i: {"id": i, "title": (" ".join((ti or "").split()))[:LINE_CHARS] or None, "url": u,
-                "at": _iso(at), "why": why} for i, ti, u, at, why in cur.fetchall()}
+                "at": _iso(at), "why": why, "source_id": src} for i, ti, u, at, src, why in cur.fetchall()}
+
+
+def sources_of(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> int:
+    """How many independent sources reported a thing (its reports' posts' sources; a post not loaded counts as its
+    own): the brief's rank (v10.29, owner 2026-11-21: what several of your sources report comes first)."""
+    return len({(posts.get(r["post"]) or {}).get("source_id") or r["post"] for r in rs})
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -239,6 +245,7 @@ def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, A
             del fields["evidence"]
     seen = list(dict.fromkeys(r["post"] for r in reversed(list(rs))))
     return {"id": t["id"], "kind": t["kind"], "fields": fields, "posts": [posts[p] for p in seen if p in posts],
+            "sources": sources_of(rs, posts),
             "first_at": _iso(t["first_at"]), "last_at": _iso(t["last_at"]), "found_at": _iso(t["found_at"]),
             **({"new": t["new"]} if "new" in t else {})}
 
@@ -298,6 +305,8 @@ def _sections(kinds: Dict[str, Dict[str, Any]], rows: Sequence[Dict[str, Any]], 
     for k in sorted(kinds, key=lambda k: _order(kinds).get(k, 99)):
         its = [t for t in rows if t["kind"] == k]
         shown = [t for t in its if t["id"] not in host and t["id"] not in quiet]
+        # ranked: more independent sources first, then the rows' own order (new first, newest post first)
+        shown = [t for _, t in sorted(enumerate(shown), key=lambda x: (-sources_of(rs.get(x[1]["id"], []), posts), x[0]))]
         if not shown:
             continue
         d = kinds[k]

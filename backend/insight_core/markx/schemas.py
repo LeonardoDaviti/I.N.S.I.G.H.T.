@@ -781,6 +781,7 @@ def guide_of(cur, kind: str) -> Optional[str]:
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
     "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
+    "track-check-v1": ("track", TRACK_SCHEMA),   # 0256: the blind check of a passive `in` (tracks.plan_checks)
     "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
     "digest-v3": ("digest", DIGEST_SCHEMA),   # v10.29: the same, its points state facts (no reporting words, no hedges)
     "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
