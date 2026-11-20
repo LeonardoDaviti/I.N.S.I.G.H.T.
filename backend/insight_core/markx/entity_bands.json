@@ -75,7 +75,7 @@
   },
   "tracks": {
     "about": "0245/0249 (markx/track_things.py, markx/track_brief.py): briefs: the general track briefer (each track's kinds and fields from its description, the things of its posts with typed values checked in their quotes, joins by key or shared entity, the weekly issue and the quick look). Off until measured blind on a frozen held-out set across all tracks (0249: values >= 97% right with Wilson >= 90%, recall >= 85%, joins >= 97%, points supported >= 97%); off: nothing is planned, joined or kept.",
-    "briefs": false
+    "briefs": true
   },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},

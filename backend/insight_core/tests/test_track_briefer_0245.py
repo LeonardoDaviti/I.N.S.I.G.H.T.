@@ -88,9 +88,7 @@ class Pure(Switch, unittest.TestCase):
             self.assertEqual(consumers.CONSUMER[kind], "tracks")
         self.assertEqual(schemas.GUIDE_VARIANTS["digest-v2"][0], "digest")   # the digest kind deepened, not a second
         self.assertIn("digest-v2", schemas.guide_ids())
-        self.assertIs(identity.bands()["tracks"]["briefs"], False, "shipped off until measured")
-        self.assertFalse(TT.on())
-        self.switch()
+        self.assertIs(identity.bands()["tracks"]["briefs"], True, "owner 2026-11-20: ships ON in v10.28, measured live")
         self.assertTrue(TT.on())
 
     def test_figures_of_a_quote(self):
