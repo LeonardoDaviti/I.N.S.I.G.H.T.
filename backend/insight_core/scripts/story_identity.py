@@ -71,14 +71,32 @@ def _kept(state: str, name: str) -> str:
     return f"{KEPT}_{state}_{name}"
 
 
-def keep(cur: Any, state: str) -> None:
-    """Every table the story job derives (TABLES' queries), kept in the copy as it is now: per table an unlogged table
-    of its rows and `h`, the md5 of the row's text. Nothing comes to Python."""
+def _keep_one(cur: Any, state: str, name: str) -> None:
     from psycopg import sql as q
-    for name, query in TABLES.items():
-        table = q.Identifier(_kept(state, name))
-        cur.execute(q.SQL("DROP TABLE IF EXISTS {}").format(table))
-        cur.execute(q.SQL("CREATE UNLOGGED TABLE {} AS SELECT r.*, md5(r::text) AS h FROM ({}) r").format(table, q.SQL(query)))
+    table = q.Identifier(_kept(state, name))
+    cur.execute(q.SQL("DROP TABLE IF EXISTS {}").format(table))
+    cur.execute(q.SQL("CREATE UNLOGGED TABLE {} AS SELECT r.*, md5(r::text) AS h FROM ({}) r").format(table, q.SQL(TABLES[name])))
+
+
+def _each(db_url: str, work: Callable[[Any, str], Any]) -> Dict[str, Any]:
+    """`work(cur, name)` for every table of TABLES at once, a connection each (Postgres does the work)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(name: str) -> Any:
+        with psycopg.connect(db_url, autocommit=True) as conn, conn.cursor() as cur:
+            return work(cur, name)
+    with ThreadPoolExecutor(max_workers=len(TABLES)) as pool:
+        return dict(zip(TABLES, pool.map(one, TABLES)))
+
+
+def keep(cur: Any, state: str, db_url: Optional[str] = None) -> None:
+    """Every table the story job derives (TABLES' queries), kept in the copy as it is now: per table an unlogged table
+    of its rows and `h`, the md5 of the row's text. Nothing comes to Python. With `db_url`, the tables at once."""
+    if db_url:
+        _each(db_url, lambda c, name: _keep_one(c, state, name))
+        return
+    for name in TABLES:
+        _keep_one(cur, state, name)
 
 
 def drop_kept(cur: Any, states=("first", "second")) -> None:
@@ -108,20 +126,26 @@ def _only(cur: Any, mine: str, other: str, shown: int) -> "tuple[int, List[str]]
         return count, sorted(set(heapq.nsmallest(shown * 2, texts)))[:shown]
 
 
-def compare_kept(cur: Any, first: str = "first", second: str = "second", shown: int = 5) -> Dict[str, Dict[str, Any]]:
+def _compare_one(cur: Any, name: str, first: str, second: str, shown: int) -> Dict[str, Any]:
+    from psycopg import sql as q
+    a, b = _kept(first, name), _kept(second, name)
+    cur.execute(q.SQL("SELECT count(*) FILTER (WHERE y.h IS NOT NULL), count(*) FILTER (WHERE y.h IS NULL), "
+                      "count(*) FILTER (WHERE x.h IS NULL) FROM (SELECT DISTINCT h FROM {}) x "
+                      "FULL JOIN (SELECT DISTINCT h FROM {}) y ON x.h = y.h").format(q.Identifier(a), q.Identifier(b)))
+    rows, n_first, n_second = cur.fetchone()
+    only_first = _only(cur, a, b, shown)[1] if n_first else []
+    only_second = _only(cur, b, a, shown)[1] if n_second else []
+    return {"rows": rows, "differing": n_first + n_second, "only_first": only_first, "only_second": only_second}
+
+
+def compare_kept(cur: Any, first: str = "first", second: str = "second", shown: int = 5,
+                 db_url: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     """`compare` of two kept states, in SQL: per table its distinct rows in `second`, how many rows are in one state
     only, and a few of each side's (JSON text, sorted, as `compare` shows them). Rows are compared by their text (its
-    md5): what the JSON of `snapshot` tells apart, the row text does too."""
-    from psycopg import sql as q
-    out = {}
-    for name in TABLES:
-        a, b = _kept(first, name), _kept(second, name)
-        cur.execute(q.SQL("SELECT count(DISTINCT h) FROM {}").format(q.Identifier(b)))
-        rows = cur.fetchone()[0]
-        n_first, only_first = _only(cur, a, b, shown)
-        n_second, only_second = _only(cur, b, a, shown)
-        out[name] = {"rows": rows, "differing": n_first + n_second, "only_first": only_first, "only_second": only_second}
-    return out
+    md5): what the JSON of `snapshot` tells apart, the row text does too. With `db_url`, the tables at once."""
+    if db_url:
+        return _each(db_url, lambda c, name: _compare_one(c, name, first, second, shown))
+    return {name: _compare_one(cur, name, first, second, shown) for name in TABLES}
 
 
 def same_rows(a: Any, b: Any) -> Dict[str, Any]:
@@ -171,12 +195,12 @@ def check(db_url: str, *, held: int = 30, batches: int = 3, hours: float = 2.0, 
         clock += timedelta(hours=hours)
         runs.append(run("incremental", clock))
     with psycopg.connect(db_url, autocommit=True) as conn, conn.cursor() as cur:
-        keep(cur, "first")                       # the incremental job's rows
+        keep(cur, "first", db_url)               # the incremental job's rows
     runs.append(run("full", clock))
     with psycopg.connect(db_url, autocommit=True) as conn, conn.cursor() as cur:
-        keep(cur, "second")                      # the full rebuild's
+        keep(cur, "second", db_url)              # the full rebuild's
         try:
-            tables = compare_kept(cur)
+            tables = compare_kept(cur, db_url=db_url)
         finally:
             drop_kept(cur)
             cur.execute("DROP TABLE IF EXISTS identity_held_posts, identity_held_links")
