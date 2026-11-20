@@ -727,6 +727,13 @@ class ThingLinks(_Db):
                          (at, pid))
 
     def test_stated_relations_become_edges_with_their_posts(self):
+        # the switches this test pins (owner 2026-11-20 turned every relation on in entity_bands.json): partnered_with
+        # off, so a switched-off relation is never written
+        bands = json.loads(json.dumps(I.bands()))
+        bands["relations"]["on"]["partnered_with"] = False
+        patcher = mock.patch.object(I, "bands", return_value=bands)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         tune = self.post_at(0, T0 - 10 * D, "Sabi 2: a fine-tune of Orbit 3")
         self.mentions(tune, ("Sabi 2", "model", "subject", "Kestrel"), ("Orbit 3", "model", "mention", "Vantor"))
         self.state(tune, [{"a": "Sabi 2", "rel": "based_on", "b": "Orbit 3"}])
