@@ -62,6 +62,7 @@ describe('found by (0147)', () => {
     expect(foundByLine({ found_by: ['probe', 'entity', 'domain'] })).toBe('found by: example post, entity, domain');
     expect(foundByLine({ found_by: [] })).toBeNull();
     expect(foundByLine({})).toBeNull();
+    expect(foundByLine({ found_by: ['source', 'linked'] })).toBe('found by: source, linked by its sources');   // 0252
     const page = { ...PAGE, discover: [{ ...PAGE.discover[0], found_by: ['word', 'source'] }] };
     vi.spyOn(tracksApi, 'page').mockResolvedValue(page);
     renderWithProviders(<TrackTopic folderId="f1" />, { api: makeFakeApi({}) });
@@ -85,6 +86,10 @@ describe('why a post is or is not in the track (0185)', () => {
     expect(whyLine({ ...base, state: 'not_asked', reason: 'below_bar', bar: 0.47 }))
       .toBe('Not asked: its source is not in this track, and the finders did not put it up (bar 0.47)');
     expect(whyLine({ ...base, state: 'not_asked', reason: 'not_embedded' })).toBe('Not asked: not embedded yet, so no finder could read it');
+    expect(whyLine({ ...base, state: 'not_asked', reason: 'not_planned', found_by: ['linked'] }))   // 0252
+      .toBe('Not asked yet: found by: linked by its sources — Haiku asks it at the next run');
+    expect(whyLine({ ...base, state: 'invalid', error: 'why: it names nothing of this post' }))
+      .toBe('Asked, but Haiku’s answers named nothing of the post (asked twice): not judged');
     expect(whyLine({ ...base, state: 'not_asked', origin: 'active', reason: 'outside_window', days: 30 }))
       .toBe('Not asked: its source is in this track, but it is older than the reading window (30 days)');
     expect(whyLine({ ...base, state: 'waiting' })).toBe('Asked, waiting for Haiku’s answer');

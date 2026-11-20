@@ -24,6 +24,14 @@ from psycopg import Cursor
 
 LEASE_MINUTES = 30     # 0086 C
 MAX_ATTEMPTS = 3       # an invalid answer goes back to open; after 3 the task fails (0086 C)
+# 0252: a kind asked fewer times: a track verdict that is no verdict (validate.track_verdict_error) is asked once
+# more, then the task fails and its rows keep no verdict (stored invalid: never read as "out").
+KIND_ATTEMPTS = {"track": 2}
+
+
+def max_attempts(kind: Optional[str]) -> int:
+    """How many invalid answers a task of `kind` takes before it fails."""
+    return KIND_ATTEMPTS.get(kind or "", MAX_ATTEMPTS)
 DIMENSIONS = 1024      # halfvec(1024): BGE-M3
 
 Id = Any   # a uuid, or its text

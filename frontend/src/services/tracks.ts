@@ -131,7 +131,7 @@ export type SubtopicEdit =
   | { action: 'add'; name: string; definition?: string };
 
 /** Where one post stands in a track and why (issue 0185, GET /tracks/{id}/why): stored rows only. */
-export type TrackWhyState = 'in' | 'joined' | 'discover' | 'out' | 'waiting' | 'not_asked';
+export type TrackWhyState = 'in' | 'joined' | 'discover' | 'out' | 'waiting' | 'invalid' | 'not_asked';
 export type TrackWhyReason = 'not_a_topic' | 'labelled' | 'outside_window' | 'not_planned' | 'not_embedded' | 'no_profile'
   | 'history_pending' | 'below_bar';
 export interface TrackWhy {
@@ -149,8 +149,12 @@ export interface TrackWhy {
   version?: number;
   /** false: the verdict was asked under an older description. */
   current?: boolean;
-  /** The current description's question is open while an older verdict stands. */
+  /** The current description's question is open while an older verdict stands (0252: or a guide change's). */
   waiting_again?: boolean;
+  /** 0252: the guide the verdict was answered under. */
+  guide?: string | null;
+  /** 0252: state 'invalid': the last answer's error. */
+  error?: string | null;
   shown?: boolean;
   /** Discover: its place among the Discover items, and how many the page shows. */
   position?: number;

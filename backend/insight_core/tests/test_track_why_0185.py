@@ -49,16 +49,16 @@ class TrackWhy(_Tracks):
         c = self.passive("passive in")
         self.plan()
         self.judge(a, verdict(conf=0.92))
-        self.judge(b, verdict(False, 0.84, why="A printer review, not a print."))
+        self.judge(b, verdict(False, 0.84, why="An Acme Widget review, not a print."))
         self.judge(c, verdict(conf=0.7))
         before = self.counts()
         got = self.why(a)
         self.assertEqual((got["state"], got["origin"], got["verdict"], got["confidence"], got["current"]),
                          ("in", "active", True, 0.92, True))
-        self.assertEqual(got["why"], "A wall storage system to print: modular, cheap.")
+        self.assertEqual(got["why"], verdict()["why"])
         got = self.why(b)
         self.assertEqual((got["state"], got["verdict"], got["confidence"], got["why"]),
-                         ("out", False, 0.84, "A printer review, not a print."))
+                         ("out", False, 0.84, "An Acme Widget review, not a print."))
         got = self.why(c)
         self.assertEqual((got["state"], got["origin"], got["position"], got["of"], got["shown"]),
                          ("discover", "passive", 1, 1, True))

@@ -39,7 +39,7 @@ def item(k=0, *, chars=600, dated=True, lang="en", transcript=None, at=None):
 
 
 def verdict(inside=True, conf=0.9):
-    return {"id": "x", "in": inside, "confidence": conf, "subtopic": "parts" if inside else None, "why": "A printable part."}
+    return {"id": "x", "in": inside, "confidence": conf, "subtopic": "parts" if inside else None, "why": "A printable part: Acme's Widget."}
 
 
 class StubReader:
@@ -271,10 +271,14 @@ class _Scout(_Api):
 
     def judge_all(self, run_id, fits):
         """Answer the run's judge questions: `fits(item url) -> bool`."""
-        self.cur.execute("""SELECT i.task_id, i.url FROM mx_scout_items i JOIN mx_scout_candidates c ON c.id = i.candidate_id
+        self.cur.execute("""SELECT i.task_id, i.url, k.input FROM mx_scout_items i
+                             JOIN mx_scout_candidates c ON c.id = i.candidate_id JOIN mx_tasks k ON k.id = i.task_id
                              WHERE c.run_id = %s AND i.task_id IS NOT NULL""", (run_id,))
-        rows = list({t: u for t, u in self.cur.fetchall()}.items())
-        status, body = self.answer(*[(t, verdict(fits(u))) for t, u in rows])
+        got = self.cur.fetchall()
+        rows = list({t: u for t, u, _ in got}.items())
+        # 0252: a verdict names its post (validate.track_verdict_error): the why cites the question's title
+        titles = {t: next((ln[7:] for ln in (q or "").splitlines() if ln.startswith("Title: ")), "") for t, _, q in got}
+        status, body = self.answer(*[(t, dict(verdict(fits(u)), why=f"About {titles[t]}.")) for t, u in rows])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["valid"], len(rows), body)
 

@@ -12,14 +12,20 @@ vector computed. The track page shows only its top items; this says where any on
       `off`      Haiku's in from a passive source the owner switched off: never suggested (issue 0200);
       `out`      Haiku's out (its why and confidence), or the owner's ✗;
     each with Haiku's `why`, `confidence`, `subtopic`, `origin`, `found_by`, the description `version` it was asked
-    under (`current` False: an older description's verdict; `waiting_again` when the current one is asked and open).
+    under (`current` False: an older description's verdict; `waiting_again` when the current one is asked and open,
+    or (0252) when a guide change asked it again and the new answer is not stored yet), the `guide` it was answered
+    under.
   - `waiting`: asked, Haiku has not answered yet.
+  - `invalid` (0252): asked, but its answers were no verdict (validate.track_verdict_error) and the task failed:
+    nothing is stored as its verdict (`error`: the last one).
   - `not_asked`, with `reason`:
       `not_a_topic`      the track has no description: nothing is judged;
       `labelled`         the owner's label places it, nothing is asked;
       `outside_window`   its source is in the track, but the post is older than the reading window (`days`);
       `not_planned`      its source is in the track and the post in the window: the next plan asks it;
-      `not_embedded`     a passive source's post with no vector yet: no finder can read it;
+      `not_planned`      also (0252) a passive post an ALWAYS finder puts up (`found_by`: from a tied source, or linked
+                         by finders.LINK_MIN+ of the track's sources): the next plan asks it;
+      `not_embedded`     a passive source's post with no vector yet: no other finder can read it;
       `no_profile`       the track's finders are not ready (no example posts embedded yet);
       `history_pending`  older than the description, and the history pass has not reached it yet;
       `below_bar`        a passive source's post the finders did not put up (the last plan's bar, `bar`).
@@ -44,9 +50,15 @@ def _post(cur: Any, post_id: str, folder: str) -> Optional[Dict[str, Any]]:
 
 
 def _rows(cur: Any, folder: str, post_id: str):
-    cur.execute("""SELECT version, verdict, confidence, subtopic, why, origin, found_by, answered_at
-                     FROM mx_track_items WHERE track_id = %s AND post_id = %s ORDER BY version DESC""", (folder, post_id))
-    cols = ("version", "verdict", "confidence", "subtopic", "why", "origin", "found_by", "answered_at")
+    """The post's rows for the track, newest version first, each with its task's status and last error, and the guide
+    its verdict was answered under (0252: a re-asked row's verdict may be an earlier task's)."""
+    cur.execute("""SELECT i.version, i.verdict, i.confidence, i.subtopic, i.why, i.origin, i.found_by, i.answered_at,
+                          k.status, k.last_error, vt.guide, vt.id IS DISTINCT FROM i.task_id AND i.verdict IS NOT NULL
+                     FROM mx_track_items i JOIN mx_tasks k ON k.id = i.task_id
+                     LEFT JOIN mx_calls c ON c.id = i.call_id LEFT JOIN mx_tasks vt ON vt.id = c.task_id
+                    WHERE i.track_id = %s AND i.post_id = %s ORDER BY i.version DESC""", (folder, post_id))
+    cols = ("version", "verdict", "confidence", "subtopic", "why", "origin", "found_by", "answered_at", "status",
+            "error", "guide", "reasked")
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
@@ -65,11 +77,13 @@ def _judged(cur: Any, t: Dict[str, Any], post: Dict[str, Any], row: Dict[str, An
         "confidence": None if row["confidence"] is None else round(float(row["confidence"]), 3),
         "why": row["why"], "subtopic": row["subtopic"], "origin": "active" if post["active"] else "passive",
         "found_by": list(row["found_by"] or []), "version": row["version"], "current": row["version"] == t["version"],
-        "waiting_again": waiting_again, "answered_at": _iso(row["answered_at"]), "shown": True,
+        "waiting_again": waiting_again or bool(row.get("reasked") and row.get("status") in ("open", "leased")),
+        "guide": row.get("guide"), "answered_at": _iso(row["answered_at"]), "shown": True,
         "join_edge": cal.get("join_edge"), "calibrated": cal["labels"] >= tracks.RANK_MIN_LABELS}
     if place == "discover" and me:
-        ahead = [it for it in items if it["place"] == "discover" and it is not me
-                 and (it["rank"], it["confidence"] or 0) > (me["rank"], me["confidence"] or 0)]
+        key = tracks.discover_order(cal)   # 0252: the lane's own order
+        mine = key(me)
+        ahead = [it for it in items if it["place"] == "discover" and it is not me and key(it) < mine]
         of = sum(1 for it in items if it["place"] == "discover")
         out.update(position=len(ahead) + 1, of=of, shown=len(ahead) < tracks.DISCOVER_ITEMS, cut=tracks.DISCOVER_ITEMS)
     elif place in ("track", "joined"):
@@ -120,6 +134,8 @@ def why(cur: Any, folder_id: Any, post_id: Any, *, now: Optional[datetime] = Non
     if label is not None:
         return {**base, "state": "in" if label == "in" else "out", "label": label, "reason": "labelled"}
     if rows:
+        if rows[0]["status"] == "failed":   # 0252: no verdict stored, never "out"
+            return {**base, "state": "invalid", "version": rows[0]["version"], "error": rows[0]["error"]}
         return {**base, "state": "waiting", "version": rows[0]["version"]}
     out = {**base, "state": "not_asked", "at": _iso(post["at"])}
     if post["active"]:
@@ -127,6 +143,12 @@ def why(cur: Any, folder_id: Any, post_id: Any, *, now: Optional[datetime] = Non
         if days is not None and post["at"] is not None and post["at"] < now - timedelta(days=days):
             return {**out, "reason": "outside_window", "days": days}
         return {**out, "reason": "not_planned"}
+    from insight_core.markx import finders
+    tie = finders.tie(cur, t, now=now)   # 0252: the ALWAYS finders ask it whatever its vector and probe score
+    always = (["source"] if post["source_id"] in tie["tied"] else []) + \
+        (["linked"] if finders.linked_by(cur, pid, tie["linkers"]) >= finders.LINK_MIN else [])
+    if always:
+        return {**out, "reason": "not_planned", "found_by": always}
     if not post["embedded"]:
         return {**out, "reason": "not_embedded"}
     last = (t.get("stats") or {}).get("last") or {}

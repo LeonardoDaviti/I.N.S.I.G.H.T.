@@ -14,6 +14,10 @@ items). Every other source is **passive**. The owner's ✓ / ✗ on a post for a
   3. passive sources, history: once over every older post when a track is described or its description changes,
      newest first, HISTORY_PAGE posts a call, resumable (a keyset cursor on mx_tracks); it shares the cap and comes
      last (its tasks' priority is HISTORY_PRIORITY + age, so new posts are leased first).
+  4. 0252, the re-ask: when the `track` kind's guide changes, the verdicts answered under an older guide for posts of
+     the last REASK_DAYS (the current description's) are asked once more under the new one, newest first, at most
+     REASK_PER_DAY a track a day, after the phases above (`_reask`). The row names the new task; the old one stays in
+     `asked_before` with its answer (mx_calls); the old verdict is shown until the new one is stored.
 A post may be in several tracks. One row per track, post and version (mx_track_items) records what was asked; a post
 whose question repeats another's (a repost) shares that task and its verdict.
 
@@ -33,11 +37,12 @@ titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds
 **Where a judged post goes** (read when the page is built, so it follows the labels and the precision):
   - an owner ✗: out (kept, counted); an owner ✓: in the track;
   - `in` from an active source: in the track;
-  - `in` from a passive source: in Discover, ranked by calibrated precision (the Wilson lower bound of the share of the
-    owner's labels that were ✓ among passive `in`s at or above the item's confidence band; by confidence until
-    RANK_MIN_LABELS labels); **joined by INSIGHT** (in the track, marked, with ✓ / ✗) when the track's passive `in`s
-    at or above some band have JOIN_MIN_LABELS+ labels, JOIN_PRECISION+ of them ✓ and a Wilson lower bound of
-    JOIN_LOWER+: those at or above the lowest such band join. When that stops holding they go back to Discover;
+  - `in` from a passive source: in Discover, in DISCOVER_BANDS of confidence, newest first within a band, the
+    bands ranked by calibrated precision (0252: `discover_order`; the Wilson lower bound of the share of the owner's
+    labels that were ✓ among passive `in`s at or above the band's edge; the edge itself until RANK_MIN_LABELS
+    labels; each item keeps its own `rank`); **joined by INSIGHT** (in the track, marked, with ✓ / ✗) when the
+    track's passive `in`s at or above some band have JOIN_MIN_LABELS+ labels, JOIN_PRECISION+ of them ✓ and a
+    Wilson lower bound of JOIN_LOWER+: those at or above the lowest such band join. When that stops holding they go back to Discover;
   - `out`: kept with its verdict, never shown, counted.
 
 **Sub-topics** (0207: markx/track_subtopics.py owns them): found from the posts in the track (their vectors), each
@@ -92,6 +97,8 @@ HISTORY_PAGE = 2000            # posts the history pass reads a page ...
 HISTORY_PAGES = 10             # ... and at most this many pages a call
 MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 HISTORY_PRIORITY = 1000        # history tasks come after the new posts' (priority = this + age in days)
+REASK_DAYS = 90                # 0252: a guide change re-asks the verdicts of posts this recent ...
+REASK_PER_DAY = 300            # ... at most this many a track a day (the re-ask's tasks: HISTORY_PRIORITY + age)
 RECENT_DAYS = 7                # the passive scan of new posts reads this far back each call
 TEXT_CHARS = 1200              # the post's text a question shows
 LINKS = 3
@@ -109,6 +116,9 @@ LABELS = ("in", "out")
 ANSWERS = LABELS + ("undo",)
 SECTION_ITEMS = 60             # items a section shows (newest first; its count says how many)
 DISCOVER_ITEMS = 100
+# 0252: Discover's order: confidence bands (their lower edges), newest first within a band. By confidence alone, the
+# year-old 0.95s filled the DISCOVER_ITEMS shown and this week's 0.8 sat at 759 of 3,089.
+DISCOVER_BANDS = (0.8, 0.6, 0.0)
 def _date(p: str = "p") -> str:
     """A folder's post date: the post's own (Pairing's ordinary date), as the feed shows it."""
     return pairing.ordinary_date(p)
@@ -441,10 +451,17 @@ def _answered_verdict(cur: Cursor, task_id: Any) -> Optional[Tuple[Any, Dict[str
     return (row[0], row[1] or {}) if row else None
 
 
+# 0252: a row takes its task's first valid answer: a row with no verdict, or one whose verdict is an earlier task's (a
+# re-ask, `_reask`): its verdict is not its task's.
+_NOT_ITS_TASKS = """(verdict IS NULL OR call_id IS NULL
+                     OR NOT EXISTS (SELECT 1 FROM mx_calls c WHERE c.id = mx_track_items.call_id
+                                       AND c.task_id = mx_track_items.task_id))"""
+
+
 def _fill(cur: Cursor, where: str, params: Sequence[Any], call_id: Any, answer: Dict[str, Any]) -> int:
     cur.execute(f"""UPDATE mx_track_items SET verdict = %s, confidence = %s, subtopic = %s, why = %s, call_id = %s,
                                              answered_at = now()
-                     WHERE verdict IS NULL AND {where}""",
+                     WHERE {_NOT_ITS_TASKS} AND {where}""",
                 (bool(answer.get("in")), float(answer.get("confidence") or 0), _clean(answer.get("subtopic"), 80),
                  _clean(answer.get("why"), schemas.TRACK_WHY_CHARS), call_id, *params))
     return cur.rowcount
@@ -529,7 +546,8 @@ def _history(cur: Cursor, t: Dict[str, Any], prep: Dict[str, Any], head: str, *,
     n = scanned = passed = unembedded = 0
     for _page in range(HISTORY_PAGES):
         page = _history_page(cur, t)
-        scored = {d["post_id"]: d for d in finders.score(cur, t, prep, ids=[r[0] for r in page if r[2] and not r[3]])}
+        # 0252: a passive post with no vector is scored too (an ALWAYS finder may put it up; `score` keeps only those)
+        scored = {d["post_id"]: d for d in finders.score(cur, t, prep, ids=[r[0] for r in page if not r[3]])}
         hits = [pid for pid, d in scored.items() if d["fired"]]
         have = _has_item(cur, t, hits) | finders.labelled(prep)
         posts = tasks.load_posts(cur, [p for p in hits if p not in have])
@@ -560,6 +578,48 @@ def _history(cur: Cursor, t: Dict[str, Any], prep: Dict[str, Any], head: str, *,
             t["history_done_at"] = now
             break
     return n, scanned, passed, unembedded
+
+
+def _reask(cur: Cursor, t: Dict[str, Any], head: str, skip: set, *, budget: int, now: datetime) -> int:
+    """0252: the verdicts of the current description answered under an older guide than the kind's, of posts dated in
+    the last REASK_DAYS, asked once more under the current guide (newest first; at most `budget` and what is left of
+    REASK_PER_DAY for the track since a day ago). The row's task becomes the new one; the old one goes to
+    `asked_before` (its answer kept in mx_calls), and the old verdict stays until the new task's first valid answer
+    (`_fill`). A post the owner labelled (`skip`) is not asked. How many tasks were added."""
+    schemas.ensure_guides(cur)
+    guide = schemas.KINDS[KIND].guide
+    cur.execute("SELECT count(*) FROM mx_track_items WHERE track_id = %s AND reasked_at >= %s",
+                (t["folder_id"], now - timedelta(days=1)))
+    left = min(budget, REASK_PER_DAY - cur.fetchone()[0])
+    if left <= 0:
+        return 0
+    cur.execute(f"""SELECT i.post_id::text, {_date()}, i.task_id FROM mx_track_items i
+                      JOIN mx_tasks k ON k.id = i.task_id JOIN posts p ON p.id = i.post_id
+                     WHERE i.track_id = %(t)s AND i.version = %(v)s AND i.verdict IS NOT NULL AND k.guide <> %(g)s
+                       AND {_date()} >= %(since)s AND NOT (i.post_id = ANY(%(skip)s::uuid[]))
+                     ORDER BY {_date()} DESC, p.id DESC LIMIT %(limit)s""",
+                {"t": t["folder_id"], "v": t["version"], "g": guide, "since": now - timedelta(days=REASK_DAYS),
+                 "skip": sorted(skip), "limit": left})
+    rows = cur.fetchall()
+    posts = tasks.load_posts(cur, [r[0] for r in rows])
+    n = 0
+    for pid, at, old in rows:
+        p = posts.get(pid)
+        if p is None:
+            continue
+        task_id, new = repo.add_task(cur, kind=KIND, guide=guide, subject_kind="post_track", input=track_input(head, p),
+                                     a=p.id, b=t["folder_id"], priority=HISTORY_PRIORITY + _age(at, now))
+        cur.execute("""UPDATE mx_track_items
+                          SET task_id = %s, asked_before = array_append(COALESCE(asked_before, '{}'), %s), reasked_at = %s
+                        WHERE track_id = %s AND post_id = %s AND version = %s""",
+                    (task_id, old, now, t["folder_id"], pid, t["version"]))
+        n += new
+        if not new:   # the same question already asked under the new guide (a repost's): its answer, when it has one
+            got = _answered_verdict(cur, task_id)
+            if got:
+                _fill(cur, "track_id = %s AND post_id = %s AND version = %s", (t["folder_id"], pid, t["version"]),
+                      got[0], got[1])
+    return n
 
 
 def _stat(acc: Dict[str, Any], phase: str, **counts: int) -> None:
@@ -637,6 +697,16 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
         n, scanned, passed, unembedded = _history(cur, t, prof, heads[t["folder_id"]], budget=budget, now=now)
         added += n
         _stat(stats[t["folder_id"]], "history", scanned=scanned, passed=passed, planned=n, unembedded=unembedded)
+    # 4. 0252: the verdicts made under an older guide, asked once more (newest first, a cap a day)
+    for k, t in enumerate(ts):
+        budget = share(room - added, len(ts) - k) if room - added > 0 else 0
+        if budget <= 0:
+            break
+        ex = exs[t["folder_id"]]
+        n = _reask(cur, t, heads[t["folder_id"]], set(ex["in"]) | set(ex["out"]), budget=budget, now=now)
+        added += n
+        if n:
+            _stat(stats[t["folder_id"]], "reask", planned=n)
     for t in ts:
         s = stats[t["folder_id"]]
         if not s:
@@ -723,15 +793,32 @@ def rank_of(cal: Dict[str, Any], conf: Optional[float]) -> float:
     return float(b["lower"])
 
 
+def discover_order(cal: Dict[str, Any]):
+    """0252: Discover's order, a sort key (ascending): the item's DISCOVER_BANDS band of confidence, the bands ranked
+    by `rank_of` their edge (calibrated precision, or the edge itself until RANK_MIN_LABELS labels), then newest
+    first, then the surer, then the post. The page's lane, the kept page's filled items and the why's position all
+    read it."""
+    tiers = {e: rank_of(cal, e) for e in DISCOVER_BANDS}
+
+    def key(it: Dict[str, Any]) -> Tuple[float, float, float, str]:
+        c = float(it.get("confidence") or 0)
+        edge = next(e for e in DISCOVER_BANDS if c >= e - 1e-9)
+        at = it.get("at")
+        return (-tiers[edge], -(at.timestamp() if at else float("-inf")), -c, it["post_id"])
+    return key
+
+
 def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str, Any]]:
     """The track's judged posts: each post's newest verdict (any version). v10.14: `shown` False reads only what a
-    place needs (post, verdict, confidence, source), for the sidebar's counts: a quarter of the time (the scale copy)."""
+    place needs (post, verdict, confidence, source; 0252: its date, Discover's order), for the sidebar's counts: a
+    quarter of the time (the scale copy)."""
     if not shown:
-        cur.execute("""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, p.source_id::text
-                         FROM mx_track_items i JOIN posts p ON p.id = i.post_id
-                        WHERE i.track_id = %s AND i.verdict IS NOT NULL
-                        ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
-        return [dict(zip(("post_id", "verdict", "confidence", "source_id"), r)) for r in cur.fetchall()]
+        cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, p.source_id::text,
+                               {_date()}
+                          FROM mx_track_items i JOIN posts p ON p.id = i.post_id
+                         WHERE i.track_id = %s AND i.verdict IS NOT NULL
+                         ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
+        return [dict(zip(("post_id", "verdict", "confidence", "source_id", "at"), r)) for r in cur.fetchall()]
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, i.subtopic, i.why, i.origin,
                            i.cos, i.answered_at, i.version, i.found_by, p.title, p.url, {_date()}, p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
@@ -892,8 +979,7 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
         track_kept.fill(cur, t, [it for g in groups.values()
                                  for it in sorted(g, key=lambda it: it["at"] or epoch, reverse=True)[:SECTION_ITEMS]]
                         + sorted((it for it in items if it["place"] == "discover"),
-                                 key=lambda it: (-it["rank"], -(it["confidence"] or 0),
-                                                 -(it["at"] or epoch).timestamp()))[:DISCOVER_ITEMS])
+                                 key=discover_order(cal))[:DISCOVER_ITEMS])
 
     def joined(its: Sequence[Dict[str, Any]]) -> List[int]:
         """0207: when each member joined the track (epoch seconds, newest first): the reader counts what is new since
@@ -915,12 +1001,13 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
                          "made_by": None, "named_by": None, "keys": [], "count": len(other), "state": "active",
                          "last_member_at": None, "digest": None, "joined": joined(other),
                          "items": [_shown(it) for it in other[:SECTION_ITEMS]]})
-    disc = sorted((it for it in items if it["place"] == "discover"),
-                  key=lambda it: (-it["rank"], -(it["confidence"] or 0), -(it["at"] or epoch).timestamp()))
+    disc = sorted((it for it in items if it["place"] == "discover"), key=discover_order(cal))   # 0252: newest within bands
     counts = Counter(it["place"] for it in items)
-    cur.execute("""SELECT count(*) FILTER (WHERE verdict IS NULL) FROM mx_track_items WHERE track_id = %s AND version = %s""",
-                (t["folder_id"], t["version"]))
-    counts["waiting"] = cur.fetchone()[0]
+    # 0252: a question whose answers were no verdict (validate.track_verdict_error, twice) failed: invalid, not waiting
+    cur.execute("""SELECT count(*) FILTER (WHERE k.status <> 'failed'), count(*) FILTER (WHERE k.status = 'failed')
+                     FROM mx_track_items i JOIN mx_tasks k ON k.id = i.task_id
+                    WHERE i.track_id = %s AND i.version = %s AND i.verdict IS NULL""", (t["folder_id"], t["version"]))
+    counts["waiting"], counts["invalid"] = cur.fetchone()
     counts["judged"] = len(items)
     ex = examples(cur, folder_id)
     shown_ex = tasks.load_posts(cur, ex["in"][:20] + ex["out"][:20])
