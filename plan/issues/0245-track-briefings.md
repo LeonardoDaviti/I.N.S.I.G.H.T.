@@ -142,8 +142,8 @@ page; the News tab is unchanged.
 4. The weekly issue and the issue strip, once two tracks have things.
 5. Questions in words (0098), after the tables.
 
-## Open for the owner
+## UX decisions (made by me 2026-11-20 at the owner's request; the owner will re-edit later)
 
-- The issue's week: Monday-Sunday, or since your last weekly read?
-- A rail count of new things: yes for all tracks, or only for tracks you mark?
-- Phone: the quick look only, or the issue too?
+- **The issue's week is Monday-Sunday**, built Monday morning. A fixed week makes issues comparable, and the date strip stays stable ("week of 16 Nov"). "Since your last read" is already the quick look (moment A), so the two moments don't overlap.
+- **The rail count of new things is on for every track** that has new things, and silent for the rest. It counts things, not posts, and is capped at "9+". A track you haven't opened in 30 days drops its count, so the rail doesn't nag.
+- **Phone: both.** The quick look is designed for the phone first. On the phone the issue is a stack of cards (one per thing) with the "what changed" points on top. The full tables and filters (moment C) stay on desktop and tablet; on a phone they open as a filtered card list.
