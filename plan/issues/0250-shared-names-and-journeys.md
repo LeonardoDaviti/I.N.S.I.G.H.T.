@@ -145,3 +145,17 @@ split mentions: "this post's <name> is <maker>'s thing"; bar 97% / Wilson 90% on
 counted apart (a split whose two makers are one company); (d) the realdata-check with the journeys step: every step
 agrees on the hard set (bar), links on a split page >= 97%, timeline events about the split >= 97%. `released_held`
 and `outside_roles` are on: their effect is in the journeys' entity_links and entity_timeline rows on that run.
+
+## Step 0 measured (2026-11-20, the one server copy, read only)
+
+`journeys.shared_names` (2+ companies, each 2+ mentions, aliases resolved): **452 bare names**; 84 with 3+ companies,
+19 with 4+, 1 with 6+ (the owner's walk). Read by hand, the top 30 split about **12 real collisions** (different things
+sharing a name: a robot vs a model, a language vs a game, a model vs a video game, a wiki tool vs a video game) and
+**18 one thing under several makers**: ownership changes (a social network under its old and new company, a game under
+its studio and its later owner), a founder named as maker, a foundation vs its project, one company's legal names.
+
+**Consequence for item 1 (`families.split`, OFF):** splitting by maker alone would wrongly split the 18 kinds of the
+second group. The split must not act on maker groups by itself: each maker group pair is a candidate, asked once with
+sample contexts of both groups ("the same thing, or different things that share a name?"; the collide kind), split
+only on "different"; type disagreement (software vs game) is evidence, not proof. Bar unchanged (97% / 90%), measured
+on the 452 (the hard set) and a random sample. Private list: `plan/research/v1027/shared-names-all.json`.
