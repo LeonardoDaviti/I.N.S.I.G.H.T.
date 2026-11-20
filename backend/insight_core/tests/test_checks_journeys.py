@@ -18,7 +18,7 @@ HARD = [{"id": "three-makers", "from": "shared_names", "makers_at_least": 3, "me
 
 @base.requires_test_db
 class Journeys(tl._Db):
-    say = sn.Split.say
+    say, pairs = sn.Split.say, sn.Split.pairs
 
     def fixture(self):
         posts = {m: [self.say(k, m, T0 - (20 - 4 * k - j) * D) for k in range(n)]
@@ -54,6 +54,8 @@ class Journeys(tl._Db):
         self.assertIn("story_makers, hard", report)
         self.assertIn(posts["Lumora"][0], report)
         with mock.patch.object(I, "families_on", lambda: dict(sn.ON)):
+            self.stage()                                     # v10.28: each maker pair asked, never split alone
+            self.assertEqual(sn.Split.answer_pairs(self, lambda a, b: "different"), 3)
             self.stage()
         after = self.walk()
         self.assertEqual(self.found(after, "journeys.story_makers.hard")["count"], 0)
@@ -72,7 +74,9 @@ class Journeys(tl._Db):
                          [["kestrel", "lumora"]])
 
     def test_the_hard_set_file_is_read_and_a_missing_one_is_the_rules_default(self):
-        self.assertEqual(J.load_hard("/nonexistent/journeys.json")[0]["from"], "shared_names")
+        default, = J.load_hard("/nonexistent/journeys.json")
+        self.assertEqual(default["from"], "shared_names")
+        self.assertIsNone(default.get("top"))                # v10.28: every shared bare name, not a top few
 
 
 if __name__ == "__main__":

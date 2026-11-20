@@ -159,3 +159,57 @@ second group. The split must not act on maker groups by itself: each maker group
 sample contexts of both groups ("the same thing, or different things that share a name?"; the collide kind), split
 only on "different"; type disagreement (software vs game) is evidence, not proof. Bar unchanged (97% / 90%), measured
 on the 452 (the hard set) and a random sample. Private list: `plan/research/v1027/shared-names-all.json`.
+
+## Built (v10.28, 2026-11-20): maker groups ask, never split by themselves
+
+Module tests only, invented names; no real data read in code or tests, no name in code. `families.split` stays OFF.
+
+1. **Candidates, not splits** (`identity.split_plan`, `name_groups`, `pair_verdict`, `split_names`): the maker groups
+   (`maker_groups`, aliases resolved, SPLIT_MIN+ mentions each) of a bare name are candidates. Each pair of groups is
+   asked once: the **collide kind**, its guide deepened as the variant `collide-makers-v1` (`schemas.GUIDE_VARIANTS`,
+   schema `COLLIDE_MAKERS_SCHEMA`: `verdict` same / different / cant_tell, `why`, each side's `what` and `kind`;
+   `validate.GUIDE_CHECKS`: evidence never empty). The question (`maker_pair_input`) shows per group its maker names
+   and mention count, the types its mentions were given, its posts' date range, the names its posts mention most
+   (`PAIR_NEAR`), and up to `PAIR_SAMPLES` (5) sample mentions, one a post, the oldest and newest first. A pair is
+   asked `PAIR_RUNS` (2) times; it is apart only when every run says `different` (one `different` re-opens it for the
+   next run; the first `same` or `cant_tell` settles it one thing). The groups no `different` separates are one thing
+   (union of the not-apart pairs; a pair still waiting keeps its two groups together), so a split acts only on
+   settled answers; two or more things split as v10.27 did (home, children, pins, redirects kept, nothing deleted).
+   A pair question is `kind = 'collide'`, `guide = 'collide-makers-v1'`, `a` = the entity; identity's own collision
+   reads (`Asked.prime_collide`, `_asked_makers`, the answers-since read) skip that guide. New pair questions a run:
+   `PAIR_CAP` (500); a name whose pair answer arrived since the step's mark is read again.
+2. **Evidence, no rule alone**: types, dates and co-mentioned names are in the question, never a rule in code; the
+   guide says a different kind of thing is strong evidence, not proof, and lists the one-thing cases (owner change,
+   founder, foundation, legal name, a platform offering another maker's thing).
+3. **No maker**: as built (the post's other makers, its links, the settled collide answer), else `unsure`.
+4. **Journeys hard set**: the rule's default is every shared bare name (`TOP_NAMES` None; 452 on the 11-20 copy), no
+   name in code. The private `plan/research/lab/journeys.json` "top 50" entry should drop its `top` (main session).
+
+Tests: `test_markx_shared_names` (22: groups alone never split; each pair asked once; a waiting pair keeps one thing;
+two invented companies of different types asked, the types in the question, one `different` run asks again, two
+split; an owner change asked and kept; a founder and an unshared legal name kept while a namesake splits; aliases
+never asked), `test_checks_journeys` (the split after its pairs are answered; the default walks every name),
+`scripts/tests/test_markx_worker.py` (the variant's schema and guide check).
+
+### To measure (before `families.split` goes on)
+
+On ONE read-only server copy, then a scratch copy for the stage (deleted after):
+
+1. Run the `names` step with `families.split` on, rolled back: every pair question of the 452 hard-set names (and of a
+   random 150 names of 2+ maker groups outside them), answered by the worker as it runs (Haiku, 2 runs). Record per
+   pair: the two groups (makers, counts), the samples shown, both answers, the settled verdict; the step's seconds,
+   the questions' tokens and cost, peak RSS.
+2. **Blind labels** on each pair's question (the same input, not the answer): two Haiku labellers with a label guide
+   ("one thing under linked makers" / "different things sharing the name" / "can't tell", rule C: the main subject),
+   a referee (Sonnet or I) on their splits; the owner sees only my flags. Truth = the label; a can't-tell label is
+   left out of both rates and counted.
+3. **Report both error kinds**, each in the breakage format (the pair, both groups' samples, what the model returned,
+   the label, the cause):
+   - **split one thing**: settled `different`, labelled one thing (precision of `different`);
+   - **kept two things**: settled same / cant_tell, labelled different (the misses).
+   Bar: right >= 97% (Wilson lower >= 90%) on the hard set and on the random set, apart, for the settled verdicts;
+   and split-one-thing errors counted apart (a split of one thing is the costlier: it scatters a page). Also the
+   share of pairs left `cant_tell` and the pairs still waiting after the run.
+4. Then 0250's original (c)/(d): blind labels on the split mentions ("this post's <name> is <maker>'s thing") and the
+   realdata-check with the journeys step on the hard set (every step agrees; links and timeline events on a split
+   page >= 97%).
