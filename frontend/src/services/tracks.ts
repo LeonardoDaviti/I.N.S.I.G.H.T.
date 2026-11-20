@@ -182,3 +182,115 @@ export const tracksApi = {
   look: (id: string, subtopic?: string | null) =>
     request<{ before: TrackSeen; now: TrackSeen }>(`${base(id)}/seen`, { method: 'POST', body: { subtopic: subtopic ?? null } }),
 };
+
+// ---- 0245 (built 0249; frontend v10.28): the general track briefer. Behind the backend's switch: every answer
+// says `on`; off, the shapes are empty and the UI shows none of it. ----
+
+export type ThingFieldType = 'text' | 'number' | 'money' | 'link' | 'enum';
+
+export interface ThingFieldDef {
+  name: string; type: ThingFieldType; unit?: string | null; values?: string[]; key?: boolean; about?: string | null;
+}
+export interface ThingKindDef { kind: string; about?: string | null; fields: ThingFieldDef[] }
+
+/** A typed value: number and money come as {number, range_to, unit | currency}; the rest as a string. */
+export type ThingValue = string | { number: number; range_to?: number | null; unit?: string | null; currency?: string | null };
+
+export interface ThingPost { id: string; title: string | null; url: string | null; at: string | null; why?: string | null }
+
+export interface Thing {
+  id: string;
+  kind: string;
+  /** Its filled fields in the schema's order: the value, in words, its quote and the post it came from. */
+  fields: Record<string, { value: ThingValue; shown: string; quote?: string | null; post?: string | null }>;
+  /** Every post that reported it, newest first. */
+  posts: ThingPost[];
+  first_at: string | null; last_at: string | null; found_at: string | null;
+  new?: boolean;
+}
+
+export interface ThingSection {
+  kind: string; header: string; about: string; count: number; new: number;
+  fields: ThingFieldDef[];
+  things: Thing[];
+}
+
+/** A "what changed" point: each cite a row (its thing, and its number among the rows shown). */
+export interface BriefPoint { text: string; cites: Array<{ thing: string; n: number | null }> }
+
+export interface QuickLook {
+  on: boolean;
+  track: { id: string; name: string };
+  since: string;
+  sections: ThingSection[];
+  points: BriefPoint[];
+  /** When the points were written; `stale`: a thing was found after them. */
+  as_of: string | null;
+  stale: boolean;
+  /** Posts joined since that gave no row. */
+  also: ThingPost[];
+  counts: { things: number; also: number };
+  nothing_new: boolean;
+  /** The newest closed week's Monday. */
+  last_issue: string | null;
+  /** The issue strip: the Mondays the track has an issue for, newest first. */
+  weeks?: string[];
+}
+
+export interface WeekIssue {
+  on: boolean;
+  track: { id: string; name: string };
+  week: { start: string; end: string; closed: boolean };
+  points: BriefPoint[];
+  points_at: string | null;
+  sections: ThingSection[];
+  also: ThingPost[];
+  counts: { things: number; new: number; posts: number; also: number };
+  built_at: string;
+  first_built_at?: string;
+  /** A closed issue built again with other things or points. */
+  updated: boolean;
+}
+
+export interface ThingTable {
+  on: boolean;
+  track: { id: string; name: string };
+  kind: string;
+  kinds: string[];
+  about?: string;
+  fields: ThingFieldDef[];
+  filters: Record<string, string>;
+  count: number;
+  things: Thing[];
+}
+
+export interface TrackSchemaView {
+  on: boolean;
+  version: number | null;
+  by: 'haiku' | 'owner' | null;
+  track_version: number | null;
+  /** Proposed for an older description (a new one is on its way). */
+  stale: boolean;
+  at?: string;
+  schema: { kinds: ThingKindDef[] } | null;
+}
+
+/** The kind code adds to every track (track_things.PRACTICE_KIND): shown, never edited. */
+export const PRACTICE_KIND = 'practice_or_claim';
+
+const query = (params: Record<string, string>) => {
+  const q = new URLSearchParams(params).toString();
+  return q ? `?${q}` : '';
+};
+
+export const briefApi = {
+  schema: (id: string) => request<TrackSchemaView>(`${base(id)}/schema`),
+  saveSchema: (id: string, kinds: ThingKindDef[]) =>
+    request<TrackSchemaView>(`${base(id)}/schema`, { method: 'PUT', body: { kinds } }),
+  /** The quick look since a time (ISO); the page passes its look before this visit. */
+  quickLook: (id: string, since: string) => request<QuickLook>(`${base(id)}/brief${query({ since })}`),
+  /** The week's issue (any day of it, YYYY-MM-DD). */
+  issue: (id: string, week: string) => request<WeekIssue>(`${base(id)}/brief${query({ week })}`),
+  things: (id: string, kind: string, filters: Record<string, string> = {}) =>
+    request<ThingTable>(`${base(id)}/things${query({ kind, ...filters, limit: '500' })}`),
+};

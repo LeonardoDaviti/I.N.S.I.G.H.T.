@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
-  tracksApi, type ShadowMeasure, type TrackItem, type TrackLabel, type TrackPage, type TrackSection, type TrackSeen,
+  briefApi, PRACTICE_KIND, tracksApi, type ShadowMeasure, type TrackItem, type TrackLabel, type TrackPage, type TrackSection, type TrackSeen,
   type TrackTool,
 } from '../../services/tracks';
-import { Button, Input, TextLink } from '../ui';
+import { Button, Input, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
@@ -16,6 +16,9 @@ import {
   toolLine, trackNewLine, whyLine,
 } from './trackWords';
 import { bylineText } from '../../lib/byline';
+import { QuickLookPanel, ThingTables, WeekIssueView, WhatChanged } from './TrackBrief';
+import { TRACK_COUNTS_KEY } from '../../hooks/useTrackCounts';
+import { kindWord, mondayOf, newestAt, schemaKey } from './briefWords';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
 
@@ -204,16 +207,32 @@ function Tools({ tools, shadow }: { tools: TrackTool[]; shadow?: ShadowMeasure }
  */
 export default function TrackTopic({ folderId }: { folderId: string }) {
   const [editing, setEditing] = useState(false);
+  const client = useQueryClient();
   const query = useQuery({ queryKey: trackKey(folderId), queryFn: () => tracksApi.page(folderId), staleTime: 30_000 });
   // 0207: the looks before this visit are what "new since you looked" counts from; this open is recorded as a look
   const [seen, setSeen] = useState<TrackSeen | null>(null);
+  const [looked, setLooked] = useState(false);
   const topic = query.data?.track.topic ?? false;
   useEffect(() => {
     if (!topic) return;
     let live = true;
-    tracksApi.look(folderId).then((got) => { if (live) setSeen(got.before); }).catch(() => undefined);
+    tracksApi.look(folderId).then((got) => {
+      if (live) { setSeen(got.before); setLooked(true); }
+      void client.invalidateQueries({ queryKey: [...TRACK_COUNTS_KEY] });   // the rail's new things are counted from this look
+    }).catch(() => undefined);
     return () => { live = false; };
-  }, [folderId, topic]);
+  }, [client, folderId, topic]);
+  // 0245 (v10.28): the briefer, when the backend's switch is on and the track has its kinds and fields
+  const schema = useQuery({ queryKey: schemaKey(folderId), queryFn: () => briefApi.schema(folderId), enabled: topic,
+    staleTime: 60_000, retry: false });
+  const briefer = Boolean(schema.data?.on && schema.data.schema);
+  // the quick look counts from the look before this visit (this open is a look); never looked: this week
+  const since = seen?.track ?? mondayOf();
+  const look = useQuery({ queryKey: ['markx-track-look', folderId, since], queryFn: () => briefApi.quickLook(folderId, since),
+    enabled: briefer && looked, staleTime: 30_000, retry: false });
+  const [tab, setTab] = useState('latest');
+  const [tableKind, setTableKind] = useState<string | undefined>(undefined);
+  const [issueWeek, setIssueWeek] = useState<string | null>(null);
   const markSeen = (sub: string) => {
     tracksApi.look(folderId, sub).then((got) => setSeen((was) => ({
       track: was?.track ?? got.before.track, subtopics: { ...(was?.subtopics ?? {}), [sub]: got.now.subtopics[sub] },
@@ -236,7 +255,15 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
     );
   }
   const counts = page.counts;
-  return (
+  const quick = briefer && look.data?.on ? look.data : null;
+  // never a stale brief above fresh posts (0002): points older than a find or a post since show after the posts
+  const late = quick ? quick.stale || (quick.as_of ? newestAt(quick.also.map((p) => p.at)) > Date.parse(quick.as_of) : false) : false;
+  const kinds = (schema.data?.schema?.kinds ?? []).map((k) => ({
+    kind: k.kind, header: k.kind === PRACTICE_KIND ? 'Practices and claims' : kindWord(k.kind),
+  }));
+  const lateBrief = quick && late && !quick.nothing_new
+    ? <WhatChanged points={quick.points} sections={quick.sections} asOf={quick.as_of} /> : null;
+  const posts = (
     <section aria-label={`${page.track.name} as a topic`}>
       <div className="mb-4 border-b border-line pb-3">
         <p className="text-[0.875rem] leading-6 text-fg [overflow-wrap:anywhere]">{page.track.description}</p>
@@ -261,6 +288,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
       )) : (
         <p className="mb-6 text-[0.8125rem] text-fg-2">Nothing in this track yet. The worker judges its posts at its next run.</p>
       )}
+      {lateBrief}
       <section aria-label="Discover" className="mb-6">
         <h2 className="border-b border-line pb-1 text-[0.8125rem] font-semibold text-fg-2">
           Discover <span className="font-normal text-fg-3">· {counts.discover ?? 0}</span>
@@ -274,5 +302,30 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
       {page.footer ? <p className="text-[0.75rem] tabular-nums text-fg-3">{footerLine(page.footer, counts)}</p> : null}
       {sheet}
     </section>
+  );
+  if (!briefer) return posts;
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsList aria-label="Track views">
+        <TabsTrigger value="latest">latest</TabsTrigger>
+        <TabsTrigger value="issues">issues</TabsTrigger>
+        <TabsTrigger value="tables">tables</TabsTrigger>
+      </TabsList>
+      <TabsContent value="latest">
+        {quick ? (
+          <QuickLookPanel look={quick} stale={late}
+            onSeeAll={(k) => { setTableKind(k); setTab('tables'); }}
+            onOpenIssue={(w) => { setIssueWeek(w); setTab('issues'); }} />
+        ) : null}
+        {posts}
+      </TabsContent>
+      <TabsContent value="issues">
+        <WeekIssueView key={issueWeek ?? ''} trackId={folderId} weeks={look.data?.weeks ?? []}
+          initial={issueWeek ?? look.data?.last_issue ?? look.data?.weeks?.[0] ?? null} />
+      </TabsContent>
+      <TabsContent value="tables">
+        <ThingTables key={tableKind ?? ''} trackId={folderId} kinds={kinds} kind={tableKind} />
+      </TabsContent>
+    </Tabs>
   );
 }
