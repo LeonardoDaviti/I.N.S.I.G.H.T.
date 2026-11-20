@@ -76,6 +76,41 @@ class Run:
         return self.random.sample(ids, EXAMPLES) if len(ids) > EXAMPLES else ids
 
 
+# ---- reading a whole table (0243) ---------------------------------------------------------------------------------
+# An invariant that runs Python over every row of a large table reads it in shares, one worker process each (a hash of
+# the row's key), streamed through a server-side cursor: no process holds the table, only the ids it finds.
+STREAM_ROWS = 500
+
+
+def _stream(source: Any, workers: int, k: int, sql: str, key: str) -> Iterable[tuple]:
+    """The rows of `sql` (its `{share}` this worker's: `key`'s hash modulo `workers` is `k`), streamed, read-only.
+    `source`: a DSN (a connection of its own), or the run's connection (the transaction it is in)."""
+    import psycopg
+    share = f"abs(hashtext({key}::text)::bigint) %% %(workers)s = %(k)s"
+    if isinstance(source, str):
+        with psycopg.connect(source, options="-c default_transaction_read_only=on -c jit=off") as conn:
+            yield from _stream(conn, workers, k, sql, key)
+        return
+    with source.cursor(name=f"share_{k}") as cur:
+        cur.itersize = STREAM_ROWS
+        cur.execute(sql.format(share=share), {"workers": workers, "k": k})
+        yield from cur
+
+
+def _in_shares(run: "Run", share: Callable[[tuple], Tuple[List[str], int]]) -> Tuple[List[str], int]:
+    """`share((source, workers, k))` in each of the run's worker processes: the ids they found, and what they read. A
+    run whose connection is in a transaction (a test's, its rows not committed) reads in it, in this process."""
+    import multiprocessing
+    from psycopg.pq import TransactionStatus
+    conn = run.cur.connection if run.cur is not None else None
+    if conn is not None and conn.info.transaction_status != TransactionStatus.IDLE:
+        return share((conn, 1, 0))
+    workers = run.workers or derive.default_workers()
+    with multiprocessing.get_context("spawn").Pool(workers) as pool:
+        got = pool.map(share, [(run.db_url, workers, k) for k in range(workers)])
+    return [i for ids, _ in got for i in ids], sum(n for _, n in got)
+
+
 def all_stories(cur: Any, batch: int = 300) -> Dict[str, dict]:
     from insight_core.db.repo_reader import ReaderRepository
     cur.execute("SELECT DISTINCT ON (story_id) story_id::text, post_id::text FROM story_posts ORDER BY story_id, post_id")
@@ -272,35 +307,38 @@ def _story_empty(run: Run):
     return ids, run.cur.fetchone()[0]
 
 
-def _refs_every_link(run: Run, batch: int = 500):
-    """A post with an http(s) link of its text (the reader's body_hrefs, made absolute and normalized as internal_links
-    does) that has no open post_refs row (issue 0125). A version without post_refs is not measurable."""
+def _refs_share(args) -> Tuple[List[str], int]:
+    """One worker's share of the posts (a hash of the id), streamed: its posts with a link of their text that has no
+    open post_refs row, and how many it read."""
+    source, workers, k = args
     from urllib.parse import urljoin
     from insight_core.utils.post_links import body_hrefs
     from insight_core.utils.url_normalization import normalize_url
-    out, of, last = [], 0, None
-    while True:
-        run.cur.execute("""SELECT p.id, p.url, p.content_html, p.content,
-                                  (SELECT array_agg(r.target_address) FROM post_refs r WHERE r.post_id = p.id AND r.valid_to IS NULL)
-                           FROM posts p WHERE %(last)s::uuid IS NULL OR p.id > %(last)s::uuid ORDER BY p.id LIMIT %(n)s""",
-                        {"last": last, "n": batch})
-        rows = run.cur.fetchall()
-        if not rows:
-            return out, of
-        for post_id, url, content_html, content, refs in rows:
-            have, missing = set(refs or ()), False
-            for href in body_hrefs(content_html, content):
-                try:
-                    absolute = urljoin(url or "", href)
-                    address = normalize_url(absolute) if absolute.lower().startswith(("http://", "https://")) else None
-                except ValueError:
-                    continue
-                if address:
-                    missing = missing or address not in have
-            of += 1
-            if missing:
-                out.append(str(post_id))
-        last = rows[-1][0]
+    out, of = [], 0
+    for post_id, url, content_html, content, refs in _stream(source, workers, k, """
+            SELECT p.id::text, p.url, p.content_html, p.content,
+                   (SELECT array_agg(r.target_address) FROM post_refs r WHERE r.post_id = p.id AND r.valid_to IS NULL)
+              FROM posts p WHERE {share}""", "p.id"):
+        have, missing = set(refs or ()), False
+        for href in body_hrefs(content_html, content):
+            try:
+                absolute = urljoin(url or "", href)
+                address = normalize_url(absolute) if absolute.lower().startswith(("http://", "https://")) else None
+            except ValueError:
+                continue
+            if address:
+                missing = missing or address not in have
+        of += 1
+        if missing:
+            out.append(post_id)
+    return out, of
+
+
+def _refs_every_link(run: Run):
+    """A post with an http(s) link of its text (the reader's body_hrefs, made absolute and normalized as internal_links
+    does) that has no open post_refs row (issue 0125). A version without post_refs is not measurable. In parallel
+    (0243: one process read 160k posts' whole bodies in 40 s)."""
+    return _in_shares(run, _refs_share)
 
 
 def _label_story_voices(run: Run):
@@ -418,16 +456,26 @@ def _discover_untested(run: Run):
 # Invariant 1 (Mark IX's tables the same with Mark X on and off) runs the decision job, so it is a job check
 # (job_checks.markx_unchanged). A version before the mx_* tables can't be asked: "not measurable".
 
+def _calls_share(args) -> Tuple[List[str], int]:
+    """One worker's share of the valid calls (a hash of the call id), streamed: those its task's checks refuse."""
+    source, workers, k = args
+    from insight_core.markx import validate
+    out, of = [], 0
+    for cid, kind, text, answer, guide in _stream(source, workers, k, """
+            SELECT c.id::text, t.kind, t.input, c.answer, t.guide FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+             WHERE c.valid AND t.kind <> 'embed' AND t.input IS NOT NULL AND {share}""", "c.id"):
+        of += 1
+        if validate.check(kind, answer, text, guide)[1] is not None:   # 0133: an entities arm's own schema
+            out.append(cid)
+    return out, of
+
+
 def _markx_calls_valid(run: Run):
     """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse.
     0233: the calls whose task still has its input: every kept kind, and the last tasks.SPEND_AFTER of the spent
-    ones (markx/tasks.py SPENDS; nothing reads a spent input, so there is nothing to check it against)."""
-    from insight_core.markx import validate
-    run.cur.execute("""SELECT c.id::text, t.kind, t.input, c.answer, t.guide FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
-                        WHERE c.valid AND t.kind <> 'embed' AND t.input IS NOT NULL""")
-    rows = run.cur.fetchall()
-    return [cid for cid, kind, text, answer, guide in rows                 # 0133: an entities arm's own schema
-            if validate.check(kind, answer, text, guide)[1] is not None], len(rows)
+    ones (markx/tasks.py SPENDS; nothing reads a spent input, so there is nothing to check it against).
+    0243: streamed, in parallel (at the server's size, 1.5M calls and their inputs read whole held 15.8 GB)."""
+    return _in_shares(run, _calls_share)
 
 
 def _markx_unnamed(run: Run):

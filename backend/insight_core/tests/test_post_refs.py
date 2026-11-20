@@ -189,6 +189,23 @@ class WrittenOnSaveTests(unittest.TestCase):
             result = PostsRepository(self.url).save_batch(conn, [draft])
         return (result.inserted_ids or result.updated_ids)[0]
 
+    def test_the_invariant_in_worker_processes_reads_what_one_process_reads(self):
+        # 0243: refs.every_link reads the posts in shares, one worker process each, when the run's connection is in no
+        # transaction (the check's); in one (a test's), in it. Both find the same posts.
+        from insight_core.checks import invariants
+        check, = [i for i in invariants.INVARIANTS if i.name == "refs.every_link"]
+        post = self._save(f'<p><a href="https://refs-{self.tag}.test/linked">a link</a></p>')
+        with psycopg.connect(self.url, autocommit=True) as conn, conn.cursor() as cur:
+            ids, of = check.count(invariants.Run(self.url, cur, datetime.now(timezone.utc), workers=3))
+            self.assertNotIn(post, ids)
+            cur.execute("UPDATE post_refs SET valid_to = now() WHERE post_id = %s", (post,))
+            ids, of = check.count(invariants.Run(self.url, cur, datetime.now(timezone.utc), workers=3))
+            self.assertIn(post, ids)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")   # in a transaction: one share, in this process
+            self.assertEqual(sorted(check.count(invariants.Run(self.url, cur, datetime.now(timezone.utc)))[0]), sorted(ids))
+            self.assertEqual(check.count(invariants.Run(self.url, cur, datetime.now(timezone.utc)))[1], of)
+
     def test_insert_then_update(self):
         one, two, three = (f"https://refs-{self.tag}.test/2026/{n}" for n in ("one", "two", "three"))
         post = self._save(f'<p><a href="{one}">one</a> <a href="{two}">two</a></p>')

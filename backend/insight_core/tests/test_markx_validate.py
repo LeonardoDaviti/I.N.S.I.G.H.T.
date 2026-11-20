@@ -141,6 +141,18 @@ class Entities(unittest.TestCase):
         self.assertTrue(version_occurs("4.1", POST))
         self.assertTrue(version_occurs("Widget 4.1", "the Widget-4.1 notes"))
 
+    def test_the_folded_input_is_kept_and_each_input_read_as_its_own(self):
+        # 0243: the input's folded forms are kept between one answer's checks; a different input is folded anew
+        from insight_core.markx.validate import occurs
+        texts = [f"post {n}: Widget-{n}.1 notes" for n in range(20)]
+        for _ in range(2):
+            for n, text in enumerate(texts):
+                self.assertTrue(occurs(f"post {n}:", text))
+                self.assertFalse(occurs(f"post {n + 1}:", text))
+                self.assertTrue(version_occurs(f"{n}.1", text))
+                self.assertFalse(version_occurs(f"{n + 1}.1", text))
+        self.assertFalse(occurs("anything", None))
+
     def test_type_and_role_come_from_their_sets(self):
         self.assertIn("type", check("entities", {"entities": [entity(type="company")]}, POST)[1])
         self.assertIn("role", check("entities", {"entities": [entity(role="main")]}, POST)[1])

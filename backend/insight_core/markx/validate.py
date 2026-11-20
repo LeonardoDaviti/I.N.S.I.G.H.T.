@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 from insight_core.markx import schemas
@@ -44,14 +45,26 @@ def fold(text: Optional[str]) -> str:
     return _SPACE.sub(" ", _DASHES.sub("-", s))
 
 
+# The text side of occurs/version_occurs, folded once: one answer's checks ask its input once per entity (up to 20,
+# and salvage again), and folding a long input is most of a check's time (0243: 90% of an entities check).
+@lru_cache(maxsize=8)
+def _folded(text: Optional[str]) -> str:
+    return fold(text)
+
+
+@lru_cache(maxsize=8)
+def _bare(text: Optional[str]) -> str:
+    return _SEP.sub("", fold(text))
+
+
 def occurs(span: str, text: str) -> bool:
-    return fold(span).strip() in fold(text)
+    return fold(span).strip() in _folded(text)
 
 
 def version_occurs(version: str, text: str) -> bool:
     """A version is found when its folded characters, separators dropped, occur in the text's ("4.1" in
     "V4.1-Flash", "K3.1" in "Kimi K3.1")."""
-    return _SEP.sub("", fold(version)) in _SEP.sub("", fold(text))
+    return _SEP.sub("", fold(version)) in _bare(text)
 
 
 # Figures and versions as the prototype's auto-checks read them (bg.py: digits, figures_found, versions), with
