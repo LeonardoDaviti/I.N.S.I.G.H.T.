@@ -297,6 +297,24 @@ class StoredBacklogTests(unittest.TestCase):
         self.assertEqual(asyncio.run(service.collect_for_source(http, missed, self.source))["status"], "collected")
         self.assertEqual(self._row(missed)[0], later)
 
+    def test_a_linker_corrected_the_same_day_dates_a_missed_page_from_its_publication(self):
+        """0248: a report citing a filing at 11:40, its page updated at 15:42 the same day, still dates the filing
+        11:40 (it had the link from the start); a later report's 14:01 is not the filing's date."""
+        site = f"https://own-{self.mark}.example"
+        missed = f"{site}/a-filing"
+        cited = datetime(2026, 11, 10, 11, 40, 11, tzinfo=timezone.utc)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            report = insert_post(cur, self.source, f"{site}/a-report", at=cited, links=[missed])
+            cur.execute("""UPDATE posts SET metadata = jsonb_build_object('modified', '2026-11-10T15:42:00+00:00')
+                            WHERE id = %s""", (report,))
+            insert_post(cur, self.source, f"{site}/another-report", at=datetime(2026, 11, 10, 14, 1, 39, tzinfo=timezone.utc),
+                        links=[missed])
+            conn.commit()
+        http = FakeHttp({missed: article("a filing", None)})
+        service = SavedService(db_url(), sources=None, source_config_sync=None, kinds=None)
+        self.assertEqual(asyncio.run(service.collect_for_source(http, missed, self.source))["status"], "collected")
+        self.assertEqual(self._row(missed)[0], cited)
+
     def test_0156_repairs_body_dates_against_their_address_and_old_first_links(self):
         site = f"https://own-{self.mark}.example"
         fetched = datetime(2026, 11, 10, 7, 55, tzinfo=timezone.utc)
@@ -327,6 +345,15 @@ class StoredBacklogTests(unittest.TestCase):
             page = insert_post(cur, self.source, missed, at=essay_day)
             cur.execute("""UPDATE posts SET fetched_at = %s, metadata = jsonb_build_object('missed_by_feed', %s::text)
                             WHERE id = %s""", (fetched, fetched.isoformat(), page))
+            # 0248: a page first linked by a report corrected the same day keeps that report's date
+            filing, report_at = f"{site}/a-filing", datetime(2026, 11, 3, 11, 40, tzinfo=timezone.utc)
+            report = insert_post(cur, self.source, f"{site}/a-report", at=report_at, links=[filing])
+            cur.execute("UPDATE posts SET metadata = '{\"modified\": \"2026-11-03T15:42:00+00:00\"}' WHERE id = %s",
+                        (report,))
+            insert_post(cur, self.source, f"{site}/a-later-report", at=report_at + timedelta(hours=2), links=[filing])
+            kept = insert_post(cur, self.source, filing, at=report_at)
+            cur.execute("""UPDATE posts SET fetched_at = %s, metadata = jsonb_build_object('missed_by_feed', %s::text)
+                            WHERE id = %s""", (fetched, fetched.isoformat(), kept))
             for _ in range(2):   # a second run changes nothing more
                 cur.execute(sql)
             cur.execute("SELECT url, published_at, published_precision FROM posts WHERE url LIKE %s OR url = %s",
@@ -339,6 +366,7 @@ class StoredBacklogTests(unittest.TestCase):
                 self.assertEqual(got[url][1], "date", url)
         self.assertEqual(got[elsewhere][0], day(2020, 5, 31), "another site's page is its feed's item, dated by it")
         self.assertEqual(got[missed], (note_at, "exact"))
+        self.assertEqual(got[filing][0], report_at, "a same-day correction is the same report: its date stands")
 
     def test_0101_dates_the_posts_stored_at_their_fetch_by_their_address(self):
         site = f"https://dated-{self.mark}.example"
