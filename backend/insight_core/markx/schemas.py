@@ -280,6 +280,20 @@ COLLIDE2_SCHEMA = {
     },
 }
 
+# 0250 (v10.28): the collide kind deepened for a bare name several makers state (collide-makers-v1, a guide variant):
+# two maker groups of one name, each with its samples, types, dates and co-mentioned names: one thing whose maker
+# names differ (an owner change, a founder, a foundation, a legal name) or different things sharing the name?
+COLLIDE_MAKERS_VERDICTS = ["same", "different", "cant_tell"]
+_PAIR_SIDE = {"type": "object", "properties": {"what": _STR, "kind": {"enum": FACT_KINDS}}}
+COLLIDE_MAKERS_SCHEMA = {
+    "type": "object",
+    "required": ["evidence", "verdict"],
+    "properties": {"evidence": _STR, "a": _PAIR_SIDE, "b": _PAIR_SIDE, "verdict": {"enum": COLLIDE_MAKERS_VERDICTS},
+                   "why": {"enum": ["owner_change", "founder", "foundation", "legal_name", "same_maker", "other",
+                                    "different_things", "cant_tell"]},
+                   "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+}
+
 # 0119 B (0120 v3.2f): what each member of a story adds (persp-v1, the lab's persp_v32f_frozen.md) and the sheet's
 # merged facts (persp-merge-v1, persp_merge_v1.md). Loose, as the lab's answer check was (members with a known label;
 # groups as a list): a fact without its span, a line number out of range, a member not asked are the final checks'
@@ -768,6 +782,7 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
     "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
     "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
+    "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
 }
 
 

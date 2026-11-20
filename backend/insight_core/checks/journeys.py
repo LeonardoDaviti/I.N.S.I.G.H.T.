@@ -41,7 +41,7 @@ ROWS_KEPT = 40                 # rows kept a step and set (the report shows fewe
 RANDOM_STORIES = 30
 RANDOM_THINGS = 30
 STORIES_A_NAME = 3             # the hard set's stories a name walks (the newest it is the subject of)
-TOP_NAMES = 50
+TOP_NAMES = None               # v10.28: the hard set is every shared bare name (step 0: 452 on the server copy)
 PRODUCT_TYPES = ("model", "product", "software", "project", "dataset")
 ABOUT_ROLES = ("subject", "actor", "compared")
 POST_EVENTS = ("birth", "release", "first_outside", "outside")
@@ -409,15 +409,16 @@ class Walks:
 
 
 def load_hard(path: Optional[str]) -> List[Dict[str, Any]]:
-    """The hard set's entries (a file: {walks: [{id, from: shared_names, makers_at_least, mentions_each, top, why}]});
-    none given: the rule's default (the bare names of 2+ makers, the top TOP_NAMES)."""
+    """The hard set's entries (a file: {walks: [{id, from: shared_names, makers_at_least, mentions_each, top, why}]};
+    `top` left out: every name the rule selects); none given: the rule's default (v10.28: every bare name of 2+
+    makers, each by 2+ mentions; no name is ever written here)."""
     if path:
         try:
             with open(path, encoding="utf-8") as f:
                 return list((json.load(f) or {}).get("walks") or [])
         except FileNotFoundError:
             pass
-    return [{"id": "shared-names", "from": "shared_names", "makers_at_least": 2, "mentions_each": 2, "top": TOP_NAMES}]
+    return [{"id": "shared-names", "from": "shared_names", "makers_at_least": 2, "mentions_each": 2}]
 
 
 def run(cur: Any, now: Any, *, hard: Sequence[Dict[str, Any]], random_stories_n: int = RANDOM_STORIES,

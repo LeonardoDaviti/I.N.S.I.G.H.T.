@@ -1909,20 +1909,30 @@ def based_on_family(cur: Any, thing: str, family: str, *, maker: Optional[str], 
 # ---- 0250: one bare name, several makers' things ----------------------------------------------------------------
 # 0230's maker rule, deepened from a versioned name's family to a bare name: a one-word thing ("Vexa") whose mentions
 # state several makers, each named by SPLIT_MIN or more of them and none one maker with another (`maker_groups`: one
-# cluster by their aliases, one's words in the other's), is one thing a maker. The maker its entity states (else the
-# most stated) keeps the entity, its id and every redirect to it; each other maker's thing is a new entity "<name>
-# (<maker>)" under its maker, its mentions pinned there (mx_entity_pins by 'facts', the link each left in
-# from_entity: undoable), recorded in mx_entity_fixes (kind SPLIT_KIND: the parent, the maker). A mention stating no
-# maker goes by its post: the makers it names otherwise (its org and person mentions, the same name's stated maker),
-# else the post's links (a site named by one maker), else the settled collision question's answer (the `collide`
-# kind, asked by identity.collisions: a name whose mentions state 2+ makers is asked once); else it stays on the
-# entity, placed 'unsure'. Nothing is deleted; behind entity_bands.json `families.split`.
+# cluster by their aliases, one's words in the other's), MAY be one thing a maker. v10.28 (0250 step 0 measured: of
+# the top 30 shared bare names about 18 were one thing under several makers: an owner change, a founder named as
+# maker, a foundation vs its project, one company's legal names): maker groups are never a split by themselves. Each
+# pair of them is a candidate, asked once (`maker_pair_input`: the collide kind, its guide deepened as the variant
+# PAIR_GUIDE: 3-5 sample mentions of each group, its types, dates and co-mentioned names), PAIR_RUNS runs; a pair is
+# apart only when every run says "different" (`pair_verdict`). The groups no "different" separates are one thing
+# (`split_plan`'s components); two or more things split: the one its entity states (else the most stated) keeps the
+# entity, its id and every redirect to it; each other is a new entity "<name> (<maker>)" under its maker, its
+# mentions pinned there (mx_entity_pins by 'facts', the link each left in from_entity: undoable), recorded in
+# mx_entity_fixes (kind SPLIT_KIND: the parent, the maker). A mention stating no maker goes by its post: the makers it
+# names otherwise (its org and person mentions, the same name's stated maker), else the post's links (a site named by
+# one maker), else the settled collision question's answer (identity.collisions' own); else it stays on the entity,
+# placed 'unsure'. Nothing is deleted; behind entity_bands.json `families.split`.
 SPLIT_KIND = "maker_split"
-SPLIT_MIN = 2                    # a maker this many of a bare name's mentions state is a thing of its own
+SPLIT_MIN = 2                    # a maker this many of a bare name's mentions state is a candidate thing of its own
 SPLIT_LIMIT = 200                # names a run splits or places (the rest wait for the next run)
 SPLIT_MARK = "maker_split_since"   # mx_settings: the clock of the step's last pass (the calls since are read)
 SPLIT_MARGIN = timedelta(minutes=5)
 SPLIT_TYPES = ("model", "product", "software", "project", "dataset")
+PAIR_GUIDE = "collide-makers-v1"   # the collide kind's guide for two maker groups of one name (schemas.GUIDE_VARIANTS)
+PAIR_RUNS = 2                    # runs a pair is asked; apart only when all of them say "different"
+PAIR_SAMPLES = 5                 # sample mentions a group shows at most (one a post; 3+ when it has them)
+PAIR_NEAR = 6                    # co-mentioned names a group shows
+PAIR_CAP = 500                   # new pair questions a run adds (the rest wait for the next run)
 
 
 @dataclass
@@ -1936,6 +1946,9 @@ class NameRow:
     near: List[str] = field(default_factory=list)    # the makers its post names otherwise
     sites: List[str] = field(default_factory=list)   # its post's link sites
     asked: Optional[str] = None                      # the maker the settled collision answer gives it
+    span: str = ""                                   # how the post wrote it (a pair question's sample)
+    type: Optional[str] = None                       # the type the reading gave it
+    at: Optional[datetime] = None                    # its post's date
 
 
 def bare_thing(e: Optional[Ent]) -> bool:
@@ -1958,23 +1971,63 @@ def _maker_words(name: str) -> Set[str]:
     return {N.squash(k)} | {w for w in k.split() if len(w) >= 4 and w not in CORP_WORDS}
 
 
-def split_plan(book: Book, e: Ent, rows: Sequence[NameRow]) -> Dict[str, Any]:
-    """(no database) A bare name's split: {groups: the makers SPLIT_MIN+ mentions state, home: the index of the one the
-    entity keeps (its own stated maker's, else the most stated), rows: {(post, guide, n): (group index or None, how)}};
-    rows {} when fewer than two makers qualify (one thing, or too few to tell)."""
+def name_groups(book: Book, e: Ent, rows: Sequence[NameRow]) -> List[MakerGroup]:
+    """(no database) A bare name's candidate makers: the maker groups (`maker_groups`, aliases resolved) SPLIT_MIN+ of
+    its mentions state, the most stated first. Two or more: each pair is a question (`split_plan`'s `ask`)."""
     votes = Counter((r.maker or "").strip() for r in rows if r.maker and N.key(r.maker) != e.key)
-    big = [g for g in maker_groups(book, votes, e.key) if g.n >= SPLIT_MIN]
-    if len(big) < 2:
-        return {"groups": big, "home": 0 if big else None, "rows": {}}
-    home = next((k for k, g in enumerate(big) if e.maker and maker_fits(book, e.maker, g.name, e.key)), 0)
+    return [g for g in maker_groups(book, votes, e.key) if g.n >= SPLIT_MIN]
+
+
+def pair_verdict(answers: Sequence[Dict[str, Any]]) -> Optional[str]:
+    """A pair question's settled verdict from its valid answers (oldest first): 'different' only when PAIR_RUNS runs
+    all say so; the first run saying 'same' or 'cant_tell' settles it so (one thing: kept); else None (waiting)."""
+    said = [str((a or {}).get("verdict") or "") for a in answers]
+    other = next((v for v in said if v != "different"), None)
+    if other is not None:
+        return other if other == "same" else "cant_tell"
+    return "different" if len(said) >= PAIR_RUNS else None
+
+
+def split_plan(book: Book, e: Ent, rows: Sequence[NameRow], said: Optional[Any] = None) -> Dict[str, Any]:
+    """(no database) A bare name's split. `said(group a, group b)`: a candidate pair's settled verdict (`pair_verdict`)
+    or None (not asked, or waiting); no `said`: none settled. {big: the candidate groups (`name_groups`), pairs:
+    {(i, j): verdict} over them, ask: the pairs with no verdict yet, groups: the things (the candidate groups no
+    'different' separates, merged), home: the index of the one the entity keeps (its own stated maker's, else the most
+    stated), rows: {(post, guide, n): (group index or None, how)}}; rows {} when fewer than two things (one maker, one
+    thing under several, or a pair still waiting: a split acts only on settled answers)."""
+    big = name_groups(book, e, rows)
+    pairs = {(i, j): (said(big[i], big[j]) if said else None)
+             for i in range(len(big)) for j in range(i + 1, len(big))}
+    ask = [p for p, v in pairs.items() if v is None]
+    par = list(range(len(big)))
+
+    def f(x: int) -> int:
+        while par[x] != x:
+            x = par[x]
+        return x
+    for (i, j), v in pairs.items():
+        if v != "different":      # same, cant_tell, or not settled: one thing until every run says apart
+            a, b = f(i), f(j)
+            if a != b:
+                par[max(a, b)] = min(a, b)
+    comps: Dict[int, List[MakerGroup]] = defaultdict(list)
+    for k, g in enumerate(big):
+        comps[f(k)].append(g)
+    members = sorted(comps.values(), key=lambda gs: (-sum(g.n for g in gs), gs[0].name))
+    groups = [MakerGroup(gs[0].name, sum(g.n for g in gs), [x for g in gs for x in g.names]) for gs in members]
+    base = {"big": big, "pairs": pairs, "ask": ask, "groups": groups}
+    if len(groups) < 2:
+        return {**base, "home": 0 if groups else None, "rows": {}}
+    tops = [[g.name for g in gs] for gs in members]
+    home = next((k for k, ns in enumerate(tops) if e.maker and any(maker_fits(book, e.maker, x, e.key) for x in ns)), 0)
 
     def which(maker: Optional[str]) -> Optional[int]:
         if not (maker or "").strip():
             return None
-        exact = [k for k, g in enumerate(big) if maker.strip() in g.names]
-        hits = exact or [k for k, g in enumerate(big) if maker_fits(book, maker, g.name, e.key)]
+        exact = [k for k, g in enumerate(groups) if maker.strip() in g.names]
+        hits = exact or [k for k, ns in enumerate(tops) if any(maker_fits(book, maker, x, e.key) for x in ns)]
         return hits[0] if len(hits) == 1 else None
-    words = [set().union(*(_maker_words(x) for x in g.names)) for g in big]
+    words = [set().union(*(_maker_words(x) for x in g.names)) for g in groups]
     out: Dict[Tuple[str, str, int], Tuple[Optional[int], str]] = {}
     for r in rows:
         at = (r.post_id, r.guide, r.n)
@@ -1992,7 +2045,121 @@ def split_plan(book: Book, e: Ent, rows: Sequence[NameRow]) -> Dict[str, Any]:
             continue
         k = which(r.asked)
         out[at] = (k, "facts") if k is not None else (None, "unsure")
-    return {"groups": big, "home": home, "rows": out}
+    return {**base, "home": home, "rows": out}
+
+
+# ---- 0250 v10.28: the pair question (the collide kind, its guide PAIR_GUIDE) ------------------------------------
+
+_PAIR_SIDE_LINE = re.compile(r"^([AB]) makers: (\[.*?\]) \(\d+ mentions\)", re.M)
+
+
+def pair_sides(text: str) -> Optional[Tuple[Set[str], Set[str]]]:
+    """A pair question's two groups' maker names, read back from its input (None: not one)."""
+    got: Dict[str, Set[str]] = {}
+    for side, names in _PAIR_SIDE_LINE.findall(text or ""):
+        try:
+            got[side] = {str(x) for x in json.loads(names)}
+        except ValueError:
+            return None
+    return (got["A"], got["B"]) if "A" in got and "B" in got else None
+
+
+def pair_samples(g: MakerGroup, rows: Sequence[NameRow], seed: str) -> List[NameRow]:
+    """(no database) Up to PAIR_SAMPLES of a group's mentions stating one of its makers, one a post: its oldest and
+    newest first (an old namesake shows), then the rest in a seeded order."""
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    mine = sorted((r for r in rows if r.maker and r.maker.strip() in g.names),
+                  key=lambda r: (r.at or far, r.post_id, r.n))
+    one, seen = [], set()
+    for r in mine:
+        if r.post_id not in seen:
+            seen.add(r.post_id)
+            one.append(r)
+    if len(one) <= PAIR_SAMPLES:
+        return one
+    rest = one[1:-1]
+    random.Random(int(hashlib.md5(seed.encode()).hexdigest(), 16) % 100000).shuffle(rest)
+    return [one[0], one[-1]] + rest[:PAIR_SAMPLES - 2]
+
+
+def maker_pair_input(e: Ent, n_posts: int, sides: Sequence[Tuple[MakerGroup, Sequence[NameRow], Sequence[str]]],
+                     posts: Dict[str, Any]) -> str:
+    """(no database) The question of two maker groups of one name (A, B): each group's maker names and mentions, the
+    types and dates of its mentions, the names its posts mention most (`near`), and its samples (`pair_samples`)."""
+    lines = [f'NAME "{e.name}" ({n_posts} posts; two groups of its mentions, each stating another maker)']
+    for side, (g, rows, near) in zip("AB", sides):
+        mine = [r for r in rows if r.maker and r.maker.strip() in g.names]
+        types = Counter(str(r.type or "none") for r in mine)
+        days = sorted(r.at for r in mine if r.at is not None)
+        when = f"{days[0]:%Y-%m-%d} to {days[-1]:%Y-%m-%d}" if days else "unknown"
+        lines.append(f"{side} makers: {json.dumps(sorted(g.names), ensure_ascii=False)} ({g.n} mentions) | types: "
+                     + ", ".join(f"{t} {n}" for t, n in sorted(types.items(), key=lambda kv: (-kv[1], kv[0])))
+                     + f" | posts {when} | named with: {', '.join(near) if near else 'none'}")
+        for k, r in enumerate(pair_samples(g, rows, f"{e.id}:{side}:{g.name}"), 1):
+            p = posts.get(r.post_id)
+            lines.append(f'  {side}{k}. written "{r.span}" | type {r.type} | maker {r.maker}\n     '
+                         + (_ctx(p, r.span, 170, 250) if p else ""))
+    return "\n".join(lines)
+
+
+PairTask = Tuple[str, str, Tuple[Set[str], Set[str]], List[Dict[str, Any]]]
+
+
+def _pair_tasks(cur: Any, eid: str) -> List[PairTask]:
+    """[(task id, status, (A's makers, B's makers), its valid answers oldest first)]: the entity's pair questions."""
+    cur.execute("""SELECT id::text, status, input FROM mx_tasks WHERE kind = 'collide' AND guide = %s AND a = %s
+                    ORDER BY created_at, id""", (PAIR_GUIDE, eid))
+    rows = [(tid, st, pair_sides(text)) for tid, st, text in cur.fetchall()]
+    rows = [r for r in rows if r[2] is not None]
+    answers = valid_answers(cur, [r[0] for r in rows])
+    return [(tid, st, sides, [a for _c, a in answers.get(tid) or []]) for tid, st, sides in rows]
+
+
+def pair_task_for(asked_: Sequence[PairTask], a: MakerGroup, b: MakerGroup) -> Optional[PairTask]:
+    """The newest pair question whose two groups are these two (a maker name of each on its side, either way round)."""
+    na, nb = set(a.names), set(b.names)
+    hits = [t for t in asked_ if (t[2][0] & na and t[2][1] & nb) or (t[2][0] & nb and t[2][1] & na)]
+    return hits[-1] if hits else None
+
+
+def _near_names(cur: Any, guide: Sequence[str], key: str, posts: Sequence[str]) -> Dict[str, List[str]]:
+    """{post: the other names it mentions}: one read (a pair question's co-mentioned names)."""
+    if not posts:
+        return {}
+    cur.execute("""SELECT post_id::text, min(name) FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND name_key <> %s AND name_key <> ''
+                    GROUP BY post_id, name_key""", (list(guide), list(posts), key))
+    out: Dict[str, List[str]] = defaultdict(list)
+    for pid, name in cur.fetchall():
+        out[pid].append(name)
+    return out
+
+
+def _ask_pairs(cur: Any, e: Ent, rows: Sequence[NameRow], big: Sequence[MakerGroup],
+               want: Sequence[Tuple[int, int]], guide: Sequence[str], n_posts: int) -> int:
+    """The pair questions not asked yet (each pair once, PAIR_GUIDE, under the collide kind): how many were added."""
+    from insight_core.markx import repo, schemas, tasks
+    if not want:
+        return 0
+    schemas.ensure_guides(cur)
+    shown = {k: pair_samples(big[k], rows, f"{e.id}:{k}:{big[k].name}") for k in {x for p in want for x in p}}
+    pids = sorted({r.post_id for k in shown for r in rows if r.maker and r.maker.strip() in big[k].names})
+    near = _near_names(cur, guide, e.key, pids)
+    posts = tasks.load_posts(cur, {r.post_id for rs in shown.values() for r in rs})
+
+    def named_with(g: MakerGroup) -> List[str]:
+        c: Counter = Counter()
+        for pid in {r.post_id for r in rows if r.maker and r.maker.strip() in g.names}:
+            c.update(x for x in set(near.get(pid, ())) if N.key(x) not in {N.key(m) for m in g.names})
+        return [x for x, _n in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:PAIR_NEAR]]
+    added = 0
+    for i, j in want:
+        text = maker_pair_input(e, n_posts, [(big[i], rows, named_with(big[i])), (big[j], rows, named_with(big[j]))],
+                                posts)
+        _tid, new = repo.add_task(cur, kind="collide", guide=PAIR_GUIDE, subject_kind=schemas.KINDS["collide"].subject,
+                                  input=text, a=e.id)
+        added += int(new)
+    return added
 
 
 def splits_of(cur: Any, parents: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]:
@@ -2031,8 +2198,8 @@ def _split_candidates(cur: Any, guide: Sequence[str], since: Optional[datetime])
 def _asked_makers(cur: Any, guide: Sequence[str], eid: str) -> Dict[Tuple[str, int], str]:
     """{(post, n): maker}: the mentions a settled collision question about `eid` shows, each with the maker every one of
     its answers (2+) gives the sense it puts the mention in (a mention they disagree on, or give no maker, is left)."""
-    cur.execute("""SELECT id::text, input FROM mx_tasks WHERE kind = 'collide' AND b IS NULL AND a = %s
-                      AND status = 'answered' ORDER BY created_at DESC, id LIMIT 1""", (eid,))
+    cur.execute("""SELECT id::text, input FROM mx_tasks WHERE kind = 'collide' AND guide <> %s AND b IS NULL AND a = %s
+                      AND status = 'answered' ORDER BY created_at DESC, id LIMIT 1""", (PAIR_GUIDE, eid))
     row = cur.fetchone()
     if row is None:
         return {}
@@ -2079,10 +2246,13 @@ def _post_context(cur: Any, guide: Sequence[str], key: str, posts: Sequence[str]
 
 def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = False,
                 limit: int = SPLIT_LIMIT) -> Dict[str, Any]:
-    """0250: the bare names several makers state, split by maker (above), and the new mentions of the names split
+    """0250: the bare names several makers state, split where their maker groups are different things (above: each
+    candidate pair asked once, PAIR_GUIDE; apart only on PAIR_RUNS "different"), and the new mentions of the names split
     before placed in their maker's thing. The first pass (and a full one) reads every bare name, then only those a
-    call since SPLIT_MARK named. Idempotent; `limit` names a run. Off (`families.split`): nothing."""
-    out: Counter = Counter({k: 0 for k in ("names", "split", "made", "pinned", "unsure", "kept")})
+    call since SPLIT_MARK named or whose pair question was answered since. Idempotent; `limit` names a run, PAIR_CAP
+    new questions. Off (`families.split`): nothing."""
+    out: Counter = Counter({k: 0 for k in ("names", "split", "made", "pinned", "unsure", "kept", "pairs", "asked",
+                                           "asked_again", "waiting", "one_thing", "apart")})
     if not families_on().get("split"):
         return {**out, "off": True}
     from insight_core.markx import entity_facts, repo, schemas
@@ -2093,6 +2263,10 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
     since = None if full or not mark else datetime.fromisoformat(mark) - SPLIT_MARGIN
     done = splits_of(cur)
     raw_ids = _split_candidates(cur, guide, since)
+    if since is not None:   # v10.28: and the names whose pair question was answered since
+        cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
+                        WHERE t.kind = 'collide' AND t.guide = %s AND c.created_at >= %s""", (PAIR_GUIDE, since))
+        raw_ids = sorted(set(raw_ids) | {r[0] for r in cur.fetchall() if r[0]})
     book.prime(ids=raw_ids + list(done))
     cand = {book.root(x) for x in raw_ids} | set(done)
     book.prime_clusters(cand)
@@ -2103,20 +2277,48 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
         children = dict(done.get(root) or {})
         members = sorted(set(book.cluster(root)) | set(children))
         # the current mentions (mx_mentions_now's join: the view was made before `placed`)
-        cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, NULLIF(btrim(m.maker), ''), m.placed
+        cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, NULLIF(btrim(m.maker), ''), m.placed,
+                              m.span, m.type, COALESCE(p.published_at, p.created_at)
                          FROM mx_mentions m JOIN mx_mention_sets s ON s.post_id = m.post_id AND s.guide = m.guide
+                         JOIN posts p ON p.id = m.post_id
                         WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[]) ORDER BY 1, 3""", (guide, members))
         raw = cur.fetchall()
         ours = set(members)
-        rows = [NameRow(p, g, n, x, mk) for p, g, n, x, mk, _pl in raw if book.pins.get((p, g, n), x) in ours]
-        placed = {(p, g, n): pl for p, g, n, _x, _mk, pl in raw}
+        rows = [NameRow(p, g, n, x, mk, span=sp or "", type=ty, at=at)
+                for p, g, n, x, mk, _pl, sp, ty, at in raw if book.pins.get((p, g, n), x) in ours]
+        placed = {(p, g, n): pl for p, g, n, _x, _mk, pl, *_ in raw}
         bare_posts = sorted({r.post_id for r in rows if not r.maker})
         near, sites = _post_context(cur, guide, e.key, bare_posts)
         asked = _asked_makers(cur, guide, root) if bare_posts else {}
         for r in rows:
             r.near, r.sites, r.asked = near.get(r.post_id, []), sites.get(r.post_id, []), asked.get((r.post_id, r.n))
-        plan = split_plan(book, e, rows)
+        # v10.28: each pair of its maker groups a question (asked once); a split only where every run says apart
+        pts = _pair_tasks(cur, root) if len(name_groups(book, e, rows)) >= 2 else []
+        reopen: List[str] = []
+
+        def said(a: MakerGroup, b: MakerGroup) -> Optional[str]:
+            t = pair_task_for(pts, a, b)
+            if t is None:
+                return None
+            v = pair_verdict(t[3])
+            if v is None and t[1] == "answered" and t[3]:
+                reopen.append(t[0])   # one run said apart: the next run is asked (all must agree)
+            return v
+        plan = split_plan(book, e, rows, said)
         out["names"] += 1
+        out["pairs"] += len(plan["pairs"])
+        out["apart"] += sum(1 for v in plan["pairs"].values() if v == "different")
+        out["one_thing"] += sum(1 for v in plan["pairs"].values() if v in ("same", "cant_tell"))
+        for tid in sorted(set(reopen)):
+            if _savepoint(cur, "UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL "
+                               "WHERE id = %s AND status = 'answered'", (tid,)):
+                out["asked_again"] += 1
+        big = plan["big"]
+        new = [p for p in plan["ask"] if pair_task_for(pts, big[p[0]], big[p[1]]) is None]
+        out["waiting"] += len(plan["ask"]) - len(new)
+        room = max(0, PAIR_CAP - out["asked"])
+        if new and room:
+            out["asked"] += _ask_pairs(cur, e, rows, big, new[:room], guide, len({r.post_id for r in rows}))
         if not plan["rows"]:
             continue
         groups, home = plan["groups"], plan["home"]
@@ -2124,7 +2326,8 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
         for k, g in enumerate(groups):
             if k == home:
                 continue
-            have = next((c for c, mk in children.items() if mk and maker_fits(book, mk, g.name, e.key)), None)
+            have = next((c for c, mk in children.items()
+                         if mk and any(maker_fits(book, mk, x, e.key) for x in g.names)), None)
             if have is None:
                 mk_root = maker_root(book, g.name)
                 label = book.label(mk_root) if mk_root in book.ents else g.name
@@ -3599,8 +3802,8 @@ class Asked:
             return
         self.collide.known.update(want)
         self.cur.execute("""SELECT id::text, a::text, status, input FROM mx_tasks
-                             WHERE kind = 'collide' AND b IS NULL AND a = ANY(%s::uuid[]) ORDER BY created_at, id""",
-                         (want,))
+                             WHERE kind = 'collide' AND guide <> %s AND b IS NULL AND a = ANY(%s::uuid[])
+                             ORDER BY created_at, id""", (PAIR_GUIDE, want))   # 0250: a maker pair's apart
         for tid, a, status, text in self.cur.fetchall():
             self.collide.got[a] = (tid, status, text)
 
@@ -3723,7 +3926,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         answered_pairs = {pair(a, b) for a, b in cur.fetchall()}
         # the keys whose collision answers came since the last run
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
-                        WHERE t.kind = 'collide' AND c.created_at >= %s""", (since,))
+                        WHERE t.kind = 'collide' AND t.guide <> %s AND c.created_at >= %s""", (PAIR_GUIDE, since))
         collide_since = {r[0] for r in cur.fetchall()}
     again = set(backlog(cur))   # v10.18: the open alias items decided again (the backlog, a cap a run)
     vec_seeds: Set[str] = set()

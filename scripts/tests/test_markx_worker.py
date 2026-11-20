@@ -1308,6 +1308,23 @@ class TestChain0219(unittest.TestCase):
         self.assertIn("reason", W.rule_error("chain", dict(ok, reason="  "), "THING: x", "chain-v1") or "")
 
 
+class TestCollideMakers0250(unittest.TestCase):
+    """0250 (v10.28): two maker groups of one bare name, the collide kind's guide collide-makers-v1: the worker checks
+    it by its own schema and the server's guide check (a verdict of three, its evidence never empty), not collide-v1's
+    senses."""
+
+    def test_the_answer_passes_the_workers_checks(self):
+        rules = W.server_rules()
+        schema = rules.schemas.schema_for("collide", "collide-makers-v1")
+        text = 'NAME "Vexa" (5 posts; two groups)\nA makers: ["Kestrel"] (3 mentions) | types: software 3'
+        ok = {"evidence": "A: a code tool; B: the same tool after its sale", "verdict": "same", "why": "owner_change",
+              "confidence": 0.8}
+        self.assertIsNone(W.check_answer(schema, ok))
+        self.assertIsNone(W.rule_error("collide", ok, text, "collide-makers-v1"))
+        self.assertIsNotNone(W.check_answer(schema, dict(ok, verdict="maybe")))
+        self.assertIn("evidence", W.rule_error("collide", dict(ok, evidence=" "), text, "collide-makers-v1") or "")
+
+
 class TestDerive0234(unittest.TestCase):
     """0234: the based_on check (a thing and its predecessor in one post), asked as it was measured (Haiku, effort low,
     10 a call), after chain; the server's rules accept a reason and a relation of its four, refuse an empty reason."""

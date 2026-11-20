@@ -414,6 +414,11 @@ def _collide(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def _collide_makers(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0250 (collide-makers-v1): a verdict needs its evidence (a reason of spaces is none)."""
+    return None if str(a.get("evidence") or "").strip() else "evidence: empty"
+
+
 def _relate(a: Dict[str, Any], input: str) -> Optional[str]:
     """0131: the judge's reason is its evidence (three of them on an edge): a reason of spaces is none."""
     return None if str(a.get("reason") or "").strip() else "reason: empty"
@@ -899,7 +904,8 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
 
 # 0196: a guide variant's own checks (schemas.GUIDE_VARIANTS), in place of its kind's.
 GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
-                "digest-v2": _digest_rows}   # 0245: a track brief's points cite its rows
+                "digest-v2": _digest_rows,   # 0245: a track brief's points cite its rows
+                "collide-makers-v1": _collide_makers}   # 0250: two maker groups of one bare name
 
 
 def unwrap(kind: str, answer: Any) -> Any:
