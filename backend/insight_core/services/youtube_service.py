@@ -179,6 +179,8 @@ class YouTubeService:
     # Cut the retries and put a hard wall on every invocation.
     YTDLP_HARDENING_ARGS = ("--retries", "2", "--extractor-retries", "1", "--socket-timeout", "15")
     DEFAULT_YTDLP_TIMEOUT_SECONDS = 90
+    # The test read before a channel is added (issue 0254): one listing of its newest video, while the owner waits.
+    TEST_READ_TIMEOUT_SECONDS = 45
     # A whole-channel listing legitimately takes longer than a single video.
     DEFAULT_YTDLP_PLAYLIST_TIMEOUT_SECONDS = 180
     # inspect_channel enumerates EVERY video on the channel (that count is the archive's
@@ -258,6 +260,12 @@ class YouTubeService:
         skipped: Counter = Counter()
         posts = self._hydrate_entries_to_posts(entries, source_handle, skipped=skipped)
         return checked_fetch(posts, len(entries), skipped, noun="videos")
+
+    def test_read_channel(self, source_handle: str) -> None:
+        """The channel's newest video listed, nothing hydrated (the test read before adding, issue 0254). Raises
+        yt-dlp's error (a wrong handle: "HTTP Error 404"), within TEST_READ_TIMEOUT_SECONDS."""
+        channel_ref = self._normalize_channel_ref(source_handle)
+        self._list_channel_entries(channel_ref["channel_url"], limit=1, timeout=self.TEST_READ_TIMEOUT_SECONDS)
 
     def archive_channel_posts(self, source_handle: str, start: int = 1) -> Dict[str, Any]:
         """Every video from video number `start` to the channel's oldest, newest first."""

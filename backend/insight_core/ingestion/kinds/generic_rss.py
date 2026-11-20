@@ -141,7 +141,9 @@ class GenericRssKind(BaseKind):
             # A feed with items none of which were read is an error, not "empty" (issue 0135); items
             # that would be stored as fewer posts than they are, a failure saying so (issue 0137 A1).
             parsed = parsing.parse_feed_posts(feed_text, url)
-            checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {})
+            # An item the parser could not read is skipped and said (issue 0254), the rest stored.
+            checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {},
+                                    broken=parsed.broken)
             failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning (0242)
             posts = await self._maybe_expand(source, parsed[:limit])
         result = FetchedPosts(await self._read_again(source, posts))

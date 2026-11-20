@@ -165,6 +165,26 @@ class NullKindSession:
         return None
 
 
+@dataclass(frozen=True)
+class ReadCheck:
+    """A test read that failed (BaseKind.test_read, issue 0254): its reason, and gone when the platform says the
+    account is not there (an HTTP 404 or 410): adding it is refused; any other failure (a timeout, a bot check, a
+    bridge down) may pass, and the source is added with the reason as a warning."""
+    reason: str
+    gone: bool = False
+
+
+# A platform's answer that the account is not there (issue 0254: "yt-dlp ... HTTP Error 404").
+GONE_STATUSES = (404, 410)
+GONE_WORDS = ("http error 404", "http error 410", "does not exist", "not found")
+
+
+def gone_reason(reason: str) -> bool:
+    """Whether a failed read's message says the account is not there (GONE_WORDS)."""
+    text = reason.lower()
+    return any(word in text for word in GONE_WORDS)
+
+
 @runtime_checkable
 class SourceKind(Protocol):
     name: str                                # persisted as settings.archive.source_type
@@ -313,10 +333,23 @@ def skip_reasons(skipped: Mapping[str, int]) -> str:
     return ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
-def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: str = "items") -> "FetchedPosts":
+BROKEN_ITEMS_SHOWN = 3
+
+
+def broken_items_line(broken: list) -> Optional[str]:
+    """"1 broken item skipped: the item "X" (line 2189): unclosed CDATA section" (issue 0254), None for none."""
+    if not broken:
+        return None
+    shown = "; ".join(broken[:BROKEN_ITEMS_SHOWN]) + ("; ..." if len(broken) > BROKEN_ITEMS_SHOWN else "")
+    return f"{len(broken)} broken item{'' if len(broken) == 1 else 's'} skipped: {shown}"
+
+
+def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: str = "items",
+                  broken: Optional[list] = None) -> "FetchedPosts":
     """The fetch's posts, or EmptyFetch when it had items and none became a post (issue 0135):
     "every item was skipped: <reasons>" when each was skipped for a reason, else "the feed has N
-    items but 0 were stored". Over half skipped is the posts with a warning."""
+    items but 0 were stored". Over half skipped is the posts with a warning; broken: the items the feed's parser
+    skipped (parsing.read_feed, issue 0254), always a warning."""
     total_skipped = sum(skipped.values())
     if items and not posts:
         if total_skipped >= items:
@@ -325,7 +358,7 @@ def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: 
                          + (f" ({skip_reasons(skipped)} skipped)" if total_skipped else ""))
     result = FetchedPosts(posts)
     result.failure = collapsed(posts)
-    warnings = [shared_addresses(posts)]
+    warnings = [broken_items_line(broken or []), shared_addresses(posts)]
     if items and total_skipped > items * SKIPPED_WARNING_SHARE:
         warnings.append(f"{total_skipped} of {items} {noun} skipped: {skip_reasons(skipped)}")
     result.warning = "; ".join(filter(None, warnings)) or None
@@ -377,6 +410,12 @@ class BaseKind:
 
     def host_key(self, source: Source) -> str:
         return source_host_key(source)
+
+    async def test_read(self, source: Source) -> Optional["ReadCheck"]:
+        """Why this kind cannot read the source being added (issue 0254), None when it read it or has no read of its
+        own to try: a feed's address goes through the feed finder, a platform account (a channel, an X account)
+        only this kind can read. Never raises."""
+        return None
 
     async def read_post(self, source: Source, url: str) -> Optional[dict]:
         """One page of this source read as its post, with the page's own date; None when it is no

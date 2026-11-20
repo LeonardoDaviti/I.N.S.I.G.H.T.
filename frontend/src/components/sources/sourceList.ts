@@ -313,13 +313,17 @@ export const STALLED_SOURCES_PATH = '/settings/sources?status=stalled';
 /**
  * Why a source stopped (issue 0242), or null when it works: its kind's unavailable reason ("Reddit closed its
  * feeds: add Reddit credentials in Sources → Connections"), its dead host, else "Stopped: nothing fetched for 4 days"
- * / "Stopped: failed 6 times in a row" / "Stopped: never fetched (added 10 days ago)".
+ * / "Stopped: failed 6 times in a row" / "Stopped: never fetched (added 10 days ago)". A source whose live fetch never
+ * worked but holds posts (its archive brought them, issue 0254): "Stopped: its live feed fails: <its last error>".
  */
 export function stalledNote(row: Pick<SourceHealthRow, 'stalled' | 'dead' | 'status' | 'unavailable_reason'>): string | null {
   const stalled = row.stalled;
   if (!stalled) return null;
   if (row.status === 'unavailable' && row.unavailable_reason) return `Stopped: ${row.unavailable_reason}`;
   if (row.dead) return `Stopped: ${row.dead.host} ${row.dead.reason}; switch it off or replace it`;
+  if (stalled.since === null && (stalled.posts ?? 0) > 0) {
+    return stalled.reason ? `Stopped: its live feed fails: ${stalled.reason}` : 'Stopped: its live feed has not worked yet';
+  }
   if (stalled.since === null) return `Stopped: never fetched${stalled.days !== null ? ` (added ${plural(stalled.days, 'day')} ago)` : ''}`;
   const days = stalled.days ? `nothing fetched for ${plural(stalled.days, 'day')}` : null;
   const failed = stalled.failures ? `failed ${plural(stalled.failures, 'time')} in a row` : null;

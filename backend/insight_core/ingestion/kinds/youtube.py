@@ -19,7 +19,16 @@ import urllib.parse
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from insight_core.ingestion.kinds.base import ArchivePage, BaseKind, Inspection, PolitenessProfile, Source, start_at
+from insight_core.ingestion.kinds.base import (
+    ArchivePage,
+    BaseKind,
+    Inspection,
+    PolitenessProfile,
+    ReadCheck,
+    Source,
+    gone_reason,
+    start_at,
+)
 
 YOUTUBE_HOSTS = frozenset({"www.youtube.com", "youtube.com", "m.youtube.com"})
 
@@ -49,6 +58,15 @@ class YouTubeKind(BaseKind):
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         return await asyncio.to_thread(self.youtube.fetch_live_posts, str(source["handle_or_url"]), limit)
+
+    async def test_read(self, source: Source) -> Optional[ReadCheck]:
+        """The channel's newest video listed (one short yt-dlp call, issue 0254): a wrong handle is yt-dlp's 404."""
+        try:
+            await asyncio.to_thread(self.youtube.test_read_channel, str(source["handle_or_url"]))
+            return None
+        except Exception as exc:  # noqa: BLE001 - the reason is the answer
+            reason = str(exc) or type(exc).__name__
+            return ReadCheck(reason, gone=gone_reason(reason))
 
     async def inspect(self, source: Source) -> Inspection:
         data = dict(await asyncio.to_thread(self.youtube.inspect_channel, str(source["handle_or_url"])))

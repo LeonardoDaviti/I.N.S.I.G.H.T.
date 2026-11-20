@@ -27,6 +27,12 @@ describe('stalledNote', () => {
       .toBe('Stopped: failed 5 times in a row');
     expect(stalledNote(healthRow({ status: 'error', stalled: { since: null, days: 10, failures: 3 } })))
       .toBe('Stopped: never fetched (added 10 days ago)');
+    // Issue 0254: its archive brought posts while the live feed never worked.
+    expect(stalledNote(healthRow({ status: 'backoff', stalled: { since: null, days: 4, failures: 6, posts: 48,
+      reason: 'the feed has 42 items but 1 would be stored' } })))
+      .toBe('Stopped: its live feed fails: the feed has 42 items but 1 would be stored');
+    expect(stalledNote(healthRow({ status: 'backoff', stalled: { since: null, days: 4, failures: 0, posts: 20, reason: null } })))
+      .toBe('Stopped: its live feed has not worked yet');
     expect(stalledNote(healthRow({ stalled: null }))).toBeNull();
   });
 

@@ -103,9 +103,11 @@ STALLED_FAILURES = 5
 
 
 def stalled_fields(source: Dict[str, Any], state: Optional[FetchStateRow], interval: timedelta, failures: int,
-                   enabled: bool, now: datetime) -> Optional[Dict[str, Any]]:
-    """{since, days, failures} for a source that stopped (issue 0242, the rule above): since its last success (None:
-    it never worked; days then count from when it was added). None when it is off, the owner's saved pages, or
+                   enabled: bool, now: datetime, stored: int = 0) -> Optional[Dict[str, Any]]:
+    """{since, days, failures, posts, reason} for a source that stopped (issue 0242, the rule above): since its last
+    success (None: its live fetch never worked; days then count from when it was added), the posts it holds (an
+    archive may have brought them while the live fetch failed: "its live feed fails", not "never fetched", issue
+    0254), and its last attempt's error when that attempt failed. None when it is off, the owner's saved pages, or
     working."""
     if not enabled or source.get("platform") == SAVED_PLATFORM:
         return None
@@ -115,7 +117,8 @@ def stalled_fields(source: Dict[str, Any], state: Optional[FetchStateRow], inter
     if not old and failures < STALLED_FAILURES:
         return None
     return {"since": iso(last), "days": int((now - since).total_seconds() // 86400) if since is not None else None,
-            "failures": failures}
+            "failures": failures, "posts": stored,
+            "reason": state.last_error if state is not None and last_attempt_failed(state) else None}
 
 
 EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
@@ -315,7 +318,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # Silent far beyond its own rhythm (issue 0178), and where the doctor found it went; None otherwise.
         "silent": silent_fields(source, state, status, now),
         # Stopped without anyone seeing (issue 0242): the flag on the Sources page and in the reader's nav.
-        "stalled": stalled_fields(source, state, decision.interval, failures, enabled, now),
+        "stalled": stalled_fields(source, state, decision.interval, failures, enabled, now, stored),
     }
 
 

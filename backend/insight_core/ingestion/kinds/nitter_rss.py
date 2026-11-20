@@ -20,14 +20,16 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, x_articles
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
     BaseKind,
+    GONE_STATUSES,
     Inspection,
     PolitenessProfile,
     RateLimit,
+    ReadCheck,
     Source,
     resume_counts,
     start_at,
@@ -155,6 +157,19 @@ class NitterRssKind(BaseKind):
         async for page in self._pages(str(source["handle_or_url"]), target, cursor, search_until, collected, pages,
                                       None):
             yield page
+
+    async def test_read(self, source: Source) -> Optional[ReadCheck]:
+        """The account's feed read once through the bridge (issue 0254): Nitter answers 404 for no such account."""
+        source_url = str(source["handle_or_url"])
+        try:
+            body, _ = await self.http.get_text(source_url)
+            if not parsing.parse_feed_posts(body, source_url):
+                return ReadCheck("the account's feed through the X bridge has no posts")
+            return None
+        except HttpError as exc:
+            return ReadCheck(f"the X bridge answered: {exc}", gone=exc.status in GONE_STATUSES)
+        except Exception as exc:  # noqa: BLE001 - the reason is the answer
+            return ReadCheck(f"the X bridge's feed could not be read: {exc}")
 
     async def inspect(self, source: Source) -> Inspection:
         source_url = str(source["handle_or_url"])

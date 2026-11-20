@@ -29,7 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from insight_core.db import database
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.db.repo_search import MAX_SEARCH_OFFSET, SearchQuery
-from insight_core.ingestion import run_ingestion, where_linked
+from insight_core.ingestion import feed_finder, run_ingestion, where_linked
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import page_watch
 from insight_core.ingestion.kinds import saved as saved_kind
@@ -972,11 +972,19 @@ def export_sources_opml():
 @app.post("/api/sources")
 @error_detail("add the source")
 async def add_source(request: NewSourceRequest):
-    """Add one source. 400 when it is already a source or handle_or_url is empty."""
+    """Add one source. 400 when it is already a source or handle_or_url is empty. A source only its kind can read
+    (a YouTube channel, an X account) is test-read first (issue 0254, feed_finder.test_read): 400 "Not added: ..."
+    when the platform says it is not there, else added with the reason as `warning`."""
     platform = (request.platform or "rss").strip()
     settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority"}, exclude_none=True)
     if request.page_watch is not None:
         settings["page_watch"] = request.page_watch
+    handle = (request.handle_or_url or "").strip()
+    check = await feed_finder.test_read(services().source_fetch.kinds,
+                                        {"platform": platform, "handle_or_url": handle, "settings": settings}) \
+        if handle and request.page_watch is None else None   # a page to follow: its preview read it
+    if check is not None and check.gone:
+        raise ValueError(f"Not added: {handle} can't be read: {check.reason}")
     created = await asyncio.to_thread(services().sources.add_with_settings, platform, request.handle_or_url,
                                       settings=settings, enabled=(request.state or "enabled") == "enabled")
     recognised = await _recognise_new_source(created["source_id"], platform, created["handle"], settings)
@@ -987,7 +995,8 @@ async def add_source(request: NewSourceRequest):
     archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
             "handle_or_url": created["handle"], **({"recognised": recognised} if recognised else {}),
-            **({"display_name": named} if named else {}), "archive": archive}
+            **({"display_name": named} if named else {}), "archive": archive,
+            **({"warning": check.reason} if check is not None else {})}
 
 
 async def _name_new_source(source_id: str, platform: str, handle: str, settings: Dict[str, Any]) -> Optional[str]:

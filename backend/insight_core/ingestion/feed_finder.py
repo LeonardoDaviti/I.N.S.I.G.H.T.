@@ -78,6 +78,7 @@ from typing import Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds.base import ReadCheck
 from insight_core.ingestion.kinds.nitter_rss import nitter_origin
 from insight_core.ingestion.kinds.parsing import (
     item_path,
@@ -231,6 +232,29 @@ class FeedFinding:
     reason: str = field(default="", compare=False)
     # SEARCH_ONLY when the only feed found is a saved search (issue 0137 A5).
     note: str = field(default="", compare=False)
+
+
+# The test read of a source being added (issue 0254), whatever its kind's read costs (yt-dlp's listing: its own 45s).
+TEST_READ_BUDGET_S = 60
+
+
+async def test_read(registry: KindRegistry, source: Dict[str, object]) -> Optional[ReadCheck]:
+    """Why the source being added can't be read (issue 0254, the source-adding rule: no address added that no kind
+    can read): its kind's own test read (BaseKind.test_read: a YouTube channel, an X account through the bridge),
+    None when it read it, or its kind has none (a feed or a page: find_feeds and the page-watch preview read those
+    before the Add). Never raises."""
+    try:
+        kind = registry.resolve(source)
+    except LookupError:
+        return None
+    try:
+        async with asyncio.timeout(TEST_READ_BUDGET_S):
+            return await kind.test_read(source)
+    except TimeoutError:
+        return ReadCheck(f"no answer within {TEST_READ_BUDGET_S}s")
+    except Exception as exc:  # noqa: BLE001 - a kind's failure is a reason, never the add's error
+        logger.exception("Test read of %s failed", source.get("handle_or_url"))
+        return ReadCheck(str(exc) or type(exc).__name__)
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str, known: Sequence[str] = ()) -> FeedFinding:
