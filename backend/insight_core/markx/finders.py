@@ -48,6 +48,7 @@ Only mx_* tables are written.
 """
 from __future__ import annotations
 
+from insight_core.utils import voice as _voice   # a voice count is voice.count_sql (test_voice_owner)
 import logging
 import math
 import os
@@ -513,7 +514,7 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
 # vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is exact), in a subquery the
 # planner keeps (OFFSET 0), so it is made once a post.
 # 0252: how many of the track's sources (`linkers`) link a post (its address), never the post's own source.
-LINKED_SQL = """(SELECT count(DISTINCT q.source_id) FROM post_links l JOIN posts q ON q.id = l.post_id
+LINKED_SQL = "(SELECT " + _voice.count_sql("q.source_id") + """ FROM post_links l JOIN posts q ON q.id = l.post_id
                   WHERE l.target_url = {url} AND NOT l.boilerplate AND q.source_id = ANY({linkers}::uuid[])
                     AND q.source_id <> {source})"""
 # 0252: a post with no vector is scored too when an ALWAYS finder can fire for it (from a tied source, or linked by
