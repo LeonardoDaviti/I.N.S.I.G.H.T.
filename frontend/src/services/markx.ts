@@ -692,8 +692,21 @@ export interface MarkxStoryPost {
   url: string | null;
 }
 
+/** 0250: one of a story's things: an entity its members' readings name, its best role there and how many name it. */
+export interface MarkxStoryThing {
+  id: string;
+  name: string;
+  type: string | null;
+  maker: string | null;
+  maker_id: string | null;
+  role: string;
+  posts: number;
+}
+
 export interface MarkxStoryView {
   story: { id: string; headline: string | null; first_at: string | null };
+  /** 0250: the things in this story, subject first, then by how many members name them. */
+  things?: MarkxStoryThing[];
   judged: boolean;
   sheet: MarkxSheet | null;
   header: { text: string; source: 'lab' | 'owner'; labels: number };

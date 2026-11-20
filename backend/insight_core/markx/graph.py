@@ -962,6 +962,11 @@ def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] 
                       AND EXISTS (SELECT 1 FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.from_id IN (x.a, x.b))""",
                 (RULE_STATED,))
     merged = {r[0] for r in cur.fetchall()}
+    # 0250: the posts whose mentions a pin moved since (a split by maker, the owner's split): their relations move with
+    # the mention (each side is read through its pin)
+    cur.execute("SELECT DISTINCT post_id::text FROM mx_entity_pins WHERE created_at >= %s OR undone_at >= %s",
+                (since, since))
+    merged |= {r[0] for r in cur.fetchall()}
     if counts is not None:
         counts.update(since_posts=len(out), merged_posts=len(merged), since_seconds=round(t1 - t0, 3),
                       merged_seconds=round(time.monotonic() - t1, 3))
@@ -1013,12 +1018,14 @@ def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
                       AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
                 ([RULE_STATED, I.FAMILY_RULE], on, ids, ids))
     mine = set(ids)
-    out = []
-    for a, b, rel, ev in cur.fetchall():
-        ev = ev or {}
-        out.append({"relation": rel, "direction": "out" if a in mine else "in", "other": b if a in mine else a,
-                    "since": ev.get("since"), "posts": ev.get("posts") or []})
-    return out
+    rows = [{"relation": rel, "a": a, "b": b, "posts": (ev or {}).get("posts") or [], "since": (ev or {}).get("since")}
+            for a, b, rel, ev in cur.fetchall()]
+    # 0250: a `released` one post states, its maker not the thing's settled maker, is held (a namesake's, or a split
+    # not settled yet): kept, not shown, until a second post states it
+    held = I.held_released(cur, rows, None)
+    return [{"relation": r["relation"], "direction": "out" if r["a"] in mine else "in",
+             "other": r["b"] if r["a"] in mine else r["a"], "since": r["since"], "posts": r["posts"]}
+            for k, r in enumerate(rows) if k not in held]
 
 
 # ---- 2. the judge: candidates, the input, the verdicts -----------------------------------------------------

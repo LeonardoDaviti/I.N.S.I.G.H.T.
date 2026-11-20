@@ -1756,10 +1756,11 @@ def family_under(w: Writer, org: str, fam_key: str, type_: Optional[str], maker:
 
 def families_on() -> Dict[str, bool]:
     """0230's switches (entity_bands.json `families`): `maker` (another maker's thing leaves the family), `stem` (a
-    member's name is never a family), `namesakes` (a relation never crosses two makers' namesakes). Off until the
-    labelled sample passes the bar."""
+    member's name is never a family), `namesakes` (a relation never crosses two makers' namesakes); 0250's: `split` (a
+    bare name several makers state splits into one thing a maker, `split_names`), `released_held` (a single post's
+    `released` whose maker is not the thing's settled maker is held, `held_released`). Off until measured."""
     got = bands().get("families") or {}
-    return {k: bool(got.get(k, False)) for k in ("maker", "stem", "namesakes")}
+    return {k: bool(got.get(k, False)) for k in ("maker", "stem", "namesakes", "split", "released_held")}
 
 
 FAMILY_RULE = "family_maker"     # the based_on edge of a thing another maker made from a family
@@ -1804,19 +1805,36 @@ def family_makers(book: Book, root: str) -> Optional[List[str]]:
     names = [x for x in book.cluster(root) if book.ents[x].level not in VERSION_LEVELS]
     fam = book.ents[root].key
     votes = Counter((book.ents[x].maker or "").strip() for x in ms + names if x in book.ents)
-    votes.pop("", None)
-    groups: List[List[Any]] = []
-    for name, n in sorted(votes.items(), key=lambda kv: (-kv[1], kv[0])):
-        g = next((g for g in groups if maker_fits(book, name, g[0], fam)), None)
-        if g is None:
-            groups.append([name, n])
-        else:
-            g[1] += n
-    total = sum(votes.values())
+    groups = maker_groups(book, votes, fam)
+    total = sum(g.n for g in groups)
     got = None if total < FAMILY_MAKER_MIN else \
-        [g[0] for k, g in enumerate(groups) if k == 0 or g[1] >= FAMILY_MAKER_SHARE * total]
+        [g.name for k, g in enumerate(groups) if k == 0 or g.n >= FAMILY_MAKER_SHARE * total]
     cache[root] = got
     return got
+
+
+@dataclass
+class MakerGroup:
+    """0250: the stated makers that are one maker (`maker_fits`): its most stated name, how many state it, its names."""
+    name: str
+    n: int
+    names: List[str] = field(default_factory=list)
+
+
+def maker_groups(book: Book, votes: Dict[str, int], family: Optional[str] = None) -> List[MakerGroup]:
+    """0230/0250: stated makers {name: how many state it} grouped into makers, the most stated first: a name joins the
+    first group one of whose names it fits (one cluster by their aliases, one's words in the other's, or one names
+    `family`, the name's key). The one rule both a family's makers and a bare name's makers are read by."""
+    groups: List[MakerGroup] = []
+    for name, n in sorted(((k.strip(), v) for k, v in votes.items() if (k or "").strip()), key=lambda kv: (-kv[1], kv[0])):
+        g = next((g for g in groups if any(maker_fits(book, name, x, family) for x in g.names)), None)
+        if g is None:
+            groups.append(MakerGroup(name, n, [name]))
+        else:
+            g.n += n
+            g.names.append(name)
+    groups.sort(key=lambda g: (-g.n, g.name))
+    return groups
 
 
 def family_stem(book: Book, parent: Optional[str]) -> Optional[str]:
@@ -1886,6 +1904,306 @@ def based_on_family(cur: Any, thing: str, family: str, *, maker: Optional[str], 
                 (thing, family, FAMILY_RULE, run_id,
                  json.dumps({"maker": maker, "family_makers": list(makers or [])})))
     return cur.rowcount
+
+
+# ---- 0250: one bare name, several makers' things ----------------------------------------------------------------
+# 0230's maker rule, deepened from a versioned name's family to a bare name: a one-word thing ("Vexa") whose mentions
+# state several makers, each named by SPLIT_MIN or more of them and none one maker with another (`maker_groups`: one
+# cluster by their aliases, one's words in the other's), is one thing a maker. The maker its entity states (else the
+# most stated) keeps the entity, its id and every redirect to it; each other maker's thing is a new entity "<name>
+# (<maker>)" under its maker, its mentions pinned there (mx_entity_pins by 'facts', the link each left in
+# from_entity: undoable), recorded in mx_entity_fixes (kind SPLIT_KIND: the parent, the maker). A mention stating no
+# maker goes by its post: the makers it names otherwise (its org and person mentions, the same name's stated maker),
+# else the post's links (a site named by one maker), else the settled collision question's answer (the `collide`
+# kind, asked by identity.collisions: a name whose mentions state 2+ makers is asked once); else it stays on the
+# entity, placed 'unsure'. Nothing is deleted; behind entity_bands.json `families.split`.
+SPLIT_KIND = "maker_split"
+SPLIT_MIN = 2                    # a maker this many of a bare name's mentions state is a thing of its own
+SPLIT_LIMIT = 200                # names a run splits or places (the rest wait for the next run)
+SPLIT_MARK = "maker_split_since"   # mx_settings: the clock of the step's last pass (the calls since are read)
+SPLIT_MARGIN = timedelta(minutes=5)
+SPLIT_TYPES = ("model", "product", "software", "project", "dataset")
+
+
+@dataclass
+class NameRow:
+    """One mention of a bare name, as the split reads it."""
+    post_id: str
+    guide: str
+    n: int
+    entity_id: Optional[str]
+    maker: Optional[str] = None
+    near: List[str] = field(default_factory=list)    # the makers its post names otherwise
+    sites: List[str] = field(default_factory=list)   # its post's link sites
+    asked: Optional[str] = None                      # the maker the settled collision answer gives it
+
+
+def bare_thing(e: Optional[Ent]) -> bool:
+    """A thing of one word with no digit (a name only its makers and posts can tell apart), of a product type."""
+    if e is None or e.level != "thing" or e.status == "not_entity" or schemas_type(e.type) not in SPLIT_TYPES:
+        return False
+    words = (e.key or "").split()
+    return len(words) == 1 and not any(c.isdigit() for c in words[0])
+
+
+def _site_words(site: str) -> Set[str]:
+    """A link site's labels but its last ("deepmind.google" -> deepmind), squashed."""
+    parts = [p for p in (site or "").lower().split(".") if p]
+    return {N.squash(p) for p in parts[:-1] if len(p) >= 3}
+
+
+def _maker_words(name: str) -> Set[str]:
+    """A maker's name squashed whole, and each of its words of 4+ letters that is no corporate word."""
+    k = N.key(name)
+    return {N.squash(k)} | {w for w in k.split() if len(w) >= 4 and w not in CORP_WORDS}
+
+
+def split_plan(book: Book, e: Ent, rows: Sequence[NameRow]) -> Dict[str, Any]:
+    """(no database) A bare name's split: {groups: the makers SPLIT_MIN+ mentions state, home: the index of the one the
+    entity keeps (its own stated maker's, else the most stated), rows: {(post, guide, n): (group index or None, how)}};
+    rows {} when fewer than two makers qualify (one thing, or too few to tell)."""
+    votes = Counter((r.maker or "").strip() for r in rows if r.maker and N.key(r.maker) != e.key)
+    big = [g for g in maker_groups(book, votes, e.key) if g.n >= SPLIT_MIN]
+    if len(big) < 2:
+        return {"groups": big, "home": 0 if big else None, "rows": {}}
+    home = next((k for k, g in enumerate(big) if e.maker and maker_fits(book, e.maker, g.name, e.key)), 0)
+
+    def which(maker: Optional[str]) -> Optional[int]:
+        if not (maker or "").strip():
+            return None
+        exact = [k for k, g in enumerate(big) if maker.strip() in g.names]
+        hits = exact or [k for k, g in enumerate(big) if maker_fits(book, maker, g.name, e.key)]
+        return hits[0] if len(hits) == 1 else None
+    words = [set().union(*(_maker_words(x) for x in g.names)) for g in big]
+    out: Dict[Tuple[str, str, int], Tuple[Optional[int], str]] = {}
+    for r in rows:
+        at = (r.post_id, r.guide, r.n)
+        if r.maker and N.key(r.maker) != e.key:
+            k = which(r.maker)
+            out[at] = (k, "rule:maker") if k is not None else (None, "unsure")
+            continue
+        ks = {which(x) for x in r.near} - {None}
+        if len(ks) == 1:
+            out[at] = (ks.pop(), "rule:post")
+            continue
+        ks = {k for k, w in enumerate(words) if any(_site_words(s) & w for s in r.sites)}
+        if len(ks) == 1:
+            out[at] = (ks.pop(), "rule:link")
+            continue
+        k = which(r.asked)
+        out[at] = (k, "facts") if k is not None else (None, "unsure")
+    return {"groups": big, "home": home, "rows": out}
+
+
+def splits_of(cur: Any, parents: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]:
+    """{parent: {child: the maker it is the thing of}}: the current maker splits (of `parents`, else every one)."""
+    ids = None if parents is None else sorted(set(parents))
+    if ids is not None and not ids:
+        return {}
+    cur.execute(f"""SELECT old->>'entity', entity_id::text, new->>'maker' FROM mx_entity_fixes
+                     WHERE kind = %s AND undone_at IS NULL {"AND old->>'entity' = ANY(%s)" if ids is not None else ""}
+                     ORDER BY at, id""", (SPLIT_KIND, ids) if ids is not None else (SPLIT_KIND,))
+    out: Dict[str, Dict[str, str]] = defaultdict(dict)
+    for parent, child, maker in cur.fetchall():
+        out[parent][child] = maker
+    return dict(out)
+
+
+def _split_candidates(cur: Any, guide: Sequence[str], since: Optional[datetime]) -> List[str]:
+    """The bare things whose current mentions state 2+ makers (`since`: of those a call since named)."""
+    where = ""
+    params: Dict[str, Any] = {"g": list(guide), "t": list(SPLIT_TYPES)}
+    if since is not None:
+        cur.execute("""SELECT DISTINCT m.entity_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
+                        WHERE m.guide = ANY(%s) AND c.created_at >= %s AND m.entity_id IS NOT NULL
+                          AND NULLIF(btrim(m.maker), '') IS NOT NULL""", (list(guide), since))
+        params["ids"] = [r[0] for r in cur.fetchall()]
+        if not params["ids"]:
+            return []
+        where = "AND m.entity_id = ANY(%(ids)s::uuid[])"
+    cur.execute(f"""SELECT m.entity_id::text FROM mx_mentions_now m JOIN mx_entities e ON e.id = m.entity_id
+                     WHERE m.guide = ANY(%(g)s) AND e.level = 'thing' AND e.status <> 'not_entity' AND e.type = ANY(%(t)s)
+                       AND e.key !~ '[[:space:][:digit:]]' AND NULLIF(btrim(m.maker), '') IS NOT NULL {where}
+                     GROUP BY 1 HAVING count(DISTINCT lower(btrim(m.maker))) >= 2 ORDER BY 1""", params)
+    return [r[0] for r in cur.fetchall()]
+
+
+def _asked_makers(cur: Any, guide: Sequence[str], eid: str) -> Dict[Tuple[str, int], str]:
+    """{(post, n): maker}: the mentions a settled collision question about `eid` shows, each with the maker every one of
+    its answers (2+) gives the sense it puts the mention in (a mention they disagree on, or give no maker, is left)."""
+    cur.execute("""SELECT id::text, input FROM mx_tasks WHERE kind = 'collide' AND b IS NULL AND a = %s
+                      AND status = 'answered' ORDER BY created_at DESC, id LIMIT 1""", (eid,))
+    row = cur.fetchone()
+    if row is None:
+        return {}
+    calls = valid_answers(cur, [row[0]]).get(row[0]) or []
+    if len(calls) < 2:
+        return {}
+    said: Dict[int, Set[str]] = defaultdict(set)
+    for _cid, ans in calls[:COLLIDE_RUNS]:
+        got: Dict[int, str] = {}
+        for s in ans.get("senses") or []:
+            for x in s.get("m") or []:
+                if str(x).isdigit():
+                    got[int(x)] = (s.get("maker") or "").strip()
+        for k in set(said) | set(got):
+            said[k].add(got.get(k, ""))
+    agreed = {k: next(iter(v)) for k, v in said.items() if len(v) == 1 and next(iter(v))}
+    if not agreed:
+        return {}
+    found = match_pick(cur, list(guide), eid, row[1] or "")
+    return {(pid, mn): agreed[k] for k, hits in found.items() if k in agreed for pid, mn in hits}
+
+
+def _post_context(cur: Any, guide: Sequence[str], key: str, posts: Sequence[str]
+                  ) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+    """({post: the makers it names otherwise: its org and person mentions' names, the stated makers of its mentions of
+    the name `key`}, {post: its link sites}): one read of each."""
+    near: Dict[str, List[str]] = defaultdict(list)
+    sites: Dict[str, List[str]] = defaultdict(list)
+    if not posts:
+        return near, sites
+    cur.execute("""SELECT post_id::text, name, type, maker, name_key FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])""", (list(guide), list(posts)))
+    for pid, name, typ, maker, nk in cur.fetchall():
+        if schemas_type(typ) in ORGISH and name and N.key(name) != key:
+            near[pid].append(name)
+        elif nk == key and (maker or "").strip():
+            near[pid].append(maker)
+    cur.execute("SELECT post_id::text, target_site FROM post_links WHERE post_id = ANY(%s::uuid[]) AND NOT boilerplate",
+                (list(posts),))
+    for pid, site in cur.fetchall():
+        sites[pid].append(site)
+    return near, sites
+
+
+def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = False,
+                limit: int = SPLIT_LIMIT) -> Dict[str, Any]:
+    """0250: the bare names several makers state, split by maker (above), and the new mentions of the names split
+    before placed in their maker's thing. The first pass (and a full one) reads every bare name, then only those a
+    call since SPLIT_MARK named. Idempotent; `limit` names a run. Off (`families.split`): nothing."""
+    out: Counter = Counter({k: 0 for k in ("names", "split", "made", "pinned", "unsure", "kept")})
+    if not families_on().get("split"):
+        return {**out, "off": True}
+    from insight_core.markx import entity_facts, repo, schemas
+    guide = schemas.mention_guides()
+    cur.execute("SELECT now()")
+    started = cur.fetchone()[0]
+    mark = repo.get_setting(cur, SPLIT_MARK, default=None)
+    since = None if full or not mark else datetime.fromisoformat(mark) - SPLIT_MARGIN
+    done = splits_of(cur)
+    raw_ids = _split_candidates(cur, guide, since)
+    book.prime(ids=raw_ids + list(done))
+    cand = {book.root(x) for x in raw_ids} | set(done)
+    book.prime_clusters(cand)
+    todo = sorted(r for r in cand if r and bare_thing(book.ents.get(r)))
+    left = len(todo) > limit
+    for root in todo[:limit]:
+        e = book.ents[root]
+        children = dict(done.get(root) or {})
+        members = sorted(set(book.cluster(root)) | set(children))
+        # the current mentions (mx_mentions_now's join: the view was made before `placed`)
+        cur.execute("""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, NULLIF(btrim(m.maker), ''), m.placed
+                         FROM mx_mentions m JOIN mx_mention_sets s ON s.post_id = m.post_id AND s.guide = m.guide
+                        WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[]) ORDER BY 1, 3""", (guide, members))
+        raw = cur.fetchall()
+        ours = set(members)
+        rows = [NameRow(p, g, n, x, mk) for p, g, n, x, mk, _pl in raw if book.pins.get((p, g, n), x) in ours]
+        placed = {(p, g, n): pl for p, g, n, _x, _mk, pl in raw}
+        bare_posts = sorted({r.post_id for r in rows if not r.maker})
+        near, sites = _post_context(cur, guide, e.key, bare_posts)
+        asked = _asked_makers(cur, guide, root) if bare_posts else {}
+        for r in rows:
+            r.near, r.sites, r.asked = near.get(r.post_id, []), sites.get(r.post_id, []), asked.get((r.post_id, r.n))
+        plan = split_plan(book, e, rows)
+        out["names"] += 1
+        if not plan["rows"]:
+            continue
+        groups, home = plan["groups"], plan["home"]
+        to: Dict[int, str] = {}
+        for k, g in enumerate(groups):
+            if k == home:
+                continue
+            have = next((c for c, mk in children.items() if mk and maker_fits(book, mk, g.name, e.key)), None)
+            if have is None:
+                mk_root = maker_root(book, g.name)
+                label = book.label(mk_root) if mk_root in book.ents else g.name
+                up = _maker_entity(w, g.name, e.first_seen)
+                have = w.entity(type_=e.type, name=f"{e.name} ({label})", key=N.key(f"{e.name} ({label})"),
+                                level="thing", parent=up, maker=g.name, fields=dict(N.NONE), first_seen=e.first_seen)
+                cur.execute("""INSERT INTO mx_entity_fixes (kind, entity_id, field, old, new, evidence, run_id)
+                               VALUES (%s, %s, 'split', %s::jsonb, %s::jsonb, %s::jsonb, %s)""",
+                            (SPLIT_KIND, have, json.dumps({"entity": root, "key": e.key, "name": e.name}),
+                             json.dumps({"maker": g.name, "maker_id": mk_root}),
+                             json.dumps({"makers": {x.name: x.n for x in groups}, "names": g.names,
+                                         "home": groups[home].name}), run_id))
+                children[have] = g.name
+                out["made"] += 1
+            to[k] = have
+        if root not in done:
+            out["split"] += 1
+        marks: List[Tuple[str, str, str, int]] = []
+        for r in rows:
+            k, how = plan["rows"].get((r.post_id, r.guide, r.n), (None, "unsure"))
+            dest = to.get(k) if k is not None else None
+            if dest is not None and book.pins.get((r.post_id, r.guide, r.n), r.entity_id) != dest:
+                if entity_facts.pin(cur, book, r, dest, call_id=None):
+                    cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s AND guide = %s AND n = %s",
+                                (dest, r.post_id, r.guide, r.n))
+                    out["pinned"] += 1
+            elif k is None:
+                out["unsure"] += 1
+            elif dest is None:
+                out["kept"] += 1
+            if placed.get((r.post_id, r.guide, r.n)) in (None, "wait"):
+                marks.append((how, r.post_id, r.guide, r.n))
+        if marks:
+            cur.executemany("UPDATE mx_mentions SET placed = %s WHERE post_id = %s AND guide = %s AND n = %s", marks)
+        # two things live: the entity is shown under its maker too ("<name> (<maker>)"; never over an owner's name)
+        hm = groups[home].name
+        hr = maker_root(book, hm)
+        shown_ = f"{e.name} ({book.label(hr) if hr in book.ents else hm})"
+        if e.shown_name != shown_:
+            cur.execute("""UPDATE mx_entities SET shown_name = %s, shown_by = 'split'
+                            WHERE id = %s AND shown_by IS DISTINCT FROM 'owner'""", (shown_, root))
+            if cur.rowcount:
+                e.shown_name = shown_
+    if not left:
+        repo.set_setting(cur, SPLIT_MARK, started.isoformat())
+    return {**out, "left": left}
+
+
+def held_released(cur: Any, rows: Sequence[Dict[str, Any]], root: Any) -> Set[int]:
+    """0250: of an entity page's relations [{relation, a, b, posts}], the indexes of a `released` only one post states
+    whose maker (a) is not the thing's (b's) settled maker: its entity's stated maker, known and not one maker with a
+    (the same key, one's words in the other's, or one cluster by their aliases). Held, never shown, until a second post
+    states it (a namesake's release on one name's page, before or while its split settles). Off (`released_held`):
+    none."""
+    want = [k for k, r in enumerate(rows) if r["relation"] == "released" and len(r.get("posts") or []) <= 1]
+    if not want or not families_on().get("released_held"):
+        return set()
+    ids = sorted({x for k in want for x in (rows[k]["a"], rows[k]["b"])})
+    cur.execute("SELECT id::text, type, name, maker FROM mx_entities WHERE id = ANY(%s::uuid[])", (ids,))
+    ents = {i: (t, n, mk) for i, t, n, mk in cur.fetchall()}
+    pairs: Dict[int, Tuple[str, str]] = {}
+    for k in want:
+        a, b = ents.get(rows[k]["a"]), ents.get(rows[k]["b"])
+        if not a or not b:
+            continue
+        said = N.key(a[1]) if schemas_type(a[0]) in ORGISH else N.key(a[2])
+        have = N.key(b[2])
+        if said and have and said != have and not (_words_in(said, have) or _words_in(have, said)):
+            pairs[k] = (said, have)
+    if not pairs:
+        return set()
+    keys = sorted({x for p in pairs.values() for x in p})
+    cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases WHERE key = ANY(%s)", (keys,))
+    got = cur.fetchall()
+    if root is None:   # the page's merges (a page's book: the redirects read whole, they are few)
+        root = lazy_book(cur).root
+    where = {k: root(e) for k, e in got}
+    return {k for k, (said, have) in pairs.items()
+            if where.get(said) is None or where.get(have) is None or where[said] != where[have]}
 
 
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:

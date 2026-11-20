@@ -22,7 +22,7 @@
 #                      `head` runs the head side on <db> (restored again from the same export) and reports
 #                      against STASH. The caller restores <db> before each side and drops it after.
 #
-# Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
+# Env: CASES (plan/research/lab/cases.json), JOURNEYS (plan/research/lab/journeys.json, 0250), OUT (plan/research/lab/checks), PG_SRC (where <db> is), PG (the scratch
 # server; default scripts/scratch-db.sh's), SCRATCH_DB=0 (copies on PG_SRC), SCRATCH_A / SCRATCH_B (the
 # scratch copies' names: <db>_check_<pid>_a / _b, one pair per run),
 # NETWORK (insight_insight-network), RESOURCE_BUDGETS (JSON: the jobs' budgets for this run, checks/resources.py).
@@ -72,6 +72,7 @@ NETWORK="${NETWORK:-insight_insight-network}"
 # plan/research/ is private and lives in the main checkout only (a worktree has none): read it there.
 MAIN_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
 CASES="${CASES:-$MAIN_ROOT/plan/research/lab/cases.json}"
+JOURNEYS="${JOURNEYS:-$MAIN_ROOT/plan/research/lab/journeys.json}"   # 0250: the journeys' hard set (private)
 OUT="${OUT:-$MAIN_ROOT/plan/research/lab/checks}"
 # Each run has its own copies (its process id), so runs at the same time never share or drop each other's.
 SCRATCH_A="${SCRATCH_A:-${DB}_check_$$_a}"
@@ -130,11 +131,12 @@ for side in base head; do   # the checks run on any version: the newest copy of 
      "$WORK/trees/$side/backend/insight_core/scripts/"
 done
 if [ -f "$CASES" ]; then cp "$CASES" "$WORK/cases.json"; fi
+if [ -f "$JOURNEYS" ]; then cp "$JOURNEYS" "$WORK/journeys-set.json"; fi
 
 run_side() {   # run_side <side> <db> [env…]
   local side="$1" db="$2"; shift 2
   docker run --rm --name "$RUN_ID-$side" --network "$NETWORK" -v "$WORK/trees/$side/backend:/app:ro" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" \
-    -w "/work/$side" -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 -e CASES=/work/cases.json "$@" \
+    -w "/work/$side" -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 -e CASES=/work/cases.json -e JOURNEYS=/work/journeys-set.json "$@" \
     "$IMAGE" sh /app/insight_core/checks/side.sh "$PG/$db" "$side" "$NOW"
 }
 
@@ -200,8 +202,9 @@ else
                    backend/insight_core/checks backend/insight_core/scripts/check_cases.py \
                    backend/insight_core/scripts/check_invariants.py) | sha256sum | cut -c1-64)"
   CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
+  JOURNEYS_SHA="$( [ -f "$WORK/journeys-set.json" ] && sha256sum < "$WORK/journeys-set.json" | cut -c1-64 || echo none)"
   IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
-  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA image=$IMAGE_ID now=$NOW copy=analyzed-v1"   # copy: how the copies are prepared (a change there is a new key)
+  KEY_TEXT="base_tree=$BASE_TREE dump=$(cat "$WORK/dump.sha") checks=$CHECKS_SHA cases=$CASES_SHA journeys=$JOURNEYS_SHA image=$IMAGE_ID now=$NOW copy=analyzed-v1"   # copy: how the copies are prepared (a change there is a new key)
   KEY="$(echo "$KEY_TEXT" | sha256sum | cut -c1-24)"
   CACHED=""
   if [ "$NO_CACHE" != "1" ] && [ -f "$CACHE_DIR/$KEY/key.txt" ] && [ -d "$CACHE_DIR/$KEY/base" ]; then CACHED="$CACHE_DIR/$KEY"; fi

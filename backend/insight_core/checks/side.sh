@@ -1,8 +1,9 @@
 #!/bin/sh
 # One version's checks over its own scratch copy (issue 0075; called by scripts/realdata-check.sh inside a
 # container: the version's code at /app, its outputs in the current directory).
-#   side.sh <scratch dsn> <name> [now]     env: IDENTITY, CASES, NO_JOB, PARTS, PARTS_ONLY
-# Writes job.json, deploy.json, snapshot.json, invariants.json, jobs.json, cases.json and their logs; never prints a DSN.
+#   side.sh <scratch dsn> <name> [now]     env: IDENTITY, CASES, JOURNEYS, NO_JOB, PARTS, PARTS_ONLY
+# Writes job.json, deploy.json, snapshot.json, invariants.json, journeys.json, jobs.json, cases.json and their logs;
+# never prints a DSN.
 set -u
 DSN="$1"; NAME="$2"; NOW="${3:-}"
 NOWARG=""; [ -n "$NOW" ] && NOWARG="--now $NOW"
@@ -23,6 +24,10 @@ python -m insight_core.checks.snapshot --db "$DSN" --out snapshot.json --parts "
 step "invariants"
 python -m insight_core.scripts.check_invariants --db "$DSN" --json invariants.json $NOWARG > invariants.log 2>&1 \
   || step "invariants FAILED (invariants.log)"
+# 0250: the journeys (a reader's walks, each page checked against the one before; the hard set from JOURNEYS, private)
+step "journeys"
+python -m insight_core.checks.journeys --db "$DSN" --json journeys.json ${JOURNEYS:+--hard "$JOURNEYS"} $NOWARG > journeys.log 2>&1 \
+  || step "journeys FAILED (journeys.log)"
 if [ -n "${CASES:-}" ] && [ -f "$CASES" ]; then
   step "cases"
   python -m insight_core.scripts.check_cases --db "$DSN" --cases "$CASES" --json cases.json $NOWARG > cases.log 2>&1

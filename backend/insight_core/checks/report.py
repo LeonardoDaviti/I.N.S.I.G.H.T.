@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from insight_core.checks import diff, resources
+from insight_core.checks import diff, journeys, resources
 
 
 # What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
@@ -39,7 +39,7 @@ def _load(path: str) -> Optional[Any]:
 
 def _found(side: str) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
-    for name in ("deploy.json", "invariants.json", "jobs.json"):
+    for name in ("deploy.json", "invariants.json", "jobs.json", "journeys.json"):   # 0250: the journeys' counts too
         data = _load(os.path.join(side, name)) or {"found": []}
         out.update({f["name"]: f for f in data["found"]})
     return out
@@ -56,7 +56,7 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         if job:
             lines.append(f"- {label}: story job (full) {job.get('wall_seconds')} s, {job.get('posts')} posts, {job.get('stories')} stories, "
                          f"News {job.get('news')}, Classics {job.get('classics')}; clock {job.get('now')}.")
-        for step in ("snapshot", "invariants", "cases", "jobs", "resources"):
+        for step in ("snapshot", "invariants", "cases", "jobs", "resources", "journeys"):
             log = os.path.join(side, f"{step}.log")
             if step != "cases" and os.path.exists(log) and not os.path.exists(os.path.join(side, f"{step}.json")):
                 problems.append(f"{label}: {step} produced nothing (see {step}.log)")
@@ -116,6 +116,11 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
             # A version's finding may hold no list here (main's markx.api_during_run under load put its seconds there).
             examples = h.get("examples") if isinstance(h.get("examples"), list) else []
             lines.append(f"- `{name}`: " + "; ".join(str(e) for e in examples) + (f" ({h['note']})" if h.get("note") else ""))
+
+    # B1. the journeys (0250): each step's right / wrong / missed on both versions, the head's rows in the breakage format
+    jb, jh = _load(os.path.join(base, "journeys.json")), _load(os.path.join(head, "journeys.json"))
+    lines += ["", "## B1. The journeys", "", "A count above in table B fails like an invariant's (a step that broke).", ""]
+    lines += journeys.lines(jb, jh, labels)
 
     # B2. the jobs' resources (0218): each job's own peak memory and seconds, against its budget and the base
     rb, rh = _load(os.path.join(base, "resources.json")), _load(os.path.join(head, "resources.json"))

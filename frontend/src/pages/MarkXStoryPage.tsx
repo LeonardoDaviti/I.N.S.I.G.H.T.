@@ -9,6 +9,7 @@ import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how th
 import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
 import { AlsoInRoundups } from '../components/markx/MarkXRoundup';   // 0181: also in round-ups
 import { StoryChain } from '../components/markx/MarkXChain';   // 0219: what led to it, what followed
+import { StoryThings } from '../components/markx/MarkXEntities';   // 0250: the things in it, each a link to its page
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 
@@ -41,6 +42,7 @@ export default function MarkXStoryPage() {
         meta={`${plural(d.counts.members, 'member')} · ${plural(d.counts.worth, 'worth opening', 'worth opening')}`}>
         <div className="space-y-6">
           <p className="text-[0.8125rem] text-fg-2"><TextLink to="/markx" muted>Mark X News</TextLink></p>
+          <StoryThings things={d.things} />
           <p className="text-[0.75rem] leading-5 text-fg-3" data-header={d.header.source}>{d.header.text}</p>
           {!d.judged ? (
             <EmptyState title="Not judged yet"

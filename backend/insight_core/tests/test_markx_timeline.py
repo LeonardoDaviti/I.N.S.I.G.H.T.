@@ -236,11 +236,15 @@ class Timeline(_Db):
         self.assertIn(("release", rel), rows)
         self.assertIn(("release", launch), rows)
         months = [i for i in tl["items"] if i["kind"] == "outside"]
-        self.assertEqual(sum(i["n"] for i in months), 3)
+        self.assertEqual(months, [])                       # 0250: posts that only name it are no outside events
         self.assertEqual([i["at"] for i in tl["items"]], sorted(i["at"] for i in tl["items"]))
         self.assertEqual(tl["shown"], sum(1 for i in tl["items"] if i["top"]))
-        self.assertTrue(all(i.get("named_only") for i in months))                  # mentions only: not among the top
-        self.assertFalse(any(i["top"] for i in months))
+        for k, o in enumerate(outs[:2]):                   # about it, they are (each in its month)
+            self.cur.execute("UPDATE mx_mentions SET role = %s WHERE post_id = %s", (("subject", "compared")[k], o))
+        tl = entity_views.entity_page(self.cur, kite, now=T0 + 2 * D)["timeline"]
+        months = [i for i in tl["items"] if i["kind"] == "outside"]
+        self.assertEqual(sum(i["n"] for i in months), 2)
+        self.assertFalse(any(i.get("named_only") for i in months))
 
     def test_a_post_that_only_names_it_is_never_its_birth_or_first_outside_mention(self):
         birth, linker, rel, outs, launch = self.thing()
@@ -253,7 +257,7 @@ class Timeline(_Db):
         self.assertEqual(first["named_since"], T0 - 400 * D)
         self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [linker])
         months = [i for i in tl["items"] if i["kind"] == "outside"]
-        self.assertEqual(sum(i["n"] for i in months), 4)                              # counted in its month
+        self.assertEqual(months, [])                       # 0250: only naming it, no outside event either
 
     def test_the_eight_most_important_are_shown_first(self):
         self.thing()

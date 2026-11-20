@@ -26,6 +26,9 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
      maker in front of the family's name; identity.Book.product_of) merges into its family (rule 'product_account'),
      never left an org; its shown type is the family's. Step 1 has cut it out of the maker's cluster first (Book.sides
      counts it on the family side).
+  4b. `names` (0250): a bare name whose mentions state several makers splits into one thing a maker
+     (identity.split_names, the family maker rule deepened; entity_bands.json `families.split`), the new mentions of
+     a name split before placed each run; the last step, a step like the others under the stage's budget.
   5. `shown`: the name and type each cluster is shown under, by evidence (mx_entities.shown_name, shown_type, on the
      root): the member name the most distinct sources write (then posts), counting no span written as a handle nor
      a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
@@ -66,7 +69,7 @@ def config() -> Dict[str, Any]:
     return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
             "reparent": got.get("reparent", True),
             "families": got.get("families", True), "shown": got.get("shown", True),
-            "family_home": got.get("family_home", True)}
+            "family_home": got.get("family_home", True), "names": got.get("names", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -707,7 +710,8 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
           deadline: Optional[float] = None) -> Dict[str, Any]:
     """The shown name and type of `roots` (None: every cluster, from `after` in id order, in chunks, stopping past
     `deadline` after a chunk; {done, after} says where). Writes only what changed; never an owner's rename."""
-    cur.execute("SELECT id::text FROM mx_entities WHERE shown_by = 'owner'")
+    # an owner's rename, and (0250) a split name's "<name> (<maker>)" (identity.split_names), are never replaced here
+    cur.execute("SELECT id::text FROM mx_entities WHERE shown_by IN ('owner', 'split')")
     owners = {r[0] for r in cur.fetchall()}
     # v10.22 (0216): the clusters of two or more names; any other root is a cluster of one, itself (book.members() of
     # every root made a set for each of the server's 330k entities, ~90 MB, every run)
@@ -806,7 +810,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home")
+STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names")
 GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
 
 
@@ -824,7 +828,9 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
              "product_accounts": lambda: product_accounts(cur, book, run_id=run_id),
              "reparent": lambda: reparent(cur, book, w, run_id=run_id),
              "families": lambda: merge_families(cur, book, run_id=run_id),
-             "family_home": lambda: family_home(cur, book, w, run_id=run_id)}
+             "family_home": lambda: family_home(cur, book, w, run_id=run_id),
+             # 0250: a bare name several makers state, one thing a maker (identity.split_names; families.split)
+             "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full)}
     last = last or {}
     took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
     start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0

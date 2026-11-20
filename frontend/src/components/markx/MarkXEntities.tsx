@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useApi } from '../../services/ApiContext';
 import type {
   MarkxEntityAccuracy, MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
-  MarkxQueueItem, MarkxQueueSide, MarkxQueueView, MarkxSurge,
+  MarkxQueueItem, MarkxQueueSide, MarkxQueueView, MarkxStoryThing, MarkxSurge,
 } from '../../services/markx';
 import { Button, Chip, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
@@ -24,6 +24,36 @@ export function entityMeta(e: MarkxEntityRef): string {
   const version = [e.version, e.variant, e.size, e.build].filter(Boolean).join(' ');
   return [e.type, e.maker ? `by ${e.maker}` : null, version ? `version ${version}` : null,
     e.status === 'provisional' ? 'provisional' : null].filter(Boolean).join(' · ');
+}
+
+/** A story's thing's role, as a reader says it (0250). */
+const THING_ROLES: Record<string, string> = {
+  subject: 'what it is about', actor: 'acts in it', compared: 'compared', predecessor: 'came before',
+  venue: 'where', source: 'a source', recommended: 'recommended', mention: 'named',
+};
+
+/**
+ * "Things in this story" (0250): the entities its members' readings name, the story's subject first, then by how
+ * many members name them, each one click from its entity page. Shown only when there is one.
+ */
+export function StoryThings({ things }: { things?: MarkxStoryThing[] | null }) {
+  if (!things?.length) return null;
+  return (
+    <section aria-label="Things in this story">
+      <h2 className={H2}>Things in this story</h2>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        {things.map((t) => (
+          <li key={t.id} className="min-w-0 text-[0.8125rem] text-fg-2" data-role={t.role}>
+            <TextLink to={entityHref(t.id)} className="[overflow-wrap:anywhere]" dir="auto">{t.name}</TextLink>
+            <span className="text-fg-3">
+              {' · '}{[t.type, t.maker ? `by ${t.maker}` : null, THING_ROLES[t.role] ?? t.role,
+                t.posts > 1 ? plural(t.posts, 'post') : null].filter(Boolean).join(' · ')}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 export function SurgeMark({ surges }: { surges: MarkxSurge[] }) {

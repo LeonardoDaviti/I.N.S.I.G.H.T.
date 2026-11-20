@@ -1310,6 +1310,43 @@ def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
     return [_item(cur, book, r, ex, joins, void) for r in mine]
 
 
+THINGS_SHOWN = 12   # 0250: a story page's things at most
+THING_ROLES = ("subject", "actor", "compared", "predecessor", "venue", "source", "recommended", "mention")
+
+
+def story_things(cur: Any, post_ids: Iterable[str], *, shown: int = THINGS_SHOWN) -> List[Dict[str, Any]]:
+    """0250: "Things in this story": the entities its members' current readings name (through the merges and pins),
+    each with the best role a member gives it (subject first: THING_ROLES' order) and how many members name it, ranked
+    by that role, then that count, then name: [{id, name, type, maker, maker_id, role, posts}], `shown` at most. An
+    entity marked not one is left out."""
+    ids = sorted(set(post_ids))
+    if not ids:
+        return []
+    cur.execute("""SELECT post_id::text, guide, n, entity_id::text, role FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[]) AND entity_id IS NOT NULL""", (_guide(), ids))
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    book = I.lazy_book(cur)   # the merges and pins (few), each entity read by need
+    book.prime(ids=[x for p, g, n, e, _r in rows for x in (e, book.pins.get((p, g, n))) if x])
+    rank = {r: k for k, r in enumerate(THING_ROLES)}
+    best: Dict[str, int] = {}
+    posts: Dict[str, Set[str]] = defaultdict(set)
+    for p, g, n, e, role in rows:
+        r = book.root(book.pins.get((p, g, n), e))
+        if r is None or r not in book.ents or book.ents[r].status == "not_entity":
+            continue
+        best[r] = min(best.get(r, len(THING_ROLES)), rank.get(role or "mention", len(THING_ROLES)))
+        posts[r].add(p)
+    order = sorted(best, key=lambda r: (best[r], -len(posts[r]), (book.label(r) or "").lower(), r))[:shown]
+    out = []
+    for r in order:
+        v = _ent_view(book, r)
+        out.append({"id": r, "name": v["name"], "type": v["type"], "maker": v["maker"], "maker_id": v["maker_id"],
+                    "role": THING_ROLES[best[r]] if best[r] < len(THING_ROLES) else "mention", "posts": len(posts[r])})
+    return out
+
+
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
     """{mention n: the entity it shows under (root, through pins)} for the post page's panel."""
     book = I.lazy_book(cur)   # v10.17 (0186): the merges and pins, not the whole book

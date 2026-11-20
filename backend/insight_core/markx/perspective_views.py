@@ -159,8 +159,10 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     urls = dict(cur.fetchall())
     from insight_core.utils.byline import bylines
     bys = bylines(cur, posts)   # issue 0185: who wrote each, via whom
+    from insight_core.markx import entity_views
     return {   # 0128's `built`: event type, the original first, leaks and "came true"
         "story": {"id": sid, "headline": st.get("headline"), "first_at": st.get("first_at")},
+        "things": entity_views.story_things(cur, members),   # 0250: its things, each a link to its entity page
         "built": built.build(cur, [sid]).get(sid),
         "judged": bool(rows), "sheet": sheet,
         "header": {"text": acc["text"], "source": acc["source"], "labels": acc["labels"]},
