@@ -14,7 +14,7 @@ manifest.json; README.txt. The restore:
      a restore never replaces data;
   3. in one transaction: the export's migrations (only those), every table emptied (a
      migration may seed rows), the keys and the indexes no constraint owns taken off, each
-     CSV loaded with `COPY … FROM STDIN (FREEZE)` in the order the foreign keys need, with the
+     CSV loaded with `COPY … FROM STDIN` in the order the foreign keys need, with the
      tables' own triggers off while it loads (the rows come back as they were: nothing queued,
      nothing refilled), each count checked against the manifest, then the keys, the indexes
      and the foreign keys (each checked by one join) made again, the sequences set;
@@ -194,7 +194,7 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 file = expected[table]["file"]
                 columns = sql.SQL(", ").join(map(sql.Identifier, _columns(archive, file)))
                 with archive.open(file) as source, cur.copy(
-                        sql.SQL("COPY {} ({}) FROM STDIN (FORMAT csv, HEADER, FREEZE)").format(sql.Identifier(table), columns)) as copy:
+                        sql.SQL("COPY {} ({}) FROM STDIN (FORMAT csv, HEADER)").format(sql.Identifier(table), columns)) as copy:
                     while chunk := source.read(CHUNK):
                         copy.write(chunk)
                 loaded[table] = cur.rowcount
