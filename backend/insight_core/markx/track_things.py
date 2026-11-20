@@ -26,6 +26,14 @@ leave it out and its text shows it as OWN. Haiku answers each value as {value, q
   - a thing whose first field (its name; a practice's `what`) is not kept is not a thing.
 A value that fails is dropped with its reason, kept on the call (the answer's "dropped"); the rest of the answer stays.
 
+**The maker's linked pages** (0257, `maker_pages`, behind entity_bands.json `tracks.linked_docs`, default on): terse
+release notes link the maker's own page that explains them. A post's questions are then followed by one question a
+page (LINKED_DOCS at most, within MAX_WINDOWS): the post's first LINKED_POST_CHARS with its links, then the page's
+address, title and WINDOW_CHARS of its text (from the words the link's anchor names). The pages are the post's links
+(post_refs) on its own site (`maker_page`: its registrable domain; on a platform or code host its account) that INSIGHT
+stores (a post at that address); nothing is fetched here. A quote may come from the page (the same checks: it is in
+what the question showed); a value quoted only from it names it (`page`, kept in the report's values and the row).
+
 **Joins** (never by vector similarity): a report joins a current thing of its kind that shares a key value (the
 schema's key fields and every link field, normalised: a name, a link, a repo); a practice joins only within its own
 post. In the jobs process (`refresh`), two things of one kind whose key value names the same entity (the posts'
@@ -63,6 +71,11 @@ THINGS_OPEN = 60        # things questions a track has waiting at most
 SAME_OPEN = 30          # same-claim questions waiting at most, across tracks
 OWN = "[this post's own address]"
 SWITCH = ("tracks", "briefs")
+LINKED_SWITCH = "linked_docs"   # entity_bands.json tracks.linked_docs (0257, default on)
+LINKED_DOCS = 2         # the maker's pages a post's questions show at most (0257), within MAX_WINDOWS
+LINKED_POST_CHARS = 1500  # characters of the post a linked page's question shows with the page (its first)
+LINKED_LEAD = 200       # characters of the page shown before the part a link's anchor names
+PAGE_MARK = "\nLinked page on the post's own site: "
 
 
 # ---- the switch ---------------------------------------------------------------------------------------------
@@ -71,6 +84,13 @@ def on() -> bool:
     """entity_bands.json `tracks.briefs`: the briefer plans, joins and builds (default off)."""
     from insight_core.markx import identity
     return bool((identity.bands().get(SWITCH[0]) or {}).get(SWITCH[1]))
+
+
+def linked_on() -> bool:
+    """entity_bands.json `tracks.linked_docs` (0257): a post's questions also show the stored pages it links on its
+    own site (default on: the post's own questions are unchanged, these are added)."""
+    from insight_core.markx import identity
+    return bool((identity.bands().get(SWITCH[0]) or {}).get(LINKED_SWITCH, True))
 
 
 # ---- folding and typed values (pure: the worker runs these checks too) --------------------------------------
@@ -275,15 +295,25 @@ def parse_input(input: str) -> Tuple[Optional[str], Optional[int], Dict[str, Dic
     return (m.group(1) if m else None), (int(m.group(2)) if m else None), kinds, shown
 
 
+def linked_page(shown: str) -> Tuple[Optional[str], str]:
+    """(the linked page a question shows, 0257, or None; what it showed of the post itself)."""
+    if PAGE_MARK not in shown:
+        return None, shown
+    of_post, _, rest = shown.partition(PAGE_MARK)
+    return rest.split("\n", 1)[0].strip() or None, of_post
+
+
 def salvage(answer: Dict[str, Any], input: str) -> Dict[str, Any]:
     """The things answer checked value by value: each kept value typed, each dropped one (and each thing whose name
-    did not stand, of an unknown kind, or past THINGS_PER_ANSWER) under "dropped" with why. Idempotent (a kept value
+    did not stand, of an unknown kind, or past THINGS_PER_ANSWER) under "dropped" with why; a value quoted only from
+    the linked page a question shows (0257) names it (`page`). Idempotent (a kept value
     passes again: the worker salvages before it posts, the server again)."""
     from insight_core.markx import schemas, validate
     things = answer.get("things")
     if not isinstance(things, list):
         return answer
     _tid, _v, kinds, shown = parse_input(input)
+    page, of_post = linked_page(shown)
     dropped = list(answer.get(validate.DROPPED) or [])
     before = len(dropped)
     kept = []
@@ -305,6 +335,8 @@ def salvage(answer: Dict[str, Any], input: str) -> Dict[str, Any]:
                                 "why": f"things[{n}].{name}: {why}"})
             else:
                 good[name] = {"value": typed, "quote": raw["quote"]}
+                if page and fold(raw["quote"]) not in fold(of_post):   # 0257: quoted from the linked page only
+                    good[name]["page"] = page
         first = kind["fields"][0]["name"]
         if first not in good:
             dropped.append({"list": "things", "item": th, "why": f"things[{n}]: its {first} did not stand"})
@@ -481,9 +513,71 @@ def _without_own(text: str, own: Sequence[str]) -> str:
     return text
 
 
-def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p: Any, own: Sequence[str]) -> List[str]:
+def maker_page(own: str, link: str) -> bool:
+    """0257: `link` is a page of the post's maker: on the registrable site of the post's own address (addresses.site_of),
+    and, on a site of accounts (a platform's, addresses.PLATFORM_SITES; a code host, rename.CODE_HOSTS), under the
+    same account (addresses.account_key): a release on a code host linking its own repo's docs, not another's."""
+    from insight_core.markx.rename import CODE_HOSTS
+    from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, site_of
+    a, b = site_of(host_of(own)), site_of(host_of(link))
+    if not a or a != b:
+        return False
+    if a in CODE_HOSTS or any(a in sites for sites in PLATFORM_SITES.values()):
+        return account_key(own) == account_key(link)
+    return True
+
+
+def maker_pages(cur: Any, posts: Dict[str, Any], own: Dict[str, List[str]]) -> Dict[str, List[Tuple[str, Any]]]:
+    """0257: {post id: [(the link as the post gives it, the stored page)]}, LINKED_DOCS at most a post, in the post's
+    order: the pages a post links (post_refs: every link of its text, its own site's too, which post_links leaves out)
+    that are its maker's (`maker_page`) and stored (a post at that address: posts.normalized_url, as Connected's
+    Earlier reads them), never the post itself. Read only; nothing is fetched here."""
+    from insight_core.markx import tasks
+    ids = [i for i in posts if own.get(i)]
+    if not ids:
+        return {}
+    cur.execute("""SELECT r.post_id::text, r.href, sp.id::text
+                     FROM post_refs r
+                     JOIN LATERAL (SELECT p.id FROM posts p WHERE p.normalized_url = r.target_address
+                                      AND p.id <> r.post_id ORDER BY p.fetched_at DESC NULLS LAST, p.id LIMIT 1) sp ON true
+                    WHERE r.post_id = ANY(%s::uuid[]) AND r.valid_to IS NULL AND NOT r.boilerplate
+                    ORDER BY r.post_id, r.position""", (ids,))
+    want: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+    for pid, href, page in cur.fetchall():
+        mine = {norm_url(u) for u in own[pid]}
+        got = want[pid]
+        if (len(got) < LINKED_DOCS and norm_url(href) not in mine and maker_page(own[pid][0], href)
+                and page not in {g for _h, g in got}):
+            got.append((href, page))
+    if not want:
+        return {}
+    loaded = tasks.load_posts(cur, {g for got in want.values() for _h, g in got}, linked=False)
+    return {pid: [(h, loaded[g]) for h, g in got if g in loaded and loaded[g].text] for pid, got in want.items()}
+
+
+def page_window(text: str, link: str) -> Tuple[int, int]:
+    """The part of a linked page a question shows (WINDOW_CHARS): from LINKED_LEAD before the words its link's anchor
+    names ("#network-toggle": "network toggle"), else from its start."""
+    from urllib.parse import unquote, urlsplit
+    try:
+        frag = unquote(urlsplit(link).fragment)
+    except ValueError:
+        frag = ""
+    words = [w for w in re.split(r"[\W_]+", frag) if w]
+    start = 0
+    if words and fold(frag) not in UI_FRAGMENTS and not frag.startswith(":~:"):
+        m = re.search(r"\W+".join(re.escape(w) for w in words), text, re.I)
+        start = max(0, m.start() - LINKED_LEAD) if m else 0
+    return start, min(len(text), start + WINDOW_CHARS)
+
+
+def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p: Any, own: Sequence[str],
+                  pages: Sequence[Tuple[str, Any]] = ()) -> List[str]:
     """A post's things questions, one a window: the schema's version line, the track, its kinds (JSON, one line), the
-    post (title, which window, text) and its links."""
+    post (title, which window, text) and its links. 0257: then one question a page of `pages` (maker_pages), while the
+    windows stay within MAX_WINDOWS: the post's first LINKED_POST_CHARS and links, then the page (its address, title
+    and its window, page_window), so a value may be quoted from the maker's page. The post's own questions are the
+    same with or without pages."""
     from insight_core.markx import tasks
     text = _without_own(p.text or "", own)
     windows = tasks.text_windows(text, WINDOW_CHARS, MAX_WINDOWS)
@@ -491,6 +585,7 @@ def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p
     head = ([f"SCHEMA: {track['folder_id']} v{version}"] + header(track)
             + ["KINDS: " + json.dumps(schema, ensure_ascii=False, separators=(",", ":")), "", "POST",
                f"Title: {_without_own(p.title or '', own)}"])
+    link_lines = (["Links in the post:"] + links) if links else []
     out = []
     for w, (start, end) in enumerate(windows):
         lines = list(head)
@@ -498,9 +593,18 @@ def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p
             lines.append(f"Window: {w + 1} of {len(windows)} of the post's text (characters {start + 1:,}-{end:,} "
                          f"of {len(text):,})")
         lines.append("Text: " + ("[…] " if start else "") + text[start:end] + (" […]" if end < len(text) else ""))
-        if links:
-            lines.append("Links in the post:")
-            lines += links
+        out.append("\n".join(lines + link_lines))
+    pages = list(pages)[:max(0, min(LINKED_DOCS, MAX_WINDOWS - len(windows)))]
+    for i, (link, page) in enumerate(pages):
+        body = _without_own(page.text or "", own)
+        start, end = page_window(body, link)
+        n = len(windows) + len(pages)
+        lines = list(head) + [
+            f"Window: {len(windows) + i + 1} of {n} (the post with a page it links on its own site, its maker's)",
+            "Text: " + text[:LINKED_POST_CHARS] + (" […]" if len(text) > LINKED_POST_CHARS else "")] + link_lines
+        lines += [PAGE_MARK.strip("\n") + _without_own(link, own),
+                  f"Page title: {_without_own(page.title or '', own)}",
+                  "Page text: " + ("[…] " if start else "") + body[start:end] + (" […]" if end < len(body) else "")]
         out.append("\n".join(lines))
     return out
 
@@ -537,10 +641,11 @@ def plan_things(cur: Any, **_kw: Any) -> int:
         todo = [i for i in ids if i not in done][:room]
         posts = tasks.load_posts(cur, todo)
         own = _own(cur, todo)
+        pages = maker_pages(cur, posts, own) if linked_on() else {}
         for pid in todo:
             if pid not in posts:
                 continue
-            for text in things_inputs(t, s["schema"], s["version"], posts[pid], own.get(pid, [])):
+            for text in things_inputs(t, s["schema"], s["version"], posts[pid], own.get(pid, []), pages.get(pid, ())):
                 task_id, new = repo.add_task(cur, kind=THINGS_KIND, guide=THINGS_GUIDE, subject_kind="post_track",
                                              input=text, a=pid, b=t["folder_id"])
                 added += new
@@ -726,7 +831,8 @@ def remerge(cur: Any, track_id: str, thing: str) -> None:
     fields: Dict[str, Any] = {}
     for r in rs:   # oldest first: a newer post's value replaces an older one's
         for name, v in (r["values"] or {}).items():
-            fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": r["post"]}
+            fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": r["post"],
+                            **({"page": v["page"]} if v.get("page") else {})}
     ats = [r["at"] for r in rs if r["at"] is not None]
     cur.execute("""UPDATE mx_track_things SET fields = %s::jsonb, first_at = %s, last_at = %s, updated_at = now()
                     WHERE id = %s""",

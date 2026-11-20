@@ -77,7 +77,9 @@
     "about": "0245/0249 (markx/track_things.py, markx/track_brief.py): briefs: the general track briefer (each track's kinds and fields from its description, the things of its posts with typed values checked in their quotes, joins by key or shared entity, the weekly issue and the quick look). Off until measured blind on a frozen held-out set across all tracks (0249: values >= 97% right with Wilson >= 90%, recall >= 85%, joins >= 97%, points supported >= 97%); off: nothing is planned, joined or kept.",
     "briefs": true,
     "checked_join_doc": "0256 (Stealth v10.29): a post from a source outside the track that the judge put in joins the track when a blind second check (guide track-check-v1) says in at tracks.CHECK_JOIN (0.85) or more. Measured 2026-11-21 on the server's Discover lanes, labelled blind by Claude: 27/27 on the set the threshold was chosen on, 26/27 held out (the one miss a label error on re-read), Wilson lower bound ~0.93 on both; it keeps ~60% of the good posts, the rest stay in Discover. Off: only the owner's labels join (0207's band calibration).",
-    "checked_join": true
+    "checked_join": true,
+    "linked_docs_doc": "0257 (Stealth v10.30): a things question also for each stored page a track post links on its own site (the maker's page: registrable domain, on a platform or code host the same account), 2 a post at most within the 6 windows, so a terse release note's fields may be quoted from the docs it links (the value names the page). On: the post's own questions are unchanged by it (tested), the pages only add questions. Off: only the post's text and links are read.",
+    "linked_docs": true
   },
   "rows": [
     {"opinion": "first", "guard": "none", "band": ">=0.90", "auto": true, "right": 86, "n": 87},

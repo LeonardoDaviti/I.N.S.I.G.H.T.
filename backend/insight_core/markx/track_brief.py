@@ -231,14 +231,14 @@ def _says_nothing(f: Dict[str, Any], v: Any) -> bool:
 def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, Any]],
                posts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """A row: its fields in the schema's order (each value typed, in words, with its quote and the post it came
-    from), every post that reported it (newest first), its dates. Not shown (kept in the row, v10.29): a choice of
+    from; 0257: the post's linked page it was quoted from, `page`), every post that reported it (newest first), its dates. Not shown (kept in the row, v10.29): a choice of
     "other", and a practice's evidence that only repeats its result's figures."""
     fields = {}
     for f in kind["fields"]:
         v = (t["fields"] or {}).get(f["name"])
         if v is not None and not _says_nothing(f, v["value"]):
             fields[f["name"]] = {"value": v["value"], "shown": TT.shown_value(f, v["value"]), "quote": v.get("quote"),
-                                 "post": v.get("post")}
+                                 "post": v.get("post"), **({"page": v["page"]} if v.get("page") else {})}
     if t["kind"] == TT.PRACTICE_KIND and "evidence" in fields and "result" in fields:
         ev = _digits(fields["evidence"]["shown"])
         if ev and ev <= _digits(fields["result"]["shown"]):
