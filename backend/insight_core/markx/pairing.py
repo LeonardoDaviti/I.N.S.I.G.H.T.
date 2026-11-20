@@ -387,12 +387,8 @@ def specific(pol: Policy, type_: Optional[str], *, level: Optional[str] = None, 
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
-                     only: Optional[Iterable[str]] = None, model: str = MODEL,
-                     keep: Optional[Callable[[str, str], bool]] = None) -> Dict[Tuple[str, str], float]:
-    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them.
-    v10.28 (0251): with `keep`, only the pairs it keeps, read as they stream (the same query and plan, its rows read one
-    at a time): story_pairs held every pair at the bar (the run's stories at the server's size: 393k rows at the
-    connect bar, +170 MB) to keep its window's (58k)."""
+                     only: Optional[Iterable[str]] = None, model: str = MODEL) -> Dict[Tuple[str, str], float]:
+    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them."""
     keys, ids = [], []
     for k, ps in groups.items():
         for p in ps:
@@ -400,21 +396,14 @@ def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
             ids.append(p)
     if not keys:
         return {}
-    sql = """WITH g AS (SELECT * FROM unnest(%(k)s::text[], %(p)s::uuid[]) AS g(k, post_id)),
-                  c AS (SELECT g.k, avg(e.v::vector) AS v FROM g
-                          JOIN mx_embeddings e ON e.post_id = g.post_id AND e.model = %(m)s GROUP BY g.k)
-             SELECT x.k, y.k, 1 - (x.v <=> y.v) FROM c x JOIN c y ON x.k < y.k
-              WHERE (%(only)s::text[] IS NULL OR x.k = ANY(%(only)s) OR y.k = ANY(%(only)s))
-                AND 1 - (x.v <=> y.v) >= %(lo)s"""
-    params = {"k": keys, "p": ids, "m": model, "lo": lo, "only": None if only is None else list(only)}
-    if keep is None:
-        cur.execute(sql, params)
-        return {(x, y): float(c) for x, y, c in cur.fetchall()}
-    out: Dict[Tuple[str, str], float] = {}
-    for x, y, cos in cur.stream(sql, params):
-        if keep(x, y):
-            out[(x, y)] = float(cos)
-    return out
+    cur.execute("""WITH g AS (SELECT * FROM unnest(%(k)s::text[], %(p)s::uuid[]) AS g(k, post_id)),
+                        c AS (SELECT g.k, avg(e.v::vector) AS v FROM g
+                                JOIN mx_embeddings e ON e.post_id = g.post_id AND e.model = %(m)s GROUP BY g.k)
+                   SELECT x.k, y.k, 1 - (x.v <=> y.v) FROM c x JOIN c y ON x.k < y.k
+                    WHERE (%(only)s::text[] IS NULL OR x.k = ANY(%(only)s) OR y.k = ANY(%(only)s))
+                      AND 1 - (x.v <=> y.v) >= %(lo)s""",
+                {"k": keys, "p": ids, "m": model, "lo": lo, "only": None if only is None else list(only)})
+    return {(x, y): float(c) for x, y, c in cur.fetchall()}
 
 
 def post_cosines(cur: Any, pairs: Iterable[Tuple[str, str]], model: str = MODEL) -> Dict[Tuple[str, str], float]:
@@ -438,7 +427,8 @@ def story_pairs(cur: Any, pol: Policy, groups: Dict[str, Sequence[str]], posts: 
               if ps and voice.count((voice.Said(posts[p].source, posts[p].kind) for p in ps if p in posts),
                                     voice.Policy.MARKX) >= pol.min_voices}
     first = {k: posts[ps[0]].at for k, ps in groups.items()}
-    return centroid_cosines(cur, groups, pol.story_cosine, keep=lambda x, y: pol.story_within(first[x], first[y]))
+    return {(x, y): c for (x, y), c in centroid_cosines(cur, groups, pol.story_cosine).items()
+            if pol.story_within(first[x], first[y])}
 
 
 class Documents:

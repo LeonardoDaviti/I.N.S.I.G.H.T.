@@ -277,27 +277,6 @@ class Candidates(_World):
         self.assertEqual(got_new, got_old)
 
 
-class StoryPairs(_World):
-    def test_the_pairs_kept_as_they_stream_are_the_window_of_every_pair(self):
-        """v10.28 (0251): story_pairs keeps its window's pairs as the rows stream (centroid_cosines `keep`): the same
-        pairs and cosines as every pair at the bar, kept by Policy.story_within."""
-        groups = {}
-        for k, p in enumerate(sorted(self.posts, key=self._at)):
-            groups.setdefault(f"s{k // 2:02d}", []).append(p)
-        posts = {p: D.Post(p, "v" + p[:4], "telegram", self._at(p), 50) for p in self.posts}
-        for pol in (pairing.POLICIES[pairing.SAME_STORY], replace(pairing.POLICIES[pairing.CONNECTED], min_voices=1),
-                    replace(pairing.POLICIES[pairing.CONNECTED], min_voices=1, story_window=timedelta(days=2))):
-            first = {k: posts[ps[0]].at for k, ps in groups.items()}
-            every = pairing.centroid_cosines(self.cur, groups, pol.story_cosine)
-            want = {xy: c for xy, c in every.items() if pol.story_within(first[xy[0]], first[xy[1]])}
-            self.assertEqual(pairing.story_pairs(self.cur, pol, groups, posts), want)
-            self.assertTrue(want)
-        near = pairing.centroid_cosines(self.cur, groups, 0.6, keep=lambda x, y: x[:2] == y[:2] == "s0")
-        self.assertEqual(near, {xy: c for xy, c in pairing.centroid_cosines(self.cur, groups, 0.6).items()
-                                if xy[0][:2] == xy[1][:2] == "s0"})
-        self.assertLess(len(near), len(pairing.centroid_cosines(self.cur, groups, 0.6)))
-
-
 class DecisionRun(_World):
     """Two rounds of the decision run: the questions asked as tasks; every task answered the same way by its input
     (a hash: some about, some not, some confident); then the run again (joins, pairs, merges, the second pass, the

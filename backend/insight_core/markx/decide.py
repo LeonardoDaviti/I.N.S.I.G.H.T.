@@ -670,7 +670,7 @@ class Ask:
         memo = self.memo if kind in incremental.KINDS else None
         if memo is not None:
             h = incremental.hash_of(text)
-            got = incremental.task_of(self.cur, memo, kind, h)
+            got = memo.tasks.get((kind, h))
             task = None if got is None else {"id": got[0], "status": got[1]}
         else:
             task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=incremental.text_of(text))
@@ -698,7 +698,8 @@ class Ask:
                 return None
             (self.old_added if old else self.added)[kind] += 1
             if memo is not None:
-                incremental.task_added(memo, kind, h, str(tid))
+                memo.tasks[(kind, h)] = (str(tid), "open", 0)
+                memo.keys[str(tid)] = (kind, h)
             return None
         if task["status"] != "answered":
             return None
@@ -742,9 +743,9 @@ class Ask:
                     if self.cur.rowcount:
                         out[kind] += 1
                         tid = self.memo.call_task.get(call) if self.memo is not None else None
-                        if tid:
-                            from insight_core.markx import incremental
-                            incremental.task_reopened(self.memo, tid)
+                        if tid and tid in self.memo.keys:
+                            key = self.memo.keys[tid]
+                            self.memo.tasks[key] = (tid, "open", self.memo.tasks[key][2])
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
         return dict(out)
