@@ -450,6 +450,34 @@ class Flow(_Briefer):
         self.assertEqual(prints[0]["fields"]["material"]["value"], "petg", "the newest post's value")
         self.assertEqual(len(TT.current(self.cur, f, TT.PRACTICE_KIND)), 1)
 
+    def test_an_explainer_that_links_a_release_joins_its_row(self):
+        """v10.29: a page listing many items keeps each item's anchor (two releases on one page stay two rows); a post
+        that gives one thing is that thing's page, so a later post linking that address joins its row."""
+        self.assertEqual(TT.norm_url("https://Zq.example/releases#2026111800"), "zq.example/releases#2026111800")
+        self.assertEqual(TT.norm_url("https://nitter.local/zq/status/1#m"), "nitter.local/zq/status/1")
+        self.assertEqual(TT.norm_url("https://zq.example/a/#comments"), "zq.example/a")
+        f = self.track("recipes")
+        self.schema(f, "recipes")
+        rel = {}
+        for name, dish in (("stew", "bean stew"), ("soup", "tomato soup")):
+            p = self.in_track(f, f"{dish} notes", f"Release notes: {dish} in 30 minutes.")
+            self.cur.execute("UPDATE posts SET url = %s, normalized_url = %s WHERE id = %s",
+                             (f"https://cook.example/menu#{name}", f"https://cook.example/menu#{name}", p))
+            rel[name] = p
+        self.run_planner("track_things")
+        for name, dish in (("stew", "bean stew"), ("soup", "tomato soup")):
+            self.things(f, rel[name], {"kind": "recipe", "fields": {"dish": v(dish, dish.capitalize())}})
+        why = self.in_track(f, "Why this stew works", "The slow simmer is what makes it: https://cook.example/menu#stew")
+        self.run_planner("track_things")
+        self.things(f, why, {"kind": "recipe", "fields": {
+            "dish": v("slow simmer stew", "The slow simmer"),
+            "source": v("https://cook.example/menu#stew", "https://cook.example/menu#stew")}})
+        things = TT.current(self.cur, f, "recipe")
+        self.assertEqual(len(things), 2, "two items of one page stay two rows; the explainer joins the stew's")
+        rs = TT.reports(self.cur, f)
+        stew = next(t for t in things if any(r["post"] == rel["stew"] for r in rs[t["id"]]))
+        self.assertEqual({r["post"] for r in rs[stew["id"]]}, {rel["stew"], why})
+
     def test_entity_joins_and_same_claim_questions(self):
         f = self.track("setups")
         self.schema(f, "setups")

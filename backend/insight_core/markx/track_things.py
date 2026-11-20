@@ -80,11 +80,18 @@ def fold(s: Any) -> str:
     return validate.fold(str(s or "")).strip()
 
 
+UI_FRAGMENTS = frozenset({"", "m", "top", "main", "content", "comments", "respond", "more"})
+
+
 def norm_url(u: Any) -> str:
-    """A URL as two are compared: folded, no scheme, no www., no fragment, no trailing slash or punctuation."""
+    """A URL as two are compared: folded, no scheme, no www., no trailing slash or punctuation; its fragment kept when
+    it names an item of the page (v10.29: "releases#2026111800" is one release of a page listing many), dropped when
+    it is the page's own furniture ("#m", "#comments", a text fragment ":~:")."""
     s = fold(u).rstrip(").,;'\"")
     s = re.sub(r"^https?://(www\.)?", "", s)
-    return s.split("#")[0].rstrip("/")
+    page, _, frag = s.partition("#")
+    page = page.rstrip("/")
+    return f"{page}#{frag}" if frag not in UI_FRAGMENTS and not frag.startswith(":~:") else page
 
 
 def key_text(v: Any) -> str:
@@ -551,8 +558,10 @@ def key_fields(kind: Dict[str, Any]) -> List[str]:
     return [f["name"] for f in kind["fields"] if f.get("key") or f.get("type") == "link"]
 
 
-def sigs(kind: Dict[str, Any], values: Dict[str, Any]) -> Set[str]:
-    """A report's (or a thing's) key values, normalised: {"field=value"}."""
+def sigs(kind: Dict[str, Any], values: Dict[str, Any], own: Optional[str] = None) -> Set[str]:
+    """A report's (or a thing's) key values, normalised: {"field=value"}; a link as "link:<address>" whatever its
+    field (v10.29: an explainer's reference link meets the release's own link), and `own` (the address of the post
+    the thing is the one thing of) as a link too."""
     types = {f["name"]: f.get("type") for f in kind["fields"]}
     out = set()
     for name in key_fields(kind):
@@ -560,10 +569,29 @@ def sigs(kind: Dict[str, Any], values: Dict[str, Any]) -> Set[str]:
         v = v.get("value") if isinstance(v, dict) and "value" in v else v
         if v is None:
             continue
-        n = norm_url(v) if types.get(name) == "link" else key_text(v) if isinstance(v, str) else json.dumps(v)
+        if types.get(name) == "link":
+            n = norm_url(v)
+            if n:
+                out.add(f"link:{n}")
+            continue
+        n = key_text(v) if isinstance(v, str) else json.dumps(v)
         if n:
             out.add(f"{name}={n}")
+    if own and norm_url(own):
+        out.add(f"link:{norm_url(own)}")
     return out
+
+
+def own_address(cur: Any, post: str, things: Sequence[Dict[str, Any]], kinds: Dict[str, Dict[str, Any]]
+                ) -> Optional[str]:
+    """v10.29: a post's own address when the post gives one thing of the track's kinds (not counting practices): the
+    post is that thing's page (a release's notes, a project's page), so a link to it elsewhere is a link to the
+    thing. None when it gives several or none (its address names no one of them)."""
+    mine = [t for t in things if t.get("kind") in kinds and t.get("kind") != PRACTICE_KIND and t.get("fields")]
+    if len(mine) != 1:
+        return None
+    got = _own(cur, [post]).get(post) or []
+    return got[0] if got else None
 
 
 def _post_at(cur: Any, post_id: str) -> Optional[datetime]:
@@ -611,14 +639,16 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
     win = tasks.window_of(task.get("input") or "")
     kinds = {k["kind"]: k for k in schema["kinds"]}
     at = _post_at(cur, post)
+    own = own_address(cur, post, answer.get("things") or [], kinds)
     n_added = 0
     for n, th in enumerate(answer.get("things") or []):
         kind = kinds.get(th.get("kind"))
         if kind is None or not th.get("fields"):
             continue
-        thing = _match(cur, tid, kind, th["fields"], post)
+        mine_own = own if kind["kind"] != PRACTICE_KIND else None
+        thing = _match(cur, tid, kind, th["fields"], post, own=mine_own)
         if thing is None:
-            key = sorted(sigs(kind, th["fields"]))
+            key = sorted(sigs(kind, th["fields"], mine_own))
             first = kind["fields"][0]["name"]
             cur.execute("""INSERT INTO mx_track_things (track_id, kind, key, schema_version, first_at, last_at)
                            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id::text""",
@@ -634,10 +664,12 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
     return n_added
 
 
-def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str) -> Optional[str]:
-    """The current thing a report joins (its root): same kind and a shared key value; a practice only among the
-    things its own post already reported (its exact `what`)."""
-    mine = sigs(kind, values)
+def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str,
+           own: Optional[str] = None) -> Optional[str]:
+    """The current thing a report joins (its root): same kind and a shared key value (a link: also the address of a
+    post that gave only that thing, `own_address`); a practice only among the things its own post already reported
+    (its exact `what`)."""
+    mine = sigs(kind, values, own)
     if not mine:
         return None
     if kind["kind"] == PRACTICE_KIND:
@@ -645,14 +677,21 @@ def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any]
                          JOIN mx_track_things t ON t.id = r.thing_id
                         WHERE t.track_id = %s AND t.kind = %s AND r.post_id = %s""", (track_id, kind["kind"], post))
         rows = cur.fetchall()
-    else:
-        cur.execute("""SELECT r.thing_id::text, r.field_values FROM mx_track_thing_reports r
-                         JOIN mx_track_things t ON t.id = r.thing_id
-                        WHERE t.track_id = %s AND t.kind = %s""", (track_id, kind["kind"]))
+    else:   # each report with its post's own address when that post gave this one thing only (of the track's kinds)
+        cur.execute("""SELECT r.thing_id::text, r.field_values,
+                              CASE WHEN (SELECT count(DISTINCT r2.thing_id) FROM mx_track_thing_reports r2
+                                           JOIN mx_track_things t2 ON t2.id = r2.thing_id
+                                          WHERE r2.post_id = r.post_id AND t2.track_id = t.track_id
+                                            AND t2.kind <> %s) = 1 THEN p.url END
+                         FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
+                         JOIN posts p ON p.id = r.post_id
+                        WHERE t.track_id = %s AND t.kind = %s""", (PRACTICE_KIND, track_id, kind["kind"]))
         rows = cur.fetchall()
     root = roots(cur, track_id)
-    for thing, vals in rows:
-        if mine & sigs(kind, vals):
+    for row in rows:
+        thing, vals = row[0], row[1]
+        theirs = row[2] if len(row) > 2 else None
+        if mine & sigs(kind, vals, theirs):
             return root.get(thing, thing)
     return None
 
