@@ -140,8 +140,24 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     try:
         os.environ["INSIGHT_MARKX"] = "off"
         try:   # 0112 Decided 10: insight-ingestion's runner (markx/jobs.py); a version before has decide.Scheduler
+            from insight_core.markx import jobs as J
             from insight_core.markx.jobs import Runner
-            off = Runner(db_url, spawn=False).tick()
+            # 0253: a check reads no web (as resources.py runs the story job): the story run's originals and scouts
+            # fetched pages into posts, post_parts and story_originals here (+11 posts on the server's copy), which
+            # this invariant then counted as Mark IX tables changed, on both sides, whatever the code
+            after_stories, reads = getattr(J.Jobs, "after_stories", None), os.environ.get("INSIGHT_DISCOVER_READS")
+            if after_stories is not None:
+                J.Jobs.after_stories = lambda self: {"ok": True, "skipped": "the real-data check reads no web"}
+            os.environ["INSIGHT_DISCOVER_READS"] = "0"
+            try:
+                off = Runner(db_url, spawn=False).tick()
+            finally:
+                if after_stories is not None:
+                    J.Jobs.after_stories = after_stories
+                if reads is None:
+                    os.environ.pop("INSIGHT_DISCOVER_READS", None)
+                else:
+                    os.environ["INSIGHT_DISCOVER_READS"] = reads
         except ImportError:
             off = decide.Scheduler(debounce=None, every=None).run_now()
         took["off"] = round(time.monotonic() - started - sum(took.values()), 1)
