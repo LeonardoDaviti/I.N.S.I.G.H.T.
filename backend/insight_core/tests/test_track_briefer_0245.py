@@ -219,6 +219,48 @@ class Pure(Switch, unittest.TestCase):
                                          "TRACK: T\nSUB-TOPIC: S\n\nPOSTS:\n[1] a, 2026-11-01: x")[1],
                           "digest-v1 (a sub-topic's) keeps its own checks")
 
+    def test_what_the_reader_is_spared(self):
+        """v10.29: the brief's view keeps every value but shows what tells rows apart."""
+        self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main/docs/A.md"),
+                         "https://github.com/zq-o/zq-r/blob/main/docs/A.md")
+        self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main"), "https://github.com/zq-o/zq-r")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r.git"), "https://github.com/zq-o/zq-r")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r/raw/main/x.js"), "https://github.com/zq-o/zq-r/blob/main/x.js")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r/tree/main/sub"), "https://github.com/zq-o/zq-r/tree/main/sub")
+        mem = {"name": "memory", "type": "number", "unit": "GB"}
+        self.assertEqual(TT.shown_value(mem, {"number": 22}), "22 GB", "a bare number takes its field's unit")
+        self.assertEqual(TT.shown_value(mem, {"number": 600, "unit": "MB"}), "600 MB")
+        kind = {"kind": "gadget", "fields": [{"name": "name", "type": "text"}, {"name": "engine", "type": "enum",
+                                                                                 "values": ["a", "other"]},
+                                             {"name": "price", "type": "money"}, {"name": "site", "type": "link"}]}
+        val = lambda x: {"value": x, "quote": str(x), "post": "p"}
+        row = lambda i, **f: {"id": i, "kind": "gadget", "fields": {k: val(x) for k, x in f.items()},
+                              "first_at": None, "last_at": None, "found_at": None}
+        self.assertNotIn("engine", TB.thing_view(kind, row("t", name="X", engine="other"), [], {})["fields"],
+                         'a choice of "other" says nothing')
+        pr = lambda i, **f: dict(row(i, **f), kind=TT.PRACTICE_KIND)
+        got = TB.thing_view(TT.PRACTICE, pr("p", what="Q", result="Runs on about 18 GB", evidence="~18GB"), [], {})
+        self.assertNotIn("evidence", got["fields"], "evidence that only repeats its result's figures")
+        got = TB.thing_view(TT.PRACTICE, pr("p", what="Q", result="1.8x faster", evidence="2000 tokens/s"), [], {})
+        self.assertIn("evidence", got["fields"])
+        # quiet columns: 5+ rows, a column filled in under 20% of them, or one choice in over 60%
+        rows = [row(f"t{i}", name=f"N{i}", engine="a", site="https://x.example/" + str(i), **({"price": {"number": 9}} if i == 0 else {}))
+                for i in range(6)]
+        views = [TB.thing_view(kind, r, [], {}) for r in rows]
+        self.assertEqual(TB._quiet(kind["fields"], views), {"engine", "price"})
+        self.assertEqual(TB._quiet(kind["fields"], views[:4]), set(), "a short section shows every column")
+        # practices: inside the thing their post gave, or not shown when they say nothing to try or check
+        kinds = {"gadget": kind, TT.PRACTICE_KIND: TT.PRACTICE}
+        rows = [row("g1", name="G"), pr("p1", what="Feature", result="works"), pr("p2", what="An opinion"),
+                pr("p3", what="Elsewhere", result="2x")]
+        rs = {"g1": [{"post": "A"}], "p1": [{"post": "A"}], "p2": [{"post": "B"}], "p3": [{"post": "C"}]}
+        secs = TB._sections(kinds, rows, rs, {})
+        self.assertEqual([(s["kind"], [t["id"] for t in s["things"]], s["inside"], s["quiet"]) for s in secs],
+                         [("gadget", ["g1"], 0, 0), (TT.PRACTICE_KIND, ["p3"], 1, 1)])
+        self.assertEqual([p["id"] for p in secs[0]["things"][0]["practices"]], ["p1"])
+        pts = TB._point_views({"points": [{"text": "x", "cites": ["p1", "g1", "p3"]}]}, ["g1", "p3"], TB._hosts(secs))
+        self.assertEqual(pts[0]["cites"], [{"thing": "g1", "n": 1}, {"thing": "p3", "n": 2}], "a folded practice cites its thing")
+
     def test_weeks_and_filters(self):
         self.assertEqual(TB.monday(datetime(2026, 11, 22, 23, 0, tzinfo=timezone.utc)), date(2026, 11, 16))
         self.assertEqual(TB.parse_week("2026-11-18"), date(2026, 11, 16))
@@ -480,7 +522,7 @@ class Flow(_Briefer):
         self.things(f, c)
         # the brief: the digest planner asks digest-v2 over the week's rows
         self.run_planner("digest")
-        briefs = [r for r in self.open_tasks("digest", "digest-v2") if r[1] == f]
+        briefs = [r for r in self.open_tasks("digest", "digest-v3") if r[1] == f]
         self.assertEqual(len(briefs), 1)
         q = briefs[0][3]
         self.assertIn(f"PERIOD: the week of {last.isoformat()}", q)
@@ -532,9 +574,14 @@ class Flow(_Briefer):
         self.run_planner("track_things")
         self.things(f, e, {"kind": "recipe", "fields": {"dish": v("tomato soup", "Tomato soup"),
                                                        "minutes": v({"number": 25, "unit": "minutes"}, "in 25 minutes")}})
+        old = self.in_track(f, "Old curry", "Red curry in 35 minutes.", at=mid)   # read after the look, posted last week
+        self.run_planner("track_things")
+        self.things(f, old, {"kind": "recipe", "fields": {"dish": v("red curry", "Red curry"),
+                                                         "minutes": v({"number": 35, "unit": "minutes"}, "in 35 minutes")}})
         look = call("GET", f"/api/markx/tracks/{f}/brief", query={"since": "seen"})[1]
         self.assertFalse(look["nothing_new"])
-        self.assertEqual([t["fields"]["dish"]["value"] for s in look["sections"] for t in s["things"]], ["tomato soup"])
+        self.assertEqual([t["fields"]["dish"]["value"] for s in look["sections"] for t in s["things"]], ["tomato soup"],
+                         "v10.29: a thing from an older post, found since the look, is in the tables, not new")
         self.assertEqual(look["points"], [], "last week's points cite none of the new things")
         self.assertEqual(look["weeks"], [TB.monday(now).isoformat(), last.isoformat()], "the issue strip, newest first")
         # the rail's count (v10.28): things since the look; none for a track not opened in 30 days

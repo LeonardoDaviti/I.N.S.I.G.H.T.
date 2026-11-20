@@ -972,6 +972,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
 # 0196: a guide variant's own checks (schemas.GUIDE_VARIANTS), in place of its kind's.
 GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
                 "digest-v2": _digest_rows,   # 0245: a track brief's points cite its rows
+                "digest-v3": _digest_rows,   # v10.29: digest-v2's points, stating facts
                 "collide-makers-v1": _collide_makers}   # 0250: two maker groups of one bare name
 
 

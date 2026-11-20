@@ -211,14 +211,35 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
     return value, None
 
 
+_RAW_GITHUB = re.compile(r"^https?://raw\.githubusercontent\.com/([^/\s]+)/([^/\s]+)/([^/\s]+)(/[^\s]*)?$", re.I)
+_GITHUB = re.compile(r"^(https?://(?:www\.)?github\.com/[^/\s]+/[^/\s#?]+?)(?:\.git)?(?:/raw(/[^\s]*))?/?$", re.I)
+
+
+def reader_link(u: str) -> str:
+    """A link as a reader opens it (v10.29): a raw file on GitHub as its page in the repo (raw.githubusercontent.com
+    /o/r/<ref>/<path> and github.com/o/r/raw/<ref>/<path> -> github.com/o/r/blob/<ref>/<path>), a clone address
+    (.git) as the repo. The stored value is kept as the post gave it."""
+    m = _RAW_GITHUB.match(u or "")
+    if m:
+        o, r, ref, path = m.groups()
+        return f"https://github.com/{o}/{r}" + (f"/blob/{ref}{path}" if path and path != "/" else "")
+    m = _GITHUB.match(u or "")
+    if m:
+        return m.group(1) + (f"/blob{m.group(2)}" if m.group(2) else "")
+    return u
+
+
 def shown_value(field: Dict[str, Any], v: Any) -> str:
-    """A typed value in words ("14-15 tok/s", "1,500 USD")."""
+    """A typed value in words ("14-15 tok/s", "1,500 USD"; a number with no unit of its own takes its field's unit;
+    a link as a reader opens it)."""
     if isinstance(v, dict) and "number" in v:
         def n(x: float) -> str:
             return f"{x:,.0f}" if float(x).is_integer() else f"{x:,}"
         s = n(v["number"]) + (f"-{n(v['range_to'])}" if v.get("range_to") is not None else "")
-        tail = v.get("currency") if field.get("type") == "money" else v.get("unit")
+        tail = v.get("currency") if field.get("type") == "money" else (v.get("unit") or field.get("unit"))
         return f"{s} {tail}" if tail else s
+    if field.get("type") == "link" and isinstance(v, str):
+        return reader_link(v)
     return str(v)
 
 

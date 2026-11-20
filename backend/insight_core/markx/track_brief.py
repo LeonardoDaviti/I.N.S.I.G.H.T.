@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.markx import track_things as TT
 
-DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v2"
+DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v3"   # v10.29: v2 asked again under v3
 BRIEF_MIN = 2                 # a period with fewer rows has no "what changed"
 BRIEF_ROWS = 60               # rows a brief question shows at most (new ones first)
 BRIEF_EVERY = timedelta(hours=12)
@@ -42,6 +42,10 @@ PAGE = "track_brief"
 KEPT_LAG = timedelta(minutes=15)
 LINE_CHARS = 160
 PRACTICE_HEADER = "Practices and claims"
+QUIET_ROWS = 5        # a section with this many rows or more hides its quiet columns (v10.29)
+QUIET_FILLED = 0.2    # a column filled in fewer rows than this share is quiet
+QUIET_SAME = 0.6      # a choice column whose one value fills more rows than this share is quiet (most rows alike)
+EMPTY_CHOICES = ("other", "unknown", "none", "n/a")
 
 
 # ---- weeks -----------------------------------------------------------------------------------------------------
@@ -208,38 +212,111 @@ def _iso(t: Optional[datetime]) -> Optional[str]:
     return t.isoformat() if t else None
 
 
+def _digits(s: str) -> set:
+    import re
+    return set(re.findall(r"\d+(?:[.,]\d+)?", s or ""))
+
+
+def _says_nothing(f: Dict[str, Any], v: Any) -> bool:
+    """A value that tells the reader nothing: a choice of "other" (or like it)."""
+    return f.get("type") == "enum" and TT.fold(v) in EMPTY_CHOICES
+
+
 def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, Any]],
                posts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """A row: its fields in the schema's order (each value typed, in words, with its quote and the post it came
-    from), every post that reported it (newest first), its dates."""
+    from), every post that reported it (newest first), its dates. Not shown (kept in the row, v10.29): a choice of
+    "other", and a practice's evidence that only repeats its result's figures."""
     fields = {}
     for f in kind["fields"]:
         v = (t["fields"] or {}).get(f["name"])
-        if v is not None:
+        if v is not None and not _says_nothing(f, v["value"]):
             fields[f["name"]] = {"value": v["value"], "shown": TT.shown_value(f, v["value"]), "quote": v.get("quote"),
                                  "post": v.get("post")}
+    if t["kind"] == TT.PRACTICE_KIND and "evidence" in fields and "result" in fields:
+        ev = _digits(fields["evidence"]["shown"])
+        if ev and ev <= _digits(fields["result"]["shown"]):
+            del fields["evidence"]
     seen = list(dict.fromkeys(r["post"] for r in reversed(list(rs))))
     return {"id": t["id"], "kind": t["kind"], "fields": fields, "posts": [posts[p] for p in seen if p in posts],
             "first_at": _iso(t["first_at"]), "last_at": _iso(t["last_at"]), "found_at": _iso(t["found_at"]),
             **({"new": t["new"]} if "new" in t else {})}
 
 
+def _quiet(fields: Sequence[Dict[str, Any]], views: Sequence[Dict[str, Any]]) -> set:
+    """The columns that tell a section's rows apart too little to show (v10.29, the reader's ease): with QUIET_ROWS+
+    rows, a column (never the first: the name) filled in under QUIET_FILLED of them, or a choice whose one value
+    fills over QUIET_SAME of them. The values stay in each row and in the tables."""
+    from collections import Counter
+    n = len(views)
+    if n < QUIET_ROWS:
+        return set()
+    out = set()
+    for f in fields[1:]:
+        got = [v["fields"][f["name"]]["shown"] for v in views if f["name"] in v["fields"]]
+        if len(got) < QUIET_FILLED * n:
+            out.add(f["name"])
+        elif f.get("type") == "enum" and got and Counter(got).most_common(1)[0][1] > QUIET_SAME * n:
+            out.add(f["name"])
+    return out
+
+
+def _fold_practices(rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]
+                    ) -> Tuple[Dict[str, str], set]:
+    """(practice -> the thing it is shown inside, the practices not shown) (v10.29). A practice every post of which
+    also gave a thing of the track's own kinds is about that thing (a project's feature, a setup's finding): shown
+    inside the newest such thing, not in its own list. A practice with only its `what` (no result, no evidence)
+    says nothing to try or check: not shown here (kept, and in the tables)."""
+    by_post: Dict[str, str] = {}
+    for t in rows:                      # rows: newest first within a kind, so the first thing a post gave is kept
+        if t["kind"] != TT.PRACTICE_KIND:
+            for r in rs.get(t["id"], []):
+                by_post.setdefault(r["post"], t["id"])
+    host, quiet = {}, set()
+    for t in rows:
+        if t["kind"] != TT.PRACTICE_KIND:
+            continue
+        ps = {r["post"] for r in rs.get(t["id"], [])}
+        if ps and all(p in by_post for p in ps):
+            host[t["id"]] = by_post[sorted(ps, key=lambda p: (p not in by_post, p))[0]]
+        elif not ({"result", "evidence"} & set(t["fields"] or {})):
+            quiet.add(t["id"])
+    return host, quiet
+
+
 def _sections(kinds: Dict[str, Dict[str, Any]], rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
               posts: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One section a kind that has rows (schema order, the practices last): its header and count written by code."""
+    """One section a kind that has rows (schema order, the practices last): its header and count written by code;
+    its quiet columns left out (`_quiet`); the practices folded into their things or not shown (`_fold_practices`:
+    the section's `inside` and `quiet` count them; each thing carries its folded practices)."""
+    host, quiet = _fold_practices(rows, rs)
+    views = {t["id"]: thing_view(kinds[t["kind"]], t, rs.get(t["id"], []), posts) for t in rows}
+    inside: Dict[str, List[Dict[str, Any]]] = {}
+    for p, h in host.items():
+        inside.setdefault(h, []).append(views[p])
     out = []
     for k in sorted(kinds, key=lambda k: _order(kinds).get(k, 99)):
         its = [t for t in rows if t["kind"] == k]
-        if not its:
+        shown = [t for t in its if t["id"] not in host and t["id"] not in quiet]
+        if not shown:
             continue
         d = kinds[k]
+        things = [dict(views[t["id"]], **({"practices": inside[t["id"]]} if t["id"] in inside else {})) for t in shown]
+        hide = _quiet(d["fields"], things)
         header = PRACTICE_HEADER if k == TT.PRACTICE_KIND else k.replace("_", " ").capitalize()
-        out.append({"kind": k, "header": f"{header} ({len(its)})", "about": d.get("about") or "", "count": len(its),
-                    "new": sum(1 for t in its if t.get("new")),
+        out.append({"kind": k, "header": f"{header} ({len(shown)})", "about": d.get("about") or "",
+                    "count": len(shown), "new": sum(1 for t in shown if t.get("new")),
+                    "inside": sum(1 for t in its if t["id"] in host), "quiet": sum(1 for t in its if t["id"] in quiet),
                     "fields": [{"name": f["name"], "type": f["type"], **({"unit": f["unit"]} if f.get("unit") else {}),
-                                **({"values": f["values"]} if f.get("values") else {})} for f in d["fields"]],
-                    "things": [thing_view(d, t, rs.get(t["id"], []), posts) for t in its]})
+                                **({"values": f["values"]} if f.get("values") else {})}
+                               for f in d["fields"] if f["name"] not in hide],
+                    "things": things})
     return out
+
+
+def _hosts(sections: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """{folded practice: the thing it is shown inside}: a point citing it cites its thing."""
+    return {p["id"]: t["id"] for s in sections for t in s["things"] for p in t.get("practices") or []}
 
 
 def _also(cur: Any, track: Dict[str, Any], start: Optional[datetime], end: Optional[datetime], *,
@@ -262,12 +339,16 @@ def _also(cur: Any, track: Dict[str, Any], start: Optional[datetime], end: Optio
     return sorted((p for p in ids if p not in gave), key=lambda p: (at[p], p), reverse=True)
 
 
-def _point_views(got: Optional[Dict[str, Any]], shown: Sequence[str]) -> List[Dict[str, Any]]:
+def _point_views(got: Optional[Dict[str, Any]], shown: Sequence[str], host: Optional[Dict[str, str]] = None
+                 ) -> List[Dict[str, Any]]:
     """The points, each cite as its row (its thing id and its number among the rows shown, for the superscripts)."""
     if not got:
         return []
     n = {t: i for i, t in enumerate(shown, 1)}
-    return [{"text": p["text"], "cites": [{"thing": c, "n": n.get(c)} for c in p["cites"]]} for p in got["points"]]
+    host = host or {}
+    return [{"text": p["text"], "cites": [{"thing": c, "n": n.get(c)}
+                                          for c in dict.fromkeys(host.get(c, c) for c in p["cites"])]}
+            for p in got["points"]]
 
 
 def _track(cur: Any, folder_id: Any) -> Dict[str, Any]:
@@ -305,7 +386,7 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     sections = _sections(kinds, rows, rs, posts)
     got = points(cur, tid, week)
     shown = [x["id"] for s in sections for x in s["things"]]
-    body = {**base, "points": _point_views(got, shown), "points_at": _iso(got["at"]) if got else None,
+    body = {**base, "points": _point_views(got, shown, _hosts(sections)), "points_at": _iso(got["at"]) if got else None,
             "sections": sections, "also": [posts[p] for p in also if p in posts],
             "counts": {"things": len(rows), "new": sum(1 for x in rows if x["new"]),
                        "posts": len({r["post"] for x in rows for r in rs.get(x["id"], []) if r["at"] and start <= r["at"] < end}),
@@ -409,6 +490,13 @@ def issues(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> List[
 
 # ---- the quick look --------------------------------------------------------------------------------------------
 
+def fresh_from(since: datetime, now: datetime) -> datetime:
+    """New since a look (v10.29; the quick look and the rail's count): a thing found since it whose first post is
+    dated since it or in the week in progress. A thing read since the look from an older post (a new schema re-reading
+    the track, a backlog) is not news: it is in its week's issue and the tables."""
+    return min(since, bounds(monday(now))[0])
+
+
 def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, now: Optional[datetime] = None
                ) -> Dict[str, Any]:
     """What is new since `since` (None: the week in progress): {on, track, since, sections (new things by kind),
@@ -425,7 +513,9 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
         return {**base, "sections": [], "points": [], "as_of": None, "stale": False, "also": [],
                 "counts": {"things": 0, "also": 0}, "nothing_new": True, "last_issue": None, "weeks": []}
     kinds = TT._kinds(cur, tid)
-    rows = [dict(x, new=True) for x in TT.current(cur, tid) if x["found_at"] > since and x["kind"] in kinds]
+    fresh = fresh_from(since, now)
+    rows = [dict(x, new=True) for x in TT.current(cur, tid)
+            if x["found_at"] > since and x["kind"] in kinds and x["first_at"] is not None and x["first_at"] >= fresh]
     rs = TT.reports(cur, tid, [x["id"] for x in rows])
     also = _also(cur, t, since, None, joined=True)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
@@ -434,14 +524,15 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     sections = _sections(kinds, rows, rs, posts)
     got = points(cur, tid)
     new_ids = {x["id"] for x in rows}
-    if got:
-        got = dict(got, points=[p for p in got["points"] if set(p["cites"]) & new_ids])
+    if got:   # the newest brief's points about a new thing; none new: this week's points still lead the look
+        cited = [p for p in got["points"] if set(p["cites"]) & new_ids]
+        got = dict(got, points=cited or ([] if rows or got["week"] != monday(now) else got["points"]))
     shown = [x["id"] for s in sections for x in s["things"]]
-    pts = _point_views(got, shown) if got and got["points"] else []
+    pts = _point_views(got, shown, _hosts(sections)) if got and got["points"] else []
     return {**base, "sections": sections, "points": pts, "as_of": _iso(got["at"]) if pts else None,
             "stale": bool(pts) and any(x["found_at"] > got["at"] for x in rows),
             "also": [posts[p] for p in also if p in posts], "counts": {"things": len(rows), "also": len(also)},
-            "nothing_new": not rows and not also, "last_issue": closed[0] if closed else None, "weeks": weeks}
+            "nothing_new": not rows and not also and not pts, "last_issue": closed[0] if closed else None, "weeks": weeks}
 
 
 RAIL_QUIET = timedelta(days=30)   # a track not opened for this long shows no count in the rail (0245's UX)
@@ -462,7 +553,7 @@ def new_count(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> in
         return 0
     kinds = list(TT._kinds(cur, str(folder_id)))
     cur.execute("""SELECT count(*) FROM mx_track_things WHERE track_id = %s AND status = 'current' AND created_at > %s
-                      AND kind = ANY(%s)""", (str(folder_id), at, kinds))
+                      AND first_at >= %s AND kind = ANY(%s)""", (str(folder_id), at, fresh_from(at, now), kinds))
     return int(cur.fetchone()[0])
 
 

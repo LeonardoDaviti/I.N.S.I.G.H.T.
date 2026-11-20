@@ -193,7 +193,7 @@ describe('the quick look on a track page', () => {
     const tools = within(panel).getByRole('region', { name: 'Tool (2)' });
     expect(within(tools).getByText('New: tool (2)')).toBeInTheDocument();
     expect(tools.querySelector('[data-thing="t1"]')).toHaveTextContent('Hori knife · 30 USD · 0.3 kg · hand · reviews.example.com');
-    expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', 'https://example.org/p-t1');
+    expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', '/posts/p-t1');   // in INSIGHT: a bridge's address may not open on the reader's device
     expect(within(panel).getByRole('region', { name: 'Also in the track' })).toHaveTextContent('What do you all use for weeding?');
     // the posts follow, as today
     const order = [...document.querySelectorAll('[aria-label="Since you looked"], [aria-label="Tools"]')].map((e) => e.getAttribute('aria-label'));
@@ -204,6 +204,18 @@ describe('the quick look on a track page', () => {
     await userEvent.click(within(tools).getByRole('button', { name: 'see all ›' }));
     await waitFor(() => expect(table).toHaveBeenCalledWith('garden', 'tool'));
     expect(await screen.findByRole('region', { name: 'Tables' })).toBeInTheDocument();
+  });
+
+  it('shows a thing\'s own practices inside it and at most five rows a kind (v10.29)', async () => {
+    const practice = thing('pr1', PRACTICE, { what: ['Oil the blade monthly', 'Oil the blade monthly'], result: ['No rust after a year', 'No rust after a year'] });
+    const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((x) => thing(`m${x}`, GARDEN, { name: [`Tool ${x}`, `Tool ${x}`] }));
+    const look: QuickLook = { ...LOOK, points: [], sections: [section(GARDEN, [{ ...TOOLS[0], practices: [practice] }, ...many], 'Tool (8)')] };
+    mockOn(look);
+    renderWithProviders(<TrackTopic folderId="garden" />, { api: makeFakeApi({}) });
+    const panel = await screen.findByRole('region', { name: 'Since you looked' });
+    const tools = within(panel).getByRole('region', { name: 'Tool (8)' });
+    expect(tools.querySelector('[data-thing-practices="t1"]')).toHaveTextContent('Oil the blade monthly → No rust after a year');
+    expect(tools.querySelectorAll('[data-thing]')).toHaveLength(5);
   });
 
   it('says nothing new since the look, with the last issue a tap away', async () => {

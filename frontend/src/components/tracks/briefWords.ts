@@ -78,7 +78,7 @@ export function thingFacts(thing: Thing, fields: ThingFieldDef[], max = 3): stri
 /** The thing's link fields (an external link a post gave), in schema order. */
 export function thingLinks(thing: Thing, fields: ThingFieldDef[]): Array<{ name: string; url: string }> {
   return fields.filter((f) => f.type === 'link' && typeof thing.fields[f.name]?.value === 'string')
-    .map((f) => ({ name: f.name, url: thing.fields[f.name].value as string }));
+    .map((f) => ({ name: f.name, url: thing.fields[f.name].shown || (thing.fields[f.name].value as string) }));
 }
 
 export function hostOf(url: string): string {
