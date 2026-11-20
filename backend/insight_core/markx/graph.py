@@ -935,12 +935,18 @@ def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] 
     posts each read found and its seconds (the run's `graph.relations.scope`; 0225 #16 is measured there first)."""
     from insight_core.markx import schemas
     t0 = time.monotonic()
+    # v10.26 (0244): the posts the current stated edges cite, read once and hashed (`IN`, a hashed subplan). Before, an
+    # EXISTS tested each mention row since against every current stated edge (`evidence->'posts' ? post`): mention
+    # rows x edges, 0226's #16. The same posts: `?` on the posts array is true exactly when the post's id is one of
+    # its string elements, which jsonb_array_elements_text lists (evidence posts are always an array of ids).
     cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
                     WHERE m.guide = ANY(%s) AND c.created_at >= %s
                       AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
                            OR {_derived_sql()}
-                           OR EXISTS (SELECT 1 FROM mx_connections x WHERE x.valid_to IS NULL AND x.rule = %s
-                                        AND x.a_kind = 'entity' AND x.evidence->'posts' ? m.post_id::text))""",
+                           OR m.post_id::text IN (
+                                SELECT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
+                                 WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
+                                   AND jsonb_typeof(x.evidence->'posts') = 'array'))""",
                 (schemas.mention_guides(), since, RULE_STATED))
     out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
     if "based_on" in derived_on():   # 0234: the posts naming a predecessor whose pair's check was answered since

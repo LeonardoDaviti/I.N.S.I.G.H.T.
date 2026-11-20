@@ -768,6 +768,27 @@ class ThingLinks(_Db):
         self.assertEqual(len(closed), 1)
         self.assertIsNotNone(closed[0][6])
 
+    def test_the_scope_finds_a_read_again_post_by_the_edges_it_is_evidence_of(self):
+        """0244: the relation scope reads the stated edges' evidence posts once (a hashed IN), not an EXISTS a
+        mention row: a post read again since that states nothing now is in scope exactly when a current stated edge
+        cites it; one no edge cites is not."""
+        from insight_core.markx import graph
+        tune = self.post_at(0, T0 - 10 * D, "Sabi 2: a fine-tune of Orbit 3")
+        self.mentions(tune, ("Sabi 2", "model", "subject", "Kestrel"), ("Orbit 3", "model", "mention", "Vantor"))
+        self.state(tune, [{"a": "Sabi 2", "rel": "based_on", "b": "Orbit 3"}])
+        other = self.post_at(1, T0 - 5 * D, "Kestrel hires")
+        self.mentions(other, ("Kestrel", "org", "actor"))
+        self.stage()
+        self.graph()
+        self.state(tune, [])
+        self.touched(tune, T0 + 3 * D)
+        self.touched(other, T0 + 3 * D)
+        counts = {}
+        got = graph._relation_scope(self.cur, T0 + 3 * D - graph.MARGIN, counts)
+        self.assertIn(tune, got)
+        self.assertNotIn(other, got)
+        self.assertEqual(counts["since_posts"], 1)
+
     @mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
     def test_a_relation_never_crosses_two_makers_namesakes(self):
         """0230: "Orbit" the exchange (an org in its post) is linked to Vantor's model Orbit by its name: the post's
