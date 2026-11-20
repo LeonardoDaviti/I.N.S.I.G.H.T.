@@ -1,6 +1,6 @@
 # 0245 — Track briefings: the things a track is about, pulled out of its posts and read as a briefing (v10.27 plan)
 
-Status: **plan** (owner asked 2026-11-20). Deepens 0207 (sub-topics, digest per sub-topic, new since you looked,
+Status: **accepted** (owner 2026-11-20), one general briefer for every track (memory `track-briefer-general`); experiment rounds 1-2 in `plan/research/briefer-0245/` (private). Deepens 0207 (sub-topics, digest per sub-topic, new since you looked,
 tools in use) and answers 0002's reading feedback. No code yet. Real rows behind the examples are private
 (`plan/research/v1026/`); the examples below are the kind of rows the server's tracks hold today.
 
@@ -147,3 +147,25 @@ page; the News tab is unchanged.
 - **The issue's week is Monday-Sunday**, built Monday morning. A fixed week makes issues comparable, and the date strip stays stable ("week of 16 Nov"). "Since your last read" is already the quick look (moment A), so the two moments don't overlap.
 - **The rail count of new things is on for every track** that has new things, and silent for the rest. It counts things, not posts, and is capped at "9+". A track you haven't opened in 30 days drops its count, so the rail doesn't nag.
 - **Phone: both.** The quick look is designed for the phone first. On the phone the issue is a stack of cards (one per thing) with the "what changed" points on top. The full tables and filters (moment C) stay on desktop and tablet; on a phone they open as a filtered card list.
+
+## The general design after the experiment (2026-11-20, rounds 1-2 on all 4 server tracks)
+
+Measured on 55 posts, every track the same code: round 2 recall 59 of 91 facts (65%), values 88 of 94 right (all 4
+wrong ones the prototype's number parser, none Haiku's), numbers/links/choices the same on a second run 80%, one run
+of all 4 tracks $0.058. The design that ships:
+
+1. **Schema from the description only.** Haiku proposes the track's kinds and fields; code always adds the general kind
+   **practice or claim** (what, result, evidence). Text values capped at 120 characters.
+2. **Typed values from Haiku, checked by code.** Each number comes as `{number, unit, currency, range_to}`; each link as
+   a URL. Code checks the digits (or the URL) appear inside the value's own quote, and the quote in the post. No
+   free-text number parsing in code.
+3. **The post's own address is attached by code**, never offered to Haiku as a candidate link; a link field is an
+   external link in the post.
+4. **Long posts read in several windows** (the readings' units), merged per post; Haiku is asked for every field of a
+   kind, so an empty field is a decision.
+5. **Joins:** things by key fields (a link, a model and quant, a repo) or the entity they name; practices by a shared
+   entity, then one Haiku "same claim?" question for those pairs only; never by similarity alone.
+6. **The brief:** "what changed" points are about things and practices only (never authors or sources), each citing
+   rows; counts and section headers written by code; posts that gave no row listed under "Also in the track".
+7. **Bars:** values >= 97% right (Wilson >= 90%), recall >= 85% for the first version, joins >= 97%, points supported
+   by their rows >= 97%; measured on a frozen held-out set across all tracks, never one track.
