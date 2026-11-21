@@ -750,11 +750,16 @@ def reroot_plan(cur: Any, book: I.Book) -> List[Dict[str, Any]]:
                 keeper = nxt
             if keeper == root:
                 continue
+        k = book.ents[keeper]
+        # a minority root re-roots only on a name of its own (shown) type: an org's page never turns a model's
+        # ("DeepSeek-AI" the org over "DeepSeek" the model: a wrong merge first, left for its own repair)
+        typed = why != "minority" or \
+            I.schemas_type(e.shown_type or e.type) == I.schemas_type(k.shown_type or k.type)
         path, x = [], keeper
         while x != root and x in book.redirect:
             path.append(x)
             x = book.redirect[x][0]
-        plans.append({"root": root, "keeper": keeper, "path": path, "skip": None, "why": why})
+        plans.append({"root": root, "keeper": keeper, "path": path, "skip": None if typed else "type", "why": why})
     if not plans:
         return out
     cur.execute("""SELECT from_id::text, id::text, kind FROM mx_entity_redirects
@@ -765,7 +770,9 @@ def reroot_plan(cur: Any, book: I.Book) -> List[Dict[str, Any]]:
                 ([p["root"] for p in plans],))
     renamed = {r for (r,) in cur.fetchall()}
     for p in plans:
-        if any(f not in kinds for f in p["path"]):
+        if p["skip"]:
+            pass                           # the type (minority): left as it is
+        elif any(f not in kinds for f in p["path"]):
             p["skip"] = "stale"            # the book's redirects are not the table's (another writer)
         elif any(kinds[f][1] == "rename" for f in p["path"]):
             p["skip"] = "rename"

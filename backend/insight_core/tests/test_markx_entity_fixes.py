@@ -586,6 +586,22 @@ class Fixes(base._Db):
         again = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
         self.assertEqual(again["reroot"]["rerooted"], 0)                  # idempotent
 
+    def test_4c_a_minority_root_never_re_roots_on_a_name_of_another_type(self):
+        """v10.35: the org "Vantor AI" (one post) took the model "Vantor" (three): an org's page never turns a
+        model's; left as it is, counted."""
+        ps = [self.post(n, T0 + n * H) for n in range(4)]
+        self.mentions(ps[0], ("Vantor AI", "org", "subject"))
+        for p in ps[1:]:
+            self.mentions(p, ("Vantor", "model", "subject"))
+        self.linked()
+        org, model = self.ent_named("Vantor AI"), self.ent_named("Vantor")
+        self.cur.execute("UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'test' WHERE undone_at IS NULL")
+        self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence)
+                            VALUES (%s, %s, 'haiku', true, '{}')""", (model, org))
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual((out["reroot"]["rerooted"], out["reroot"]["skip_type"]), (0, 1))
+        self.assertEqual(self.book().root(model), org)
+
     def test_4e_a_bare_name_several_makers_names_were_merged_into_is_cut_out(self):
         """v10.35: "SUSE Linux" took "Linux", then "Amazon Linux" and "Oracle Linux" (rule:maker_prefix): the
         maker-prefix merges are undone, nothing deleted; an owner's merge stays."""
