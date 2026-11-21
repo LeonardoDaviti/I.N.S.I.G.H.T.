@@ -182,18 +182,13 @@ class Rules(unittest.TestCase):
         self.assertEqual(out.mentions["A"]["b"]["relation"], "digest_item")
         self.assertEqual(out.log[0]["change"], "demote")
 
-    def test_v1035_a_digest_item_or_mention_at_the_bar_demotes_a_removal_does_not(self):
-        """v10.35: the AINews digest a check called a digest item at confidence 70 (p 1 - 0.70, 0.30000000000000004
-        in floats) stayed a member of the Gemini 4 Hydrogen story; at the bar a demotion counts, a removal still not."""
+    def test_v1035_a_check_at_the_bar_keeps_the_member(self):
+        """v10.35: "at the bar demotes" was measured 7 of 15 right on the copy and not shipped: at the bar a member
+        stays, whatever the relation (it leaves below the bar only)."""
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
-        for rel in ("digest_item", "mention"):
+        for rel in ("digest_item", "mention", "different"):
             out = D.decide(self.posts, self.stories, [(q, D.Verdict.of({"relation": rel, "confidence": 70}))])
-            self.assertNotIn("b", out.about["A"], rel)
-            self.assertEqual((out.mentions["A"]["b"]["relation"], out.log[0]["change"]), (rel, "demote"))
-        kept = D.decide(self.posts, self.stories, [(q, D.Verdict.of({"relation": "mention", "confidence": 69}))])
-        self.assertIn("b", kept.about["A"])
-        out = D.decide(self.posts, self.stories, [(q, D.Verdict.of({"relation": "different", "confidence": 70}))])
-        self.assertIn("b", out.about["A"])                               # a removal needs p below the bar
+            self.assertIn("b", out.about["A"], rel)
 
     def test_the_two_event_guard_demotes_instead_of_removing(self):
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
