@@ -623,6 +623,55 @@ class Flow(_Briefer):
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"week": "soon"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)
 
+    def test_points_about_rows_that_left_the_week_are_not_shown_and_the_week_is_asked_again(self):
+        """0269 (production: a week's points asked in the morning cited old rows that re-dating their posts moved out
+        of the week): a point is shown only when every row it cites is in the issue's sections; the week in progress
+        whose brief's cited rows mostly left is asked again within BRIEF_EVERY."""
+        f = self.track("recipes")
+        self.schema(f, "recipes")
+        now = datetime.now(timezone.utc)
+        week = TB.monday(now)
+        start = datetime.combine(week, datetime.min.time(), tzinfo=timezone.utc)
+        dishes = [("Pasta", "lemon pasta", 20), ("Stew", "bean stew", 45), ("Soup", "tomato soup", 25),
+                  ("Curry", "red curry", 35)]
+        posts = [self.in_track(f, title, f"{dish.capitalize()} in {mins} minutes.", at=start + (now - start) * (k + 1) / 10)
+                 for k, (title, dish, mins) in enumerate(dishes)]
+        self.run_planner("track_things")
+        for p, (_title, dish, mins) in zip(posts, dishes):
+            self.things(f, p, {"kind": "recipe", "fields": {"dish": v(dish, dish.capitalize()),
+                                                           "minutes": v({"number": mins, "unit": "minutes"},
+                                                                        f"in {mins} minutes")}})
+        self.run_planner("digest")
+        (brief,) = [r for r in self.open_tasks("digest", "digest-v3") if r[1] == f]
+        n = {d: next(int(ln[1:ln.index("]")]) for ln in brief[3].splitlines() if ln.startswith("[") and d in ln)
+             for _t, d, _m in dishes}
+        answer = {"id": "x", "points": [
+            {"text": "A bean stew takes 45 minutes and a soup 25.", "cites": [n["bean stew"], n["tomato soup"]]},
+            {"text": "Lemon pasta is ready in 20 minutes.", "cites": [n["lemon pasta"]]}]}
+        status, body = self.answer((brief[0], answer))
+        self.assertEqual((status, body["valid"]), (200, 1), body)
+        self.assertEqual(len(TB.issue(self.cur, f, week, now=now)["points"]), 2)
+        with self.conn.transaction():
+            self.assertEqual(TB.plan(self.cur, now=now), 0, "answered, the same rows: not asked again")
+        # the stew's and the soup's posts dated again, three weeks back: their rows leave this week
+        self.cur.execute("UPDATE posts SET surfaced_at = %s, published_at = %s WHERE id = ANY(%s::uuid[])",
+                         (start - timedelta(days=20), start - timedelta(days=20), posts[1:3]))
+        issue = TB.issue(self.cur, f, week, now=now)
+        self.assertEqual(sorted(t["fields"]["dish"]["value"] for s in issue["sections"] for t in s["things"]),
+                         ["lemon pasta", "red curry"])
+        self.assertEqual([p["text"] for p in issue["points"]], ["Lemon pasta is ready in 20 minutes."],
+                         "the point citing rows that left the week is not shown")
+        def asks():
+            self.cur.execute("SELECT count(*) FROM mx_track_brief_asks WHERE track_id = %s AND week = %s", (f, week))
+            return self.cur.fetchone()[0]
+        with self.conn.transaction():
+            TB.plan(self.cur, now=now + timedelta(minutes=5))
+        self.assertEqual(asks(), 2, "2 of the 3 rows its brief cites left the week in progress: asked again within "
+                                    "BRIEF_EVERY")
+        with self.conn.transaction():
+            TB.plan(self.cur, now=now + timedelta(minutes=6))
+        self.assertEqual(asks(), 2, "one waits: not asked twice")
+
 
 if __name__ == "__main__":
     unittest.main()
