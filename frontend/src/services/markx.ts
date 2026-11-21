@@ -482,6 +482,8 @@ export interface MarkxBriefSense {
   what: MarkxBriefLine[];
   how: MarkxBriefLine[];
   results: MarkxBriefLine[];
+  /** 0272 per sense: its own posts' numbers over time */
+  numbers?: MarkxNumberSeries[];
 }
 
 export interface MarkxEntityPage {
