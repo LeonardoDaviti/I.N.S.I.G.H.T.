@@ -117,6 +117,8 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
                 out.append((kind if own else R.CITED, same[0], R.IDENTIFIER, None))
     for url, text in links:
         title = titles.get(url) or text
+        if R.conversation(url):   # v10.35: a chat with an app is nobody's page, not even one its post cites
+            continue
         if R.is_home(url):   # never an address, but a document's work site (E2): its front page is the work
             rule = R.by_site(url, title, names, N.key, N.squash) if t == "document" else None
             if rule:
@@ -129,8 +131,15 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
             continue
         if R.by_title(title, names, N.key):
             # 0229: a thing's page titled with its name is its own on its own or its maker's site (or a platform's
-            # page of it, rule repo's); elsewhere a page its post cites (a third party's dashboard, a listing)
-            cited = kind == R.RELEASE and not repo and t in R.MAKER_TYPES and not R.own_site(url, names | makers, N.squash)
+            # page of it, rule repo's); elsewhere a page its post cites (a third party's dashboard, a listing).
+            # v10.35: a platform's page is whose it is under (R.platform_page_own: a tweet its account's, a
+            # repository's page its repository's); a document's page titled with its name is the document anywhere
+            platform = R.platform_page_own(url, repo=repo, names=names, makers=makers, squash=N.squash) \
+                if t in R.MAKER_TYPES else None
+            if platform is not None:
+                cited = not platform
+            else:
+                cited = kind == R.RELEASE and t in R.MAKER_TYPES and not R.own_site(url, names | makers, N.squash)
             out.append((R.CITED if cited else kind, url, R.TITLE, owner))
         elif repo:
             out.append((kind, url, R.REPO, owner))
@@ -181,24 +190,29 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
     chunks = [head[k:k + CHUNK] for k in range(0, len(head), CHUNK)]
     n_head = len(chunks)
     chunks += [rest[k:k + CHUNK] for k in range(0, len(rest), CHUNK)]
-    done_posts, last, done = 0, after, True
+    done_posts, last, done, demoted = 0, after, True, 0
     for k, chunk in enumerate(chunks):
         links = _links(cur, chunk)
         docs = _documents(cur, chunk)
         titles = _titles(cur, {u for pid in chunk for u, _ in links.get(pid, ())})
+        gave_none: Set[Tuple[str, str, str]] = set()   # v10.35: (entity, address, post) the post gives nothing of
         for pid, guide, n, eid, type_, ref, span, name in (r for p in chunk if links.get(p) for r in by_post[p]):
             root = book.root(book.pins.get((pid, guide, n), eid))
             if root not in book.ents or book.ents[root].status == "not_entity":
                 continue
             if root not in makers:
                 makers[root] = _makers(book, root)   # its cluster (0186: not a walk), not book.members()
-            for kind, url, rule, owner in found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
-                                                 links=links[pid], titles=titles, documents=docs.get(pid, 0),
-                                                 names=names.get(root, set()), makers=makers[root]):
+            gave = found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
+                                 links=links[pid], titles=titles, documents=docs.get(pid, 0),
+                                 names=names.get(root, set()), makers=makers[root])
+            given = {u for _, u, _, _ in gave}
+            gave_none.update((root, u, pid) for u, _ in links[pid] if u not in given)
+            for kind, url, rule, owner in gave:
                 had = found.get((root, url))
                 if had is None or (had[0] == R.CITED and kind != R.CITED):   # 0229: a post naming it as its own wins
                     found[(root, url)] = (kind, rule, pid, owner)
                 seen[(root, url)].add(pid)
+        demoted += _demote(cur, gave_none)
         done_posts += len(chunk)
         if k >= n_head:
             last = chunk[-1]
@@ -225,8 +239,25 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
         by_rule[rule] += 1
     if waits is not None:
         done, last = False, waits
-    return {"posts": done_posts, "found": len(found), "added": added, "changed": changed, "by_rule": dict(by_rule),
-            "done": done, "after": None if done else last}
+    return {"posts": done_posts, "found": len(found), "added": added, "changed": changed, "demoted": demoted,
+            "by_rule": dict(by_rule), "done": done, "after": None if done else last}
+
+
+def _demote(cur: Any, gave_none: Set[Tuple[str, str, str]]) -> int:
+    """v10.35: a row an older rule took as its own whose own post, read again, gives that address as nothing of the
+    entity's (a tweet's line it was titled by, a chat, a third party's page the rules no longer take) becomes `cited`,
+    as a post giving it as cited makes it (0229); never removed. A post giving it as its own later in the run makes it
+    its own again (the upsert after)."""
+    rows = sorted(gave_none)
+    n = 0
+    for k in range(0, len(rows), 20000):
+        part = rows[k:k + 20000]
+        cur.execute("""UPDATE mx_entity_addresses a SET kind = 'cited'
+                         FROM unnest(%s::uuid[], %s::text[], %s::uuid[]) AS x(e, u, p)
+                        WHERE a.entity_id = x.e AND a.url = x.u AND a.post_id = x.p AND a.kind <> 'cited'""",
+                    ([r[0] for r in part], [r[1] for r in part], [r[2] for r in part]))
+        n += max(cur.rowcount or 0, 0)
+    return n
 
 
 def add(cur: Any, *, root: str, url: str, kind: str, rule: str, post_id: Optional[str], now: datetime) -> bool:
@@ -269,6 +300,8 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
         if roots is not None and root not in roots:
             continue
         if pid and (pid, root) not in named:
+            continue
+        if R.conversation(url):   # v10.35: a row an older rule took from a chat with an app
             continue
         out[root].append((kind, url, rule, at, pid, owner))
     for root, got in out.items():   # a fork or a namesake: 2+ owners of one kind keep the stated maker's only
