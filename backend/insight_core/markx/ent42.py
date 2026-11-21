@@ -301,6 +301,9 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                                                                OR (t.kind = 'reading' AND t.guide = %(v5)s)))   -- 0212
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
+                  AND {plan_marks.left("SELECT t.a FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s"
+                                       " UNION ALL SELECT t.a FROM mx_tasks t WHERE t.kind = 'reading' AND t.guide = %(v5)s"
+                                       " EXCEPT SELECT t.a FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s")}
                   AND (%(at)s::timestamptz IS NULL
                        OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC

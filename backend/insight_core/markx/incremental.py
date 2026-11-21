@@ -525,17 +525,27 @@ def _hold(cache: Dict[str, Any], ids: Sequence[str]) -> None:
             del cache[k]
 
 
-def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], ids: Iterable[str]) -> None:
-    """v10.25 (0227): of `ids` (the posts the next questions show, in the order they are asked), the texts (and with
-    `readings`, the readings) of those the reading read again (State.stale: their questions' inputs are rendered
-    again) read in one query each when not held, and the held ones kept: the renders that follow find them. When the
-    posts read again fit in a page (an incremental run), all of them at once, as the first render did before."""
+def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Iterable[Sequence[str]]) -> None:
+    """v10.25 (0227): of `groups` (the posts each of the next questions shows, in the order they are asked), the
+    texts (and with `readings`, the readings) a render will need read in one query each when not held, and the held
+    ones kept: the renders that follow find them. A render needs them when it misses its kept input, and it misses
+    when it shows a post the reading read again (State.stale: the post's stamp, so the input's key, changed): then all
+    the posts it shows. v10.34: was only the stale posts themselves, so in an incremental run each such render (a new
+    post's join question shows every member of the story) read its unchanged posts in a query of its own (production:
+    ~4,500 load_posts calls in 30 minutes). When the posts read again fit in a page (an incremental run), all of them
+    at once, as the first render did before."""
     s = texts.state
-    ids = list(dict.fromkeys(ids))
-    few = sorted(s.stale) if len(s.stale) <= TEXT_PAGE else []
-    texts.load([i for i in itertools.chain(ids, few) if i in s.stale or i in s.texts])
+    shown: List[str] = []
+    missing: Set[str] = set()   # the posts of the renders that will miss
+    for g in groups:
+        g = list(g)
+        shown += g
+        if any(i in s.stale for i in g):
+            missing.update(g)
+    ids = list(dict.fromkeys(itertools.chain(shown, sorted(s.stale) if len(s.stale) <= TEXT_PAGE else [])))
+    texts.load([i for i in ids if i in missing or i in s.stale or i in s.texts])
     if readings is not None:
-        readings.prefetch([i for i in itertools.chain(ids, few) if i in s.stale or i in s.readings])
+        readings.prefetch([i for i in ids if i in missing or i in s.stale or i in s.readings])
 
 
 def release(state: State) -> None:
