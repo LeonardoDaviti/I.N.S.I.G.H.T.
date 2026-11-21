@@ -4,7 +4,9 @@ News was ordered by loudness: a row's score is its voices and reports, so a big 
 sources outranks a new method two expert sources take apart. This module owns the other half of the order: what kind
 of event a row is and how big its effect is on the work of people in its field, whatever its coverage.
 
-**The question** (kind `significance`, guide significance-v1, one row a question): the row's headline (`news.headlines`),
+**The question** (kind `significance`, guide schemas.guide_of's: significance-v2, or significance-v3 with entity_bands.json
+`significance.results` on (0260: a result scored by what it changes in the field as well as by what one can use); one
+row a question): the row's headline (`news.headlines`),
 then what INSIGHT already measured about it (the existing signals first):
   - its kind of happening (`event_types.of_stories`, the event-type seam over its posts' readings);
   - its main subjects and their kind (`news_sections._entities`: the current entities of its posts);
@@ -19,7 +21,8 @@ LONG_CHARS, the others TEXT_CHARS). `question` is pure (the measurement builds t
 
 **When** (`plan`, the decision run's stage after News, in the jobs process, never a lease): a row of News' window is
 asked once, and again only when its posts changed since its last ask (`mx_news_significance_asks.members`) and its last
-ask is REASK_GAP old: a row growing all day is asked a few times, not once a post. At most PLAN_MAX questions a run,
+ask is REASK_GAP old: a row growing all day is asked a few times, not once a post. A guide switch asks nothing again
+by itself (0260): a row is asked under the new guide only when it is new or changed, and keeps its older answer until the new one is answered. At most PLAN_MAX questions a run,
 the newest rows first. A row asked and still waiting is not asked again.
 
 **The answer** (`answers`): each row's newest answered ask (its task's first valid call), even when the row changed
@@ -34,7 +37,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-KIND, GUIDE = "significance", "significance-v2"   # 0208: v2 also names the breakdowns (v1 rows kept)
+KIND, GUIDE = "significance", "significance-v2"   # 0208: v2 also names the breakdowns (v1 rows kept); 0260: a new
+                                                  # ask's guide is schemas.guide_of (significance-v3 behind the switch)
 MEMBERS = 6                 # members shown, at most
 EARLIEST = 2                # the first posts always shown (who broke it)
 TEXT_CHARS = 500            # a member's text shown

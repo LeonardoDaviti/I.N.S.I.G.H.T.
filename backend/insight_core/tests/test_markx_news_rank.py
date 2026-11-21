@@ -6,9 +6,10 @@ Synthetic data only; the DB tests run on a database whose name ends in _test."""
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-from insight_core.markx import news, news_rank as R, repo, schemas, significance as S, validate
+from insight_core.markx import identity, news, news_rank as R, repo, schemas, significance as S, validate
 from insight_core.tests.test_markx_api import _Api, call
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
@@ -80,6 +81,36 @@ class TheQuestion(unittest.TestCase):
         self.assertNotIn(" AI", body)
         for f in schemas.SIGNIFICANCE_SCHEMA["required"]:
             self.assertIn(f"`{f}`", body)
+
+
+class TheResultsGuide(unittest.TestCase):
+    """0260 (v10.30): significance-v3, a result scored by what it changes in the field, behind entity_bands.json
+    `significance.results`."""
+
+    def switched(self, on):
+        bands = dict(identity.bands(), significance={"results": on})
+        return mock.patch.object(identity, "bands", lambda: bands)
+
+    def test_the_switch_names_the_guide_a_new_ask_is_asked_under(self):
+        with self.switched(True):
+            self.assertEqual(schemas.guide_of(None, S.KIND), "significance-v3")
+        with self.switched(False):
+            self.assertEqual(schemas.guide_of(None, S.KIND), "significance-v2")
+
+    def test_it_is_a_registered_guide_of_the_kind_with_the_same_answer(self):
+        self.assertEqual(schemas.guide_ids()["significance-v3"], S.KIND)
+        self.assertEqual(schemas.schema_for(S.KIND, "significance-v3"), schemas.SIGNIFICANCE_V2_SCHEMA)
+        self.assertIsNone(validate.check(S.KIND, ANSWER, "STORY: x", "significance-v3")[1])
+        self.assertIsNotNone(validate.check(S.KIND, {**ANSWER, "effect": 6}, "STORY: x", "significance-v3")[1])
+
+    def test_it_weighs_what_a_result_changes_and_keeps_business_low(self):
+        body = schemas.guide_body("significance-v3")
+        self.assertNotIn(" AI", body)
+        for f in schemas.SIGNIFICANCE_V2_SCHEMA["required"]:
+            self.assertIn(f"`{f}`", body)
+        for words in ("open problem", "state of the art", "first of its kind", "never lowers a result's effect",
+                      "Business events"):
+            self.assertIn(words, body)
 
 
 class TheAnswer(unittest.TestCase):
@@ -229,6 +260,27 @@ class Ranked(_Api):
         got = self.plan()
         self.assertEqual(got["asked"], 1)                                          # only the row whose posts changed
         self.assertEqual(len([r for r, *_ in self.asks() if r == b]), 2)
+
+    def test_the_results_guide_asks_new_and_changed_rows_only(self):
+        """0260: switching the guide asks no row again by itself (no mass re-ask): a row is asked under the new
+        guide when it is new, or when its posts changed past the gap."""
+        bands_off = dict(identity.bands(), significance={"results": False})
+        bands_on = dict(identity.bands(), significance={"results": True})
+        a, b = self.post(title="An old result"), self.post(title="Its follow-up")
+        with mock.patch.object(identity, "bands", lambda: bands_off):
+            self.news_run([([a], 5)])
+            self.assertEqual(self.plan()["asked"], 1)
+            self.answer_all({a: ANSWER})
+        c = self.post(title="A new result")
+        with mock.patch.object(identity, "bands", lambda: bands_on):
+            self.news_run([([a], 5), ([c], 3)])
+            self.assertEqual(self.plan()["asked"], 1)                              # only the new row
+            self.cur.execute("UPDATE mx_news_significance_asks SET asked_at = asked_at - interval '7 hours'")
+            self.news_run([([a, b], 6), ([c], 3)])
+            self.assertEqual(self.plan()["asked"], 1)                              # the changed row; c waits
+        self.cur.execute("""SELECT a.row_id::text, t.guide FROM mx_news_significance_asks a
+                              JOIN mx_tasks t ON t.id = a.task_id ORDER BY a.asked_at, t.guide""")
+        self.assertEqual(self.cur.fetchall(), [(a, "significance-v2"), (c, "significance-v3"), (a, "significance-v3")])
 
     def test_answers_rank_the_rows_and_the_pages_follow_the_switch(self):
         loud, quiet, plain = self.post(title="Loud minor launch"), self.post(title="Quiet method"), self.post(title="Plain")
