@@ -7,6 +7,13 @@ checks it, keeps it and applies it, by code, to every new item. Any source may h
 
     rule = {"kind": "releases" | "builds" | "mixed", "hide": [{"field": "tag" | "title", "regex": "...", "why": "..."}]}
 
+  - **Listing pages** (v10.35): a rule may also say `"listing": true`: it hides the source's stored listing pages (a
+    tag, category, topic or author archive its archive or page watch read as an article), as
+    page_watch.stored_listing decides. INSIGHT sets it itself (`by` insight) on a source the first time one of its
+    posts is one (`mark`, at store time: a page that slipped past the fetch's checks), and keeps it through every
+    later rule of the source (`put`: the worker's or the owner's; clearing a rule leaves {"kind": "listing"}).
+    scripts/hide_listing_pages.py applies it once to the posts stored before.
+
   - `tag` is a release's tag, read from its address (`.../releases/tag/<tag>`); `title` the item's title.
   - **Checks** (`check`): at most HIDE_MAX patterns, each compiles, is at most REGEX_CHARS long, holds no literal digit
     (a shape, `^b\\d+$`, never one version, `v1\\.2`), hides at least one item read, never one the answer keeps (its
@@ -26,6 +33,7 @@ import urllib.parse
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 KINDS = ("releases", "builds", "mixed")
+LISTING_KIND = "listing"      # a rule of the listing flag alone (no release patterns)
 FIELDS = ("tag", "title")
 HIDE_MAX = 4
 REGEX_CHARS = 120
@@ -53,10 +61,14 @@ def _compiled(rule: Dict[str, Any]) -> List[tuple]:
     return out
 
 
-def hides(rule: Optional[Dict[str, Any]], title: Optional[str], url: Optional[str]) -> bool:
-    """Whether the rule hides an item (its title, its address's tag)."""
+def hides(rule: Optional[Dict[str, Any]], title: Optional[str], url: Optional[str], *, external_id: Optional[str] = None,
+          adapter: Optional[str] = None, prefix: str = "") -> bool:
+    """Whether the rule hides an item (its title, its address's tag; with `listing`, a stored listing page: its
+    external id, the kind that stored it and the page watch's prefix)."""
     if not rule:
         return False
+    if rule.get("listing") and listing(url, external_id, adapter, prefix):
+        return True
     tag = tag_of(url)
     title = (title or "").strip()
     for field, rx in _compiled(rule):
@@ -64,6 +76,12 @@ def hides(rule: Optional[Dict[str, Any]], title: Optional[str], url: Optional[st
         if value and rx.search(value):
             return True
     return False
+
+
+def listing(url: Optional[str], external_id: Optional[str], adapter: Optional[str], prefix: str = "") -> bool:
+    """Whether a stored post is a listing page (page_watch.stored_listing: the one place that decides)."""
+    from insight_core.ingestion.kinds.page_watch import stored_listing   # page_watch imports the db layer
+    return stored_listing(url, external_id, adapter, prefix)
 
 
 def _literal_digit(regex: str) -> bool:
@@ -79,13 +97,13 @@ def check(rule: Any, items: Sequence[Dict[str, Any]], keep: Iterable[str] = ()) 
     answer says are real releases (never hidden)."""
     if not isinstance(rule, dict):
         return "the filter: not an object"
-    if rule.get("kind") not in KINDS:
+    if rule.get("kind") not in KINDS + (LISTING_KIND,):   # v10.35: the listing flag alone, as GET shows it
         return f"the filter's kind: one of {', '.join(KINDS)}"
     hide = rule.get("hide")
     if not isinstance(hide, list) or len(hide) > HIDE_MAX:
         return f"the filter's hide: a list of at most {HIDE_MAX}"
     if not hide:
-        return None if rule["kind"] == "releases" else "a filter of builds hides something"
+        return None if rule["kind"] in ("releases", LISTING_KIND) else "a filter of builds hides something"
     for h in hide:
         if not isinstance(h, dict) or h.get("field") not in FIELDS:
             return f"a hide pattern's field: one of {', '.join(FIELDS)}"
@@ -114,9 +132,21 @@ def check(rule: Any, items: Sequence[Dict[str, Any]], keep: Iterable[str] = ()) 
 
 
 def clean(rule: Dict[str, Any]) -> Dict[str, Any]:
-    """The rule as kept: its kind and patterns, nothing else."""
-    return {"kind": rule["kind"], "hide": [{"field": h["field"], "regex": h["regex"], "why": (h.get("why") or "")[:WHY_CHARS]}
-                                           for h in rule.get("hide") or []]}
+    """The rule as kept: its kind, patterns and listing flag, nothing else."""
+    out = {"kind": rule["kind"], "hide": [{"field": h["field"], "regex": h["regex"], "why": (h.get("why") or "")[:WHY_CHARS]}
+                                          for h in rule.get("hide") or []]}
+    if rule.get("listing"):
+        out["listing"] = True
+    return out
+
+
+# A post's fields a rule reads, from posts p and sources s.
+_FIELDS_SQL = "p.id::text, p.title, p.url, p.external_id, p.metadata->>'adapter', s.settings->'page_watch'->>'prefix'"
+
+
+def _hides(rule: Optional[Dict[str, Any]], row: Sequence[Any]) -> bool:
+    _pid, title, url, external_id, adapter, prefix = row[:6]
+    return hides(rule, title, url, external_id=external_id, adapter=adapter, prefix=prefix or "")
 
 
 # ---- kept and applied -----------------------------------------------------------------------------------
@@ -137,16 +167,26 @@ def mark(cur: Any, post_ids: Sequence[str]) -> int:
     ids = [str(p) for p in post_ids]
     if not ids:
         return 0
-    cur.execute("""SELECT p.id::text, p.title, p.url, f.id::text, f.rule FROM posts p
-                     JOIN source_filters f ON f.source_id = p.source_id AND f.superseded_at IS NULL
-                    WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    cur.execute(f"""SELECT {_FIELDS_SQL}, f.id::text, f.rule, p.source_id::text FROM posts p
+                      JOIN sources s ON s.id = p.source_id
+                      LEFT JOIN source_filters f ON f.source_id = p.source_id AND f.superseded_at IS NULL
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
     hidden: Dict[str, List[str]] = {}
-    for pid, title, url, fid, rule in cur.fetchall():
-        if hides(rule, title, url):
-            hidden.setdefault(fid, []).append(pid)
+    flag: set = set()   # sources whose new listing page their rule doesn't hide yet: they get the listing flag
+    for row in cur.fetchall():
+        fid, rule, sid = row[6], row[7], row[8]
+        if _hides(rule, row):
+            hidden.setdefault(fid, []).append(row[0])
+        elif not (rule or {}).get("listing") and _hides({"listing": True}, row):
+            flag.add(sid)
     for fid, pids in hidden.items():
         cur.execute("UPDATE posts SET filtered_by = %s WHERE id = ANY(%s::uuid[])", (fid, pids))
-    return sum(len(p) for p in hidden.values())
+    if not flag:
+        return sum(len(p) for p in hidden.values())
+    for sid in sorted(flag):   # then the flag: the source's posts are marked again under its new rule (`put`)
+        put_listing(cur, sid)
+    cur.execute("SELECT count(*) FROM posts WHERE id = ANY(%s::uuid[]) AND filtered_by IS NOT NULL", (ids,))
+    return cur.fetchone()[0]
 
 
 def remark(cur: Any, source_id: str) -> int:
@@ -156,8 +196,9 @@ def remark(cur: Any, source_id: str) -> int:
     cur.execute("UPDATE posts SET filtered_by = NULL WHERE source_id = %s AND filtered_by IS NOT NULL", (source_id,))
     if got is None:
         return 0
-    cur.execute("SELECT id::text, title, url FROM posts WHERE source_id = %s", (source_id,))
-    pids = [pid for pid, title, url in cur.fetchall() if hides(got["rule"], title, url)]
+    cur.execute(f"SELECT {_FIELDS_SQL} FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.source_id = %s",
+                (source_id,))
+    pids = [row[0] for row in cur.fetchall() if _hides(got["rule"], row)]
     if pids:
         cur.execute("UPDATE posts SET filtered_by = %s WHERE id = ANY(%s::uuid[])", (got["id"], pids))
     return len(pids)
@@ -165,7 +206,11 @@ def remark(cur: Any, source_id: str) -> int:
 
 def put(cur: Any, source_id: str, rule: Optional[Dict[str, Any]], *, by: str, guide: Optional[str] = None,
         task_id: Optional[str] = None) -> Optional[str]:
-    """The source's new rule (None: none), the old one superseded, its posts marked again. Returns the new row's id."""
+    """The source's new rule (None: none), the old one superseded, its posts marked again. Returns the new row's id.
+    A listing flag the old rule had is kept (v10.35): clearing the rule leaves the flag alone ({"kind": "listing"})."""
+    old = current(cur, [source_id]).get(str(source_id))
+    if old is not None and (old["rule"] or {}).get("listing") and not (rule or {}).get("listing"):
+        rule = {**(rule or {"kind": LISTING_KIND, "hide": []}), "listing": True}
     cur.execute("UPDATE source_filters SET superseded_at = now() WHERE source_id = %s AND superseded_at IS NULL",
                 (source_id,))
     fid = None
@@ -175,6 +220,16 @@ def put(cur: Any, source_id: str, rule: Optional[Dict[str, Any]], *, by: str, gu
         fid = cur.fetchone()[0]
     remark(cur, source_id)
     return fid
+
+
+def put_listing(cur: Any, source_id: str) -> Optional[str]:
+    """The source's rule with the listing flag (v10.35, `by` insight): its current rule kept as it is plus the flag,
+    or {"kind": "listing"} when it has none; its posts marked again. None when its rule has the flag already."""
+    old = current(cur, [source_id]).get(str(source_id))
+    if old is not None and (old["rule"] or {}).get("listing"):
+        return None
+    rule = {**((old or {}).get("rule") or {"kind": LISTING_KIND, "hide": []}), "listing": True}
+    return put(cur, source_id, rule, by="insight")
 
 
 def hidden_count(cur: Any, source_ids: Iterable[str]) -> Dict[str, int]:
@@ -187,5 +242,5 @@ def hidden_count(cur: Any, source_ids: Iterable[str]) -> Dict[str, int]:
     return dict(cur.fetchall())
 
 
-__all__ = ["KINDS", "PLAIN", "SHOWN_SQL", "check", "clean", "current", "hidden_count", "hides", "mark", "put",
-           "remark", "tag_of"]
+__all__ = ["KINDS", "LISTING_KIND", "PLAIN", "SHOWN_SQL", "check", "clean", "current", "hidden_count", "hides",
+           "listing", "mark", "put", "put_listing", "remark", "tag_of"]

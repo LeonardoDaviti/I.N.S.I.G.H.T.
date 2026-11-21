@@ -254,6 +254,21 @@ def listing_address(url: str, prefix: str = "") -> bool:
     return len(segments) >= 2 and len(segments) - 2 >= own and segments[-2].lower() in LISTING_SEGMENTS
 
 
+# The kinds that store a site's own pages read as articles (article_post: external_id is the page's path).
+SITE_PAGE_ADAPTERS = frozenset({"page_watch", "generic_rss"})
+
+
+def stored_listing(url: Optional[str], external_id: Optional[str], adapter: Optional[str], prefix: str = "") -> bool:
+    """Whether a stored post is a listing of other posts (v10.35), from what its row keeps (its markup is not): a page
+    of the site read as an article by page watch or a feed's archive (SITE_PAGE_ADAPTERS, its external_id a path)
+    at a listing address. Never a feed's own item, a saved page or a code host's release (/releases/tag/<v>: no
+    article_post's row). The item filter's `listing` rule asks it (utils/item_filter)."""
+    if not url or adapter not in SITE_PAGE_ADAPTERS or not external_id:
+        return False
+    # its external id a path (article_post's; a page that moved keeps the one it was first read at), never a guid
+    return external_id.startswith("/") and listing_address(url, prefix)
+
+
 def listing_markup(page: str, url: str) -> bool:
     """Whether the page says it lists other posts (LISTING_BODY_CLASSES, LISTING_LD_RE, a feed of its own)."""
     head = page[:MARKUP_HEAD]
@@ -1110,7 +1125,7 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "action_page", "listing_address", "listing_markup", "not_post", "article_post", "article_shaped", "discover", "discover_changed",
+__all__ = ["Discovery", "PageWatchKind", "action_page", "listing_address", "listing_markup", "not_post", "stored_listing", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
            "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
            "read_page_post", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]
