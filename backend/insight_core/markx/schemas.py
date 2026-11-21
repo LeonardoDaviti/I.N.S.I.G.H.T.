@@ -828,6 +828,7 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
     "digest-v3": ("digest", DIGEST_SCHEMA),   # v10.29: the same, its points state facts (no reporting words, no hedges)
     "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
+    "collide-v2": ("collide", COLLIDE2_SCHEMA),   # 0184's guide; 0274: an entity brief's senses (entity_brief.senses, b set)
     "significance-v3": ("significance", SIGNIFICANCE_V2_SCHEMA),   # 0260: results by what they change (the switch above)
 }
 

@@ -470,6 +470,18 @@ export interface MarkxEntityBrief {
   numbers?: MarkxNumberSeries[];
   as_of: string | null;
   posts: { id: string; n: number; title: string | null; url: string | null; at: string | null; source: string | null }[];
+  /** 0274: when its posts hold several things of the name, one brief a sense (the three lists above are then empty) */
+  senses?: MarkxBriefSense[];
+}
+
+export interface MarkxBriefSense {
+  label: string | null;
+  kind: string | null;
+  maker: string | null;
+  post_count: number;
+  what: MarkxBriefLine[];
+  how: MarkxBriefLine[];
+  results: MarkxBriefLine[];
 }
 
 export interface MarkxEntityPage {

@@ -1,5 +1,5 @@
 import { TextLink } from '../ui';
-import type { MarkxBriefLine, MarkxEntityBrief, MarkxNumberSeries } from '../../services/markx';
+import type { MarkxBriefLine, MarkxBriefSense, MarkxEntityBrief, MarkxNumberSeries } from '../../services/markx';
 
 /** 0261: an entity's brief on its page: what it is, how it works, its results (who measured them), each line with
  * quiet superscript citations to the posts it rests on (the quote on hover), the way a track's "What changed" cites. */
@@ -72,14 +72,45 @@ function Numbers({ series, brief }: { series: MarkxNumberSeries[]; brief: MarkxE
   );
 }
 
+function Parts({ lines, brief }: {
+  lines: Pick<MarkxBriefSense, 'what' | 'how' | 'results' | 'numbers'>; brief: MarkxEntityBrief;
+}) {
+  return (
+    <>
+      <Part label="What it is" lines={lines.what} brief={brief} />
+      <Part label="How it works" lines={lines.how} brief={brief} />
+      <Part label="Results" lines={lines.results} brief={brief} />
+      <Numbers series={lines.numbers ?? []} brief={brief} />
+    </>
+  );
+}
+
+/** 0274: one brief a sense when the entity's posts hold several things of its name, each from its own posts. */
 export function EntityBrief({ brief }: { brief: MarkxEntityBrief | null | undefined }) {
-  if (!brief || !(brief.what.length || brief.how.length || brief.results.length || brief.numbers?.length)) return null;
+  if (!brief) return null;
+  const senses = brief.senses ?? [];
+  if (senses.length) {
+    return (
+      <section aria-label="Brief" className="mt-3" data-brief-as-of={brief.as_of ?? undefined}>
+        <p className="text-[0.8125rem] text-fg-3">This name stands for {senses.length} different things in its posts.</p>
+        {senses.map((s, i) => (
+          <div key={i} className="mt-3" data-brief-sense={i + 1}>
+            <h3 className="text-[0.875rem] font-semibold text-fg [overflow-wrap:anywhere]">
+              {s.label ?? `Sense ${i + 1}`}
+              <span className="font-normal text-fg-3">
+                {s.maker ? ` · ${s.maker}` : ''} · {s.post_count} {s.post_count === 1 ? 'post' : 'posts'}
+              </span>
+            </h3>
+            <Parts lines={s} brief={brief} />
+          </div>
+        ))}
+      </section>
+    );
+  }
+  if (!(brief.what.length || brief.how.length || brief.results.length || brief.numbers?.length)) return null;
   return (
     <section aria-label="Brief" className="mt-3" data-brief-as-of={brief.as_of ?? undefined}>
-      <Part label="What it is" lines={brief.what} brief={brief} />
-      <Part label="How it works" lines={brief.how} brief={brief} />
-      <Part label="Results" lines={brief.results} brief={brief} />
-      <Numbers series={brief.numbers ?? []} brief={brief} />
+      <Parts lines={brief} brief={brief} />
     </section>
   );
 }

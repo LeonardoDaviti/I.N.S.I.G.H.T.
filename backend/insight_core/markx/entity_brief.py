@@ -27,9 +27,9 @@ sources come first. Behind entity_bands.json `entities.brief` (`on`): off, nothi
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import track_things as TT
 
@@ -204,7 +204,7 @@ def plan_things(cur: Any, *, now: Optional[datetime] = None, roots: Optional[Seq
     now = now or datetime.now(timezone.utc)
     schemas.ensure_guides(cur)
     book, worth = _worth(cur, roots)
-    added = 0
+    added = plan_senses(cur, book, worth)   # 0274: the sense question of each, before its things
     for root, posts in worth:
         room = ASKS_A_DAY - asked_today(cur, now)
         if room <= 0:
@@ -292,10 +292,14 @@ def _same(ln: Dict[str, Any]) -> Tuple[frozenset, frozenset]:
     return frozenset(TB._digits(words)), frozenset(w for w in re.findall(r"\w+", TT.fold(words)) if len(w) >= 4)
 
 
-def read_posts(cur: Any, root: str) -> int:
-    """0269: the posts the brief has read (a things question of the entity answered)."""
-    cur.execute("SELECT count(DISTINCT a) FROM mx_tasks WHERE kind = %s AND b = %s AND status = 'answered'",
-                (TT.THINGS_KIND, root))
+def read_posts(cur: Any, root: str, posts: Optional[Sequence[str]] = None) -> int:
+    """0269: the posts the brief has read (a things question of the entity answered); 0274: of `posts` only."""
+    if posts is None:
+        cur.execute("SELECT count(DISTINCT a) FROM mx_tasks WHERE kind = %s AND b = %s AND status = 'answered'",
+                    (TT.THINGS_KIND, root))
+    else:
+        cur.execute("""SELECT count(DISTINCT a) FROM mx_tasks WHERE kind = %s AND b = %s AND status = 'answered'
+                          AND a = ANY(%s::uuid[])""", (TT.THINGS_KIND, root, list(posts)))
     return cur.fetchone()[0]
 
 
@@ -376,56 +380,59 @@ def series(reported: Sequence[Dict[str, Any]], *, min_posts: int = 2) -> List[Di
 
 
 
-def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
-    """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, 0269: fewer
-    than SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
-    posts}. Each line {text, note, cites: [{n, post, quote}], sources} (results also `who`: its posts' sources);
-    lines of the same figures and key words are one (`_same`); `posts` numbers the cited posts in order of first cite
-    (the superscripts) with their title, address, source and date."""
+def _cite(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A line's cites: its reports' posts, newest first, each with the quotes it rests on."""
+    out, seen = [], set()
+    for r in reversed(list(rs)):   # newest first
+        if r["post"] in seen or r["post"] not in posts:
+            continue
+        seen.add(r["post"])
+        vals = r["values"] or {}
+        first = next(iter(vals.values()), {}) if vals else {}
+        out.append({"post": r["post"], "quotes": [v.get("quote") for v in vals.values() if v.get("quote")][:3],
+                    "quote": first.get("quote")})
+    return out
+
+
+def _fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """0274: a thing's fields from these reports only (track_things.remerge's rule: a newer post's value replaces)."""
+    fields: Dict[str, Any] = {}
+    for r in rs:   # oldest first
+        for name, v in (r["values"] or {}).items():
+            fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": r["post"]}
+    return fields
+
+
+def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]], posts: Dict[str, Dict[str, Any]],
+              names: Sequence[str], only: Optional[Set[str]] = None
+              ) -> Optional[Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]]:
+    """({what, how, results}, {thing: its line}) of these things, or None (no what_it_is line about the entity itself,
+    0269). `only` (0274): a sense's posts: each thing read from those posts' reports alone (its fields too)."""
     from insight_core.markx import track_brief as TB
-    if not on():
+    rows = []
+    for t in things:
+        mine = [r for r in rs.get(t["id"], []) if only is None or r["post"] in only]
+        if mine:
+            rows.append((t if only is None else dict(t, fields=_fields(mine)), mine))
+    rows = [(t, mine) for t, mine in rows if t["kind"] != WHAT or own_what(t, names)]
+    if not any(t["kind"] == WHAT for t, _m in rows):
         return None
-    s = TT.current_schema(cur, root)
-    if s is None:
-        return None
-    things = TT.current(cur, root)
-    if not things or read_posts(cur, root) < SHOW_POSTS:
-        return None
-    things = [t for t in things if t["kind"] != WHAT or own_what(t, names)]
-    if not any(t["kind"] == WHAT for t in things):
-        return None
-    rs = TT.reports(cur, root, [t["id"] for t in things])
-    posts = _posts(cur, sorted({r["post"] for v in rs.values() for r in v}))
-    numbers: Dict[str, int] = {}
-
-    def cite(t: Dict[str, Any]) -> List[Dict[str, Any]]:
-        out, seen = [], set()
-        for r in reversed(rs.get(t["id"], [])):   # newest first
-            if r["post"] in seen or r["post"] not in posts:
-                continue
-            seen.add(r["post"])
-            vals = r["values"] or {}
-            first = next(iter(vals.values()), {}) if vals else {}
-            out.append({"post": r["post"], "quotes": [v.get("quote") for v in vals.values() if v.get("quote")][:3],
-                        "quote": first.get("quote")})
-        return out
-
     by_kind: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     alike: Dict[Any, Dict[str, Any]] = {}
     epoch = datetime.min.replace(tzinfo=timezone.utc)
-    for t in sorted(things, key=lambda t: (-TB.sources_of(rs.get(t["id"], []), posts),
-                                           -(t["last_at"] or epoch).timestamp(), t["id"])):
+    for t, mine in sorted(rows, key=lambda x: (-TB.sources_of(x[1], posts),
+                                               -(x[0]["last_at"] or epoch).timestamp(), x[0]["id"])):
         if t["kind"] == MEASURE:   # 0272: a measure is a value of the numbers over time, never a line
             continue
         text, note = line_parts(t["kind"], t, names)
         text = text.strip()
         if not text:
             continue
-        cs = cite(t)
+        cs = _cite(mine, posts)
         if not cs:
             continue
         ln = {"thing": t["id"], "text": text, "note": note, "cites": cs,
-              "sources": TB.sources_of(rs.get(t["id"], []), posts), "by": _val(t, "by")}
+              "sources": TB.sources_of(mine, posts), "by": _val(t, "by")}
         key = (t["kind"], _same(ln))
         if key in alike:   # 0269: the same figures and key words: one line, every post it rests on cited
             first = alike[key]
@@ -446,20 +453,68 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
             if name == "results":   # who measured it, when its quote names them; else the posts' sources
                 ln["who"] = [by] if by else sorted({posts[c["post"]]["source"] for c in ln["cites"]
                                                     if posts[c["post"]].get("source")})
+    return sections, line_of
+
+
+def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
+    """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, 0269: fewer
+    than SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
+    numbers, posts[, senses]}. Each line {text, note, cites: [{n, post, quote}], sources} (results also `who`: its posts'
+    sources); lines of the same figures and key words are one (`_same`); `posts` numbers the cited posts in order of
+    first cite (the superscripts) with their title, address, source and date. 0274: when the entity's posts hold 2+
+    senses (`senses`), the three lists are empty and `senses` holds one brief a sense ({label, kind, maker,
+    post_count, what, how, results}), each by 0269's rules over its own posts (SHOW_POSTS of them read, a what line
+    about the sense itself by its names and the names its posts wrote); a sense short of them is listed, no lines."""
+    from insight_core.markx import track_brief as TB
+    if not on():
+        return None
+    s = TT.current_schema(cur, root)
+    if s is None:
+        return None
+    things = TT.current(cur, root)
+    if not things or read_posts(cur, root) < SHOW_POSTS:
+        return None
+    rs = TT.reports(cur, root, [t["id"] for t in things])
+    posts = _posts(cur, sorted({r["post"] for v in rs.values() for r in v}))
+    sense = senses(cur, root)
+    out_senses: List[Dict[str, Any]] = []
+    if sense is None:
+        got = _sections(things, rs, posts, names)
+        if got is None:
+            return None
+        sections, line_of = got
+        parts = [sections]
+    else:   # 0274: one brief a sense, each from its own posts' reports only
+        sections, line_of, parts = {"what": [], "how": [], "results": []}, {}, []
+        for x in sense:
+            got = (_sections(things, rs, posts, list(names) + x["names"], set(x["posts"]))
+                   if read_posts(cur, root, x["posts"]) >= SHOW_POSTS else None)
+            part = got[0] if got else {"what": [], "how": [], "results": []}
+            if got:
+                line_of.update(got[1])
+                parts.append(part)
+            out_senses.append({"label": x["label"], "kind": x["kind"], "maker": x["maker"],
+                               "post_count": len(x["posts"]), **part, "numbers": []})
+    numbers: Dict[str, int] = {}
     shown_things = []
-    for name in ("what", "how", "results"):
-        for ln in sections[name]:
-            shown_things.append(ln["thing"])
-            for c in ln["cites"]:
-                c["n"] = numbers.setdefault(c["post"], len(numbers) + 1)
+    for part in parts:
+        for name in ("what", "how", "results"):
+            for ln in part[name]:
+                shown_things.append(ln["thing"])
+                for c in ln["cites"]:
+                    c["n"] = numbers.setdefault(c["post"], len(numbers) + 1)
     numbers_shown: List[Dict[str, Any]] = []
-    if numbers_on():   # 0272: each recurring measure's values over time, each value's post numbered as a cite
-        got_series = series([dict(r) for t in things if t["kind"] == MEASURE for r in rs.get(t["id"], [])
-                             if r["post"] in posts])
-        for sr in got_series[:NUMBERS_SHOWN]:
-            for pt in sr["points"]:
-                pt["n"] = numbers.setdefault(pt["post"], len(numbers) + 1)
-            numbers_shown.append(sr)
+    if numbers_on():   # 0272: each recurring measure's values over time (0274: a sense's from its own posts)
+        for part, only in ([(sections, None)] if sense is None else
+                           [(p, set(x["posts"])) for p, x in zip(out_senses, sense)]):
+            got_series = series([dict(r) for t in things if t["kind"] == MEASURE for r in rs.get(t["id"], [])
+                                 if r["post"] in posts and (only is None or r["post"] in only)])
+            part["numbers"] = []
+            for sr in got_series[:NUMBERS_SHOWN]:
+                for pt in sr["points"]:
+                    pt["n"] = numbers.setdefault(pt["post"], len(numbers) + 1)
+                part["numbers"].append(sr)
+            numbers_shown += part["numbers"]
     if not shown_things and not numbers_shown:
         return None
     got = TB.points(cur, root)
@@ -469,9 +524,177 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
         if ns:
             points.append({"text": p["text"], "cites": ns})
     found = [r["found_at"] for v in rs.values() for r in v if r.get("found_at")]
-    return {**sections, "points": points, "numbers": numbers_shown,
+    return {**{k: sections[k] for k in ("what", "how", "results")}, "points": points,
+            "numbers": sections.get("numbers", []), **({"senses": out_senses} if out_senses else {}),
             "as_of": max(found).isoformat() if found else None,
             "posts": [dict(posts[p], n=n) for p, n in sorted(numbers.items(), key=lambda x: x[1])]}
+
+
+# ---- 0274: the senses of an entity's posts (a brief a sense) ---------------------------------------------------
+#
+# One entity can hold several things of one name (merged by a name rule before any sense was known, or a key whose
+# senses were never split). Where identity already made sense entities (0184 entity_facts: a split's entities, their
+# mentions pinned), each sense is its own entity with its own brief and the page links the others (`senses` of
+# entity_facts.read): nothing here. Else the brief asks identity's own sense question, the collide kind under its
+# guide collide-v2 (0184: one sense one exact thing, what each is, its kind and the maker a post states), over the
+# brief's report posts (one mention a post, the shown sample's format: identity.collide_input), a=b=the root (b set:
+# identity's collision reads, which read b IS NULL, never take it as theirs). Settled when SENSE_RUNS runs group the
+# mentions alike (asked again up to SENSE_ASKS runs); a settled answer with 2+ named senses (generic and unclear
+# mentions are in none) gives the brief one part a sense.
+
+SENSE_SWITCH = ("entities", "brief_senses")
+SENSE_GUIDE = "collide-v2"
+SENSE_RUNS = 2
+SENSE_ASKS = 3
+
+
+def senses_on() -> bool:
+    """entity_bands.json `entities.brief_senses` (default off)."""
+    from insight_core.markx import identity
+    return bool((identity.bands().get(SENSE_SWITCH[0]) or {}).get(SENSE_SWITCH[1]))
+
+
+def _mentions(cur: Any, book: Any, root: str, posts: Sequence[str]) -> List[Tuple[str, str, Any, Any, Any]]:
+    """One mention of the entity a post (post, span, type, maker, at), in the posts' order: its first subject/actor
+    mention, else its first."""
+    from insight_core.markx import entity_views as EV
+    if not posts:
+        return []
+    members = EV._members(book, root)
+    cur.execute("""SELECT m.post_id::text, m.n, m.span, m.type, m.maker, m.role, m.entity_id::text, m.guide
+                     FROM mx_mentions_now m
+                    WHERE m.guide = ANY(%s) AND m.post_id = ANY(%s::uuid[]) AND m.entity_id IS NOT NULL
+                    ORDER BY m.post_id, m.n""", (EV._guide(), list(posts)))
+    best: Dict[str, Tuple] = {}
+    for pid, n, span, typ, maker, role, eid, g in cur.fetchall():
+        if book.root(book.pins.get((pid, g, n), eid)) != root or (eid not in members and (pid, g, n) not in book.pins):
+            continue
+        rank = 0 if role in EV.ROLE_REPORT else 1
+        if pid not in best or rank < best[pid][0]:
+            best[pid] = (rank, span, typ, maker)
+    return [(p, best[p][1], best[p][2], best[p][3], None) for p in posts if p in best]
+
+
+def sense_input(cur: Any, book: Any, root: str, posts: Sequence[str]) -> Optional[str]:
+    """The sense question's input over the brief's posts (the known senses, then one numbered mention a post), or
+    None (under two posts)."""
+    from insight_core.markx import entity_facts, identity as I, tasks
+    loaded = tasks.load_posts(cur, list(posts))
+    pick = [m for m in _mentions(cur, book, root, posts) if m[0] in loaded]
+    if len(pick) < 2:
+        return None
+    return entity_facts.known_block(cur, root) + I.collide_input(book.ents[root], len(posts), pick, loaded)
+
+
+def _partners(ans: Dict[str, Any]) -> Dict[int, Tuple[frozenset, Dict[str, Any]]]:
+    """{mention: (the mentions of its sense, that sense)} of one run (unclear mentions in none)."""
+    out = {}
+    for s in ans.get("senses") or []:
+        ms = frozenset(int(x) for x in s.get("m") or [] if str(x).isdigit())
+        for x in ms:
+            out[x] = (ms, s)
+    return out
+
+
+def settled(calls: Sequence[Tuple[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """The settled senses of the first SENSE_ASKS runs, {senses: [...], unclear: [...]}, else None (under SENSE_RUNS
+    runs). The two-run agreement read per mention: a mention is settled when SENSE_RUNS runs put it with the same
+    mentions; while some are not, the fewest mentions are left out (unclear) for the rest to settle (one run's
+    stray mention never unsettles the others). Each settled group keeps the first run's what, kind and maker."""
+    runs = [_partners(a) for _c, a in list(calls)[:SENSE_ASKS]]
+    if len(runs) < SENSE_RUNS:
+        return None
+    nodes = sorted(set().union(*runs))
+
+    def unsettled(drop: Set[int]) -> List[int]:
+        out = []
+        for x in nodes:
+            if x in drop:
+                continue
+            sets = Counter(r[x][0] - drop for r in runs if x in r)
+            if not sets or sets.most_common(1)[0][1] < SENSE_RUNS:
+                out.append(x)
+        return out
+    drop: Set[int] = set()
+    bad = unsettled(drop)
+    while bad:   # leave out the one mention whose absence settles the most others (ties: the lowest number)
+        x = min(bad, key=lambda b: (len(unsettled(drop | {b})), b))
+        drop.add(x)
+        bad = unsettled(drop)
+    groups: Dict[frozenset, Dict[str, Any]] = {}
+    for x in nodes:
+        if x in drop:
+            continue
+        g = Counter(r[x][0] - drop for r in runs if x in r).most_common(1)[0][0]
+        if g not in groups:
+            first = next(r[x][1] for r in runs if x in r and r[x][0] - drop == g)
+            groups[g] = dict(first, m=sorted(g))
+    return {"senses": sorted(groups.values(), key=lambda s: s["m"]), "unclear": sorted(drop)}
+
+
+def _task(cur: Any, root: str) -> Optional[Tuple[str, str, str]]:
+    cur.execute("""SELECT id::text, status, input FROM mx_tasks WHERE kind = 'collide' AND guide = %s AND a = %s
+                      AND b = %s ORDER BY created_at DESC, id LIMIT 1""", (SENSE_GUIDE, root, root))
+    row = cur.fetchone()
+    return tuple(row) if row else None
+
+
+def senses(cur: Any, root: str) -> Optional[List[Dict[str, Any]]]:
+    """The senses of the entity's brief posts, from the newest settled sense question: [{label, kind, maker, posts}]
+    (2+ named senses, the largest first), else None (off; identity's sense entities hold them; one sense; unsettled)."""
+    from insight_core.markx import entity_facts, entity_views as EV, identity as I
+    if not senses_on():
+        return None
+    f = entity_facts.read(cur, [root], senses=True).get(root)
+    if f is not None and f.senses:
+        return None   # identity's sense entities: each its own entity, brief and page
+    t = _task(cur, root)
+    if t is None:
+        return None
+    ans = settled(I.valid_answers(cur, [t[0]]).get(t[0]) or [])
+    if ans is None:
+        return None
+    book = I.lazy_book(cur)
+    found = I.match_pick(cur, EV._guide(), root, t[2] or "", members=EV._members(book, root))
+    spans = {r["n"]: r["span"] for r in I._sample_rows(t[2] or "")}   # how each mention wrote the name
+    out = []
+    for s in ans.get("senses") or []:
+        if s.get("generic"):
+            continue
+        ps = sorted({pid for x in s.get("m") or [] if str(x).isdigit() for pid, _n in found.get(int(x), [])})
+        if ps:
+            out.append({"label": s.get("what") or None, "kind": s.get("kind"), "maker": s.get("maker") or None,
+                        "posts": ps, "names": sorted({spans[int(x)] for x in s.get("m") or []
+                                                      if str(x).isdigit() and int(x) in spans})})
+    if len(out) < 2:
+        return None
+    return sorted(out, key=lambda s: (-len(s["posts"]), s["posts"][0]))
+
+
+def plan_senses(cur: Any, book: Any, worth: Sequence[Tuple[str, List[str]]]) -> int:
+    """The sense question of each entity worth a brief whose posts changed since it was asked (a new input), asked
+    again while unsettled (up to SENSE_ASKS runs). How many were added or reopened."""
+    from insight_core.markx import identity as I, repo, schemas
+    if not senses_on():
+        return 0
+    n = 0
+    for root, posts in worth:
+        text = sense_input(cur, book, root, posts)
+        if text is None:
+            continue
+        tid, new = repo.add_task(cur, kind="collide", guide=SENSE_GUIDE, subject_kind=schemas.KINDS["collide"].subject,
+                                 input=text, a=root, b=root)
+        if new:
+            n += 1
+            continue
+        calls = I.valid_answers(cur, [str(tid)]).get(str(tid)) or []
+        got = settled(calls)
+        if calls and len(calls) < SENSE_ASKS and (got is None or got["unclear"]):   # 2 runs disagree: a third
+            cur.execute("""UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL
+                            WHERE id = %s AND status = 'answered'""", (tid,))
+            n += cur.rowcount
+    return n
+
 
 
 def stamp(cur: Any, root: str) -> List[Any]:
@@ -481,5 +704,9 @@ def stamp(cur: Any, root: str) -> List[Any]:
                           (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_brief_asks a
                              JOIN mx_calls c ON c.task_id = a.task_id AND c.valid WHERE a.track_id = %s),
                           (SELECT json_build_array(count(*), max(updated_at)) FROM mx_track_things
-                            WHERE track_id = %s)""", (root, root, root))
-    return list(cur.fetchone()) + [on(), numbers_on()]
+                            WHERE track_id = %s),
+                          (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_tasks t
+                             JOIN mx_calls c ON c.task_id = t.id AND c.valid
+                            WHERE t.kind = 'collide' AND t.guide = %s AND t.a = %s AND t.b = %s)""",
+                (root, root, root, SENSE_GUIDE, root, root))
+    return list(cur.fetchone()) + [on(), numbers_on(), senses_on()]   # 0274: the sense answers

@@ -3927,7 +3927,8 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         answered_pairs = {pair(a, b) for a, b in cur.fetchall()}
         # the keys whose collision answers came since the last run
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
-                        WHERE t.kind = 'collide' AND t.guide <> %s AND c.created_at >= %s""", (PAIR_GUIDE, since))
+                        WHERE t.kind = 'collide' AND t.guide <> %s AND t.b IS NULL AND c.created_at >= %s""",
+                    (PAIR_GUIDE, since))   # 0274: a brief's sense question (b set) is not identity's
         collide_since = {r[0] for r in cur.fetchall()}
     again = set(backlog(cur))   # v10.18: the open alias items decided again (the backlog, a cap a run)
     vec_seeds: Set[str] = set()
@@ -4546,12 +4547,15 @@ def schemas_guide(kind: str) -> Optional[str]:
     return schemas.KINDS[kind].guide
 
 
-def match_pick(cur: Any, guide: str, eid: str, text: str) -> Dict[int, List[Tuple[str, int]]]:
+def match_pick(cur: Any, guide: str, eid: str, text: str, members: Optional[Iterable[str]] = None
+               ) -> Dict[int, List[Tuple[str, int]]]:
     """A collision question's numbered mentions found again among the entity's mentions: {number: [(post, n)]} (the
-    input names no ids; each line's span, type, maker and its post's title and date say which post it is)."""
+    input names no ids; each line's span, type, maker and its post's title and date say which post it is).
+    `members`: among the mentions of these entities (0274: an entity and the ones merged into it), else `eid`'s."""
     from insight_core.markx import tasks
-    cur.execute("SELECT post_id::text, n, span, type, maker FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id = %s",
-                (guide, eid))
+    cur.execute("""SELECT post_id::text, n, span, type, maker FROM mx_mentions_now
+                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""",
+                (guide, sorted(set(members or []) | {eid})))
     rows = cur.fetchall()
     posts = tasks.load_posts(cur, {r[0] for r in rows})
     blocks = re.split(r"\n(?=\d+\. written )", text)

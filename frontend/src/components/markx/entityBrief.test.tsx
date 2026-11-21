@@ -60,3 +60,22 @@ describe('EntityBrief (0261)', () => {
     expect(empty.container.textContent).toBe('');
   });
 });
+
+describe('EntityBrief senses (0274)', () => {
+  it('shows one brief a sense, each headed by what it is, its maker and its post count', () => {
+    const senses = [
+      { label: 'An editor mode', kind: 'software', maker: 'Zentra', post_count: 2, what: brief.what, how: brief.how, results: [] },
+      { label: 'A general pattern', kind: 'other', maker: null, post_count: 1, what: [], how: [], results: brief.results },
+    ];
+    render(<MemoryRouter><EntityBrief brief={{ ...brief, what: [], how: [], results: [], senses }} /></MemoryRouter>);
+    const box = screen.getByRole('region', { name: 'Brief' });
+    expect(within(box).getByText(/2 different things/)).toBeTruthy();
+    const first = box.querySelector('[data-brief-sense="1"]') as HTMLElement;
+    const second = box.querySelector('[data-brief-sense="2"]') as HTMLElement;
+    expect(within(first).getByText('An editor mode')).toBeTruthy();
+    expect(first.textContent).toContain('Zentra');
+    expect(within(first).queryByText('Results')).toBeNull();
+    expect(within(second).getByText('Results')).toBeTruthy();
+    expect(second.textContent).toContain('1 post');
+  });
+});
