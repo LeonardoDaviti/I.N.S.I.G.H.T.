@@ -49,12 +49,20 @@ def unread(asks: str, kind_param: str = "%(kind)s", guide_param: str = "%(guide)
     no mark of this kind and guide holds for it (`unmarked`'s, by a join of mx_plan_marks and mx_post_stamps). Both are
     the planner's own conditions over narrow tables and indexes, so a window whose posts all have their task, or are
     passed over for their current text, is found without reading a post row (v10.22: every planner run read every
-    post of the window, ~3 page reads a post for the post, ~3 for its mark, ~3 for its task)."""
-    return f"""p.id IN (SELECT q.id FROM posts q
-                        WHERE {asks}
-                          AND NOT EXISTS (SELECT 1 FROM mx_plan_marks mk JOIN mx_post_stamps ps ON ps.post_id = mk.post_id
-                                           WHERE mk.kind = {kind_param} AND mk.guide = {guide_param}
-                                             AND mk.post_id = q.id AND mk.stamp = ps.n::text))"""
+    post of the window, ~3 page reads a post for the post, ~3 for its mark, ~3 for its task).
+    v10.33 (0277): an array of ids (`p.id = ANY(ARRAY(...))`), not `p.id IN (...)`: the planner estimated the posts
+    left at ~80% of all (the tasks' (kind, guide) estimate is a fifth of the real one), so it walked the date index
+    over every post of the window, reading each post's row to test it against the hashed set (production: ~3 s and
+    ~1.4M blocks a call, 1,361 calls, with the all-time window); the array is the posts' primary-key probes, so only
+    the posts left are read (synthetic 200k posts, 1k left: 407 -> 207 ms, 137k -> 97k blocks). The price: a guide
+    with no task yet (every post left) reads every post and sorts them (synthetic: 0.31 -> 1.25 s) for its first
+    pages, while it has PLAN_LIMIT tasks a call to add."""
+    return f"""p.id = ANY(ARRAY(SELECT q.id FROM posts q
+                                WHERE {asks}
+                                  AND NOT EXISTS (SELECT 1 FROM mx_plan_marks mk
+                                                    JOIN mx_post_stamps ps ON ps.post_id = mk.post_id
+                                                   WHERE mk.kind = {kind_param} AND mk.guide = {guide_param}
+                                                     AND mk.post_id = q.id AND mk.stamp = ps.n::text)))"""
 
 
 def execute(cur: Any, sql: str, params: Any) -> List[Tuple]:
