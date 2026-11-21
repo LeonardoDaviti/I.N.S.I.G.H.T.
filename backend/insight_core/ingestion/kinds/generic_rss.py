@@ -684,7 +684,7 @@ class GenericRssKind(BaseKind):
         page watch reads one; None when the page is no post, UNREADABLE when it cannot be read (a host limiting
         us stops the archive: it resumes). `archived`: the Web Archive's capture of it, read when the live page
         is gone (404 / 410)."""
-        from insight_core.ingestion.kinds.page_watch import article_post, page_date
+        from insight_core.ingestion.kinds.page_watch import article_post, not_post, page_date
 
         try:
             page, _ = await self.http.get_text(url)
@@ -713,8 +713,10 @@ class GenericRssKind(BaseKind):
         # undated (article_post keeps None): the saver sorts it before the source's oldest post, never at today's top
         post = article_post(page, str(source["handle_or_url"]), url, date or address_hint(url) or lastmod,
                             adapter=self.name)
-        if post is not None:
-            post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
+        # v10.35: a form, a listing's numbered page or a listing of other posts (a tag page) is no post.
+        if post is None or not_post(page, url, post):
+            return None
+        post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
         return post
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -825,14 +827,17 @@ def _public(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _under_section(entries: Sequence[Tuple[str, Optional[str]]], site: str, prefix: str
                    ) -> List[Tuple[str, Optional[datetime]]]:
-    """The sitemap's addresses on the site under the feed's section, newest lastmod first, once each."""
+    """The sitemap's addresses on the site under the feed's section, newest lastmod first, once each; never a
+    listing of other posts by its address (/tag/<name>/, v10.35: page_watch.listing_address)."""
+    from insight_core.ingestion.kinds.page_watch import listing_address   # page_watch imports this module
+
     publication = publication_of(host_of(site))
     found: Dict[str, Tuple[str, Optional[datetime]]] = {}
     for loc, lastmod in entries:
         path = urllib.parse.urlparse(loc).path or "/"
         key = normalize_url(loc)
         if (key and publication_of(host_of(loc)) == publication and path.startswith(prefix)
-                and path.rstrip("/") + "/" != prefix):
+                and path.rstrip("/") + "/" != prefix and not listing_address(loc, prefix)):
             found.setdefault(key, (loc, parsing.parse_datetime_value(lastmod)))
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(found.values(), key=lambda entry: entry[1] or epoch, reverse=True)

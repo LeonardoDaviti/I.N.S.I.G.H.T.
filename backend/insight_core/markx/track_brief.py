@@ -31,6 +31,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.markx import track_things as TT
 
 DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v3"   # v10.29: v2 asked again under v3
@@ -255,7 +256,7 @@ def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, A
     from insight_core.markx import tracks
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.title, p.url, {tracks._date()}, p.source_id::text,
+    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {tracks._date()}, p.source_id::text,
                            (SELECT i.why FROM mx_track_items i WHERE i.track_id = %s AND i.post_id = p.id
                              AND i.verdict IS NOT NULL ORDER BY i.version DESC LIMIT 1)
                       FROM posts p WHERE p.id = ANY(%s::uuid[])""", (track_id, list(ids)))

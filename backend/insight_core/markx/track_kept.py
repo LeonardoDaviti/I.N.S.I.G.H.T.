@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.db.repo_post_parts import shown_title
+
 REFRESH_LOCK = 0x7472_0195   # one refresh at a time; a second skips (the tracks stay as they are until the next)
 REFRESH_GAP = 300.0          # 0264: a track changed by the worker only is placed again at most every 5 minutes
 
@@ -67,7 +69,8 @@ def fill(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, Any]]) ->
     ids = [it["post_id"] for it in items if "title" not in it]
     if not ids:
         return
-    cur.execute("""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.why, p.title, p.url,
+    # The title every page shows (v10.35: a title-less post's, a toot's, is its first line, never "")
+    cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.why, {shown_title()}, p.url,
                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                    s.handle_or_url)
                      FROM mx_track_items i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
