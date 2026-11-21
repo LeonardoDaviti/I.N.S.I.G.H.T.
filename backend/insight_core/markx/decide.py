@@ -401,9 +401,13 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
             continue
         if q.type == "check":
             strict = config.tau_keep2 if q.voices <= 2 else config.tau_keep
-            if pa < strict:
+            demoting = rel in ("mention", "digest_item")
+            # v10.35: a "mention" or "digest item" answer AT the bar demotes too (confidence 70 is p 0.30000000000000004
+            # in floats, and 0.30 was "not below 0.30" anyway): the AINews digest the check called a digest item of the
+            # Gemini 4 Hydrogen story stayed a member, its things on the story. A removal keeps the strict bar.
+            if pa < strict or (demoting and round(pa, 6) <= strict):
                 ev = about[q.story].pop(q.post, None)
-                kind = "demote" if rel in ("mention", "digest_item") else "remove"
+                kind = "demote" if demoting else "remove"
                 guarded = None
                 if kind == "remove" and config.two_event_guard and events.get(q.post) == "several":
                     guarded = "two-event"

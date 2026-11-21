@@ -232,6 +232,19 @@ class Leases(_Api):
         _, rest = self.lease(limit=20, worker="device-2")
         self.assertEqual(len(rest["tasks"]), 1)     # the third; the two leased are not leased again
 
+    def test_v1035_a_join_or_pair_task_carries_its_judged_post(self):
+        """v10.35: two questions judging one post quote that post, so an answer the model wrote for one under the
+        other's id passed judge-read-v2's quote check; each carries the judged post (the POST block: join's `a`,
+        pair's `b`), which the worker never asks twice in one call (split_calls)."""
+        judged, story_post, anchor = self.post(), self.post(title="Globex raised $300m"), self.post(title="Initech")
+        with self.conn.transaction():
+            join = tasks.add(self.cur, "join", "STORY\njoin question", a=judged)[0]
+            pair = tasks.add(self.cur, "pair", "STORY\npair question", a=anchor, b=judged)[0]
+            read = tasks.read_task(self.cur, story_post)[0]
+        _, body = self.lease("join,pair,read", limit=20)
+        got = {t["id"]: t.get("post") for t in body["tasks"]}
+        self.assertEqual(got, {str(join): judged, str(pair): judged, str(read): None})
+
     def test_v1020_a_lease_sends_the_schema_the_server_checks_with_not_a_stale_stored_one(self):
         # mx_guides keeps a guide's first schema; a set widened later (ent-v4.2's `published`) must reach the worker
         # (mx_guides rows are never edited: the stored schema stays, and a widened code schema stands in for the change)
