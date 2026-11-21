@@ -84,7 +84,7 @@ describe('News (issue 0051)', () => {
     expect(screen.getByRole('button', { name: /4 sources \(1 share\) · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
     // News is not the unread feed: its own Show (All / Unread, issue 0238), no Posts, no unread count.
     expect(within(screen.getByRole('radiogroup', { name: 'Show' })).getAllByRole('radio').map((radio) => radio.textContent))
-      .toEqual(['All', 'Unread']);
+      .toEqual(['All', 'Unread', 'Since you looked']);
     expect(screen.queryByRole('radiogroup', { name: 'Posts' })).not.toBeInTheDocument();
     expect(screen.queryByText('4 unread')).not.toBeInTheDocument();
   });

@@ -55,6 +55,7 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
 // News and Classics (issue 0051): their own chunks, loaded the first time they are shown (the reader's JS budget).
 const NewsList = lazy(() => import('../components/reader/NewsList'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
+const SinceLooked = lazy(() => import('../components/reader/SinceLooked'));   // issue 0271
 // A voice's channels as tabs (issue 0132 A): its own chunk, loaded on a voice's or a channel's page only.
 const ScopeVoiceHeader = lazy(() => import('../components/voices/ScopeVoiceHeader'));
 // A track as a topic (issue 0145, Mark X): its own chunk, loaded on View Topic only.
@@ -144,6 +145,8 @@ function Reader({ scope }: { scope: string }) {
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
   // Issue 0238: News's Unread view (`?news=unread`): its rows with an unread post. News opens on every row.
   const newsUnread = readerView === 'news' && params.get('news') === 'unread';
+  // Issue 0271: "Since you looked" (`?news=since`): the reader's one look over News and the tracks.
+  const newsSince = readerView === 'news' && params.get('news') === 'since';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
   const [navOpen, setNavOpen] = useState(false);
@@ -286,7 +289,7 @@ function Reader({ scope }: { scope: string }) {
             oneSource={oneSource}
             topic={oneTrack && (markxOn || readerView === 'topic')}
             allSources={topicTrack ? { on: allSources, onChange: (on) => setParam('all_sources', on ? '1' : null) } : null}
-            newsShow={{ value: newsUnread ? 'unread' : 'all', onChange: (value) => setParam('news', value === 'unread' ? 'unread' : null) }}
+            newsShow={{ value: newsSince ? 'since' : newsUnread ? 'unread' : 'all', onChange: (value) => setParam('news', value === 'all' ? null : value) }}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
             // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
@@ -319,7 +322,7 @@ function Reader({ scope }: { scope: string }) {
               ) : null}
               {viewPending ? <LoadingState label="Loading" rows={6} /> : readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
-                  <NewsList scope={scope} unread={newsUnread} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
+                  {newsSince ? <SinceLooked /> : <NewsList scope={scope} unread={newsUnread} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />}
                 </Suspense>
               ) : readerView === 'topic' ? (
                 <Suspense fallback={<LoadingState label="Loading the topic" rows={6} />}>
