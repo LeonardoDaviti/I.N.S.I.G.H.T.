@@ -524,7 +524,7 @@ class Fixes(base._Db):
         it took the last time are left, and the next run begins at the first step this one could not start."""
         z, vela, zv, v5 = self._org_and_family()
         took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0,
-                "names": 1.0, "reroot": 1.0}
+                "names": 1.0, "levels": 1.0, "reroot": 1.0}
         clock = Tick()
         with mock.patch.object(R, "time", clock):
             first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 6.5,
@@ -535,7 +535,7 @@ class Fixes(base._Db):
         self.assertEqual(set(first["took"]), set(R.STEPS))                       # the steps not run keep their seconds
         second = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=first)
         self.assertEqual((second["done"], second["next"]), (True, None))
-        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families", "family_home", "names", "reroot"})   # resumed where the first stopped
+        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families", "family_home", "names", "levels", "reroot"})   # resumed where the first stopped
         third = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=second)
         self.assertEqual(set(third) & set(R.STEPS), set(R.STEPS))                # done: a new round from the first
         self.assertEqual(third["product_accounts"]["merged"], 0)                 # idempotent

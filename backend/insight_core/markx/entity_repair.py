@@ -39,6 +39,8 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
      made for (keep everything) and the brief planner, reading roots, briefs the new root; the shown name follows on
      the touched clusters. Skipped: a rename on the path (an older name into the newer, its own direction), an owner's
      shown name on the build root.
+  4d. `levels` (v10.35): a checkpoint of a product, dataset or software (a SKU read as a size: "Core Ultra 9 285K",
+     "Radeon 780M") is the variant identity.level_of makes it now; only a model's size or build makes a checkpoint.
   5. `shown`: the name and type each cluster is shown under, by evidence (mx_entities.shown_name, shown_type, on the
      root): the member name the most distinct sources write (then posts), counting no span written as a handle nor
      a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
@@ -67,6 +69,7 @@ UNDO_LIMIT = 200          # redirects a run undoes (org_family)
 PRODUCT_LIMIT = 500       # product accounts a run merges into their family (product_accounts)
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
+RELEVEL_LIMIT = 2000      # v10.35: checkpoints a run makes the variants identity.level_of says (relevel)
 REROOT_LIMIT = 200        # clusters a run re-roots on their general name (reroot)
 SHOWN_CHUNK = 2000        # clusters whose shown name one query reads
 SHOWN_SINGLES = 20000     # v10.23 (0218): a sweep's step: SHOWN_CHUNK clusters of several names, or this many of one
@@ -81,7 +84,7 @@ def config() -> Dict[str, Any]:
             "reparent": got.get("reparent", True),
             "families": got.get("families", True), "shown": got.get("shown", True),
             "family_home": got.get("family_home", True), "names": got.get("names", True),
-            "reroot": got.get("reroot", True)}
+            "reroot": got.get("reroot", True), "levels": got.get("levels", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -630,6 +633,26 @@ def merge_versions(cur: Any, book: I.Book, *, run_id: Any, limit: int = FAMILY_L
     return n
 
 
+# ---- 4d. a product's SKU is no checkpoint -----------------------------------------------------------------------
+
+def relevel(cur: Any, book: I.Book, *, limit: int = RELEVEL_LIMIT) -> int:
+    """v10.35: a checkpoint of a type no size or build makes one of (identity.level_of: a product's, a dataset's,
+    software's "285K", "780M", "10k"), made before v10.35, is the variant identity.level_of makes it now (in id
+    order; idempotent: none is left once done). Its fields stay as stated. Before `reroot`, which reads a checkpoint
+    as a build."""
+    n = 0
+    for e in book.walk("e.level = %s", ("checkpoint",), by_id=True):
+        if n >= limit:
+            break
+        to = I.level_of(e.type, e.hk, e.pk) if e.level == "checkpoint" else "checkpoint"
+        if to == "checkpoint":
+            continue
+        cur.execute("UPDATE mx_entities SET level = %s WHERE id = %s AND level = 'checkpoint'", (to, e.id))
+        e.level = to
+        n += 1
+    return n
+
+
 # ---- 4c. a cluster rooted on a build ---------------------------------------------------------------------------
 
 def reroot_plan(cur: Any, book: I.Book) -> List[Dict[str, Any]]:
@@ -943,7 +966,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names", "reroot")
+STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names", "levels", "reroot")
 GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
 
 
@@ -965,7 +988,9 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
              # 0250: a bare name several makers state, one thing a maker (identity.split_names; families.split)
              "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full),
              # v10.35: a cluster rooted on a build re-roots on its general name (identity.merge's keeper)
-             "reroot": lambda: reroot_builds(cur, book, run_id=run_id)}
+             "reroot": lambda: reroot_builds(cur, book, run_id=run_id),
+             # v10.35: a product's SKU ("285K") is no checkpoint (identity.level_of)
+             "levels": lambda: relevel(cur, book)}
     last = last or {}
     took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
     start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0
