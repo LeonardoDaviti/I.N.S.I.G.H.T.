@@ -340,7 +340,8 @@ def _members(book: I.Book, root: str) -> Set[str]:
     return set(book.cluster(root))   # v10.17 (0186): the entities whose merges lead to root, not a walk of the book
 
 
-def family_versions(book: Any, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def family_versions(book: Any, versions: List[Dict[str, Any]],
+                    posts: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
     """v10.30 (0259): a family's versions as a reader counts them: each row's version as a version reads it
     (names.clean: a model id's "5-1" is 5.1 when the family lists 5.1), a row whose version is a ratio ("5:1") left out (no version of the
     family), and a variant that is a setting of its version (names.setting: "Nimbus 5.2 (max)", "Nimbus 5 low") listed
@@ -382,7 +383,33 @@ def family_versions(book: Any, versions: List[Dict[str, Any]]) -> List[Dict[str,
             top.setdefault("builds", []).append({"id": v["id"], "name": v["name"], "build": book.ents[v["id"]].build})
             continue
         kept.append(v)
-    return kept
+    # v10.35: two rows of one version and variant, neither a build, are one version written two ways ("Fable 5.0" and
+    # "Fable 5": N.vnorm; "claude-fable-5-1", the model id, and "Fable 5.1" once names.clean reads 5.1): the row of
+    # the most posts (`posts`; then the order) lists the others under it (`same`), not as versions of their own.
+    def spelled(v: Dict[str, Any]) -> Tuple[Any, str, str]:
+        return (N.vnorm(N.vt(v["version"])), (v["variant"] or "").strip().lower(),
+                N.squash(N.nk(book.ents[v["id"]].size) or ""))
+    def spelled_apart(a: Any, b: Any) -> bool:
+        # only a version written two ways ("5.0" / "5", the id's "5-1" / "5.1"), by one maker: two names stating the
+        # same version are two things until identity says one (measured: "HP Z6" / "Nikon Z6", "Fourier GR-1" /
+        # "ArcFlash Labs GR-1" in one family)
+        written = (N.vt(a.version), N.nk(a.variant)) != (N.vt(b.version), N.nk(b.variant))
+        return written and (not a.maker or not b.maker or I.same_maker(book, a.maker, b.maker))
+    posts = posts or {}
+    lead: Dict[Tuple[Any, str, str], Dict[str, Any]] = {}
+    for v in kept:
+        if v["version"] and not book.ents[v["id"]].build:
+            k = spelled(v)
+            if k not in lead or posts.get(v["id"], 0) > posts.get(lead[k]["id"], 0):
+                lead[k] = v
+    one = []
+    for v in kept:
+        top = lead.get(spelled(v)) if v["version"] and not book.ents[v["id"]].build else None
+        if top is not None and top is not v and spelled_apart(book.ents[v["id"]], book.ents[top["id"]]):
+            top.setdefault("same", []).append({"id": v["id"], "name": v["name"]})
+            continue
+        one.append(v)
+    return one
 
 
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
@@ -406,7 +433,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
-PAGE_SHAPE = "7"      # v10.35: a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "8"      # v10.35: a version's `same` (one version written two ways); a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
@@ -964,13 +991,18 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
     from insight_core.markx import components as C, stops as ST, timeline as TL
     comps = [c for c in C.components_of(book, root) if c in named]
-    versions = family_versions(book, [v for v in versions if v["id"] not in set(comps)])   # v10.30 (0259)
+    versions = [v for v in versions if v["id"] not in set(comps)]
+    versions = family_versions(book, versions, _post_counts(cur, book, [v["id"] for v in versions]))   # v10.30 (0259)
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
     from insight_core.markx import entity_brief, entity_facts
     facts = entity_facts.read(cur, [root], senses=True)   # 0184: what it is, and the name's other senses
     page_entity = _ent_view(book, root, facts)
+    if maker not in book.ents and page_entity.get("maker_id") in book.ents:
+        # v10.35: a version's (or a thing's with no maker parent) maker is the one its names state, as its entity
+        # shows it (`_ent_view`: I.cluster_maker, else its facts'); the parent is a maker only for a family or thing
+        maker = page_entity["maker_id"]
     if root in facts and facts[root].senses:
         page_entity["senses"] = facts[root].senses
     page = {"entity": page_entity, "asked": entity_id, "redirected": root != entity_id,

@@ -48,6 +48,18 @@ class Names(unittest.TestCase):
         self.assertEqual(N.parse("Orbit V4.1 Flash EXL3", "model")["build"], "exl3")
         self.assertEqual(N.parse("Orbit V4.1 Flash 1017", "model")["build"], "1017")
 
+    def test_a_size_is_a_models_number_with_no_leading_zero(self):
+        """v10.35: "GR00T" writes o as zeros (no size "00t", no version); a product's SKU ("285K", "780M") is a variant,
+        only a model's size or build makes a checkpoint (identity.level_of)."""
+        self.assertEqual(N.parse("Isaac GR00T N1.5", "model"),
+                         {"family": "isaac gr00t", "version": "n1.5", "variant": None, "size": None, "build": None})
+        self.assertEqual(N.parse("Qwen3-0.6B", "model")["size"], "0.6b")
+        for name, type_, level in (("Core Ultra 9 285K", "product", "variant"), ("Radeon 780M", "product", "variant"),
+                                   ("pile-10k", "dataset", "variant"), ("Nimbus 3 27B", "model", "checkpoint"),
+                                   ("Nimbus 3 GGUF", "model", "checkpoint"), ("Nimbus 3 Pro", "model", "variant")):
+            pk = N.fields_key(N.parse(name, type_))
+            self.assertEqual(I.level_of(type_, N.fields_key({}), pk), level, name)
+
     def test_variants_and_families(self):
         self.assertEqual(N.parse("Orbit-6.1 Terra", "model"),
                          {"family": "orbit", "version": "6.1", "variant": "terra", "size": None, "build": None})

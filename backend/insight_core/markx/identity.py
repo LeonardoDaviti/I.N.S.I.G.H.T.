@@ -1587,10 +1587,20 @@ def _majority(ms: Sequence[Mention]) -> Mention:
     return min(pick, key=lambda m: (-names[m.name], m.at or datetime.max.replace(tzinfo=timezone.utc), m.post_id, m.n))
 
 
-def _level(hk: Tuple, pk: Tuple) -> str:
+CHECKPOINT_TYPES = ("model", None)   # v10.35: the types a size or a build makes a checkpoint of
+
+
+def level_of(type_: Optional[str], hk: Tuple, pk: Tuple) -> str:
+    """A versioned name's level: a checkpoint when it states a size or a build, a variant when a variant, else a
+    version. v10.35: a size or build is a model's only (its parameters, its weights' format): a product's, a
+    dataset's or software's "size" is a part of its name, a SKU ("Core Ultra 9 285K", "Radeon 780M", "AP-101B",
+    "goodbooks-10k", "Build 29695"), so it is a variant. Measured on the server copy: 476 non-model checkpoints,
+    every one of 25 sampled a SKU, a name or a row count, none a build of a thing."""
     fk = hk if N.has_version(hk) else pk
-    if fk[3] or fk[4]:
+    if (fk[3] or fk[4]) and type_ in CHECKPOINT_TYPES:
         return "checkpoint"
+    if fk[3] or fk[4]:
+        return "variant"
     if fk[2]:
         return "variant"
     return "version"
@@ -1680,7 +1690,7 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
             parent = w.entity(type_=m.type, name=fam_name, key=fam_key, level="family", parent=up, maker=maker,
                               fields=dict(N.NONE), first_seen=first)
     fields = dict(m.fields) if N.has_version(hk) else dict(N.parse(m.name, m.type, m.maker))
-    return w.entity(type_=m.type, name=m.name, key=key, level=_level(hk, pk), parent=parent, maker=maker,
+    return w.entity(type_=m.type, name=m.name, key=key, level=level_of(m.type, hk, pk), parent=parent, maker=maker,
                     fields=fields, first_seen=first)
 
 

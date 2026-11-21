@@ -36,7 +36,9 @@
     "about": "0164 (markx/entity_repair.py): the identity repairs each run. org_family: a product family merged into an org is cut apart (automatic redirects undone; never the owner's). reparent: a version whose family is an org gets a family entity. families: families differing only by their maker's name or brand merge, then their same versions. (suffix merges dropped in v10.18, 0203: 0 merges of 11 candidates on the copy.) shown: the name and type shown, by evidence. product_accounts (0164 B): an org-typed name that is a family's maker in front of the family's name merges into the family.",
     "org_family": true, "product_accounts": true, "reparent": true, "families": true, "shown": true,
     "reroot_about": "v10.35 (entity_repair.reroot_builds): a cluster rooted on a build (a checkpoint, or a name stating GGUF, NVFP4...) that holds a general name re-roots on it, identity.merge's keeper; the same names stay one thing.",
-    "reroot": true
+    "reroot": true,
+    "levels_about": "v10.35 (entity_repair.relevel, identity.level_of): a checkpoint of a type other than a model (a product's SKU read as a size: 'Core Ultra 9 285K', 'Radeon 780M'; a dataset's row count) is a variant. Copy 2026-11-19: 476 such checkpoints, 25 of 25 sampled a SKU, a name or a count.",
+    "levels": true
   },
   "timeline": {
     "about": "0165 (markx/rename.py; the components rule dropped in v10.18, 0203: 26 of 60 right). renames: two entities of one maker, one older, sharing an own address, a 'formerly' sentence or the new one's post naming the old, are asked (rename-v1) and Haiku's `renamed` queued for the owner, never merged by itself (rename_cap questions a run).",

@@ -118,10 +118,32 @@ class VersionStrings(unittest.TestCase):
             book.ents[e.id] = e
         rows = [{"id": e.id, "name": e.name, "version": e.version, "variant": e.variant, "level": e.level} for e in ents]
         got = EV.family_versions(book, rows)
-        self.assertEqual([v["id"] for v in got], ["a", "d", "e", "g"])             # the ratio left out
+        self.assertEqual([v["id"] for v in got], ["a", "e", "g"])                  # the ratio left out
         self.assertEqual(got[0]["settings"], [{"id": "b", "name": "Nimbus 5.2 (max)", "variant": "max"}])
-        self.assertEqual((got[1]["version"], got[1]["variant"]), ("5.2", None))    # the id's numbers: one version
-        self.assertNotIn("settings", got[2])                                        # 6 not listed: its setting a row
+        # the id's numbers: one version, 5.2, and v10.35: so the id is listed under Nimbus 5.2, not a row of its own
+        self.assertEqual(got[0]["same"], [{"id": "d", "name": "kestrel-nimbus-5-2"}])
+        self.assertNotIn("settings", got[1])                                        # 6 not listed: its setting a row
+
+    def test_one_version_written_two_ways_is_one_row(self):
+        """v10.35: "Lumo 5.0" and "Lumo 5" are one version: the row of more posts lists the other (`same`); two
+        names stating one version as written stay two rows (identity says whether they are one), as do two makers'."""
+        def ent(eid, name, version, maker=None, variant=None):
+            return I.Ent(eid, "model", name, N.key(name), "variant" if variant else "version", "f", maker, "lumo",
+                         version, N.vt(version), variant)
+        ents = [ent("a", "Lumo 5.0", "5.0", "Zentra"), ent("b", "Zentra Lumo 5", "5", "Zentra"),
+                ent("c", "Lumo 5 Max", "5", "Zentra", "Max"), ent("d", "Lumo 5.0 Max", "5.0", "Orbit", "Max"),
+                ent("e", "Lumo 4", "4"), ent("g", "Other Lumo 4", "4"), ent("h", "Lumo 1.10", "1.10"),
+                ent("i", "Lumo 1.1", "1.1")]
+        book = I.Book()
+        for e in ents:
+            book.ents[e.id] = e
+        rows = [{"id": e.id, "name": e.name, "version": e.version, "variant": e.variant, "level": e.level} for e in ents]
+        got = EV.family_versions(book, rows, {"b": 9, "a": 2})
+        self.assertEqual([v["id"] for v in got], ["b", "c", "d", "e", "g", "h", "i"])
+        self.assertEqual(got[0]["same"], [{"id": "a", "name": "Lumo 5.0"}])          # the row of more posts leads
+        self.assertNotIn("same", got[1])                                              # another maker's: two rows
+        self.assertEqual(N.vnorm(N.vt("2.0.0")), (2,))
+        self.assertEqual(N.vnorm(N.vt("1.10")), (1, 10))
 
     def test_a_build_is_listed_under_its_version(self):
         def ent(eid, name, level, version, variant=None, build=None):

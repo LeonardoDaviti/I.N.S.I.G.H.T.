@@ -17,7 +17,9 @@ parses as family Acme, version V4, variant Pro; the lab's parser stripped "Acme"
                           ("x-5-1": 5.1) when its family states it
   setting(variant, name)  v10.30: a variant that is a setting of its version ("low", "xhigh", "(max)"), not a release
 
-A size ("27B", "8x7B", "A3B", "E4B") or a build ("GGUF", "Q4_K_M", "EXL3", a date) is never a version.
+A size ("27B", "8x7B", "A3B", "E4B") or a build ("GGUF", "Q4_K_M", "EXL3", a date) is never a version. v10.35: a
+size is a number with no leading zero ("GR00T" states none), and makes a checkpoint of a model only (identity.level_of:
+"Core Ultra 9 285K", "Radeon 780M" are a product's variants).
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ import unicodedata
 from typing import Any, Dict, Optional, Set, Tuple
 
 DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−⁃﹘﹣－"), "-")
-SIZE = re.compile(r"^(\d+(\.\d+)?[kmbt]|\d+x\d+(\.\d+)?[bt]|a\d+(\.\d+)?b|e\d+b)$")
+SIZE = re.compile(r"^((0|[1-9]\d*)(\.\d+)?[kmbt]|\d+x\d+(\.\d+)?[bt]|a\d+(\.\d+)?b|e\d+b)$")
 BUILD = re.compile(r"^(gguf|ggml|awq|gptq|exl2|exl3|mlx|fp4|fp8|fp16|bf16|int4|int8|nvfp4|mxfp4|q\d(_[0-9a-z]+)*"
                    r"|iq\d(_[0-9a-z]+)*|\d{4}|\d{6,8})$")
 VERSION = re.compile(r"^(v?\d+(\.\d+)*[a-z]{0,2}|[a-z]\d+(\.\d+)*[a-z]?)$")
@@ -113,7 +115,9 @@ def tokens(name: Optional[str]):
             if not u:
                 continue
             m = re.fullmatch(r"([a-z]{2,})(\d+(\.\d+)*[a-z]?)", u)   # nimbus3.8 -> nimbus, 3.8 ; zeta4o -> zeta, 4o
-            out += [m.group(1), m.group(2)] if m and not SIZE.match(u) and not BUILD.match(u) else [u]
+            # v10.35: never a number with a leading zero ("gr00t", "r2d2" aside): letters for o written as zeros
+            lead0 = m is not None and re.match(r"0\d", m.group(2)) is not None
+            out += [m.group(1), m.group(2)] if m and not lead0 and not SIZE.match(u) and not BUILD.match(u) else [u]
     return out
 
 
@@ -224,6 +228,17 @@ def vt(v: Any) -> Optional[Tuple]:
     s = re.sub(r"^v(?=\d)", "", s)
     parts = _VNUM.findall(s)
     return tuple(int(p) if p.isdigit() else p for p in parts) or None
+
+
+def vnorm(t: Optional[Tuple]) -> Optional[Tuple]:
+    """v10.35: a version tuple without its trailing zeros ("5.0" = "5", "2.0.0" = "2"; "1.10" stays): one version
+    written two ways."""
+    if not t:
+        return t
+    t = tuple(t)
+    while len(t) > 1 and t[-1] == 0:
+        t = t[:-1]
+    return t
 
 
 def nk(v: Any) -> Optional[str]:
