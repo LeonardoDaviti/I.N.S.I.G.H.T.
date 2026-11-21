@@ -20,6 +20,13 @@ test('bylineText names the writer and the feed that carried it', () => {
   assert.equal(bylineText(undefined, 'Example Feed'), 'Example Feed');
 });
 
+test("0265: a maker's page an aggregator carried names the maker, as a source is named", () => {
+  const maker = { author: 'Example Labs News', via: 'Hacker News', quoting: null };
+  assert.equal(bylineText(maker), 'Example Labs News via Hacker News');
+  assert.equal(bylineText({ ...maker, author: 'https://www.labs.example/research' }), 'labs.example via Hacker News');
+  assert.equal(bylineName({ byline: { ...maker, author: 'https://www.labs.example/research' } }), 'labs.example');
+});
+
 test('bylineName is the writer, else the feed (a story line)', () => {
   assert.equal(bylineName({ byline: repost, source_display_name: 'Example Feed' }), '@acme');
   assert.equal(bylineName({ byline: own, source_display_name: 'Example Feed' }), 'Example Feed');

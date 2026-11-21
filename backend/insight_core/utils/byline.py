@@ -24,6 +24,12 @@ Who wrote a post, as the other modules ask it (issue 0189), is here too:
     `not_retold_sql`: the stance count's filter);
   - `RT_BY` / `RT_BY_PREFIX`: Nitter's "RT by @user: " title, the one pattern for it.
 
+A page its feed carried from another followed site (issue 0265): Hacker News, a link blog or Saved holding a maker's
+announcement page (the maker's own page watch not having fetched it yet, or a citation of it once it has) names the
+maker as `author` and the carrier as `via` ("Thinking Machines News via Hacker News"), as a repost names its writer:
+`page_owner` over `site_owners` (own_pages.owns' rule: a website source on the page's site; of two on one site, the
+one whose section the page is under).
+
 Display only: who a post COUNTS as (a voice) is Voice's rule (utils/voice.py: `voice.counted_source` over
 `author_account`: a repost counts as its author's voice only when a source follows that author). Nothing here
 changes it.
@@ -32,7 +38,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # The stored fields a byline reads, for a query joining posts p, sources s and (LEFT) post_parts pp, in `of_row`'s
 # order after the source name: platform, handle, author, forward's name, quoted tweet.
@@ -86,22 +92,75 @@ def quoting(quoted: Optional[str], *, besides: Iterable[Optional[str]] = ()) -> 
     return None if who.casefold() in mine else "@" + who
 
 
+# A followed website source, as `page_owner` reads it: (its name, platform, handle_or_url).
+Owner = Tuple[str, Optional[str], Optional[str]]
+# The kinds whose post addresses are their platform's (a tweet, a Telegram or Reddit post, a video): never a site's page.
+_PLATFORM_KINDS = frozenset({"x", "telegram", "reddit", "youtube", "arxiv"})
+
+
+def _section(url: Optional[str]) -> str:
+    """The first path segment of an address ("research" of anthropic.com/research/x), lower case; "" for none."""
+    from insight_core.utils.url_normalization import normalize_url
+    rest = (normalize_url(url) or url or "").split("://", 1)[-1].split("#", 1)[0].split("?", 1)[0]
+    parts = [p for p in rest.split("/")[1:] if p]
+    return parts[0].lower() if parts else ""
+
+
+def site_owners(cur: Any) -> Dict[str, List[Owner]]:
+    """{page site: the enabled website sources on it} (own_pages.page_site of each source's own address), one query."""
+    from insight_core.utils import own_pages
+    from insight_core.utils.post_links import source_kind
+    cur.execute(f"SELECT {SOURCE_NAME}, s.platform, s.handle_or_url FROM sources s WHERE s.enabled")
+    out: Dict[str, List[Owner]] = {}
+    for name, platform, handle in cur.fetchall():
+        site = own_pages.page_site(handle) if source_kind(platform, handle) == own_pages.OWNER_KIND else ""
+        if site and (platform or "").lower() != "saved":
+            out.setdefault(site, []).append((name or handle or "", platform, handle))
+    return out
+
+
+def page_owner(url: Optional[str], platform: Optional[str], handle: Optional[str],
+               sites: Dict[str, List[Owner]], kind: Optional[str] = None) -> Optional[str]:
+    """Issue 0265: the name of the followed source a page belongs to when the feed holding it doesn't own it (an
+    aggregator, a link blog, Saved: own_pages.owns' rule), else None. Of several sources on the page's site, the one
+    whose own address's first path segment the page's is ("/research" for anthropic.com/research/...); with none of
+    them, the site's only source; else None (a platform site's user pages: no one of them wrote it). A platform
+    post's address (a tweet, a Telegram or Reddit post) is never a site's page."""
+    from insight_core.utils import own_pages
+    from insight_core.utils.post_links import source_kind
+    if not url or not sites or (kind or source_kind(platform, handle)) in _PLATFORM_KINDS:
+        return None
+    if own_pages.owns(platform, handle, url):
+        return None
+    on_site = [o for o in sites.get(own_pages.page_site(url)) or () if own_pages.owns(o[1], o[2], url)]
+    section = _section(url)
+    under = {o[0] for o in on_site if section and _section(o[2]) == section}
+    names = under or {o[0] for o in on_site}
+    return next(iter(names)) if len(names) == 1 else None
+
+
 def byline(source: Optional[str], platform: Optional[str], handle: Optional[str], author: Optional[str] = None,
            forwarded: Optional[str] = None, quoted: Optional[str] = None, *, kind: Optional[str] = None,
-           owns: Optional[Dict[Tuple[Any, Any], str]] = None) -> Dict[str, Optional[str]]:
-    """{author, via, quoting} of a post from its stored fields (see the module)."""
+           owns: Optional[Dict[Tuple[Any, Any], str]] = None, url: Optional[str] = None,
+           sites: Optional[Dict[str, List[Owner]]] = None) -> Dict[str, Optional[str]]:
+    """{author, via, quoting} of a post from its stored fields (see the module). With its `url` and `site_owners`
+    (`sites`), a page its feed carried from another followed site names that site's source as `author` (0265)."""
     from insight_core.utils.post_links import source_kind
     kind = kind or source_kind(platform, handle)
     by = original_author(kind, platform, handle, author, forwarded, owns)
+    if by is None and sites:
+        maker = page_owner(url, platform, handle, sites, kind)
+        by = maker if maker and maker != source else None
     own = own_account(platform, handle) if kind == "x" else ""
     return {"author": by, "via": source or "", "quoting": quoting(quoted, besides=(by, own, author if not by else None))}
 
 
 def of_row(source: Optional[str], platform: Optional[str], handle: Optional[str], author: Optional[str],
            forwarded: Optional[str], quoted: Optional[str],
-           owns: Optional[Dict[Tuple[Any, Any], str]] = None) -> Dict[str, Optional[str]]:
-    """The byline of a row read with SOURCE_NAME, COLUMNS."""
-    return byline(source, platform, handle, author, forwarded, quoted, owns=owns)
+           owns: Optional[Dict[Tuple[Any, Any], str]] = None, url: Optional[str] = None,
+           sites: Optional[Dict[str, List[Owner]]] = None) -> Dict[str, Optional[str]]:
+    """The byline of a row read with SOURCE_NAME, COLUMNS (and its url, with `sites`: 0265)."""
+    return byline(source, platform, handle, author, forwarded, quoted, owns=owns, url=url, sites=sites)
 
 
 def who(b: Dict[str, Optional[str]]) -> str:
@@ -114,11 +173,13 @@ def bylines(cur: Any, ids: Iterable[Any]) -> Dict[str, Dict[str, Optional[str]]]
     ids = sorted({str(i) for i in ids})
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, {SOURCE_NAME}, {COLUMNS}
+    cur.execute(f"""SELECT p.id::text, p.url, {SOURCE_NAME}, {COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    rows = cur.fetchall()
     owns: Dict[Tuple[Any, Any], str] = {}
-    return {pid: of_row(*row, owns=owns) for pid, *row in cur.fetchall()}
+    sites = site_owners(cur)
+    return {pid: of_row(*row, owns=owns, url=url, sites=sites) for pid, url, *row in rows}
 
 
 # ---- who wrote it, as the other modules ask (issue 0189) -------------------------------------------------------

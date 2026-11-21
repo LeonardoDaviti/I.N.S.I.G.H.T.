@@ -7,6 +7,9 @@
  *   own post              -> "Feed"
  *   repost / forward      -> "@acme via Feed"
  *   quote                 -> "Feed, quoting @other"
+ *   a maker's page an aggregator carried (issue 0265) -> "Maker News via Hacker News"
+ *
+ * An author that is a source (0265's maker) is named as every source is (`sourceLabel`: never a raw feed URL).
  */
 import type { Repost } from '../services/api';
 import { sourceLabel } from './sourceLabel.ts';
@@ -22,13 +25,13 @@ type HasByline = { byline?: Byline | null };
 /** The line: "@acme via Feed, quoting @other"; the feed alone for its own post. `source` when no byline came. */
 export function bylineText(byline: Byline | null | undefined, source?: string | null): string {
   const feed = sourceLabel(byline?.via || source);
-  const who = byline?.author ? `${byline.author} via ${feed}` : feed;
+  const who = byline?.author ? `${sourceLabel(byline.author)} via ${feed}` : feed;
   return byline?.quoting ? `${who}, quoting ${byline.quoting}` : who;
 }
 
 /** Who wrote it, in one name: the original author, else the feed (a story line's name, issue 0070). */
 export function bylineName(post: HasByline & { source_display_name?: string | null }): string {
-  return post.byline?.author ?? sourceLabel(post.byline?.via || post.source_display_name);
+  return post.byline?.author ? sourceLabel(post.byline.author) : sourceLabel(post.byline?.via || post.source_display_name);
 }
 
 /** Whether the feed carried another's post (a repost or a forward): the line then names the feed as the carrier. */
@@ -41,7 +44,7 @@ export function carriedLine(post: HasByline & { repost?: Repost | null }): strin
   const b = post.byline;
   if (!b) return null;
   const others = post.repost?.by.length ? `@${post.repost.by.join(', @')}, ` : '';
-  const from = b.author ? `↻ ${others}from ${b.author}` : null;
+  const from = b.author ? `↻ ${others}from ${sourceLabel(b.author)}` : null;
   const quote = b.quoting ? `quoting ${b.quoting}` : null;
   return from && quote ? `${from}, ${quote}` : from ?? quote;
 }

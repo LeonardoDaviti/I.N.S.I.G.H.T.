@@ -493,10 +493,13 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
                            {pairing.published_date('p')}, p.url, {byline.COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    rows = cur.fetchall()
     owns: Dict[Any, str] = {}
+    sites = byline.site_owners(cur)   # 0265: a maker's page an aggregator carried is the maker's, via the aggregator
     return {pid: {"id": pid, "title": title or "", "source_id": sid, "source": name or "", "kind": source_kind(platform, handle),
-                  "at": at, "url": url, "byline": byline.of_row(name, platform, handle, author, fwd, quoted, owns=owns)}
-            for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in cur.fetchall()}
+                  "at": at, "url": url, "byline": byline.of_row(name, platform, handle, author, fwd, quoted, owns=owns,
+                                                                 url=url, sites=sites)}
+            for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in rows}
 
 
 def launch_order(facts: Dict[str, Dict[str, Any]]) -> List[str]:
