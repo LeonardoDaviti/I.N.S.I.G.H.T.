@@ -27,10 +27,13 @@ def enabled() -> bool:
 
 def track_posts(cur: Cursor, folder_id: Any) -> Optional[List[str]]:
     """The posts in a topic track (newest verdict in, or the owner's ✓; not ✗), or None: a plain folder."""
-    from insight_core.markx import tracks
+    from insight_core.markx import track_kept, tracks
     t = tracks.get(cur, folder_id)
     if not tracks.is_topic(t):
         return None
+    kept = track_kept.posts_in(cur, t, IN_TRACK)   # 0270: the kept placement (live only when it is not kept)
+    if kept is not None:
+        return kept
     return [it["post_id"] for it in tracks.placed(cur, t)["items"] if it["place"] in IN_TRACK]
 
 

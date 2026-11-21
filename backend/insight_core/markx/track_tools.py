@@ -46,22 +46,36 @@ def judged_in(items: Sequence[Dict[str, Any]]) -> List[str]:
     return [it["post_id"] for it in items if it.get("place") in ("track", "joined", "discover")]
 
 
-def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None
-         ) -> List[Dict[str, Any]]:
-    """Every tool the posts name: [{id, name, kind, what, posts, voices, last_at, recent, in_track}], most voices
-    first."""
+def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None,
+         min_posts: int = 1) -> List[Dict[str, Any]]:
+    """Every tool the posts name (`min_posts` of them at least): [{id, name, kind, what, posts, voices, last_at,
+    recent, in_track}], most voices first.
+
+    0270: the tool kinds and the post minimum are the query's own conditions. Before, it returned every entity the
+    track's posts name with the array of its posts and Python dropped the non-tools and the one-post names
+    (production, 2026-11-21: 6,229 calls returned 63M rows; each counted every name's posts everywhere)."""
     from insight_core.markx import entity_facts, pairing, tasks
     now = now or datetime.now(timezone.utc)
     if not posts:
         return []
-    cur.execute(f"""SELECT m.entity_id::text, COALESCE(e.shown_name, e.name), COALESCE(e.shown_type, e.type),
+    etype = "COALESCE(e.shown_type, e.type)"
+    if entity_facts.on():   # a current fact's kind is the entity's kind, a generic one is no tool (as below)
+        facts_join = "LEFT JOIN mx_entity_facts f ON f.entity_id = e.id AND f.superseded_at IS NULL"
+        tool = (f"COALESCE(NULLIF(f.kind, ''), {etype}) = ANY(%(kinds)s) AND f.generic IS NOT TRUE")
+    else:
+        facts_join, tool = "", f"{etype} = ANY(%(kinds)s)"
+    cur.execute(f"""SELECT m.entity_id::text, COALESCE(e.shown_name, e.name), {etype},
                            array_agg(DISTINCT m.post_id::text), max({pairing.ordinary_date('p')}),
-                           count(DISTINCT m.post_id) FILTER (WHERE {pairing.ordinary_date('p')} >= %s),
-                           count(DISTINCT m.post_id) FILTER (WHERE m.role = ANY(%s))
-                      FROM mx_mentions_now m JOIN mx_entities e ON e.id = m.entity_id JOIN posts p ON p.id = m.post_id
-                     WHERE m.post_id = ANY(%s::uuid[]) AND m.entity_id IS NOT NULL AND e.status <> 'not_entity'
-                     GROUP BY m.entity_id, COALESCE(e.shown_name, e.name), COALESCE(e.shown_type, e.type)""",
-                (now - timedelta(days=RECENT_DAYS), list(STRONG_ROLES), list(posts)))
+                           count(DISTINCT m.post_id) FILTER (WHERE {pairing.ordinary_date('p')} >= %(recent)s),
+                           count(DISTINCT m.post_id) FILTER (WHERE m.role = ANY(%(strong)s))
+                      FROM mx_mentions_now m JOIN mx_entities e ON e.id = m.entity_id {facts_join}
+                      JOIN posts p ON p.id = m.post_id
+                     WHERE m.post_id = ANY(%(posts)s::uuid[]) AND m.entity_id IS NOT NULL AND e.status <> 'not_entity'
+                       AND {tool}
+                     GROUP BY m.entity_id, COALESCE(e.shown_name, e.name), {etype}
+                    HAVING count(DISTINCT m.post_id) >= %(min)s""",
+                {"recent": now - timedelta(days=RECENT_DAYS), "strong": list(STRONG_ROLES), "posts": list(posts),
+                 "kinds": list(TOOL_KINDS), "min": min_posts})
     got = cur.fetchall()
     # how specific each is to the track: its posts here over all its posts (a platform or a language every post names
     # is not this track's tool)
@@ -99,7 +113,7 @@ def panel(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetim
     """The page's "Tools in use": tools with MIN_VOICES+ voices, at most PANEL_MAX, each {id, name, kind, what, posts,
     voices, last_at (ISO), recent, in_track}."""
     got = rows(cur, judged_in(items), [it["post_id"] for it in items if it.get("place") in ("track", "joined")],
-               now=now)
+               now=now, min_posts=MIN_VOICES)   # a tool's voices are never more than its posts
     out = []
     for c in got:
         if c["voices"] < MIN_VOICES or not c["strong"]:
@@ -112,5 +126,5 @@ def panel(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetim
 
 def finder_ids(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetime] = None) -> List[str]:
     """The tool finder's entities: tools FINDER_MIN_VOICES+ voices of the track discuss, at most FINDER_MAX."""
-    got = rows(cur, judged_in(items), now=now)
+    got = rows(cur, judged_in(items), now=now, min_posts=FINDER_MIN_VOICES)
     return [c["id"] for c in got if c["voices"] >= FINDER_MIN_VOICES][:FINDER_MAX]
