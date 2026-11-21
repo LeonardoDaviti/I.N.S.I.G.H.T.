@@ -414,7 +414,7 @@ class Routing(_Tracks):
         self.assertNotIn(sure, [it["post_id"] for s in self.page()["sections"] for it in s["items"]])
 
     def test_a_join_from_one_run_is_asked_again(self):
-        """v10.30: a check settled in on one run (before CHECK_RUNS) leaves the track and is asked again."""
+        """v10.31 (migration 0168): a check settled in on one run (before CHECK_RUNS) leaves the track and is asked again."""
         p = self.passive("joined before the runs")
         self.plan()
         self.judge(p, verdict(conf=0.8))
@@ -424,7 +424,9 @@ class Routing(_Tracks):
         self.answer((tid, verdict(conf=0.95)))
         self.cur.execute("UPDATE mx_track_items SET check_in = true, check_confidence = 0.95 WHERE post_id = %s", (p,))
         self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (tid,))   # as v10.29 left it
-        self.plan()
+        from pathlib import Path
+        sql = (Path(__file__).resolve().parents[1] / "db" / "migrations" / "0168_reset_one_run_joins.sql").read_text()
+        self.cur.execute(sql)   # v10.31: the one-time reset (whatever the check queue's room)
         self.cur.execute("SELECT i.check_in, k.status FROM mx_track_items i JOIN mx_tasks k ON k.id = i.check_task_id "
                          "WHERE i.post_id = %s", (p,))
         self.assertEqual(self.cur.fetchone(), (None, "open"))

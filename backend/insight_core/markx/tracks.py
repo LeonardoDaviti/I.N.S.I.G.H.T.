@@ -786,19 +786,6 @@ def plan_checks(cur: Cursor, ts: Sequence[Dict[str, Any]], *, now: Optional[date
                 (KIND, CHECK_SUBJECT))
     room = CHECK_OPEN - cur.fetchone()[0]
     added = 0
-    # v10.30: a check settled in on fewer than CHECK_RUNS runs (before the runs) is asked again: its row leaves the
-    # track until the next run agrees (the task opened, the row's check cleared), within the same room
-    cur.execute("""WITH one AS (SELECT i.track_id, i.post_id, i.version, i.check_task_id FROM mx_track_items i
-                                 WHERE i.check_in AND (SELECT count(*) FROM mx_calls c WHERE c.task_id = i.check_task_id
-                                                          AND c.valid) < %s
-                                 ORDER BY i.checked_at DESC LIMIT %s),
-                        opened AS (UPDATE mx_tasks k SET status = 'open', lease_until = NULL, leased_by = NULL
-                                     FROM one WHERE k.id = one.check_task_id AND k.status <> 'open' RETURNING k.id)
-                   UPDATE mx_track_items i SET check_in = NULL, check_confidence = NULL, check_why = NULL,
-                                               checked_at = NULL
-                     FROM one WHERE i.track_id = one.track_id AND i.post_id = one.post_id AND i.version = one.version""",
-                (CHECK_RUNS, max(0, room)))
-    added += cur.rowcount
     for k, t in enumerate(ts):
         budget = -(-(room - added) // max(1, len(ts) - k)) if room - added > 0 else 0
         if budget <= 0:
