@@ -396,14 +396,38 @@ class Routing(_Tracks):
         for p, ans in ((sure, verdict(conf=0.9)), (unsure, verdict(conf=0.7)), (no, verdict(False, 0.9))):
             status, body = self.answer((checks[p][0], ans))
             self.assertEqual((status, body["valid"]), (200, 1), body)
-        body = self.page()
-        places = {it["post_id"]: it["place"] for s in body["sections"] for it in s["items"]}
-        self.assertEqual(places.get(sure), "joined")
-        self.assertEqual(sorted(it["post_id"] for it in body["discover"]), sorted([unsure, no]))
+        live = lambda: {it["post_id"]: it["place"] for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]}
+        self.assertEqual(live()[sure], "discover", "one run is not enough: sure waits for its second run")
+        self.cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (checks[sure][0],))
+        self.assertEqual(self.cur.fetchone()[0], "open", "asked again")
+        self.cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (checks[no][0],))
+        self.assertEqual(self.cur.fetchone()[0], "answered", "a first out settles it")
+        for p, ans in ((sure, verdict(conf=0.88)), (unsure, verdict(conf=0.95))):
+            status, body = self.answer((checks[p][0], ans))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        places = live()
+        self.assertEqual(places[sure], "joined", "two runs in at 0.9 and 0.88")
+        self.assertEqual((places[unsure], places[no]), ("discover", "discover"), "0.7 then 0.95: the weakest run is 0.7")
         self.cur.execute("SELECT verdict FROM mx_track_items WHERE post_id = %s", (no,))
         self.assertTrue(self.cur.fetchone()[0], "the judge's verdict is kept as it was")
         self.label(sure, "out")                                             # the owner's label wins
         self.assertNotIn(sure, [it["post_id"] for s in self.page()["sections"] for it in s["items"]])
+
+    def test_a_join_from_one_run_is_asked_again(self):
+        """v10.30: a check settled in on one run (before CHECK_RUNS) leaves the track and is asked again."""
+        p = self.passive("joined before the runs")
+        self.plan()
+        self.judge(p, verdict(conf=0.8))
+        self.plan()
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (p,))
+        tid = self.cur.fetchone()[0]
+        self.answer((tid, verdict(conf=0.95)))
+        self.cur.execute("UPDATE mx_track_items SET check_in = true, check_confidence = 0.95 WHERE post_id = %s", (p,))
+        self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (tid,))   # as v10.29 left it
+        self.plan()
+        self.cur.execute("SELECT i.check_in, k.status FROM mx_track_items i JOIN mx_tasks k ON k.id = i.check_task_id "
+                         "WHERE i.post_id = %s", (p,))
+        self.assertEqual(self.cur.fetchone(), (None, "open"))
 
     def test_labels_become_examples(self):
         a = self.passive("A printable cable organiser for a desk")

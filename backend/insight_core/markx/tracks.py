@@ -102,6 +102,9 @@ REASK_PER_DAY = 300            # ... at most this many a track a day (the re-ask
 CHECK_GUIDE = "track-check-v1"   # 0256: the blind check of a passive `in` (the `track` kind's second guide)
 CHECK_SUBJECT = "post_track_check"
 CHECK_JOIN = 0.85              # 0256: a passive `in` the check says in at this confidence or more joins the track
+CHECK_RUNS = 2                 # v10.30: the check is asked this many times; it says in only when every run does (the
+                               # weakest run's confidence): one confident run let 7 of 48 sampled joins in on the server,
+                               # and asked again all 7 came back out
 CHECK_OPEN = 300               # check tasks open at once, across tracks (their own cap)
 CHECK_SWITCH = ("tracks", "checked_join")
 RECENT_DAYS = 7                # the passive scan of new posts reads this far back each call
@@ -783,6 +786,19 @@ def plan_checks(cur: Cursor, ts: Sequence[Dict[str, Any]], *, now: Optional[date
                 (KIND, CHECK_SUBJECT))
     room = CHECK_OPEN - cur.fetchone()[0]
     added = 0
+    # v10.30: a check settled in on fewer than CHECK_RUNS runs (before the runs) is asked again: its row leaves the
+    # track until the next run agrees (the task opened, the row's check cleared), within the same room
+    cur.execute("""WITH one AS (SELECT i.track_id, i.post_id, i.version, i.check_task_id FROM mx_track_items i
+                                 WHERE i.check_in AND (SELECT count(*) FROM mx_calls c WHERE c.task_id = i.check_task_id
+                                                          AND c.valid) < %s
+                                 ORDER BY i.checked_at DESC LIMIT %s),
+                        opened AS (UPDATE mx_tasks k SET status = 'open', lease_until = NULL, leased_by = NULL
+                                     FROM one WHERE k.id = one.check_task_id AND k.status <> 'open' RETURNING k.id)
+                   UPDATE mx_track_items i SET check_in = NULL, check_confidence = NULL, check_why = NULL,
+                                               checked_at = NULL
+                     FROM one WHERE i.track_id = one.track_id AND i.post_id = one.post_id AND i.version = one.version""",
+                (CHECK_RUNS, max(0, room)))
+    added += cur.rowcount
     for k, t in enumerate(ts):
         budget = -(-(room - added) // max(1, len(ts) - k)) if room - added > 0 else 0
         if budget <= 0:
@@ -817,10 +833,23 @@ def plan_checks(cur: Cursor, ts: Sequence[Dict[str, Any]], *, now: Optional[date
 
 
 def _fill_check(cur: Cursor, task_id: Any, answer: Dict[str, Any]) -> int:
+    """A check task's answers (v10.30: CHECK_RUNS of them; the task is opened again until they came, back.py's way):
+    in only when every run says in, at the weakest run's confidence; a first `out` settles it alone. Before that the
+    row keeps no check (it stays in Discover)."""
+    cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task_id,))
+    runs = [r[0] or {} for r in cur.fetchall()][:CHECK_RUNS] or [answer]
+    settled = len(runs) >= CHECK_RUNS or not all(bool(r.get("in")) for r in runs)
+    if not settled:
+        cur.execute("""UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL
+                        WHERE id = %s AND status <> 'open'""", (task_id,))
+        return 0
+    ok = all(bool(r.get("in")) for r in runs)
+    conf = min(float(r.get("confidence") or 0) for r in runs) if ok else \
+        max(float(r.get("confidence") or 0) for r in runs if not r.get("in"))
+    why = next((r.get("why") for r in runs if bool(r.get("in")) == ok), answer.get("why"))
     cur.execute("""UPDATE mx_track_items SET check_in = %s, check_confidence = %s, check_why = %s, checked_at = now()
                     WHERE check_task_id = %s AND check_in IS NULL""",
-                (bool(answer.get("in")), float(answer.get("confidence") or 0),
-                 _clean(answer.get("why"), schemas.TRACK_WHY_CHARS), task_id))
+                (ok, conf, _clean(why, schemas.TRACK_WHY_CHARS), task_id))
     return cur.rowcount
 
 
