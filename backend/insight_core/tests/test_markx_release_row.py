@@ -55,6 +55,29 @@ class Rules(unittest.TestCase):
         self.assertEqual(N.launch_order(f), ["bench", "avail"])
         self.assertEqual(N.launch_order({"leak": {"maker": True, "type": "leak_rumour", "at": T}}), [])
 
+    def test_a_result_the_maker_announced_alongside_never_names_the_release(self):
+        # 0268: the maker's release, then the same day its result on a hard problem (its own post, a newer maker story
+        # of a news type) and a day later its Q&A: the release names the row, however new the others are
+        f = {"launch": {"maker": True, "type": "model_release", "at": T},
+             "result": {"maker": True, "type": "research_result", "at": T + 1 * H},
+             "qa": {"maker": True, "type": "public_statement", "at": T + 30 * H},
+             "bench": {"maker": False, "type": "research_result", "at": T + 9 * H}}
+        self.assertEqual(N.launch_order(f), ["launch", "qa", "result", "bench"])
+        self.assertEqual(N.launch_order(f, {"result": 9, "launch": 40})[:2], ["launch", "result"])
+        # two maker stories of a release (a preview, then the launch): the one holding most of the row's voices,
+        # then the newest
+        f = {"preview": {"maker": True, "type": "product_release", "at": T},
+             "launch": {"maker": True, "type": "model_release", "at": T + 48 * H}}
+        self.assertEqual(N.launch_order(f), ["launch", "preview"])
+        self.assertEqual(N.launch_order(f, {"preview": 12, "launch": 30}), ["launch", "preview"])
+        self.assertEqual(N.launch_order(f, {"preview": 30, "launch": 12}), ["preview", "launch"])
+
+    def test_story_voices_count_each_voice_once(self):
+        row = {"posts": [{"post_id": "p1", "voice": "a", "story": "s1"}, {"post_id": "p2", "voice": "a", "story": "s1"},
+                         {"post_id": "p3", "voice": "b", "story": "s1"}, {"post_id": "p4", "voice": "c", "story": "s2"},
+                         {"post_id": "p5", "voice": "d", "story": None}]}
+        self.assertEqual(N.story_voices(row), {"s1": 2, "s2": 1})
+
 
 @requires_test_db
 class Row(unittest.TestCase):
@@ -132,6 +155,23 @@ class Row(unittest.TestCase):
         self.switch = dict(OFF)   # off: no release row; its main story (the leaks) names it, as before
         with mock.patch.object(N, "_story_facts", return_value=facts):
             self.assertEqual(N.headlines(self.cur, [row])[leak[0]]["text"], "Orbit 4 Nova leaks ahead of launch")
+
+    def test_a_release_row_is_never_named_by_a_result_merged_into_it(self):
+        # 0268: the maker's launch story and its result announced the same day (the maker's own post, newer, of a
+        # news type), joined into one row by a same_release edge: the launch's headline names it
+        launch = [self.post(4, "Acme launches Orbit 4 Nova"), self.post(5, "Orbit 4 Nova is rolling out now"),
+                  self.post(6, "Orbit 4 Nova, first look"), self.post(7, "Orbit 4 Nova pricing")]
+        result = [self.post(5.5, "Orbit 4 Nova settles an open question in number theory"),
+                  self.post(8, "Nova's number theory proof, explained")]
+        sm = self.story("Acme launches Orbit 4 Nova")
+        sx = self.story("Acme says Orbit 4 Nova settled an open question in number theory")
+        self.edge(sx, sm)
+        row = next(r for r in self.rows({sm: (launch, set()), sx: (result, set())}) if r["id"] == launch[0])
+        self.assertEqual({p["story"] for p in row["posts"]}, {sm, sx})
+        facts = {sm: {"maker": True, "post": launch[0], "type": "model_release", "at": T + 4 * H},
+                 sx: {"maker": True, "post": result[0], "type": "research_result", "at": T + 5.5 * H}}
+        with mock.patch.object(N, "_story_facts", return_value=facts):
+            self.assertEqual(N.headlines(self.cur, [row])[launch[0]], {"text": "Acme launches Orbit 4 Nova", "from": "haiku"})
 
     def test_an_edge_that_is_not_same_release_joins_nothing(self):
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
