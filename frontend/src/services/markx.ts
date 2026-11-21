@@ -440,7 +440,9 @@ export interface MarkxEntityPage {
   aliases: string[];
   maker: { id: string; name: string } | null;
   family: { id: string; name: string } | null;
-  versions: { id: string; name: string; version: string | null; variant: string | null; level: string }[];
+  versions: { id: string; name: string; version: string | null; variant: string | null; level: string;
+    /** 0259: the settings of this version ("(max)", "low"), listed under it, not as versions */
+    settings?: { id: string; name: string; variant: string | null }[] }[];
   posts: number;
   voices: number;
   stories: MarkxEntityStory[];

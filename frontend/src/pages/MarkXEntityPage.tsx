@@ -333,7 +333,12 @@ export default function MarkXEntityPage() {
               <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem]">
                 {d.versions.map((v) => (
                   <li key={v.id}>{v.id === e.id ? <span className="font-semibold text-fg">{v.name}</span>
-                    : <TextLink to={entityHref(v.id)}>{v.name}</TextLink>}</li>
+                    : <TextLink to={entityHref(v.id)}>{v.name}</TextLink>}
+                    {v.settings?.length ? (/* 0259: a version's settings, under it */
+                      <span className="text-fg-3"> ({v.settings.map((s, i) => (
+                        <span key={s.id}>{i ? ', ' : ''}{s.id === e.id ? <span className="font-semibold text-fg">{s.variant ?? s.name}</span>
+                          : <TextLink to={entityHref(s.id)}>{s.variant ?? s.name}</TextLink>}</span>))})</span>
+                    ) : null}</li>
                 ))}
               </ul>
             </section>

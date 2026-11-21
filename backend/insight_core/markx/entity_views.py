@@ -338,6 +338,36 @@ def _members(book: I.Book, root: str) -> Set[str]:
     return set(book.cluster(root))   # v10.17 (0186): the entities whose merges lead to root, not a walk of the book
 
 
+def family_versions(book: Any, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """v10.30 (0259): a family's versions as a reader counts them: each row's version as a version reads it
+    (names.clean: a model id's "5-1" is 5.1 when the family lists 5.1), a row whose version is a ratio ("5:1") left out (no version of the
+    family), and a variant that is a setting of its version (names.setting: "Nimbus 5.2 (max)", "Nimbus 5 low") listed
+    under that version's row (`settings`), not as a version of its own, when the family lists that version; one it
+    does not list stays a row. The order kept."""
+    known = {N.vt(v["version"]) for v in versions if v["level"] == "version" and not v["variant"] and v["version"]}
+    rows: List[Dict[str, Any]] = []
+    for v in versions:
+        e = book.ents[v["id"]]
+        if N.not_a_version(e.version) and not e.variant:
+            continue
+        f = N.clean({"version": e.version, "variant": e.variant}, e.name, known)
+        rows.append({**v, "version": f["version"], "variant": f["variant"]})
+    by_version: Dict[Any, Dict[str, Any]] = {}
+    for v in rows:
+        if v["level"] == "version" and not v["variant"] and v["version"]:
+            by_version.setdefault(N.vt(v["version"]), v)
+    out = []
+    for v in rows:
+        e = book.ents[v["id"]]
+        top = by_version.get(N.vt(v["version"])) if v["version"] else None
+        typ = book.shown_type(v["id"]) or e.type
+        if top is not None and top is not v and any(N.setting(v["variant"], n, typ) for n in {e.name, v["name"]}):
+            top.setdefault("settings", []).append({"id": v["id"], "name": v["name"], "variant": v["variant"]})
+            continue
+        out.append(v)
+    return out
+
+
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                 by_limit: Optional[int] = None, offer_sample: bool = False,
                 replies: bool = False, stories_limit: Optional[int] = None,
@@ -802,7 +832,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
     from insight_core.markx import components as C, stops as ST, timeline as TL
     comps = [c for c in C.components_of(book, root) if c in named]
-    versions = [v for v in versions if v["id"] not in set(comps)]
+    versions = family_versions(book, [v for v in versions if v["id"] not in set(comps)])   # v10.30 (0259)
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
