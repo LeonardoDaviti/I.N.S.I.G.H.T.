@@ -253,7 +253,7 @@ const SCENARIOS: FrameScenario[] = [
   {
     // Issue 0060, modeled on claude.com (2026-10-31): Follow… from Discover starts where the links point.
     page: 'sources', state: 'follow-where-linked', label: 'Follow… from Discover: every page with the linked articles it holds',
-    url: '/settings/sources?tab=discover', routes: (now) => [...followWhereLinked(now), ...siteRoutes(normalSite(now))], documented: false,
+    url: '/settings/sources?tab=discover', routes: (now) => [...followWhereLinked(now), ...siteRoutes(normalSite(now)), noPeople()], documented: false,
     setup: async (frame) => {
       await frame.click('button', /Follow…/);
       await frame.find('[role="dialog"] input[type="radio"]');
@@ -262,9 +262,14 @@ const SCENARIOS: FrameScenario[] = [
   {
     // Issue 0065, modeled on the lab copy (2026-10-31): the sources your stories start from first.
     page: 'sources', state: 'discover-origins', label: 'Discover: where your stories start, and what a source you follow misses',
-    url: '/settings/sources?tab=discover', routes: (now) => [...discoverOrigins(), ...siteRoutes(normalSite(now))], documented: true,
+    url: '/settings/sources?tab=discover', routes: (now) => [...discoverOrigins(), ...siteRoutes(normalSite(now)), noPeople()], documented: true,
   },
 ];
+
+/** Discover's people and makers (issue 0276): none kept yet in these scenarios. */
+function noPeople(): FixtureRoute {
+  return { path: '/api/discover/people', respond: () => ({ window_days: 30, posts: 0, authors: [], makers: [], built_at: null, refreshing: false }) };
+}
 
 /** Discover on the lab copy (issue 0065): origins first, a section of a site you follow, an archive offer. */
 function discoverOrigins(): FixtureRoute[] {

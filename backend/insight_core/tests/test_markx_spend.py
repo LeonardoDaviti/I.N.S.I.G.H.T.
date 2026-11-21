@@ -38,7 +38,8 @@ READERS = {
     "markx/rename.py": ("after", ("rename",)),
     "markx/graph.py": ("after", ("relate", "chain")),
     "markx/identity.py": ("after", ("alias", "alias2", "alias3", "alias4", "collide")),
-    "markx/entity_brief.py": ("after", ("collide",)),   # 0274: a brief's sense question read back (never spent)
+    "markx/entity_brief.py": ("after", ("collide",)),
+    "markx/questions.py": ("after", ("question",)),   # 0275: an answer's posts read back from its question   # 0274: a brief's sense question read back (never spent)
     "checks/invariants.py": ("open", ()),
 }
 REASKED = ("join", "pair", "merge", "check", "perspective", "collide", "relate", "chain", "back")   # opened again
