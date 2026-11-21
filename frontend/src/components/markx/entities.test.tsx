@@ -44,7 +44,7 @@ const LIST: MarkxEntityList = {
 };
 
 describe('Mark X entities (issue 0119 A3)', () => {
-  it('is one list ranked like News, read posts kept and dimmed, with the queue and the measured accuracy', async () => {
+  it('is one list ranked like News, read posts kept and dimmed, with the queue, no accuracy note', async () => {
     renderWithProviders(<MarkXEntities />, { api: makeFakeApi({
       getMarkxEntities: vi.fn().mockResolvedValue(LIST), getMarkxEntityQueue: vi.fn().mockResolvedValue(QUEUE) }) });
     const list = await screen.findByRole('region', { name: 'Entities' });
@@ -55,7 +55,7 @@ describe('Mark X entities (issue 0119 A3)', () => {
     const read = within(list).getByText('Nimbus 5 benchmarks').closest('li');
     expect(read).toHaveAttribute('data-read', 'true');                         // read: still there, marked
     expect(within(list).getByText('surging')).toBeInTheDocument();
-    expect(screen.getByText(/97.6%/)).toBeInTheDocument();
+    expect(screen.queryByText(/97.6%/)).toBeNull();   // v10.35: the accuracy note is gone (owner 2026-11-21)
     expect(await screen.findByText(/Flagged for you: 1/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Nimbus 5' })).toHaveAttribute('href', '/markx/entities/e5');
   });

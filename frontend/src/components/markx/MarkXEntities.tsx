@@ -3,7 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 
 import { useApi } from '../../services/ApiContext';
 import type {
-  MarkxEntityAccuracy, MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
+  MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
   MarkxQueueItem, MarkxQueueSide, MarkxQueueView, MarkxStoryThing, MarkxSurge,
 } from '../../services/markx';
 import { Button, Chip, TextLink } from '../ui';
@@ -107,14 +107,6 @@ export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Dat
       <span className="block min-w-0 truncate">{line}</span>
       <MentionContext parts={post.context} />
     </li>
-  );
-}
-
-export function Accuracy({ accuracy }: { accuracy: MarkxEntityAccuracy }) {
-  return (
-    <p className="text-[0.75rem] leading-5 text-fg-3">
-      Experimental: {accuracy.merges}; {accuracy.surges}; {accuracy.collisions}. Claude reviews the decisions first; you are asked only what it flags.
-    </p>
   );
 }
 
@@ -476,7 +468,6 @@ export default function MarkXEntities() {
   const data = query.data;
   return (
     <div className="space-y-8">
-      <Accuracy accuracy={data.accuracy} />
       <EntityQueue />
       <section aria-label="Entities">
         <h2 className={H2}>
