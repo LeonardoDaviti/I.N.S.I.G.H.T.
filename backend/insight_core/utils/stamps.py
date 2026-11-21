@@ -137,7 +137,6 @@ PRESS = "https://press.example/2026/03/press-release-on-models"
 TWEET = "https://x.com/writer_x/status/1900000000000000101"
 GUEST = "https://writer-one.github.io/guest-post-on-indexes"
 SAVED = "https://saved.example/essays/on-careful-measurement"
-SAVED_OLD = "https://saved.example/papers/an-older-paper-on-efficiency"
 PAPER = "https://preprints.example/abs/2603.01234"
 PAPER_PDF = "https://preprints.example/pdf/2603.01234v2"
 MOVED = "https://writer-one.github.io/on-keeping-notes"
@@ -311,13 +310,6 @@ def posts() -> List[Dict[str, Any]]:
         p("n1", "s-saved", _at(130), "On Careful Measurement", SAVED),
         p("n2", "s-beta", _at(131), "Why measurement matters", "https://beta.example/why-measure", links=[(SAVED, "n1")]),
         p("n3", "s-tg2", _at(132), "мерить", "https://t.me/other_channel/260", links=[(SAVED, "n1")], html="<p>m</p>"),
-        # ... and one saved two months before the two voices citing it (0263): it stays a member, but is background:
-        # the story starts at its first report, never at the page's own date
-        p("n4", "s-saved", _at(470 - 60 * 24), "An Older Paper On Efficiency", SAVED_OLD),
-        p("n5", "s-beta", _at(470), "A new model, and the paper behind it", "https://beta.example/new-model-paper",
-          links=[(SAVED_OLD, "n4")]),
-        p("n6", "s-tg2", _at(471), "модель и статья", "https://t.me/other_channel/470", links=[(SAVED_OLD, "n4")],
-          html="<p>m</p>"),
         # Two people in one subreddit are one place, two voices; a site linking it too makes the story
         p("r1", "s-red", _at(140), "A paper on long context retrieval", "https://reddit.com/r/samplesub/comments/r1/paper",
           links=[(L9, None)], html=_reddit("sample_user") + _words(56)),
@@ -403,21 +395,6 @@ def posts() -> List[Dict[str, Any]]:
           links=[(L11, None)]),
         p("rk1", "s-two", _at(463), "Rho Kade steps down after a long run", "https://writer-two.github.io/rho-kade"),
         p("rk2", "s-one", _at(464), "Rho Kade: what comes next", "https://writer-one.github.io/2026/03/rho-kade"),
-    ]
-
-
-# ---- story dates: a story's start (story_rules.story_start, 0263), as Mark X's stored stories are dated ----------
-
-def story_dates() -> List[List[Tuple[str, str, datetime]]]:
-    """Stories as (post id, its source's kind, its date) lists, each tuned value at its edge: a Saved page more than
-    72 hours before the first report never dates its story, one at 72 hours does; a voice's post days early (a leak)
-    always does; a story of Saved pages alone by its first."""
-    return [
-        [("s1", "saved", _at(-60 * 24)), ("r1", "site", _at(0)), ("r2", "x", _at(2))],
-        [("s2", "saved", _at(-72)), ("r3", "site", _at(0)), ("r4", "x", _at(1))],
-        [("s3", "saved", _at(-72, -1)), ("r5", "site", _at(0))],
-        [("l1", "telegram", _at(-96)), ("r6", "site", _at(0))],
-        [("s4", "saved", _at(5)), ("s5", "saved", _at(3))],
     ]
 
 

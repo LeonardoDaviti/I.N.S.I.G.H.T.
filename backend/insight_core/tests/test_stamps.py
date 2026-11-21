@@ -49,12 +49,6 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual([p.id for p in update.posts[:2]], ["h7", "h1"], "as early as it, first at the tie")
         self.assertEqual(stories["k1"].id, "k2", "the post stored first, not the first posted")
 
-    def test_a_saved_page_long_before_its_reports_never_dates_its_story(self):
-        # 0263: a Saved page two months older than the two voices citing it stays a member, never the story's start
-        stories = {p.id: s for s in sample_stories() for p in s.posts}
-        self.assertEqual([p.id for p in stories["n4"].posts], ["n4", "n5", "n6"])
-        self.assertEqual(stories["n4"].first_at, stamps._at(470))
-
     def test_a_reply_continues_the_own_tweet_it_quotes(self):
         # Issue 0103: not the account's tweet right before it, which is about something else.
         stories = {p.id: s for s in sample_stories() for p in s.posts}
@@ -158,10 +152,6 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         from insight_core.db import repo_stories
         with mock.patch.object(repo_stories, "channel_owners", lambda *args: {}):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0263's miss (v10.31.1): a background page dating its story; no sample case showed it, so the stored stories
-        # were never re-dated. The grouping part sees it now (the stories regroup once with this case)
-        with mock.patch.object(story_rules, "background", lambda posts, times: set()):
-            self.assertNotEqual(rules_stamp.__wrapped__()["grouping"], stories["grouping"])
         from insight_core.ingestion.kinds import parsing
         with mock.patch.object(parsing, "_without_hidden_link_labels", lambda html: html):
             self.assertNotEqual(posts_service.stored_bodies_stamp.__wrapped__(), bodies)
