@@ -55,6 +55,8 @@ def published_precision(post: Dict[str, Any]) -> str:
     if not isinstance(date, datetime):
         return "seen" if post.get("date_precision") == "seen" else "none"
     told = post.get("date_precision")
+    if told == "before":   # v10.30: no date given; the feed's next older-side dated item bounds it (parsing._bound_undated)
+        return "none"
     return told if told in ("date", "exact") else "date" if date_alone(date) else "exact"
 
 

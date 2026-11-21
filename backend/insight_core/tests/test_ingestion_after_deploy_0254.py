@@ -276,3 +276,37 @@ class AddSourceRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UndatedBacklog(unittest.TestCase):
+    """v10.30: a feed that dates only its recent items: its undated older items are no newer than the nearest dated
+    item on their newer side (never "this week" on a first fetch); undated items newer than all stay "seen"."""
+
+    def feed(self, items):
+        body = "".join(f"<item><title>{t}</title><link>https://zq.example/{t}</link>"
+                       + (f"<pubDate>{d}</pubDate>" if d else "") + "</item>" for t, d in items)
+        return f'<?xml version="1.0"?><rss version="2.0"><channel><title>Zq</title>{body}</channel></rss>'
+
+    def test_newest_first(self):
+        from insight_core.ingestion.kinds.parsing import parse_feed_posts
+        from insight_core.db.repo_posts import published_precision
+        posts = parse_feed_posts(self.feed([("top", None), ("new", "Sun, 18 Oct 2026 00:00:00 +0000"),
+                                            ("mid", "Sun, 23 Aug 2026 00:00:00 +0000"), ("old1", None),
+                                            ("old2", None)]), "https://zq.example/rss.xml")
+        by = {p["title"]: p for p in posts}
+        self.assertIsNone(by["top"]["date"])
+        self.assertEqual(by["top"]["date_precision"], "seen")
+        self.assertEqual(by["old1"]["date"].date().isoformat(), "2026-08-23")
+        self.assertEqual(by["old2"]["date"].date().isoformat(), "2026-08-23")
+        self.assertEqual(published_precision(by["old1"]), "none", "stored as no date given")
+
+    def test_oldest_first_and_too_few_dates(self):
+        from insight_core.ingestion.kinds.parsing import parse_feed_posts
+        posts = parse_feed_posts(self.feed([("a", None), ("b", "Mon, 02 Mar 2026 00:00:00 +0000"), ("c", None),
+                                            ("d", "Tue, 03 Nov 2026 00:00:00 +0000"), ("e", None)]), "https://zq.example/r")
+        by = {p["title"]: p for p in posts}
+        self.assertEqual(by["a"]["date"].date().isoformat(), "2026-03-02")
+        self.assertEqual(by["c"]["date"].date().isoformat(), "2026-11-03")
+        self.assertIsNone(by["e"]["date"], "newer than every dated item: seen")
+        one = parse_feed_posts(self.feed([("x", "Mon, 02 Mar 2026 00:00:00 +0000"), ("y", None)]), "https://zq.example/r")
+        self.assertIsNone({p["title"]: p for p in one}["y"]["date"], "one dated item tells no order")

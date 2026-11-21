@@ -1822,8 +1822,30 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
             }))
 
     _identities(posts, source_url)
+    _bound_undated(posts)
     posts.sort(key=lambda post: post.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return posts
+
+
+def _bound_undated(posts: List[Dict[str, Any]]) -> None:
+    """v10.30: an undated item listed on the older side of a dated one is no newer than it. A feed that dates only
+    its recent items (a blog's archive left undated) gave its old items the time they were first seen (B9), so a 2015
+    post read on a first fetch was this week's news. In the document's order (newest first or oldest first, read from
+    its dated items; 2+ needed), each undated item takes the date of the nearest dated item on its newer side,
+    precision "before" (the saver stores it as no date given: published_precision "none"). Undated items newer than
+    every dated one stay "seen". A document with fewer than 2 dated items is left as it was."""
+    dated = [i for i, p in enumerate(posts) if isinstance(p.get("date"), datetime)]
+    if len(dated) < 2 or len(dated) == len(posts):
+        return
+    newest_first = posts[dated[0]]["date"] >= posts[dated[-1]]["date"]
+    order = range(len(posts)) if newest_first else range(len(posts) - 1, -1, -1)
+    bound = None
+    for i in order:   # from the newest end to the oldest
+        p = posts[i]
+        if isinstance(p.get("date"), datetime):
+            bound = p["date"] if bound is None else min(bound, p["date"])
+        elif bound is not None:
+            p["date"], p["date_precision"] = bound, "before"
 
 
 def _extract_xml_media_urls(node: ET.Element, content_html: str) -> List[str]:
