@@ -201,6 +201,31 @@ class Incremental(unittest.TestCase):
         self.assertEqual(rows[0], rows[1])
         self.assertTrue(rows[0][0])
 
+    def test_a_render_that_misses_finds_its_posts_read_ahead(self):
+        """v10.34: in an incremental run a question that shows a post read again (its text changed) misses its kept
+        input; prefetch reads all the posts it shows ahead with the others of its page, so no render reads its posts
+        in a query of its own (production: ~4,500 load_posts calls in 30 minutes, the unchanged members of each)."""
+        import inspect
+        a, b, c, d, e, f, g, h, k = self.scene()
+        self.go()
+        self.go()
+        self.cur.execute("UPDATE posts SET content = content || ' Updated.' WHERE id = %s", (c,))
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        PostPartsRepository.write(self.cur, [c])
+        by_render = []
+        load = tasks.load_posts
+
+        def counting(cur, ids, **kw):
+            if any(fr.function in ("made", "copies") and fr.filename.endswith("incremental.py")
+                   for fr in inspect.stack()[1:8]):
+                by_render.append(sorted(map(str, ids)))
+            return load(cur, ids, **kw)
+        with unittest.mock.patch.object(tasks, "load_posts", counting):
+            out = self.go()
+        self.assertEqual(out["run"]["kind"], "incremental")
+        self.assertGreater(out["run"]["inputs_rendered"], 0)            # renders missed ...
+        self.assertEqual(by_render, [])                                  # ... and read nothing of their own
+
     def test_the_dirty_set_is_the_tasks_answered_since_and_the_closure_their_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()

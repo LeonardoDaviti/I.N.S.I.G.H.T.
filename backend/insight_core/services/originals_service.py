@@ -694,12 +694,16 @@ class OriginalsService:
         """F1: the curated long-reads you opened or kept: {post: its outside article pages}. A post is one when its own
         text is LONGREAD_CHARS+ long, Mark X reads it as commentary or a roundup (its reading's kind), and it cites
         LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's).
-        `suggesting` (Discover's citations, issue 0200): only the posts of sources not switched off."""
+        `suggesting` (Discover's citations, issue 0200): only the posts of sources not switched off.
+        v10.34: your posts as an array of primary-key probes, not a join: a plan that hashed them read every post and
+        measured every text (char_length decompresses it): production 9.7 s a call; on the server copy forced so,
+        2.25 s and 525k blocks, the array 0.1 s (the copy's own plan, 21 ms, is unchanged)."""
         cur.execute(f"""
-            WITH yours AS (SELECT post_id FROM post_interactions WHERE interaction_type IN ('opened', 'reading_session')
-                           UNION SELECT post_id FROM post_reader_state WHERE starred_at IS NOT NULL)
-            SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p JOIN yours y ON y.post_id = p.id
-             WHERE char_length(COALESCE(p.content, '')) >= %s
+            SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p
+             WHERE p.id = ANY(ARRAY(SELECT post_id FROM post_interactions
+                                     WHERE interaction_type IN ('opened', 'reading_session')
+                                    UNION SELECT post_id FROM post_reader_state WHERE starred_at IS NOT NULL))
+               AND char_length(COALESCE(p.content, '')) >= %s
                AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))
                AND (NOT %s OR {suggestable_sql("p.source_id")})""",
                     (E.LONGREAD_CHARS, list(E.LONGREAD_KINDS), suggesting))

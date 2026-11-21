@@ -65,6 +65,20 @@ def unread(asks: str, kind_param: str = "%(kind)s", guide_param: str = "%(guide)
                                                      AND mk.post_id = q.id AND mk.stamp = ps.n::text)))"""
 
 
+def left(asks: str, kind_param: str = "%(kind)s", guide_param: str = "%(guide)s") -> str:
+    """`unread`'s narrowing for a planner whose own question is a set of post ids (`asks`: a query of one uuid
+    column, e.g. its tasks' ids EXCEPT its kind's), over alias `p`: the ids asked, EXCEPT the posts marked at their
+    current stamp, as an array of primary-key probes. Set operations, so no plan rests on the estimate of the marks'
+    stamp join (1 row: as `unread`'s anti-join it compared every mark with every post, >100 s on the server copy for
+    cite). v10.34: the cite planner had no narrowing and read every post of the window through the date index with
+    each post's mark and stamp (server copy, 162k posts: 2.35 s, 1.65M blocks; production 8.8 s a call); with this
+    0.65-0.87 s, ~90k blocks, the same rows."""
+    return f"""p.id = ANY(ARRAY(({asks})
+                                EXCEPT SELECT mk.post_id FROM mx_plan_marks mk
+                                         JOIN mx_post_stamps ps ON ps.post_id = mk.post_id AND mk.stamp = ps.n::text
+                                        WHERE mk.kind = {kind_param} AND mk.guide = {guide_param}))"""
+
+
 def execute(cur: Any, sql: str, params: Any) -> List[Tuple]:
     """The planner's query's rows, read with JIT off, then JIT as it was: the stamp's subqueries make the planner's cost estimate
     pass jit_above_cost, and compiling took ~0.5 s of a 0.1 s query (folds.plan on the scale copy). A query that fails

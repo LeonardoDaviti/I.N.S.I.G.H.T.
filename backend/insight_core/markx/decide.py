@@ -820,9 +820,9 @@ class World:
         ahead = 0
         for n, (key, ms) in enumerate(items):
             if self.memo is not None and n >= ahead:
-                page: List[str] = []
-                while ahead < len(items) and (not page or len(page) < incremental.TEXT_PAGE):
-                    page += [m.post for m in items[ahead][1]]
+                page: List[List[str]] = []   # v10.34: a story's members each (a story with a post read again misses)
+                while ahead < len(items) and (not page or sum(map(len, page)) < incremental.TEXT_PAGE):
+                    page.append([m.post for m in items[ahead][1]])
                     ahead += 1
                 incremental.prefetch(self.text, None, page)
             ids = [m.post for m in ms if m.post in self.text]
@@ -1085,13 +1085,15 @@ def _ask_all(q: "Questions", qs: Sequence[Question], world: World, outcome: Opti
     ahead = 0
     for i, n in enumerate(order):
         if world.memo is not None and i >= ahead:
-            page: List[str] = []
-            reads: List[str] = []          # a check shows no reading
-            while ahead < len(order) and (not page or len(page) < incremental.TEXT_PAGE):
+            page: List[List[str]] = []     # v10.34: each question's posts (a question showing a post read again misses)
+            reads: List[List[str]] = []    # a check shows no reading
+            size = 0
+            while ahead < len(order) and (not page or size < incremental.TEXT_PAGE):
                 shown = q.shows(qs[order[ahead]], outcome)
-                page += shown
+                page.append(shown)
+                size += len(shown)
                 if qs[order[ahead]].type != "check":
-                    reads += shown
+                    reads.append(shown)
                 ahead += 1
             incremental.prefetch(world.text, None, page)
             if reads:
