@@ -414,7 +414,11 @@ def fake_answer(t):
     if k in ("check", "join", "pair", "merge", "connect"):
         rel = ["same_event", "same_event", "same_event", "development", "reaction", "mention", "different", "different",
                "different", "cant_tell"][_h(t["input_hash"]) % 10]
-        return {"relation": rel, "confidence": 60 + _h(t["input_hash"], "c") % 40, "reason": "Synthetic answer."}
+        out = {"relation": rel, "confidence": 60 + _h(t["input_hash"], "c") % 40, "reason": "Synthetic answer."}
+        if t.get("guide") == "judge-read-v2":   # 0258: the post's own words, as the server checks them
+            from insight_core.markx import validate
+            out["post_quote"] = validate.judge_blocks(t.get("input") or "")[1][:60].strip()
+        return out
     if k == "card":
         return {"headline_en": "Story card " + t["input_hash"][:10], "actors": ["Acme"], "object": "thing",
                 "action": "did", "date": None, "summary_en": "A summary."}

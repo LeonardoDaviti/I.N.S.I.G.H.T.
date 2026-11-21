@@ -413,6 +413,28 @@ class Job(unittest.TestCase):
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
+    def test_a_question_asked_under_judge_read_v1_is_read_never_asked_again(self):
+        """0258: join and pair ask judge-read-v2 (its answer quotes the post); a question already asked under v1 keeps
+        its task and answer, in a plain run and in the incremental one's index; a new question is asked under v2."""
+        from insight_core.markx import incremental
+        old, new = "STORY\nHeadline: old question", "STORY\nHeadline: new question"
+        tid, _ = repo.add_task(self.cur, kind="pair", guide="judge-read-v1", subject_kind="post_post", input=old)
+        ans = {"relation": "same_event", "confidence": 90, "reason": "v1"}
+        call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=ans)
+        repo.answer_task(self.cur, tid)
+        ask = D.Ask(self.cur, self.now)
+        self.assertEqual(ask.answer("pair", old), (ans, str(call)))
+        self.assertIsNone(ask.answer("pair", new))
+        self.assertEqual(ask.added["pair"], 1)
+        self.cur.execute("SELECT guide, count(*) FROM mx_tasks WHERE kind = 'pair' GROUP BY guide ORDER BY guide")
+        self.assertEqual(self.cur.fetchall(), [("judge-read-v1", 1), ("judge-read-v2", 1)])
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        memo_ask = D.Ask(self.cur, self.now, memo=state)
+        self.assertEqual(memo_ask.answer("pair", old), (ans, str(call)))
+        self.assertIsNone(memo_ask.answer("pair", new))
+        self.assertEqual(memo_ask.added["pair"], 0)   # the v2 task already asks it
+
     def test_refusals_open_and_close_never_deleted(self):
         """0217: a run's refusals become the current ones touching its stories; one no longer found (or found over other
         members) closes, the row kept; stories the run did not touch keep theirs."""

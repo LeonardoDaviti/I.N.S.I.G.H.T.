@@ -879,8 +879,10 @@ class EveryKindRoundTrips(_Api):
         "entities": {"entities": [{"span": "Widget 4.1 Pro", "name": "Widget 4.1 Pro", "type": "product", "role": "subject",
                                    "version": "4.1"}], "relations": []},
         "check": {"relation": "same_event", "confidence": 90, "reason": "Same launch."},
-        "join": {"relation": "reaction", "confidence": 70, "reason": "Reacts to it."},
-        "pair": {"relation": "same_event", "confidence": 85, "reason": "Same launch."},
+        "join": {"relation": "reaction", "confidence": 70, "reason": "Reacts to it.",   # 0258: quotes its POST
+                 "post_quote": "Widget 4.1 Pro arrived today"},
+        "pair": {"relation": "same_event", "confidence": 85, "reason": "Same launch.",
+                 "post_quote": "Acme's Widget 4.1 Pro arrived today", "story_quote": "Acme ships Widget 4.1 Pro"},
         "merge": {"relation": "different", "confidence": 95, "reason": "Another event."},
         "connect": {"relation": "different", "confidence": 90, "reason": "Unrelated."},
         "card": {"headline_en": "Acme released Widget 4.1 Pro", "actors": ["Acme"], "object": "Widget 4.1 Pro",
@@ -895,7 +897,9 @@ class EveryKindRoundTrips(_Api):
         "entities": ({"entities": [{"span": "Widget 5", "name": "Widget 5", "type": "product", "role": "subject"}]},
                      "every entity was dropped: entities[0].span 'Widget 5' does not occur in the post"),
         "check": ({"relation": "related", "confidence": 50}, "answer.relation: 'related' is not one of"),
-        "join": ({"relation": "same_event", "confidence": 150}, "answer.confidence: above 100"),
+        "join": ({"relation": "same_event", "confidence": 90,   # 0258: the story's post quoted as this POST's
+                  "post_quote": "Acme released Widget 4.1 Pro with 27B parameters"},
+                 "post_quote: not in this question's POST"),
         "pair": ({"relation": "same_event"}, "answer: confidence missing"),
         "merge": ({"relation": "merged", "confidence": 90}, "answer.relation: 'merged' is not one of"),
         "connect": ({"relation": "builds_on", "confidence": 90}, "answer.relation: 'builds_on' is not one of"),

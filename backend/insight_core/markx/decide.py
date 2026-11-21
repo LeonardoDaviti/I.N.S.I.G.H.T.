@@ -666,14 +666,17 @@ class Ask:
         answered in this snapshot, so the run goes on (`raced` counts them). `text`: the input, or an
         incremental.Input (0169: its hash kept, rendered only when the task is added)."""
         from insight_core.markx import incremental, repo, schemas, tasks
-        spec = schemas.KINDS[kind]
         memo = self.memo if kind in incremental.KINDS else None
         if memo is not None:
             h = incremental.hash_of(text)
             got = memo.tasks.get((kind, h))
             task = None if got is None else {"id": got[0], "status": got[1]}
-        else:
-            task = repo.task_for(self.cur, kind=kind, guide=spec.guide, input=incremental.text_of(text))
+        else:   # 0258: a question asked under the kind's earlier guide keeps that task (never asked again)
+            task = None
+            for guide in schemas.answer_guides(kind):
+                task = repo.task_for(self.cur, kind=kind, guide=guide, input=incremental.text_of(text))
+                if task is not None:
+                    break
         if task is None and not add:
             self.settled[kind] += 1
             return None
