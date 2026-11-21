@@ -21,8 +21,6 @@ import {
 const postHref = (id: string) => `/posts/${encodeURIComponent(id)}`;
 const QUICK_ROWS = 5;   // v10.29: the quick look shows a kind's newest rows; "see all" opens the rest
 
-/** A practice in one line: what, then its result ("→ 1.8x faster"). */
-const practiceLine = (p: Thing) => [p.fields.what?.shown, p.fields.result?.shown].filter(Boolean).join(' → ');
 
 /**
  * The ↗ to a thing's newest post, in INSIGHT (v10.29): a post's own address can be a feed bridge's (a Nitter or
@@ -37,27 +35,6 @@ function OpenThing({ thing, name }: { thing: Thing; name: string }) {
   );
 }
 
-/** "· 3 sources" when more than one of the reader's sources reported the thing (v10.29: the brief's rank). */
-function Sources({ thing }: { thing: Thing }) {
-  return thing.sources && thing.sources > 1
-    ? <span className="text-fg-3 tabular-nums" data-thing-sources={thing.sources}> · {thing.sources} sources</span> : null;
-}
-
-/** A thing's own practices (v10.29: a practice from the post that gave the thing is shown inside it). */
-function InsidePractices({ thing, max = 3 }: { thing: Thing; max?: number }) {
-  const ps = thing.practices ?? [];
-  if (!ps.length) return null;
-  return (
-    <ul className="mt-0.5 space-y-0.5 text-[0.8125rem] leading-5 text-fg-2" data-thing-practices={thing.id}>
-      {ps.slice(0, max).map((p) => (
-        <li key={p.id} className="[overflow-wrap:anywhere]">
-          <span aria-hidden="true">– </span>{practiceLine(p)}
-        </li>
-      ))}
-      {ps.length > max ? <li className="text-fg-3">+{ps.length - max} more</li> : null}
-    </ul>
-  );
-}
 
 function LinkFacts({ thing, fields }: { thing: Thing; fields: ThingFieldDef[] }) {
   const links = thingLinks(thing, fields);
@@ -123,10 +100,10 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
           return (
             <li key={t.id} className="flex items-baseline gap-2 py-1 text-[0.875rem] leading-5" data-thing={t.id}>
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                <span className="text-fg">{name}</span><Sources thing={t} />
+                <span className="text-fg">{name}</span>
                 {facts.length ? <span className="text-fg-2"> · {facts.join(' · ')}</span> : null}
                 <LinkFacts thing={t} fields={section.fields} />
-                <InsidePractices thing={t} max={2} />
+                
               </span>
               <OpenThing thing={t} name={name} />
             </li>
@@ -243,7 +220,7 @@ export function ThingsView({ section, sort, onSort }: {
                 {fields.map((f, i) => (
                   <td key={f.name} className={`py-1.5 pr-3 [overflow-wrap:anywhere] ${i === 0 ? 'text-fg' : 'text-fg-2'}`}>
                     <Cell thing={t} field={f} />
-                    {i === 0 ? <><Sources thing={t} /><InsidePractices thing={t} /></> : null}
+                    
                   </td>
                 ))}
                 <td className="py-1.5"><OpenThing thing={t} name={thingName(t, fields)} /></td>
@@ -258,7 +235,7 @@ export function ThingsView({ section, sort, onSort }: {
           return (
             <li key={t.id} className="mb-2 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
               <p className="flex items-baseline gap-2 text-[0.9375rem] font-semibold leading-5 text-fg">
-                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{name}<Sources thing={t} /></span>
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{name}</span>
                 <OpenThing thing={t} name={name} />
               </p>
               {thingFacts(t, fields).length ? (
@@ -266,7 +243,7 @@ export function ThingsView({ section, sort, onSort }: {
                   {thingFacts(t, fields).join(' · ')}<LinkFacts thing={t} fields={fields} />
                 </p>
               ) : null}
-              <InsidePractices thing={t} />
+              
             </li>
           );
         })}

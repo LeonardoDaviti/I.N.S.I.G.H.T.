@@ -206,7 +206,7 @@ describe('the quick look on a track page', () => {
     expect(await screen.findByRole('region', { name: 'Tables' })).toBeInTheDocument();
   });
 
-  it('shows a thing\'s own practices inside it and at most five rows a kind (v10.29)', async () => {
+  it('shows at most five rows a kind (v10.29)', async () => {
     const practice = thing('pr1', PRACTICE, { what: ['Oil the blade monthly', 'Oil the blade monthly'], result: ['No rust after a year', 'No rust after a year'] });
     const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((x) => thing(`m${x}`, GARDEN, { name: [`Tool ${x}`, `Tool ${x}`] }));
     const look: QuickLook = { ...LOOK, points: [], sections: [section(GARDEN, [{ ...TOOLS[0], practices: [practice], sources: 3 }, ...many], 'Tool (8)')] };
@@ -214,9 +214,7 @@ describe('the quick look on a track page', () => {
     renderWithProviders(<TrackTopic folderId="garden" />, { api: makeFakeApi({}) });
     const panel = await screen.findByRole('region', { name: 'Since you looked' });
     const tools = within(panel).getByRole('region', { name: 'Tool (8)' });
-    expect(tools.querySelector('[data-thing-practices="t1"]')).toHaveTextContent('Oil the blade monthly → No rust after a year');
     expect(tools.querySelectorAll('[data-thing]')).toHaveLength(5);
-    expect(tools.querySelector('[data-thing="t1"]')).toHaveTextContent('Hori knife · 3 sources');
   });
 
   it('says nothing new since the look, with the last issue a tap away', async () => {
