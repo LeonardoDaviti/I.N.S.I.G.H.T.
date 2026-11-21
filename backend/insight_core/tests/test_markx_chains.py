@@ -81,7 +81,7 @@ class Rules(unittest.TestCase):
         self.assertIsNotNone(validate.check("chain", {"reason": "x", "relation": "next_version"}, "x")[1])
         self.assertIn("chain", tasks.BACKGROUND_PLANNED)
         # measured (0219): asked and stored; no relation passed its bar on the held-out sets, so none is shown
-        self.assertEqual(G.chain_config(), {"on": True, "shown": (), "one_row": True})   # 0236: one row on (owner 2026-11-19: the maker's Q&A is in the row)
+        self.assertEqual(G.chain_config(), {"on": True, "shown": ("same_release",), "one_row": True})   # 0267: same_release shown (98.3% [91.1] on 60 stored edges)   # 0236: one row on (owner 2026-11-19: the maker's Q&A is in the row)
         from insight_core.markx import consumers
         self.assertEqual(consumers.feature_of("chain"), "graph")
 
@@ -187,6 +187,26 @@ class Chains(TL._Db):
         self.assertEqual(G.chain(self.cur, x["b"])["before"], [])           # not shown
         self.assertEqual([i["relation"] for i in G.chain(self.cur, x["b"], relations=["development"])["before"]],
                          ["development"])
+        self.assertEqual(G.row_chains(self.cur, {"row": [x["b"]]}), {})     # nor on a News row
+
+    def test_a_news_row_shows_its_earlier_and_later_outside_itself(self):
+        """0267: a row's Earlier and Later are the stories one shown edge joins to one of its stories, never its own."""
+        x = self.line()
+        self.stops_about(x)
+        G.plan_chains(self.cur)
+        self.answer_chain("same_release", "same_release")
+        G.plan_chains(self.cur)
+        got = G.row_chains(self.cur, {"weights": [x["b"]], "launch": [x["a"]], "both": [x["a"], x["b"]]})
+        self.assertEqual(set(got), {"weights", "launch"})                   # a one-release row holding both: nothing
+        (e,) = got["weights"]["before"]
+        self.assertEqual((e["story"], e["relation"], e["headline"], e["first_at"]),
+                         (x["a"], "same_release", "Vantor releases Orbit 2 Small, scoring 31", T0.isoformat()))
+        self.assertEqual(e["reason"], "same_release: the launch, then its weights")
+        self.assertEqual((got["weights"]["after"], got["weights"]["before_more"]), ([], 0))
+        self.assertEqual([i["story"] for i in got["launch"]["after"]], [x["b"]])
+        self.assertEqual(G.row_chains(self.cur, {"weights": [x["b"]]}, shown=0)["weights"]["before_more"], 1)
+        self.switches["on"] = False
+        self.assertEqual(G.row_chains(self.cur, {"weights": [x["b"]]}), {})
 
     def test_a_pair_no_longer_proposed_closes_its_edge_and_as_of_still_reads_it(self):
         x = self.line()

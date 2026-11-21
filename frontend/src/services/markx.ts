@@ -99,6 +99,8 @@ export interface MarkxRow {
   ix: { id: string; title: string | null; voices?: number; first_at?: string }[];
   /** 0208: its kept rank (significance, fit, coverage, score in 0..1; the lane; what decided them); null: not ranked yet. */
   rank?: MarkxRank | null;
+  /** 0267: the stories before and after it about the same thing (null: none shown). */
+  chain?: MarkxRowChain | null;
 }
 
 /** 0208: a row's rank as the jobs process kept it. `why`: the significance answer's fields and the fit's parts. */
@@ -763,6 +765,22 @@ export interface MarkxChain {
   before_more: number;
   after_more: number;
   as_of: string | null;
+}
+
+/** 0267: a News row's Earlier and Later (one chain edge from one of its stories, outside the row). */
+export interface MarkxRowChainLink {
+  story: string;
+  relation: MarkxChainRelation;
+  reason: string | null;
+  headline: string | null;
+  first_at: string | null;
+}
+
+export interface MarkxRowChain {
+  before: MarkxRowChainLink[];
+  after: MarkxRowChainLink[];
+  before_more: number;
+  after_more: number;
 }
 
 export interface MarkxRate {
