@@ -187,7 +187,7 @@ export interface FeedItemProps {
   /** A search result's matching line (issue 0040), shown instead of the excerpt, its words in bold. */
   snippet?: SnippetPart[] | null;
   /** Issue 0139: `markx` when only Mark X's English layer matched: the line is its headline, labelled "Mark X". */
-  snippetFrom?: 'markx' | null;
+  snippetFrom?: 'markx' | 'meaning' | null;
   /** A story's line in place of "covered by …": News says what its score is made of (issue 0051). */
   storyLine?: string;
 }
@@ -374,6 +374,9 @@ function FeedItem({
             {snippetFrom === 'markx' ? (
               // Why it matched (issue 0139): Mark X's English reading of the post, not its own words.
               <span data-snippet-from="markx" className="mr-1.5 text-[0.75rem] text-fg-3">Mark X ·</span>
+            ) : snippetFrom === 'meaning' ? (
+              // Issue 0247: no word of the query is in it; its meaning is near the query's.
+              <span data-snippet-from="meaning" className="mr-1.5 text-[0.75rem] text-fg-3">By meaning ·</span>
             ) : null}
             {snippet.map((part, index) => (part.mark
               ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.text}</mark>

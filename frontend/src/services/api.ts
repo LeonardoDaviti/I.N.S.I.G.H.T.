@@ -139,7 +139,7 @@ export interface FeedItem {
    *  words matched only the title or the source's name. */
   snippet?: SnippetPart[] | null;
   /** Issue 0139: `markx` when only Mark X's English layer matched, the snippet then its English headline. */
-  snippet_from?: 'markx' | null;
+  snippet_from?: 'markx' | 'meaning' | null;
   /** A watched page's last meaningful change (issue 0039); null or absent when it never changed. */
   update?: PageUpdate | null;
   /** The Main feed and a track (issue 0050): the story this row leads, its other posts folded
