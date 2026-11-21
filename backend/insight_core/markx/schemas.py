@@ -771,9 +771,25 @@ def mention_guides() -> list:
     return list(ENTITY_ARMS) + ["ent-v5"]
 
 
+# 0260 (v10.30): the `significance` kind's guide behind a switch (entity_bands.json `significance.results`): on, a new
+# ask is significance-v3 (a result scored by what it changes in the field as well as by what one can use); off,
+# significance-v2. Same schema; a guide is a new task only when a row is asked (significance.due), never a mass re-ask.
+SIGNIFICANCE_RESULTS_GUIDE = "significance-v3"
+
+
+def significance_guide() -> str:
+    from insight_core.markx import identity   # identity reads this module
+    on = bool((identity.bands().get("significance") or {}).get("results", False))
+    return SIGNIFICANCE_RESULTS_GUIDE if on else KINDS["significance"].guide
+
+
 def guide_of(cur, kind: str) -> Optional[str]:
-    """The guide a new task of `kind` is asked under: the switch's for entities, else the kind's."""
-    return entities_arm(cur).guide if kind == "entities" else KINDS[kind].guide
+    """The guide a new task of `kind` is asked under: the switch's for entities and significance, else the kind's."""
+    if kind == "entities":
+        return entities_arm(cur).guide
+    if kind == "significance":
+        return significance_guide()
+    return KINDS[kind].guide
 
 
 # 0196: a kind's second guide with a schema of its own (the same kind, so the worker asks it with that kind's tools and
@@ -785,6 +801,7 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
     "digest-v3": ("digest", DIGEST_SCHEMA),   # v10.29: the same, its points state facts (no reporting words, no hedges)
     "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
+    "significance-v3": ("significance", SIGNIFICANCE_V2_SCHEMA),   # 0260: results by what they change (the switch above)
 }
 
 
