@@ -460,7 +460,8 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     return {"follow": len(tested), "titles": len(titled), **({"videos": len(channeled)} if channeled else {})}
 
 
-def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = None) -> Dict[str, Any]:
+def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = None,
+         people: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Issue 0206, the jobs process (markx/jobs.py, the view "discover", wanted by an open: services/stories_service.
     discover_served): Discover's answer made again when it is due (StoriesService.refresh), then what its first page
     lacks read over the web (`read_first_page`, which makes it again when it read anything; off with
@@ -472,6 +473,7 @@ def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = 
     if stories.served_due():
         stories.refresh()
         out["built"].append("answer")
+    out["people"] = (people or keep_people)(db_url)   # 0276: Discover's people and makers, built here (~1 s on the server copy)
     if enabled():
         if http is None:
             from concurrent.futures import ThreadPoolExecutor
@@ -484,5 +486,20 @@ def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = 
     return out
 
 
-__all__ = ["read_first_page", "keep", "read_video", "videos_due", "channel_key", "VIDEOS_PER_PASS", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
+def keep_people(db_url: str) -> Dict[str, Any]:
+    """Issue 0276: Discover's people and makers (markx/discover_people.keep) built again when KEEP_FOR old; a failure is
+    logged and returned, never failing Discover's own answer."""
+    from insight_core.db import database
+    from insight_core.markx import discover_people
+    try:
+        with database.transaction(db_url) as cur:
+            if not discover_people.due(cur):
+                return {"built": False}
+            return discover_people.keep(cur)
+    except Exception as exc:  # noqa: BLE001 - derived; the older list stays served
+        logger.exception("Discover: keeping the people failed")
+        return {"failed": str(exc)[:300]}
+
+
+__all__ = ["read_first_page", "keep", "keep_people", "read_video", "videos_due", "channel_key", "VIDEOS_PER_PASS", "label", "follow_read", "kind_read", "declared_accounts", "TRANSIENT_HOURS", "own_pages", "page_title", "to_read", "work", "due", "kind_source", "kind_test", "Polite", "LABELS",
            "FOLLOW_TEST", "enabled"]

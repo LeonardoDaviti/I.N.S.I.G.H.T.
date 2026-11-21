@@ -9,6 +9,7 @@ import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResp
 import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import DiscoverPages from './DiscoverPages';
 import MainSourceMissing from './MainSourceMissing';
+import PeopleAndMakers from './PeopleAndMakers';
 import OfficialChannels from './OfficialChannels';
 import SilentSources from './SilentSources';
 import SourceJudge from './SourceJudge';
@@ -306,6 +307,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
           </label>
           {words.length ? null : <OfficialChannels />}
           {words.length ? null : <MainSourceMissing onFollow={onFollow} />}
+          {words.length ? null : <PeopleAndMakers onFollow={onFollow} />}
           {words.length ? null : <SilentSources />}
           {archives.length ? (
             <section aria-label="Sources you follow that miss where your stories start" className="mb-2">

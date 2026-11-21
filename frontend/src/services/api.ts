@@ -1095,6 +1095,42 @@ export interface MainSourceRow {
   latest: string | null;
   test: MainSourceTest | null;
 }
+/** Discover's people and makers (issue 0276): who your tracks' posts and News quote, repost, mention, link or name. */
+export interface PeopleEvidence {
+  post_id: string;
+  title: string;
+  url: string;
+  where: string;            // "track:<name>" | "news"
+  how: string;              // quote | repost | mention | link | maker
+  at: string | null;
+}
+
+export interface PeopleRow {
+  key: string;
+  kind: 'author' | 'maker';
+  platform: string;
+  name: string;
+  posts: number;
+  sources: number;
+  accounts: string[];
+  tracks: string[];
+  news: number;
+  how: Record<string, number>;
+  why: string;
+  evidence: PeopleEvidence[];
+  follow: { address?: string; via: string; feed?: string | null; ready: boolean } | null;
+  channels?: { key: string | null; kind: string | null; state: string | null; address: string | null; source_id: string | null }[];
+}
+
+export interface PeopleResponse {
+  window_days: number;
+  posts: number;
+  authors: PeopleRow[];
+  makers: PeopleRow[];
+  built_at: string | null;
+  refreshing: boolean;
+}
+
 export interface MainSourceResponse {
   success: true;
   rows: MainSourceRow[];
@@ -1483,6 +1519,9 @@ export function createApi() {
      *  the shown channels in the background; nothing is followed here. */
     getMainSourceMissing: (signal?: AbortSignal) =>
       request<MainSourceResponse>('/api/discover/main-source', { signal }),
+    /** Discover's people and makers (issue 0276): kept by the jobs process; nothing is followed here. */
+    getDiscoverPeople: (signal?: AbortSignal) =>
+      request<PeopleResponse>('/api/discover/people', { signal }),
     /** Official channels (issue 0196): what the official-channels job found, why, from where and how it was checked. */
     getOfficial: (signal?: AbortSignal, page: OfficialPage = {}) => {
       const qs = new URLSearchParams();
