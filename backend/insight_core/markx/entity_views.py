@@ -367,7 +367,22 @@ def family_versions(book: Any, versions: List[Dict[str, Any]]) -> List[Dict[str,
             top.setdefault("settings", []).append({"id": v["id"], "name": v["name"], "variant": v["variant"]})
             continue
         out.append(v)
-    return out
+    # v10.35: a build of a version (GGUF, NVFP4, quantised weights: the name states a build) is listed under the
+    # row of the same version and variant that states none (`builds`), as its settings are, not as a version of its own.
+    def same(v: Dict[str, Any]) -> Tuple[Any, str]:
+        return (N.vt(v["version"]) if v["version"] else None, (v["variant"] or "").strip().lower())
+    base = {}
+    for v in out:
+        if not book.ents[v["id"]].build:
+            base.setdefault(same(v), v)
+    kept = []
+    for v in out:
+        top = base.get(same(v)) if book.ents[v["id"]].build and (v["version"] or v["variant"]) else None
+        if top is not None:
+            top.setdefault("builds", []).append({"id": v["id"], "name": v["name"], "build": book.ents[v["id"]].build})
+            continue
+        kept.append(v)
+    return kept
 
 
 def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
@@ -391,7 +406,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
-PAGE_SHAPE = "6"      # v10.35: a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "7"      # v10.35: a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)

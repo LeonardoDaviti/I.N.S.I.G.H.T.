@@ -123,6 +123,24 @@ class VersionStrings(unittest.TestCase):
         self.assertEqual((got[1]["version"], got[1]["variant"]), ("5.2", None))    # the id's numbers: one version
         self.assertNotIn("settings", got[2])                                        # 6 not listed: its setting a row
 
+    def test_a_build_is_listed_under_its_version(self):
+        def ent(eid, name, level, version, variant=None, build=None):
+            e = I.Ent(eid, "model", name, N.key(name), level, "f", None, "inkling", version, N.vt(version), variant)
+            e.build = build
+            return e
+        ents = [ent("m", "Inkling 2 Mini", "variant", "2", "Mini"),
+                ent("g", "Inkling-2-Mini-GGUF", "checkpoint", "2", "Mini", "GGUF"),
+                ent("s", "Inkling 2 Small", "variant", "2", "Small"),
+                ent("q", "Inkling-3-Nano-GGUF", "checkpoint", "3", "Nano", "GGUF")]   # no row of its own: stays
+        book = I.Book()
+        for e in ents:
+            book.ents[e.id] = e
+        rows = [{"id": e.id, "name": e.name, "version": e.version, "variant": e.variant, "level": e.level} for e in ents]
+        got = EV.family_versions(book, rows)
+        self.assertEqual([v["id"] for v in got], ["m", "s", "q"])
+        self.assertEqual(got[0]["builds"], [{"id": "g", "name": "Inkling-2-Mini-GGUF", "build": "GGUF"}])
+        self.assertNotIn("builds", got[1])
+
 
 @base.requires_test_db
 class FamilyVersions(tl._Db):

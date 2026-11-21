@@ -501,7 +501,9 @@ export interface MarkxEntityPage {
   family: { id: string; name: string } | null;
   versions: { id: string; name: string; version: string | null; variant: string | null; level: string;
     /** 0259: the settings of this version ("(max)", "low"), listed under it, not as versions */
-    settings?: { id: string; name: string; variant: string | null }[] }[];
+    settings?: { id: string; name: string; variant: string | null }[];
+    /** v10.35: its builds (GGUF, NVFP4), listed under it, not as versions */
+    builds?: { id: string; name: string; build: string }[] }[];
   posts: number;
   voices: number;
   stories: MarkxEntityStory[];
