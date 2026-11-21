@@ -79,14 +79,22 @@ def fill(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, Any]]) ->
             it["why"], it["title"], it["url"], it["source"] = got[it["post_id"]]
 
 
-def counts(cur: Cursor, track: Dict[str, Any], inside_places: Sequence[str]) -> Optional[Tuple[List[str], int]]:
-    """(the posts placed in `inside_places`, the number placed in Discover) from what is kept, or None (live)."""
+def posts_in(cur: Cursor, track: Dict[str, Any], places: Sequence[str]) -> Optional[List[str]]:
+    """The posts placed in `places` from what is kept (by post id), or None (place it live). 0270: the track's
+    reading views read this (track_feed), not a live placement of every judged item a request."""
     if calibration(cur, track["folder_id"]) is None:
         return None
     cur.execute("""SELECT k.post_id::text FROM mx_track_places k JOIN posts p ON p.id = k.post_id
                     WHERE k.track_id = %s AND k.place = ANY(%s) ORDER BY k.post_id""",
-                (track["folder_id"], list(inside_places)))
-    inside = [pid for (pid,) in cur.fetchall()]
+                (track["folder_id"], list(places)))
+    return [pid for (pid,) in cur.fetchall()]
+
+
+def counts(cur: Cursor, track: Dict[str, Any], inside_places: Sequence[str]) -> Optional[Tuple[List[str], int]]:
+    """(the posts placed in `inside_places`, the number placed in Discover) from what is kept, or None (live)."""
+    inside = posts_in(cur, track, inside_places)
+    if inside is None:
+        return None
     # 0264: Discover counted where it is kept (only a number is sent: the rows were most of the counts' traffic)
     cur.execute("""SELECT count(*) FROM mx_track_places k JOIN posts p ON p.id = k.post_id
                     WHERE k.track_id = %s AND k.place = 'discover'""", (track["folder_id"],))
@@ -109,6 +117,52 @@ def suggestible(cur: Cursor, track: Dict[str, Any]) -> Optional[List[Dict[str, A
                        AND NOT k.active AND {suggestable_sql("p.source_id")}
                      ORDER BY k.post_id""", (track["folder_id"],))
     return [{"source_id": sid, "source": name, "at": at} for sid, name, at in cur.fetchall()]
+
+
+def write_places(cur: Cursor, tid: str, items: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    """Make the track's kept rows these placed items, writing only what differs (0270): a row whose post is no longer
+    placed is deleted, a new or changed one upserted, an unchanged one not written. Before, every refresh deleted and
+    inserted every row of the track (production, 2026-11-21: 2,086 refreshes wrote 85.6M rows, ~41k a refresh, while
+    a refresh changes a few). The same rows result. {deleted, written}."""
+    # One statement, one snapshot: `y` the rows the placement makes (a post with a judged item), `gone` the kept rows
+    # it no longer makes, `up` the new rows and the rows that differ (compared by a read; an ON CONFLICT ... WHERE
+    # alone would still lock, and so write, every unchanged row).
+    cur.execute("""WITH y AS MATERIALIZED (
+                       SELECT x.post_id, x.place, x.rank, x.calibrated, x.label, x.active, x.verdict, x.confidence,
+                              i.subtopic, i.answered_at, i.found_by
+                         FROM unnest(%(posts)s::uuid[], %(place)s::text[], %(rank)s::float8[], %(calibrated)s::bool[],
+                                     %(label)s::text[], %(active)s::bool[], %(verdict)s::bool[], %(confidence)s::real[])
+                              AS x(post_id, place, rank, calibrated, label, active, verdict, confidence)
+                         JOIN LATERAL (SELECT subtopic, answered_at, found_by FROM mx_track_items
+                                        WHERE track_id = %(tid)s::uuid AND post_id = x.post_id AND verdict IS NOT NULL
+                                        ORDER BY version DESC LIMIT 1) i ON true),
+                   gone AS (DELETE FROM mx_track_places k
+                             WHERE k.track_id = %(tid)s::uuid AND NOT EXISTS (SELECT 1 FROM y WHERE y.post_id = k.post_id)
+                            RETURNING 1),
+                   up AS (INSERT INTO mx_track_places (track_id, post_id, place, rank, calibrated, label, active, verdict,
+                                                       confidence, subtopic, answered_at, found_by)
+                          SELECT %(tid)s::uuid, y.post_id, y.place, y.rank, y.calibrated, y.label, y.active, y.verdict,
+                                 y.confidence, y.subtopic, y.answered_at, y.found_by
+                            FROM y LEFT JOIN mx_track_places o ON o.track_id = %(tid)s::uuid AND o.post_id = y.post_id
+                           WHERE o.post_id IS NULL
+                              OR (o.place, o.rank, o.calibrated, o.label, o.active, o.verdict, o.confidence, o.subtopic,
+                                  o.answered_at, o.found_by)
+                                 IS DISTINCT FROM
+                                 (y.place, y.rank, y.calibrated, y.label, y.active, y.verdict, y.confidence, y.subtopic,
+                                  y.answered_at, y.found_by)
+                          ON CONFLICT (track_id, post_id) DO UPDATE
+                             SET place = EXCLUDED.place, rank = EXCLUDED.rank, calibrated = EXCLUDED.calibrated,
+                                 label = EXCLUDED.label, active = EXCLUDED.active, verdict = EXCLUDED.verdict,
+                                 confidence = EXCLUDED.confidence, subtopic = EXCLUDED.subtopic,
+                                 answered_at = EXCLUDED.answered_at, found_by = EXCLUDED.found_by
+                          RETURNING 1)
+                   SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM up)""",
+                {"tid": tid, "posts": [it["post_id"] for it in items], "place": [it["place"] for it in items],
+                 "rank": [float(it["rank"]) for it in items], "calibrated": [bool(it["calibrated"]) for it in items],
+                 "label": [it["label"] for it in items], "active": [bool(it["active"]) for it in items],
+                 "verdict": [it["verdict"] for it in items], "confidence": [it["confidence"] for it in items]})
+    deleted, written = cur.fetchone()
+    return {"deleted": int(deleted), "written": int(written)}
 
 
 def due(cur: Cursor, *, gap: float = REFRESH_GAP) -> bool:
@@ -149,20 +203,7 @@ def refresh(cur: Cursor, *, gap: float = REFRESH_GAP) -> Optional[int]:
             continue   # unchanged, or changed by the worker only and placed less than `gap` ago (its rows stay)
         got = tracks.placed(cur, t, shown=False)
         items = got["items"]
-        cur.execute("DELETE FROM mx_track_places WHERE track_id = %s", (tid,))
-        cur.execute("""INSERT INTO mx_track_places (track_id, post_id, place, rank, calibrated, label, active, verdict,
-                                                    confidence, subtopic, answered_at, found_by)
-                       SELECT %s::uuid, x.post_id, x.place, x.rank, x.calibrated, x.label, x.active, x.verdict,
-                              x.confidence, i.subtopic, i.answered_at, i.found_by
-                         FROM unnest(%s::uuid[], %s::text[], %s::float8[], %s::bool[], %s::text[], %s::bool[], %s::bool[],
-                                     %s::real[]) AS x(post_id, place, rank, calibrated, label, active, verdict, confidence)
-                         JOIN LATERAL (SELECT subtopic, answered_at, found_by FROM mx_track_items
-                                        WHERE track_id = %s::uuid AND post_id = x.post_id AND verdict IS NOT NULL
-                                        ORDER BY version DESC LIMIT 1) i ON true""",
-                    (tid, [it["post_id"] for it in items], [it["place"] for it in items],
-                     [float(it["rank"]) for it in items], [bool(it["calibrated"]) for it in items],
-                     [it["label"] for it in items], [bool(it["active"]) for it in items],
-                     [it["verdict"] for it in items], [it["confidence"] for it in items], tid))
+        write_places(cur, tid, items)
         cur.execute("""INSERT INTO mx_track_places_state (track_id, calibration, placed_at) VALUES (%s, %s::json, now())
                        ON CONFLICT (track_id) DO UPDATE SET calibration = EXCLUDED.calibration, placed_at = now()""",
                     (tid, json.dumps(got["calibration"])))

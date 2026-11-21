@@ -530,6 +530,38 @@ class KeptPlaces(_Tracks):
         self.keep()
         self.assertEqual(self.keep(), 0, "nothing changed since")
 
+    def test_placing_again_writes_only_the_rows_that_differ(self):
+        """Issue 0270: a placement written again leaves its unchanged rows unwritten, writes a changed one, deletes a
+        post no longer placed; the kept rows are what placing live makes; the reading views read the kept set."""
+        from insight_core.markx import track_feed, track_kept
+        a, b, c = self.post(title="one in"), self.post(title="two out"), self.post(title="three in")
+        self.plan()
+        self.judge(a, verdict())
+        self.judge(b, verdict(False, 0.8))
+        self.judge(c, verdict(conf=0.7))
+        self.keep()
+        t = tracks.get(self.cur, self.folder)
+        live = tracks.placed(self.cur, t, shown=False)["items"]
+
+        def rows():
+            self.cur.execute("""SELECT post_id::text, place, rank, label, verdict, ctid::text FROM mx_track_places
+                                 WHERE track_id = %s ORDER BY post_id""", (self.folder,))
+            return {r[0]: r[1:] for r in self.cur.fetchall()}
+        before = rows()
+        self.assertEqual(sorted(before), sorted(it["post_id"] for it in live))
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, live), {"deleted": 0, "written": 0})
+        self.assertEqual(rows(), before, "nothing written: the same row versions")
+        moved = [dict(it, place="out" if it["post_id"] == c else it["place"]) for it in live if it["post_id"] != b]
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, moved), {"deleted": 1, "written": 1})
+        after = rows()
+        self.assertNotIn(b, after)
+        self.assertEqual(after[c][0], "out")
+        self.assertEqual(after[a], before[a], "an unchanged row is not written")
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, live), {"deleted": 0, "written": 2})
+        self.assertEqual({k: v[:4] for k, v in rows().items()}, {k: v[:4] for k, v in before.items()})
+        self.assertEqual(sorted(track_feed.track_posts(self.cur, self.folder)),
+                         sorted(it["post_id"] for it in live if it["place"] in track_feed.IN_TRACK))
+
     def test_the_workers_changes_read_the_kept_placement_the_owners_live(self):
         """Issue 0264: a blind check's answers (the worker's) leave the kept placement read, never placed live, until
         the refresh places the track again once REFRESH_GAP old; the owner's label is read live at once."""

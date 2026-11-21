@@ -939,15 +939,31 @@ def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] 
     # EXISTS tested each mention row since against every current stated edge (`evidence->'posts' ? post`): mention
     # rows x edges, 0226's #16. The same posts: `?` on the posts array is true exactly when the post's id is one of
     # its string elements, which jsonb_array_elements_text lists (evidence posts are always an array of ids).
-    cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
-                    WHERE m.guide = ANY(%s) AND c.created_at >= %s
-                      AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
-                           OR {_derived_sql()}
-                           OR m.post_id::text IN (
-                                SELECT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
-                                 WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
-                                   AND jsonb_typeof(x.evidence->'posts') = 'array'))""",
-                (schemas.mention_guides(), since, RULE_STATED))
+    # v10.31.1 (0270): read from the calls since, not from every current mention. A mention's call is its post's task's
+    # (repo.add_mentions, ent42: post_id = the task's `a`), so the calls since (their created_at index), their tasks
+    # (primary key) and those posts' mentions (the (post_id, guide, n) key) are the same rows as the join of every
+    # current mention to mx_calls, filtered after (a scan of all of mx_mentions a run; production, 2026-11-21: 112
+    # runs, ~140 s and ~41M block reads each). A call's answer is read once (not once a mention), and the stated
+    # edges' evidence posts are joined to the few posts since that state nothing, not hashed for every mention.
+    cur.execute(f"""WITH c AS MATERIALIZED (
+                        SELECT c.id, t.a AS post_id,
+                               (jsonb_typeof(c.answer->'relations') = 'array'
+                                AND c.answer->'relations' <> '[]'::jsonb) AS states
+                          FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+                         WHERE c.created_at >= %(since)s AND t.a IS NOT NULL),
+                    s AS MATERIALIZED (
+                        SELECT m.post_id, bool_or(c.states OR {_derived_sql()}) AS says
+                          FROM c JOIN mx_mentions_now m ON m.post_id = c.post_id AND m.call_id = c.id
+                         WHERE m.guide = ANY(%(guides)s)
+                         GROUP BY m.post_id)
+                    SELECT post_id::text FROM s WHERE says
+                    UNION
+                    SELECT e.post FROM mx_connections x
+                           CROSS JOIN LATERAL jsonb_array_elements_text(x.evidence->'posts') AS e(post)
+                           JOIN s ON NOT s.says AND s.post_id::text = e.post
+                     WHERE x.valid_to IS NULL AND x.rule = %(rule)s AND x.a_kind = 'entity'
+                       AND jsonb_typeof(x.evidence->'posts') = 'array'""",
+                {"guides": schemas.mention_guides(), "since": since, "rule": RULE_STATED})
     out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
     if "based_on" in derived_on():   # 0234: the posts naming a predecessor whose pair's check was answered since
         cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_tasks t
