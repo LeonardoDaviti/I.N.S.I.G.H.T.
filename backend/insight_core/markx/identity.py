@@ -506,11 +506,34 @@ class Book:
         a space ("acme" and "acme widget")."""
         return [x for x, e in self.ents.items() if e.key and (e.key.startswith(key + " ") or key.startswith(e.key + " "))]
 
+    def prefix_makers(self, key: str) -> Set[str]:
+        """v10.35: the makers (keys) of the names that are a bare name (its `key`) with their stated maker in front
+        ("suse linux" by SUSE, "amazon linux" by Amazon: {"suse", "amazon"} for "linux"). Kept while the book holds
+        as many entities (the Writer only adds)."""
+        got = self.__dict__.get("_prefix_makers")
+        if got is None or got[0] != len(self.ents):
+            idx: Dict[str, Set[str]] = defaultdict(set)
+            for e in self.ents.values():
+                m = N.key(e.maker or "")
+                if m and e.key.startswith(m + " "):
+                    idx[e.key[len(m) + 1:]].add(m)
+            got = (len(self.ents), idx)
+            self.__dict__["_prefix_makers"] = got
+        return set(got[1].get(key, ()))
+
     def cluster_size(self, root: str) -> int:
         """len(members()[root]) without walking every entity (v10.13.9: a merge asked it of the whole book each
         time): the entities whose redirects lead to `root`, read from the current redirects (an undo or a merge in
         between is always seen)."""
         return len(self.cluster(root))
+
+    def mentions(self, root: str) -> int:
+        """v10.35: the current mentions of a cluster's names (the book's type counts; none when read without them)."""
+        ms = self.cluster(root)
+        want = getattr(self.types, "want", None)
+        if want is not None:
+            want(ms)   # a book read by need: the cluster's counts in one read
+        return sum(n for m in ms for _t, n in (self.types.get(m) or {}).items())
 
     def _into(self) -> Dict[str, List[str]]:
         """{to: [from]} of the current redirects; kept while they don't change (0164: Redirects counts its changes;
@@ -987,6 +1010,21 @@ class LazyBook(Book):
         starts = [" ".join(key.split(" ")[:i]) for i in range(1, len(key.split(" ")))]
         return [x for x in self._ordered_ids("key LIKE %s ESCAPE '\\' OR key = ANY(%s)", (like, starts))
                 if (k := self.ents[x].key) and (k.startswith(key + " ") or key.startswith(k + " "))]
+
+    def prefix_makers(self, key: str) -> Set[str]:
+        got = self.__dict__.setdefault("_prefix_got", {})
+        if key not in got:
+            out: Set[str] = set()
+            if key:   # the names ending in " <key>" (the reversed key index), read as Book reads them
+                like = (" " + key)[::-1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                self._cur.execute("""SELECT key, maker FROM mx_entities WHERE maker IS NOT NULL AND maker <> ''
+                                        AND reverse(key) LIKE %s ESCAPE '\\'""", (like,))
+                for k, mk in self._cur.fetchall():
+                    m = N.key(mk)
+                    if m and k == m + " " + key:
+                        out.add(m)
+            got[key] = out
+        return set(got[key])
 
     def _ents_of(self, ids: Sequence[str]) -> Dict[str, Ent]:
         b = Book()
@@ -2627,6 +2665,58 @@ def maker_prefix(x: Ent, y: Ent) -> bool:
     return False
 
 
+def generic_bare(book: Book, x: Ent, y: Ent) -> bool:
+    """v10.35: the bare name y of the maker-prefix pair (x = y with its maker in front) is generic: another maker's
+    name is y with that maker in front too ("linux": "suse linux" by SUSE, "amazon linux" by Amazon, "oracle linux"
+    by Oracle), in the book or in either cluster, or y's cluster states another maker. Several makers' names on one
+    bare name are several things the bare name is common to: none merges into it by the rule (on production SUSE
+    Linux took Linux, and then Amazon, Oracle, Red Hat and Raspberry Pi Linux, as one thing of SUSE's)."""
+    m = next((k for k in (N.key(x.maker or ""), N.key(y.maker or "")) if k and x.key.startswith(k + " ")), "")
+    if not m:
+        return False
+    others = {k for k in book.prefix_makers(y.key) if k != m}
+    for r in {book.root(x.id), book.root(y.id)}:
+        for z in book.cluster(r) if r else ():
+            e = book.ents.get(z)
+            k = N.key(e.maker or "") if e is not None else ""
+            if k and k != m and e.key.startswith(k + " ") and N.squash(e.key[len(k) + 1:]) == y.sq:
+                others.add(k)
+    if any(not one_maker(book, k, m) for k in others):
+        return True
+    stated = cluster_maker(book, book.root(y.id)) if book.root(y.id) else None
+    return bool(stated) and not one_maker(book, N.key(stated), m)
+
+
+def one_maker(book: Book, a: str, b: str) -> bool:
+    """v10.35: two makers' keys name one maker: same_maker, or one's words in the other's ("google" and "google
+    deepmind")."""
+    return same_maker(book, a, b) or _words_in(a, b) or _words_in(b, a)
+
+
+def generic_bares(book: Book, members: Iterable[str]) -> Dict[str, Set[str]]:
+    """v10.35: of a cluster's names, the bare names (by id) that two or more makers' names in it are with their
+    maker in front ({linux: {"suse", "amazon", "oracle"}}: generic_bare's class, merged before the guard)."""
+    ms = [m for m in members if m in book.ents]
+    by_sq: Dict[str, List[str]] = defaultdict(list)
+    for m in ms:
+        if book.ents[m].sq:
+            by_sq[book.ents[m].sq].append(m)
+    makers: Dict[str, Set[str]] = defaultdict(set)
+    for z in ms:
+        e = book.ents[z]
+        k = N.key(e.maker or "")
+        if k and e.key.startswith(k + " "):
+            for b in by_sq.get(N.squash(e.key[len(k) + 1:]), ()):
+                if b != z:
+                    makers[b].add(k)
+    out: Dict[str, Set[str]] = {}
+    for b, got in makers.items():
+        ks = sorted(got)
+        if any(not one_maker(book, x, y) for i, x in enumerate(ks) for y in ks[i + 1:]):
+            out[b] = set(ks)
+    return out
+
+
 def fields_rule(a: Ent, b: Ent) -> Optional[str]:
     """'auto': the same family, version tuple, variant, size and build in Haiku's fields, the parser's version,
     variant, size and build agreeing, and the same maker or one side none (22/22 unseen); 'queue': only Haiku's
@@ -2978,6 +3068,8 @@ def rules_of(cur: Any, book: Book, p: Pooled, handle_extra: Dict[Tuple[str, str]
     if "squash" not in auto:
         for x, y in ((a, b), (b, a)):
             if maker_prefix(x, y):
+                if generic_bare(book, x, y):   # v10.35: several makers' names on one bare name: no rule, Haiku
+                    break                      # decides it as any pair no rule decides
                 maker = x.maker or y.maker or ""
                 (auto if stated_maker(cur, y, maker, guide) else queue).add(
                     "maker_prefix" if stated_maker(cur, y, maker, guide) else "maker_unstated")
@@ -3750,7 +3842,9 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
           run_id: Any = None, evidence: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """One merge: one root redirects into the other, the keeper. The redirect's id.
 
-    v10.35: the keeper is the more general thing, then the larger cluster (more names), then the older. A root is
+    v10.35: the keeper is the more general thing, then the more mentioned cluster (its names' current mentions: a
+    misspelling written once, "Kimik 3", never keeps "Kimi K3" written a thousand times), then the larger cluster
+    (more names), then the older. A root is
     the specific one when it is a build (a checkpoint, or a name stating a `build`: GGUF, NVFP4, quantised weights)
     and the other is not: "Inkling 2 Mini" (a variant, its maker and its brief under its id) merged with
     "Inkling-2-Mini-GGUF" keeps Mini, never the GGUF (on production the larger GGUF cluster kept, and the page lost
@@ -3760,7 +3854,8 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
         return None
     def weight(r: str):
         e = book.ents[r]
-        return (not is_build(e), book.cluster_size(r), -(e.first_seen.timestamp() if e.first_seen else 0), r)
+        return (not is_build(e), book.mentions(r), book.cluster_size(r), -(e.first_seen.timestamp() if e.first_seen else 0),
+                r)
     to, frm = (ra, rb) if weight(ra) >= weight(rb) else (rb, ra)
     got = _savepoint(cur, """INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, call_id, queue_id, run_id, evidence)
                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb) RETURNING id::text""",

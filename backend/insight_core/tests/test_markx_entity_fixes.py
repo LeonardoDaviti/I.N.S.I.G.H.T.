@@ -163,6 +163,51 @@ class MergeKeeper(unittest.TestCase):
         self.assertEqual((view["maker"], view["maker_id"]), ("Zentra", "z"))
         self.assertEqual(entity_views._ent_view(book, "a")["maker"], "Zentra")   # a member: its own
 
+    def test_the_more_mentioned_cluster_keeps_over_an_older_misspelling(self):
+        """v10.35: "Kimik 3" (older, written once) and "Kimi K3" (written 40 times): the name written keeps."""
+        a = self.ent("a", "Kimik 3", "model")
+        b = self.ent("b", "Kimi K3", "model", maker="Moonshot AI")
+        a.first_seen, b.first_seen = T0 - D, T0
+        book = self.book(a, b)
+        book.types = {"a": I.TypeCounts(("model", 1)), "b": I.TypeCounts(("model", 40))}
+        I.merge(_Cur(), book, "a", "b", by="rule:squash", automatic=True)
+        self.assertEqual(book.root("a"), "b")
+        self.assertEqual(book.mentions("b"), 41)
+
+
+class GenericPrefix(unittest.TestCase):
+    """v10.35: a bare name several makers' names are with their maker in front is no one maker's thing."""
+    ent, book = base.Rules.ent, base.Rules.book
+
+    def _linux(self):
+        bare = self.ent("l", "Linux", "software")
+        suse = self.ent("s", "SUSE Linux", "software", maker="SUSE")
+        amzn = self.ent("a", "Amazon Linux", "software", maker="Amazon")
+        z, b = self.ent("z", "Zeta Z200", "product", maker="Zeta"), self.ent("y", "Z200", "product")
+        return self.book(bare, suse, amzn, z, b)
+
+    def test_the_maker_prefix_rule_never_joins_a_bare_name_two_makers_name(self):
+        book = self._linux()
+        self.assertTrue(I.generic_bare(book, book.ents["s"], book.ents["l"]))
+        self.assertFalse(I.generic_bare(book, book.ents["z"], book.ents["y"]))   # one maker's: the rule as before
+        self.assertEqual(book.prefix_makers("linux"), {"suse", "amazon"})
+        book.redirect["l"] = ("s", True)                                     # Linux merged into SUSE's already
+        self.assertTrue(I.generic_bare(book, book.ents["a"], book.ents["l"]))
+
+    def test_a_maker_and_its_division_are_one_maker(self):
+        g = self.ent("g", "Google Gemini", "model", maker="Google")
+        d = self.ent("d", "Google DeepMind Gemini", "model", maker="Google DeepMind")
+        bare = self.ent("b", "Gemini", "model")
+        book = self.book(g, d, bare)
+        self.assertFalse(I.generic_bare(book, g, bare))
+        book.redirect.update({"g": ("b", True), "d": ("b", True)})
+        self.assertEqual(I.generic_bares(book, ["b", "g", "d"]), {})
+
+    def test_the_bare_names_merged_with_several_makers_names(self):
+        book = self._linux()
+        book.redirect.update({"l": ("s", True), "a": ("s", True)})
+        self.assertEqual(I.generic_bares(book, book.cluster("s")), {"l": {"suse", "amazon"}})
+
 
 class Tick:
     """A clock that moves a second each time it is read (entity_repair's `time`): a sweep given a deadline 3.5 s
@@ -519,18 +564,66 @@ class Fixes(base._Db):
         self.assertEqual((out["reroot"]["rerooted"], out["reroot"]["skip_rename"]), (0, 1))
         self.assertEqual(self.book().root(ink), tmi)
 
+    def test_4c_a_cluster_rooted_on_a_name_seldom_written_re_roots_on_the_name_written(self):
+        """v10.35: "Kimik 3" (one post, older) took "Kimi K3" (three posts) by rule:squash before the keeper read
+        mentions: the cluster re-roots on Kimi K3, one thing still."""
+        ps = [self.post(n, T0 + n * H) for n in range(4)]
+        self.mentions(ps[0], ("Kimik 3", "model", "subject"))
+        for p in ps[1:]:
+            self.mentions(p, ("Kimi K3", "model", "subject", "Moonshot AI"))
+        self.linked()
+        typo, kimi = self.ent_named("Kimik 3"), self.ent_named("Kimi K3")
+        self.cur.execute("UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'test' WHERE undone_at IS NULL")
+        self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence)
+                            VALUES (%s, %s, 'rule:squash', true, '{"rules": ["squash"]}')""", (kimi, typo))
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual((out["reroot"]["rerooted"], out["reroot"]["rerooted_minority"]), (1, 1))
+        book = self.book()
+        self.assertEqual((book.root(typo), book.root(kimi)), (kimi, kimi))
+        self.cur.execute("SELECT by, automatic FROM mx_entity_redirects WHERE from_id = %s AND undone_at IS NULL",
+                         (typo,))
+        self.assertEqual(self.cur.fetchone(), ("rule:squash", True))
+        again = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual(again["reroot"]["rerooted"], 0)                  # idempotent
+
+    def test_4e_a_bare_name_several_makers_names_were_merged_into_is_cut_out(self):
+        """v10.35: "SUSE Linux" took "Linux", then "Amazon Linux" and "Oracle Linux" (rule:maker_prefix): the
+        maker-prefix merges are undone, nothing deleted; an owner's merge stays."""
+        names = (("Linux", None), ("SUSE Linux", "SUSE"), ("Amazon Linux", "Amazon"), ("Oracle Linux", "Oracle"))
+        for n, (name, maker) in enumerate(names):
+            self.mentions(self.post(n, T0 + n * H), (name, "software", "subject", maker))
+        self.linked()
+        lx, suse, amzn, orcl = (self.ent_named(x) for x, _m in names)
+        self.cur.execute("UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'test' WHERE undone_at IS NULL")
+        for f in (lx, amzn, orcl):
+            self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence)
+                                VALUES (%s, %s, 'rule:maker_prefix', true, '{"rules": ["maker_prefix"]}')""",
+                             (f, suse))
+        self.owner_same(orcl, suse)   # the owner said Oracle Linux is SUSE's (a test's answer): kept
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual(out["generic"]["clusters"], 1)
+        book = self.book()
+        self.assertEqual(len({book.root(x) for x in (lx, suse, amzn)}), 3)
+        self.assertEqual(book.root(orcl), book.root(suse))
+        self.cur.execute("SELECT count(*), count(*) FILTER (WHERE undone_by = 'repair' AND "
+                         "evidence->'undone'->>'why' = 'generic_prefix') FROM mx_entity_redirects")
+        total, undone = self.cur.fetchone()
+        self.assertGreaterEqual(undone, 2)
+        again = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual(again["generic"]["undone"], 0)                    # idempotent
+
     def test_the_repairs_go_a_step_at_a_time_and_the_next_run_resumes_at_the_step_left(self):
         """v10.24 (0221): the repairs run with what the stage's budget has left; a step starts only when the seconds
         it took the last time are left, and the next run begins at the first step this one could not start."""
         z, vela, zv, v5 = self._org_and_family()
-        took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0,
+        took = {"org_family": 1.0, "generic": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0,
                 "names": 1.0, "levels": 1.0, "reroot": 1.0}
         clock = Tick()
         with mock.patch.object(R, "time", clock):
-            first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 6.5,
+            first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 9.5,
                              last={"took": took})
-        self.assertEqual((first["done"], first["next"]), (False, "reparent"))   # two steps fitted, not the third
-        self.assertEqual(set(first) & set(R.STEPS), {"org_family", "product_accounts"})
+        self.assertEqual((first["done"], first["next"]), (False, "reparent"))   # three steps fitted, not the fourth
+        self.assertEqual(set(first) & set(R.STEPS), {"org_family", "generic", "product_accounts"})
         self.assertEqual(first["product_accounts"]["merged"], 1)
         self.assertEqual(set(first["took"]), set(R.STEPS))                       # the steps not run keep their seconds
         second = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=first)
