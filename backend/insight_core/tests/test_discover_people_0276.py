@@ -48,10 +48,10 @@ class Rank(unittest.TestCase):
     def test_posts_rank_once_each(self):
         hits = [hit("p1", "x.com/jane", how="quote"), hit("p1", "x.com/jane", how="mention"),
                 hit("p1", "x.com/jane", where="news"), hit("p2", "x.com/jane", where="track:Local", source="s2"),
-                hit("p3", "x.com/bob"), hit("p4", "x.com/bob"), hit("p5", "x.com/bob"),
+                hit("p3", "x.com/bob"), hit("p4", "x.com/bob", source="s3"), hit("p5", "x.com/bob"),
                 hit("p6", "x.com/once")]
         got = P.rank(hits)
-        self.assertEqual([s.key for s in got], ["x.com/bob", "x.com/jane"])   # 3 posts, then 2 from 2 sources
+        self.assertEqual([s.key for s in got], ["x.com/bob", "x.com/jane"])   # 3 posts from 2 sources, then 2 from 2 sources
         jane = got[1]
         self.assertEqual(len(jane.posts), 2)
         self.assertEqual(jane.tracks, {"Agents", "Local"})
@@ -65,14 +65,14 @@ class Rank(unittest.TestCase):
         self.assertEqual([s.key for s in got], ["x.com/two"])
 
     def test_tracks_break_ties_and_skip(self):
-        hits = [hit(f"a{i}", "x.com/aa") for i in range(3)] + \
-               [hit("b0", "x.com/bb", where="track:One"), hit("b1", "x.com/bb", where="track:Two"),
-                hit("b2", "x.com/bb", where="track:Two")] + [hit(f"c{i}", "x.com/cc") for i in range(3)]
+        hits = [hit(f"a{i}", "x.com/aa", source=f"s{i}") for i in range(3)] + \
+               [hit("b0", "x.com/bb", where="track:One"), hit("b1", "x.com/bb", where="track:Two", source="s2"),
+                hit("b2", "x.com/bb", where="track:Two")] + [hit(f"c{i}", "x.com/cc", source=f"s{i}") for i in range(3)]
         got = P.rank(hits, skip=lambda k, w: k == "x.com/cc")
         self.assertEqual([s.key for s in got], ["x.com/bb", "x.com/aa"])
 
     def test_evidence_newest_first_and_capped(self):
-        got = P.rank([hit(f"p{i}", "x.com/jane", days=i) for i in range(1, 9)])[0]
+        got = P.rank([hit(f"p{i}", "x.com/jane", days=i, source=f"s{i % 2}") for i in range(1, 9)])[0]
         self.assertEqual([h.post_id for h in got.evidence], ["p1", "p2", "p3", "p4", "p5"])
         self.assertEqual(len(got.posts), 8)
 
@@ -83,7 +83,7 @@ class Rank(unittest.TestCase):
                 hit("p2", "huggingface.co/jdoe", word="hub", how="link", source="s2"),
                 hit("p3", CODE[8:] + "simon", word="code"), hit("p4", CODE[8:] + "simon", word="code"),
                 hit("p5", CODE[8:] + "simon", word="code"),
-                hit("p6", "x.com/janedoe"), hit("p7", "x.com/janedoe"), hit("p8", "x.com/janedoe")]
+                hit("p6", "x.com/janedoe"), hit("p7", "x.com/janedoe", source="s2"), hit("p8", "x.com/janedoe")]
         got = {s.key: s for s in P.rank(hits, people=people)}
         self.assertEqual(set(got), {"person:e1", "x.com/janedoe"})   # same handle on X: another account (handles.py)
         self.assertEqual(got["person:e1"].name, "Jane Doe")
@@ -114,7 +114,7 @@ class Shown(unittest.TestCase):
         self.assertIn("page watching", P.followable("huggingface.co/acmelab", "hub")["via"])
 
     def test_maker_carries_official_channels(self):
-        s = P.rank([hit(f"p{i}", "maker:m1", word="maker", how="maker", name="Acme") for i in range(3)])[0]
+        s = P.rank([hit(f"p{i}", "maker:m1", word="maker", how="maker", name="Acme", source=f"s{i % 2}") for i in range(3)])[0]
         out = P.shown(s, [{"key": "x.com/acme", "kind": "x", "state": "would_add", "follow": "https://x.com/acme",
                            "source_id": None}])
         self.assertEqual(out["kind"], "maker")
@@ -224,7 +224,7 @@ class OnTheDatabase(_Scout):
         for _ in range(3):
             self.in_track([CODE + "simonex/tool"])                                 # followed as his site: out
         got = P.suggestions(self.cur, self.now)
-        self.assertEqual([a["key"] for a in got["authors"]], ["x.com/janedoe", "x.com/twosrc"])
+        self.assertEqual([a["key"] for a in got["authors"]], ["x.com/twosrc"])   # v10.33: 3 posts from 1 source: out
         self.assertEqual(got["authors"][0]["evidence"][0]["where"], self.where)
         first = P.served(self.cur)
         self.assertEqual(first["authors"], [])                                    # nothing kept yet: the job is wanted
@@ -232,17 +232,17 @@ class OnTheDatabase(_Scout):
         self.cur.execute("SELECT wanted_at IS NOT NULL FROM mx_jobs WHERE job = 'discover'")
         self.assertTrue(self.cur.fetchone()[0])
         out = P.keep(self.cur, self.now)
-        self.assertEqual(out["authors"], 2)
+        self.assertEqual(out["authors"], 1)
         served = P.served(self.cur, limit=1)
-        self.assertEqual([a["key"] for a in served["authors"]], ["x.com/janedoe"])
+        self.assertEqual([a["key"] for a in served["authors"]], ["x.com/twosrc"])
         self.assertFalse(served["refreshing"])
         self.assertFalse(P.due(self.cur))
 
     def test_the_discover_job_keeps_it(self):
         from insight_core.services import discover_reads
         from insight_core.tests._db import db_url
-        for _ in range(3):
-            self.in_track(["https://x.com/janedoe/status/1890000000000000001"])
+        self.in_track(["https://x.com/janedoe/status/1890000000000000001"])
+        self.in_track(["https://x.com/janedoe/status/1890000000000000009"], source=self.third)   # 2 of your sources
         self.assertTrue(discover_reads.keep_people(db_url())["built"])
         self.assertEqual(discover_reads.keep_people(db_url()), {"built": False})      # KEEP_FOR not over
         self.assertEqual([a["key"] for a in P.served(self.cur)["authors"]], ["x.com/janedoe"])

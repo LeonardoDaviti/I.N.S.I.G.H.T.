@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 WITHIN_DAYS = 30
-MIN_POSTS = 3          # a candidate needs 3+ posts ...
+MIN_POSTS = 3          # (kept for callers; v10.33: the floor is MIN_SOURCES only) ...
 MIN_SOURCES = 2        # ... or 2+ posts from 2+ of your sources
 EVIDENCE = 5           # the posts shown with each suggestion
 LIMIT = 60
@@ -226,7 +226,7 @@ def rank(hits: Iterable[Hit], *, skip: Callable[[str, str], bool] = lambda k, w:
             s.posts.add(h.post_id)
             s.evidence.append(h)
     out = [s for s in by.values()
-           if len(s.posts) >= min_posts or (len(s.posts) >= 2 and len(s.sources) >= min_sources)]
+           if len(s.posts) >= 2 and len(s.sources) >= min_sources]   # v10.33: 2+ of your sources only (7/8 wanted vs 14/26)
     for s in out:
         s.evidence.sort(key=lambda h: h.at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         s.evidence = s.evidence[:EVIDENCE]
