@@ -13,7 +13,7 @@ PRACTICE ("practice or claim": what, result, evidence). Stored with the track, o
 a description change (the track's version) proposes again; the owner may replace it (`set_schema`, PUT .../schema),
 a version of its own. A new schema version re-reads every post in the track (its questions name the version).
 
-**The things** (`plan_things`, kind `track_things`, guide track-things-v1): asked only for the posts in the track
+**The things** (`plan_things`, kind `track_things`, guide track-things-v2; 0261: v1 before): asked only for the posts in the track
 (judged in, joined, or the owner's ✓: track_subtopics.in_track), newest first. A long post is read in windows
 (tasks.text_windows, WINDOW_CHARS each, MAX_WINDOWS at most; its links listed in each), merged per post (the reports
 of one post join by any key, a practice by its exact `what`). The post's own address is never offered: its links
@@ -23,6 +23,7 @@ leave it out and its text shows it as OWN. Haiku answers each value as {value, q
   - number / money: the digits of `number` (and `range_to`) are a figure of the quote (thousands groups, a decimal
     comma or point, a K/M/B-like multiplier after it), the unit (when given) and the currency are shown by the quote;
   - link: an http(s) URL inside its own quote; enum: one of the field's values; text: at most TEXT_CAP characters;
+    0261: every figure a text value gives is one of its own quote's (`figures_read`: read in its quote, not beside it);
   - a thing whose first field (its name; a practice's `what`) is not kept is not a thing.
 A value that fails is dropped with its reason, kept on the call (the answer's "dropped"); the rest of the answer stays.
 
@@ -56,13 +57,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 log = logging.getLogger(__name__)
 
 SCHEMA_KIND, SCHEMA_GUIDE = "track_schema", "track-schema-v1"
-THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v1"
+THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v2"   # 0261: v2; a post asked under v1 is not asked again
 SAME_KIND, SAME_GUIDE = "track_same", "track-same-v1"
 PRACTICE_KIND = "practice_or_claim"
 PRACTICE = {"kind": PRACTICE_KIND, "about": "a method, habit, finding or opinion a post states",
             "fields": [{"name": "what", "type": "text", "key": True, "about": "the method or claim, in a few words"},
                        {"name": "result", "type": "text", "key": False, "about": "what it gave or what is claimed"},
-                       {"name": "evidence", "type": "text", "key": False, "about": "numbers, test or example given"}]}
+                       {"name": "evidence", "type": "text", "key": False, "about": "numbers, test or example given"},
+                       {"name": "by", "type": "text", "key": False,
+                        "about": "who measured, tested or found it, when the post names them (a company, a lab, a person)"}]}   # 0261
 TEXT_CAP = 120          # characters of a text value at most
 WINDOW_CHARS = 3500     # characters of a post one question shows (round 2's window)
 MAX_WINDOWS = 6         # windows a long post is read in at most
@@ -235,7 +238,17 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
         return allowed[fold(value)], None
     if len(value) > TEXT_CAP:
         return None, f"text over {TEXT_CAP} characters"
+    if not figures_read(value, quote):
+        return None, "a figure not in its quote"
     return value, None
+
+
+def figures_read(value: str, quote: str) -> bool:
+    """0261: every figure a text value gives is a figure of its own quote (the value is read in its quote, not taken
+    from the post around it: "32 users on a 12 GB phone" quoted from "max users 32"). Language-free: figures only;
+    the words are the guide's to keep (track-things-v2: a value says only what its quote says)."""
+    have = figures(quote)
+    return all(_same_number(float(x), have) for x in re.findall(r"\d+(?:\.\d+)?", value or ""))
 
 
 _RAW_GITHUB = re.compile(r"^https?://raw\.githubusercontent\.com/([^/\s]+)/([^/\s]+)/([^/\s]+)(/[^\s]*)?$", re.I)
@@ -611,10 +624,13 @@ def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p
 
 
 def _asked(cur: Any, track_id: str, version: int, ids: Sequence[str]) -> Set[str]:
-    """The posts already asked under this schema version (their questions' first line names it)."""
-    cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = %s AND guide = %s AND a = ANY(%s::uuid[])
+    """The posts already asked under this schema version (their questions' first line names it), under any guide of
+    the kind (0261: a new guide asks new posts only, never the history again)."""
+    from insight_core.markx import schemas
+    cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s) AND a = ANY(%s::uuid[])
                       AND b = %s AND input LIKE %s""",
-                (THINGS_KIND, THINGS_GUIDE, list(ids), track_id, f"SCHEMA: {track_id} v{version}\n%"))
+                (THINGS_KIND, list(schemas.answer_guides(THINGS_KIND)), list(ids), track_id,
+                 f"SCHEMA: {track_id} v{version}\n%"))
     return {r[0] for r in cur.fetchall()}
 
 

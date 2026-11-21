@@ -80,7 +80,7 @@ class Switch:
 
 class Pure(Switch, unittest.TestCase):
     def test_the_kinds_guides_planners_and_the_switch(self):
-        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v1"),
+        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v2"),
                             ("track_same", "track-same-v1")):
             self.assertEqual(schemas.KINDS[kind].guide, guide)
             self.assertTrue(schemas.guide_body(guide).startswith("#"))

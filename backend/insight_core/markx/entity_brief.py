@@ -5,7 +5,7 @@ it is, how it works, and is it good (measured results and who measured them), ev
 entity's root id, its description is the entity's own words (name, type, maker, other names: `subject`), and its
 schema is the general one below (`SCHEMA`, the same for every entity; code writes it, Haiku never proposes it). From
 there everything is track_things' and track_brief's: the questions (`track_things.ask_posts`: windows, links, the
-maker's linked pages, kind `track_things`, guide track-things-v1), the checks (every value's quote in what the
+maker's linked pages, kind `track_things`, guide track-things-v2), the checks (every value's quote in what the
 question showed: `track_things.salvage`, the worker too), the reports, the joins by key, and "what changed"
 (digest-v3, the digest kind) over every row so far. Nothing here names an entity or a type.
 
@@ -250,11 +250,15 @@ def view(cur: Any, root: str) -> Optional[Dict[str, Any]]:
         if not cs:
             continue
         by_kind[t["kind"]].append({"thing": t["id"], "text": text, "cites": cs,
-                                   "sources": TB.sources_of(rs.get(t["id"], []), posts)})
+                                   "sources": TB.sources_of(rs.get(t["id"], []), posts), "by": _val(t, "by")})
     sections = {"what": by_kind.get(WHAT, [])[:SHOWN["what"]], "how": by_kind.get(HOW, [])[:SHOWN["how"]],
                 "results": by_kind.get(TT.PRACTICE_KIND, [])[:SHOWN["results"]]}
-    for ln in sections["results"]:
-        ln["who"] = sorted({posts[c["post"]]["source"] for c in ln["cites"] if posts[c["post"]].get("source")})
+    for name in sections:
+        for ln in sections[name]:
+            by = ln.pop("by")
+            if name == "results":   # who measured it, when its quote names them; else the posts' sources
+                ln["who"] = [by] if by else sorted({posts[c["post"]]["source"] for c in ln["cites"]
+                                                    if posts[c["post"]].get("source")})
     shown_things = []
     for name in ("what", "how", "results"):
         for ln in sections[name]:

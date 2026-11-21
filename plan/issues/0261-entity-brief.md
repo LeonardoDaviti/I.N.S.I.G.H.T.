@@ -1,8 +1,8 @@
 # 0261 — An entity's brief: what it is, how it works, is it good (v10.31; 0156 the knowledge page + 0245 the briefer)
 
-Status: **built, switched off** (`entity_bands.json` `entities.brief: false`): measured under the bar (89.6% of
-lines supported by their quotes, bar 95%). Migration **0167**. Not pushed. Real rows behind the measure are private
-(`plan/research/v1031/entity-brief/`).
+Status: **built, switched ON** (`entity_bands.json` `entities.brief: true`) after round 2: round 1 measured 89.6% of
+lines supported (bar 95%); the fixes below, then 81/82 (98.8%) on a held-out set of 5 new entities. Migration
+**0167**. Not pushed. Real rows behind the measure are private (`plan/research/v1031/entity-brief/`).
 
 ## Why
 
@@ -78,20 +78,58 @@ Supported < 95%: **off**. The causes, each a class:
    (0184 senses), not the briefer's.
 4. **Duplicates (2)** where two reports of one thing were worded differently (key text joins only exact keys).
 
+
 Points (digest-v3) were not measured this round.
+
+## Round 2: the fixes (in track_things, so tracks gain them) and the held-out measure
+
+1. **A text value's figures come from its own quote** (`track_things.figures_read`, in `check_value`): every figure
+   of a text value must be a figure of its quote (thousands groups, decimals, K/M/B multipliers: `figures`); else the
+   value is dropped with "a figure not in its quote" (a thing whose name field drops is not a thing). Language-free;
+   a pure-code rule for words is not sound here (values are English, quotes are often in other languages), so words
+   are the guide's. On round 1's answers (re-salvaged, no new asks): it catches **2 of the 7** words-beyond lines (a
+   device and its memory added to a figure) and drops **none** of the 70 other shown lines.
+2. **Guide `track-things-v2`** (registered as the kind's guide; v1 kept in `schemas.EARLIER_GUIDES`, and
+   `track_things._asked` counts a post asked under any of the kind's guides: a new guide asks new posts only, no mass
+   re-ask): a value says only what its own quote says (built from the quote's words, translated, nothing from
+   elsewhere: no device, version, date, figure, duration, setting or name the quote lacks); a result or claim said of
+   a rival, a replacement, an alternative or "both of them" is not the subject's.
+3. **Who measured it**: the practice kind gains a `by` field (who measured, tested or found it, when the post names
+   them), quote-checked like every value; a result's `who` is its `by` when given, else the posts' sources. Tracks'
+   stored schemas are unchanged (a new track's schema has it).
+
+**Held out** (5 new entities of 5 kinds, none of round 1's: a speech model, a 3D application, a memory maker, a
+driver-assistance product, a fine-tuning method; 173 questions, $0.32; guide v2 with the figure check). Every shown
+line judged by me against its quotes and the post around them:
+
+| entity kind | lines | supported | words beyond | wrong | notes |
+|---|---|---|---|---|---|
+| model | 17 | 17 | 0 | 0 | 1 low use (a repeat) |
+| software | 17 | 17 | 0 | 0 | 1 duplicate |
+| org | 14 | 14 | 0 | 0 | 1 low use |
+| product | 17 | 17 | 0 | 0 | 1 speaker's guess stated as mechanism (hedge lost); 1 thin |
+| concept | 17 | 16 | 1 | 0 | 1 fragment |
+| **all** | **82** | **81 (98.8%, Wilson low 93.4%)** | **1** | **0** | |
+
+`who` named the measurer its quote names in 5 results (an OpenAI researcher, an NVIDIA artist, plaintiffs, a judge, a
+podcaster). **>= 95%: switched on.** One labeller (me), one held-out set: the owner's flags and a second set are the
+next check.
 
 ## Tests
 
-`insight_core.tests.test_entity_brief_0261` (2): the switch, the 3-post rule, the general schema written by code,
-questions asked once a version and never for a mention; the brief's lines, cites numbered, `who`, a dropped value's
-line kept, the points asked once and mapped to the cites, the entity page carrying it. Also run:
-`test_track_briefer_0245`, `test_markx_kept_pages` (entity shape 3 recorded), `test_markx_storage`. Frontend:
-`components/markx/entityBrief.test.tsx` (2), tsc clean.
+`insight_core.tests.test_entity_brief_0261` (4): the switch, the 3-post rule, the general schema written by code,
+questions asked once a version and never for a mention; the brief's lines, cites numbered, `who` (the poster, and the
+measurer a quote names), a dropped value's line kept, a value's figure not in its quote dropped, the points asked once
+and mapped to the cites, the entity page carrying it; `figures_read`; guide v2 registered with v1 as earlier. Also
+run: `test_track_briefer_0245` (guide v2), `test_markx_kept_pages` (entity shape 3), `test_markx_storage`,
+`test_markx_validate`, `scripts/tests/test_markx_worker.py`. Frontend: `components/markx/entityBrief.test.tsx` (2),
+tsc clean.
 
 ## Left
 
-- The value-in-its-quote check (cause 1) and the subject line (cause 2), then a fresh held-out set (other entities)
-  and switch on at >= 95%.
 - Measure the points; show them (one line above the three lists) once measured.
-- An entity's brief when its cluster has senses (0184): brief per sense.
+- A speaker's guess or hedge kept as such (one held-out line lost "I think").
+- Duplicates worded differently (key text joins only exact keys): 1 of 82 held out, 2 of 77 in round 1.
+- An entity's brief when its cluster has senses (0184): brief per sense (round 1's tool feature mixed three senses).
 - Caveats as their own line kind (now they are results' text when the post states them).
+- A second held-out set and the owner's flags (one labeller so far).

@@ -6,6 +6,7 @@ reports, joins and digest as a track's; its schema is the general one, written b
 from __future__ import annotations
 
 import json
+import unittest
 
 from insight_core.markx import entity_brief as EB, identity, track_things as TT
 from insight_core.tests._db import insert_scratch_source
@@ -65,7 +66,8 @@ class EntityBrief(_Briefer):
     def test_the_brief_cites_each_line_and_says_who_measured(self):
         p1, ent = self.about(None, "Zqedit Mode", "Zqedit Mode is an experimental mode of the Zq editor.")
         p2, _ = self.about(ent, "Turning it on", "Zqedit Mode is turned on with the flag --zq-mode in settings.")
-        p3, _ = self.about(ent, "Benchmark", "In our test of 40 tasks Zqedit Mode cut steps from 12 to 3.")
+        p3, _ = self.about(ent, "Benchmark", "In our test of 40 tasks Zqedit Mode cut steps from 12 to 3. "
+                                             "Qbench Labs found it 2x faster.")
         with self.conn.transaction():
             EB.plan_things(self.cur, roots=[ent])
         self.things(ent, p1, {"kind": EB.WHAT, "fields": {
@@ -78,15 +80,23 @@ class EntityBrief(_Briefer):
         self.things(ent, p3, {"kind": TT.PRACTICE_KIND, "fields": {
             "what": v("fewer steps per task", "Zqedit Mode cut steps from 12 to 3"),
             "result": v("steps cut from 12 to 3", "cut steps from 12 to 3"),
-            "evidence": v("a test of 40 tasks", "In our test of 40 tasks")}})
+            "evidence": v("a test of 40 tasks", "In our test of 40 tasks")}},
+            {"kind": TT.PRACTICE_KIND, "fields": {
+                "what": v("faster", "found it 2x faster"),
+                "result": v("2x faster on 9 runs", "found it 2x faster"),   # a figure its quote lacks: dropped
+                "by": v("Qbench Labs", "Qbench Labs found it")}})
         with self.conn.transaction():
             b = EB.view(self.cur, ent)
+        (faster,) = [ln for ln in b["results"] if ln["text"] == "faster"]
+        self.assertEqual(faster["who"], ["Qbench Labs"], "the measurer its quote names, not the poster")
+        b["results"] = [ln for ln in b["results"] if ln is not faster]
         self.assertEqual([ln["text"] for ln in b["what"]], ["an experimental mode of the Zq editor (experimental)"])
         self.assertEqual([ln["text"] for ln in b["how"]], ["turned on with a flag in settings: --zq-mode"])
         (res,) = b["results"]
         self.assertEqual(res["text"], "fewer steps per task: steps cut from 12 to 3 (a test of 40 tasks)")
         self.assertEqual(res["who"], ["Zq Lab Notes"])
         self.assertEqual([c["n"] for c in b["what"][0]["cites"] + b["how"][0]["cites"] + res["cites"]], [1, 2, 3])
+        self.assertEqual(faster["cites"][0]["n"], 3)
         self.assertEqual(res["cites"][0]["post"], p3)
         self.assertIn("cut steps from 12 to 3", res["cites"][0]["quotes"])
         self.assertEqual([p["n"] for p in b["posts"]], [1, 2, 3])
@@ -97,14 +107,36 @@ class EntityBrief(_Briefer):
         (tid, a, _b, text), = [r for r in self.open_tasks("digest", "digest-v3") if r[1] == ent]
         self.assertIn(f"PERIOD: {EB.PERIOD}", text)
         status, body = self.answer((tid, {"id": "x", "points": [
-            {"text": "Zqedit Mode cut steps from 12 to 3.", "cites": [3]},
+            {"text": "Zqedit Mode needs fewer steps.", "cites": [3]},
             {"text": "Zqedit Mode is turned on with a flag.", "cites": [2]}]}))
         self.assertEqual((status, body["valid"]), (200, 1), body)
         with self.conn.transaction():
             b = EB.view(self.cur, ent)
-        self.assertEqual(b["points"], [{"text": "Zqedit Mode cut steps from 12 to 3.", "cites": [3]},
+        self.assertEqual(b["points"], [{"text": "Zqedit Mode needs fewer steps.", "cites": [3]},
                                        {"text": "Zqedit Mode is turned on with a flag.", "cites": [2]}])
         # the entity page carries it
         status, page = call("GET", f"/api/markx/entities/{ent}")
         self.assertEqual(status, 200, page)
         self.assertEqual([ln["text"] for ln in page["brief"]["how"]], ["turned on with a flag in settings: --zq-mode"])
+
+
+class Checks(unittest.TestCase):
+    def test_a_text_values_figures_come_from_its_own_quote(self):
+        self.assertTrue(TT.figures_read("32 users at most", "max users 32,"))
+        self.assertFalse(TT.figures_read("32 users on a 12 GB phone", "max users 32,"))
+        self.assertTrue(TT.figures_read("cut spend by 15%", "cutting model spend by 15%"))
+        self.assertTrue(TT.figures_read("1,500 USD box", "a $1 500 box"))
+        self.assertTrue(TT.figures_read("16000 tokens", "a 16K window"))
+        self.assertTrue(TT.figures_read("no figures here", "none"))
+        f = {"name": "what", "type": "text"}
+        self.assertEqual(TT.check_value(f, v("Nine users on 12 GB", "max running users nine"), "max running users nine"),
+                         (None, "a figure not in its quote"))
+
+    def test_guide_v2_asks_new_posts_only(self):
+        from insight_core.markx import schemas
+        self.assertEqual((schemas.KINDS["track_things"].guide, TT.THINGS_GUIDE), ("track-things-v2", "track-things-v2"))
+        self.assertEqual(schemas.answer_guides("track_things"), ("track-things-v2", "track-things-v1"))
+        body = schemas.guide_body("track-things-v2")
+        self.assertIn("A value says only what its own quote says", body)
+        self.assertIn("a result said of those is not the track's", body)
+        self.assertIn("by", [f["name"] for f in TT.PRACTICE["fields"]])
