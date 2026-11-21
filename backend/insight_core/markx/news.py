@@ -502,18 +502,33 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
             for pid, title, sid, name, at, url, platform, handle, author, fwd, quoted in rows}
 
 
-def launch_order(facts: Dict[str, Dict[str, Any]]) -> List[str]:
+def launch_order(facts: Dict[str, Dict[str, Any]], weight: Optional[Dict[str, int]] = None) -> List[str]:
     """0236: the stories a row's headline is taken from, in order, by the owner's rule (a release is named by its
-    launch, never by a leak): those holding the maker's own post, then the others of a news type, each the newest
-    (its release) first; a story of leaks never. `facts`: {story: {maker, type, at}} (`_story_facts`). Pure."""
+    launch, never by a leak): those holding the maker's own post, then the others of a news type; a story of leaks
+    never. In each, v10.31.1 (0268): a release first (grouping.RELEASES: the launch is the release itself, never a
+    result the maker announced alongside it, as a research result of the same day), then the story holding most of
+    the row's voices (`weight`: {story: its voices in the row}; main_story's rule), then the newest (its release).
+    `facts`: {story: {maker, type, at}} (`_story_facts`). Pure."""
     from insight_core.markx import event_types
+    from insight_core.utils.grouping import RELEASES
     floor = datetime.min.replace(tzinfo=timezone.utc)
+    weight = weight or {}
 
-    def newest(sids: Iterable[str]) -> List[str]:
-        return sorted(sids, key=lambda s: (facts[s].get("at") or floor, s), reverse=True)
+    def ordered(sids: Iterable[str]) -> List[str]:
+        return sorted(sids, key=lambda s: (facts[s].get("type") in RELEASES, weight.get(s, 0),
+                                           facts[s].get("at") or floor, s), reverse=True)
     makers = [s for s, f in facts.items() if f.get("maker") and f.get("type") != event_types.LEAK]
     news_ = [s for s, f in facts.items() if s not in makers and f.get("type") in event_types.NEWS_TYPES]
-    return newest(makers) + newest(news_)
+    return ordered(makers) + ordered(news_)
+
+
+def story_voices(row: Dict[str, Any]) -> Dict[str, int]:
+    """{Mark X story: how many voices its posts are in the row} (main_story's count)."""
+    seen: Dict[str, Set[str]] = defaultdict(set)
+    for p in row.get("posts") or []:
+        if p.get("story"):
+            seen[str(p["story"])].add(p.get("voice") or p.get("post_id"))
+    return {s: len(v) for s, v in seen.items()}
 
 
 def _story_facts(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
@@ -553,8 +568,10 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
     if sids:
         cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND headline IS NOT NULL", (sids,))
         heads = dict(cur.fetchall())
+    by_id = {str(r["id"]): r for r in rows}
     for rid, ss in released.items():
-        named = [s for s in launch_order({s: facts[s] for s in ss if s in facts}) if heads.get(s)]
+        named = [s for s in launch_order({s: facts[s] for s in ss if s in facts}, story_voices(by_id[rid]))
+                 if heads.get(s)]
         if named:
             mains[rid] = named[0]
     rest = [r for r in rows if not heads.get(mains[str(r["id"])] or "")]
@@ -583,7 +600,7 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
         for r in leaked:
             ids = {p["post_id"] for p in r["posts"]}
             mine = {s: facts[s] for s in _row_stories(r) if s in facts}
-            order = launch_order(mine)
+            order = launch_order(mine, story_voices(r))
             got = [facts[s]["post"] for s in order + sorted(set(mine) - set(order)) if facts[s].get("post") in ids]
             if got:
                 makers[str(r["id"])] = got[0]

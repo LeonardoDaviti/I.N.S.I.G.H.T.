@@ -1147,6 +1147,60 @@ def _start(members: Iterable[str], posts: Dict[str, Post]) -> Any:
     return story_start(ps, {p.id: p.at for p in ps})
 
 
+# v10.31.1 (0268): a stored story's first_at is written by `persist` only for the stories a run reads (its window), so a
+# change of the dating rule (0263's) left every story stored before it, and every story outside the window, dated by
+# the old rule. The rule is stamped as Mark IX's rules are (utils/stamps.py): a fingerprint of what `_start` makes of
+# a fixed sample (stamps.story_dates); a run that finds another stamp than the one kept re-dates every current story
+# once (`redate`) and keeps the new one.
+DATES_KEY = "story_dates_rule"
+
+
+def dates_stamp() -> str:
+    """The dating rule's stamp: what `_start` makes of stamps.story_dates() (a change in the rule's output changes it,
+    a rename or a move keeps it)."""
+    from insight_core.utils import stamps
+    made = []
+    for case in stamps.story_dates():
+        posts = {pid: Post(pid, pid, kind, at, 0) for pid, kind, at in case}
+        made.append(_start(list(posts), posts))
+    return stamps.fingerprint(made)
+
+
+def redate(cur: Any) -> Dict[str, int]:
+    """Every current Mark X story's first_at by the current rule (`_start` over its current rows, as `persist` dates a
+    story it writes): one read of the current rows, an UPDATE only of the stories whose date moves. Idempotent."""
+    from insight_core.utils.post_links import source_kind
+    cur.execute(f"""SELECT sp.story_id::text, sp.post_id::text, s.platform, s.handle_or_url, {pairing.ordinary_date('p')},
+                           st.first_at
+                      FROM mx_story_posts sp JOIN mx_stories st ON st.id = sp.story_id AND st.merged_into IS NULL
+                      JOIN posts p ON p.id = sp.post_id JOIN sources s ON s.id = p.source_id
+                     WHERE sp.valid_to IS NULL""")
+    members: Dict[str, Dict[str, Post]] = defaultdict(dict)
+    stored: Dict[str, Any] = {}
+    for sid, pid, platform, handle, at, first_at in cur.fetchall():
+        if at is not None:
+            members[sid][pid] = Post(pid, pid, source_kind(platform, handle), at, 0)
+        stored[sid] = first_at
+    moved = 0
+    for sid, posts in sorted(members.items()):
+        first = _start(list(posts), posts)
+        if first is not None and stored.get(sid) != first:
+            cur.execute("UPDATE mx_stories SET first_at = %s WHERE id = %s", (first, sid))
+            moved += 1
+    return {"stories": len(stored), "moved": moved}
+
+
+def redate_due(cur: Any) -> Optional[Dict[str, int]]:
+    """`redate` once the dating rule's stamp is not the one kept (then kept); None when it is."""
+    from insight_core.markx import repo
+    stamp = dates_stamp()
+    if repo.get_setting(cur, DATES_KEY) == stamp:
+        return None
+    got = redate(cur)
+    repo.set_setting(cur, DATES_KEY, stamp)
+    return got
+
+
 def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
             write: bool = True) -> Tuple[Dict[str, str], Counter]:
     """Match each final story to the Mark X story holding most of its members (one each), open what is new and
@@ -1525,6 +1579,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     counts["tasks_reasked"] = ask.reopen()        # asked again before they count (0112 Decided 8)
     mark("write")
     ids, written = persist(cur, run_id, out, world, now)
+    redated = redate_due(cur)      # 0268: a new dating rule re-dates the stories stored before it, once
+    if redated is not None:
+        counts["redated"] = redated
     news_keys = [s["story"] for s in out.stories(world.posts) if voices(world.posts, s["posts"]) >= 2]
     mark("connections")
     apart: List[Dict[str, Any]] = []
