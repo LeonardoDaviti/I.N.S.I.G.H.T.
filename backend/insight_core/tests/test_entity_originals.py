@@ -131,12 +131,71 @@ class Rules(unittest.TestCase):
         words = {N.key("Nimbus 4"), N.key("Acme Labs"), N.key("Black Forest Kilns")}
         for url in ("https://acmelabs.example/news/nimbus-4", "https://nimbus.example/release",
                     "https://blog.acme.example/nimbus-4", "https://bfk.example/blog/nimbus-4",
-                    "https://huggingface.co/collections/acme/nimbus-4", "https://github.com/acme/nimbus/tree/main",
                     "https://gitlab.acme-tools.example/acme/nimbus"):
             self.assertTrue(E.own_site(url, words, N.squash), url)
         for url in ("https://dashboards.example/dashboard/1f2e", "https://en.encyclopedia.example/wiki/Nimbus_4",
                     "https://router.example/acme/nimbus-4", "https://paste.example/view/x"):
             self.assertFalse(E.own_site(url, words, N.squash), url)
+        # v10.35: a platform's page is whose it is under (platform_page_own), not anyone's by the platform
+        names, makers = [N.key("Nimbus 4")], [N.key("Acme Labs")]
+        for url in ("https://huggingface.co/collections/acmelabs/nimbus-4", "https://github.com/acme-labs/nimbus/tree/main",
+                    "https://huggingface.co/nimbus/nimbus-4-gguf"):
+            self.assertTrue(E.platform_page_own(url, repo=None, names=names, makers=makers, squash=N.squash), url)
+
+    def test_whose_page_a_platform_page_is(self):
+        """v10.35: a chat is nobody's; a voice platform's post is its account's; a repository page its repository's."""
+        own = lambda url, names=("claude nimbus",), makers=("acme",), repo=None: E.platform_page_own(  # noqa: E731
+            url, repo=repo, names=[N.key(n) for n in names], makers=list(makers), squash=N.squash)
+        for url in ("https://chat.example/c/6afee144-664c-83e9-ba1e-60537991d582",
+                    "https://chat.example/g/g-p-68606c911a8c8191955e3a237ee3982a-helper/c/6afee144-664c-83e9-ba1e-60537991d582",
+                    "https://assistant.example/chat/6afee144-664c-83e9-ba1e-60537991d582",
+                    "https://assistant.example/share/6afee144-664c-83e9-ba1e-60537991d582"):
+            self.assertTrue(E.conversation(url), url)
+            self.assertEqual(E.pick([("release", url, E.TITLE, T0)]), {}, url)
+        self.assertFalse(E.conversation("https://news.example/content/6afee144-664c-83e9-ba1e-60537991d582"))
+        self.assertFalse(own("https://x.com/some_writer/status/1885007847135609224"), "a third party's tweet")
+        self.assertTrue(own("https://x.com/acme_ai/status/1885007847135609224"), "its maker's")
+        self.assertTrue(own("https://x.com/claudenimbus/status/1885007847135609224"), "its own account")
+        self.assertFalse(own("https://news.ycombinator.com/item?id=48935342"), "a thread under no account")
+        self.assertFalse(own("https://reddit.com/r/claudenimbus/comments/abc/x"), "a community is nobody's account")
+        self.assertFalse(own("https://github.com/writer/claude-nimbus-mcp"), "another's project holding its name")
+        self.assertFalse(own("https://github.com/writer/logs/tree/main/runs/nimbus"), "a folder in another's repository")
+        self.assertFalse(own("https://github.com/vendor/server/pull/41567"), "a pull request in another's repository")
+        self.assertTrue(own("https://github.com/acme-research/claude-nimbus/blob/main/README.md"), "in its repository")
+        self.assertTrue(own("https://github.com/writer/claude-nimbus/releases/tag/0.22", names=("claude nimbus 0.22",)))
+        self.assertTrue(own("https://github.com/acmes/claude-nimbus", repo=("code", "acmes")), "rule repo: one_owner's")
+        self.assertIsNone(own("https://docs.github.com/en/claude-nimbus"), "the platform's other site: the site rules")
+        self.assertIsNone(own("https://acme.example/claude-nimbus"))
+        # a repository named as it (one version or size word aside) is its own whoever's handle it is under
+        self.assertTrue(own("https://huggingface.co/kestrel-lab/Molmo-7B-D-0924", names=("molmo 7b-d",)))
+        self.assertTrue(own("https://huggingface.co/OtherHandle/kestrel-80b", names=("kestrel",)))
+        self.assertFalse(own("https://huggingface.co/quants/Kestrel3.5-27B-GGUF", names=("kestrel3.5 27b",)), "a build")
+        self.assertFalse(own("https://huggingface.co/quants/Kestrel3.5-397B", names=("kestrel3.5 27b",)), "two words")
+        self.assertIsNone(own("https://blog.twitter.com/2021/spaces"), "the platform's blog: the site rules")
+        self.assertTrue(E.owner_agrees("acme-research", ["acme"], N.squash))
+        self.assertFalse(E.owner_agrees("notacme", ["acme"], N.squash))
+
+    def test_a_lesser_page_is_chosen_only_when_no_page_of_it_is(self):
+        rows = [("release", "https://x.com/acme_ai/status/1885007847135609224", E.TITLE, T0),
+                ("release", "https://acme.example/blog/nimbus-4", E.TITLE, T0 + D),
+                ("code", "https://github.com/acme/nimbus/blob/main/run.py", E.TITLE, T0),
+                ("code", "https://github.com/acme/nimbus", E.REPO, T0 + D)]
+        self.assertEqual({k: v[0] for k, v in E.pick(rows).items()},
+                         {"release": "https://acme.example/blog/nimbus-4", "code": "https://github.com/acme/nimbus"})
+
+    def test_a_title_is_its_first_line_and_a_versioned_name_is_a_longer_name(self):
+        self.assertNotIn("nimbus", E.title_keys("An update!\n\nWhat we ran:\n\n- Nimbus\n- Kestrel", N.key))
+        self.assertIn("nimbus", E.title_keys("Nimbus | Acme", N.key))
+        by = lambda title, names: E.by_maker("https://acme.example/news/x", title, makers=["acme"],  # noqa: E731
+                                             names=[N.key(n) for n in names], squash=N.squash)
+        self.assertFalse(by("Redeploying Claude Nimbus 5", ["claude nimbus"]), "Nimbus 5's page, not the family's")
+        self.assertTrue(by("Introducing Claude Nimbus 5", ["claude nimbus 5"]))
+        self.assertTrue(by("Claude Nimbus is here", ["claude nimbus"]))
+        known = {"claude nimbus 5"}.__contains__   # with the book: a version counts when the longer name is an entity's
+        self.assertFalse(E.by_maker("https://acme.example/news/x", "Redeploying Claude Nimbus 5", makers=["acme"],
+                                    names=["claude nimbus"], squash=N.squash, known=known))
+        self.assertTrue(E.by_maker("https://acme.example/news/x", "Claude Nimbus 2026.2 release", makers=["acme"],
+                                   names=["claude nimbus"], squash=N.squash, known=known), "no such entity")
 
     def test_a_cited_page_is_no_address_of_it(self):
         t = datetime(2026, 11, 1, tzinfo=timezone.utc)
@@ -356,6 +415,30 @@ class Addresses(_AddressCase):
         self.stage(full=True)
         self.assertEqual(self.root(b), root)
         self.assertEqual(self.addresses(self.root(b)), {"paper": (PAPER, "identifier")}, "named as its own: its own")
+
+    def test_a_row_its_post_now_gives_as_nothing_becomes_cited_on_the_sweep(self):
+        """v10.35: a release row an older rule took from a tweet's line or a chat, its post read again giving that
+        address as nothing of the entity's, is cited (never removed); a third party's tweet titled with it is cited."""
+        chat = "https://chat.example/c/6afee144-664c-83e9-ba1e-60537991d582"
+        tweet = "https://x.com/some_writer/status/1885007847135609224"
+        a = self.post(0, T0, links=[chat, tweet])
+        self.link_text(a, chat, "Nimbus 4")
+        self.link_text(a, tweet, "Nimbus 4")
+        self.say(a, m("Nimbus 4", type_="model", maker="Acme Labs"))
+        self.stage()
+        root = self.root(a)
+        self.assertEqual(self.addresses(root), {})
+        self.cur.execute("""INSERT INTO mx_entity_addresses (entity_id, url, kind, rule, post_id, first_at)
+                            VALUES (%s, %s, 'release', 'title', %s, %s)
+                            ON CONFLICT (entity_id, url) DO UPDATE SET kind = 'release'""", (root, chat, a, T0))
+        self.cur.execute("UPDATE mx_entity_addresses SET kind = 'release' WHERE url = %s", (tweet,))
+        got = EA.stage(self.cur, now=T0 + D, since=None, full=True)
+        self.assertEqual(got["demoted"], 1)
+        self.cur.execute("SELECT url, kind FROM mx_entity_addresses ORDER BY url")
+        self.assertEqual(self.cur.fetchall(), [(chat, "cited"), (tweet, "cited")])
+        page = entity_views.entity_page(self.cur, root, now=T0 + D)
+        self.assertIsNone(page["original"])
+        self.assertEqual([c["url"] for c in page["cited"]], [tweet], "a chat is not even cited")
 
     def test_an_address_counts_only_while_its_post_names_the_entity_now(self):
         a = self.post(0, T0, links=[PAPER])
