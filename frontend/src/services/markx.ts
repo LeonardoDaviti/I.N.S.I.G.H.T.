@@ -386,7 +386,9 @@ export interface MarkxEntityStory {
   first_at?: string;
   /** 0277: the story's posts (the default answer lists 6: its original, then those about the entity). */
   posts_total?: number;
-  original?: { post: string | null; url: string | null; why: 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
+  /** v10.35: the other stories one same_release chain joins into this one (one News row: graph.release_groups). */
+  joined?: string[];
+  original?: { post: string | null; url: string | null; why: 'release' | 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
   posts: MarkxEntityPost[];
 }
 

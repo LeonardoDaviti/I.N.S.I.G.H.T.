@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -352,6 +353,74 @@ class Page(_Db):
         one = entity_views.entity_page(self.cur, eid, now=E0 + DAY, stories_limit=1)
         self.assertEqual((one["stories"], one["stories_total"]), (page["stories"][:1], 2))
         self.assertEqual(one["timeline"], page["timeline"])
+
+    def x_story(self, pids, headline=None):
+        sx = repo.add_story(self.cur, first_at=E0, run_id=None, headline=headline)
+        for pid in pids:
+            repo.open_membership(self.cur, story_id=sx, post_id=pid, role="member", reason="judge:pair", p=0.9,
+                                 call_id=None, run_id=None, at=E0)
+        return str(sx)
+
+    def saved(self, at, title):
+        self.sources.append(insert_scratch_source(self.cur, platform="saved"))
+        return self.post(len(self.sources) - 1, at, title=title)
+
+    def test_v1035_a_mark_ix_story_a_mark_x_story_mostly_holds_is_listed_once_as_mark_x(self):
+        eid, a, b = self.person()
+        c = self.post(3, E0 + HOUR / 2, title="A channel repeats it")
+        d = self.post(2, E0 + HOUR / 3, title="Ivo Kestrel again")
+        self.mentions(d, ("Ivo Kestrel", "person", "mention"))
+        self.stage()
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, 4)", (d, E0))
+        for n, pid in enumerate([d, a, b, c]):
+            self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice) VALUES (%s, %s, 'report', %s)",
+                             (pid, d, f"v{n}"))
+        sx = self.x_story([a, b, c])        # 3 of the Mark IX story's 4 posts
+        page = entity_views.entity_page(self.cur, eid, now=E0 + DAY)
+        self.assertEqual([(s["mark"], s["story"]) for s in page["stories"]], [("x", sx)], "one group, listed once")
+        self.assertIn(d, [p["id"] for p in page["loose"]], "its post in no Mark X story is loose")
+        self.assertFalse(entity_views.covered([d, a, b, c], [{a, b}]), "half is not most: both are listed")
+
+    def test_v1035_a_background_page_neither_dates_nor_leads_and_no_headline_is_its_leads_title(self):
+        eid, a, b = self.person()
+        old = self.saved(E0 - 30 * DAY, "A paper from last year")
+        sx = self.x_story([old, a, b])
+        page = entity_views.entity_page(self.cur, eid, now=E0 + DAY)
+        x = page["stories"][0]
+        self.assertEqual((x["story"], x["first_at"], x["original"]["post"]), (sx, E0, a))
+        self.assertEqual(x["headline"], "Ivo Kestrel joins Acme", "never null: its lead's title, as News names it")
+        self.assertEqual(x["posts"][0]["id"], a)
+        # a Saved page within 72 h of the first voice still dates and leads it (story_rules.background's edge)
+        near = self.saved(E0 - 2 * HOUR, "A note saved just before")
+        sy = self.x_story([near, a])
+        y = next(s for s in entity_views.entity_page(self.cur, eid, now=E0 + DAY)["stories"] if s["story"] == sy)
+        self.assertEqual((y["first_at"], y["original"]["post"]), (E0 - 2 * HOUR, near))
+
+    def test_v1035_the_entitys_release_page_leads_every_story_holding_it(self):
+        eid, a, b = self.person()
+        sx = self.x_story([a, b])
+        with mock.patch.object(entity_views, "original",
+                               lambda cur, book, root: {"original": {"post": {"id": b}}, "addresses": []}):
+            page = entity_views.entity_page(self.cur, eid, now=E0 + DAY)
+        x = next(s for s in page["stories"] if s["story"] == sx)
+        self.assertEqual((x["original"]["post"], x["original"]["why"], x["posts"][0]["id"]), (b, "release", b))
+
+    def test_v1035_stories_one_release_chain_joins_are_one_entry_led_by_the_launch(self):
+        from insight_core.markx import graph, news
+        eid, a, b = self.person()
+        c = self.post(3, E0 + HOUR / 2, title="Acme scores 20 on an index")
+        s1, s2 = self.x_story([a, b], headline="Ivo Kestrel joins Acme"), self.x_story([c, b, a], headline="A score")
+        facts = {s1: {"maker": False, "type": "model_release", "at": E0},
+                 s2: {"maker": False, "type": "research_result", "at": E0}}
+        with mock.patch.object(graph, "release_groups", lambda cur, ids: [sorted([s1, s2])]), \
+                mock.patch.object(news, "_story_facts", lambda cur, ids: {s: facts[s] for s in ids}):
+            page = entity_views.entity_page(self.cur, eid, now=E0 + DAY)
+        self.assertEqual([(s["story"], s["joined"], s["headline"]) for s in page["stories"]],
+                         [(s1, [s2], "Ivo Kestrel joins Acme")], "the release leads, though the other has more voices")
+        self.assertEqual({p["id"] for p in page["stories"][0]["posts"]}, {a, b, c})
+        self.assertEqual(page["stories_total"], 1)
+        alone = entity_views.entity_page(self.cur, eid, now=E0 + DAY)   # no chain edge: two entries
+        self.assertEqual(sorted(s["story"] for s in alone["stories"]), sorted([s1, s2]))
 
     def test_the_sample_offers_ten_a_page_and_thirty_a_day(self):
         eid, a, b = self.person()
