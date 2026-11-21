@@ -1,4 +1,4 @@
--- 0168_reset_one_run_joins.sql (Stealth v10.31, issue 0256: the track check asked twice)
+-- 0169_reset_one_run_joins.sql (Stealth v10.31, issue 0256: the track check asked twice)
 --
 -- v10.29 joined a passive `in` on one blind check run; v10.30 asks the check twice (tracks.CHECK_RUNS) and joins only
 -- when both runs say in. The one-run joins v10.29 left were to be sent back by the check planner, but only within the
