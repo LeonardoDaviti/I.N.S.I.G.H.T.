@@ -398,6 +398,22 @@ def posts() -> List[Dict[str, Any]]:
     ]
 
 
+# ---- story dates: a story's start (story_rules.story_start, 0263), as Mark X's stored stories are dated ----------
+# (only Mark X's dates stamp reads this; Mark IX's grouping sample is unchanged, so no full regroup: v10.31.1)
+
+def story_dates() -> List[List[Tuple[str, str, datetime]]]:
+    """Stories as (post id, its source's kind, its date) lists, each tuned value at its edge: a Saved page more than
+    72 hours before the first report never dates its story, one at 72 hours does; a voice's post days early (a leak)
+    always does; a story of Saved pages alone by its first."""
+    return [
+        [("s1", "saved", _at(-60 * 24)), ("r1", "site", _at(0)), ("r2", "x", _at(2))],
+        [("s2", "saved", _at(-72)), ("r3", "site", _at(0)), ("r4", "x", _at(1))],
+        [("s3", "saved", _at(-72, -1)), ("r5", "site", _at(0))],
+        [("l1", "telegram", _at(-96)), ("r6", "site", _at(0))],
+        [("s4", "saved", _at(5)), ("s5", "saved", _at(3))],
+    ]
+
+
 # ---- stored bodies: the repair of 0068 (parsing._without_hidden_link_labels) ----------------------
 
 BODIES = (
