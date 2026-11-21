@@ -16,6 +16,7 @@ import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/ma
 import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
 import { CameTrue, eventWords, LineRole } from './MarkXBuilt';   // 0128: how the story is built
 import type { BuiltLine, BuiltRow } from './MarkXBuilt';
+import { RowChain } from './MarkXChain';   // 0267: a row's Earlier and Later
 import { bylineText } from '../../lib/byline';
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
@@ -165,6 +166,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
               <TextLink to={`/markx/stories/${encodeURIComponent(row.story)}`}>Perspectives and the story sheet</TextLink>
             </p>
           ) : null}
+          <RowChain chain={row.chain} />{/* 0267: the stories before and after it about the same thing */}
           {row.rank?.why?.analysis?.length ? (   // 0208: its expert breakdowns, a Shadow until measured over its bar
             <ul aria-label="Analysis (Shadow)" className="mb-2 text-[0.8125rem] leading-5">
               {row.posts.filter((line) => row.rank?.why?.analysis?.includes(line.id)).map((line) => (

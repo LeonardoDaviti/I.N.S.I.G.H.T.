@@ -1721,6 +1721,55 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
     return out
 
 
+ROW_CHAIN_SHOWN = 3                   # 0267: a News row's Earlier and Later, at most, each
+
+
+def row_chains(cur: Any, rows: Dict[str, Iterable[str]], *, shown: int = ROW_CHAIN_SHOWN) -> Dict[str, Dict[str, Any]]:
+    """0267: each News row's Earlier and Later: the stories one current chain edge of a relation shown joins to one of
+    the row's own stories, outside the row (a one-release row's own stories are its row, not its thread), each
+    {story, headline, first_at, relation, reason}, the nearest in time to the row's start first, `shown` a side
+    (`*_more` the rest), shown in date order. `rows`: {row id: its stories}. One read of the chain rows for the whole
+    page; {} while chains are off or no relation is shown."""
+    cfg = chain_config()
+    rels = list(cfg["shown"])
+    mine = {rid: {str(s) for s in ss if s} for rid, ss in rows.items()}
+    ids = sorted({s for ss in mine.values() for s in ss})
+    if not (cfg["on"] and rels and ids):
+        return {}
+    cur.execute(f"""SELECT x.a::text, x.b::text, x.relation, x.evidence->>'reason' FROM mx_connections x
+                     WHERE {_CHAIN_VALID} AND (x.a = ANY(%(s)s::uuid[]) OR x.b = ANY(%(s)s::uuid[]))""",
+                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids})
+    edges = cur.fetchall()
+    every = sorted({s for a, b, *_x in edges for s in (a, b)})
+    firsts = _story_firsts(cur, every)
+    heads: Dict[str, Optional[str]] = {}
+    if every:
+        cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND merged_into IS NULL",
+                    (every,))
+        heads = dict(cur.fetchall())
+    out: Dict[str, Dict[str, Any]] = {}
+    for rid, ss in mine.items():
+        start = min((firsts[s] for s in ss if s in firsts), default=None)
+        sides: Dict[str, Dict[str, Dict[str, Any]]] = {"before": {}, "after": {}}
+        for a, b, rel, reason in edges:   # a = the later story, b = the earlier
+            for near, far, side in ((a, b, "before"), (b, a, "after")):
+                if near in ss and far not in ss and far in heads and far not in sides[side]:
+                    at = firsts.get(far)
+                    sides[side][far] = {"story": far, "headline": heads[far], "relation": rel, "reason": reason,
+                                        "first_at": at.isoformat() if at else None,
+                                        "gap": abs((at - start).total_seconds()) if at and start else float("inf")}
+        got: Dict[str, Any] = {}
+        for side, found in sides.items():
+            items = sorted(found.values(), key=lambda r: (r["gap"], r["story"]))
+            for r in items:
+                r.pop("gap")
+            got[side] = sorted(items[:shown], key=lambda r: (r["first_at"] or "", r["story"]))
+            got[side + "_more"] = max(0, len(items) - shown)
+        if any(got.values()):
+            out[rid] = got
+    return out
+
+
 def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[List[str]]:
     """0236: the one-release groups of these same_release edges [(a, b, thing)]: each story keeps only the edges of
     its own release thing (the thing most of its edges are about, then the lowest id), so a group is one thing and a

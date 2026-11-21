@@ -723,6 +723,10 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     fold_count = folds.annotate(cur, items)
     from insight_core.markx import built   # 0128: how each row's story is built, its original first, published order
     built.annotate(cur, items)
+    from insight_core.markx import graph   # 0267: each row's Earlier and Later (the chain relations shown)
+    thread = graph.row_chains(cur, {i["id"]: _row_stories(i) for i in items})
+    for i in items:
+        i["chain"] = thread.get(i["id"])
     gone = []
     for nid in sorted(gone_rows, key=lambda n: -(ix_meta.get(n) or {}).get("voices", 0)):
         gone.append({"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {}),
@@ -743,7 +747,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
 
 VIEWS = {"differences": True, "all": False}   # the kept views: key -> only_differences
-SHAPE = "1"   # 0232: the answer's shape, in the kept keys (a field the frontend reads added, renamed or gone: bump it):
+SHAPE = "2"   # 0267: a row's `chain` added. 0232: the answer's shape, in the kept keys (a field the frontend reads added, renamed or gone: bump it):
 #               a view kept by an older code is sent only while its shape is this one
 KEEP_RUNS = 3                                 # the newest runs whose kept views stay (a cache: pruned)
 RECENT = timedelta(hours=48)                   # rank_key's "last 48 hours first"
