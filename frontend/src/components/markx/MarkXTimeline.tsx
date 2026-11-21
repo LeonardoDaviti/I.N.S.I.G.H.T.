@@ -82,7 +82,7 @@ export function timelineRows(items: MarkxTimelineEvent[]): { e: MarkxTimelineEve
  * breakdowns written on it, back in the news); the most important by default, "all" opens the rest (the stories that
  * only name it among them).
  */
-export function Timeline({ timeline }: { timeline: MarkxTimeline }) {
+export function Timeline({ timeline, onAll }: { timeline: MarkxTimeline; onAll?: () => void }) {
   const [all, setAll] = useState(false);
   const shown = all ? timeline.items : timeline.items.filter((e) => e.top);
   const left = timeline.total - shown.length;
@@ -107,7 +107,7 @@ export function Timeline({ timeline }: { timeline: MarkxTimeline }) {
       </ol>
       {left > 0 ? (
         <button type="button" className="mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline"
-                onClick={() => setAll(true)}>All {plural(timeline.total, 'event')}</button>
+                onClick={() => { setAll(true); if (timeline.items_all === false) onAll?.(); }}>All {plural(timeline.total, 'event')}</button>
       ) : null}
     </section>
   );

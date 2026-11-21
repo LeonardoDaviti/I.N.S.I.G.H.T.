@@ -388,7 +388,7 @@ ENTITY_PAGES = 300   # the kept entity pages: the newest built stay (a cache: th
 STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more at a time)
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
-DEFAULTS = {"by": 50, "stories": 50, "loose": 100}   # the route's defaults (PP.BY_LIMIT; issue 0195)
+DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
 PAGE_SHAPE = "5"      # 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
@@ -418,10 +418,11 @@ def _full(cur: Any, entity_id: str, *, now: datetime, replies: bool):
                         stories_limit=STORIES_CAP, loose_limit=LOOSE_CAP + BY_CAP)
 
 
-def _cut(full: Dict[str, Any], by: int, stories: int, loose: int) -> Dict[str, Any]:
+def _cut(full: Dict[str, Any], by: int, stories: int, loose: int, whole: bool = False) -> Dict[str, Any]:
     """`entity_page` at these limits (by <= BY_CAP, stories <= STORIES_CAP, loose <= LOOSE_CAP) from `_full`'s
     answer: its first `stories` blocks; its loose posts without the by posts past `by`, the first `loose` of them;
-    loose_total as the build counts it (every loose post but the by posts past `by`)."""
+    loose_total as the build counts it (every loose post but the by posts past `by`).
+    0277: unless `whole` (the page's "all" links), the long lists are cut too (`_short`)."""
     from insight_core.markx import person_page as PP
     seen, kept = 0, []
     for ln in full["loose"]:
@@ -433,8 +434,56 @@ def _cut(full: Dict[str, Any], by: int, stories: int, loose: int) -> Dict[str, A
                 continue
         kept.append(ln)
     counts = full["loose_counts"]
-    return {**full, "stories": full["stories"][:stories], "loose": kept,
+    page = {**full, "stories": full["stories"][:stories], "loose": kept,
             "loose_total": sum(counts.values()) - counts["by"] + min(counts["by"], by)}
+    return page if whole else _short(page)
+
+
+# 0277: the default answer's long lists. Anthropic's page on the server was 2.5 MB: 1.1 MB the 1,053 posts citing it,
+# 1.06 MB the 50 stories' 1,527 posts, 300 kB a timeline of 920 events of which 8 are shown first, 150 + 104 kB its
+# 863 works (twice). Each list is cut to what the page shows first, its total beside it; `whole` (?all=true, the
+# page's "all" links) answers every one. Cut from the one kept page: nothing more is built, held or kept.
+SHORT = {"story_posts": 6, "citing": 20, "recommending": 20, "works": 30, "relations": 60}
+
+
+def _short(page: Dict[str, Any]) -> Dict[str, Any]:
+    """The page with each story's posts cut to SHORT["story_posts"] (its original first, then the posts about the
+    entity, shown in the block's order; `posts_total`), the posts citing or recommending it and its works (published,
+    the rabbit hole's) to their first ones (`<list>_total`; the rabbit hole's `missing`: its works not stored, counted),
+    and the timeline to its top events (`items_all`: whether every event is listed)."""
+    out = dict(page)
+    n = SHORT["story_posts"]
+    blocks = []
+    for b in page.get("stories") or []:
+        ps = b.get("posts") or []
+        if len(ps) <= n:
+            blocks.append({**b, "posts_total": len(ps)})
+            continue
+        orig = (b.get("original") or {}).get("post")
+        first = sorted(range(len(ps)), key=lambda i: (ps[i]["id"] != orig, not ps[i].get("about"), i))[:n]
+        blocks.append({**b, "posts": [ps[i] for i in sorted(first)], "posts_total": len(ps)})
+    out["stories"] = blocks
+    for k in ("citing", "recommending", "published"):
+        xs = page.get(k)
+        if isinstance(xs, list):
+            out[k], out[f"{k}_total"] = xs[:SHORT.get(k, SHORT["works"])], len(xs)
+    hole = page.get("rabbit_hole")
+    if isinstance(hole, dict) and isinstance(hole.get("works"), list):
+        works = hole["works"]
+        out["rabbit_hole"] = {**hole, "works": works[:SHORT["works"]], "works_total": len(works),
+                              "missing": sum(1 for w in works if w.get("url") and not w.get("stored"))}
+    rels = page.get("relations")
+    if isinstance(rels, list) and len(rels) > SHORT["relations"]:   # the most stated ones, in their order
+        most = set(sorted(range(len(rels)), key=lambda i: (-(rels[i].get("posts") or 0), i))[:SHORT["relations"]])
+        out["relations"] = [r for i, r in enumerate(rels) if i in most]
+    out["relations_total"] = len(rels) if isinstance(rels, list) else 0
+    # a surge's posts (65 kB of ids on Anthropic's page) are read by no view of the page
+    out["surges"] = [{k: v for k, v in s.items() if k != "post_ids"} for s in page.get("surges") or []]
+    tl = page.get("timeline")
+    if isinstance(tl, dict) and isinstance(tl.get("items"), list):
+        top = [e for e in tl["items"] if e.get("top")]
+        out["timeline"] = {**tl, "items": top, "items_all": len(top) == len(tl["items"])}
+    return out
 
 
 def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[Any]]]:
@@ -472,7 +521,7 @@ def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[
 
 def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None, replies: bool = False,
                      stories_limit: Optional[int] = None, loose_limit: Optional[int] = None,
-                     now: Optional[datetime] = None) -> Optional[bytes]:
+                     now: Optional[datetime] = None, whole: bool = False) -> Optional[bytes]:
     """GET /api/markx/entities/{id}: the page's bytes (kept_pages.encode of `entity_page` with its sample offered, at
     the request's `limits`), cut from the entity's one kept page (`kept_full`); the open counted (the jobs process
     builds the most opened pages before anyone asks: `keep_pages`). None: no such entity."""
@@ -483,7 +532,7 @@ def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None
     if body is None:
         return None
     kept_pages.opened(cur, "entity", _page_key(entity_id, replies))
-    return kept_pages.recut(body, lambda full: _cut(full, by, stories, loose))
+    return kept_pages.recut(body, lambda full: _cut(full, by, stories, loose, whole))
 
 
 def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[datetime] = None,

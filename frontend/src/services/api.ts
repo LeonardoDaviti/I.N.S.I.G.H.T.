@@ -1649,11 +1649,13 @@ export function createApi() {
     // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
     /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too.
-     *  Issue 0195: `limits`, the stories and the posts in no story listed (the API's 50 and 100 by default). */
-    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean, limits?: MarkxEntityLimits) => {
+     *  Issue 0195: `limits`, the stories and the posts in no story listed (the API's 20 and 30 by default, 0277).
+     *  0277: `whole`, every post of each story, every citing post and work and every timeline event. */
+    getMarkxEntity: (id: string, byLimit?: number, replies?: boolean, limits?: MarkxEntityLimits, whole?: boolean) => {
       const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : '',
         limits?.stories !== undefined ? `stories_limit=${limits.stories}` : '',
-        limits?.loose !== undefined ? `loose_limit=${limits.loose}` : ''].filter(Boolean).join('&');
+        limits?.loose !== undefined ? `loose_limit=${limits.loose}` : '',
+        whole ? 'all=true' : ''].filter(Boolean).join('&');   // 0277: every post, work and event (else the first)
       return request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${q ? `?${q}` : ''}`);
     },
     /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. 0222: `view`

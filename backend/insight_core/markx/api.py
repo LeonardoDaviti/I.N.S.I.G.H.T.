@@ -852,18 +852,20 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 
 
 @router.get("/entities/{entity_id}")
-def mx_entity_page(entity_id: str, by_limit: int = 50, replies: bool = False, stories_limit: int = 50,
-                   loose_limit: int = 100):
+def mx_entity_page(entity_id: str, by_limit: int = 50, replies: bool = False, stories_limit: int = 20,
+                   loose_limit: int = 30, whole: bool = Query(False, alias="all")):
     """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
     old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too.
-    Issue 0195: `stories_limit` story blocks (50) and `loose_limit` loose posts (100); stories_total, loose_total.
-    0232: each limit clamped into its range (entity_views.limits: at most 200 stories, 500 loose and 500 by posts),
-    every request cut from the entity's one kept page."""
+    Issue 0195: `stories_limit` story blocks (0277: 20) and `loose_limit` loose posts (0277: 30); stories_total,
+    loose_total. 0232: each limit clamped into its range (entity_views.limits: at most 200 stories, 500 loose and
+    500 by posts), every request cut from the entity's one kept page. 0277: `all`, every post of each story, every
+    citing post and work and every timeline event (else the first ones and their totals: entity_views._short)."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
     with transaction() as cur:   # 0198: kept while its inputs are the same, else built as before and kept
         got = entity_views.kept_entity_page(cur, str(found), by_limit=by_limit, replies=replies,
-                                            stories_limit=stories_limit, loose_limit=loose_limit) if found else None
+                                            stories_limit=stories_limit, loose_limit=loose_limit,
+                                            whole=whole) if found else None
     if got is None:
         raise HTTPException(status_code=404, detail="No such entity")
     return Response(content=got, media_type="application/json")
