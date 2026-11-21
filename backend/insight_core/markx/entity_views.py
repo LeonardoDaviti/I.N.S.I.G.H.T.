@@ -389,7 +389,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 50, "loose": 100}   # the route's defaults (PP.BY_LIMIT; issue 0195)
-PAGE_SHAPE = "3"      # 0261: `brief` added. 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "4"      # 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
@@ -869,7 +869,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": queue_about(cur, book, root),
-            "brief": entity_brief.view(cur, root)}   # 0261: what it is, how it works, its results, each line cited
+            "brief": entity_brief.view(cur, root, names=[book.ents[m].name for m in members])}   # 0261, 0269
     if CONTEXT_ON:
         _with_contexts(cur, book, members, page)   # 0222: the sentences around the mention under each post
     return page, _until(now, every, offer_sample)

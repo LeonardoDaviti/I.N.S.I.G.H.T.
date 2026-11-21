@@ -437,6 +437,9 @@ export interface MarkxEntityLimits { stories?: number; loose?: number }
 export interface MarkxBriefLine {
   thing: string;
   text: string;
+  /** 0269: shown apart from the text, never glued into it: a definition's stage and maker, a step's detail, a
+   * result's evidence when it gives figures the line does not */
+  note?: string | null;
   cites: { post: string; n: number; quote?: string | null; quotes?: string[] }[];
   sources: number;
   /** results only: the sources of the posts that reported it */

@@ -28,14 +28,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.markx import track_things as TT
 
 SWITCH = ("entities", "brief")
 SUBJECT = "entity"
-SCHEMA_VERSION = 1      # the general schema's version (its track_version): a change here re-reads every post
-MIN_POSTS = 3           # an entity is briefed with this many subject/actor posts or more
+SCHEMA_VERSION = 2      # the general schema's version (its track_version): a change here re-reads every post
+                        # (0269: 2, what_it_is says whose definition it is: `subject`)
+MIN_POSTS = 5           # an entity is briefed with this many subject/actor posts or more (0269: was 3)
+SHOW_POSTS = 5          # 0269: a brief is shown only when this many of its posts were read (one post misled)
 MAX_POSTS = 12          # posts read for an entity at most (newest first)
 OPENED = 50             # the most opened entity pages considered (kept_pages.most_opened, 14 days)
 ASKS_A_DAY = 150        # things questions a day across entities at most
@@ -46,6 +48,9 @@ SCHEMA = {"kinds": [
     {"kind": WHAT, "about": "what the subject itself is: a definition line, its stage, who makes it",
      "fields": [{"name": "definition", "type": "text", "key": True,
                  "about": "what the subject is, in a few words (a kind of thing and what it is for)"},
+                {"name": "subject", "type": "text", "key": False,
+                 "about": "the name of the thing this definition is about, exactly as the post writes it: the "
+                          "subject's own name, or the name of another product, part or feature named with it"},
                 {"name": "stage", "type": "text", "key": False,
                  "about": "its stage as stated: experimental, preview, beta, released, retired, a version"},
                 {"name": "maker", "type": "text", "key": False, "about": "who makes, runs or owns it"}]},
@@ -88,14 +93,29 @@ def _subject(cur: Any, book: Any, root: str) -> Dict[str, Any]:
     return subject(v["name"], v["type"], v["maker"], [book.ents[m].name for m in EV._members(book, root)], root)
 
 
+def own_sources(cur: Any, book: Any, root: str) -> set:
+    """0269: the sources that are the entity or its maker (person_page.by_sources: via its voice, or the owner's yes):
+    their posts are its own announcements, read first."""
+    from insight_core.markx import entity_views as EV, person_page
+    out = set()
+    mk = EV._ent_view(book, root).get("maker_id")
+    for r in dict.fromkeys(x for x in (root, book.root(mk) if mk else None) if x and x in book.ents):
+        out |= {s["id"] for s in person_page.by_sources(cur, book, r, EV._members(book, r))["by"]}
+    return out
+
+
 def report_posts(cur: Any, book: Any, root: str) -> List[str]:
-    """The posts naming the entity (its merges and pins) as subject or actor, newest first, MAX_POSTS at most."""
+    """The posts naming the entity (its merges and pins) as subject or actor, MAX_POSTS at most: 0269, its own and its
+    maker's posts first (`own_sources`), then the newest."""
     from insight_core.markx import entity_views as EV
     at: Dict[str, Any] = {}
-    for pid, n, role, eid, when, _s, _r, g in EV._rows(cur, EV._guide(), None, EV._members(book, root)):
+    src: Dict[str, str] = {}
+    for pid, n, role, eid, when, s, _r, g in EV._rows(cur, EV._guide(), None, EV._members(book, root)):
         if role in EV.ROLE_REPORT and book.root(book.pins.get((pid, g, n), eid)) == root and when is not None:
             at[pid] = max(at.get(pid, when), when)
-    return sorted(at, key=lambda p: (at[p], p), reverse=True)[:MAX_POSTS]
+            src[pid] = s
+    own = own_sources(cur, book, root) if at else set()
+    return sorted(at, key=lambda p: (src.get(p) in own, at[p], p), reverse=True)[:MAX_POSTS]
 
 
 def ensure_schema(cur: Any, root: str) -> Dict[str, Any]:
@@ -195,25 +215,62 @@ def _val(t: Dict[str, Any], name: str) -> Optional[str]:
     return None if v is None or v.get("value") in (None, "") else str(v["value"])
 
 
-def line_text(kind: str, t: Dict[str, Any]) -> str:
-    """A row as one line of the brief, from its own fields only."""
+def line_parts(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> Tuple[str, Optional[str]]:
+    """A row as one line of the brief, from its own fields only: (its text, its note or None), shown apart, never
+    glued into one string of labels (0269). what_it_is: the definition, its note the stage and maker; how_it_works: the
+    step, its note the detail; a result: "what → result" ("what" left out when it is the entity's own name), its note
+    the evidence only when it gives figures the line does not."""
+    from insight_core.markx import track_brief as TB
     if kind == WHAT:
-        extra = [x for x in (_val(t, "stage"), ("by " + _val(t, "maker")) if _val(t, "maker") else None) if x]
-        return _val(t, "definition") + (f" ({'; '.join(extra)})" if extra else "")
+        note = " · ".join(x for x in (_val(t, "stage"), ("by " + _val(t, "maker")) if _val(t, "maker") else None) if x)
+        return _val(t, "definition") or "", note or None
     if kind == HOW:
-        return _val(t, "how") + (f": {_val(t, 'detail')}" if _val(t, "detail") else "")
-    out = _val(t, "what") or ""
-    if _val(t, "result"):
-        out += f": {_val(t, 'result')}"
-    if _val(t, "evidence") and _val(t, "evidence") not in out:
-        out += f" ({_val(t, 'evidence')})"
-    return out
+        how, detail = _val(t, "how") or "", _val(t, "detail")
+        return how, detail if detail and TT.fold(detail) not in TT.fold(how) else None
+    what, result, evidence = _val(t, "what"), _val(t, "result"), _val(t, "evidence")
+    if what and TT.fold(what) in {TT.fold(n) for n in names}:
+        what = None
+    text = " → ".join(x for x in (what, result) if x)
+    adds = evidence and TB._digits(evidence) - TB._digits(text)
+    return text, evidence if adds else None
 
 
-def view(cur: Any, root: str) -> Optional[Dict[str, Any]]:
-    """The brief of an entity (its root), or None (off, or nothing found yet): {what, how, results, points, as_of,
-    posts}. Each line {text, cites: [{n, post, quote}], sources} (results also `who`: its posts' sources); `posts`
-    numbers the cited posts in order of first cite (the superscripts) with their title, address, source and date."""
+def line_text(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> str:
+    """The line's text and its note as one string (the tests' and the logs' reading of a line)."""
+    text, note = line_parts(kind, t, names)
+    return text + (f" ({note})" if note else "")
+
+
+def own_what(t: Dict[str, Any], names: Sequence[str]) -> bool:
+    """0269: a what_it_is row about the entity itself: its `subject` is one of the entity's names (a definition of
+    "<Entity> Camera" from a post about it is that product's, not the entity's). A row without a subject (asked
+    before schema 2) is not known to be the entity's."""
+    subj = _val(t, "subject")
+    return bool(subj) and TT.fold(subj) in {TT.fold(n) for n in names if n}
+
+
+def _same(ln: Dict[str, Any]) -> Tuple[frozenset, frozenset]:
+    """0269: what two lines of one meaning share, by a simple sound rule: the same figures and the same key words (the
+    folded words of 4 letters or more). Anything less alike is left to the joins (track_things' keys)."""
+    import re
+    from insight_core.markx import track_brief as TB
+    words = " ".join(x for x in (ln["text"], ln.get("note") or "") if x)
+    return frozenset(TB._digits(words)), frozenset(w for w in re.findall(r"\w+", TT.fold(words)) if len(w) >= 4)
+
+
+def read_posts(cur: Any, root: str) -> int:
+    """0269: the posts the brief has read (a things question of the entity answered)."""
+    cur.execute("SELECT count(DISTINCT a) FROM mx_tasks WHERE kind = %s AND b = %s AND status = 'answered'",
+                (TT.THINGS_KIND, root))
+    return cur.fetchone()[0]
+
+
+def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
+    """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, 0269: fewer
+    than SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
+    posts}. Each line {text, note, cites: [{n, post, quote}], sources} (results also `who`: its posts' sources);
+    lines of the same figures and key words are one (`_same`); `posts` numbers the cited posts in order of first cite
+    (the superscripts) with their title, address, source and date."""
     from insight_core.markx import track_brief as TB
     if not on():
         return None
@@ -221,7 +278,10 @@ def view(cur: Any, root: str) -> Optional[Dict[str, Any]]:
     if s is None:
         return None
     things = TT.current(cur, root)
-    if not things:
+    if not things or read_posts(cur, root) < SHOW_POSTS:
+        return None
+    things = [t for t in things if t["kind"] != WHAT or own_what(t, names)]
+    if not any(t["kind"] == WHAT for t in things):
         return None
     rs = TT.reports(cur, root, [t["id"] for t in things])
     posts = _posts(cur, sorted({r["post"] for v in rs.values() for r in v}))
@@ -240,21 +300,35 @@ def view(cur: Any, root: str) -> Optional[Dict[str, Any]]:
         return out
 
     by_kind: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    alike: Dict[Any, Dict[str, Any]] = {}
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     for t in sorted(things, key=lambda t: (-TB.sources_of(rs.get(t["id"], []), posts),
                                            -(t["last_at"] or epoch).timestamp(), t["id"])):
-        text = line_text(t["kind"], t).strip()
+        text, note = line_parts(t["kind"], t, names)
+        text = text.strip()
         if not text:
             continue
         cs = cite(t)
         if not cs:
             continue
-        by_kind[t["kind"]].append({"thing": t["id"], "text": text, "cites": cs,
-                                   "sources": TB.sources_of(rs.get(t["id"], []), posts), "by": _val(t, "by")})
+        ln = {"thing": t["id"], "text": text, "note": note, "cites": cs,
+              "sources": TB.sources_of(rs.get(t["id"], []), posts), "by": _val(t, "by")}
+        key = (t["kind"], _same(ln))
+        if key in alike:   # 0269: the same figures and key words: one line, every post it rests on cited
+            first = alike[key]
+            first["cites"] += [c for c in cs if c["post"] not in {x["post"] for x in first["cites"]}]
+            first["also"].append(t["id"])
+            continue
+        alike[key] = ln
+        ln["also"] = []
+        by_kind[t["kind"]].append(ln)
     sections = {"what": by_kind.get(WHAT, [])[:SHOWN["what"]], "how": by_kind.get(HOW, [])[:SHOWN["how"]],
                 "results": by_kind.get(TT.PRACTICE_KIND, [])[:SHOWN["results"]]}
+    line_of: Dict[str, Dict[str, Any]] = {}
     for name in sections:
         for ln in sections[name]:
+            for t in [ln["thing"], *ln.pop("also")]:
+                line_of[t] = ln
             by = ln.pop("by")
             if name == "results":   # who measured it, when its quote names them; else the posts' sources
                 ln["who"] = [by] if by else sorted({posts[c["post"]]["source"] for c in ln["cites"]
@@ -268,7 +342,6 @@ def view(cur: Any, root: str) -> Optional[Dict[str, Any]]:
     if not shown_things:
         return None
     got = TB.points(cur, root)
-    line_of = {t: ln for name in ("what", "how", "results") for ln in sections[name] for t in [ln["thing"]]}
     points = []
     for p in (got or {}).get("points") or []:
         ns = sorted({c["n"] for t in p["cites"] if t in line_of for c in line_of[t]["cites"]})
